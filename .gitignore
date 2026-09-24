@@ -1,0 +1,19 @@
+# Private — never committed
+home-assessment.md
+research/
+data/
+devenv/local.env
+devenv/ssh/
+
+# Tools, environments and caches — inside the project, never committed
+.tools/
+.venv/
+.tmp/
+vendor/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Claude Code local settings
+.claude/
