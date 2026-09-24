@@ -5,9 +5,16 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
+from ..core.foreign_heat import SourceKind
 from ..core.readings import BoilerSnapshot, Reading
 from ..core.signals import Signal
-from ..units import signal_value
+from ..units import (
+    parse_binary,
+    parse_number,
+    power_to_kw,
+    signal_value,
+    temperature_to_celsius,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant, State
@@ -52,3 +59,61 @@ class EntityTransport:
     def snapshot(self, now: float) -> BoilerSnapshot:
         """Every mapped signal at ``now``; an unmapped signal is absent."""
         return BoilerSnapshot(now, {signal: self.reading(signal) for signal in self._mapping})
+
+
+FLOW_LOW, FLOW_HIGH = -20.0, 110.0
+
+
+def read_temperature(hass: HomeAssistant, entity_id: str) -> Reading:
+    """A water temperature entity (e.g. a mixed circuit's flow) in °C, plausibility-checked."""
+    return temperature_from_state(hass.states.get(entity_id))
+
+
+def temperature_from_state(state: State | None) -> Reading:
+    if state is None:
+        return Reading(None, None)
+    number = parse_number(state.state)
+    value = (
+        None
+        if number is None
+        else temperature_to_celsius(number, state.attributes.get("unit_of_measurement"))
+    )
+    if value is not None and not FLOW_LOW <= value <= FLOW_HIGH:
+        value = None
+    return Reading(value, reported_at(state))
+
+
+def read_source(hass: HomeAssistant, entity_id: str, kind: SourceKind) -> bool | float | None:
+    """A foreign-heat source: on/off for switches and binary sensors, W or °C for sensors."""
+    state = hass.states.get(entity_id)
+    if state is None:
+        return None
+    if kind in (SourceKind.SWITCH, SourceKind.BINARY):
+        return parse_binary(state.state)
+    number = parse_number(state.state)
+    if number is None:
+        return None
+    unit = state.attributes.get("unit_of_measurement")
+    if kind is SourceKind.POWER:
+        kw = power_to_kw(number, unit)
+        return None if kw is None else kw * 1000.0
+    return temperature_to_celsius(number, unit)
+
+
+def read_weather_temperature(hass: HomeAssistant, entity_id: str) -> Reading:
+    """The current temperature of a weather entity, in °C."""
+    return weather_from_state(hass.states.get(entity_id))
+
+
+def weather_from_state(state: State | None) -> Reading:
+    if state is None:
+        return Reading(None, None)
+    number = parse_number(state.attributes.get("temperature"))
+    value = (
+        None
+        if number is None
+        else temperature_to_celsius(number, state.attributes.get("temperature_unit"))
+    )
+    if value is not None and not -60.0 <= value <= 60.0:
+        value = None
+    return Reading(value, reported_at(state))

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from .building import DayPoint, LoadModel
-from .cycles import ClassifiedBurn, DhwInputs, classify_burns, find_burns
+from .cycles import BurnKind, ClassifiedBurn, DhwInputs, classify_burns, find_burns
 from .history import History
 from .metrics import (
     CH_KINDS,
@@ -62,6 +62,7 @@ class MonitorSummary:
     gas_source: GasSource | None
     gas_per_degree_day: float | None
     heat_output_kwh: Consumption | None  # heating only, estimated from modulation
+    dhw_output_kwh: Consumption | None  # DHW only, estimated from modulation
     by_outdoor: dict[float, CycleStats]
     load_below_min: Share | None
 
@@ -90,6 +91,7 @@ def _heat_output(
     parameters: ParameterSet,
     burns: Sequence[ClassifiedBurn],
     scale: ModulationScale,
+    kinds: frozenset[BurnKind] = CH_KINDS,
 ) -> Consumption | None:
     low = parameters.value(ParameterKey.BOILER_MIN_POWER)
     high = parameters.value(ParameterKey.BOILER_MAX_POWER)
@@ -100,7 +102,7 @@ def _heat_output(
     total = 0.0
     complete = True
     for classified in burns:
-        if classified.kind not in CH_KINDS:
+        if classified.kind not in kinds:
             continue
         burn = classified.burn
         part = integrate_rate(flame, modulation, low, high, scale, burn.start, burn.end)
@@ -184,6 +186,7 @@ def summarize(
         gas_source=source,
         gas_per_degree_day=gas_per_dd,
         heat_output_kwh=_heat_output(history, parameters, burns, opts.modulation_scale),
+        dhw_output_kwh=_heat_output(history, parameters, burns, opts.modulation_scale, DHW_KINDS),
         by_outdoor=(
             binned_cycle_stats(
                 burns, flame, outdoor, start, end, opts.bin_width, CH_KINDS, opts.short_burn_s

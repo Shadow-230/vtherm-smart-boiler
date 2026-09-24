@@ -87,6 +87,17 @@ class History:
             return None
         return combine(per_zone, start, end, _any_known)
 
+    def copy_window(self, start: float, end: float) -> History:
+        """An independent copy of ``[start, end)``, safe to analyse in another thread."""
+        return History(
+            signals={s: series.window(start, end) for s, series in self.signals.items()},
+            zones={
+                zid: ZoneSeries(zid, *(series.window(start, end) for series in zone.series()))
+                for zid, zone in self.zones.items()
+            },
+            weather=self.weather.window(start, end),
+        )
+
     def drop_before(self, t: float) -> None:
         for series in self.signals.values():
             series.drop_before(t)

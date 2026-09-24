@@ -118,6 +118,8 @@ def test_summary_of_a_cycling_boiler() -> None:
     assert summary.gas_per_degree_day == pytest.approx(summary.gas.amount / 56.0)
     assert summary.heat_output_kwh is not None
     assert summary.heat_output_kwh.amount == pytest.approx(8 * 8 * 14.0)
+    assert summary.dhw_output_kwh is not None
+    assert summary.dhw_output_kwh.amount == 0.0
     # load 1.4 kW at 8 °C, below the 4 kW minimum all the time
     assert summary.load_below_min is not None
     assert summary.load_below_min.value == pytest.approx(1.0)
@@ -168,3 +170,13 @@ def test_daily_points_need_known_outdoor_and_output() -> None:
     assert points[0].outdoor_mean == pytest.approx(8.0)
     assert points[0].energy_kwh == pytest.approx(8 * 14.0)
     assert daily_points(history, ParameterSet(), days) == []
+
+
+def test_copy_window_is_independent() -> None:
+    zone = ZoneSeries("a", temperature=Series([(0, 20.0), (50, 21.0)]))
+    history = History(signals={Signal.FLOW: Series([(0, 40.0), (50, 45.0)])}, zones={"a": zone})
+    copy = history.copy_window(10, 100)
+    history.signals[Signal.FLOW].append(200, 50.0)
+    assert [(s.t, s.value) for s in copy.signal(Signal.FLOW)] == [(10, 40.0), (50, 45.0)]
+    assert copy.zones["a"].temperature.value_at(60) == 21.0
+    assert copy.zones["a"].target.value_at(60) is None

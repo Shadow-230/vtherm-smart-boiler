@@ -55,3 +55,27 @@ def test_transport_package_has_no_write_method() -> None:
                     m for m, _ in inspect.getmembers(obj, callable) if not m.startswith("__")
                 ]
                 assert not [m for m in methods if any(w in m.lower() for w in WRITE_WORDS)], name
+
+
+async def test_other_inputs(hass: HomeAssistant) -> None:
+    from custom_components.vtherm_smart_boiler.core.foreign_heat import SourceKind
+    from custom_components.vtherm_smart_boiler.transport.entities import (
+        read_source,
+        read_temperature,
+        read_weather_temperature,
+    )
+
+    hass.states.async_set("sensor.mix", "95.0", {"unit_of_measurement": "°F"})
+    assert read_temperature(hass, "sensor.mix").value == pytest.approx(35.0)
+    hass.states.async_set("sensor.mix", "500", {"unit_of_measurement": "°C"})
+    assert read_temperature(hass, "sensor.mix").value is None
+    assert read_temperature(hass, "sensor.none").reported_at is None
+    hass.states.async_set("switch.fire", "on")
+    hass.states.async_set("sensor.heater", "1.2", {"unit_of_measurement": "kW"})
+    hass.states.async_set("sensor.stove", "140", {"unit_of_measurement": "°F"})
+    assert read_source(hass, "switch.fire", SourceKind.SWITCH) is True
+    assert read_source(hass, "sensor.heater", SourceKind.POWER) == pytest.approx(1200.0)
+    assert read_source(hass, "sensor.stove", SourceKind.TEMPERATURE) == pytest.approx(60.0)
+    assert read_source(hass, "sensor.none", SourceKind.POWER) is None
+    hass.states.async_set("weather.x", "sunny", {"temperature": 41.0, "temperature_unit": "°F"})
+    assert read_weather_temperature(hass, "weather.x").value == pytest.approx(5.0)

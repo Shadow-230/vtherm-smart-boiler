@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_loaded_integration
 
@@ -55,7 +55,10 @@ class VThermLink:
         return self._zones
 
     def zone(self, entity_id: str) -> ZoneState:
-        state = self._hass.states.get(entity_id)
+        return self.zone_from_state(entity_id, self._hass.states.get(entity_id))
+
+    def zone_from_state(self, entity_id: str, state: State | None) -> ZoneState:
+        """A zone from a given state of its climate entity (current or recorded)."""
         if state is None:
             return ZoneState(entity_id)
         unit = str(self._hass.config.units.temperature_unit)

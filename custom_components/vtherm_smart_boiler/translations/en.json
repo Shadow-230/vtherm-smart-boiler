@@ -1,0 +1,49 @@
+{
+  "entity": {
+    "sensor": {
+      "starts_per_hour": { "name": "Heating starts per hour" },
+      "median_burn": { "name": "Median heating burn" },
+      "burner_hours": { "name": "Heating burner hours (24 h)" },
+      "short_burn_share": { "name": "Short heating burns" },
+      "condensing_share": { "name": "Condensing share" },
+      "degree_days": { "name": "Degree-days (7 days)" },
+      "gas_per_degree_day": { "name": "Gas per degree-day" },
+      "verdict": {
+        "name": "Control verdict",
+        "state": {
+          "worth_it": "Worth enabling",
+          "not_worth_it": "Not worth enabling",
+          "not_enough_data": "Not enough data yet"
+        }
+      },
+      "signal_problems": { "name": "Signal problems" },
+      "reference_room": { "name": "Reference room" },
+      "reference_room_temperature": { "name": "Reference room temperature" },
+      "reference_room_setpoint": { "name": "Reference room setpoint" },
+      "change_report": { "name": "Use against yesterday" },
+      "loss_coefficient": { "name": "Building loss coefficient" },
+      "forecast_snapshots": { "name": "Forecast snapshots" },
+      "critical_zone": { "name": "Critical zone {circuit}" },
+      "emitter_power_factor": { "name": "{zone} emitter power" }
+    },
+    "binary_sensor": {
+      "connection": { "name": "Boiler signals" },
+      "hot_water": { "name": "{zone} hot water" },
+      "foreign_heat": { "name": "{zone} foreign heat" },
+      "alarm_frequent_starts": { "name": "Frequent starts" },
+      "alarm_unstable_ignition": { "name": "Unstable ignition" },
+      "alarm_pressure_low": { "name": "Water pressure low" },
+      "alarm_pressure_high": { "name": "Water pressure high" },
+      "alarm_pressure_falling": { "name": "Water pressure falling" },
+      "alarm_flue_gas_high": { "name": "Flue gas too hot" },
+      "alarm_flue_gas_rising": { "name": "Flue gas rising above return" },
+      "alarm_hysteresis_drift": { "name": "Heating hysteresis drifting" },
+      "outdoor_sensor_problem": { "name": "Outdoor sensor problem" }
+    }
+  },
+  "exceptions": {
+    "invalid_options": {
+      "message": "The configuration cannot be used ({code}: {subject}). Open the options and correct it."
+    }
+  }
+}
