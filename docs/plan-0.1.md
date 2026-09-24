@@ -99,7 +99,7 @@ core is reviewed together with the rest of 0.1.
 |---|---|
 | C1 ✅ | `sim/`: boiler (minimum and maximum power, hysteresis, water volume), house as one mass, one circuit, zones; generic profiles per boiler class and circuit type. Done, with `core/history.py` and `core/monitor.py`: the one history container and the monitor pipeline (burns, metrics, daily points, verdict) that the simulator, the importer and the integration share |
 | C2 ✅ | `tools/`: importer for a copy of an HA database (read-only) with a user-written entity mapping kept in `data/`. Done: `scripts/env.sh python -m tools.import_history --db … --mapping data/mapping.toml` (template: `tools/mapping.example.toml`); the database is opened `mode=ro&immutable=1`; VT zones read from the top-level climate attributes the recorder keeps |
-| C3 | integration-test harness: `enable_custom_integrations`, fake boiler entities, VT zones (from `vendor/` or fakes), time control |
+| C3 ✅ | integration-test harness: `enable_custom_integrations`, fake boiler entities, VT zones (from `vendor/` or fakes), time control. Done: `tests/integration/harness.py` — fake boiler states with units, fake VT zones registered under VT's platform, canned `weather.get_forecasts` recording its calls, replay of a simulated history with a frozen clock; VT itself loads from `vendor/` |
 
 Done when: simulator output and an imported history pass through the core and give sensible
 metrics. The test HA (`devenv/`, test LXC) is built with 0.2 (`docs/plan-0.2.md`, phase J).

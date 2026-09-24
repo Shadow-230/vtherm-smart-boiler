@@ -12,3 +12,26 @@ requires_vendor = pytest.mark.skipif(
     not (VENDOR_COMPONENTS / "versatile_thermostat").is_dir(),
     reason="vendor/ is not set up (docs/plan-0.1.md, A5)",
 )
+
+
+@pytest.fixture
+def boiler(hass):
+    from .harness import FakeBoiler
+
+    return FakeBoiler(hass)
+
+
+@pytest.fixture
+def zones(hass):
+    from .harness import FakeZones
+
+    return FakeZones(hass)
+
+
+@pytest.fixture
+def forecasts(hass):
+    from .harness import FakeForecasts
+
+    fake = FakeForecasts(hass)
+    fake.register()
+    return fake
