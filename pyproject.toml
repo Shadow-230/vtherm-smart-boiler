@@ -43,6 +43,8 @@ select = [
 ]
 # Comparisons with UPPER_CASE module constants on the left read naturally in tests.
 ignore = ["SIM300"]
+# Formulas in docstrings use the typographic minus and en dash on purpose.
+allowed-confusables = ["−", "–"]
 
 [tool.ruff.lint.isort]
 required-imports = ["from __future__ import annotations"]
