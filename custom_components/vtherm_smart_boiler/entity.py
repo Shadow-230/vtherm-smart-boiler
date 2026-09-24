@@ -6,6 +6,7 @@ from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .control import ControlUnit
 from .coordinator import SmartBoilerCoordinator
 
 
@@ -41,3 +42,18 @@ class SmartBoilerEntity(CoordinatorEntity[SmartBoilerCoordinator]):
             model="Boiler monitor",
             entry_type=DeviceEntryType.SERVICE,
         )
+
+
+class ControlEntity(SmartBoilerEntity):
+    """An entity showing control; it updates whenever control's status changes."""
+
+    def __init__(self, coordinator: SmartBoilerCoordinator, key: str) -> None:
+        super().__init__(coordinator, key)
+        control = coordinator.control
+        if control is None:
+            raise ValueError("control is not set up")
+        self.control: ControlUnit = control
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(self.control.async_add_listener(self.async_write_ha_state))

@@ -12,6 +12,7 @@ override is active. The plugin never touches the DHW-enable override.
 
 from __future__ import annotations
 
+import asyncio
 import math
 from typing import TYPE_CHECKING, Protocol
 
@@ -22,6 +23,11 @@ if TYPE_CHECKING:
 
 OTGW_MIN_SETPOINT = 8.0  # below this (and above 0) an OTGW override never lapses
 MAX_SETPOINT = 90.0
+WRITE_TIMEOUT_S = 10.0  # a service call that hangs longer counts as failed
+OPENTHERM_GW = "opentherm_gw"
+OTGW_SERVICES = frozenset(
+    {(OPENTHERM_GW, "set_control_setpoint"), (OPENTHERM_GW, "set_central_heating_ovrd")}
+)
 
 
 class WriteError(Exception):
@@ -51,71 +57,97 @@ class _ServiceWriter:
 
     async def _call(self, domain: str, service: str, data: dict[str, object]) -> None:
         try:
-            await self._hass.services.async_call(domain, service, data, blocking=True)
+            async with asyncio.timeout(WRITE_TIMEOUT_S):
+                await self._hass.services.async_call(domain, service, data, blocking=True)
         except Exception as err:  # every failure is a failed write, reported upstream
-            raise WriteError(f"{domain}.{service}: {err}") from err
+            raise WriteError(f"{domain}.{service}: {err!r}") from err
+
+
+def _domain(entity_id: str) -> str:
+    return entity_id.split(".", 1)[0]
+
+
+def writer_services(options: ControlOptions) -> frozenset[tuple[str, str]]:
+    """Every service a writer for these options may call; empty when control is not set up."""
+    path = options.write_path
+    if path is WritePath.OPENTHERM_GW:
+        return OTGW_SERVICES
+    if path is WritePath.OTGW_MQTT:
+        return frozenset({("mqtt", "publish")})
+    if path is not WritePath.ENTITY or not options.setpoint_entity:
+        return frozenset()
+    found = {(_domain(options.setpoint_entity), "set_value")}
+    switches = [options.ch_entity]
+    if options.hand_back is HandBack.SWITCH:
+        switches.append(options.hand_back_entity)
+    for entity in switches:
+        if entity:
+            found |= {(_domain(entity), "turn_on"), (_domain(entity), "turn_off")}
+    return frozenset(found)
 
 
 class EntityWriter(_ServiceWriter):
-    """A setpoint entity (number, input_number) and optionally a heating switch."""
+    """A setpoint entity (number, input_number) and optionally a heating switch.
+
+    With a switch hand-back, the switch that enables external control is turned on before the
+    first write of each control session and off to hand back.
+    """
 
     def __init__(self, hass: HomeAssistant, options: ControlOptions) -> None:
         super().__init__(hass)
         if not options.setpoint_entity:
             raise ValueError("no setpoint entity")
+        self._options = options
         self._setpoint = options.setpoint_entity
         self._switch = options.ch_entity
         self._hand_back = options.hand_back
         self._hand_back_value = options.hand_back_value
-        self._hand_back_entity = options.hand_back_entity
-
-    @staticmethod
-    def _domain(entity_id: str) -> str:
-        return entity_id.split(".", 1)[0]
+        self._external = (
+            options.hand_back_entity if options.hand_back is HandBack.SWITCH else None
+        )
+        self._taken = False
 
     @property
     def services(self) -> frozenset[tuple[str, str]]:
-        found = {(self._domain(self._setpoint), "set_value")}
-        for entity in (self._switch, self._hand_back_entity):
-            if entity:
-                domain = self._domain(entity)
-                found |= {(domain, "turn_on"), (domain, "turn_off")}
-        return frozenset(found)
+        return writer_services(self._options)
+
+    async def _take(self) -> None:
+        if self._external and not self._taken:
+            await self._call(_domain(self._external), "turn_on", {"entity_id": self._external})
+        self._taken = True
 
     async def write_setpoint(self, value: float) -> None:
+        checked = _checked(value, 0.0)
+        await self._take()
         await self._call(
-            self._domain(self._setpoint),
-            "set_value",
-            {"entity_id": self._setpoint, "value": _checked(value, 0.0)},
+            _domain(self._setpoint), "set_value", {"entity_id": self._setpoint, "value": checked}
         )
 
     async def write_heating(self, on: bool) -> None:
         if not self._switch:
             raise WriteError("no heating switch")
+        await self._take()
         await self._call(
-            self._domain(self._switch), "turn_on" if on else "turn_off", {"entity_id": self._switch}
+            _domain(self._switch), "turn_on" if on else "turn_off", {"entity_id": self._switch}
         )
 
     async def hand_back(self) -> None:
+        self._taken = False
         if self._hand_back is HandBack.VALUE:
             await self._call(
-                self._domain(self._setpoint),
+                _domain(self._setpoint),
                 "set_value",
                 {"entity_id": self._setpoint, "value": self._hand_back_value},
             )
-        elif self._hand_back is HandBack.SWITCH and self._hand_back_entity:
-            await self._call(
-                self._domain(self._hand_back_entity),
-                "turn_off",
-                {"entity_id": self._hand_back_entity},
-            )
+        elif self._external:
+            await self._call(_domain(self._external), "turn_off", {"entity_id": self._external})
         # HandBack.TIMEOUT: stop writing; the device's own timeout hands back.
 
 
 class OpenthermGwWriter(_ServiceWriter):
     """Built-in OTGW through Home Assistant's opentherm_gw services."""
 
-    DOMAIN = "opentherm_gw"
+    DOMAIN = OPENTHERM_GW
 
     def __init__(self, hass: HomeAssistant, options: ControlOptions) -> None:
         super().__init__(hass)
@@ -125,9 +157,7 @@ class OpenthermGwWriter(_ServiceWriter):
 
     @property
     def services(self) -> frozenset[tuple[str, str]]:
-        return frozenset(
-            {(self.DOMAIN, "set_control_setpoint"), (self.DOMAIN, "set_central_heating_ovrd")}
-        )
+        return OTGW_SERVICES
 
     async def write_setpoint(self, value: float) -> None:
         await self._call(

@@ -19,7 +19,7 @@ from .core.controller import ControlConfig
 from .core.curve import HeatingCurve
 from .core.demand import DemandConfig
 from .core.guards import SetpointGuardConfig, SwitchGuardConfig, WriteType
-from .core.installation import CircuitControl, EmitterType, Installation
+from .core.installation import BoilerClass, CircuitControl, EmitterType, Installation
 from .core.learning import LearningConfig
 from .core.limits import FlowLimits, FrostConfig, SeasonConfig
 from .core.loop import DEFAULT_OFF_SETPOINT, LoopConfig
@@ -56,6 +56,21 @@ class CapReaction(StrEnum):
     HAND_BACK = "hand_back"
 
 
+# Everything ``config_blockers`` may report (translation keys).
+CONFIG_BLOCKERS = (
+    "no_write_path",
+    "boiler_not_flow_setpoint",
+    "no_setpoint_entity",
+    "no_hand_back",
+    "no_gateway",
+    "no_mqtt_topic",
+    "no_confirmed_setpoint",
+    "no_topology",
+    "topology_no_control",
+    "curve_not_entered",
+    "one_direct_circuit_only",
+    "underfloor_without_max_flow",
+)
 OTGW_PATHS = frozenset({WritePath.OPENTHERM_GW, WritePath.OTGW_MQTT})
 CONTROLLABLE_TOPOLOGIES = frozenset(
     {Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT, Topology.VIRTUAL}
@@ -226,6 +241,8 @@ def config_blockers(control: ControlOptions, installation: Installation) -> list
     if not control.configured:
         return ["no_write_path"]
     found: list[str] = []
+    if installation.boiler.boiler_class is not BoilerClass.FLOW_SETPOINT:
+        found.append("boiler_not_flow_setpoint")
     path = control.write_path
     if path is WritePath.ENTITY:
         if not control.setpoint_entity:

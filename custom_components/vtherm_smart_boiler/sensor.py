@@ -1,4 +1,5 @@
-"""Sensors: boiler metrics, verdict, reference room, critical zones, emitter power factors."""
+"""Sensors: boiler metrics, verdict, reference room, critical zones, emitter power factors, and
+the state and setpoint of control."""
 
 from __future__ import annotations
 
@@ -16,15 +17,17 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from .coordinator import MonitorData, SmartBoilerCoordinator
+from .core.controller import ControlMode
 from .core.emitters import FactorStatus
 from .core.parameters import ParameterKey
 from .core.signal_check import Feature, FeatureStatus, SignalStatus
 from .core.signals import Signal
 from .core.verdict import Verdict
 from .core.zones import SelectionStatus
-from .entity import SmartBoilerEntity
+from .entity import ControlEntity, SmartBoilerEntity
 
 type Value = float | str | None
 
@@ -310,6 +313,8 @@ async def async_setup_entry(
         EmitterFactorSensor(coordinator, zone.zone_id)
         for zone in coordinator.config.installation.zones
     ]
+    if coordinator.control is not None:
+        entities += [ControlStateSensor(coordinator), ControlSetpointSensor(coordinator)]
     async_add_entities(entities)
 
 
@@ -387,4 +392,58 @@ class EmitterFactorSensor(SmartBoilerEntity, SensorEntity):
             "computed_at": factor.at,
             "output_w": _round(factor.output_w, 0),
             "held": factor.status is FactorStatus.HELD,
+        }
+
+
+def _time(t: float | None) -> str | None:
+    return None if t is None else dt_util.utc_from_timestamp(t).isoformat()
+
+
+class ControlStateSensor(ControlEntity, SensorEntity):
+    """What control does now and why: mode, reasons, blockers, anti-cycling hold, hand-back."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+
+    def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
+        super().__init__(coordinator, "control_state")
+        self._attr_options = [mode.value for mode in ControlMode]
+
+    @property
+    def native_value(self) -> str:
+        return self.control.status.mode.value
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        status = self.control.status
+        return {
+            "reasons": list(status.reasons),
+            "blockers": list(status.blockers),
+            "target": _round(status.target, 1),
+            "heating_on": status.heating_on,
+            "hold_until": _time(status.hold_until),
+            "hand_back_at": _time(status.hand_back_at),
+            "learning_paused": list(status.paused_zones),
+        }
+
+
+class ControlSetpointSensor(ControlEntity, SensorEntity):
+    """The flow setpoint control last wrote, with what the boiler reports back."""
+
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
+        super().__init__(coordinator, "control_setpoint")
+
+    @property
+    def native_value(self) -> float | None:
+        return _round(self.control.status.setpoint, 1)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        status = self.control.status
+        return {
+            "confirmed": _round(status.confirmed, 1),
+            "last_change": _time(status.last_change_at),
         }

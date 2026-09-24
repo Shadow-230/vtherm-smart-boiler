@@ -1,4 +1,5 @@
-"""Binary sensors: connection, hot water available and foreign heat per zone, alarms."""
+"""Binary sensors: connection, hot water available and foreign heat per zone, alarms, and the
+alarms of control."""
 
 from __future__ import annotations
 
@@ -13,11 +14,12 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from .control import ControlAlarm
 from .coordinator import SmartBoilerCoordinator
 from .core.alarms import AlarmKind
 from .core.signal_check import Feature, FeatureStatus, OutdoorStatus, SignalStatus
 from .core.signals import Signal
-from .entity import SmartBoilerEntity
+from .entity import ControlEntity, SmartBoilerEntity
 
 # Early warnings are advanced: created but hidden until the user shows them.
 EARLY_WARNINGS = frozenset(
@@ -56,6 +58,8 @@ async def async_setup_entry(
     entities += [AlarmSensor(coordinator, kind) for kind in _alarm_kinds(coordinator)]
     if coordinator.data.features[Feature.OUTDOOR_CHECK].status is FeatureStatus.AVAILABLE:
         entities.append(OutdoorSensorProblem(coordinator))
+    if coordinator.control is not None:
+        entities += [ControlAlarmSensor(coordinator, kind) for kind in ControlAlarm]
     async_add_entities(entities)
 
 
@@ -184,3 +188,18 @@ class OutdoorSensorProblem(SmartBoilerEntity, BinarySensorEntity):
             "status": analysis.outdoor.status.value,
             "mean_difference": analysis.outdoor.mean_difference,
         }
+
+
+class ControlAlarmSensor(ControlEntity, BinarySensorEntity):
+    """A control alarm: a write failed or was ignored, another controller changed the setpoint,
+    the daily cap on wearing writes was reached, or control stopped on an internal error."""
+
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+
+    def __init__(self, coordinator: SmartBoilerCoordinator, kind: ControlAlarm) -> None:
+        super().__init__(coordinator, f"alarm_{kind.value}")
+        self.kind = kind
+
+    @property
+    def is_on(self) -> bool:
+        return self.kind in self.control.status.alarms

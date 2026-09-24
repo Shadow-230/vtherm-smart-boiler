@@ -13,10 +13,13 @@ from .coordinator import SmartBoilerCoordinator
 from .core.parameters import ParameterKey, Source
 
 ENTITY_ID = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+# Identifiers of the user's devices (an MQTT node name often holds a MAC address).
+REDACTED_KEYS = frozenset({"gateway_id", "mqtt_node", "mqtt_top"})
 
 
 class _Redactor:
-    """Replaces every entity ID with ``entity_N``, the same N for the same ID."""
+    """Replaces every entity ID with ``entity_N``, the same N for the same ID, and hides device
+    identifiers."""
 
     def __init__(self) -> None:
         self._names: dict[str, str] = {}
@@ -25,10 +28,26 @@ class _Redactor:
         if isinstance(value, str) and ENTITY_ID.match(value):
             return self._names.setdefault(value, f"entity_{len(self._names) + 1}")
         if isinstance(value, dict):
-            return {self(key): self(item) for key, item in value.items()}
+            return {
+                self(key): "**redacted**" if key in REDACTED_KEYS and item else self(item)
+                for key, item in value.items()
+            }
         if isinstance(value, list | tuple):
             return [self(item) for item in value]
         return value
+
+
+def _control(coordinator: SmartBoilerCoordinator) -> dict[str, Any] | None:
+    control = coordinator.control
+    if control is None:
+        return None
+    status = control.status
+    return {
+        "enabled": control.enabled,
+        "allowed_services": sorted(f"{d}.{s}" for d, s in control.allowed_services),
+        "status": asdict(status) | {"alarms": sorted(a.value for a in status.alarms)},
+        "stored": control.stored(),
+    }
 
 
 def _parameters(coordinator: SmartBoilerCoordinator) -> dict[str, Any]:
@@ -109,6 +128,7 @@ async def async_get_config_entry_diagnostics(
             "critical": {cid: asdict(c) for cid, c in data.critical.items()},
             "alarms": {kind.value: asdict(alarm) for kind, alarm in data.alarms.items()},
             "analysis": summary,
+            "control": _control(coordinator),
             "forecasts": {
                 "snapshots": data.forecast_snapshots,
                 "unsupported": sorted(k.value for k in coordinator.forecasts.unsupported)

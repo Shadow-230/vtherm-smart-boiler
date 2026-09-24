@@ -32,6 +32,25 @@ def test_minimal_options_get_cautious_defaults() -> None:
     assert config.monitor.monitor.modulation_scale is ModulationScale.RANGE
     assert config.parameters.value(ParameterKey.HEATING_THRESHOLD) == 15.0  # class default
     assert config.watched_entities == ("binary_sensor.flame", "sensor.flow")
+    assert not config.control.configured
+
+
+def test_control_section_uses_the_boilers_maximum() -> None:
+    options = MINIMAL | {
+        "boiler": {"class": "flow_setpoint"},
+        "parameters": {"max_ch_setpoint": 60},
+        "control": {
+            "write_path": "opentherm_gw",
+            "gateway_id": "gw",
+            "confirmed_entity": "sensor.setpoint",
+            "topology": "gateway_with_thermostat",
+            "curve": {"design_outdoor": -20, "design_flow": 50},
+        },
+    }
+    control = EntryConfig.from_options(options).control
+    assert control.configured
+    assert control.loop.control.boiler_max == 60.0
+    assert control.loop.control.curve.design_flow == 50.0
 
 
 def test_full_options() -> None:
@@ -123,6 +142,11 @@ def test_coarse_building_answers_give_a_default_loss() -> None:
         (
             MINIMAL | {"reference_room": {"strategy": "chosen_zone", "zone": "climate.x"}},
             "reference_zone_unknown",
+        ),
+        (MINIMAL | {"control": {"write_path": "carrier_pigeon"}}, "invalid_control"),
+        (
+            MINIMAL | {"control": {"write_path": "entity", "daily_cap": "many"}},
+            "invalid_control",
         ),
     ],
 )

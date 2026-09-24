@@ -15,6 +15,7 @@ from .const import (
     BOILER,
     BUILDING,
     CIRCUITS,
+    CONTROL,
     FRESHNESS,
     LEVEL,
     LEVEL_SIMPLE,
@@ -25,6 +26,7 @@ from .const import (
     WEATHER,
     ZONES,
 )
+from .control_config import ControlOptions, parse_control
 from .core.building import (
     InsulationClass,
     ThermalMass,
@@ -94,6 +96,7 @@ class EntryConfig:
     reference_room: ReferenceRoomConfig
     monitor: MonitorConfig
     freshness: dict[Signal, float | None]
+    control: ControlOptions = field(default_factory=ControlOptions)
 
     @property
     def zone_entities(self) -> tuple[str, ...]:
@@ -141,6 +144,7 @@ class EntryConfig:
             reference_room=reference,
             monitor=_monitor(options.get(MONITOR, {}), boiler_data),
             freshness=_freshness(options.get(FRESHNESS, {})),
+            control=_control(options.get(CONTROL), installation, parameters),
         )
 
 
@@ -280,6 +284,17 @@ def _freshness(data: Mapping[str, Any]) -> dict[Signal, float | None]:
             raise ConfigError("unknown_signal", key) from err
         result[signal] = None if value is None else float(value)
     return result
+
+
+def _control(
+    data: Mapping[str, Any] | None, installation: Installation, parameters: ParameterSet
+) -> ControlOptions:
+    try:
+        return parse_control(
+            data, installation, parameters.value(ParameterKey.MAX_CH_SETPOINT)
+        )
+    except (KeyError, TypeError, ValueError) as err:
+        raise ConfigError("invalid_control", str(err)) from err
 
 
 def _float_or_none(value: object) -> float | None:

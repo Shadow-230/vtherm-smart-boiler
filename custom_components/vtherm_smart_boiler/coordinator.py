@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from functools import partial
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import (
@@ -26,6 +26,7 @@ from homeassistant.core import (
     State,
     callback,
 )
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.storage import Store
@@ -83,6 +84,9 @@ from .transport.entities import (
 )
 from .vtherm_attributes import CentralMode
 from .vtherm_link import VtCapabilities, VThermLink
+
+if TYPE_CHECKING:
+    from .control import ControlUnit
 
 _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 1
@@ -162,6 +166,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._alarms: dict[AlarmKind, Alarm] = {}
         self._analysing = False
         self._save_pending = False
+        self.control: ControlUnit | None = None
+        self.stored_control: dict[str, Any] = {}
 
     # --- lifecycle ------------------------------------------------------------------------
 
@@ -193,10 +199,11 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     self.hass, self._async_forecast_tick, timedelta(seconds=FORECAST_SECONDS)
                 )
             )
-        self._schedule_save()
+        self.schedule_save()
 
     def async_start_background(self) -> None:
         """First analysis and first forecast snapshot, without holding up setup."""
+        self.check_auto_tpi()
         self.config_entry.async_create_background_task(
             self.hass, self.async_run_analysis(), f"{DOMAIN} analysis"
         )
@@ -209,6 +216,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         """Stop every listener and timer and write what is pending."""
         while self._unsubs:
             self._unsubs.pop()()
+        ir.async_delete_issue(self.hass, DOMAIN, f"auto_tpi_blocked_{self.config_entry.entry_id}")
         await self.async_shutdown()
         await self._store.async_save(self._stored_data())
         if self.forecasts is not None:
@@ -219,6 +227,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     async def _async_load_store(self, now: float) -> None:
         stored = await self._store.async_load() or {}
         self.monitoring_since = float(stored.get("monitoring_since", now))
+        control = stored.get("control")
+        self.stored_control = control if isinstance(control, dict) else {}
         for zone_id, data in stored.get("factors", {}).items():
             if zone_id in self.config.zone_entities and data.get("value") is not None:
                 self._factors[zone_id] = FactorResult(
@@ -259,9 +269,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 if f.value is not None
             },
             "measured": measured,
+            "control": self.control.stored() if self.control is not None else self.stored_control,
         }
 
-    def _schedule_save(self) -> None:
+    def schedule_save(self) -> None:
         # Each delayed save restarts the store's timer: schedule only when none is pending, or
         # frequent updates would postpone the write forever.
         if not self._save_pending:
@@ -354,7 +365,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         flow = snapshot.number(Signal.FLOW)
         flow_fresh = snapshot.reading(Signal.FLOW).is_fresh(now, self._max_age(Signal.FLOW))
         return_temp = snapshot.number(Signal.RETURN, self._max_age(Signal.RETURN))
-        dhw = self._dhw_now(snapshot)
+        dhw = self.dhw_now(snapshot)
 
         zone_states = {z.zone_id: self.link.zone(z.zone_id) for z in config.installation.zones}
         views: dict[str, ZoneView] = {}
@@ -381,7 +392,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 self._factors.get(zone.zone_id), zone, state, supply, return_temp, now
             )
             if factor.status is FactorStatus.COMPUTED:
-                self._schedule_save()
+                self.schedule_save()
             if factor.value is not None:
                 self._factors[zone.zone_id] = factor
             foreign = None
@@ -450,7 +461,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             parameters=self.parameters,
         )
 
-    def _dhw_now(self, snapshot: BoilerSnapshot) -> bool | None:
+    def dhw_now(self, snapshot: BoilerSnapshot) -> bool | None:
         """DHW running now: its own signal, else flame on without heating demand from the CH
         signal; otherwise unknown."""
         dhw = snapshot.flag(Signal.DHW_ACTIVE)
@@ -495,7 +506,31 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     # --- analysis -------------------------------------------------------------------------
 
     async def _async_analysis_tick(self, _now: datetime) -> None:
+        self.check_auto_tpi()
         await self.async_run_analysis()
+
+    def check_auto_tpi(self) -> None:
+        """Warn about zones whose Auto-TPI cannot learn: flagged as used by VT's central boiler
+        while that feature is off, which is how the plugin replaces it (research F2)."""
+        issue_id = f"auto_tpi_blocked_{self.config_entry.entry_id}"
+        blocked: list[str] = []
+        if not self.link.vt_central_boiler_configured():
+            for zone_id in self.config.zone_entities:
+                algorithm = self.link.zone_algorithm(zone_id)
+                if algorithm.auto_tpi and algorithm.used_by_central_boiler:
+                    blocked.append(self.link.zone_name(zone_id))
+        if blocked:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="auto_tpi_blocked",
+                translation_placeholders={"zones": ", ".join(blocked)},
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
 
     async def async_run_analysis(self) -> None:
         """The periodic analysis, on a copy of the history in an executor thread."""
@@ -519,7 +554,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     self.parameters = self.parameters.with_estimate(
                         ParameterKey.HEATING_THRESHOLD, fit.threshold
                     )
-                self._schedule_save()
+                self.schedule_save()
             self.async_set_updated_data(self._compute(now))
         except Exception:
             _LOGGER.exception("The periodic analysis failed")

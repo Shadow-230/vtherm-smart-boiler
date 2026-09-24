@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -14,12 +15,14 @@ from custom_components.vtherm_smart_boiler.core.installation import (
     Circuit,
     Installation,
 )
+from custom_components.vtherm_smart_boiler.transport import writers
 from custom_components.vtherm_smart_boiler.transport.writers import (
     EntityWriter,
     OpenthermGwWriter,
     OtgwMqttWriter,
     WriteError,
     make_writer,
+    writer_services,
 )
 
 INSTALLATION = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
@@ -134,15 +137,58 @@ async def test_entity_writer_switch_and_timeout_hand_back(hass: HomeAssistant) -
             hand_back_entity="input_boolean.external_control",
         ),
     )
+    external = {"entity_id": "input_boolean.external_control"}
+    await switch.write_setpoint(40.0)
+    await switch.write_setpoint(41.0)
     await switch.hand_back()
-    assert calls == [("input_boolean", "turn_off", {"entity_id": "input_boolean.external_control"})]
+    await switch.write_setpoint(42.0)
+    assert calls == [
+        ("input_boolean", "turn_on", external),  # control is taken once per session
+        ("input_number", "set_value", {"entity_id": "input_number.flow", "value": 40.0}),
+        ("input_number", "set_value", {"entity_id": "input_number.flow", "value": 41.0}),
+        ("input_boolean", "turn_off", external),
+        ("input_boolean", "turn_on", external),
+        ("input_number", "set_value", {"entity_id": "input_number.flow", "value": 42.0}),
+    ]
+    assert switch.services == {
+        ("input_number", "set_value"),
+        ("input_boolean", "turn_on"),
+        ("input_boolean", "turn_off"),
+    }
     with pytest.raises(WriteError, match="no heating switch"):
         await switch.write_heating(True)
+    calls.clear()
     timeout = make_writer(
         hass, options(write_path="entity", setpoint_entity="input_number.flow", hand_back="timeout")
     )
     await timeout.hand_back()
-    assert len(calls) == 1  # nothing written: the device's timeout hands back
+    assert calls == []  # nothing written: the device's timeout hands back
+    assert timeout.services == {("input_number", "set_value")}
+
+
+async def test_a_value_hand_back_ignores_a_hand_back_switch(hass: HomeAssistant) -> None:
+    services = writer_services(
+        options(
+            write_path="entity",
+            setpoint_entity="number.flow",
+            hand_back="value",
+            hand_back_entity="switch.unused",
+        )
+    )
+    assert services == {("number", "set_value")}
+
+
+async def test_a_hanging_service_times_out(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def hang(call: ServiceCall) -> None:
+        await asyncio.sleep(3600)
+
+    hass.services.async_register("opentherm_gw", "set_control_setpoint", hang)
+    monkeypatch.setattr(writers, "WRITE_TIMEOUT_S", 0.05)
+    writer = make_writer(hass, options(write_path="opentherm_gw", gateway_id="gw1"))
+    with pytest.raises(WriteError, match="set_control_setpoint"):
+        await writer.write_setpoint(45.0)
 
 
 async def test_a_failing_service_is_a_write_error(hass: HomeAssistant) -> None:
@@ -154,3 +200,4 @@ async def test_a_failing_service_is_a_write_error(hass: HomeAssistant) -> None:
 async def test_unconfigured_control_has_no_writer(hass: HomeAssistant) -> None:
     with pytest.raises(ValueError, match="not configured"):
         make_writer(hass, options())
+    assert writer_services(options()) == frozenset()

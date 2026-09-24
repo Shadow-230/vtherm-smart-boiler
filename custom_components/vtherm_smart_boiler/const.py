@@ -21,9 +21,13 @@ BUILDING = "building"
 REFERENCE_ROOM = "reference_room"
 MONITOR = "monitor"
 FRESHNESS = "freshness"
+CONTROL = "control"
 
 # Clocks.
 TICK_SECONDS = 30
+# Control runs more often than its 30 s keep-alive, so a late tick never lets an override that
+# must be repeated within a minute lapse.
+CONTROL_TICK_SECONDS = 10
 SUMMARY_SECONDS = 300
 FORECAST_SECONDS = 30 * 60
 HISTORY_DAYS = 8

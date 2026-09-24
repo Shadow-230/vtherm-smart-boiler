@@ -143,3 +143,34 @@ def test_topologies() -> None:
         options = parse_control(OTGW | {"topology": topology.value}, RADIATORS, None)
         blocked = "topology_no_control" in config_blockers(options, RADIATORS)
         assert blocked is (topology is Topology.MONITOR_MODE)
+
+
+def test_control_needs_a_flow_setpoint_boiler() -> None:
+    for boiler_class in BoilerClass:
+        installation = Installation(Boiler(boiler_class), (Circuit("main"),))
+        blockers = config_blockers(parse_control(OTGW, installation, None), installation)
+        assert ("boiler_not_flow_setpoint" in blockers) is (
+            boiler_class is not BoilerClass.FLOW_SETPOINT
+        )
+
+
+def test_every_blocker_is_listed() -> None:
+    from custom_components.vtherm_smart_boiler.control_config import CONFIG_BLOCKERS
+
+    found: set[str] = set()
+    cases = [
+        ({}, RADIATORS),
+        (OTGW | {"write_path": "entity", "curve": {}, "topology": ""}, RADIATORS),
+        (OTGW | {"gateway_id": "", "confirmed_entity": "", "topology": "monitor_mode"}, RADIATORS),
+        (OTGW | {"write_path": "otgw_mqtt"}, RADIATORS),
+    ]
+    two = Installation(Boiler(BoilerClass.READ_ONLY), (Circuit("a"), Circuit("b")))
+    floor = Installation(
+        Boiler(BoilerClass.FLOW_SETPOINT),
+        (Circuit("main"),),
+        (Zone("climate.a", "main", EmitterType.UNDERFLOOR),),
+    )
+    cases += [(OTGW, two), (OTGW, floor)]
+    for data, installation in cases:
+        found |= set(config_blockers(parse_control(data, RADIATORS, None), installation))
+    assert found == set(CONFIG_BLOCKERS)

@@ -110,3 +110,23 @@ def test_every_config_error_code_can_be_shown() -> None:
     }
     for section in ("config", "options"):
         assert codes <= set(SOURCE[section]["abort"]), sorted(codes - set(SOURCE[section]["abort"]))
+
+
+def test_every_control_entity_blocker_and_issue_is_translated() -> None:
+    from custom_components.vtherm_smart_boiler.control import RUNTIME_BLOCKERS, ControlAlarm
+    from custom_components.vtherm_smart_boiler.control_config import CONFIG_BLOCKERS
+    from custom_components.vtherm_smart_boiler.core.controller import ControlMode
+
+    for blocker in (*CONFIG_BLOCKERS, *RUNTIME_BLOCKERS):
+        message = SOURCE["exceptions"][f"blocked_{blocker}"]["message"]
+        assert "{others}" in message, blocker
+    for kind in ControlAlarm:
+        assert "name" in SOURCE["entity"]["binary_sensor"][f"alarm_{kind.value}"], kind
+    assert set(SOURCE["entity"]["sensor"]["control_state"]["state"]) == {
+        mode.value for mode in ControlMode
+    }
+    assert "name" in SOURCE["entity"]["sensor"]["control_setpoint"]
+    assert "name" in SOURCE["entity"]["switch"]["control"]
+    issue = SOURCE["issues"]["auto_tpi_blocked"]
+    assert "{zones}" in issue["description"]
+    assert issue["title"]

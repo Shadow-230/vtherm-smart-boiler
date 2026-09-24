@@ -549,6 +549,23 @@
       },
       "emitter_power_factor": {
         "name": "{zone} emitter power"
+      },
+      "control_state": {
+        "name": "Control state",
+        "state": {
+          "disabled": "Off",
+          "not_allowed": "Not allowed",
+          "handed_back": "Handed back",
+          "waiting_data": "Waiting for data",
+          "heating": "Heating",
+          "idle": "Idle",
+          "summer": "Summer",
+          "frost": "Frost protection",
+          "fallback": "Fallback setpoint"
+        }
+      },
+      "control_setpoint": {
+        "name": "Control flow setpoint"
       }
     },
     "binary_sensor": {
@@ -590,12 +607,86 @@
       },
       "alarm_low_flow": {
         "name": "Low flow: all valves closed while the pump runs"
+      },
+      "alarm_write_failed": {
+        "name": "Control: write failed"
+      },
+      "alarm_write_ignored": {
+        "name": "Control: boiler ignores the setpoint"
+      },
+      "alarm_outside_change": {
+        "name": "Control: setpoint changed from outside"
+      },
+      "alarm_daily_cap": {
+        "name": "Control: daily write cap reached"
+      },
+      "alarm_control_error": {
+        "name": "Control: internal error"
+      }
+    },
+    "switch": {
+      "control": {
+        "name": "Boiler control (experimental)"
       }
     }
   },
   "exceptions": {
     "invalid_options": {
       "message": "The configuration cannot be used ({code}: {subject}). Open the options and correct it."
+    },
+    "blocked_no_write_path": {
+      "message": "Control is not set up: choose in the options how the plugin writes to the boiler. Other reasons: {others}."
+    },
+    "blocked_boiler_not_flow_setpoint": {
+      "message": "Control needs a boiler of the class \"Flow setpoint\". Other reasons: {others}."
+    },
+    "blocked_no_setpoint_entity": {
+      "message": "Pick the entity that takes the flow setpoint. Other reasons: {others}."
+    },
+    "blocked_no_hand_back": {
+      "message": "Choose how control is handed back to the boiler: a value, the device's own timeout or a switch. Other reasons: {others}."
+    },
+    "blocked_no_gateway": {
+      "message": "Enter the OpenTherm Gateway ID. Other reasons: {others}."
+    },
+    "blocked_no_mqtt_topic": {
+      "message": "Enter the gateway's MQTT topic prefix and node name. Other reasons: {others}."
+    },
+    "blocked_no_confirmed_setpoint": {
+      "message": "Pick the entity that reports the setpoint the boiler received (read-back). Other reasons: {others}."
+    },
+    "blocked_no_topology": {
+      "message": "Declare how the gateway is connected. Other reasons: {others}."
+    },
+    "blocked_topology_no_control": {
+      "message": "The gateway runs in monitor mode and cannot control the boiler. Other reasons: {others}."
+    },
+    "blocked_curve_not_entered": {
+      "message": "Enter the heating curve, at least the design flow temperature. Other reasons: {others}."
+    },
+    "blocked_one_direct_circuit_only": {
+      "message": "This version controls only one circuit fed straight from the boiler (unmixed, or with a fixed thermostatic mixing valve). Other reasons: {others}."
+    },
+    "blocked_underfloor_without_max_flow": {
+      "message": "Underfloor heating on an unmixed circuit needs a maximum flow temperature for that circuit. Other reasons: {others}."
+    },
+    "blocked_ha_starting": {
+      "message": "Home Assistant is still starting. Other reasons: {others}."
+    },
+    "blocked_monitoring_period": {
+      "message": "Control becomes available once the monitoring period has passed. Other reasons: {others}."
+    },
+    "blocked_vt_central_boiler_active": {
+      "message": "Versatile Thermostat's own central boiler is configured. Remove it first, so that only one controller drives the boiler. Other reasons: {others}."
+    },
+    "blocked_control_error": {
+      "message": "Control stopped after an internal error. Check the log, then switch control off and on again. Other reasons: {others}."
+    }
+  },
+  "issues": {
+    "auto_tpi_blocked": {
+      "title": "Auto-TPI cannot learn in some zones",
+      "description": "These zones run Auto-TPI and are marked in Versatile Thermostat as used by the central boiler, but VT's central boiler is not configured, so Auto-TPI skips learning in them: {zones}. Clear the option \"used by the central boiler\" in each zone's VT configuration."
     }
   }
 }

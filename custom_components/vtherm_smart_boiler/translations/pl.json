@@ -549,6 +549,23 @@
       },
       "emitter_power_factor": {
         "name": "{zone} moc grzejnika"
+      },
+      "control_state": {
+        "name": "Stan sterowania",
+        "state": {
+          "disabled": "Wyłączone",
+          "not_allowed": "Niedozwolone",
+          "handed_back": "Oddane kotłu",
+          "waiting_data": "Czeka na dane",
+          "heating": "Grzanie",
+          "idle": "Postój",
+          "summer": "Lato",
+          "frost": "Ochrona przed mrozem",
+          "fallback": "Nastawa awaryjna"
+        }
+      },
+      "control_setpoint": {
+        "name": "Nastawa zasilania ze sterowania"
       }
     },
     "binary_sensor": {
@@ -590,12 +607,86 @@
       },
       "alarm_low_flow": {
         "name": "Brak przepływu: wszystkie zawory zamknięte przy pracującej pompie"
+      },
+      "alarm_write_failed": {
+        "name": "Sterowanie: zapis nieudany"
+      },
+      "alarm_write_ignored": {
+        "name": "Sterowanie: kocioł ignoruje nastawę"
+      },
+      "alarm_outside_change": {
+        "name": "Sterowanie: nastawa zmieniona z zewnątrz"
+      },
+      "alarm_daily_cap": {
+        "name": "Sterowanie: dzienny limit zapisów osiągnięty"
+      },
+      "alarm_control_error": {
+        "name": "Sterowanie: błąd wewnętrzny"
+      }
+    },
+    "switch": {
+      "control": {
+        "name": "Sterowanie kotłem (eksperymentalne)"
       }
     }
   },
   "exceptions": {
     "invalid_options": {
       "message": "Tej konfiguracji nie da się użyć ({code}: {subject}). Otwórz opcje i popraw ją."
+    },
+    "blocked_no_write_path": {
+      "message": "Sterowanie nie jest skonfigurowane: wybierz w opcjach, jak wtyczka zapisuje do kotła. Inne powody: {others}."
+    },
+    "blocked_boiler_not_flow_setpoint": {
+      "message": "Sterowanie wymaga kotła klasy „Nastawa zasilania”. Inne powody: {others}."
+    },
+    "blocked_no_setpoint_entity": {
+      "message": "Wybierz encję, która przyjmuje nastawę zasilania. Inne powody: {others}."
+    },
+    "blocked_no_hand_back": {
+      "message": "Wybierz, jak sterowanie wraca do kotła: wartość, własny limit czasu urządzenia albo przełącznik. Inne powody: {others}."
+    },
+    "blocked_no_gateway": {
+      "message": "Podaj identyfikator bramki OpenTherm Gateway. Inne powody: {others}."
+    },
+    "blocked_no_mqtt_topic": {
+      "message": "Podaj prefiks tematu MQTT bramki i nazwę węzła. Inne powody: {others}."
+    },
+    "blocked_no_confirmed_setpoint": {
+      "message": "Wybierz encję, która pokazuje nastawę odebraną przez kocioł (odczyt zwrotny). Inne powody: {others}."
+    },
+    "blocked_no_topology": {
+      "message": "Określ, jak podłączona jest bramka. Inne powody: {others}."
+    },
+    "blocked_topology_no_control": {
+      "message": "Bramka pracuje w trybie monitora i nie może sterować kotłem. Inne powody: {others}."
+    },
+    "blocked_curve_not_entered": {
+      "message": "Wpisz krzywą grzewczą, co najmniej projektową temperaturę zasilania. Inne powody: {others}."
+    },
+    "blocked_one_direct_circuit_only": {
+      "message": "Ta wersja steruje tylko jednym obiegiem zasilanym wprost z kotła (bez mieszania albo z termostatycznym zaworem mieszającym). Inne powody: {others}."
+    },
+    "blocked_underfloor_without_max_flow": {
+      "message": "Ogrzewanie podłogowe na obiegu bez mieszania wymaga maksymalnej temperatury zasilania tego obiegu. Inne powody: {others}."
+    },
+    "blocked_ha_starting": {
+      "message": "Home Assistant jeszcze się uruchamia. Inne powody: {others}."
+    },
+    "blocked_monitoring_period": {
+      "message": "Sterowanie będzie dostępne po okresie monitorowania. Inne powody: {others}."
+    },
+    "blocked_vt_central_boiler_active": {
+      "message": "Skonfigurowany jest kocioł centralny Versatile Thermostat. Najpierw go usuń, żeby kotłem sterował tylko jeden sterownik. Inne powody: {others}."
+    },
+    "blocked_control_error": {
+      "message": "Sterowanie zatrzymało się po błędzie wewnętrznym. Sprawdź log, potem wyłącz i włącz sterowanie. Inne powody: {others}."
+    }
+  },
+  "issues": {
+    "auto_tpi_blocked": {
+      "title": "Auto-TPI nie może się uczyć w części stref",
+      "description": "Te strefy używają Auto-TPI i są oznaczone w Versatile Thermostat jako używane przez kocioł centralny, ale kocioł centralny VT nie jest skonfigurowany, więc Auto-TPI pomija w nich naukę: {zones}. Wyłącz opcję „używany przez kocioł centralny” w konfiguracji VT każdej z tych stref."
     }
   }
 }
