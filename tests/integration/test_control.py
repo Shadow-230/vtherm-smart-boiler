@@ -89,6 +89,7 @@ class Rig:
     entry: MockConfigEntry | None = None
     flow: float | None = 35.0
     dhw: bool = False
+    outdoor: float = OUTDOOR
     services: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
 
     def live(self) -> None:
@@ -97,7 +98,7 @@ class Rig:
             {
                 Signal.FLAME: False,
                 Signal.FLOW: self.flow,
-                Signal.OUTDOOR: OUTDOOR,
+                Signal.OUTDOOR: self.outdoor,
                 Signal.DHW_ACTIVE: self.dhw,
             }
         )
@@ -514,3 +515,86 @@ async def test_auto_tpi_zones_that_cannot_learn_raise_a_repair_issue(rig: Rig) -
     )
     assert issue is not None
     assert issue.translation_key == "auto_tpi_blocked"
+
+
+@dataclass
+class FakeNumber:
+    """A writable setpoint entity (like a boiler's EMS or ESPHome number) that records writes."""
+
+    hass: HomeAssistant
+    entity_id: str = "input_number.fake_boiler_flow"
+    writes: list[float] = field(default_factory=list)
+
+    def register(self) -> None:
+        async def set_value(call: ServiceCall) -> None:
+            value = float(call.data["value"])
+            self.writes.append(value)
+            self.publish(value)
+
+        self.hass.services.async_register("input_number", "set_value", set_value)
+        self.publish(50.0)
+
+    def publish(self, value: float) -> None:
+        self.hass.states.async_set(self.entity_id, str(value), {"unit_of_measurement": "°C"})
+
+
+async def test_persistent_writes_follow_the_minimum_change_and_stop_at_the_daily_cap(
+    rig: Rig,
+) -> None:
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(
+        rig,
+        write_path="entity",
+        setpoint_entity=number.entity_id,
+        write_type="persistent",
+        hand_back="value",
+        hand_back_value=50,
+        confirmed_entity=number.entity_id,
+        topology="virtual",
+        daily_cap=3,
+        decision_interval_min=1,
+        ramp_k_per_min=10,
+    )
+    await rig.switch(True)
+    assert number.writes == [EXPECTED]
+    await rig.advance(120)
+    assert number.writes == [EXPECTED]  # no keep-alive for a persistent write
+
+    async def outdoor(value: float) -> None:
+        rig.outdoor = value
+        await rig.advance(120)
+
+    await outdoor(4.5)  # the curve moves by less than 1 K: nothing written
+    assert number.writes == [EXPECTED]
+    await outdoor(0.0)
+    await outdoor(-5.0)
+    assert len(number.writes) == 3
+    assert all(abs(b - a) >= 1.0 for a, b in pairwise(number.writes))
+    await outdoor(-10.0)  # a fourth write would exceed the daily cap of 3
+    assert len(number.writes) == 3
+    assert rig.state("binary_sensor", "alarm_daily_cap").state == "on"
+    assert rig.state("sensor", "control_state").state == "heating"  # holds its last value
+    await rig.switch(False)
+    assert number.writes[-1] == 50.0  # the hand-back passes the cap
+
+
+async def test_mqtt_path_calls_only_its_publish(rig: Rig) -> None:
+    published: list[tuple[str, str]] = []
+
+    async def publish(call: ServiceCall) -> None:
+        published.append((call.data["topic"], call.data["payload"]))
+        if call.data["topic"].endswith("/ctrlsetpt"):
+            value = float(call.data["payload"])
+            rig.gateway.override = None if value == 0 else value
+            rig.gateway.publish()
+
+    rig.hass.services.async_register("mqtt", "publish", publish)
+    await start(rig, write_path="otgw_mqtt", mqtt_top="OTGW", mqtt_node="otgw-1")
+    await rig.switch(True)
+    await rig.advance(60)
+    await rig.switch(False)
+    assert published[0] == ("OTGW/set/otgw-1/chenable", "1")
+    assert published[1] == ("OTGW/set/otgw-1/ctrlsetpt", f"{EXPECTED:.1f}")
+    assert published[-1] == ("OTGW/set/otgw-1/ctrlsetpt", "0")
+    assert rig.plugin_calls() <= {("mqtt", "publish"), ("weather", "get_forecasts")}

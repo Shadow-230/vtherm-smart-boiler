@@ -22,6 +22,7 @@ PLATFORMS = ("sensor", "binary_sensor", "switch")
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from homeassistant.exceptions import ConfigEntryError
 
+    from . import feature_manager
     from .config import ConfigError, EntryConfig
     from .control import ControlUnit
     from .coordinator import SmartBoilerCoordinator
@@ -48,15 +49,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception:
         await _async_stop(coordinator)
         raise
+    feature_manager.async_attach(hass, coordinator)
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     coordinator.async_start_background()
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    from . import feature_manager
+
     coordinator = entry.runtime_data
     if coordinator.control is not None:
         await coordinator.control.async_stop()  # hand back before anything else goes
+    feature_manager.async_detach(hass, coordinator)
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         await coordinator.async_stop()
