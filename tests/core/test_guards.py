@@ -117,6 +117,23 @@ def test_outside_change_is_rewritten_once_then_blocked() -> None:
     assert state.blocked is GuardEvent.OUTSIDE_CHANGE
 
 
+@pytest.mark.parametrize("config", [HELD, EXPIRING])
+def test_a_rewrite_that_does_not_hold_is_an_outside_change(config) -> None:
+    state, _, _ = step(SetpointGuardState(), 45.0, None, 0.0, config)
+    state, _, _ = step(state, 45.0, 45.0, 10.0, config)  # confirmed
+    state, action, _ = step(state, 45.0, 60.0, 20.0, config)  # another controller wrote 60
+    assert action == WriteAction(45.0, WriteKind.REWRITE)
+    for t in (30.0, 60.0, 90.0, 120.0):  # it keeps its 60: no alarm before the timeout
+        state, _, events = step(state, 45.0, 60.0, t, config)
+        assert events == ()
+    state, action, events = step(state, 45.0, 60.0, 150.0, config)
+    assert action is None
+    assert events == (GuardEvent.OUTSIDE_CHANGE,)
+    assert state.blocked is GuardEvent.OUTSIDE_CHANGE
+    _, action, events = step(state, 45.0, 60.0, 180.0, config)
+    assert (action, events) == (None, ())  # blocked: no fight, no repeated alarm
+
+
 def test_a_new_value_of_ours_is_not_an_outside_change() -> None:
     state, _, _ = step(SetpointGuardState(), 45.0, None, 0.0, HELD)
     state, _, _ = step(state, 45.0, 45.0, 10.0, HELD)

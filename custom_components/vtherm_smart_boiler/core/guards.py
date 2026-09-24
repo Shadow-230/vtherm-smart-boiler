@@ -9,7 +9,8 @@ The guards are fixed; their values are options. For a setpoint:
   minute, repeats included (a guard against runaway loops);
 - every write is read back: not confirmed within the timeout → reported as ignored, never assumed
   applied; changed from outside after it was confirmed → written again once, then blocked and
-  reported — the plugin does not fight another controller.
+  reported, also when that one rewrite is not confirmed within the timeout — the plugin does not
+  fight another controller.
 
 For heating on/off: minimum on and off times and a cap on switchings per hour.
 
@@ -121,8 +122,14 @@ def plan_setpoint(
         and not state.ignored_reported
         and now - state.sent_at > config.confirm_timeout_s
     ):
-        events.append(GuardEvent.IGNORED)
-        state = replace(state, ignored_reported=True)
+        if state.rewritten:
+            # The one rewrite after an outside change did not hold: another controller keeps
+            # its value. Stop and report rather than fight it.
+            events.append(GuardEvent.OUTSIDE_CHANGE)
+            state = replace(state, ignored_reported=True, blocked=GuardEvent.OUTSIDE_CHANGE)
+        else:
+            events.append(GuardEvent.IGNORED)
+            state = replace(state, ignored_reported=True)
 
     if state.blocked is not None or desired is None:
         return GuardResult(state, None, tuple(events))

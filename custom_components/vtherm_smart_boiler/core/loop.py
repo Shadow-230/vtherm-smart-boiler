@@ -4,7 +4,7 @@ The same step drives the simulator in tests and the real write path in Home Assi
 write path cannot switch heating on and off, "off" is written as a low setpoint; the switch guard
 still enforces the minimum on and off times on that logical switch. A hand-back is passed on as
 it is — the guards never hold it back — and resets the guards, so a later control session starts
-fresh.
+fresh; only the record of recent writes is kept, for the daily cap.
 """
 
 from __future__ import annotations
@@ -62,7 +62,10 @@ def loop_step(
 ) -> tuple[LoopState, LoopOutput]:
     control, decision = decide(state.control, inputs, config.control)
     if decision.hand_back:
-        return LoopState(control), LoopOutput(decision, hand_back=True)
+        # Fresh guards, but the record of recent writes stays: the daily cap on wearing writes
+        # must not restart with every hand-back.
+        fresh = SetpointGuardState(history=state.setpoint.history)
+        return LoopState(control, fresh), LoopOutput(decision, hand_back=True)
     if decision.command is None:
         return replace(state, control=control), LoopOutput(decision)
 

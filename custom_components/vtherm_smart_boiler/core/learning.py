@@ -115,6 +115,10 @@ def plan_learning(
     )
 
 
-def release_all(state: LearningState) -> tuple[LearningState, tuple[str, ...]]:
-    """Resume every zone the plugin paused (control switched off, unload, hand-back)."""
-    return LearningState(setpoints=state.setpoints), tuple(state.paused)
+def release_all(state: LearningState, now: float) -> tuple[LearningState, tuple[str, ...]]:
+    """Resume every zone the plugin paused (control switched off, unload, hand-back).
+
+    A release is a toggle too: a zone is not paused again sooner than the minimum pause."""
+    toggles = dict(state.last_toggle)
+    toggles.update(dict.fromkeys(state.paused, now))
+    return LearningState({}, state.setpoints, toggles), tuple(state.paused)

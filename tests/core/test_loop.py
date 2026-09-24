@@ -55,6 +55,16 @@ def test_hand_back_passes_and_resets_the_guards() -> None:
     assert state.switch.written is None
 
 
+def test_hand_back_keeps_the_record_of_wearing_writes() -> None:
+    config = replace(CONFIG, setpoint_guard=SetpointGuardConfig(write_type=WriteType.PERSISTENT))
+    state, _ = loop_step(LoopState(), inputs(0.0), None, config)
+    assert state.setpoint.history == (0.0,)
+    state, out = loop_step(state, inputs(30.0, enabled=False), 45.0, config)
+    assert out.hand_back
+    assert state.setpoint.written is None
+    assert state.setpoint.history == (0.0,)  # the daily cap still counts the earlier write
+
+
 def test_without_a_switch_off_is_a_low_setpoint() -> None:
     config = replace(CONFIG, ch_writes=False, off_setpoint=12.0)
     _state, out = loop_step(LoopState(), inputs(0.0, opening=0.0), None, config)

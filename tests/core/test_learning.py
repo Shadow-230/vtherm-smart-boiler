@@ -78,9 +78,17 @@ def test_unknown_flag_is_not_paused_but_resumed_when_ours() -> None:
 
 def test_release_all_resumes_what_the_plugin_paused() -> None:
     state = LearningState(paused={"a": 0.0, "b": 60.0})
-    released, zones = release_all(state)
+    released, zones = release_all(state, 2 * MIN)
     assert set(zones) == {"a", "b"}
     assert released.paused == {}
+
+
+def test_a_release_counts_as_a_toggle() -> None:
+    state = plan(LearningState(), [zone("a", foreign=True)], 0).state
+    released, _ = release_all(state, 11 * MIN)
+    again = plan(released, [zone("a", foreign=True)], 12)
+    assert again.pause == ()  # resumed only a minute ago
+    assert plan(released, [zone("a", foreign=True)], 22).pause == ("a",)
 
 
 def test_pauses_can_be_switched_off() -> None:
