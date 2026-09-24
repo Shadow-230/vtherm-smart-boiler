@@ -74,7 +74,7 @@ so `core` can be imported on its own; `core` tests import it directly.
 | B1 ✅ | data format: boiler state (flame, flow, return, modulation, setpoint, DHW, pressure, flue gas), zone state (on_percent, valve, temperature, target, active, power), weather |
 | B2 ✅ | installation model (boiler → circuits of four control types → zones); parameters with source and confidence; declared-versus-measured findings |
 | B3 ✅ | building load estimate: coarse answers (insulation, thermal mass) or an entered design heat load or loss coefficient; refined from measured data |
-| B4 | burn-cycle detection; DHW from its signal, inference from a shared return with a confidence |
+| B4 ✅ | burn-cycle detection; DHW from its signal, inference from a shared return with a confidence |
 | B5 | metrics: starts per hour, burn times, condensing share (return threshold as a parameter, default 55 °C), degree-days, gas per degree-day from a mapped gas meter, else estimated from modulation when consumption data exist; binned by outdoor temperature |
 | B6 | emitter power factor (EN 442 exponent by emitter type — defaults: radiator 1.3, underfloor 1.1, convector 1.4, advanced override), heating zones only, last value held, unavailable with a reason |
 | B7 | hot water available per zone: no while DHW is active, while the flow has fallen near room temperature, or while the flow signal is stale |
