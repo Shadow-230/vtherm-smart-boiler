@@ -872,7 +872,17 @@
     },
     "switch": {
       "control": {
-        "name": "Boiler control (experimental)"
+        "name": "Boiler control (experimental)",
+        "state_attributes": {
+          "hand_back_effect": {
+            "name": "On hand-back",
+            "state": {
+              "thermostat_takes_over": "The thermostat takes over",
+              "heating_stops": "Heating stops until control resumes",
+              "device_decides": "The device's own fallback applies"
+            }
+          }
+        }
       }
     }
   },

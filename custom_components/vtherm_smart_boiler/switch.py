@@ -14,6 +14,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .control_config import hand_back_effect
 from .coordinator import SmartBoilerCoordinator
 from .entity import ControlEntity
 
@@ -49,9 +50,11 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         status = self.control.status
+        effect = hand_back_effect(self.control.options)
         return {
             "experimental": True,
             "blockers": list(status.blockers),
+            "hand_back_effect": None if effect is None else effect.value,
             "allowed_services": sorted(f"{d}.{s}" for d, s in self.control.allowed_services),
         }
 

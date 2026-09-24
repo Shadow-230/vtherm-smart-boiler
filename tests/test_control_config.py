@@ -174,3 +174,20 @@ def test_every_blocker_is_listed() -> None:
     for data, installation in cases:
         found |= set(config_blockers(parse_control(data, RADIATORS, None), installation))
     assert found == set(CONFIG_BLOCKERS)
+
+
+@pytest.mark.parametrize(
+    ("changes", "effect"),
+    [
+        ({"topology": "gateway_with_thermostat"}, "thermostat_takes_over"),
+        ({"topology": "gateway_standalone"}, "heating_stops"),
+        ({"topology": "virtual"}, "device_decides"),
+        ({"topology": "monitor_mode"}, None),
+        ({"topology": ""}, None),
+    ],
+)
+def test_hand_back_effect_follows_the_topology(changes: dict, effect: str | None) -> None:
+    from custom_components.vtherm_smart_boiler.control_config import hand_back_effect
+
+    result = hand_back_effect(parse_control(OTGW | changes, RADIATORS, None))
+    assert (None if result is None else result.value) == effect

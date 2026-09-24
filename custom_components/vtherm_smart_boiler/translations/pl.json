@@ -872,7 +872,17 @@
     },
     "switch": {
       "control": {
-        "name": "Sterowanie kotłem (eksperymentalne)"
+        "name": "Sterowanie kotłem (eksperymentalne)",
+        "state_attributes": {
+          "hand_back_effect": {
+            "name": "Po oddaniu sterowania",
+            "state": {
+              "thermostat_takes_over": "Przejmuje termostat",
+              "heating_stops": "Grzanie staje do powrotu sterowania",
+              "device_decides": "Działa własne zabezpieczenie urządzenia"
+            }
+          }
+        }
       }
     }
   },

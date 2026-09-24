@@ -46,6 +46,14 @@ class HandBack(StrEnum):
     SWITCH = "switch"  # turn off an entity that enables external control
 
 
+class HandBackEffect(StrEnum):
+    """What handing control back leads to, shown to the user."""
+
+    THERMOSTAT_TAKES_OVER = "thermostat_takes_over"
+    HEATING_STOPS = "heating_stops"  # a gateway without a thermostat: no heat until control
+    DEVICE_DECIDES = "device_decides"  # a controller on the HA side: its own fallback applies
+
+
 class AlarmReaction(StrEnum):
     INFO = "info"
     HAND_BACK = "hand_back"
@@ -234,6 +242,15 @@ def parse_control(
         cap_reaction=CapReaction(data.get("cap_reaction", CapReaction.HOLD)),
         alarm_reactions=reactions,
     )
+
+
+def hand_back_effect(control: ControlOptions) -> HandBackEffect | None:
+    """The effect of a hand-back for the declared topology; ``None`` where control cannot run."""
+    return {
+        Topology.GATEWAY_WITH_THERMOSTAT: HandBackEffect.THERMOSTAT_TAKES_OVER,
+        Topology.GATEWAY_STANDALONE: HandBackEffect.HEATING_STOPS,
+        Topology.VIRTUAL: HandBackEffect.DEVICE_DECIDES,
+    }.get(control.topology) if control.topology is not None else None
 
 
 def config_blockers(control: ControlOptions, installation: Installation) -> list[str]:
