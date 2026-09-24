@@ -1,8 +1,9 @@
 # VTherm Smart Boiler
 
 Working rules, code conventions and verified facts for Claude. **Where to continue:** the first
-step without ✅ in [`docs/plan-0.1.md`](docs/plan-0.1.md), then in
-[`docs/plan-0.2.md`](docs/plan-0.2.md); phases run in order. 0.1 and 0.2 are built in one go;
+step without ✅ (optional ones aside) in [`docs/plan-0.1.md`](docs/plan-0.1.md), then in
+[`docs/plan-0.2.md`](docs/plan-0.2.md), whose status line says where the build stands; phases
+run in order. 0.1 and 0.2 are built in one go;
 0.2 is the first release.
 
 - **Scope** (general, any installation): [`SCOPE.md`](SCOPE.md)
@@ -35,8 +36,12 @@ Each topic lives only in its file; do not copy it here.
   only: no clones, downloads or copies on disk, temporary directories included. Exceptions,
   consented 2026-09-24: `uv` from PyPI into `.tools/bootstrap/` (`docs/plan-0.1.md` A1); Python
   3.14 through `uv` into `.tools/python/` (A2); packages from PyPI into `.venv/` (A3); VT 10.4.0
-  and SmartPI 0.4.0 sources in `vendor/` (A5). The official license text only with the user's
-  consent at that step (`docs/plan-0.2.md` K1).
+  and SmartPI 0.4.0 sources in `vendor/` (A5). Sources and documents of typical DIY boiler
+  interfaces (OTGW, ESPHome, EMS-ESP, DIYLess and the like) are downloaded on purpose into the
+  git-ignored `research/diy/` — one folder per solution, every file listed with its source, date
+  and license in `research/diy/INDEX.md` — rather than left by a tool outside the project; read
+  for interface facts only (the user's decision, 2026-09-24). The official license text only
+  with the user's consent at that step (`docs/plan-0.2.md` K1).
 - Nothing is created without the user's consent: no files or directories (temporary ones
   included), repositories, installs, environments, issues or pull requests.
   Exceptions: files and directories in the agreed layout (the "Layout" sections of
@@ -90,7 +95,8 @@ Each topic lives only in its file; do not copy it here.
 - Detect capabilities (`hasattr`, import in `try`); VT, `vtherm_api` and SmartPI change fast and
   older versions must work.
 - `translations/en.json` is the source; every user-visible string via translation keys; a test
-  checks key parity across languages.
+  checks key parity across languages. The language is the Home Assistant instance's: the plugin
+  has no language setting of its own (the user's rule, 2026-09-24).
 - Every user option has a cautious default and a translated description of what it does and what
   it risks (`SCOPE.md` §3, principle 11).
 - Test layers: `PLAN.md`, section "Test environment".
@@ -102,15 +108,21 @@ Each topic lives only in its file; do not copy it here.
   `PluginClimate`. No central hook — hence the plugin replaces VT's central boiler itself.
   A feature manager can add attributes to the VT climate (`add_custom_attributes`); its
   `refresh_state()` runs after the algorithm (one-cycle lag). The thermostat method
-  `get_feature_manager(name)` exists from VT 10.5.0.beta1, not in 10.4.0.
+  `get_feature_manager(name)` exists from VT 10.5.0.beta1, not in 10.4.0. `get_vtherm_api`
+  creates a bare API when VT has none yet — call it only once VT's instance exists. A factory is
+  picked up when a thermostat starts; a running one sees it only after VT's reload.
 - **VT central configuration**: `select.central_mode` (Auto, Stopped, Heat only, Cool only, Frost
   protection) — the plugin obeys it. Central boiler: binary sensor on device count or total power
   thresholds, calls on/off actions — the plugin replaces it.
 - **VT** uses current outdoor temperature only; forecast is on its "future improvements" list.
-  Auto-TPI learns in sessions (≥ 50 cycles). `set_auto_tpi_mode`: disabling pauses (cycles and
-  coefficients kept); re-enabling with the default `reinitialise: true` wipes them — always send
-  `reinitialise: false`. Auto-TPI skips learning while power shedding is active or VT's central
-  boiler is off.
+  Auto-TPI learns in sessions (≥ 50 cycles). `set_auto_tpi_mode` is not a pure pause: the
+  `reinitialise` default is true (wipes the learning), the allow-flags are overwritten on every
+  call, configured coefficients return after a restart while learning is off, and enabling may
+  rewrite and reload the VT entry — the plugin does not call it (0.2). Auto-TPI skips learning
+  while power shedding is active or VT's central boiler is off; without a central boiler it
+  never learns in zones flagged `is_used_by_central_boiler`. VT 10.4.0 publishes
+  `auto_tpi_state` and `auto_tpi_continuous_kext` ("on"/"off") for every TPI zone; only "on"
+  means Auto-TPI learns.
 - **Zones are modelled alone**: no VT, SmartPI or TPI model uses another zone's data; the only
   house-wide signals are power shedding and central boiler off, used only to skip learning.
 - **SmartPI**: 1R1C room model, no water/boiler input. Services `set_smartpi_learning`
@@ -122,6 +134,11 @@ Each topic lives only in its file; do not copy it here.
   the model.
 - **HA forecasts**: only through `weather.get_forecasts`, not in entity state — the recorder
   does not keep them. HACS inclusion has no license requirement.
+- **Home Assistant 2026.9.3**: shutdown jobs (`hass.async_add_shutdown_job`) run before
+  `EVENT_HOMEASSISTANT_STOP`, on which MQTT disconnects — the plugin hands back in one, and a
+  job must not remove itself while they run (Home Assistant would skip the next one). MQTT
+  entities write their state only when a value changes (unless `force_update`), so a steady MQTT
+  source keeps an old `last_reported`; `opentherm_gw` rewrites every entity on each report.
 - **Related plugins (no overlap)**: `vtherm_heating_failure_detection` (rooms),
   `vtherm_heating_optimizer` (chooses pellet/AC/electric source), `vtherm_adaptive_tpi`.
   `vtherm_pellet_stove` (MIT) drives a central heat source — a reference. No license, ideas
@@ -137,7 +154,9 @@ Each topic lives only in its file; do not copy it here.
   `<top>/set/<node>/<command>` (`ctrlsetpt`, `maxmodulation`, `chenable`, `command`). Reported
   from the author's installation, to confirm: `SW` does not expire; values outside the gateway's
   regular polling (e.g. ID 48 bounds) read 0 after a gateway reset.
-  `research/2026-09-24-otgw-write-paths.md`.
+  `research/2026-09-24-otgw-write-paths.md`. Firmware MQTT: commands resent after 5 s, up to 5
+  times; `TSet` echoes what the gateway sends, not the boiler's acceptance; `CS`, `MM` and `CH`
+  are lost at a PIC reset (`research/2026-09-24-write-paths-f1-f6.md`).
 - **User needs** (VT and SAT issues, 2026-09-24, details in `research/`): short-cycling is the
   top complaint in both; boilers silently ignore some commands; a gateway acting as master lost
   the DHW-enable bit (Immergas); a reload left old loops toggling the boiler; a failed outdoor

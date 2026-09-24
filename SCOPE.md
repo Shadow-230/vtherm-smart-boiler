@@ -125,10 +125,11 @@ What the plugin can do depends on what the integration can write:
 
 ### Gateway topology
 
-How the gateway is set up decides what the plugin may do and what hand-back leads to. OTGW
-reports its mode and whether it sees a thermostat; other gateways have similar variants (DIYLess
-and ESPHome as master or pass-through; EMS-ESP with or without a controller). To verify before
-0.2 (`docs/plan-0.2.md`, F3).
+How the gateway is set up decides what the plugin may do and what hand-back leads to. Other
+gateways have similar variants (DIYLess and ESPHome as master or pass-through; EMS-ESP with or
+without a controller). F3 found that neither the OTGW's mode nor a connected thermostat can be
+read reliably through Home Assistant (the mode is read only when the gateway connects; there is
+no presence entity).
 
 | Gateway mode | Thermostat | Who controls the boiler | What the plugin may do | Hand-back leads to |
 |---|---|---|---|---|
@@ -138,17 +139,17 @@ and ESPHome as master or pass-through; EMS-ESP with or without a controller). To
 | monitor | none | nobody | nothing | — |
 | — | virtual — a controller on the HA side (e.g. DIYLess or ESPHome as master) | that controller | through its entities: flow setpoint if it exposes one, room values if it runs its own regulator | the user's chosen method for its entities |
 
-- The topology is part of the configuration: detected where the gateway reports it, otherwise
-  declared by the user in the config flow.
+- The topology is part of the configuration, declared by the user in the config flow (F3: it
+  cannot be read through Home Assistant).
 - Control modes the topology does not allow are unavailable, with the reason shown.
 - Hand-back stops the plugin's heating demand. Without a thermostat heating stops until the plugin
   or the user acts; the config flow states this risk. Frost protection then rests on the boiler's
   own frost protection, if it has one.
-- The plugin never changes the gateway mode on its own. Monitor mode as a hand-back method is
-  available only with a physical thermostat, by the user's choice, and only after checking
-  whether the gateway stores the mode persistently.
-- Without a thermostat, an HA outage longer than the gateway's override timeout may stop heating
-  too (to verify, `docs/plan-0.2.md` F3); the config flow says so.
+- The plugin never changes the gateway mode on its own; the gateway stores its mode
+  persistently (F3). 0.2 hands back with `CS=0`; monitor mode as a hand-back method is not
+  offered.
+- Without a thermostat, an HA outage longer than about a minute stops heating: `CS` lapses
+  (F3); the config flow and the control switch say so.
 - An emulated OpenTherm thermostat inside the plugin stays for later (§9).
 
 ### Topology
@@ -229,7 +230,7 @@ emitter type; the burner is shared.
 
 | Stage | Delivers | Controls the boiler |
 |---|---|---|
-| **Monitor** | starts per hour, burn time, condensing share, gas per degree-day, connection state; alarms with selectable reaction (info; stop and hand back from the first control release); **early warning** (flue gas, ignitions, pressure, hysteresis); **report explaining changes** (weather / DHW / settings); condensing indicator; outdoor sensor check; DHW and foreign-heat detection; **forecast recording** (FC0); **reference room** (§5); **signal check** — which optional signals are present and fresh | no |
+| **Monitor** | starts per hour, burn time, condensing share, gas per degree-day, connection state; alarms with selectable reaction (info; hand back from the first control release); **early warning** (flue gas, ignitions, pressure, hysteresis); **report explaining changes** (weather / DHW / settings); condensing indicator; outdoor sensor check; DHW and foreign-heat detection; **forecast recording** (FC0); **reference room** (§5); **signal check** — which optional signals are present and fresh | no |
 | **Advisor** | curve and anti-cycling suggestions with rationale and an "apply" button | no |
 | **Curve (strategy A)** | replaces VT's on/off and user automations; curve per circuit; effective outdoor temperature; **summer/winter switch from a multi-day forecast** (FC1); ramp; keep-alive; frost protection; learning pauses (DHW, foreign heat, large changes) | yes |
 | **Anti-cycling** | duty cycling at low load, starts-per-hour budget, modulation cap; **planning from the forecast** — mild hours ahead → long cycles from the start (FC2) | yes |
@@ -251,10 +252,12 @@ emitter type; the burner is shared.
 Fixed safeguards (principle 11), for every write — flow setpoint, CH on/off, modulation cap and
 room values:
 
-- No write without fresh input data — the data the decision uses. Gateway connectivity is part
-  of freshness; a 0 from a value outside the gateway's regular polling counts as unknown, and
-  bounds fall back to safe defaults. On/off without feedback has no boiler data: its inputs are
-  the zones and the outdoor temperature.
+- No write without fresh input data — the data the decision uses: for the boiler, flame and flow
+  known. Gateway connectivity is part of freshness (its entities go unavailable). A steady
+  reading is not a stale one — many sources report only on change — so a reading's age counts
+  only with a user-set freshness limit. A 0 from a value outside the gateway's regular polling
+  counts as unknown, and bounds fall back to safe defaults (0.2 reads no such values). On/off
+  without feedback has no boiler data: its inputs are the zones and the outdoor temperature.
 - Every value within hard limits; room values within plausible room bounds.
 - Every write rate-limited; on/off keeps minimum on and off times and a cap on switchings per
   hour.
@@ -294,7 +297,9 @@ Options, each with a cautious default and its risks described:
   lapse (risk, if the entity is in fact persistent: boiler memory wear); **persistent** — stored in
   the boiler's memory, written only on the minimum change, with coarser ramp steps and a daily
   cap (risk, if the override in fact expires: it lapses, the read-back shows it and an alarm
-  follows); **unknown** (default) counts as persistent. Built-in OTGW repeats `CS` every 30 s.
+  follows); **held** — the device keeps the value and sends it on itself (e.g. an ESPHome
+  OpenTherm master), written on change only; **unknown** (default) counts as persistent.
+  Built-in OTGW repeats `CS` every 30 s.
 - Reaction when the daily cap on persistent writes is reached: hold the last value and raise an
   alarm (default), or hand control back.
 - Low-flow warning when all valves are closed while the pump runs — needs a pump-running or
@@ -381,15 +386,11 @@ verdict stays visible and the user decides.
 
 - Learning pause during long anti-cycling pauses (water near room temperature while a zone calls
   for heat) — decide on data from the first installations (before 0.3).
-- Auto-TPI protection once VT's central boiler is replaced — check `central_boiler_manager.is_on`
-  without a configured boiler (before 0.2).
-- OTGW topologies (§5, "Gateway topology"): how the mode and a connected thermostat are
-  detected; behaviour when `CS` is not repeated; hand-back effects per topology (`CS=0`, monitor
-  mode `GW=0`); whether the gateway mode is stored persistently (before 0.2). Room values with a
-  physical thermostat (override) and without one (`AA` injection — does the boiler heat on its
-  own curve without `CS`); firmware version that added `RT` and `BS` (before 0.3).
-- Which integrations offer a writable flow-setpoint entity (ESPHome / DIYLess, EMS-ESP, newer
-  OTGW firmware) (before 0.2).
+- Room values with an OTGW (0.3): with a physical thermostat (override) and without one (`AA`
+  injection — does the boiler heat on its own curve without `CS`); firmware version that added
+  `RT` and `BS` (before 0.3).
+- The provisional decisions below, marked (K4), are confirmed or changed by the user at the
+  review before anything reaches a real boiler (`docs/plan-0.2.md`, K4).
 
 **Decided**
 
@@ -408,6 +409,47 @@ verdict stays visible and the user decides.
   built-in OTGW through `opentherm_gw` or its firmware over MQTT (2026-09-24).
 - GitHub and every publication come at the end of 0.2; the first pre-release is 0.2.0b1, which
   monitors first because control is off by default (2026-09-24).
+- Writable flow-setpoint entities (research F1, 2026-09-24): ESPHome `opentherm` (`number`, held
+  by the ESP, which repeats it itself), DIYLess (ESPHome, or its own `climate`), EMS-ESP
+  (`selflowtemp` expiring — repeated within a minute; `heatingtemp` persistent). OTGW firmware up
+  to 2.0.0-alpha has none; its MQTT commands are the path. All three kinds occur, so a picked
+  entity has a declared write type: expiring, persistent, held, or unknown (counted as
+  persistent).
+- OTGW (research F3, F5–F7): the topology is declared in the config flow — the gateway's mode
+  and a connected thermostat cannot be read reliably through Home Assistant. With a thermostat,
+  every fallback (`CS=0`, expiry, Home Assistant stopping) returns control to the thermostat;
+  stand-alone, every fallback ends heating; monitor mode allows no control. `CS` of 8 °C or more
+  lapses unless repeated within a minute; below 8 °C it never lapses, so the plugin never writes
+  it and writes "off" as `CS` of at least 8 °C with CH off. The gateway mode is stored in the
+  gateway; the plugin never changes it and never sends `HW=` or `BW=`, so the DHW-enable bit
+  stays as it was. The firmware's `TSet` echoes what the gateway sends, not what the boiler
+  accepts.
+- Auto-TPI (research F2): without VT's central boiler, Auto-TPI never learns in zones flagged
+  "used by the central boiler"; the plugin raises a repair issue naming them. It does not pause
+  Auto-TPI in 0.2, because `set_auto_tpi_mode` is not a pure pause (K4).
+- VT feature manager (research F4): registered once VT's API exists; a thermostat already
+  running picks it up at VT's next reload, which the plugin never triggers.
+- Provisional control decisions (K4): control only for one circuit fed by the boiler flow and a
+  boiler of the class "flow setpoint"; the curve's design flow is entered, never defaulted;
+  control refused while VT's own central boiler is configured and during the monitoring period;
+  the first setpoint of a session is the curve's value, not ramped from the current flow;
+  comfort correction on, within a 10 K band; alarm reactions information or hand-back.
+- Provisional write decisions (K4): boiler data is there while flame and flow are known — a
+  steady reading is not a stale one, as many sources report only on change; its age counts only
+  with a user-set freshness limit; without the data nothing is written, and control hands back
+  after 5 min (stand-alone, the gateway stops heating within a minute of the last keep-alive).
+  A failed write is sent again at the next step; the setpoint goes before heating on/off, which
+  is repeated with an expiring setpoint. An outside change is rewritten once, and within a day
+  never again, whatever the plugin wrote in between; the default reaction is hand-back. A lapse
+  the plugin caused itself (silence while data was stale) is not an outside change. The daily cap
+  counts every wearing write, a hand-back included, and "off" as a low setpoint stops two writes
+  short of it, so the value held at the cap is a heating one. A heating switch is used only with
+  expiring or held writes and is turned back on at hand-back. A timeout hand-back needs expiring
+  writes. A failed hand-back is shown and retried every minute until it goes through; at Home
+  Assistant's stop the hand-back runs before integrations stop. Latches survive a restart; the
+  control switch comes back as it was and control waits for its blockers.
+- Learning pauses (SmartPI) only while control runs; the water-swing check follows the heating
+  setpoint, not the low "off" value (K4).
 
 ## 12. Release
 

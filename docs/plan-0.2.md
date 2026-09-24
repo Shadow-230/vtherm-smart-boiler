@@ -11,6 +11,11 @@ Scope: `SCOPE.md`; overview: `PLAN.md`.
 Phases run in order: F, G, H, I, J, K — the build first, then the test HA with the user (J2, J4),
 the review and the release. S3 can happen at any time.
 
+Status on 2026-09-24: built through phase J in-process — F to I, J1, J3 and K2 done, J4's
+in-process scenarios pass (`tests/integration/test_acceptance.py`); the control code went through
+two independent reviews, every finding fixed or listed below under "Open for 0.2". Waiting for
+the user at J2 (the test HA), then J4 in the test HA and phase K. S3 stays optional.
+
 ## Rules that shape this release
 
 - Everything in `docs/plan-0.1.md` "Rules" still applies.
@@ -47,6 +52,8 @@ the review and the release. S3 can happen at any time.
                          built-in OTGW (`opentherm_gw` services, firmware MQTT commands)
       switch.py        control switch
     sim/               + controllable boiler; physics simulator as a test-only component
+    research/diy/      sources of DIY boiler interfaces, read for interface facts (git-ignored;
+                       `research/diy/INDEX.md`)
     .github/workflows/ tests, ruff, Hassfest, HACS
     LICENSE NOTICE README.md CHANGELOG.md hacs.json
 
@@ -55,7 +62,7 @@ the review and the release. S3 can happen at any time.
 | Step | Work |
 |---|---|
 | S1 ✅ | this plan written and `CLAUDE.md` updated: code and delegation rules (2026-09-24) |
-| S2 | review of the 0.1 monitor laws — moved to K4 (the user's decision, 2026-09-24) |
+| S2 ✅ | review of the 0.1 monitor laws — moved to K4 (the user's decision, 2026-09-24) |
 | S3 🔒 | optional, at any time once there is heating data: the user copies their recorder database to `data/`; the importer's results are compared with what the user sees (starts, DHW runs on a shared return) |
 
 ## Phase F — checks before control code
@@ -65,17 +72,21 @@ decides where a choice is needed.
 
 | Step | Question |
 |---|---|
-| F1 | Writable entities for a flow setpoint (and optionally a modulation cap and CH enable): ESPHome / DIYLess, EMS-ESP, newer OTGW firmware (none in `opentherm_gw` or firmware 1.7.4 over MQTT, `research/2026-09-24-otgw-write-paths.md`). For every write path: a volatile override that expires (needs repeating), a persistent write (memory wear, must stay rare), or a value the gateway holds and keeps sending (neither) — which may need a third write type |
-| F2 | Auto-TPI once VT's central boiler is replaced: `central_boiler_manager.is_on` without a configured boiler — whether Auto-TPI would stop learning |
-| F3 | OTGW topologies for flow-setpoint control (`SCOPE.md` §5, "Gateway topology"): detection of the gateway mode and of a connected thermostat; behaviour when `CS` is not repeated; hand-back effects per topology (`CS=0`, monitor mode `GW=0`); whether the gateway mode is stored persistently; what the boiler does during an HA outage in each topology |
-| F4 | The feature-manager contract of `vtherm_api` 0.5.0 and VT 10.4.0: what VT calls, when, and what happens on an exception |
-| F5 | `opentherm_gw` in Home Assistant 2026.9.3: service fields, the gateway ID, and the entities that echo the confirmed control setpoint, modulation cap and CH enable |
-| F6 | OTGW firmware over MQTT: command topics, the echo of each command, values after a gateway reset |
-| F7 | The DHW-enable bit when the gateway is master: how it is set and how the plugin keeps it as it was |
+| F1 ✅ | Writable entities for a flow setpoint (and optionally a modulation cap and CH enable): ESPHome / DIYLess, EMS-ESP, newer OTGW firmware (none in `opentherm_gw` or firmware 1.7.4 over MQTT, `research/2026-09-24-otgw-write-paths.md`). For every write path: a volatile override that expires (needs repeating), a persistent write (memory wear, must stay rare), or a value the gateway holds and keeps sending (neither) — which may need a third write type |
+| F2 ✅ | Auto-TPI once VT's central boiler is replaced: `central_boiler_manager.is_on` without a configured boiler — whether Auto-TPI would stop learning |
+| F3 ✅ | OTGW topologies for flow-setpoint control (`SCOPE.md` §5, "Gateway topology"): detection of the gateway mode and of a connected thermostat; behaviour when `CS` is not repeated; hand-back effects per topology (`CS=0`, monitor mode `GW=0`); whether the gateway mode is stored persistently; what the boiler does during an HA outage in each topology |
+| F4 ✅ | The feature-manager contract of `vtherm_api` 0.5.0 and VT 10.4.0: what VT calls, when, and what happens on an exception |
+| F5 ✅ | `opentherm_gw` in Home Assistant 2026.9.3: service fields, the gateway ID, and the entities that echo the confirmed control setpoint, modulation cap and CH enable |
+| F6 ✅ | OTGW firmware over MQTT: command topics, the echo of each command, values after a gateway reset |
+| F7 ✅ | The DHW-enable bit when the gateway is master: how it is set and how the plugin keeps it as it was |
 
 Done when: answers recorded and `SCOPE.md` §11 updated. Open choices — among them the default
 hand-back method per topology and a possible third write type — get the most cautious option as
 a provisional decision; the user confirms them at K4.
+
+Answers (2026-09-24): `research/2026-09-24-write-paths-f1-f6.md`,
+`research/2026-09-24-vt-otgw-interfaces-f2-f4-f5.md`, `research/2026-09-24-otgw-topologies-f3-f7.md`;
+the decisions they led to are in `SCOPE.md` §11.
 
 ## Phase G — control core (test first)
 
@@ -135,7 +146,7 @@ Done when: integration tests cover enabling and disabling control, every hand-ba
 | J1 ✅ | `devenv/`: `compose.yaml` (pinned image, config volume, plugin, VT and SmartPI mounted read-only, port), `configuration.yaml` with a fake boiler from helpers, rooms and weather; `scripts/deploy_test.sh` syncs files to the test LXC with rsync over SSH and restarts Home Assistant; setup guide for the user |
 | J2 🔒 | user, at any time: LXC (Debian 12, `nesting=1`, `keyctl=1` if unprivileged), Docker, firewall blocking the production HA, its broker and the gateway; a long-lived token for Claude; address, token and SSH key in `devenv/local.env` and `devenv/ssh/` (git-ignored) |
 | J3 ✅ | physics simulator of our own as a test-only component in the test HA: writable setpoint entities (expiring and persistent, with a write counter) and an OTGW-like command path, burner with minimum power and hysteresis, water volume, house as one mass, zones; topologies: gateway or monitor mode, with a physical thermostat, without one, or with a virtual one |
-| J4 🔒 | acceptance scenarios, first automated in-process against the simulator (no Home Assistant instance), then the same run by Claude in the test HA through its API once the user says to start: hand-back on every exit, keep-alive loss, hard limits, stale data, sensor failure, reload, DHW-enable bit kept, ignored command detected, minimum burn and pause, `central_mode` "Stopped", frost protection, control refused without a hand-back or without a confirmed-setpoint source, an alarm handing back, every topology allowing control only where it may and handing back as described, CH on/off respecting minimum on and off times, persistent writes only on the minimum change and stopped at the daily cap with the last value held, a value changed from outside rewritten at most once and then an alarm, a hand-back write passing every guard; plus the monitor on fake entities |
+| J4 🔒 | acceptance scenarios, first automated in-process against the simulator (no Home Assistant instance; done: `tests/integration/test_acceptance.py`), then the same run by Claude in the test HA through its API once the user says to start: hand-back on every exit, keep-alive loss, hard limits, stale data, sensor failure, reload, DHW-enable bit kept, ignored command detected, minimum burn and pause, `central_mode` "Stopped", frost protection, control refused without a hand-back or without a confirmed-setpoint source, an alarm handing back, every topology allowing control only where it may and handing back as described, CH on/off respecting minimum on and off times, persistent writes only on the minimum change and stopped at the daily cap with the last value held, a value changed from outside rewritten at most once and then an alarm, a hand-back write passing every guard; plus the monitor on fake entities |
 
 Done when: every scenario passes in the test HA.
 
@@ -159,7 +170,32 @@ installation has monitored for 7 days and then run control without errors; the u
 
 ## Open for 0.2
 
-- Phase F questions.
+- J2 🔒 (the user): the test HA per `devenv/README.md`; then J4 in the test HA once the user says
+  to start. The monitoring period there: wait 7 days, or — with the user's consent — move the
+  test instance's stored monitoring start back.
+- K1 🔒: the official license text, fetched with the user's consent.
+- For the review (K4), besides the provisional decisions in `SCOPE.md` §11 — what the
+  independent reviews of the control code (2026-09-24) leave for the user to decide:
+  - Stand-alone gateway: with the boiler's data lost, or an alarm set to hand back, the boiler
+    does not heat until the data returns or the user acts.
+  - Two gateway disturbances in a day (reset, power blip) count as two outside changes: control
+    hands back and stays latched until switched off and on.
+  - A source that freezes without going unavailable (MQTT without availability) is not caught
+    unless a freshness limit is set; control then runs on the curve without seeing the boiler.
+  - Near the daily cap of wearing writes "off" is no longer written, so the boiler may heat
+    without demand until the day's window frees up.
+  - Comfort correction is on by default (up to 10 K above the curve); a session's first setpoint
+    is the curve's value, not ramped; Auto-TPI is not paused (a repair issue only); an OTGW
+    read-back confirms what the gateway sent, not what the boiler took; the control switch comes
+    back after a restart as it was.
+  - Built differently from the steps above: alarm reactions are information or hand-back (no
+    separate "stop", I2); the gateway topology is declared, not detected, as F3 found it cannot
+    be read (H6); Auto-TPI is not paused, so no `reinitialise` handling (H5); 0.2 reads no rarely
+    polled gateway values, so "a 0 counts as unknown" has nothing to act on yet (H1); the curve
+    is entered, not taken from the boiler; the test HA's boiler, rooms and weather come from the
+    simulator component rather than helpers (J1); the simulator models the gateway with and
+    without a thermostat and a virtual controller (the entity path), not monitor mode, where the
+    plugin refuses control anyway (J3).
 
 Decided on 2026-09-24: 0.2 writes one circuit, CH2 later; room-value mode moves to 0.3; 0.2
 supports every write path, for any installation; GitHub and every publication come at the end of
