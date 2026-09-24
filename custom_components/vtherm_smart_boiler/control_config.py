@@ -215,7 +215,9 @@ def parse_control(
             min_off_s=_minutes(data, "min_off_min", 5.0),
             max_switches_per_hour=int(data.get("max_switches_per_hour", 6)),
         ),
-        ch_writes=path in OTGW_PATHS or bool(data.get("ch_entity")),
+        # A heating switch only for writes that do not wear: with persistent or unknown writes,
+        # "off" is a low setpoint, so every write counts toward the daily cap.
+        ch_writes=path in OTGW_PATHS or (bool(data.get("ch_entity")) and not wears),
         off_setpoint=float(data.get("off_setpoint", DEFAULT_OFF_SETPOINT)),
     )
     reactions = {

@@ -77,7 +77,7 @@ def writer_services(options: ControlOptions) -> frozenset[tuple[str, str]]:
     if path is not WritePath.ENTITY or not options.setpoint_entity:
         return frozenset()
     found = {(_domain(options.setpoint_entity), "set_value")}
-    switches = [options.ch_entity]
+    switches = [options.ch_entity if options.loop.ch_writes else None]
     if options.hand_back is HandBack.SWITCH:
         switches.append(options.hand_back_entity)
     for entity in switches:
@@ -90,7 +90,8 @@ class EntityWriter(_ServiceWriter):
     """A setpoint entity (number, input_number) and optionally a heating switch.
 
     With a switch hand-back, the switch that enables external control is turned on before the
-    first write of each control session and off to hand back.
+    first write of each control session and off to hand back. A heating switch the session
+    turned on or off is turned back on at hand-back, so the boiler heats under its own control.
     """
 
     def __init__(self, hass: HomeAssistant, options: ControlOptions) -> None:
@@ -99,7 +100,8 @@ class EntityWriter(_ServiceWriter):
             raise ValueError("no setpoint entity")
         self._options = options
         self._setpoint = options.setpoint_entity
-        self._switch = options.ch_entity
+        self._switch = options.ch_entity if options.loop.ch_writes else None
+        self._switched = False
         self._hand_back = options.hand_back
         self._hand_back_value = options.hand_back_value
         self._external = (
@@ -127,12 +129,16 @@ class EntityWriter(_ServiceWriter):
         if not self._switch:
             raise WriteError("no heating switch")
         await self._take()
+        self._switched = True
         await self._call(
             _domain(self._switch), "turn_on" if on else "turn_off", {"entity_id": self._switch}
         )
 
     async def hand_back(self) -> None:
         self._taken = False
+        if self._switch and self._switched:
+            self._switched = False
+            await self._call(_domain(self._switch), "turn_on", {"entity_id": self._switch})
         if self._hand_back is HandBack.VALUE:
             await self._call(
                 _domain(self._setpoint),

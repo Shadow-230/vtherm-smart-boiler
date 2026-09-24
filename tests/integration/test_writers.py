@@ -101,17 +101,20 @@ async def test_entity_writer_with_value_hand_back(hass: HomeAssistant) -> None:
             write_path="entity",
             setpoint_entity="number.flow",
             ch_entity="switch.ch",
+            write_type="expiring",
             hand_back="value",
             hand_back_value=0,
         ),
     )
     assert isinstance(writer, EntityWriter)
     await writer.write_setpoint(41.0)
-    await writer.write_heating(True)
+    await writer.write_heating(False)
     await writer.hand_back()
+    ch = {"entity_id": "switch.ch"}
     assert calls == [
         ("number", "set_value", {"entity_id": "number.flow", "value": 41.0}),
-        ("switch", "turn_on", {"entity_id": "switch.ch"}),
+        ("switch", "turn_off", ch),
+        ("switch", "turn_on", ch),  # the heating override is cleared: the boiler heats itself
         ("number", "set_value", {"entity_id": "number.flow", "value": 0.0}),
     ]
     assert writer.services == {
@@ -119,6 +122,22 @@ async def test_entity_writer_with_value_hand_back(hass: HomeAssistant) -> None:
         ("switch", "turn_on"),
         ("switch", "turn_off"),
     }
+    calls.clear()
+    await writer.write_setpoint(42.0)
+    await writer.hand_back()  # the switch was not touched this session: left alone
+    assert ("switch", "turn_on", ch) not in calls
+
+
+async def test_a_wearing_write_type_leaves_the_heating_switch_alone(hass: HomeAssistant) -> None:
+    data = {
+        "write_path": "entity",
+        "setpoint_entity": "number.flow",
+        "ch_entity": "switch.ch",
+        "write_type": "persistent",
+        "hand_back": "value",
+        "hand_back_value": 0,
+    }
+    assert writer_services(options(**data)) == {("number", "set_value")}
 
 
 async def test_entity_writer_switch_and_timeout_hand_back(hass: HomeAssistant) -> None:

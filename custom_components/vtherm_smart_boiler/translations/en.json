@@ -467,7 +467,7 @@
         "data_description": {
           "setpoint_entity": "A number or input_number that sets the boiler's flow temperature.",
           "write_type": "Expiring: the device drops the value unless it is repeated; it is repeated every 30 s. Persistent: stored in the boiler's memory, and every write wears it; written only on a change of at least the minimum change and within a daily cap. Held: the device keeps the value and sends it on itself; written on change only. Unknown (default) counts as persistent. Expiring on a device that stores each write would write its memory every 30 s and wear it out.",
-          "ch_entity": "Optional. A switch that turns heating on and off. Without it, \"off\" is written as a low setpoint.",
+          "ch_entity": "Optional, used only with expiring or held writes: a switch that turns heating on and off, turned back on at hand-back. With persistent or unknown writes, or without a switch, \"off\" is written as a low setpoint. Never pick a switch that is stored in the boiler's memory (e.g. a boiler's \"heating activated\" parameter): every switching would wear it.",
           "hand_back": "How control returns to the boiler on every exit: write a hand-back value; stop writing and let the device's own timeout take over, for expiring writes only; or turn off a switch that enables external control. Required; control cannot be switched on without it.",
           "hand_back_value": "The setpoint written on hand-back, for the value method: what the boiler uses on its own, or 0 if that returns control to it. Required for the value method.",
           "hand_back_entity": "For the switch method: the switch that enables external control. It is turned on when control starts and off on hand-back."

@@ -191,3 +191,22 @@ def test_hand_back_effect_follows_the_topology(changes: dict, effect: str | None
 
     result = hand_back_effect(parse_control(OTGW | changes, RADIATORS, None))
     assert (None if result is None else result.value) == effect
+
+
+@pytest.mark.parametrize(
+    ("write_type", "switched"),
+    [("expiring", True), ("held", True), ("persistent", False), ("unknown", False)],
+)
+def test_a_heating_switch_only_with_writes_that_do_not_wear(
+    write_type: str, switched: bool
+) -> None:
+    data = {
+        "write_path": "entity",
+        "setpoint_entity": "number.flow",
+        "ch_entity": "switch.ch",
+        "write_type": write_type,
+        "hand_back": "value",
+    }
+    options = parse_control(data, RADIATORS, None)
+    # With wearing writes "off" is a low setpoint, so every write counts toward the daily cap.
+    assert options.loop.ch_writes is switched
