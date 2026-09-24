@@ -23,6 +23,15 @@ from .vtherm_attributes import CentralMode, central_mode, zone_values
 
 SMARTPI_DOMAIN = "vtherm_smartpi"
 CENTRAL_MODE_UNIQUE_ID = "central_mode"
+CENTRAL_BOILER_UNIQUE_ID = "central_boiler_state"
+
+
+@dataclass(frozen=True, slots=True)
+class ZoneAlgorithm:
+    proportional_function: str | None = None  # "tpi" or "smartpi"
+    smartpi_learning: bool | None = None  # SmartPI's learning flag; None: not SmartPI
+    auto_tpi: bool = False
+    used_by_central_boiler: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +92,36 @@ class VThermLink:
         if state is not None and state.name:
             return state.name
         return entity_id
+
+    def zone_algorithm(self, entity_id: str) -> ZoneAlgorithm:
+        """What runs a zone, from VT's live attributes (not kept by the recorder)."""
+        state = self._hass.states.get(entity_id)
+        if state is None:
+            return ZoneAlgorithm()
+        configuration = state.attributes.get("configuration")
+        specific = state.attributes.get("specific_states")
+        configuration = configuration if isinstance(configuration, dict) else {}
+        specific = specific if isinstance(specific, dict) else {}
+        smartpi = specific.get("smartpi_learning_enabled")
+        used = configuration.get("is_used_by_central_boiler")
+        function = configuration.get("proportional_function")
+        return ZoneAlgorithm(
+            proportional_function=function if isinstance(function, str) else None,
+            smartpi_learning=smartpi if isinstance(smartpi, bool) else None,
+            auto_tpi=any(key.startswith("auto_tpi") for key in specific),
+            used_by_central_boiler=used if isinstance(used, bool) else None,
+        )
+
+    def vt_central_boiler_configured(self) -> bool:
+        """Whether VT's own central boiler feature is set up (then it must not run alongside)."""
+        registry = er.async_get(self._hass)
+        entity_id = registry.async_get_entity_id(
+            "binary_sensor", VT_DOMAIN, CENTRAL_BOILER_UNIQUE_ID
+        )
+        if entity_id is None:
+            return False
+        state = self._hass.states.get(entity_id)
+        return state is not None and state.attributes.get("is_central_boiler_configured") is True
 
     def central_mode(self) -> CentralMode | None:
         """VT's central mode, or ``None`` when VT has no central configuration."""

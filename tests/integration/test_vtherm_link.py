@@ -61,3 +61,36 @@ async def test_capabilities_without_vt(hass: HomeAssistant) -> None:
     assert capabilities.vt_version is None
     assert capabilities.vtherm_api_version == "0.5.0"
     assert capabilities.smartpi_loaded is False
+
+
+async def test_zone_algorithm_from_live_attributes(hass: HomeAssistant, zones: FakeZones) -> None:
+    smartpi = zones.add(
+        "smartpi",
+        configuration={"proportional_function": "smartpi", "is_used_by_central_boiler": False},
+        specific_states={"smartpi_learning_enabled": True},
+    )
+    tpi = zones.add(
+        "tpi",
+        configuration={"proportional_function": "tpi", "is_used_by_central_boiler": True},
+        specific_states={"auto_tpi_state": "learning"},
+    )
+    link = VThermLink(hass, [smartpi, tpi])
+    assert link.zone_algorithm(smartpi).smartpi_learning is True
+    assert link.zone_algorithm(smartpi).proportional_function == "smartpi"
+    algo = link.zone_algorithm(tpi)
+    assert algo.auto_tpi
+    assert algo.used_by_central_boiler is True
+    assert algo.smartpi_learning is None
+    assert link.zone_algorithm("climate.missing").proportional_function is None
+
+
+async def test_vt_central_boiler_detection(hass: HomeAssistant) -> None:
+    link = VThermLink(hass, [])
+    assert not link.vt_central_boiler_configured()
+    entry = er.async_get(hass).async_get_or_create(
+        "binary_sensor", VT_PLATFORM, "central_boiler_state"
+    )
+    hass.states.async_set(entry.entity_id, "off", {"is_central_boiler_configured": False})
+    assert not link.vt_central_boiler_configured()
+    hass.states.async_set(entry.entity_id, "on", {"is_central_boiler_configured": True})
+    assert link.vt_central_boiler_configured()
