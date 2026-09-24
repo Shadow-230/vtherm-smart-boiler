@@ -106,24 +106,24 @@ reaches a real boiler.
 
 | Step | Work |
 |---|---|
-| H0 | writers in a separate module, created only while control is enabled; the read transport keeps no write method |
-| H1 | write transport: (1) user-picked entity; (2) built-in OTGW through `opentherm_gw` services or firmware MQTT commands. Repetition by write type: built-in OTGW `CS` every 30 s; a picked entity by its declared write type — expiring: repeated every 30 s; persistent or unknown (default): on change only, within the persistent-write guards (G9); state from the value the boiler confirmed, never the requested one, read from the mapped confirmed-setpoint entity (required); on/off overrides the device does not echo (e.g. CH enable) stay marked unverified and rely on the write guards; ignored command reported; DHW-enable bit kept as it was; a 0 from rarely polled values treated as unknown |
-| H2 | hand-back on unload, reload, error, data loss, `central_mode` "Stopped" and an alarm set to hand back, with every override cleared (setpoint, CH on/off, modulation cap) — the user's chosen method: for built-in OTGW `CS=0` (default) or monitor mode (only with a physical thermostat, if F3 allows it), for an entity a value, the device's timeout or a switch; control cannot be enabled without one; what hand-back leads to depends on the topology (the thermostat takes over, or heating stops) and is shown to the user; reload leaves no loop running |
-| H3 | replaces VT's central boiler; a warning when both are active; obeys `central_mode` |
-| H4 | VT feature manager with the two zone values; every exception caught so VT's loop never breaks |
-| H5 | learning pauses (options, on by default): SmartPI (`set_smartpi_learning`) during DHW in zones calling for heat, in zones with foreign heat on, and during large water temperature changes; Auto-TPI resumed only with `reinitialise: false` |
-| H6 | gateway topology: detected where the gateway reports it, otherwise declared; control is unavailable, with the reason shown, where the topology does not allow it; the plugin never changes the gateway mode on its own |
-| H7 | the allowed service calls follow from the configuration; a test checks them, and that monitor mode still calls only `weather.get_forecasts` |
+| H0 ✅ | writers in a separate module, created only while control is enabled; the read transport keeps no write method |
+| H1 ✅ | write transport: (1) user-picked entity; (2) built-in OTGW through `opentherm_gw` services or firmware MQTT commands. Repetition by write type: built-in OTGW `CS` every 30 s; a picked entity by its declared write type — expiring: repeated every 30 s; persistent or unknown (default): on change only, within the persistent-write guards (G9); state from the value the boiler confirmed, never the requested one, read from the mapped confirmed-setpoint entity (required); on/off overrides the device does not echo (e.g. CH enable) stay marked unverified and rely on the write guards; ignored command reported; DHW-enable bit kept as it was; a 0 from rarely polled values treated as unknown |
+| H2 ✅ | hand-back on unload, reload, error, data loss, `central_mode` "Stopped" and an alarm set to hand back, with every override cleared (setpoint, CH on/off, modulation cap) — the user's chosen method: for built-in OTGW `CS=0` (default) or monitor mode (only with a physical thermostat, if F3 allows it), for an entity a value, the device's timeout or a switch; control cannot be enabled without one; what hand-back leads to depends on the topology (the thermostat takes over, or heating stops) and is shown to the user; reload leaves no loop running |
+| H3 ✅ | replaces VT's central boiler; a warning when both are active; obeys `central_mode` |
+| H4 ✅ | VT feature manager with the two zone values; every exception caught so VT's loop never breaks |
+| H5 ✅ | learning pauses (options, on by default): SmartPI (`set_smartpi_learning`) during DHW in zones calling for heat, in zones with foreign heat on, and during large water temperature changes; Auto-TPI resumed only with `reinitialise: false` |
+| H6 ✅ | gateway topology: detected where the gateway reports it, otherwise declared; control is unavailable, with the reason shown, where the topology does not allow it; the plugin never changes the gateway mode on its own |
+| H7 ✅ | the allowed service calls follow from the configuration; a test checks them, and that monitor mode still calls only `weather.get_forecasts` |
 
 ## Phase I — config flow and entities
 
 | Step | Work |
 |---|---|
-| I1 | control switch: off by default, available after the monitoring period (default 7 days, user may change it), marked experimental; cannot be enabled without a hand-back method and a confirmed-setpoint entity; the verdict stays visible |
-| I2 | fields: writable entity or built-in device, write type for a picked entity (expiring, persistent, or unknown — counted as persistent) and the reaction to a reached daily cap (hold and alarm, or hand back), gateway topology (detected or declared) with the hand-back effect stated, hand-back method, limits and curve per circuit, demand thresholds, anti-cycling, learning pauses, write-guard values, alarm reactions per alarm type (info, stop, hand back); each with a cautious default, a description and its risks; simple and advanced levels |
-| I3 | control-state entities: current setpoint and its reason, last write and read-back, hand-back state, anti-cycling state |
-| I4 | translations EN and PL; key-parity test |
-| I5 | alarm thresholds as advanced options (open from 0.1) |
+| I1 ✅ | control switch: off by default, available after the monitoring period (default 7 days, user may change it), marked experimental; cannot be enabled without a hand-back method and a confirmed-setpoint entity; the verdict stays visible |
+| I2 ✅ | fields: writable entity or built-in device, write type for a picked entity (expiring, persistent, or unknown — counted as persistent) and the reaction to a reached daily cap (hold and alarm, or hand back), gateway topology (detected or declared) with the hand-back effect stated, hand-back method, limits and curve per circuit, demand thresholds, anti-cycling, learning pauses, write-guard values, alarm reactions per alarm type (info, stop, hand back); each with a cautious default, a description and its risks; simple and advanced levels |
+| I3 ✅ | control-state entities: current setpoint and its reason, last write and read-back, hand-back state, anti-cycling state |
+| I4 ✅ | translations EN and PL; key-parity test |
+| I5 ✅ | alarm thresholds as advanced options (open from 0.1) |
 
 Done when: integration tests cover enabling and disabling control, every hand-back path, the
 "no write without fresh data" rule and the list of allowed service calls.
@@ -132,9 +132,9 @@ Done when: integration tests cover enabling and disabling control, every hand-ba
 
 | Step | Work |
 |---|---|
-| J1 | `devenv/`: `compose.yaml` (pinned image, config volume, plugin, VT and SmartPI mounted read-only, port), `configuration.yaml` with a fake boiler from helpers, rooms and weather; `scripts/deploy_test.sh` syncs files to the test LXC with rsync over SSH and restarts Home Assistant; setup guide for the user |
+| J1 ✅ | `devenv/`: `compose.yaml` (pinned image, config volume, plugin, VT and SmartPI mounted read-only, port), `configuration.yaml` with a fake boiler from helpers, rooms and weather; `scripts/deploy_test.sh` syncs files to the test LXC with rsync over SSH and restarts Home Assistant; setup guide for the user |
 | J2 🔒 | user, at any time: LXC (Debian 12, `nesting=1`, `keyctl=1` if unprivileged), Docker, firewall blocking the production HA, its broker and the gateway; a long-lived token for Claude; address, token and SSH key in `devenv/local.env` and `devenv/ssh/` (git-ignored) |
-| J3 | physics simulator of our own as a test-only component in the test HA: writable setpoint entities (expiring and persistent, with a write counter) and an OTGW-like command path, burner with minimum power and hysteresis, water volume, house as one mass, zones; topologies: gateway or monitor mode, with a physical thermostat, without one, or with a virtual one |
+| J3 ✅ | physics simulator of our own as a test-only component in the test HA: writable setpoint entities (expiring and persistent, with a write counter) and an OTGW-like command path, burner with minimum power and hysteresis, water volume, house as one mass, zones; topologies: gateway or monitor mode, with a physical thermostat, without one, or with a virtual one |
 | J4 🔒 | acceptance scenarios, first automated in-process against the simulator (no Home Assistant instance), then the same run by Claude in the test HA through its API once the user says to start: hand-back on every exit, keep-alive loss, hard limits, stale data, sensor failure, reload, DHW-enable bit kept, ignored command detected, minimum burn and pause, `central_mode` "Stopped", frost protection, control refused without a hand-back or without a confirmed-setpoint source, an alarm handing back, every topology allowing control only where it may and handing back as described, CH on/off respecting minimum on and off times, persistent writes only on the minimum change and stopped at the daily cap with the last value held, a value changed from outside rewritten at most once and then an alarm, a hand-back write passing every guard; plus the monitor on fake entities |
 
 Done when: every scenario passes in the test HA.
@@ -144,7 +144,7 @@ Done when: every scenario passes in the test HA.
 | Step | Work |
 |---|---|
 | K1 🔒 | release files: `LICENSE` (official Apache-2.0 text, fetched with the user's consent at this step), `NOTICE`, `README.md` (installation, what each entity means, what stays local, a section "Options and risks", what hand-back does on each write path, a template for the user's manual fallback), `CHANGELOG.md`, `hacs.json`; `manifest.json` code owners, documentation and issue tracker once the repository name is known |
-| K2 | workflows: tests, ruff, Hassfest, HACS action |
+| K2 ✅ | workflows: tests, ruff, Hassfest, HACS action |
 | K3 ✅ | local git since 2026-09-24; `.gitignore` written before the first commit: `.tools/`, `.venv/`, `.tmp/`, `data/`, `vendor/`, `research/`, `home-assessment.md`, `devenv/local.env`, `devenv/ssh/` |
 | K4 🔒 | the user reviews the 0.1 monitor laws, the control laws, the write guards and the defaults, and confirms the provisional decisions — before anything reaches a real boiler (the user's decisions, 2026-09-24) |
 | K5 🔒 | GitHub repository (created by the user, or by Claude with the user's consent) and a pre-release `0.2.0b1` — private if HACS can install from a private repository (to verify), otherwise public, marked pre-release |
