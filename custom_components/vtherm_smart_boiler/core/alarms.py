@@ -16,6 +16,7 @@ from itertools import pairwise
 
 from .cycles import ClassifiedBurn
 from .metrics import CH_KINDS
+from .readings import ZoneState
 from .series import Series
 
 MIN = 60.0
@@ -30,6 +31,7 @@ class AlarmKind(StrEnum):
     PRESSURE_FALLING = "pressure_falling"
     FLUE_GAS_RISING = "flue_gas_rising"
     HYSTERESIS_DRIFT = "hysteresis_drift"
+    LOW_FLOW = "low_flow"
 
 
 class Level(StrEnum):
@@ -238,3 +240,29 @@ def hysteresis_samples(
                 continue
         samples.append(off_flow - on_flow)
     return samples
+
+
+LOW_FLOW_OPENING = 0.05
+
+
+def low_flow(
+    zones: Sequence[ZoneState],
+    pump_running: bool | None,
+    now: float,
+    max_age: float | None,
+) -> Alarm:
+    """Warning while the pump runs and every zone's valve is closed: no path for the water.
+
+    Only zones with a fresh, known valve opening count; a zone without one (e.g. a relay) could be
+    the open path, so it keeps the warning off. ``pump_running`` comes from a pump-running or a
+    CH-active signal; without either the warning cannot be judged (``None``).
+    """
+    kind = AlarmKind.LOW_FLOW
+    if pump_running is None:
+        return Alarm(kind, False)
+    fresh = [z for z in zones if z.is_fresh(now, max_age)]
+    if not fresh or any(z.valve_open is None for z in fresh):
+        return Alarm(kind, False)
+    widest = max(z.valve_open for z in fresh if z.valve_open is not None)
+    active = pump_running and widest <= LOW_FLOW_OPENING
+    return Alarm(kind, active, Level.WARNING if active else None, widest, LOW_FLOW_OPENING)

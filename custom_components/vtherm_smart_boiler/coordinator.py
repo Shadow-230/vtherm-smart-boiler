@@ -49,6 +49,7 @@ from .core.alarms import (
     AlarmKind,
     banded_alarm,
     frequent_starts,
+    low_flow,
     unstable_ignition,
 )
 from .core.analysis import Analysis, analyse
@@ -427,7 +428,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 self._critical.get(circuit.circuit_id),
             )
 
-        self._alarms = self._current_alarms(snapshot, now)
+        self._alarms = self._current_alarms(snapshot, now, list(zone_states.values()))
         alarms = dict(self._alarms)
         if self.analysis is not None:
             alarms.update(self.analysis.trends)
@@ -460,7 +461,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             return True
         return None
 
-    def _current_alarms(self, snapshot: BoilerSnapshot, now: float) -> dict[AlarmKind, Alarm]:
+    def _current_alarms(
+        self, snapshot: BoilerSnapshot, now: float, zones: list[ZoneState]
+    ) -> dict[AlarmKind, Alarm]:
         alarms: dict[AlarmKind, Alarm] = {}
         pressure = snapshot.number(Signal.PRESSURE, self._max_age(Signal.PRESSURE))
         if snapshot.is_mapped(Signal.PRESSURE):
@@ -482,6 +485,11 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         ]
         alarms[AlarmKind.FREQUENT_STARTS] = frequent_starts(burns, now)
         alarms[AlarmKind.UNSTABLE_IGNITION] = unstable_ignition(burns, now)
+        if snapshot.is_mapped(Signal.PUMP_RUNNING) or snapshot.is_mapped(Signal.CH_ACTIVE):
+            pump = snapshot.flag(Signal.PUMP_RUNNING)
+            if pump is None:
+                pump = snapshot.flag(Signal.CH_ACTIVE)
+            alarms[AlarmKind.LOW_FLOW] = low_flow(zones, pump, now, ZONE_MAX_AGE_S)
         return alarms
 
     # --- analysis -------------------------------------------------------------------------

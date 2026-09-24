@@ -587,6 +587,9 @@
       },
       "outdoor_sensor_problem": {
         "name": "Outdoor sensor problem"
+      },
+      "alarm_low_flow": {
+        "name": "Low flow: all valves closed while the pump runs"
       }
     }
   },

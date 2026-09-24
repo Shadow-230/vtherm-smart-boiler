@@ -587,6 +587,9 @@
       },
       "outdoor_sensor_problem": {
         "name": "Problem z czujnikiem zewnętrznym"
+      },
+      "alarm_low_flow": {
+        "name": "Brak przepływu: wszystkie zawory zamknięte przy pracującej pompie"
       }
     }
   },

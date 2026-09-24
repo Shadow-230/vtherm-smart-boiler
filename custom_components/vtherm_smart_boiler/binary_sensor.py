@@ -35,6 +35,8 @@ def _alarm_kinds(coordinator: SmartBoilerCoordinator) -> list[AlarmKind]:
     if Signal.FLUE_GAS in signals and Signal.RETURN in signals:
         kinds.append(AlarmKind.FLUE_GAS_RISING)
     kinds.append(AlarmKind.HYSTERESIS_DRIFT)
+    if Signal.PUMP_RUNNING in signals or Signal.CH_ACTIVE in signals:
+        kinds.append(AlarmKind.LOW_FLOW)
     return kinds
 
 

@@ -123,3 +123,19 @@ def test_hysteresis_samples() -> None:
     assert hysteresis_samples(flow, burns) == [10.0]
     moving = Series([(0, 45.0), (20 * MIN, 50.0)])
     assert hysteresis_samples(flow, burns, setpoint=moving) == []
+
+
+def test_low_flow_warning() -> None:
+    from custom_components.vtherm_smart_boiler.core.alarms import low_flow
+    from custom_components.vtherm_smart_boiler.core.readings import ZoneState
+
+    def z(opening: float | None, t: float = 100.0) -> ZoneState:
+        return ZoneState("z", valve_open=opening, reported_at=t)
+
+    closed = [z(0.0), z(0.02)]
+    assert low_flow(closed, True, 100.0, 600.0).active
+    assert not low_flow(closed, False, 100.0, 600.0).active
+    assert low_flow(closed, None, 100.0, 600.0) == Alarm(AlarmKind.LOW_FLOW, False)
+    assert not low_flow([z(0.0), z(0.3)], True, 100.0, 600.0).active
+    assert not low_flow([z(0.0), z(None)], True, 100.0, 600.0).active  # a relay zone may flow
+    assert not low_flow([z(0.0, t=-5000.0)], True, 100.0, 600.0).active  # stale

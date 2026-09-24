@@ -83,15 +83,15 @@ Flow-setpoint mode; 0.2 writes one circuit, a second circuit through the boiler 
 
 | Step | Work |
 |---|---|
-| G0 | control model: a state machine — monitor, heating, idle, summer, frost protection, fallback setpoint, handed back — every decision with its reason |
+| G0 ✅ | control model: a state machine — monitor, heating, idle, summer, frost protection, fallback setpoint, handed back — every decision with its reason |
 | G1 ✅ | heating curve per circuit (entered, or taken from the boiler's parameters); effective outdoor temperature, smoothed, with the weather entity as the fallback source |
 | G2 ✅ | limits: hard minimum and maximum, weather-dependent ceiling, underfloor maximum capping a shared unmixed circuit, frost protection |
 | G3 ✅ | summer/winter threshold with hysteresis |
 | G4 ✅ | boiler demand from device count, total power or valve opening |
 | G5 ✅ | basic anti-cycling: minimum burn, minimum pause, starts per hour |
-| G6 | failure rules: stale data → no write; failed sensor → safe fallback setpoint (value is an option); low-flow warning when all valves are closed while the pump runs (needs a pump-running or CH-active signal; otherwise unavailable with the reason) |
+| G6 ✅ | failure rules: stale data → no write; failed sensor → safe fallback setpoint (value is an option); low-flow warning when all valves are closed while the pump runs (needs a pump-running or CH-active signal; otherwise unavailable with the reason) |
 | G7 | decision clock at the shortest VT zone cycle (default 5 min); keep-alive clock every 30 s |
-| G8 | ramp: the water temperature changes at a limited rate (option, cautious default); with a persistent write type, steps of at least the minimum change |
+| G8 ✅ | ramp: the water temperature changes at a limited rate (option, cautious default); with a persistent write type, steps of at least the minimum change |
 | G9 | write guards for every write: rate limits; minimum on and off times and a cap on switchings per hour for CH on/off; for persistent writes (declared persistent or unknown) a minimum change (default 1 K) and a daily cap — once reached, the last value held and an alarm raised, or hand-back, the user's choice; a value changed from outside written again at most once, then an alarm, no fight (keep-alive repeats of an expiring override are not rewrites); a hand-back write held back by no guard and not bound by the hard limits (values are options, the guards are fixed) |
 | G10 | closed-loop tests against the simulator extended with a controllable boiler (an expiring setpoint override like OTGW's, CH enable, modulation cap, DHW-enable bit): rooms hold their setpoints, hard limits are never exceeded, starts stay within the budget, after hand-back the boiler returns to its own control, no write without fresh data |
 
