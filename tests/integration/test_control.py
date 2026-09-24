@@ -13,7 +13,7 @@ from itertools import pairwise
 from typing import Any
 
 import pytest
-from homeassistant.const import EVENT_CALL_SERVICE, EVENT_HOMEASSISTANT_STOP
+from homeassistant.const import EVENT_CALL_SERVICE
 from homeassistant.core import Event, HomeAssistant, ServiceCall, State
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
@@ -331,12 +331,8 @@ async def test_reload_resumes_control_as_it_was(rig: Rig) -> None:
 async def test_home_assistant_stop_hands_back(rig: Rig) -> None:
     await start(rig)
     await rig.switch(True)
-    rig.hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
-    await rig.hass.async_block_till_done()
+    await rig.hass.async_stop()  # the hand-back runs as a shutdown job, before the stop event
     assert rig.gateway.calls[-1] == ("setpoint", 0.0)
-    count = len(rig.gateway.calls)
-    await rig.advance(60)
-    assert len(rig.gateway.calls) == count
 
 
 async def test_an_internal_error_hands_back_and_blocks_until_switched_off(

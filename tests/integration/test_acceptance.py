@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 from custom_components.boiler_sim import SimHub
-from homeassistant.const import EVENT_CALL_SERVICE, EVENT_HOMEASSISTANT_STOP
+from homeassistant.const import EVENT_CALL_SERVICE
 from homeassistant.core import Event, HomeAssistant, State
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
@@ -224,7 +224,10 @@ async def test_hand_back_on_every_exit(rig: Rig, exit_path: str) -> None:
     elif exit_path == "reload":
         assert await hass.config_entries.async_reload(rig.entry.entry_id)
     else:
-        hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+        await hass.async_stop()  # the hand-back runs as a shutdown job, before the stop event
+        assert ("setpoint", 0.0) in [(k, v) for _t, k, v in rig.gateway()][-3:]
+        assert not rig.sim.plant.override_active(rig.now())
+        return
     await hass.async_block_till_done()
     assert ("setpoint", 0.0) in [(k, v) for _t, k, v in rig.gateway()][-3:]
     if exit_path == "reload":

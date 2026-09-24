@@ -19,7 +19,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, Event, HassJob, HomeAssistant
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
@@ -234,9 +234,17 @@ class ControlUnit:
                 self._hass, self._async_timer, timedelta(seconds=CONTROL_TICK_SECONDS)
             )
         )
-        self._stop_unsub = self._hass.bus.async_listen_once(
-            EVENT_HOMEASSISTANT_STOP, self._async_ha_stop
-        )
+        # Hand back before Home Assistant stops its integrations (MQTT disconnects on the stop
+        # event itself); older versions without shutdown jobs get the stop event.
+        add_shutdown_job = getattr(self._hass, "async_add_shutdown_job", None)
+        if callable(add_shutdown_job):
+            self._stop_unsub = add_shutdown_job(
+                HassJob(self.async_stop, "vtherm_smart_boiler hand-back")
+            )
+        else:
+            self._stop_unsub = self._hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STOP, self._async_ha_stop
+            )
 
     def mark_restored(self) -> None:
         """The switch has restored the user's choice: control steps may run."""
