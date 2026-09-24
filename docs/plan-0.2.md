@@ -84,7 +84,7 @@ Flow-setpoint mode; 0.2 writes one circuit, a second circuit through the boiler 
 | Step | Work |
 |---|---|
 | G0 | control model: a state machine — monitor, heating, idle, summer, frost protection, fallback setpoint, handed back — every decision with its reason |
-| G1 | heating curve per circuit (entered, or taken from the boiler's parameters); effective outdoor temperature, smoothed, with the weather entity as the fallback source |
+| G1 ✅ | heating curve per circuit (entered, or taken from the boiler's parameters); effective outdoor temperature, smoothed, with the weather entity as the fallback source |
 | G2 | limits: hard minimum and maximum, weather-dependent ceiling, underfloor maximum capping a shared unmixed circuit, frost protection |
 | G3 | summer/winter threshold with hysteresis |
 | G4 | boiler demand from device count, total power or valve opening |
