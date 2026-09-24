@@ -6,7 +6,8 @@ Order of precedence, checked on every tick:
    controlling.
 2. An alarm set to hand back → hand back, latched until control is switched off and on again.
 3. VT's central mode "Stopped" → hand back; control resumes when the mode changes.
-4. The boiler's signals are not fresh → no command (nothing is written without fresh data).
+4. The boiler's signals are not fresh → no command (nothing is written without fresh data); if
+   that lasts beyond the stale hand-back time, hand back once; control resumes with fresh data.
 5. Otherwise the heating decision, taken every decision interval (and at once after any of the
    above ends): frost protection, VT's central mode, summer/winter, zone demand, anti-cycling,
    the curve on the effective outdoor temperature, limits and ramp. Without an outdoor
@@ -143,6 +144,7 @@ class ControlConfig:
     decision_interval_s: float = 300.0
     zone_max_age_s: float = 2 * HOUR
     correction_step_k: float | None = 1.0  # None: no comfort correction
+    stale_hand_back_s: float | None = 300.0  # hand back after this long without fresh data
     outdoor_time_constant_s: float = DEFAULT_TIME_CONSTANT_S
     outdoor_hold_s: float = DEFAULT_HOLD_S
 
@@ -193,6 +195,7 @@ class ControlState:
     hold_until: float | None = None
     decided_at: float | None = None
     correction: float = 0.0  # K added to the curve for a zone that cannot reach its setpoint
+    waiting_since: float | None = None  # when the boiler's signals went stale
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,9 +256,18 @@ def decide(
     if inputs.central_mode is CentralMode.STOPPED:
         return _release(state, ControlMode.HANDED_BACK, Reason.CENTRAL_STOPPED)
     if not inputs.boiler_link:
+        since = state.waiting_since if state.waiting_since is not None else now
+        state = replace(state, waiting_since=since)
+        if (
+            state.controlling
+            and config.stale_hand_back_s is not None
+            and now - since >= config.stale_hand_back_s
+        ):
+            return _release(state, ControlMode.HANDED_BACK, Reason.BOILER_LINK_STALE)
         reasons = (Reason.BOILER_LINK_STALE,)
         waiting = replace(state, mode=ControlMode.WAITING_DATA, reasons=reasons, decided_at=None)
         return waiting, ControlDecision(ControlMode.WAITING_DATA, None, reasons=reasons)
+    state = replace(state, waiting_since=None)
 
     frost = frost_needed(inputs.zones, now, config.zone_max_age_s, state.frost, config.frost)
     due = (

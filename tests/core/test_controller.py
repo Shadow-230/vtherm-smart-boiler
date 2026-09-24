@@ -295,3 +295,28 @@ def test_comfort_correction_stays_within_the_ceiling_band_and_can_be_off() -> No
     off = replace(config, correction_step_k=None)
     state, _ = run([inputs(t * 60.0, zones=short) for t in range(3)], off)
     assert state.correction == 0.0
+
+
+def test_long_data_loss_hands_back_once_and_resumes() -> None:
+    config = replace(CONFIG, stale_hand_back_s=300.0)
+    state, decisions = run(
+        [
+            inputs(0.0),
+            inputs(30.0, boiler_link=False),
+            inputs(200.0, boiler_link=False),
+            inputs(330.0, boiler_link=False),
+            inputs(360.0, boiler_link=False),
+            inputs(400.0),
+        ],
+        config,
+    )
+    assert [d.hand_back for d in decisions] == [False, False, False, True, False, False]
+    assert decisions[3].mode is ControlMode.HANDED_BACK
+    assert Reason.BOILER_LINK_STALE in decisions[3].reasons
+    assert decisions[5].mode is ControlMode.HEATING
+    assert state.waiting_since is None
+    never = replace(CONFIG, stale_hand_back_s=None)
+    _state, decisions = run(
+        [inputs(0.0), inputs(30.0, boiler_link=False), inputs(9999.0, boiler_link=False)], never
+    )
+    assert not any(d.hand_back for d in decisions)
