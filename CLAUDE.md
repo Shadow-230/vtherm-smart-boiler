@@ -1,9 +1,9 @@
 # VTherm Smart Boiler
 
-Working rules, code conventions and verified facts for Claude. Status on 2026-09-24: **scope,
-release plan and plans for 0.1 and 0.2 agreed; no code.** Next:
-[`docs/plan-0.1.md`](docs/plan-0.1.md), phase A; then [`docs/plan-0.2.md`](docs/plan-0.2.md).
-0.1 and 0.2 are built in one go, in order; 0.2 is the first release.
+Working rules, code conventions and verified facts for Claude. **Where to continue:** the first
+step without ✅ in [`docs/plan-0.1.md`](docs/plan-0.1.md), then in
+[`docs/plan-0.2.md`](docs/plan-0.2.md); phases run in order. 0.1 and 0.2 are built in one go;
+0.2 is the first release.
 
 - **Scope** (general, any installation): [`SCOPE.md`](SCOPE.md)
 - **Development plan:** [`PLAN.md`](PLAN.md); plans per release:
@@ -32,14 +32,16 @@ Each topic lives only in its file; do not copy it here.
   production HA directory and Claude's memory directory — requires the user's explicit consent
   for that specific access.
 - External sources (VT, `vtherm_api`, SmartPI, HA, anything else) are read over the network
-  only: no clones, downloads or copies on disk, temporary directories included. Exceptions:
-  packages from PyPI into `.venv/`, and VT 10.4.0 and SmartPI 0.4.0 sources in `vendor/`
-  (consented 2026-09-24); the official license text only with the user's consent at that step
-  (`docs/plan-0.1.md` A3, A5; `docs/plan-0.2.md` K1).
+  only: no clones, downloads or copies on disk, temporary directories included. Exceptions,
+  consented 2026-09-24: `uv` from PyPI into `.tools/bootstrap/` (`docs/plan-0.1.md` A1); Python
+  3.14 through `uv` into `.tools/python/` (A2); packages from PyPI into `.venv/` (A3); VT 10.4.0
+  and SmartPI 0.4.0 sources in `vendor/` (A5). The official license text only with the user's
+  consent at that step (`docs/plan-0.2.md` K1).
 - Nothing is created without the user's consent: no files or directories (temporary ones
   included), repositories, installs, environments, issues or pull requests.
-  Exception: results of network reads may be kept in `research/` in the working directory
-  (git-ignored).
+  Exceptions: files and directories in the agreed layout (the "Layout" sections of
+  `docs/plan-0.1.md` and `docs/plan-0.2.md`) are created without asking; results of network
+  reads may be kept in `research/` in the working directory (git-ignored).
 - These rules bind subagents too: every delegated task states them.
 - Tools, Python, package caches and temporary files live inside the project (`.tools/`, `.venv/`,
   `.tmp/`, git-ignored); every command runs as `scripts/env.sh <command>`, which sets the
@@ -52,7 +54,8 @@ Each topic lives only in its file; do not copy it here.
   tracked by git is shown and confirmed before it is deleted or overwritten.
 - Autonomous work: phases run in order without waiting; work stops at every 🔒 step and at the
   review stops after phases B and G (`docs/plan-0.1.md`, `docs/plan-0.2.md`); each finished step
-  is marked ✅ in its plan and committed, so the next session knows where to continue.
+  is marked ✅ in its plan and committed, so the next session knows where to continue; a step
+  found unnecessary is marked ✅ with the reason.
   Subagents may be used and are bound by these rules; a multi-agent workflow only when the user
   asks for one.
 - **Never touch the production Home Assistant instance** (location in Claude's memory): no

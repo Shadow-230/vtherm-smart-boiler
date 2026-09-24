@@ -57,15 +57,18 @@ a heat pump controller (excluded), or anything that sends data outside.
     description of what it does and what it risks — in the config flow and in the documentation.
     Fixed safeguards, not options, for every write (flow setpoint, CH on/off, modulation cap,
     room values to the boiler): no write without fresh input data; values within hard limits; a
-    rate limit, and minimum on and off times for on/off; read-back of every write, or the value
-    marked unverified when the device does not echo it; hand-back on every exit with every
-    override cleared; control only with a known hand-back and, for setpoint control, a source for
+    rate limit, minimum on and off times for on/off, and a minimum change and a daily cap for
+    persistent writes; read-back of every write, or the value marked unverified when the device
+    does not echo it; a value changed from outside written again at most once, then an alarm,
+    never a fight; hand-back on every exit with every override cleared, never held back by a
+    guard; control only with a known hand-back and, for setpoint control, a source for
     the confirmed setpoint; on sensor failure a safe fallback setpoint, never zero heat (its
     value is an option), or in room-value mode the room values cleared so the boiler's own
-    control carries on; the DHW-enable bit kept as it was. The values of limits, rates and times
-    are options; the guards themselves are not. On/off without feedback (a relay, an override the
-    device does not echo) gives no boiler data to be fresh: freshness applies to the inputs of
-    the decision, the write stays marked unverified, and the on/off guards carry the safety.
+    control carries on; the DHW-enable bit kept as it was. The values of limits, rates, caps and
+    times are options; the guards themselves are not. On/off without feedback (a relay, an
+    override the device does not echo) gives no boiler data to be fresh: freshness applies to the
+    inputs of the decision, the write stays marked unverified, and the on/off guards carry the
+    safety.
 
 ## 4. User levels
 
@@ -254,12 +257,21 @@ room values:
   the zones and the outdoor temperature.
 - Every value within hard limits; room values within plausible room bounds.
 - Every write rate-limited; on/off keeps minimum on and off times and a cap on switchings per
-  hour; persistent writes (stored in the boiler's memory) have a daily cap.
+  hour.
+- Persistent writes (stored in the boiler's memory) happen only on a change of at least the
+  minimum change and within a daily cap; once the cap is reached the last value is held and an
+  alarm raised, or control is handed back — the user's choice.
 - Every write is read back; a command the boiler ignores is reported, never assumed applied. The
   state shown is the value the boiler confirmed, never the requested one; settings the device
   does not echo back are marked unverified.
+- A value changed from outside is written again at most once, then an alarm is raised; the
+  plugin never fights another controller. Keep-alive repeats of an expiring override are not
+  rewrites.
 - Every exit — unload, reload, error, data loss, `central_mode` "Stopped", an alarm set to hand
   back — stops every loop, hands control back and clears every override.
+- A hand-back write is not a control decision: no guard holds it back — not freshness, a cap, a
+  rate limit or a minimum on or off time — and its value (e.g. `CS=0`) is not bound by the hard
+  limits.
 - Control only with a known hand-back and, for setpoint control, a source for the confirmed
   setpoint.
 - Room values go to the boiler only from a valid reference room; without one they are cleared.
@@ -276,9 +288,15 @@ Options, each with a cautious default and its risks described:
 - Basic anti-cycling: minimum burn, minimum pause, starts per hour.
 - Ramp: how fast the water temperature may change, so zone algorithms can follow.
 - Fallback setpoint value on sensor failure.
-- Values of the hard limits, rate limits, minimum on and off times and room-value bounds.
-- Repeat mode for a picked write entity: on change only (default; an expiring override lapses)
-  or repeated (memory wear on persistent writes). Built-in OTGW repeats `CS` every 30 s.
+- Values of the hard limits, rate limits, minimum on and off times and room-value bounds; for
+  persistent writes the minimum change (default 1 K) and the daily cap.
+- Write type of a picked write entity: **expiring** override — repeated every 30 s so it does not
+  lapse (risk, if the entity is in fact persistent: boiler memory wear); **persistent** — stored in
+  the boiler's memory, written only on the minimum change, with coarser ramp steps and a daily
+  cap (risk, if the override in fact expires: it lapses, the read-back shows it and an alarm
+  follows); **unknown** (default) counts as persistent. Built-in OTGW repeats `CS` every 30 s.
+- Reaction when the daily cap on persistent writes is reached: hold the last value and raise an
+  alarm (default), or hand control back.
 - Low-flow warning when all valves are closed while the pump runs — needs a pump-running or
   CH-active signal.
 

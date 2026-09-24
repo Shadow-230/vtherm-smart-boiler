@@ -58,8 +58,8 @@ the project.
 | A1 ✓ | through `scripts/env.sh`: `.tools/bootstrap` venv from system Python, `uv` installed into it | `uv --version` |
 | A2 ✓ | through `scripts/env.sh`: Python 3.14 into `.tools/python/` without shims outside the project (`--no-bin` or `UV_PYTHON_BIN_DIR` — check against the installed uv version first) | Python ≥ 3.14.2; `uv cache dir`, `uv python dir` and `uv python dir --bin` all point inside the project |
 | A5 ✓ | VT 10.4.0 and SmartPI 0.4.0 sources from their release tags in `vendor/` (git-ignored); newer VT features (e.g. `get_feature_manager` from 10.5) are tested with fakes | loadable in tests and the test HA |
-| A3 ✓ | `.venv` with `pytest-homeassistant-custom-component==0.13.366` (pins Home Assistant 2026.9.3), `vtherm-api==0.5.0`, `ruff`, plus the requirements in the VT and SmartPI manifests from `vendor/` (e.g. `numpy`, `scipy` for VT), at the versions those manifests allow; pins change only deliberately | imports succeed; VT loads in a test |
-| A6 | system packages for the test dependencies, only if one fails to build — installed by the user | — |
+| A3 ✓ | `.venv` with `pytest-homeassistant-custom-component==0.13.366` (pins Home Assistant 2026.9.3), `vtherm-api==0.5.0`, `ruff`, plus the requirements in the VT and SmartPI manifests from `vendor/` (e.g. `numpy`, `scipy` for VT), at the versions those manifests allow, constrained by Home Assistant's `package_constraints.txt` so the versions match a real Home Assistant (to verify: the file ships in the `homeassistant` package); pins change only deliberately | imports succeed; VT loads in a test |
+| A6 🔒 | system packages for the test dependencies, only if one fails to build — installed by the user | — |
 | A7 ✓ | layout, `pyproject.toml` (pytest `--basetemp=.tmp/pytest`, ruff `py314`) | `pytest -q` and `ruff check .` pass on an empty suite |
 
 ## Phase B — core (test first)
