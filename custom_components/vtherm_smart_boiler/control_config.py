@@ -1,0 +1,263 @@
+"""Control options (flow-setpoint mode) as core objects, and what keeps control from starting.
+
+No Home Assistant imports. Every value has a cautious default; a blocker is a translation key
+naming what the user must provide or fix before control may be switched on. Provisional decisions
+of phase F (to be confirmed at the review, `docs/plan-0.2.md` K4): control only for an
+installation with one circuit fed by the boiler flow (unmixed, or passive fixed); the curve must
+be entered, never silently defaulted; VT's central boiler must not run alongside.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Any
+
+from .core.anticycling import AntiCycleConfig
+from .core.controller import ControlConfig
+from .core.curve import HeatingCurve
+from .core.demand import DemandConfig
+from .core.guards import SetpointGuardConfig, SwitchGuardConfig, WriteType
+from .core.installation import CircuitControl, EmitterType, Installation
+from .core.learning import LearningConfig
+from .core.limits import FlowLimits, FrostConfig, SeasonConfig
+from .core.loop import DEFAULT_OFF_SETPOINT, LoopConfig
+
+MINUTE = 60.0
+
+
+class WritePath(StrEnum):
+    ENTITY = "entity"  # a writable entity the user picked
+    OPENTHERM_GW = "opentherm_gw"  # built-in OTGW through Home Assistant's opentherm_gw
+    OTGW_MQTT = "otgw_mqtt"  # built-in OTGW through its firmware's MQTT commands
+
+
+class Topology(StrEnum):
+    GATEWAY_STANDALONE = "gateway_standalone"  # the gateway is master: hand-back stops heating
+    GATEWAY_WITH_THERMOSTAT = "gateway_with_thermostat"  # hand-back: the thermostat takes over
+    MONITOR_MODE = "monitor_mode"  # the gateway only listens: no control
+    VIRTUAL = "virtual"  # a controller on the HA side (e.g. an ESPHome OpenTherm master)
+
+
+class HandBack(StrEnum):
+    VALUE = "value"  # write a hand-back value to the setpoint entity
+    TIMEOUT = "timeout"  # stop writing: the device's own timeout hands back
+    SWITCH = "switch"  # turn off an entity that enables external control
+
+
+class AlarmReaction(StrEnum):
+    INFO = "info"
+    HAND_BACK = "hand_back"
+
+
+class CapReaction(StrEnum):
+    HOLD = "hold"  # keep the last value and raise an alarm
+    HAND_BACK = "hand_back"
+
+
+OTGW_PATHS = frozenset({WritePath.OPENTHERM_GW, WritePath.OTGW_MQTT})
+CONTROLLABLE_TOPOLOGIES = frozenset(
+    {Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT, Topology.VIRTUAL}
+)
+# Alarms whose default reaction hands control back: another controller is writing too.
+DEFAULT_REACTIONS: Mapping[str, AlarmReaction] = {"outside_change": AlarmReaction.HAND_BACK}
+EXPONENT_BY_EMITTER = {
+    EmitterType.RADIATOR: 1.3,
+    EmitterType.CONVECTOR: 1.4,
+    EmitterType.UNDERFLOOR: 1.1,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ControlOptions:
+    write_path: WritePath | None = None
+    setpoint_entity: str | None = None
+    ch_entity: str | None = None
+    write_type: WriteType = WriteType.UNKNOWN
+    hand_back: HandBack | None = None
+    hand_back_value: float = 0.0
+    hand_back_entity: str | None = None
+    gateway_id: str | None = None
+    mqtt_top: str | None = None
+    mqtt_node: str | None = None
+    confirmed_entity: str | None = None
+    topology: Topology | None = None
+    curve_entered: bool = False
+    loop: LoopConfig = field(default_factory=lambda: LoopConfig(ControlConfig(HeatingCurve())))
+    learning: LearningConfig = field(default_factory=LearningConfig)
+    learning_pauses: bool = True
+    cap_reaction: CapReaction = CapReaction.HOLD
+    alarm_reactions: Mapping[str, AlarmReaction] = field(default_factory=dict)
+
+    @property
+    def configured(self) -> bool:
+        return self.write_path is not None
+
+    def reaction(self, alarm: str) -> AlarmReaction:
+        return self.alarm_reactions.get(alarm, DEFAULT_REACTIONS.get(alarm, AlarmReaction.INFO))
+
+    @property
+    def entities(self) -> tuple[str, ...]:
+        """Entities the control part reads (read-back) or writes."""
+        found = (self.setpoint_entity, self.ch_entity, self.hand_back_entity, self.confirmed_entity)
+        return tuple(e for e in found if e)
+
+
+def _float(data: Mapping[str, Any], key: str, default: float | None) -> float | None:
+    value = data.get(key, default)
+    if value is None or value == "":
+        return None
+    return float(value)
+
+
+def _minutes(data: Mapping[str, Any], key: str, default_min: float) -> float:
+    value = _float(data, key, default_min)
+    return (default_min if value is None else value) * MINUTE
+
+
+def parse_control(
+    data: Mapping[str, Any] | None, installation: Installation, boiler_max: float | None
+) -> ControlOptions:
+    """The control options; an empty section means control is not configured."""
+    data = data or {}
+    if not data.get("write_path"):
+        return ControlOptions()
+    path = WritePath(data["write_path"])
+    curve_data = data.get("curve") or {}
+    circuit = installation.circuits[0] if installation.circuits else None
+    emitters = installation.emitters_in(circuit.circuit_id) if circuit is not None else frozenset()
+    default_exponent = min((EXPONENT_BY_EMITTER[e] for e in emitters), default=1.3)
+    curve = HeatingCurve(
+        design_outdoor=float(curve_data.get("design_outdoor", -15.0)),
+        design_flow=float(curve_data.get("design_flow", 55.0)),
+        room=float(curve_data.get("room", 20.0)),
+        exponent=float(curve_data.get("exponent", default_exponent)),
+        offset=float(curve_data.get("offset", 0.0)),
+    )
+    write_type = (
+        WriteType.EXPIRING
+        if path in OTGW_PATHS
+        else WriteType(data.get("write_type", WriteType.UNKNOWN))
+    )
+    circuit_max = circuit.max_flow if circuit is not None else None
+    if circuit is not None and circuit.control is CircuitControl.PASSIVE_FIXED:
+        circuit_max = None  # the mixing valve protects the emitters itself
+    ramp = _float(data, "ramp_k_per_min", 1.0)
+    wears = write_type in (WriteType.PERSISTENT, WriteType.UNKNOWN)
+    min_change = _float(data, "min_change", 1.0) or 0.0
+    control = ControlConfig(
+        curve=curve,
+        limits=FlowLimits(
+            hard_min=float(data.get("hard_min", 25.0)),
+            hard_max=float(data.get("hard_max", 70.0)),
+            ceiling_band=float(data.get("ceiling_band", 10.0)),
+        ),
+        circuit_max=circuit_max,
+        boiler_max=boiler_max,
+        season=SeasonConfig(threshold=float(data.get("summer_threshold", 20.0))),
+        frost=FrostConfig(
+            room_limit=float(data.get("frost_limit", 5.0)),
+            release=float(data.get("frost_release", 7.0)),
+        ),
+        demand=DemandConfig(
+            count_threshold=int(data.get("count_threshold", 1)),
+            power_threshold_kw=_float(data, "power_threshold_kw", None),
+            opening_threshold=(
+                None
+                if (opening := _float(data, "opening_threshold", None)) is None
+                else opening / 100.0
+            ),
+        ),
+        anticycling=AntiCycleConfig(
+            min_burn_s=_minutes(data, "min_burn_min", 5.0),
+            min_pause_s=_minutes(data, "min_pause_min", 5.0),
+            max_starts_per_hour=int(data.get("max_starts_per_hour", 6)),
+        ),
+        fallback_setpoint=_float(data, "fallback_setpoint", None),
+        ramp_k_per_min=ramp,
+        min_step=min_change if wears else 0.0,
+        decision_interval_s=_minutes(data, "decision_interval_min", 5.0),
+        correction_step_k=1.0 if data.get("comfort_correction", True) else None,
+    )
+    loop = LoopConfig(
+        control=control,
+        setpoint_guard=SetpointGuardConfig(
+            write_type=write_type,
+            min_change=min_change,
+            daily_cap=int(data.get("daily_cap", 48)),
+        ),
+        switch_guard=SwitchGuardConfig(
+            min_on_s=_minutes(data, "min_on_min", 5.0),
+            min_off_s=_minutes(data, "min_off_min", 5.0),
+            max_switches_per_hour=int(data.get("max_switches_per_hour", 6)),
+        ),
+        ch_writes=path in OTGW_PATHS or bool(data.get("ch_entity")),
+        off_setpoint=float(data.get("off_setpoint", DEFAULT_OFF_SETPOINT)),
+    )
+    reactions = {
+        str(alarm): AlarmReaction(reaction)
+        for alarm, reaction in (data.get("alarm_reactions") or {}).items()
+    }
+    return ControlOptions(
+        write_path=path,
+        setpoint_entity=data.get("setpoint_entity") or None,
+        ch_entity=data.get("ch_entity") or None,
+        write_type=write_type,
+        hand_back=HandBack(data["hand_back"]) if data.get("hand_back") else None,
+        hand_back_value=float(data.get("hand_back_value", 0.0)),
+        hand_back_entity=data.get("hand_back_entity") or None,
+        gateway_id=data.get("gateway_id") or None,
+        mqtt_top=data.get("mqtt_top") or None,
+        mqtt_node=data.get("mqtt_node") or None,
+        confirmed_entity=data.get("confirmed_entity") or None,
+        topology=Topology(data["topology"]) if data.get("topology") else None,
+        curve_entered=bool(curve_data.get("design_flow")),
+        loop=loop,
+        learning=LearningConfig(),
+        learning_pauses=bool(data.get("learning_pauses", True)),
+        cap_reaction=CapReaction(data.get("cap_reaction", CapReaction.HOLD)),
+        alarm_reactions=reactions,
+    )
+
+
+def config_blockers(control: ControlOptions, installation: Installation) -> list[str]:
+    """What the configuration still lacks for control (translation keys)."""
+    if not control.configured:
+        return ["no_write_path"]
+    found: list[str] = []
+    path = control.write_path
+    if path is WritePath.ENTITY:
+        if not control.setpoint_entity:
+            found.append("no_setpoint_entity")
+        if control.hand_back is None or (
+            control.hand_back is HandBack.SWITCH and not control.hand_back_entity
+        ):
+            found.append("no_hand_back")
+    elif path is WritePath.OPENTHERM_GW and not control.gateway_id:
+        found.append("no_gateway")
+    elif path is WritePath.OTGW_MQTT and not (control.mqtt_top and control.mqtt_node):
+        found.append("no_mqtt_topic")
+    if not control.confirmed_entity:
+        found.append("no_confirmed_setpoint")
+    if control.topology is None:
+        found.append("no_topology")
+    elif control.topology not in CONTROLLABLE_TOPOLOGIES:
+        found.append("topology_no_control")
+    if not control.curve_entered:
+        found.append("curve_not_entered")
+    circuits = installation.circuits
+    if len(circuits) != 1 or circuits[0].control not in (
+        CircuitControl.UNMIXED_SHARED,
+        CircuitControl.PASSIVE_FIXED,
+    ):
+        found.append("one_direct_circuit_only")
+    else:
+        circuit = circuits[0]
+        if (
+            circuit.control is CircuitControl.UNMIXED_SHARED
+            and EmitterType.UNDERFLOOR in installation.emitters_in(circuit.circuit_id)
+            and circuit.max_flow is None
+        ):
+            found.append("underfloor_without_max_flow")
+    return found
