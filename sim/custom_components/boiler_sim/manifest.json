@@ -1,0 +1,12 @@
+{
+  "domain": "boiler_sim",
+  "name": "Boiler simulator (test only)",
+  "codeowners": [],
+  "config_flow": false,
+  "dependencies": [],
+  "after_dependencies": ["mqtt"],
+  "integration_type": "hub",
+  "iot_class": "calculated",
+  "requirements": [],
+  "version": "0.0.1"
+}

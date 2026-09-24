@@ -115,24 +115,35 @@ class Plant:
         self.override_setpoint: float | None = None
         self.override_ch: bool | None = None
         self.override_at: float | None = None
+        self.override_holds = False
 
     # --- the external controller --------------------------------------------------------
 
-    def set_override(self, t: float, setpoint: float | None, ch_enable: bool | None) -> None:
-        """An override from a controller; each call renews it."""
+    def set_override(
+        self, t: float, setpoint: float | None, ch_enable: bool | None, holds: bool = False
+    ) -> None:
+        """An override from a controller; each call renews it. ``holds``: it never lapses (a
+        stored value, or an OTGW control setpoint below 8 °C)."""
         if setpoint is not None:
             self.override_setpoint = setpoint
             self.override_at = t
         if ch_enable is not None:
             self.override_ch = ch_enable
             self.override_at = t
+        if setpoint is not None or ch_enable is not None:
+            self.override_holds = holds
 
     def clear_override(self) -> None:
         self.override_setpoint = self.override_ch = self.override_at = None
+        self.override_holds = False
 
     def override_active(self, t: float) -> bool:
-        return self.override_at is not None and (
-            self.override_expires_s is None or t - self.override_at <= self.override_expires_s
+        if self.override_at is None:
+            return False
+        return (
+            self.override_holds
+            or self.override_expires_s is None
+            or t - self.override_at <= self.override_expires_s
         )
 
     # --- zones ----------------------------------------------------------------------------
