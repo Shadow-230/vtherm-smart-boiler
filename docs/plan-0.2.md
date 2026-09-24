@@ -88,7 +88,7 @@ Flow-setpoint mode; 0.2 writes one circuit, a second circuit through the boiler 
 | G2 ✅ | limits: hard minimum and maximum, weather-dependent ceiling, underfloor maximum capping a shared unmixed circuit, frost protection |
 | G3 ✅ | summer/winter threshold with hysteresis |
 | G4 ✅ | boiler demand from device count, total power or valve opening |
-| G5 | basic anti-cycling: minimum burn, minimum pause, starts per hour |
+| G5 ✅ | basic anti-cycling: minimum burn, minimum pause, starts per hour |
 | G6 | failure rules: stale data → no write; failed sensor → safe fallback setpoint (value is an option); low-flow warning when all valves are closed while the pump runs (needs a pump-running or CH-active signal; otherwise unavailable with the reason) |
 | G7 | decision clock at the shortest VT zone cycle (default 5 min); keep-alive clock every 30 s |
 | G8 | ramp: the water temperature changes at a limited rate (option, cautious default); with a persistent write type, steps of at least the minimum change |
