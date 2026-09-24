@@ -97,7 +97,7 @@ core is reviewed together with the rest of 0.1.
 
 | Step | Work |
 |---|---|
-| C1 | `sim/`: boiler (minimum and maximum power, hysteresis, water volume), house as one mass, one circuit, zones; generic profiles per boiler class and circuit type |
+| C1 ✅ | `sim/`: boiler (minimum and maximum power, hysteresis, water volume), house as one mass, one circuit, zones; generic profiles per boiler class and circuit type. Done, with `core/history.py` and `core/monitor.py`: the one history container and the monitor pipeline (burns, metrics, daily points, verdict) that the simulator, the importer and the integration share |
 | C2 | `tools/`: importer for a copy of an HA database (read-only) with a user-written entity mapping kept in `data/` |
 | C3 | integration-test harness: `enable_custom_integrations`, fake boiler entities, VT zones (from `vendor/` or fakes), time control |
 
