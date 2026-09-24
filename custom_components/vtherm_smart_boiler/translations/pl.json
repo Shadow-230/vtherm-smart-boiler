@@ -611,7 +611,9 @@
       "hand_back_value_missing": "Sposób „wartość” wymaga wartości oddania.",
       "hand_back_entity_missing": "Sposób „przełącznik” wymaga przełącznika sterowania zewnętrznego.",
       "hard_limits_out_of_order": "Najwyższa nastawa musi być wyższa od najniższej.",
-      "frost_release_not_above_limit": "Ochrona przed mrozem musi kończyć się powyżej temperatury, przy której się zaczyna."
+      "frost_release_not_above_limit": "Ochrona przed mrozem musi kończyć się powyżej temperatury, przy której się zaczyna.",
+      "hand_back_timeout_not_expiring": "Limit czasu urządzenia oddaje sterowanie tylko przy zapisach wygasających; wybierz wartość albo przełącznik.",
+      "hand_back_value_out_of_range": "Wartość oddania leży poza zakresem, który przyjmuje encja nastawy."
     },
     "abort": {
       "missing_signal": "Brakuje wymaganego sygnału.",
@@ -868,6 +870,9 @@
       },
       "alarm_control_error": {
         "name": "Sterowanie: błąd wewnętrzny"
+      },
+      "alarm_hand_back_failed": {
+        "name": "Sterowanie: oddanie nieudane"
       }
     },
     "switch": {
@@ -937,6 +942,9 @@
     },
     "blocked_control_error": {
       "message": "Sterowanie zatrzymało się po błędzie wewnętrznym. Sprawdź log, potem wyłącz i włącz sterowanie. Inne powody: {others}."
+    },
+    "blocked_timeout_needs_expiring_writes": {
+      "message": "Limit czasu urządzenia oddaje sterowanie tylko przy zapisach wygasających: wybierz w opcjach wartość oddania albo przełącznik. Inne powody: {others}."
     }
   },
   "issues": {

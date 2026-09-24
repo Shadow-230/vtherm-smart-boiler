@@ -42,7 +42,9 @@ class Writer(Protocol):
 
     async def write_heating(self, on: bool) -> None: ...
 
-    async def hand_back(self) -> None: ...
+    async def hand_back(self, full: bool = False) -> None:
+        """Give control back; ``full`` also clears what an earlier session may have left."""
+        ...
 
 
 def _checked(value: float, low: float) -> float:
@@ -134,20 +136,32 @@ class EntityWriter(_ServiceWriter):
             _domain(self._switch), "turn_on" if on else "turn_off", {"entity_id": self._switch}
         )
 
-    async def hand_back(self) -> None:
+    async def hand_back(self, full: bool = False) -> None:
+        """Each step is tried whatever the others do; any failure is raised at the end."""
         self._taken = False
-        if self._switch and self._switched:
-            self._switched = False
-            await self._call(_domain(self._switch), "turn_on", {"entity_id": self._switch})
-        if self._hand_back is HandBack.VALUE:
-            await self._call(
-                _domain(self._setpoint),
-                "set_value",
-                {"entity_id": self._setpoint, "value": self._hand_back_value},
-            )
-        elif self._external:
-            await self._call(_domain(self._external), "turn_off", {"entity_id": self._external})
-        # HandBack.TIMEOUT: stop writing; the device's own timeout hands back.
+        errors: list[WriteError] = []
+        if self._switch and (self._switched or full):
+            try:
+                await self._call(_domain(self._switch), "turn_on", {"entity_id": self._switch})
+                self._switched = False
+            except WriteError as err:
+                errors.append(err)
+        try:
+            if self._hand_back is HandBack.VALUE:
+                await self._call(
+                    _domain(self._setpoint),
+                    "set_value",
+                    {"entity_id": self._setpoint, "value": self._hand_back_value},
+                )
+            elif self._external:
+                await self._call(
+                    _domain(self._external), "turn_off", {"entity_id": self._external}
+                )
+            # HandBack.TIMEOUT: stop writing; the device's own timeout hands back.
+        except WriteError as err:
+            errors.append(err)
+        if errors:
+            raise WriteError("; ".join(str(err) for err in errors))
 
 
 class OpenthermGwWriter(_ServiceWriter):
@@ -179,7 +193,7 @@ class OpenthermGwWriter(_ServiceWriter):
             {"gateway_id": self._gateway, "ch_override": on},
         )
 
-    async def hand_back(self) -> None:
+    async def hand_back(self, full: bool = False) -> None:
         # 0 cancels the setpoint override; the CH override applies only alongside it.
         await self._call(
             self.DOMAIN, "set_control_setpoint", {"gateway_id": self._gateway, "temperature": 0}
@@ -210,7 +224,7 @@ class OtgwMqttWriter(_ServiceWriter):
     async def write_heating(self, on: bool) -> None:
         await self._publish("chenable", "1" if on else "0")
 
-    async def hand_back(self) -> None:
+    async def hand_back(self, full: bool = False) -> None:
         await self._publish("ctrlsetpt", "0")
 
 

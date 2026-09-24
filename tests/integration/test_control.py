@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 from homeassistant.const import EVENT_CALL_SERVICE, EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import Event, HomeAssistant, ServiceCall, State
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import (
@@ -51,11 +51,13 @@ class FakeGateway:
     forced: float | None = None
     override: float | None = None
     calls: list[tuple[str, Any]] = field(default_factory=list)
+    times: list[float] = field(default_factory=list)  # when each setpoint arrived
 
     def register(self) -> None:
         async def setpoint(call: ServiceCall) -> None:
             value = float(call.data["temperature"])
             self.calls.append(("setpoint", value))
+            self.times.append(datetime.now(UTC).timestamp())
             self.override = None if value == 0 else value
             self.publish()
 
@@ -90,18 +92,20 @@ class Rig:
     flow: float | None = 35.0
     dhw: bool = False
     outdoor: float = OUTDOOR
+    flow_reported: bool = True  # False: the flow is not reported again (a source that reports
+    # only on change, as MQTT entities do)
     services: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
 
     def live(self) -> None:
         """The gateway's periodic reports: fresh boiler signals and setpoint echo."""
-        self.boiler.set_many(
-            {
-                Signal.FLAME: False,
-                Signal.FLOW: self.flow,
-                Signal.OUTDOOR: self.outdoor,
-                Signal.DHW_ACTIVE: self.dhw,
-            }
-        )
+        values: dict[Signal, float | bool | None] = {
+            Signal.FLAME: False,
+            Signal.OUTDOOR: self.outdoor,
+            Signal.DHW_ACTIVE: self.dhw,
+        }
+        if self.flow_reported:
+            values[Signal.FLOW] = self.flow
+        self.boiler.set_many(values)
         self.gateway.publish()
 
     async def advance(self, seconds: float, step: float = 10.0) -> None:
@@ -213,7 +217,8 @@ async def test_control_is_off_by_default_and_refused_during_monitoring(rig: Rig)
 async def test_switching_on_writes_keeps_alive_and_switching_off_hands_back(rig: Rig) -> None:
     await start(rig)
     await rig.switch(True)
-    assert rig.gateway.calls[:2] == [("ch", True), ("setpoint", EXPECTED)]
+    # The setpoint first: the gateway applies heating on/off only while it holds a setpoint.
+    assert rig.gateway.calls[:2] == [("setpoint", EXPECTED), ("ch", True)]
     state = rig.state("sensor", "control_state")
     assert state.state == "heating"
     assert rig.state("sensor", "control_setpoint").state == str(EXPECTED)
@@ -275,9 +280,10 @@ async def test_stale_data_stops_writes_and_hands_back_after_five_minutes(rig: Ri
     await rig.advance(70)
     assert rig.gateway.calls[count:] == [("setpoint", 0.0)]
     assert rig.state("sensor", "control_state").state == "handed_back"
+    resumed = len(rig.gateway.calls)
     rig.flow = 35.0
     await rig.advance(20)
-    assert rig.gateway.calls[-1] == ("setpoint", EXPECTED)  # control resumes with fresh data
+    assert ("setpoint", EXPECTED) in rig.gateway.calls[resumed:]  # control resumes with data
 
 
 async def test_vt_central_mode_stopped_hands_back_and_auto_resumes(rig: Rig) -> None:
@@ -295,7 +301,7 @@ async def test_vt_central_mode_stopped_hands_back_and_auto_resumes(rig: Rig) -> 
     assert len(rig.gateway.calls) == count
     hass.states.async_set(select.entity_id, "Auto")
     await rig.advance(10)
-    assert rig.gateway.calls[-1] == ("setpoint", EXPECTED)
+    assert ("setpoint", EXPECTED) in rig.gateway.calls[count:]
 
 
 async def test_unload_and_reload_hand_back_and_leave_no_loop(rig: Rig) -> None:
@@ -354,7 +360,7 @@ async def test_an_internal_error_hands_back_and_blocks_until_switched_off(
     assert len(rig.gateway.calls) == count  # blocked until the user switches it off and on
     await rig.switch(False)
     await rig.switch(True)
-    assert rig.gateway.calls[-1] == ("setpoint", EXPECTED)
+    assert ("setpoint", EXPECTED) in rig.gateway.calls[count:]
     assert rig.state("binary_sensor", "alarm_control_error").state == "off"
 
 
@@ -577,6 +583,9 @@ async def test_persistent_writes_follow_the_minimum_change_and_stop_at_the_daily
     assert rig.state("sensor", "control_state").state == "heating"  # holds its last value
     await rig.switch(False)
     assert number.writes[-1] == 50.0  # the hand-back passes the cap
+    assert rig.entry is not None
+    writes = rig.entry.runtime_data.control.stored()["writes"]
+    assert len(writes) == 4  # and wears the memory too: it counts toward the cap
 
 
 async def test_mqtt_path_calls_only_its_publish(rig: Rig) -> None:
@@ -594,7 +603,92 @@ async def test_mqtt_path_calls_only_its_publish(rig: Rig) -> None:
     await rig.switch(True)
     await rig.advance(60)
     await rig.switch(False)
-    assert published[0] == ("OTGW/set/otgw-1/chenable", "1")
-    assert published[1] == ("OTGW/set/otgw-1/ctrlsetpt", f"{EXPECTED:.1f}")
+    assert published[0] == ("OTGW/set/otgw-1/ctrlsetpt", f"{EXPECTED:.1f}")
+    assert published[1] == ("OTGW/set/otgw-1/chenable", "1")
     assert published[-1] == ("OTGW/set/otgw-1/ctrlsetpt", "0")
     assert rig.plugin_calls() <= {("mqtt", "publish"), ("weather", "get_forecasts")}
+
+
+async def test_a_failed_hand_back_is_retried_and_stays_shown(rig: Rig) -> None:
+    await start(rig)
+    await rig.switch(True)
+    rig.hass.services.async_remove("opentherm_gw", "set_control_setpoint")
+    await rig.switch(False)  # the hand-back fails
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+    await rig.advance(30)
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"  # kept
+    rig.gateway.register()  # the gateway answers again
+    await rig.advance(70)
+    assert rig.gateway.calls[-1] == ("setpoint", 0.0)  # retried until it went through
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
+
+
+async def test_a_latch_survives_a_reload(rig: Rig) -> None:
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(30)
+    rig.gateway.forced = 60.0  # another controller
+    await rig.advance(180)
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    assert rig.entry is not None
+    assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
+    await rig.hass.async_block_till_done()
+    count = len(rig.gateway.setpoints())
+    await rig.advance(60)
+    assert rig.state("switch", "control").state == "on"
+    assert len(rig.gateway.setpoints()) == count  # still handed back: no fight after reload
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
+    rig.gateway.forced = None
+    await rig.switch(False)
+    await rig.switch(True)  # the user's off and on clears the latch
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+
+
+async def test_a_steady_reading_that_is_reported_only_on_change_is_not_stale(rig: Rig) -> None:
+    await start(rig)
+    await rig.switch(True)
+    rig.flow_reported = False  # the flow stays at its value and is not reported again
+    await rig.advance(20 * 60, step=30.0)
+    assert rig.state("sensor", "control_state").state == "heating"
+    gaps = [b - a for a, b in pairwise(rig.gateway.times[-30:])]
+    assert gaps
+    assert max(gaps) <= 40.0  # keep-alives went on
+
+
+async def test_a_failed_write_is_retried_at_the_next_step(rig: Rig) -> None:
+    await start(rig)
+    await rig.switch(True)
+    attempts: list[float] = []
+    fail = {"left": 1}
+
+    async def flaky(call: ServiceCall) -> None:
+        attempts.append(datetime.now(UTC).timestamp())
+        if fail["left"]:
+            fail["left"] -= 1
+            raise HomeAssistantError("gateway busy")
+        rig.gateway.override = float(call.data["temperature"])
+        rig.gateway.publish()
+
+    rig.hass.services.async_register("opentherm_gw", "set_control_setpoint", flaky)
+    await rig.advance(60)
+    assert len(attempts) >= 2
+    assert attempts[1] - attempts[0] <= 10.0  # not 30 s later
+    assert rig.state("binary_sensor", "alarm_write_failed").state == "off"  # cleared again
+
+
+async def test_a_timeout_hand_back_needs_expiring_writes(rig: Rig) -> None:
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(
+        rig,
+        write_path="entity",
+        setpoint_entity=number.entity_id,
+        write_type="unknown",
+        hand_back="timeout",
+        confirmed_entity=number.entity_id,
+        topology="virtual",
+    )
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)
+    assert err.value.translation_key == "blocked_timeout_needs_expiring_writes"
+    assert number.writes == []

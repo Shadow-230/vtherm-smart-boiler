@@ -46,12 +46,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await control.async_start()
         entry.runtime_data = coordinator
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        feature_manager.async_attach(hass, coordinator)
+        if not config.control.configured:
+            _remove_control_entities(hass, entry)
     except Exception:
-        await _async_stop(coordinator)
+        feature_manager.async_detach(hass, coordinator)
+        await _async_stop(coordinator)  # no control clock is left running
         raise
-    feature_manager.async_attach(hass, coordinator)
-    if not config.control.configured:
-        _remove_control_entities(hass, entry)
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     coordinator.async_start_background()
     return True

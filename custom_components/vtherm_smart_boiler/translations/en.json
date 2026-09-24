@@ -611,7 +611,9 @@
       "hand_back_value_missing": "The value method needs a hand-back value.",
       "hand_back_entity_missing": "The switch method needs the external control switch.",
       "hard_limits_out_of_order": "The highest setpoint must be above the lowest.",
-      "frost_release_not_above_limit": "Frost protection must end above the temperature where it starts."
+      "frost_release_not_above_limit": "Frost protection must end above the temperature where it starts.",
+      "hand_back_timeout_not_expiring": "The device's timeout hands back only with expiring writes; choose a value or a switch.",
+      "hand_back_value_out_of_range": "The hand-back value is outside what the setpoint entity accepts."
     },
     "abort": {
       "missing_signal": "A required signal is missing.",
@@ -868,6 +870,9 @@
       },
       "alarm_control_error": {
         "name": "Control: internal error"
+      },
+      "alarm_hand_back_failed": {
+        "name": "Control: hand-back failed"
       }
     },
     "switch": {
@@ -937,6 +942,9 @@
     },
     "blocked_control_error": {
       "message": "Control stopped after an internal error. Check the log, then switch control off and on again. Other reasons: {others}."
+    },
+    "blocked_timeout_needs_expiring_writes": {
+      "message": "The device's timeout hands back only with expiring writes: choose a hand-back value or a switch in the options. Other reasons: {others}."
     }
   },
   "issues": {

@@ -220,3 +220,21 @@ async def test_unconfigured_control_has_no_writer(hass: HomeAssistant) -> None:
     with pytest.raises(ValueError, match="not configured"):
         make_writer(hass, options())
     assert writer_services(options()) == frozenset()
+
+
+async def test_each_hand_back_step_is_tried_whatever_the_others_do(hass: HomeAssistant) -> None:
+    calls = record(hass, ("number", "set_value"))  # the heating switch's service is missing
+    writer = make_writer(
+        hass,
+        options(
+            write_path="entity",
+            setpoint_entity="number.flow",
+            ch_entity="switch.ch",
+            write_type="expiring",
+            hand_back="value",
+            hand_back_value=0,
+        ),
+    )
+    with pytest.raises(WriteError, match=r"switch\.turn_on"):
+        await writer.hand_back(full=True)
+    assert calls == [("number", "set_value", {"entity_id": "number.flow", "value": 0.0})]

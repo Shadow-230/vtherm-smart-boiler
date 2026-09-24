@@ -142,7 +142,8 @@ class Simulation:
         self.commands.gateway.append((now, "ch", on))
         if self.ignore_writes or not self.plant.override_active(now):
             return
-        self.plant.set_override(now, None, on, holds=self.plant.override_holds)
+        # CH= does not renew the control setpoint's one-minute vigilance: only CS= does.
+        self.plant.set_override(now, None, on, renew=False)
 
     def gateway_hot_water(self, now: float, value: object) -> None:
         """``HW=``: stored in the gateway's memory; the plugin must never send it."""

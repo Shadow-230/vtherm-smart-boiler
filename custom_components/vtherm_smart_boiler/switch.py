@@ -63,6 +63,7 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
         last = await self.async_get_last_state()
         if last is not None and last.state == STATE_ON:
             await self.control.async_set_enabled(True)
+        self.control.mark_restored()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         blockers = [

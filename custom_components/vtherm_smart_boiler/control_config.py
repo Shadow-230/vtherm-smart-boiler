@@ -25,6 +25,7 @@ from .core.limits import FlowLimits, FrostConfig, SeasonConfig
 from .core.loop import DEFAULT_OFF_SETPOINT, LoopConfig
 
 MINUTE = 60.0
+KEEPALIVE_S = 30.0
 
 
 class WritePath(StrEnum):
@@ -70,6 +71,7 @@ CONFIG_BLOCKERS = (
     "boiler_not_flow_setpoint",
     "no_setpoint_entity",
     "no_hand_back",
+    "timeout_needs_expiring_writes",
     "no_gateway",
     "no_mqtt_topic",
     "no_confirmed_setpoint",
@@ -214,6 +216,8 @@ def parse_control(
             min_on_s=_minutes(data, "min_on_min", 5.0),
             min_off_s=_minutes(data, "min_off_min", 5.0),
             max_switches_per_hour=int(data.get("max_switches_per_hour", 6)),
+            # An expiring heating override is repeated with the setpoint's keep-alive.
+            keepalive_s=KEEPALIVE_S if write_type is WriteType.EXPIRING else None,
         ),
         # A heating switch only for writes that do not wear: with persistent or unknown writes,
         # "off" is a low setpoint, so every write counts toward the daily cap.
@@ -270,6 +274,9 @@ def config_blockers(control: ControlOptions, installation: Installation) -> list
             control.hand_back is HandBack.SWITCH and not control.hand_back_entity
         ):
             found.append("no_hand_back")
+        elif control.hand_back is HandBack.TIMEOUT and control.write_type is not WriteType.EXPIRING:
+            # Only a lapsing value goes back on its own; any other would stay for good.
+            found.append("timeout_needs_expiring_writes")
     elif path is WritePath.OPENTHERM_GW and not control.gateway_id:
         found.append("no_gateway")
     elif path is WritePath.OTGW_MQTT and not (control.mqtt_top and control.mqtt_node):

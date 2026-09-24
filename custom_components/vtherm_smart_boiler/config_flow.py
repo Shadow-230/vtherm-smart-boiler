@@ -598,14 +598,37 @@ def _set_or_drop(target: dict[str, Any], user_input: dict[str, Any], keys: tuple
             target[key] = value
 
 
-def control_details_error(user_input: dict[str, Any]) -> dict[str, str]:
-    """Hand-back fields that the chosen hand-back method needs."""
+def control_details_error(
+    user_input: dict[str, Any], bounds: tuple[float | None, float | None] = (None, None)
+) -> dict[str, str]:
+    """What the chosen hand-back method needs; ``bounds``: what the setpoint entity accepts."""
     method = user_input.get("hand_back")
-    if method == HandBack.VALUE and user_input.get("hand_back_value") in (None, ""):
-        return {"hand_back_value": "hand_back_value_missing"}
+    value = user_input.get("hand_back_value")
+    if method == HandBack.VALUE:
+        if value in (None, ""):
+            return {"hand_back_value": "hand_back_value_missing"}
+        low, high = bounds
+        if (low is not None and value < low) or (high is not None and value > high):
+            return {"hand_back_value": "hand_back_value_out_of_range"}
     if method == HandBack.SWITCH and not user_input.get("hand_back_entity"):
         return {"hand_back_entity": "hand_back_entity_missing"}
+    if method == HandBack.TIMEOUT and user_input.get("write_type") != WriteType.EXPIRING:
+        # Only a value that lapses goes back on its own; any other would stay for good.
+        return {"hand_back": "hand_back_timeout_not_expiring"}
     return {}
+
+
+def _entity_bounds(state: Any) -> tuple[float | None, float | None]:
+    """The ``min`` and ``max`` a number or input_number entity accepts."""
+    if state is None:
+        return None, None
+    bounds: list[float | None] = []
+    for key in ("min", "max"):
+        try:
+            bounds.append(float(state.attributes[key]))
+        except KeyError, TypeError, ValueError:
+            bounds.append(None)
+    return bounds[0], bounds[1]
 
 
 # --- applying user input ----------------------------------------------------------------------
@@ -1056,7 +1079,8 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            errors = control_details_error(user_input)
+            state = self.hass.states.get(user_input["setpoint_entity"])
+            errors = control_details_error(user_input, _entity_bounds(state))
             if not errors:
                 apply_control_details(self.options, user_input)
                 return await self.async_step_control_curve()

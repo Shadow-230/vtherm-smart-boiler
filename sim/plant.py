@@ -120,17 +120,24 @@ class Plant:
     # --- the external controller --------------------------------------------------------
 
     def set_override(
-        self, t: float, setpoint: float | None, ch_enable: bool | None, holds: bool = False
+        self,
+        t: float,
+        setpoint: float | None,
+        ch_enable: bool | None,
+        holds: bool = False,
+        renew: bool = True,
     ) -> None:
         """An override from a controller; each call renews it. ``holds``: it never lapses (a
-        stored value, or an OTGW control setpoint below 8 °C)."""
+        stored value, or an OTGW control setpoint below 8 °C). ``renew=False``: a heating
+        on/off alone does not renew the setpoint override (as on an OTGW)."""
         if setpoint is not None:
             self.override_setpoint = setpoint
             self.override_at = t
         if ch_enable is not None:
             self.override_ch = ch_enable
-            self.override_at = t
-        if setpoint is not None or ch_enable is not None:
+            if renew:
+                self.override_at = t
+        if setpoint is not None or (ch_enable is not None and renew):
             self.override_holds = holds
 
     def clear_override(self) -> None:

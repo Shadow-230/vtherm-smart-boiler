@@ -163,6 +163,10 @@ def test_every_blocker_is_listed() -> None:
         (OTGW | {"write_path": "entity", "curve": {}, "topology": ""}, RADIATORS),
         (OTGW | {"gateway_id": "", "confirmed_entity": "", "topology": "monitor_mode"}, RADIATORS),
         (OTGW | {"write_path": "otgw_mqtt"}, RADIATORS),
+        (
+            OTGW | {"write_path": "entity", "setpoint_entity": "number.x", "hand_back": "timeout"},
+            RADIATORS,
+        ),
     ]
     two = Installation(Boiler(BoilerClass.READ_ONLY), (Circuit("a"), Circuit("b")))
     floor = Installation(
@@ -210,3 +214,39 @@ def test_a_heating_switch_only_with_writes_that_do_not_wear(
     options = parse_control(data, RADIATORS, None)
     # With wearing writes "off" is a low setpoint, so every write counts toward the daily cap.
     assert options.loop.ch_writes is switched
+
+
+@pytest.mark.parametrize(
+    ("write_type", "blocked"),
+    [("expiring", False), ("held", True), ("persistent", True), ("unknown", True)],
+)
+def test_a_timeout_hand_back_needs_writes_that_lapse(write_type: str, blocked: bool) -> None:
+    data = {
+        "write_path": "entity",
+        "setpoint_entity": "number.flow",
+        "write_type": write_type,
+        "hand_back": "timeout",
+        "confirmed_entity": "sensor.flow_setpoint",
+        "topology": "virtual",
+        "curve": CURVE,
+    }
+    blockers = config_blockers(parse_control(data, RADIATORS, None), RADIATORS)
+    # A value that never lapses would stay with the boiler for good.
+    assert ("timeout_needs_expiring_writes" in blockers) is blocked
+
+
+def test_an_expiring_heating_override_is_repeated_with_the_setpoint() -> None:
+    otgw = parse_control(OTGW, RADIATORS, None)
+    assert otgw.loop.switch_guard.keepalive_s == 30.0
+    held = parse_control(
+        {
+            "write_path": "entity",
+            "setpoint_entity": "number.flow",
+            "ch_entity": "switch.ch",
+            "write_type": "held",
+            "hand_back": "value",
+        },
+        RADIATORS,
+        None,
+    )
+    assert held.loop.switch_guard.keepalive_s is None  # the device keeps it

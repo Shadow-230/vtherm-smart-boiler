@@ -4,7 +4,8 @@ every exit, learning pauses, and the status the entities show.
 The step itself is pure (``core.loop``); this module only gathers its inputs, carries out its
 writes through the writer, and turns guard events and failures into alarms. The writer exists
 only while control is switched on. An internal error hands back and blocks control until the user
-switches it off and on again; unloading the entry and stopping Home Assistant hand back too.
+switches it off and on again; unloading the entry and stopping Home Assistant hand back too. A
+hand-back that fails is retried until it goes through, and says so; latches survive a restart.
 """
 
 from __future__ import annotations
@@ -23,13 +24,27 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .const import CONTROL_TICK_SECONDS
-from .control_config import AlarmReaction, CapReaction, ControlOptions, config_blockers
+from .control_config import (
+    AlarmReaction,
+    CapReaction,
+    ControlOptions,
+    HandBack,
+    WritePath,
+    config_blockers,
+)
 from .core.controller import CentralMode as ControlCentralMode
-from .core.controller import ControlInputs, ControlMode
-from .core.guards import GuardEvent, SetpointGuardState, WriteAction, WriteKind
+from .core.controller import ControlInputs, ControlMode, ControlState
+from .core.guards import (
+    GuardEvent,
+    SetpointGuardState,
+    WriteAction,
+    WriteKind,
+    setpoint_failed,
+    switch_failed,
+)
 from .core.learning import LearningState, ZoneLearning, plan_learning, release_all
 from .core.loop import LoopOutput, LoopState, loop_step
-from .core.readings import ZoneState
+from .core.readings import BoilerSnapshot, ZoneState
 from .core.signals import SIGNAL_SPECS, Signal
 from .transport.entities import read_temperature, read_weather_temperature
 from .transport.writers import WriteError, Writer, make_writer, writer_services
@@ -40,10 +55,10 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 DAY = 86400.0
-LINK_MAX_AGE_S = 600.0  # control needs the boiler's flow reported at least this recently
-CONFIRM_MAX_AGE_S = 600.0  # a read-back older than this is unknown
-LEARNING_TIMEOUT_S = 10.0
+LEARNING_TIMEOUT_S = 5.0
 LEARNING_RETRY_S = 60.0
+HAND_BACK_RETRY_S = 60.0
+RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control counts as off
 SMARTPI_DOMAIN = "vtherm_smartpi"
 SMARTPI_SERVICE = "set_smartpi_learning"
 # Blockers found while running, besides those of the configuration (translation keys).
@@ -63,6 +78,7 @@ class ControlAlarm(StrEnum):
     WRITE_IGNORED = "write_ignored"
     OUTSIDE_CHANGE = "outside_change"
     DAILY_CAP = "daily_cap"
+    HAND_BACK_FAILED = "hand_back_failed"
     CONTROL_ERROR = "control_error"
 
 
@@ -71,6 +87,8 @@ _EVENT_ALARM = {
     GuardEvent.OUTSIDE_CHANGE: ControlAlarm.OUTSIDE_CHANGE,
     GuardEvent.DAILY_CAP: ControlAlarm.DAILY_CAP,
 }
+# Alarms kept across a restart: they explain a latch that survives it.
+_KEPT_ALARMS = frozenset({ControlAlarm.OUTSIDE_CHANGE, ControlAlarm.CONTROL_ERROR})
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +119,7 @@ class _Session:
     learning: LearningState = field(default_factory=LearningState)
     alarms: set[ControlAlarm] = field(default_factory=set)
     failed: bool = False
+    failing: set[str] = field(default_factory=set)  # writes whose last attempt failed
 
 
 type WriterFactory = Callable[[HomeAssistant, ControlOptions], Writer]
@@ -127,8 +146,13 @@ class ControlUnit:
         self._published: ControlStatus | None = None
         self._last_change_at: float | None = None
         self._hand_back_at: float | None = None
+        self._hand_back_pending = False  # a hand-back failed and is retried until it goes through
+        self._hand_back_retry_at = 0.0
         self._learning_retry_at = 0.0
+        self._restored = False
+        self._started_at = dt_util.utcnow().timestamp()
         self._lock = asyncio.Lock()
+        self._tick_waiting = False
         self._listeners: list[Callable[[], None]] = []
         self._unsubs: list[CALLBACK_TYPE] = []
         self._stop_unsub: CALLBACK_TYPE | None = None
@@ -165,22 +189,38 @@ class ControlUnit:
             update()
 
     def stored(self) -> dict[str, Any]:
-        """What must survive a restart: recent wearing writes (daily cap) and paused zones."""
-        guard = self._session.loop.setpoint
+        """What must survive a restart: recent wearing writes (daily cap), paused zones, latches
+        and a hand-back still to be done."""
+        session = self._session
+        guard = session.loop.setpoint
         writes = list(guard.history) if self.options.loop.setpoint_guard.wears else []
-        return {"writes": writes, "paused": dict(self._session.learning.paused)}
+        return {
+            "writes": writes,
+            "paused": dict(session.learning.paused),
+            "latched": session.loop.control.latched,
+            "failed": session.failed,
+            "alarms": sorted(alarm.value for alarm in session.alarms & _KEPT_ALARMS),
+            "hand_back_pending": self._hand_back_pending,
+        }
 
     def restore(self, data: Mapping[str, Any]) -> None:
         try:
             writes = tuple(float(t) for t in data.get("writes", []))
             paused = {str(z): float(t) for z, t in dict(data.get("paused", {})).items()}
+            alarms = {ControlAlarm(a) for a in data.get("alarms", [])} & _KEPT_ALARMS
         except TypeError, ValueError:
             _LOGGER.warning("Ignoring unreadable stored control data")
             return
         self._session = _Session(
-            loop=LoopState(setpoint=SetpointGuardState(history=writes)),
+            loop=LoopState(
+                control=ControlState(latched=bool(data.get("latched", False))),
+                setpoint=SetpointGuardState(history=writes),
+            ),
             learning=LearningState(paused=paused, last_toggle=dict(paused)),
+            alarms=alarms,
+            failed=bool(data.get("failed", False)),
         )
+        self._hand_back_pending = bool(data.get("hand_back_pending", False))
 
     # --- lifecycle ------------------------------------------------------------------------
 
@@ -188,6 +228,7 @@ class ControlUnit:
         """Start the control clock and hand back when Home Assistant stops."""
         if not self.options.configured:
             return
+        self._started_at = dt_util.utcnow().timestamp()
         self._unsubs.append(
             async_track_time_interval(
                 self._hass, self._async_timer, timedelta(seconds=CONTROL_TICK_SECONDS)
@@ -196,6 +237,10 @@ class ControlUnit:
         self._stop_unsub = self._hass.bus.async_listen_once(
             EVENT_HOMEASSISTANT_STOP, self._async_ha_stop
         )
+
+    def mark_restored(self) -> None:
+        """The switch has restored the user's choice: control steps may run."""
+        self._restored = True
 
     async def _async_ha_stop(self, _event: Event) -> None:
         self._stop_unsub = None  # a one-time listener removes itself
@@ -221,10 +266,15 @@ class ControlUnit:
         self._coordinator.schedule_save()
 
     async def _async_timer(self, _now: datetime) -> None:
-        if self._lock.locked():
-            _LOGGER.debug("Control step skipped: the previous one is still running")
+        # At most one step waits while another runs: a long step delays the next one instead
+        # of dropping it, so a due keep-alive follows at once.
+        if self._tick_waiting:
             return
-        await self.async_tick()
+        self._tick_waiting = True
+        try:
+            await self.async_tick()
+        finally:
+            self._tick_waiting = False
 
     # --- switching ------------------------------------------------------------------------
 
@@ -245,6 +295,7 @@ class ControlUnit:
     async def async_set_enabled(self, enabled: bool, now: float | None = None) -> None:
         """Switch control on or off; switching off hands back at once."""
         async with self._lock:
+            self._restored = True
             if self._stopped or enabled == self.enabled:
                 return
             now = dt_util.utcnow().timestamp() if now is None else now
@@ -255,13 +306,15 @@ class ControlUnit:
         self._notify()
 
     def _end_session(self) -> None:
-        """A new session starts fresh; only the record of wearing writes and pauses carries on."""
+        """A new session starts fresh; only the record of wearing writes and pauses carries on
+        (a pending hand-back and its alarm belong to the unit, not the session)."""
         old = self._session
         self._session = _Session(
             loop=LoopState(setpoint=SetpointGuardState(history=old.loop.setpoint.history)),
             learning=old.learning,
         )
         self._writer = None
+        self._coordinator.schedule_save()
 
     # --- the step -------------------------------------------------------------------------
 
@@ -286,22 +339,32 @@ class ControlUnit:
                 await self._async_hand_back_now(now)
             except Exception:
                 _LOGGER.exception("Handing control back after an error failed")
+            self._coordinator.schedule_save()
             self._status = replace(
                 self._status,
                 blockers=(*self._status.blockers, "control_error"),
                 mode=ControlMode.NOT_ALLOWED,
-                alarms=frozenset(self._session.alarms),
+                alarms=frozenset(self._alarms()),
             )
 
     async def _async_step(self, now: float) -> None:
         session = self._session
+        if (
+            self._hand_back_pending
+            and not session.loop.control.controlling
+            and now >= self._hand_back_retry_at
+        ):
+            await self._async_try_hand_back(now, full=True)
+        if not self._restored and now - self._started_at < RESTORE_WAIT_S:
+            return  # the switch has not restored the user's choice yet: decide nothing
         blockers = self.blockers(now)
         if self.enabled and not blockers and self._writer is None:
             self._writer = self._writer_factory(self._hass, self.options)
         zones = self._coordinator.link.zones()
         self._unblock_daily_cap(now)
-        inputs = self._inputs(now, zones, blockers)
-        confirmed = self._confirmed(now)
+        snapshot = self._coordinator.transport.snapshot(now)
+        inputs = self._inputs(now, snapshot, zones, blockers)
+        confirmed = self._confirmed()
         session.loop, out = loop_step(session.loop, inputs, confirmed, self.options.loop)
         if out.hand_back:
             await self._async_hand_back_writes(now)
@@ -309,9 +372,18 @@ class ControlUnit:
             await self._async_writes(out, now)
         for event in out.events:
             session.alarms.add(_EVENT_ALARM[event])
+        if out.events:
+            self._coordinator.schedule_save()
         if session.loop.setpoint.confirmed_at is not None:
             session.alarms.discard(ControlAlarm.WRITE_IGNORED)
-        await self._async_learning(now, zones)
+        command = out.decision.command
+        await self._async_learning(
+            now,
+            snapshot,
+            zones,
+            None if command is None else command.setpoint,
+            out.heating_on,
+        )
         self._status = ControlStatus(
             configured=True,
             enabled=self.enabled,
@@ -325,19 +397,39 @@ class ControlUnit:
             last_change_at=self._last_change_at,
             hand_back_at=self._hand_back_at,
             hold_until=out.decision.hold_until,
-            alarms=frozenset(session.alarms),
+            alarms=frozenset(self._alarms()),
             paused_zones=tuple(sorted(session.learning.paused)),
         )
 
+    def _alarms(self) -> set[ControlAlarm]:
+        alarms = set(self._session.alarms)
+        if self._hand_back_pending:
+            alarms.add(ControlAlarm.HAND_BACK_FAILED)
+        return alarms
+
+    def _boiler_link(self, snapshot: BoilerSnapshot, now: float) -> bool:
+        """The boiler's own signals are there: flame and flow known.
+
+        Many sources (MQTT among them) report only on change, so a steady reading is not a stale
+        one; the age of the flow reading counts only when the user set a freshness limit for it.
+        """
+        flow = snapshot.reading(Signal.FLOW)
+        if snapshot.flag(Signal.FLAME) is None or flow.value is None:
+            return False
+        limit = self._coordinator.config.freshness.get(Signal.FLOW)
+        return limit is None or flow.is_fresh(now, limit)
+
     def _inputs(
-        self, now: float, zones: Sequence[ZoneState], blockers: tuple[str, ...]
+        self,
+        now: float,
+        snapshot: BoilerSnapshot,
+        zones: Sequence[ZoneState],
+        blockers: tuple[str, ...],
     ) -> ControlInputs:
         coordinator = self._coordinator
         config = coordinator.config
-        snapshot = coordinator.transport.snapshot(now)
-        link = snapshot.flag(Signal.FLAME) is not None and snapshot.reading(Signal.FLOW).is_fresh(
-            now, _capped(config.freshness.get(Signal.FLOW), LINK_MAX_AGE_S)
-        )
+        # A missing outdoor reading only moves the curve to the weather entity, so its age limit
+        # stays: a sensor stuck at a mild value must not keep the house in summer mode.
         outdoor_age = _capped(
             config.freshness.get(Signal.OUTDOOR), SIGNAL_SPECS[Signal.OUTDOOR].max_age_s
         )
@@ -353,7 +445,7 @@ class ControlUnit:
             blockers=blockers,
             hand_back_alarms=self._hand_back_alarms(),
             central_mode=_CENTRAL.get(central) if central is not None else None,
-            boiler_link=link,
+            boiler_link=self._boiler_link(snapshot, now),
             flame=snapshot.flag(Signal.FLAME),
             dhw=coordinator.dhw_now(snapshot),
             outdoor_sensor=snapshot.number(Signal.OUTDOOR, outdoor_age),
@@ -372,8 +464,8 @@ class ControlUnit:
                 if alarm.active and self.options.reaction(kind.value) is AlarmReaction.HAND_BACK
             ]
         for alarm in sorted(self._session.alarms):
-            if alarm is ControlAlarm.CONTROL_ERROR:
-                continue  # handled as a blocker
+            if alarm in (ControlAlarm.CONTROL_ERROR, ControlAlarm.HAND_BACK_FAILED):
+                continue  # a blocker, and a retry of its own
             if alarm is ControlAlarm.DAILY_CAP:
                 if self.options.cap_reaction is CapReaction.HAND_BACK:
                     active.append(alarm.value)
@@ -381,15 +473,14 @@ class ControlUnit:
                 active.append(alarm.value)
         return tuple(active)
 
-    def _confirmed(self, now: float) -> float | None:
-        """The setpoint the boiler reports back; ``None`` when unknown or stale."""
+    def _confirmed(self) -> float | None:
+        """The setpoint the boiler reports back; ``None`` when unknown. A read-back that reports
+        only on change keeps its value, so its age does not make it unknown."""
         entity = self.options.confirmed_entity
         if not entity:
             return None
         reading = read_temperature(self._hass, entity)
-        if reading.value is None or not reading.is_fresh(now, CONFIRM_MAX_AGE_S):
-            return None
-        return float(reading.value)
+        return None if reading.value is None else float(reading.value)
 
     # --- writes ---------------------------------------------------------------------------
 
@@ -399,23 +490,42 @@ class ControlUnit:
             if out.ch_enable is not None or out.setpoint is not None:
                 _LOGGER.error("Control asked for a write without a writer; nothing written")
             return
-        if out.ch_enable is not None:
-            await self._async_write(writer.write_heating(out.ch_enable), now, None)
-        if out.setpoint is not None:
-            await self._async_write(writer.write_setpoint(out.setpoint.value), now, out.setpoint)
+        loop = self._session.loop
+        # The setpoint first: a gateway applies heating on/off only while its setpoint override
+        # is in force. A write that fails is sent again at the next step.
+        if out.setpoint is not None and not await self._async_write(
+            "setpoint", writer.write_setpoint(out.setpoint.value), now, out.setpoint
+        ):
+            loop = replace(loop, setpoint=setpoint_failed(loop.setpoint))
+        if out.ch_enable is not None and not await self._async_write(
+            "heating", writer.write_heating(out.ch_enable), now, None
+        ):
+            loop = replace(loop, switch=switch_failed(loop.switch))
+        self._session.loop = loop
 
-    async def _async_write(self, call: Any, now: float, action: WriteAction | None) -> None:
+    async def _async_write(
+        self, kind: str, call: Any, now: float, action: WriteAction | None
+    ) -> bool:
+        session = self._session
         try:
             await call
         except WriteError as err:
-            _LOGGER.warning("A boiler write failed: %s", err)
-            self._session.alarms.add(ControlAlarm.WRITE_FAILED)
-            return
-        self._session.alarms.discard(ControlAlarm.WRITE_FAILED)
+            _LOGGER.warning("A boiler write failed; sent again at the next step: %s", err)
+            session.failing.add(kind)
+            session.alarms.add(ControlAlarm.WRITE_FAILED)
+            return False
+        session.failing.discard(kind)
+        if not session.failing:  # each kind of write clears only its own failure
+            session.alarms.discard(ControlAlarm.WRITE_FAILED)
+        if self._hand_back_pending:
+            # Control has the boiler again: the earlier hand-back no longer matters.
+            self._hand_back_pending = False
+            self._coordinator.schedule_save()
         if action is None or action.kind is not WriteKind.KEEPALIVE:
             self._last_change_at = now
         if action is not None and self.options.loop.setpoint_guard.wears:
             self._coordinator.schedule_save()
+        return True
 
     def _unblock_daily_cap(self, now: float) -> None:
         """A daily cap frees up as its 24-hour window moves on."""
@@ -433,30 +543,68 @@ class ControlUnit:
 
     async def _async_hand_back_writes(self, now: float) -> None:
         """The hand-back write, which no guard holds back, and the release of learning."""
-        writer = self._writer or self._writer_factory(self._hass, self.options)
-        try:
-            await writer.hand_back()
-        except WriteError as err:
-            _LOGGER.error("Handing control back failed: %s", err)
-            self._session.alarms.add(ControlAlarm.WRITE_FAILED)
+        await self._async_try_hand_back(now)
         self._hand_back_at = now
         self._last_change_at = now
+        self._coordinator.schedule_save()  # a latch set with it must survive a restart
         await self._async_release_learning(now, force=True)
+
+    async def _async_try_hand_back(self, now: float, full: bool = False) -> bool:
+        """One hand-back attempt; a failure is kept, shown and retried until it goes through.
+        ``full``: also clear what an earlier session may have set (a retry after a restart)."""
+        try:
+            writer = self._writer or self._writer_factory(self._hass, self.options)
+            await writer.hand_back(full=full)
+        except (WriteError, ValueError) as err:
+            _LOGGER.error("Handing control back failed; retrying every minute: %s", err)
+            self._hand_back_pending = True
+            self._hand_back_retry_at = now + HAND_BACK_RETRY_S
+            self._coordinator.schedule_save()
+            return False
+        if self._hand_back_pending:
+            self._hand_back_pending = False
+            self._coordinator.schedule_save()
+        self._count_wearing_hand_back(now)
+        return True
+
+    def _count_wearing_hand_back(self, now: float) -> None:
+        """A hand-back value written to a wearing setpoint wears it too: it counts toward the
+        daily cap, though nothing holds it back."""
+        options = self.options
+        if (
+            options.write_path is WritePath.ENTITY
+            and options.hand_back is HandBack.VALUE
+            and options.loop.setpoint_guard.wears
+        ):
+            loop = self._session.loop
+            guard = replace(loop.setpoint, history=(*loop.setpoint.history, now))
+            self._session.loop = replace(loop, setpoint=guard)
+            self._coordinator.schedule_save()
 
     async def _async_hand_back_now(self, now: float) -> None:
         """Hand back at once if control holds the boiler (unload, stop, error)."""
         loop = self._session.loop
         if loop.control.controlling:
             await self._async_hand_back_writes(now)
+            loop = self._session.loop
             control = replace(loop.control, controlling=False, command=None, decided_at=None)
             fresh = SetpointGuardState(history=loop.setpoint.history)
             self._session.loop = LoopState(control, fresh)
         else:
+            if self._hand_back_pending:
+                await self._async_try_hand_back(now, full=True)
             await self._async_release_learning(now, force=True)
 
     # --- learning pauses ------------------------------------------------------------------
 
-    async def _async_learning(self, now: float, zones: Sequence[ZoneState]) -> None:
+    async def _async_learning(
+        self,
+        now: float,
+        snapshot: BoilerSnapshot,
+        zones: Sequence[ZoneState],
+        heating_setpoint: float | None,
+        heating: bool | None,
+    ) -> None:
         if not (self.options.learning_pauses and self._session.loop.control.controlling):
             await self._async_release_learning(now)
             return
@@ -480,15 +628,15 @@ class ControlUnit:
                     foreign,
                 )
             )
-        snapshot = coordinator.transport.snapshot(now)
         plan = plan_learning(
             self._session.learning,
             learning_zones,
             coordinator.dhw_now(snapshot),
             snapshot.number(Signal.FLOW),
-            self._session.loop.setpoint.written,
+            heating_setpoint,  # the heating setpoint, not a low "off" value: no false swings
             now,
             self.options.learning,
+            heating,
         )
         state = plan.state
         for zone_id in plan.pause:
@@ -534,7 +682,7 @@ class ControlUnit:
 
 
 def _capped(configured: float | None, limit: float | None) -> float | None:
-    """A freshness limit for control: the user's, but never longer than ``limit``."""
+    """A freshness limit: the user's, but never longer than ``limit``."""
     if configured is None:
         return limit
     if limit is None:
