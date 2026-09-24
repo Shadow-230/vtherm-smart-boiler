@@ -301,3 +301,179 @@ async def test_switching_to_simple_can_restore_advanced_defaults(
     assert "monitor" not in entry.options
     menu = await hass.config_entries.options.async_init(entry_id)
     assert "level" in menu["menu_options"]
+
+
+def control_switch(hass: HomeAssistant, entry_id: str) -> str | None:
+    from homeassistant.helpers import entity_registry as er
+
+    return er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{entry_id}_control")
+
+
+async def options_step(hass: HomeAssistant, result: dict[str, Any], data: dict[str, Any]):
+    return await hass.config_entries.options.async_configure(result["flow_id"], data)
+
+
+async def open_control(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
+    menu = await hass.config_entries.options.async_init(entry_id)
+    assert "control" in menu["menu_options"]
+    return await options_step(hass, menu, {"next_step_id": "control"})
+
+
+async def test_control_through_the_gateway_at_the_simple_level(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    MockConfigEntry(domain="opentherm_gw", data={"id": "living_room_gw"}).add_to_hass(hass)
+    hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
+    entry_id = await create_entry(hass, entities, "simple")
+    result = await open_control(hass, entry_id)
+    assert result["step_id"] == "control"
+    result = await options_step(
+        hass,
+        result,
+        {
+            "write_path": "opentherm_gw",
+            "topology": "gateway_with_thermostat",
+            "confirmed_entity": "sensor.gw_control_setpoint",
+        },
+    )
+    assert result["step_id"] == "control_gateway"
+    result = await options_step(hass, result, {"gateway_id": "living_room_gw"})
+    assert result["step_id"] == "control_curve"
+    assert "exponent" not in result["data_schema"].schema  # advanced only
+    result = await options_step(
+        hass,
+        result,
+        {
+            "design_outdoor": -18,
+            "design_flow": 52,
+            "hard_min": 25,
+            "hard_max": 65,
+            "summer_threshold": 18,
+        },
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert control == {
+        "write_path": "opentherm_gw",
+        "topology": "gateway_with_thermostat",
+        "confirmed_entity": "sensor.gw_control_setpoint",
+        "gateway_id": "living_room_gw",
+        "curve": {"design_outdoor": -18, "design_flow": 52},
+        "hard_min": 25,
+        "hard_max": 65,
+        "summer_threshold": 18,
+    }
+    switch = control_switch(hass, entry_id)
+    assert switch is not None
+    assert hass.states.get(switch).state == "off"  # off by default
+
+
+async def test_control_with_an_entity_checks_the_hand_back(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    hass.states.async_set("number.boiler_flow", "45", {"unit_of_measurement": "°C"})
+    entry_id = await create_entry(hass, entities, "simple")
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.boiler_flow"},
+    )
+    assert result["step_id"] == "control_entity"
+    details = {"setpoint_entity": "number.boiler_flow", "write_type": "unknown"}
+    result = await options_step(hass, result, details | {"hand_back": "value"})
+    assert result["errors"] == {"hand_back_value": "hand_back_value_missing"}
+    result = await options_step(hass, result, details | {"hand_back": "switch"})
+    assert result["errors"] == {"hand_back_entity": "hand_back_entity_missing"}
+    result = await options_step(
+        hass, result, details | {"hand_back": "value", "hand_back_value": 0}
+    )
+    assert result["step_id"] == "control_curve"
+    curve = {"design_outdoor": -15, "design_flow": 50, "summer_threshold": 20}
+    result = await options_step(hass, result, curve | {"hard_min": 50, "hard_max": 40})
+    assert result["errors"] == {"hard_max": "hard_limits_out_of_order"}
+    result = await options_step(hass, result, curve | {"hard_min": 25, "hard_max": 60})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert control["hand_back"] == "value"
+    assert control["hand_back_value"] == 0
+    assert control["write_type"] == "unknown"
+
+
+async def test_control_at_the_advanced_level_and_back(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    entry_id = await create_entry(hass, entities, "advanced")
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {
+            "write_path": "otgw_mqtt",
+            "topology": "gateway_standalone",
+            "confirmed_entity": "sensor.fake_boiler_ch_setpoint",
+        },
+    )
+    assert result["step_id"] == "control_mqtt"
+    result = await options_step(hass, result, {"mqtt_top": "OTGW", "mqtt_node": "otgw-1"})
+    assert result["step_id"] == "control_curve"
+    result = await options_step(
+        hass,
+        result,
+        {
+            "design_outdoor": -15,
+            "design_flow": 55,
+            "hard_min": 25,
+            "hard_max": 70,
+            "summer_threshold": 20,
+            "room": 21,
+            "exponent": 1.25,
+            "offset": 1,
+            "ceiling_band": 8,
+            "frost_limit": 5,
+            "frost_release": 7,
+        },
+    )
+    assert result["step_id"] == "control_behaviour"
+    result = await options_step(hass, result, {"min_burn_min": 8, "daily_cap": 24})
+    assert result["step_id"] == "control_alarms"
+    assert result["data_schema"]({})["outside_change"] == "hand_back"  # the default
+    result = await options_step(hass, result, {"pressure_low": "hand_back"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    entry = hass.config_entries.async_get_entry(entry_id)
+    control = entry.options["control"]
+    assert control["curve"] == {
+        "design_outdoor": -15,
+        "design_flow": 55,
+        "room": 21,
+        "exponent": 1.25,
+        "offset": 1,
+    }
+    assert control["min_burn_min"] == 8
+    assert control["cap_reaction"] == "hold"
+    assert control["alarm_reactions"]["pressure_low"] == "hand_back"
+    assert control["alarm_reactions"]["outside_change"] == "hand_back"
+    assert entry.runtime_data.config.control.loop.control.anticycling.min_burn_s == 480.0
+
+    # Back to simple with defaults restored: only the simple control fields remain.
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "level"})
+    result = await options_step(hass, result, {"level": "simple", "restore_defaults": True})
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert "min_burn_min" not in control
+    assert "alarm_reactions" not in control
+    assert control["curve"] == {"design_outdoor": -15, "design_flow": 55}
+
+    # "No control" removes the section.
+    result = await open_control(hass, entry_id)
+    result = await options_step(hass, result, {"write_path": "none"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert "control" not in hass.config_entries.async_get_entry(entry_id).options
+    assert control_switch(hass, entry_id) is None  # its entities are removed too

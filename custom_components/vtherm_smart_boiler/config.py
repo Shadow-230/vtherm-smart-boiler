@@ -27,6 +27,14 @@ from .const import (
     ZONES,
 )
 from .control_config import ControlOptions, parse_control
+from .core.alarms import (
+    DEFAULT_FREQUENT_STARTS_PER_HOUR,
+    DEFAULT_UNSTABLE_BURNS_PER_DAY,
+    FLUE_GAS_CONDENSING_BAND,
+    PRESSURE_HIGH_BAND,
+    PRESSURE_LOW_BAND,
+    Band,
+)
 from .core.building import (
     InsulationClass,
     ThermalMass,
@@ -77,11 +85,23 @@ class ReferenceRoomConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class AlarmThresholds:
+    """Limits of the current alarms (advanced options)."""
+
+    pressure_low: Band = PRESSURE_LOW_BAND
+    pressure_high: Band = PRESSURE_HIGH_BAND
+    flue_gas: Band = FLUE_GAS_CONDENSING_BAND
+    starts_per_hour: int = DEFAULT_FREQUENT_STARTS_PER_HOUR
+    unstable_burns_per_day: int = DEFAULT_UNSTABLE_BURNS_PER_DAY
+
+
+@dataclass(frozen=True, slots=True)
 class MonitorConfig:
     monitor: MonitorOptions = field(default_factory=MonitorOptions)
     monitoring_days: float = 7.0
     near_room_k: float = DEFAULT_NEAR_ROOM_K
     foreign_heat_hold_s: float = DEFAULT_HOLD_S
+    alarms: AlarmThresholds = field(default_factory=AlarmThresholds)
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,6 +292,28 @@ def _monitor(data: Mapping[str, Any], boiler: Mapping[str, Any]) -> MonitorConfi
         monitoring_days=monitoring_days,
         near_room_k=float(data.get("near_room_k", DEFAULT_NEAR_ROOM_K)),
         foreign_heat_hold_s=float(data.get("foreign_heat_hold_min", DEFAULT_HOLD_S / 60.0)) * 60.0,
+        alarms=_alarm_thresholds(data),
+    )
+
+
+def _band(data: Mapping[str, Any], name: str, default: Band) -> Band:
+    warning = float(data.get(f"{name}_warning", default.warning))
+    alarm = float(data.get(f"{name}_alarm", default.alarm))
+    # The alarm limit lies beyond the warning limit, on the dangerous side.
+    if (alarm <= warning) if default.rising else (alarm >= warning):
+        raise ConfigError("alarm_limits_out_of_order", name)
+    return Band(warning, alarm, default.rising, default.hysteresis)
+
+
+def _alarm_thresholds(data: Mapping[str, Any]) -> AlarmThresholds:
+    return AlarmThresholds(
+        pressure_low=_band(data, "pressure_low", PRESSURE_LOW_BAND),
+        pressure_high=_band(data, "pressure_high", PRESSURE_HIGH_BAND),
+        flue_gas=_band(data, "flue_gas", FLUE_GAS_CONDENSING_BAND),
+        starts_per_hour=int(data.get("starts_per_hour_limit", DEFAULT_FREQUENT_STARTS_PER_HOUR)),
+        unstable_burns_per_day=int(
+            data.get("unstable_burns_limit", DEFAULT_UNSTABLE_BURNS_PER_DAY)
+        ),
     )
 
 

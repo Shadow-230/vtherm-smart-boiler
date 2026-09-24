@@ -154,3 +154,45 @@ def test_unusable_options(options: dict, code: str) -> None:
     with pytest.raises(ConfigError) as err:
         EntryConfig.from_options(options)
     assert err.value.code == code
+
+
+def test_alarm_thresholds_default_and_options() -> None:
+    from custom_components.vtherm_smart_boiler.core.alarms import (
+        DEFAULT_FREQUENT_STARTS_PER_HOUR,
+        PRESSURE_LOW_BAND,
+    )
+
+    defaults = EntryConfig.from_options(MINIMAL).monitor.alarms
+    assert defaults.pressure_low == PRESSURE_LOW_BAND
+    assert defaults.starts_per_hour == DEFAULT_FREQUENT_STARTS_PER_HOUR
+    options = MINIMAL | {
+        "monitor": {
+            "pressure_low_warning": 1.2,
+            "pressure_low_alarm": 0.9,
+            "pressure_high_warning": 2.2,
+            "pressure_high_alarm": 2.6,
+            "flue_gas_warning": 70,
+            "flue_gas_alarm": 90,
+            "starts_per_hour_limit": 8,
+            "unstable_burns_limit": 5,
+        }
+    }
+    alarms = EntryConfig.from_options(options).monitor.alarms
+    assert (alarms.pressure_low.warning, alarms.pressure_low.alarm) == (1.2, 0.9)
+    assert (alarms.pressure_high.warning, alarms.pressure_high.alarm) == (2.2, 2.6)
+    assert (alarms.flue_gas.warning, alarms.flue_gas.alarm) == (70.0, 90.0)
+    assert (alarms.starts_per_hour, alarms.unstable_burns_per_day) == (8, 5)
+
+
+@pytest.mark.parametrize(
+    "monitor",
+    [
+        {"pressure_low_warning": 0.8, "pressure_low_alarm": 0.9},
+        {"pressure_high_warning": 2.9, "pressure_high_alarm": 2.8},
+        {"flue_gas_warning": 100, "flue_gas_alarm": 90},
+    ],
+)
+def test_alarm_limits_must_be_in_order(monitor: dict) -> None:
+    with pytest.raises(ConfigError) as err:
+        EntryConfig.from_options(MINIMAL | {"monitor": monitor})
+    assert err.value.code == "alarm_limits_out_of_order"

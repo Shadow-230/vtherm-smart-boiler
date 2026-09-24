@@ -25,6 +25,7 @@ from .const import (
     BOILER,
     BUILDING,
     CIRCUITS,
+    CONTROL,
     DOMAIN,
     LEVEL,
     LEVEL_ADVANCED,
@@ -37,8 +38,25 @@ from .const import (
     WEATHER,
     ZONES,
 )
+from .control_config import (
+    DEFAULT_REACTIONS,
+    AlarmReaction,
+    CapReaction,
+    HandBack,
+    Topology,
+    WritePath,
+)
+from .core.alarms import (
+    DEFAULT_FREQUENT_STARTS_PER_HOUR,
+    DEFAULT_UNSTABLE_BURNS_PER_DAY,
+    FLUE_GAS_CONDENSING_BAND,
+    PRESSURE_HIGH_BAND,
+    PRESSURE_LOW_BAND,
+    AlarmKind,
+)
 from .core.building import InsulationClass, ThermalMass
 from .core.foreign_heat import SourceKind
+from .core.guards import WriteType
 from .core.installation import BoilerClass, CircuitControl, DhwType, EmitterType
 from .core.metrics import ModulationScale
 from .core.reference_room import Strategy
@@ -296,8 +314,298 @@ def monitor_schema(options: dict[str, Any]) -> vol.Schema:
             vol.Required(
                 "foreign_heat_hold_min", default=monitor.get("foreign_heat_hold_min", 60.0)
             ): _number(0, 720, 5, "min"),
+            **_limit(monitor, "pressure_low_warning", PRESSURE_LOW_BAND.warning, 0.3, 2.0, "bar"),
+            **_limit(monitor, "pressure_low_alarm", PRESSURE_LOW_BAND.alarm, 0.1, 2.0, "bar"),
+            **_limit(monitor, "pressure_high_warning", PRESSURE_HIGH_BAND.warning, 1.5, 4, "bar"),
+            **_limit(monitor, "pressure_high_alarm", PRESSURE_HIGH_BAND.alarm, 1.5, 4, "bar"),
+            **_limit(monitor, "flue_gas_warning", FLUE_GAS_CONDENSING_BAND.warning, 40, 200, "°C"),
+            **_limit(monitor, "flue_gas_alarm", FLUE_GAS_CONDENSING_BAND.alarm, 40, 200, "°C"),
+            vol.Required(
+                "starts_per_hour_limit",
+                default=monitor.get("starts_per_hour_limit", DEFAULT_FREQUENT_STARTS_PER_HOUR),
+            ): _number(2, 60, 1),
+            vol.Required(
+                "unstable_burns_limit",
+                default=monitor.get("unstable_burns_limit", DEFAULT_UNSTABLE_BURNS_PER_DAY),
+            ): _number(1, 100, 1),
         }
     )
+
+
+def _limit(
+    current: dict[str, Any], key: str, default: float | None, low: float, high: float, unit: str
+) -> dict[Any, Any]:
+    step = 0.1 if unit == "bar" else 1.0
+    return {vol.Required(key, default=current.get(key, default)): _number(low, high, step, unit)}
+
+
+# --- control ----------------------------------------------------------------------------------
+
+NO_CONTROL = "none"
+_SETPOINT_ENTITY = {"domain": ["number", "input_number"]}
+_ON_OFF_ENTITY = {"domain": ["switch", "input_boolean"]}
+_READ_BACK_ENTITY = {"domain": ["sensor", "number", "input_number"]}
+# Alarms whose reaction the user may choose (a reached daily cap has its own field; an internal
+# error always hands back).
+REACTION_ALARMS = (
+    *(kind.value for kind in AlarmKind),
+    "write_failed",
+    "write_ignored",
+    "outside_change",
+)
+# Control fields only the advanced level shows; at the simple level they keep their defaults.
+CONTROL_ADVANCED_KEYS = (
+    "room",
+    "exponent",
+    "offset",
+    "ceiling_band",
+    "fallback_setpoint",
+    "frost_limit",
+    "frost_release",
+    "count_threshold",
+    "power_threshold_kw",
+    "opening_threshold",
+    "min_burn_min",
+    "min_pause_min",
+    "max_starts_per_hour",
+    "min_on_min",
+    "min_off_min",
+    "max_switches_per_hour",
+    "ramp_k_per_min",
+    "decision_interval_min",
+    "min_change",
+    "daily_cap",
+    "cap_reaction",
+    "off_setpoint",
+    "learning_pauses",
+    "comfort_correction",
+    "alarm_reactions",
+)
+CURVE_KEYS = ("design_outdoor", "design_flow", "room", "exponent", "offset")
+
+
+def control_schema(options: dict[str, Any]) -> vol.Schema:
+    control = options.get(CONTROL, {})
+    paths = [NO_CONTROL, *(path.value for path in WritePath)]
+    return vol.Schema(
+        {
+            vol.Required("write_path", default=control.get("write_path", NO_CONTROL)): _select(
+                "write_path", paths
+            ),
+            _optional("topology", control): _select("topology", [t.value for t in Topology]),
+            _optional("confirmed_entity", control): _entity(_READ_BACK_ENTITY),
+        }
+    )
+
+
+def control_entity_schema(options: dict[str, Any]) -> vol.Schema:
+    control = options.get(CONTROL, {})
+    return vol.Schema(
+        {
+            vol.Required(
+                "setpoint_entity", default=control.get("setpoint_entity", vol.UNDEFINED)
+            ): _entity(_SETPOINT_ENTITY),
+            vol.Required(
+                "write_type", default=control.get("write_type", WriteType.UNKNOWN.value)
+            ): _select("write_type", [t.value for t in WriteType]),
+            _optional("ch_entity", control): _entity(_ON_OFF_ENTITY),
+            vol.Required("hand_back", default=control.get("hand_back", vol.UNDEFINED)): _select(
+                "hand_back", [h.value for h in HandBack]
+            ),
+            _optional("hand_back_value", control): _number(0, 90, 0.5, "°C"),
+            _optional("hand_back_entity", control): _entity(_ON_OFF_ENTITY),
+        }
+    )
+
+
+def control_gateway_schema(options: dict[str, Any], gateways: list[str]) -> vol.Schema:
+    control = options.get(CONTROL, {})
+    current = control.get("gateway_id") or (gateways[0] if len(gateways) == 1 else vol.UNDEFINED)
+    field: Any = (
+        selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=gateways, custom_value=True, mode=selector.SelectSelectorMode.DROPDOWN
+            )
+        )
+        if gateways
+        else str
+    )
+    return vol.Schema({vol.Required("gateway_id", default=current): field})
+
+
+def control_mqtt_schema(options: dict[str, Any]) -> vol.Schema:
+    control = options.get(CONTROL, {})
+    return vol.Schema(
+        {
+            vol.Required("mqtt_top", default=control.get("mqtt_top", "OTGW")): str,
+            vol.Required("mqtt_node", default=control.get("mqtt_node", vol.UNDEFINED)): str,
+        }
+    )
+
+
+def control_curve_schema(options: dict[str, Any]) -> vol.Schema:
+    control = options.get(CONTROL, {})
+    curve = control.get("curve", {})
+    design_outdoor = curve.get(
+        "design_outdoor", options.get(PARAMETERS, {}).get("design_outdoor", -15.0)
+    )
+    fields: dict[Any, Any] = {
+        vol.Required("design_outdoor", default=design_outdoor): _number(-40, 10, 0.5, "°C"),
+        # The curve is the user's to enter: no silent default for the design flow.
+        vol.Required(
+            "design_flow", default=curve.get("design_flow", vol.UNDEFINED)
+        ): _number(25, 80, 0.5, "°C"),
+        vol.Required("hard_min", default=control.get("hard_min", 25.0)): _number(
+            10, 50, 0.5, "°C"
+        ),
+        vol.Required("hard_max", default=control.get("hard_max", 70.0)): _number(
+            30, 90, 0.5, "°C"
+        ),
+        vol.Required(
+            "summer_threshold", default=control.get("summer_threshold", 20.0)
+        ): _number(10, 25, 0.5, "°C"),
+    }
+    if _advanced(options):
+        fields |= {
+            vol.Required("room", default=curve.get("room", 20.0)): _number(15, 25, 0.5, "°C"),
+            _optional("exponent", curve): _number(1.0, 2.0, 0.05),
+            vol.Required("offset", default=curve.get("offset", 0.0)): _number(-10, 10, 0.5, "K"),
+            vol.Required("ceiling_band", default=control.get("ceiling_band", 10.0)): _number(
+                0, 20, 0.5, "K"
+            ),
+            _optional("fallback_setpoint", control): _number(25, 80, 0.5, "°C"),
+            vol.Required("frost_limit", default=control.get("frost_limit", 5.0)): _number(
+                3, 10, 0.5, "°C"
+            ),
+            vol.Required("frost_release", default=control.get("frost_release", 7.0)): _number(
+                4, 12, 0.5, "°C"
+            ),
+        }
+    return vol.Schema(fields)
+
+
+def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
+    control = options.get(CONTROL, {})
+
+    def required(key: str, default: Any, field: Any) -> dict[Any, Any]:
+        return {vol.Required(key, default=control.get(key, default)): field}
+
+    return vol.Schema(
+        {
+            **required("min_burn_min", 5.0, _number(0, 30, 1, "min")),
+            **required("min_pause_min", 5.0, _number(0, 60, 1, "min")),
+            **required("max_starts_per_hour", 6, _number(1, 20, 1)),
+            **required("min_on_min", 5.0, _number(0, 30, 1, "min")),
+            **required("min_off_min", 5.0, _number(0, 60, 1, "min")),
+            **required("max_switches_per_hour", 6, _number(1, 20, 1)),
+            **required("ramp_k_per_min", 1.0, _number(0.1, 10, 0.1, "K/min")),
+            **required("decision_interval_min", 5.0, _number(1, 30, 1, "min")),
+            **required("min_change", 1.0, _number(0, 5, 0.5, "K")),
+            **required("daily_cap", 48, _number(1, 500, 1)),
+            **required(
+                "cap_reaction",
+                CapReaction.HOLD.value,
+                _select("cap_reaction", [c.value for c in CapReaction]),
+            ),
+            **required("off_setpoint", 10.0, _number(0, 30, 0.5, "°C")),
+            **required("count_threshold", 1, _number(1, 20, 1)),
+            _optional("power_threshold_kw", control): _number(0, 100, 0.1, "kW"),
+            _optional("opening_threshold", control): _number(0, 100, 1, "%"),
+            **required("learning_pauses", True, selector.BooleanSelector()),
+            **required("comfort_correction", True, selector.BooleanSelector()),
+        }
+    )
+
+
+def control_alarms_schema(options: dict[str, Any]) -> vol.Schema:
+    reactions = options.get(CONTROL, {}).get("alarm_reactions", {})
+    choices = [r.value for r in AlarmReaction]
+    return vol.Schema(
+        {
+            vol.Required(
+                alarm,
+                default=reactions.get(
+                    alarm, DEFAULT_REACTIONS.get(alarm, AlarmReaction.INFO).value
+                ),
+            ): _select("alarm_reaction", choices)
+            for alarm in REACTION_ALARMS
+        }
+    )
+
+
+def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    """The first control step: the write path, topology and read-back; "none" removes control."""
+    if user_input["write_path"] == NO_CONTROL:
+        options.pop(CONTROL, None)
+        return
+    control = dict(options.get(CONTROL, {}))
+    if control.get("write_path") != user_input["write_path"]:
+        for key in (
+            "setpoint_entity", "write_type", "ch_entity", "hand_back", "hand_back_value",
+            "hand_back_entity", "gateway_id", "mqtt_top", "mqtt_node",
+        ):  # fmt: skip
+            control.pop(key, None)
+    _set_or_drop(control, user_input, ("write_path", "topology", "confirmed_entity"))
+    options[CONTROL] = control
+
+
+def apply_control_details(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    control = dict(options.get(CONTROL, {}))
+    keys = (
+        "setpoint_entity", "write_type", "ch_entity", "hand_back", "hand_back_value",
+        "hand_back_entity", "gateway_id", "mqtt_top", "mqtt_node",
+    )  # fmt: skip
+    _set_or_drop(control, user_input, tuple(k for k in keys if k in user_input or k in control))
+    options[CONTROL] = control
+
+
+def apply_control_curve(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    control = dict(options.get(CONTROL, {}))
+    curve = dict(control.get("curve", {}))
+    shown = CURVE_KEYS if _advanced(options) else ("design_outdoor", "design_flow")
+    for key in shown:
+        value = user_input.get(key)
+        if value in (None, ""):
+            curve.pop(key, None)
+        else:
+            curve[key] = value
+    control["curve"] = curve
+    keys = ["hard_min", "hard_max", "summer_threshold"]
+    if _advanced(options):
+        keys += ["ceiling_band", "fallback_setpoint", "frost_limit", "frost_release"]
+    _set_or_drop(control, user_input, tuple(keys))
+    options[CONTROL] = control
+
+
+def apply_control_behaviour(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    control = dict(options.get(CONTROL, {}))
+    _set_or_drop(control, user_input, tuple(control_behaviour_schema(options).schema))
+    options[CONTROL] = control
+
+
+def apply_control_alarms(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    control = dict(options.get(CONTROL, {}))
+    control["alarm_reactions"] = {alarm: user_input[alarm] for alarm in REACTION_ALARMS}
+    options[CONTROL] = control
+
+
+def _set_or_drop(target: dict[str, Any], user_input: dict[str, Any], keys: tuple[Any, ...]) -> None:
+    for key in (str(k) for k in keys):
+        value = user_input.get(key)
+        if value in (None, ""):
+            target.pop(key, None)
+        else:
+            target[key] = value
+
+
+def control_details_error(user_input: dict[str, Any]) -> dict[str, str]:
+    """Hand-back fields that the chosen hand-back method needs."""
+    method = user_input.get("hand_back")
+    if method == HandBack.VALUE and user_input.get("hand_back_value") in (None, ""):
+        return {"hand_back_value": "hand_back_value_missing"}
+    if method == HandBack.SWITCH and not user_input.get("hand_back_entity"):
+        return {"hand_back_entity": "hand_back_entity_missing"}
+    return {}
 
 
 # --- applying user input ----------------------------------------------------------------------
@@ -413,6 +721,11 @@ def restore_advanced_defaults(options: dict[str, Any]) -> None:
             source.pop("threshold", None)
     options.get(REFERENCE_ROOM, {}).pop("switch_margin", None)
     options.pop(MONITOR, None)
+    control = options.get(CONTROL, {})
+    for key in CONTROL_ADVANCED_KEYS:
+        control.pop(key, None)
+    for key in ("room", "exponent", "offset"):
+        control.get("curve", {}).pop(key, None)
 
 
 ADVANCED_SIGNALS = tuple(key for key, (_f, simple) in SIGNAL_FIELDS.items() if not simple)
@@ -444,6 +757,11 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
         or any("threshold" in s for z in zones for s in z.get("foreign_heat", []))
         or "switch_margin" in options.get(REFERENCE_ROOM, {})
         or MONITOR in options
+        or any(key in options.get(CONTROL, {}) for key in CONTROL_ADVANCED_KEYS)
+        or any(
+            key in options.get(CONTROL, {}).get("curve", {})
+            for key in ("room", "exponent", "offset")
+        )
     )
 
 
@@ -680,7 +998,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         return "save"
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        menu = ["signals", "boiler", "circuit", "zones", "building", "reference"]
+        menu = ["signals", "boiler", "circuit", "zones", "building", "reference", "control"]
         if _advanced(self.options):
             menu.append("monitor")
         # At the simple level, say when hidden advanced settings are still active.
@@ -713,3 +1031,100 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         if problem is not None:
             return self.async_abort(reason=problem)
         return self.async_create_entry(data=self.options)
+
+    # --- control: path and topology → path details → curve and limits → (advanced) behaviour
+    # → alarm reactions → save
+
+    async def async_step_control(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            apply_control(self.options, user_input)
+            path = user_input["write_path"]
+            if path == NO_CONTROL:
+                return await self.async_step_save()
+            step = {
+                WritePath.ENTITY: "control_entity",
+                WritePath.OPENTHERM_GW: "control_gateway",
+                WritePath.OTGW_MQTT: "control_mqtt",
+            }[WritePath(path)]
+            return await self._goto(step)
+        return self.async_show_form(step_id="control", data_schema=control_schema(self.options))
+
+    async def async_step_control_entity(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            errors = control_details_error(user_input)
+            if not errors:
+                apply_control_details(self.options, user_input)
+                return await self.async_step_control_curve()
+        return self.async_show_form(
+            step_id="control_entity",
+            data_schema=control_entity_schema(self.options),
+            errors=errors,
+        )
+
+    async def async_step_control_gateway(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            apply_control_details(self.options, user_input)
+            return await self.async_step_control_curve()
+        gateways = sorted(
+            str(entry.data["id"])
+            for entry in self.hass.config_entries.async_entries("opentherm_gw")
+            if entry.data.get("id")
+        )
+        return self.async_show_form(
+            step_id="control_gateway", data_schema=control_gateway_schema(self.options, gateways)
+        )
+
+    async def async_step_control_mqtt(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            apply_control_details(self.options, user_input)
+            return await self.async_step_control_curve()
+        return self.async_show_form(
+            step_id="control_mqtt", data_schema=control_mqtt_schema(self.options)
+        )
+
+    async def async_step_control_curve(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if user_input["hard_min"] >= user_input["hard_max"]:
+                errors["hard_max"] = "hard_limits_out_of_order"
+            elif user_input.get("frost_limit", 5.0) >= user_input.get("frost_release", 7.0):
+                errors["frost_release"] = "frost_release_not_above_limit"
+            else:
+                apply_control_curve(self.options, user_input)
+                if _advanced(self.options):
+                    return await self.async_step_control_behaviour()
+                return await self.async_step_save()
+        return self.async_show_form(
+            step_id="control_curve", data_schema=control_curve_schema(self.options), errors=errors
+        )
+
+    async def async_step_control_behaviour(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            apply_control_behaviour(self.options, user_input)
+            return await self.async_step_control_alarms()
+        return self.async_show_form(
+            step_id="control_behaviour", data_schema=control_behaviour_schema(self.options)
+        )
+
+    async def async_step_control_alarms(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            apply_control_alarms(self.options, user_input)
+            return await self.async_step_save()
+        return self.async_show_form(
+            step_id="control_alarms", data_schema=control_alarms_schema(self.options)
+        )

@@ -43,9 +43,6 @@ from .const import (
     TICK_SECONDS,
 )
 from .core.alarms import (
-    FLUE_GAS_CONDENSING_BAND,
-    PRESSURE_HIGH_BAND,
-    PRESSURE_LOW_BAND,
     Alarm,
     AlarmKind,
     banded_alarm,
@@ -476,26 +473,27 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self, snapshot: BoilerSnapshot, now: float, zones: list[ZoneState]
     ) -> dict[AlarmKind, Alarm]:
         alarms: dict[AlarmKind, Alarm] = {}
+        limits = self.config.monitor.alarms
         pressure = snapshot.number(Signal.PRESSURE, self._max_age(Signal.PRESSURE))
         if snapshot.is_mapped(Signal.PRESSURE):
             for kind, band in (
-                (AlarmKind.PRESSURE_LOW, PRESSURE_LOW_BAND),
-                (AlarmKind.PRESSURE_HIGH, PRESSURE_HIGH_BAND),
+                (AlarmKind.PRESSURE_LOW, limits.pressure_low),
+                (AlarmKind.PRESSURE_HIGH, limits.pressure_high),
             ):
                 alarms[kind] = banded_alarm(kind, pressure, band, self._alarms.get(kind))
         if snapshot.is_mapped(Signal.FLUE_GAS) and self.config.installation.boiler.condensing:
             flue = snapshot.number(Signal.FLUE_GAS, self._max_age(Signal.FLUE_GAS))
             kind = AlarmKind.FLUE_GAS_HIGH
-            alarms[kind] = banded_alarm(
-                kind, flue, FLUE_GAS_CONDENSING_BAND, self._alarms.get(kind)
-            )
+            alarms[kind] = banded_alarm(kind, flue, limits.flue_gas, self._alarms.get(kind))
         flame = self.history.signal(Signal.FLAME)
         burns = [
             ClassifiedBurn(burn, BurnKind.UNKNOWN, 0.0)
             for burn in find_burns(flame, now - DAY, now)
         ]
-        alarms[AlarmKind.FREQUENT_STARTS] = frequent_starts(burns, now)
-        alarms[AlarmKind.UNSTABLE_IGNITION] = unstable_ignition(burns, now)
+        alarms[AlarmKind.FREQUENT_STARTS] = frequent_starts(burns, now, limits.starts_per_hour)
+        alarms[AlarmKind.UNSTABLE_IGNITION] = unstable_ignition(
+            burns, now, limit=limits.unstable_burns_per_day
+        )
         if snapshot.is_mapped(Signal.PUMP_RUNNING) or snapshot.is_mapped(Signal.CH_ACTIVE):
             pump = snapshot.flag(Signal.PUMP_RUNNING)
             if pump is None:

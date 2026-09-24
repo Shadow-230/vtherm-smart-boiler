@@ -67,7 +67,7 @@
           "shared_return": "C.o. i c.w.u. mają wspólny czujnik powrotu"
         },
         "data_description": {
-          "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Ta wersja wyłącznie monitoruje, cokolwiek wybierzesz; sterowanie użyje tego później.",
+          "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Sterowanie (eksperymentalne) wymaga klasy „Nastawa zasilania”; przy pozostałych wtyczka tylko monitoruje.",
           "dhw": "Brak, zasobnik albo kocioł dwufunkcyjny. Służy do interpretacji grzania c.w.u.",
           "condensing": "Kotły kondensacyjne dostają progi spalin dla kondensacji; dla innych bezwzględny alarm spalin jest wyłączony.",
           "boiler_min_power": "Najniższa moc grzewcza z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować.",
@@ -173,14 +173,30 @@
           "short_burn_min": "Krótkie palenie",
           "monitoring_days": "Okres monitorowania",
           "near_room_k": "Blisko temperatury pokoju",
-          "foreign_heat_hold_min": "Podtrzymanie obcego ciepła"
+          "foreign_heat_hold_min": "Podtrzymanie obcego ciepła",
+          "pressure_low_warning": "Ostrzeżenie: niskie ciśnienie",
+          "pressure_low_alarm": "Alarm: niskie ciśnienie",
+          "pressure_high_warning": "Ostrzeżenie: wysokie ciśnienie",
+          "pressure_high_alarm": "Alarm: wysokie ciśnienie",
+          "flue_gas_warning": "Ostrzeżenie: spaliny",
+          "flue_gas_alarm": "Alarm: spaliny",
+          "starts_per_hour_limit": "Częste zapłony",
+          "unstable_burns_limit": "Niestabilny zapłon"
         },
         "data_description": {
           "condensing_return": "Powrót poniżej tej wartości liczy się jako kondensacja, w °C. Domyślnie 55 °C.",
           "short_burn_min": "Palenia krótsze niż ta wartość liczą się jako krótkie, w minutach. Domyślnie 10.",
           "monitoring_days": "Dni danych przed werdyktem, a później przed możliwością włączenia sterowania. Domyślnie 7; krócej nie można.",
           "near_room_k": "Woda w tej odległości od temperatury pokoju oznacza brak ciepłej wody, w K. Domyślnie 3.",
-          "foreign_heat_hold_min": "Jak długo pokój nadal liczy się jako ogrzany po wyłączeniu źródła, w minutach. Domyślnie 60."
+          "foreign_heat_hold_min": "Jak długo pokój nadal liczy się jako ogrzany po wyłączeniu źródła, w minutach. Domyślnie 60.",
+          "pressure_low_warning": "Ciśnienie poniżej tej wartości daje ostrzeżenie, w barach. Domyślnie 1,0. Weź wartość z instrukcji kotła.",
+          "pressure_low_alarm": "Ciśnienie poniżej tej wartości daje alarm, w barach. Domyślnie 0,7. Musi być niższe od ostrzeżenia.",
+          "pressure_high_warning": "Ciśnienie powyżej tej wartości daje ostrzeżenie, w barach. Domyślnie 2,5.",
+          "pressure_high_alarm": "Ciśnienie powyżej tej wartości daje alarm, w barach. Domyślnie 2,8, poniżej typowego zaworu bezpieczeństwa 3 bar. Musi być wyższe od ostrzeżenia.",
+          "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C.",
+          "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
+          "starts_per_hour_limit": "Więcej zapłonów w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12.",
+          "unstable_burns_limit": "Więcej niż tyle spalań krótszych niż minuta w ciągu doby daje ostrzeżenie. Domyślnie 10."
         }
       }
     },
@@ -202,7 +218,9 @@
       "reference_zone_unknown": "Wybrana strefa odniesienia nie jest jedną ze stref.",
       "duplicate_circuit": "Dwa obiegi mają tę samą nazwę.",
       "duplicate_zone": "Strefa jest podana dwa razy.",
-      "no_circuit": "Potrzebny jest co najmniej jeden obieg."
+      "no_circuit": "Potrzebny jest co najmniej jeden obieg.",
+      "invalid_control": "Ustawień sterowania nie da się użyć.",
+      "alarm_limits_out_of_order": "Próg alarmu musi leżeć za progiem ostrzeżenia."
     }
   },
   "options": {
@@ -219,7 +237,8 @@
           "reference": "Pokój odniesienia",
           "monitor": "Progi monitora",
           "level": "Poziom szczegółowości",
-          "level_hidden": "Poziom szczegółowości (aktywne są ukryte ustawienia zaawansowane)"
+          "level_hidden": "Poziom szczegółowości (aktywne są ukryte ustawienia zaawansowane)",
+          "control": "Sterowanie (eksperymentalne)"
         }
       },
       "level": {
@@ -288,7 +307,7 @@
           "shared_return": "C.o. i c.w.u. mają wspólny czujnik powrotu"
         },
         "data_description": {
-          "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Ta wersja wyłącznie monitoruje, cokolwiek wybierzesz; sterowanie użyje tego później.",
+          "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Sterowanie (eksperymentalne) wymaga klasy „Nastawa zasilania”; przy pozostałych wtyczka tylko monitoruje.",
           "dhw": "Brak, zasobnik albo kocioł dwufunkcyjny. Służy do interpretacji grzania c.w.u.",
           "condensing": "Kotły kondensacyjne dostają progi spalin dla kondensacji; dla innych bezwzględny alarm spalin jest wyłączony.",
           "boiler_min_power": "Najniższa moc grzewcza z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować.",
@@ -394,14 +413,192 @@
           "short_burn_min": "Krótkie palenie",
           "monitoring_days": "Okres monitorowania",
           "near_room_k": "Blisko temperatury pokoju",
-          "foreign_heat_hold_min": "Podtrzymanie obcego ciepła"
+          "foreign_heat_hold_min": "Podtrzymanie obcego ciepła",
+          "pressure_low_warning": "Ostrzeżenie: niskie ciśnienie",
+          "pressure_low_alarm": "Alarm: niskie ciśnienie",
+          "pressure_high_warning": "Ostrzeżenie: wysokie ciśnienie",
+          "pressure_high_alarm": "Alarm: wysokie ciśnienie",
+          "flue_gas_warning": "Ostrzeżenie: spaliny",
+          "flue_gas_alarm": "Alarm: spaliny",
+          "starts_per_hour_limit": "Częste zapłony",
+          "unstable_burns_limit": "Niestabilny zapłon"
         },
         "data_description": {
           "condensing_return": "Powrót poniżej tej wartości liczy się jako kondensacja, w °C. Domyślnie 55 °C.",
           "short_burn_min": "Palenia krótsze niż ta wartość liczą się jako krótkie, w minutach. Domyślnie 10.",
           "monitoring_days": "Dni danych przed werdyktem, a później przed możliwością włączenia sterowania. Domyślnie 7; krócej nie można.",
           "near_room_k": "Woda w tej odległości od temperatury pokoju oznacza brak ciepłej wody, w K. Domyślnie 3.",
-          "foreign_heat_hold_min": "Jak długo pokój nadal liczy się jako ogrzany po wyłączeniu źródła, w minutach. Domyślnie 60."
+          "foreign_heat_hold_min": "Jak długo pokój nadal liczy się jako ogrzany po wyłączeniu źródła, w minutach. Domyślnie 60.",
+          "pressure_low_warning": "Ciśnienie poniżej tej wartości daje ostrzeżenie, w barach. Domyślnie 1,0. Weź wartość z instrukcji kotła.",
+          "pressure_low_alarm": "Ciśnienie poniżej tej wartości daje alarm, w barach. Domyślnie 0,7. Musi być niższe od ostrzeżenia.",
+          "pressure_high_warning": "Ciśnienie powyżej tej wartości daje ostrzeżenie, w barach. Domyślnie 2,5.",
+          "pressure_high_alarm": "Ciśnienie powyżej tej wartości daje alarm, w barach. Domyślnie 2,8, poniżej typowego zaworu bezpieczeństwa 3 bar. Musi być wyższe od ostrzeżenia.",
+          "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C.",
+          "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
+          "starts_per_hour_limit": "Więcej zapłonów w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12.",
+          "unstable_burns_limit": "Więcej niż tyle spalań krótszych niż minuta w ciągu doby daje ostrzeżenie. Domyślnie 10."
+        }
+      },
+      "control": {
+        "title": "Sterowanie (eksperymentalne)",
+        "description": "Jak wtyczka zapisuje do kotła nastawę zasilania. Sterowanie pozostaje wyłączone, dopóki go nie włączysz, i działa dopiero po okresie monitorowania. Wybierz „Bez sterowania”, żeby tylko monitorować.",
+        "data": {
+          "write_path": "Ścieżka zapisu",
+          "topology": "Podłączenie bramki",
+          "confirmed_entity": "Odczyt zwrotny nastawy"
+        },
+        "data_description": {
+          "write_path": "Bez sterowania (domyślnie); wybrana przez ciebie encja do zapisu, np. liczba EMS-ESP albo ESPHome OpenTherm; bramka OpenTherm Gateway przez integrację OpenTherm Gateway w Home Assistant; albo polecenia MQTT firmware OTGW. Wybierz ścieżkę, którą naprawdę oferuje twój interfejs kotła: zła oznacza zapisy, które się nie udają albo trafiają donikąd.",
+          "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Tryb monitora: bramka tylko słucha i sterowanie jest niemożliwe. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki.",
+          "confirmed_entity": "Encja, która pokazuje nastawę odebraną przez kocioł, np. czujnik nastawy sterowania bramki. Wymagana: każdy zapis jest z nią porównywany, a zapis zignorowany przez kocioł albo nadpisany przez inny sterownik zostaje zgłoszony. Wybranie wartości, którą zapisujesz, zamiast odczytu z kotła ukrywa oba przypadki."
+        }
+      },
+      "control_entity": {
+        "title": "Encja do zapisu",
+        "description": "Encja, która przyjmuje nastawę zasilania, i sposób oddawania sterowania.",
+        "data": {
+          "setpoint_entity": "Encja nastawy",
+          "write_type": "Typ zapisu",
+          "ch_entity": "Przełącznik grzania",
+          "hand_back": "Sposób oddania sterowania",
+          "hand_back_value": "Wartość oddania",
+          "hand_back_entity": "Przełącznik sterowania zewnętrznego"
+        },
+        "data_description": {
+          "setpoint_entity": "Liczba (number albo input_number), która ustawia temperaturę zasilania kotła.",
+          "write_type": "Wygasający: urządzenie porzuca wartość, jeśli nie jest powtarzana; jest powtarzana co 30 s. Trwały: zapisywany w pamięci kotła, a każdy zapis ją zużywa; zapis tylko przy zmianie o co najmniej minimalną zmianę i w granicach dziennego limitu. Trzymany: urządzenie zachowuje wartość i samo ją przekazuje; zapis tylko przy zmianie. Nieznany (domyślnie) liczy się jako trwały. Wygasający na urządzeniu, które zapisuje każdą wartość do pamięci, zapisywałby ją co 30 s i szybko ją zużył.",
+          "ch_entity": "Opcjonalny. Przełącznik, który włącza i wyłącza grzanie. Bez niego „wyłącz” jest zapisywane jako niska nastawa.",
+          "hand_back": "Jak sterowanie wraca do kotła przy każdym wyjściu: zapis wartości oddania; zaprzestanie zapisów, po którym przejmuje własny limit czasu urządzenia (tylko dla zapisów wygasających); albo wyłączenie przełącznika, który włącza sterowanie zewnętrzne. Wymagany; bez niego sterowania nie da się włączyć.",
+          "hand_back_value": "Nastawa zapisywana przy oddaniu sterowania, dla sposobu „wartość”: ta, której kocioł używa sam, albo 0, jeśli to oddaje mu sterowanie. Wymagana dla sposobu „wartość”.",
+          "hand_back_entity": "Dla sposobu „przełącznik”: przełącznik, który włącza sterowanie zewnętrzne. Jest włączany na początku sterowania i wyłączany przy oddaniu."
+        }
+      },
+      "control_gateway": {
+        "title": "OpenTherm Gateway",
+        "description": "Bramka skonfigurowana w integracji OpenTherm Gateway w Home Assistant.",
+        "data": {
+          "gateway_id": "Identyfikator bramki"
+        },
+        "data_description": {
+          "gateway_id": "Identyfikator nadany bramce w integracji OpenTherm Gateway. Nastawa sterowania jest powtarzana co 30 s; przy oddaniu sterowania ustawiana na 0, co oddaje sterowanie termostatowi, a bez termostatu kończy grzanie."
+        }
+      },
+      "control_mqtt": {
+        "title": "Firmware OTGW przez MQTT",
+        "description": "Polecenia są publikowane w <prefiks>/set/<węzeł>/<polecenie>.",
+        "data": {
+          "mqtt_top": "Prefiks tematu",
+          "mqtt_node": "Nazwa węzła"
+        },
+        "data_description": {
+          "mqtt_top": "Prefiks tematów MQTT ustawiony w firmware OTGW. Domyślnie OTGW.",
+          "mqtt_node": "Nazwa węzła ustawiona w firmware OTGW. Zły prefiks albo nazwa węzła wysyła polecenia donikąd; odczyt zwrotny zgłosi je wtedy jako zignorowane."
+        }
+      },
+      "control_curve": {
+        "title": "Krzywa grzewcza i limity",
+        "description": "Temperatura zasilania potrzebna domowi przy każdej temperaturze zewnętrznej i limity, których żadna nastawa nie przekroczy.",
+        "data": {
+          "design_outdoor": "Projektowa temperatura zewnętrzna",
+          "design_flow": "Projektowa temperatura zasilania",
+          "hard_min": "Najniższa nastawa zasilania",
+          "hard_max": "Najwyższa nastawa zasilania",
+          "summer_threshold": "Próg lata",
+          "room": "Temperatura pokojowa krzywej",
+          "exponent": "Wykładnik krzywej",
+          "offset": "Przesunięcie krzywej",
+          "ceiling_band": "Zakres korekty",
+          "fallback_setpoint": "Nastawa awaryjna",
+          "frost_limit": "Ochrona przed mrozem poniżej",
+          "frost_release": "Ochrona przed mrozem do"
+        },
+        "data_description": {
+          "design_outdoor": "Najniższa temperatura zewnętrzna, na którą zaprojektowano ogrzewanie, w °C. Domyślnie: projektowa temperatura zewnętrzna budynku albo −15 °C.",
+          "design_flow": "Temperatura zasilania potrzebna przy projektowej temperaturze zewnętrznej, w °C, np. wartość z krzywej ustawionej w kotle. Wymagana; nie ma wartości domyślnej. Za wysoka marnuje gaz i powoduje taktowanie palnika; za niska zostawia chłodne pokoje w silny mróz.",
+          "hard_min": "Żadna nastawa poniżej tej wartości, w °C. Domyślnie 25 °C.",
+          "hard_max": "Żadna nastawa powyżej tej wartości, cokolwiek wyliczy krzywa lub korekta, w °C. Domyślnie 70 °C. Ogrzewanie podłogowe wymaga też maksymalnego zasilania swojego obiegu.",
+          "summer_threshold": "Powyżej tej efektywnej temperatury zewnętrznej sterowanie nie grzeje, w °C. Domyślnie 20 °C.",
+          "room": "Temperatura pokojowa, dla której zbudowana jest krzywa, w °C. Domyślnie 20 °C.",
+          "exponent": "Jak wygina się krzywa. Puste pole dobiera go według grzejników: grzejniki 1,3, konwektory 1,4, podłogówka 1,1.",
+          "offset": "Przesuwa całą krzywą w górę lub w dół, w K. Domyślnie 0.",
+          "ceiling_band": "Jak wysoko ponad krzywą może sięgnąć korekta komfortu, w K. Domyślnie 10 K; 0 w praktyce wyłącza korektę.",
+          "fallback_setpoint": "Nastawa używana, gdy temperatura zewnętrzna jest nieznana, w °C. Puste pole: krzywa przy 0 °C na zewnątrz.",
+          "frost_limit": "Każda strefa chłodniejsza niż ta wartość uruchamia grzanie bez względu na inne warunki, w °C. Domyślnie 5 °C.",
+          "frost_release": "Ochrona przed mrozem kończy się, gdy każda strefa przekroczy tę wartość, w °C. Domyślnie 7 °C."
+        }
+      },
+      "control_behaviour": {
+        "title": "Zachowanie sterowania",
+        "description": "Ochrona przed taktowaniem, strażnicy zapisu i pauzy nauki. Każda wartość domyślna jest tą ostrożną.",
+        "data": {
+          "min_burn_min": "Minimalne spalanie",
+          "min_pause_min": "Minimalna przerwa",
+          "max_starts_per_hour": "Zapłony na godzinę",
+          "min_on_min": "Minimalny czas włączenia",
+          "min_off_min": "Minimalny czas wyłączenia",
+          "max_switches_per_hour": "Przełączenia na godzinę",
+          "ramp_k_per_min": "Rampa nastawy",
+          "decision_interval_min": "Odstęp decyzji",
+          "min_change": "Minimalna zmiana",
+          "daily_cap": "Dzienny limit zapisów",
+          "cap_reaction": "Po osiągnięciu limitu",
+          "off_setpoint": "Nastawa „wyłączone”",
+          "count_threshold": "Strefy wołające",
+          "power_threshold_kw": "Moc wołająca",
+          "opening_threshold": "Otwarcie zaworów wołające",
+          "learning_pauses": "Pauzuj naukę stref",
+          "comfort_correction": "Korekta komfortu"
+        },
+        "data_description": {
+          "min_burn_min": "Po zapłonie palnik pracuje co najmniej tyle, w minutach. Domyślnie 5. Krócej pozwala kotłowi taktować.",
+          "min_pause_min": "Po zgaśnięciu palnik pozostaje wyłączony co najmniej tyle, w minutach. Domyślnie 5. Ochrona przed mrozem nie jest wstrzymywana.",
+          "max_starts_per_hour": "Największa liczba zapłonów, jaką sterowanie może wywołać w ciągu godziny. Domyślnie 6.",
+          "min_on_min": "Włączone grzanie pozostaje włączone co najmniej tyle, w minutach. Domyślnie 5.",
+          "min_off_min": "Wyłączone grzanie pozostaje wyłączone co najmniej tyle, w minutach. Domyślnie 5.",
+          "max_switches_per_hour": "Największa liczba włączeń i wyłączeń grzania w ciągu godziny. Domyślnie 6.",
+          "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
+          "decision_interval_min": "Jak często nastawa jest wyznaczana na nowo, w minutach. Domyślnie 5.",
+          "min_change": "Najmniejsza zmiana nastawy zapisywana przy typie zapisu trwałym lub nieznanym, w K. Domyślnie 1. Mniejsza szybciej zużywa pamięć kotła.",
+          "daily_cap": "Największa liczba zapisów na dobę przy typie zapisu trwałym lub nieznanym. Domyślnie 48.",
+          "cap_reaction": "Trzymaj (domyślnie): zachowaj ostatnią wartość i zgłoś alarm. Oddaj: zwróć sterowanie kotłowi.",
+          "off_setpoint": "Zapisywana jako „wyłączone”, gdy nie ma przełącznika grzania, w °C. Domyślnie 10 °C.",
+          "count_threshold": "Grzanie jest potrzebne, gdy o ciepło woła co najmniej tyle stref. Domyślnie 1.",
+          "power_threshold_kw": "Opcjonalnie: grzanie jest potrzebne, gdy moc wołających stref sumuje się do tej wartości, w kW.",
+          "opening_threshold": "Opcjonalnie: grzanie jest potrzebne, gdy otwarcia zaworów stref sumują się do tej wartości, w %.",
+          "learning_pauses": "Wstrzymuj naukę SmartPI podczas grzania ciepłej wody, gdy strefę grzeje obce źródło i przy dużych wahaniach temperatury wody, żeby nie uczyła się tego, co zrobił kocioł. Domyślnie włączone.",
+          "comfort_correction": "Podnoś nastawę o krok, gdy zawór strefy jest w pełni otwarty, a pokój nie osiąga nastawy, w granicach zakresu korekty; obniżaj ją, gdy wszystkie strefy są zaspokojone. Domyślnie włączone."
+        }
+      },
+      "control_alarms": {
+        "title": "Reakcje na alarmy",
+        "description": "Co robi sterowanie, gdy alarm jest aktywny: tylko informuje albo oddaje sterowanie kotłowi, dopóki nie wyłączysz i nie włączysz go ponownie.",
+        "data": {
+          "pressure_low": "Niskie ciśnienie",
+          "pressure_high": "Wysokie ciśnienie",
+          "flue_gas_high": "Wysoka temperatura spalin",
+          "frequent_starts": "Częste zapłony",
+          "unstable_ignition": "Niestabilny zapłon",
+          "pressure_falling": "Spadające ciśnienie",
+          "flue_gas_rising": "Rosnąca temperatura spalin",
+          "hysteresis_drift": "Dryf histerezy",
+          "low_flow": "Brak przepływu",
+          "write_failed": "Zapis nieudany",
+          "write_ignored": "Kocioł ignoruje nastawę",
+          "outside_change": "Nastawa zmieniona z zewnątrz"
+        },
+        "data_description": {
+          "pressure_low": "Domyślnie: tylko informacja.",
+          "pressure_high": "Domyślnie: tylko informacja.",
+          "flue_gas_high": "Domyślnie: tylko informacja.",
+          "frequent_starts": "Domyślnie: tylko informacja.",
+          "unstable_ignition": "Domyślnie: tylko informacja.",
+          "pressure_falling": "Domyślnie: tylko informacja.",
+          "flue_gas_rising": "Domyślnie: tylko informacja.",
+          "hysteresis_drift": "Domyślnie: tylko informacja.",
+          "low_flow": "Domyślnie: tylko informacja.",
+          "write_failed": "Domyślnie: tylko informacja.",
+          "write_ignored": "Domyślnie: tylko informacja.",
+          "outside_change": "Domyślnie: oddaj — do kotła zapisuje też inny sterownik, a wtyczka z nim nie walczy."
         }
       }
     },
@@ -410,7 +607,11 @@
       "fixed_temperature_missing": "Obieg pasywny stały potrzebuje swojej temperatury stałej.",
       "foreign_heat_unsupported": "Źródłem ciepła mogą być tylko przełączniki, czujniki binarne oraz czujniki mocy lub temperatury.",
       "temperature_threshold_missing": "Źródło temperatury potrzebuje progu temperatury (poziom zaawansowany).",
-      "reference_zone_unknown": "Wybierz jedną ze skonfigurowanych stref."
+      "reference_zone_unknown": "Wybierz jedną ze skonfigurowanych stref.",
+      "hand_back_value_missing": "Sposób „wartość” wymaga wartości oddania.",
+      "hand_back_entity_missing": "Sposób „przełącznik” wymaga przełącznika sterowania zewnętrznego.",
+      "hard_limits_out_of_order": "Najwyższa nastawa musi być wyższa od najniższej.",
+      "frost_release_not_above_limit": "Ochrona przed mrozem musi kończyć się powyżej temperatury, przy której się zaczyna."
     },
     "abort": {
       "missing_signal": "Brakuje wymaganego sygnału.",
@@ -423,7 +624,9 @@
       "reference_zone_unknown": "Wybrana strefa odniesienia nie jest jedną ze stref.",
       "duplicate_circuit": "Dwa obiegi mają tę samą nazwę.",
       "duplicate_zone": "Strefa jest podana dwa razy.",
-      "no_circuit": "Potrzebny jest co najmniej jeden obieg."
+      "no_circuit": "Potrzebny jest co najmniej jeden obieg.",
+      "invalid_control": "Ustawień sterowania nie da się użyć.",
+      "alarm_limits_out_of_order": "Próg alarmu musi leżeć za progiem ostrzeżenia."
     }
   },
   "selector": {
@@ -489,6 +692,49 @@
         "largest_deficit": "Największy deficyt",
         "chosen_zone": "Wybrana strefa",
         "average": "Średnia"
+      }
+    },
+    "write_path": {
+      "options": {
+        "none": "Bez sterowania",
+        "entity": "Encja do zapisu",
+        "opentherm_gw": "OpenTherm Gateway (integracja OpenTherm Gateway)",
+        "otgw_mqtt": "Firmware OTGW przez MQTT"
+      }
+    },
+    "topology": {
+      "options": {
+        "gateway_with_thermostat": "Bramka z termostatem",
+        "gateway_standalone": "Bramka bez termostatu (samodzielna)",
+        "monitor_mode": "Bramka w trybie monitora",
+        "virtual": "Wirtualnie: sterownik po stronie Home Assistant"
+      }
+    },
+    "write_type": {
+      "options": {
+        "unknown": "Nieznany (liczony jako trwały)",
+        "expiring": "Wygasający",
+        "persistent": "Trwały",
+        "held": "Trzymany przez urządzenie"
+      }
+    },
+    "hand_back": {
+      "options": {
+        "value": "Zapis wartości",
+        "timeout": "Limit czasu urządzenia",
+        "switch": "Wyłączenie przełącznika"
+      }
+    },
+    "cap_reaction": {
+      "options": {
+        "hold": "Trzymaj ostatnią wartość i zgłoś alarm",
+        "hand_back": "Oddaj sterowanie"
+      }
+    },
+    "alarm_reaction": {
+      "options": {
+        "info": "Tylko informacja",
+        "hand_back": "Oddaj sterowanie"
       }
     }
   },

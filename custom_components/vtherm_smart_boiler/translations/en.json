@@ -67,7 +67,7 @@
           "shared_return": "Heating and DHW share the return sensor"
         },
         "data_description": {
-          "class": "Flow setpoint, curve parameters only, on/off or read-only. This version only monitors, whatever you pick; control will use it later.",
+          "class": "Flow setpoint, curve parameters only, on/off or read-only. Control (experimental) needs \"Flow setpoint\"; with the other classes the plugin only monitors.",
           "dhw": "None, a storage tank or a combi boiler. Used to interpret DHW runs.",
           "condensing": "Condensing boilers get flue gas limits for condensing appliances; for other boilers the absolute flue gas alarm is off.",
           "boiler_min_power": "Lowest heating power from the manual, in kW. Compared with the building load: a load often below it means the boiler must cycle.",
@@ -173,14 +173,30 @@
           "short_burn_min": "Short burn",
           "monitoring_days": "Monitoring period",
           "near_room_k": "Near room temperature",
-          "foreign_heat_hold_min": "Foreign heat hold"
+          "foreign_heat_hold_min": "Foreign heat hold",
+          "pressure_low_warning": "Low pressure warning",
+          "pressure_low_alarm": "Low pressure alarm",
+          "pressure_high_warning": "High pressure warning",
+          "pressure_high_alarm": "High pressure alarm",
+          "flue_gas_warning": "Flue gas warning",
+          "flue_gas_alarm": "Flue gas alarm",
+          "starts_per_hour_limit": "Frequent starts",
+          "unstable_burns_limit": "Unstable ignition"
         },
         "data_description": {
           "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C.",
           "short_burn_min": "Burns shorter than this count as short, in minutes. Default 10.",
           "monitoring_days": "Days of data before the verdict is given, and later before control can be enabled. Default 7; shorter is not allowed.",
           "near_room_k": "Water within this of the room counts as no hot water, in K. Default 3.",
-          "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60."
+          "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60.",
+          "pressure_low_warning": "Pressure below this raises a warning, in bar. Default 1.0. Take the value from your boiler's manual.",
+          "pressure_low_alarm": "Pressure below this raises an alarm, in bar. Default 0.7. Must be below the warning.",
+          "pressure_high_warning": "Pressure above this raises a warning, in bar. Default 2.5.",
+          "pressure_high_alarm": "Pressure above this raises an alarm, in bar. Default 2.8, below a typical 3 bar safety valve. Must be above the warning.",
+          "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C.",
+          "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
+          "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12.",
+          "unstable_burns_limit": "More than this many burns under a minute in a day raise a warning. Default 10."
         }
       }
     },
@@ -202,7 +218,9 @@
       "reference_zone_unknown": "The chosen reference zone is not one of the zones.",
       "duplicate_circuit": "Two circuits have the same name.",
       "duplicate_zone": "A zone is listed twice.",
-      "no_circuit": "At least one circuit is needed."
+      "no_circuit": "At least one circuit is needed.",
+      "invalid_control": "The control settings cannot be used.",
+      "alarm_limits_out_of_order": "An alarm limit must lie beyond its warning limit."
     }
   },
   "options": {
@@ -219,7 +237,8 @@
           "reference": "Reference room",
           "monitor": "Monitor thresholds",
           "level": "Level of detail",
-          "level_hidden": "Level of detail (some hidden advanced settings are active)"
+          "level_hidden": "Level of detail (some hidden advanced settings are active)",
+          "control": "Control (experimental)"
         }
       },
       "level": {
@@ -288,7 +307,7 @@
           "shared_return": "Heating and DHW share the return sensor"
         },
         "data_description": {
-          "class": "Flow setpoint, curve parameters only, on/off or read-only. This version only monitors, whatever you pick; control will use it later.",
+          "class": "Flow setpoint, curve parameters only, on/off or read-only. Control (experimental) needs \"Flow setpoint\"; with the other classes the plugin only monitors.",
           "dhw": "None, a storage tank or a combi boiler. Used to interpret DHW runs.",
           "condensing": "Condensing boilers get flue gas limits for condensing appliances; for other boilers the absolute flue gas alarm is off.",
           "boiler_min_power": "Lowest heating power from the manual, in kW. Compared with the building load: a load often below it means the boiler must cycle.",
@@ -394,14 +413,192 @@
           "short_burn_min": "Short burn",
           "monitoring_days": "Monitoring period",
           "near_room_k": "Near room temperature",
-          "foreign_heat_hold_min": "Foreign heat hold"
+          "foreign_heat_hold_min": "Foreign heat hold",
+          "pressure_low_warning": "Low pressure warning",
+          "pressure_low_alarm": "Low pressure alarm",
+          "pressure_high_warning": "High pressure warning",
+          "pressure_high_alarm": "High pressure alarm",
+          "flue_gas_warning": "Flue gas warning",
+          "flue_gas_alarm": "Flue gas alarm",
+          "starts_per_hour_limit": "Frequent starts",
+          "unstable_burns_limit": "Unstable ignition"
         },
         "data_description": {
           "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C.",
           "short_burn_min": "Burns shorter than this count as short, in minutes. Default 10.",
           "monitoring_days": "Days of data before the verdict is given, and later before control can be enabled. Default 7; shorter is not allowed.",
           "near_room_k": "Water within this of the room counts as no hot water, in K. Default 3.",
-          "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60."
+          "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60.",
+          "pressure_low_warning": "Pressure below this raises a warning, in bar. Default 1.0. Take the value from your boiler's manual.",
+          "pressure_low_alarm": "Pressure below this raises an alarm, in bar. Default 0.7. Must be below the warning.",
+          "pressure_high_warning": "Pressure above this raises a warning, in bar. Default 2.5.",
+          "pressure_high_alarm": "Pressure above this raises an alarm, in bar. Default 2.8, below a typical 3 bar safety valve. Must be above the warning.",
+          "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C.",
+          "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
+          "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12.",
+          "unstable_burns_limit": "More than this many burns under a minute in a day raise a warning. Default 10."
+        }
+      },
+      "control": {
+        "title": "Control (experimental)",
+        "description": "How the plugin writes the flow setpoint to the boiler. Control stays off until you switch it on, and only after the monitoring period. Choose \"No control\" to keep monitoring only.",
+        "data": {
+          "write_path": "Write path",
+          "topology": "Gateway connection",
+          "confirmed_entity": "Setpoint read-back"
+        },
+        "data_description": {
+          "write_path": "No control (default); a writable entity you pick, e.g. an EMS-ESP or ESPHome OpenTherm number; the OpenTherm Gateway through Home Assistant's OpenTherm Gateway integration; or the OTGW firmware's MQTT commands. Pick the path your boiler interface really offers: a wrong one means writes that fail or go nowhere.",
+          "topology": "How the gateway sits between thermostat and boiler. With a thermostat: on hand-back the thermostat takes over. Stand-alone, without a thermostat: on hand-back, and whenever Home Assistant stops for more than about a minute, the boiler stops heating. Monitor mode: the gateway only listens and control is not possible. Virtual: a controller on the Home Assistant side, e.g. ESPHome, drives the boiler. Required; declare it as it is — the plugin never changes the gateway's mode.",
+          "confirmed_entity": "The entity that reports the setpoint the boiler received, e.g. the gateway's control setpoint sensor. Required: every write is checked against it, and a write the boiler ignores or another controller overwrites is reported. Picking the value you write instead of the boiler's report hides both."
+        }
+      },
+      "control_entity": {
+        "title": "Writable entity",
+        "description": "The entity that takes the flow setpoint, and how control is handed back.",
+        "data": {
+          "setpoint_entity": "Setpoint entity",
+          "write_type": "Write type",
+          "ch_entity": "Heating on/off switch",
+          "hand_back": "Hand-back method",
+          "hand_back_value": "Hand-back value",
+          "hand_back_entity": "External control switch"
+        },
+        "data_description": {
+          "setpoint_entity": "A number or input_number that sets the boiler's flow temperature.",
+          "write_type": "Expiring: the device drops the value unless it is repeated; it is repeated every 30 s. Persistent: stored in the boiler's memory, and every write wears it; written only on a change of at least the minimum change and within a daily cap. Held: the device keeps the value and sends it on itself; written on change only. Unknown (default) counts as persistent. Expiring on a device that stores each write would write its memory every 30 s and wear it out.",
+          "ch_entity": "Optional. A switch that turns heating on and off. Without it, \"off\" is written as a low setpoint.",
+          "hand_back": "How control returns to the boiler on every exit: write a hand-back value; stop writing and let the device's own timeout take over, for expiring writes only; or turn off a switch that enables external control. Required; control cannot be switched on without it.",
+          "hand_back_value": "The setpoint written on hand-back, for the value method: what the boiler uses on its own, or 0 if that returns control to it. Required for the value method.",
+          "hand_back_entity": "For the switch method: the switch that enables external control. It is turned on when control starts and off on hand-back."
+        }
+      },
+      "control_gateway": {
+        "title": "OpenTherm Gateway",
+        "description": "The gateway set up in Home Assistant's OpenTherm Gateway integration.",
+        "data": {
+          "gateway_id": "Gateway ID"
+        },
+        "data_description": {
+          "gateway_id": "The ID you gave the gateway in the OpenTherm Gateway integration. The control setpoint is repeated every 30 s; on hand-back it is set to 0, which returns control to the thermostat, or ends heating without one."
+        }
+      },
+      "control_mqtt": {
+        "title": "OTGW firmware over MQTT",
+        "description": "Commands are published on <prefix>/set/<node>/<command>.",
+        "data": {
+          "mqtt_top": "Topic prefix",
+          "mqtt_node": "Node name"
+        },
+        "data_description": {
+          "mqtt_top": "The MQTT topic prefix set in the OTGW firmware. Default OTGW.",
+          "mqtt_node": "The node name set in the OTGW firmware. A wrong prefix or node name sends commands nowhere; the read-back then reports them as ignored."
+        }
+      },
+      "control_curve": {
+        "title": "Heating curve and limits",
+        "description": "The flow temperature the house needs at each outdoor temperature, and the limits no setpoint may pass.",
+        "data": {
+          "design_outdoor": "Design outdoor temperature",
+          "design_flow": "Design flow temperature",
+          "hard_min": "Lowest flow setpoint",
+          "hard_max": "Highest flow setpoint",
+          "summer_threshold": "Summer threshold",
+          "room": "Room temperature of the curve",
+          "exponent": "Curve exponent",
+          "offset": "Curve offset",
+          "ceiling_band": "Room for correction",
+          "fallback_setpoint": "Fallback setpoint",
+          "frost_limit": "Frost protection below",
+          "frost_release": "Frost protection until"
+        },
+        "data_description": {
+          "design_outdoor": "The coldest outdoor temperature your heating is designed for, in °C. Default: the building's design outdoor temperature, or −15 °C.",
+          "design_flow": "The flow temperature the heating needs at the design outdoor temperature, in °C, e.g. the value on your boiler's own curve. Required; there is no default. Too high wastes gas and makes the burner cycle; too low leaves rooms cold in hard frost.",
+          "hard_min": "No setpoint below this, in °C. Default 25 °C.",
+          "hard_max": "No setpoint above this, whatever the curve or a correction asks, in °C. Default 70 °C. Underfloor heating also needs its circuit's maximum flow.",
+          "summer_threshold": "Above this effective outdoor temperature control does not heat, in °C. Default 20 °C.",
+          "room": "The room temperature the curve is built for, in °C. Default 20 °C.",
+          "exponent": "How the curve bends. Empty picks it from the emitters: radiators 1.3, convectors 1.4, underfloor 1.1.",
+          "offset": "Shifts the whole curve up or down, in K. Default 0.",
+          "ceiling_band": "How far above the curve a comfort correction may go, in K. Default 10 K; 0 turns correction off in effect.",
+          "fallback_setpoint": "The setpoint used while no outdoor temperature is known, in °C. Empty: the curve at 0 °C outside.",
+          "frost_limit": "Any zone colder than this starts heating, whatever else applies, in °C. Default 5 °C.",
+          "frost_release": "Frost protection ends once every zone is above this, in °C. Default 7 °C."
+        }
+      },
+      "control_behaviour": {
+        "title": "Control behaviour",
+        "description": "Anti-cycling, write guards and learning pauses. Every default is the cautious one.",
+        "data": {
+          "min_burn_min": "Minimum burn",
+          "min_pause_min": "Minimum pause",
+          "max_starts_per_hour": "Starts per hour",
+          "min_on_min": "Minimum on time",
+          "min_off_min": "Minimum off time",
+          "max_switches_per_hour": "Switchings per hour",
+          "ramp_k_per_min": "Setpoint ramp",
+          "decision_interval_min": "Decision interval",
+          "min_change": "Minimum change",
+          "daily_cap": "Daily write cap",
+          "cap_reaction": "At the daily cap",
+          "off_setpoint": "Off setpoint",
+          "count_threshold": "Zones calling",
+          "power_threshold_kw": "Power calling",
+          "opening_threshold": "Valve opening calling",
+          "learning_pauses": "Pause zone learning",
+          "comfort_correction": "Comfort correction"
+        },
+        "data_description": {
+          "min_burn_min": "Once lit, the burner is kept on at least this long, in minutes. Default 5. Shorter lets the boiler cycle.",
+          "min_pause_min": "After it stops, the burner stays off at least this long, in minutes. Default 5. Frost protection is not held back.",
+          "max_starts_per_hour": "The most burner starts control may cause in an hour. Default 6.",
+          "min_on_min": "Heating, once switched on, stays on at least this long, in minutes. Default 5.",
+          "min_off_min": "Heating, once switched off, stays off at least this long, in minutes. Default 5.",
+          "max_switches_per_hour": "The most heating on/off switchings in an hour. Default 6.",
+          "ramp_k_per_min": "The fastest setpoint change, in K per minute. Default 1. Faster changes stress the boiler and make zones overshoot.",
+          "decision_interval_min": "How often the setpoint is decided anew, in minutes. Default 5.",
+          "min_change": "The smallest setpoint change written for a persistent or unknown write type, in K. Default 1. Smaller wears the boiler's memory faster.",
+          "daily_cap": "The most writes a day for a persistent or unknown write type. Default 48.",
+          "cap_reaction": "Hold (default): keep the last value and raise an alarm. Hand back: return control to the boiler.",
+          "off_setpoint": "Written for \"off\" when there is no heating switch, in °C. Default 10 °C.",
+          "count_threshold": "Heating is needed when at least this many zones call for heat. Default 1.",
+          "power_threshold_kw": "Optional: heating is needed when the calling zones' power adds up to this, in kW.",
+          "opening_threshold": "Optional: heating is needed when the zones' valve openings add up to this, in %.",
+          "learning_pauses": "Pause SmartPI learning while hot water runs, while foreign heat warms a zone and while the water temperature swings, so it does not learn what the boiler did. Default on.",
+          "comfort_correction": "Raise the setpoint a step while a zone's valve is fully open and its room stays short of the setpoint, within the room for correction; lower it again once every zone is satisfied. Default on."
+        }
+      },
+      "control_alarms": {
+        "title": "Alarm reactions",
+        "description": "What control does while an alarm is active: information only, or hand control back to the boiler until you switch control off and on again.",
+        "data": {
+          "pressure_low": "Low pressure",
+          "pressure_high": "High pressure",
+          "flue_gas_high": "High flue gas temperature",
+          "frequent_starts": "Frequent starts",
+          "unstable_ignition": "Unstable ignition",
+          "pressure_falling": "Pressure falling",
+          "flue_gas_rising": "Flue gas rising",
+          "hysteresis_drift": "Hysteresis drifting",
+          "low_flow": "Low flow",
+          "write_failed": "Write failed",
+          "write_ignored": "Boiler ignores the setpoint",
+          "outside_change": "Setpoint changed from outside"
+        },
+        "data_description": {
+          "pressure_low": "Default: information only.",
+          "pressure_high": "Default: information only.",
+          "flue_gas_high": "Default: information only.",
+          "frequent_starts": "Default: information only.",
+          "unstable_ignition": "Default: information only.",
+          "pressure_falling": "Default: information only.",
+          "flue_gas_rising": "Default: information only.",
+          "hysteresis_drift": "Default: information only.",
+          "low_flow": "Default: information only.",
+          "write_failed": "Default: information only.",
+          "write_ignored": "Default: information only.",
+          "outside_change": "Default: hand back — another controller writes to the boiler too, and the plugin does not fight it."
         }
       }
     },
@@ -410,7 +607,11 @@
       "fixed_temperature_missing": "A passive fixed circuit needs its fixed temperature.",
       "foreign_heat_unsupported": "Only switches, binary sensors and power or temperature sensors can be heat sources.",
       "temperature_threshold_missing": "A temperature source needs a temperature threshold (advanced level).",
-      "reference_zone_unknown": "Pick one of the configured zones."
+      "reference_zone_unknown": "Pick one of the configured zones.",
+      "hand_back_value_missing": "The value method needs a hand-back value.",
+      "hand_back_entity_missing": "The switch method needs the external control switch.",
+      "hard_limits_out_of_order": "The highest setpoint must be above the lowest.",
+      "frost_release_not_above_limit": "Frost protection must end above the temperature where it starts."
     },
     "abort": {
       "missing_signal": "A required signal is missing.",
@@ -423,7 +624,9 @@
       "reference_zone_unknown": "The chosen reference zone is not one of the zones.",
       "duplicate_circuit": "Two circuits have the same name.",
       "duplicate_zone": "A zone is listed twice.",
-      "no_circuit": "At least one circuit is needed."
+      "no_circuit": "At least one circuit is needed.",
+      "invalid_control": "The control settings cannot be used.",
+      "alarm_limits_out_of_order": "An alarm limit must lie beyond its warning limit."
     }
   },
   "selector": {
@@ -489,6 +692,49 @@
         "largest_deficit": "Largest deficit",
         "chosen_zone": "Chosen zone",
         "average": "Average"
+      }
+    },
+    "write_path": {
+      "options": {
+        "none": "No control",
+        "entity": "Writable entity",
+        "opentherm_gw": "OpenTherm Gateway (OpenTherm Gateway integration)",
+        "otgw_mqtt": "OTGW firmware over MQTT"
+      }
+    },
+    "topology": {
+      "options": {
+        "gateway_with_thermostat": "Gateway with a thermostat",
+        "gateway_standalone": "Gateway without a thermostat (stand-alone)",
+        "monitor_mode": "Gateway in monitor mode",
+        "virtual": "Virtual: a controller on the Home Assistant side"
+      }
+    },
+    "write_type": {
+      "options": {
+        "unknown": "Unknown (counted as persistent)",
+        "expiring": "Expiring",
+        "persistent": "Persistent",
+        "held": "Held by the device"
+      }
+    },
+    "hand_back": {
+      "options": {
+        "value": "Write a value",
+        "timeout": "Device timeout",
+        "switch": "Turn off a switch"
+      }
+    },
+    "cap_reaction": {
+      "options": {
+        "hold": "Hold the last value and raise an alarm",
+        "hand_back": "Hand back"
+      }
+    },
+    "alarm_reaction": {
+      "options": {
+        "info": "Information only",
+        "hand_back": "Hand back"
       }
     }
   },

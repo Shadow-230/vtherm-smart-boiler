@@ -78,8 +78,18 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "reference": flow.reference_schema(options),
         "monitor": flow.monitor_schema(options),
     }
+    options_only = {
+        "control": flow.control_schema(options),
+        "control_entity": flow.control_entity_schema(options),
+        "control_gateway": flow.control_gateway_schema(options, ["gw"]),
+        "control_mqtt": flow.control_mqtt_schema(options),
+        "control_curve": flow.control_curve_schema(options),
+        "control_behaviour": flow.control_behaviour_schema(options),
+        "control_alarms": flow.control_alarms_schema(options),
+    }
     for section in ("config", "options"):
-        for step, schema in schemas.items():
+        steps = schemas | (options_only if section == "options" else {})
+        for step, schema in steps.items():
             if section == "options" and step == "user":
                 continue
             texts = SOURCE[section]["step"][step]
@@ -91,6 +101,8 @@ def test_every_form_field_and_select_option_is_translated() -> None:
                 if key:
                     for option in config["options"]:
                         assert option in SOURCE["selector"][key]["options"], (key, option)
+    menu = SOURCE["options"]["step"]["init"]["menu_options"]
+    assert "control" in menu
 
 
 def test_every_config_error_code_can_be_shown() -> None:
@@ -108,6 +120,7 @@ def test_every_config_error_code_can_be_shown() -> None:
         for code in IssueCode
         if code.value not in ("empty_circuit", "underfloor_without_max_flow")
     }
+    codes |= {"invalid_control", "alarm_limits_out_of_order"}
     for section in ("config", "options"):
         assert codes <= set(SOURCE[section]["abort"]), sorted(codes - set(SOURCE[section]["abort"]))
 

@@ -50,6 +50,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await _async_stop(coordinator)
         raise
     feature_manager.async_attach(hass, coordinator)
+    if not config.control.configured:
+        _remove_control_entities(hass, entry)
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     coordinator.async_start_background()
     return True
@@ -76,3 +78,22 @@ async def _async_stop(coordinator: SmartBoilerCoordinator) -> None:
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+def _remove_control_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Control was removed from the options: its entities go from the registry too."""
+    from homeassistant.helpers import entity_registry as er
+
+    from .control import ControlAlarm
+
+    keys = [
+        ("switch", "control"),
+        ("sensor", "control_state"),
+        ("sensor", "control_setpoint"),
+        *(("binary_sensor", f"alarm_{kind.value}") for kind in ControlAlarm),
+    ]
+    registry = er.async_get(hass)
+    for domain, key in keys:
+        entity_id = registry.async_get_entity_id(domain, DOMAIN, f"{entry.entry_id}_{key}")
+        if entity_id is not None:
+            registry.async_remove(entity_id)
