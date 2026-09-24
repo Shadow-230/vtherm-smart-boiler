@@ -8,8 +8,8 @@ with 0.2 (`docs/plan-0.2.md`). Scope: `SCOPE.md`; overview: `PLAN.md`.
 
 - The development machine is a Debian 12 LXC on Proxmox with system Python 3.11 only; no `uv`,
   Docker or Podman. Claude does not use `sudo`.
-- No code, no git. Documents: `CLAUDE.md`, `SCOPE.md`, `PLAN.md`, this plan, `docs/plan-0.2.md`,
-  `research/`.
+- No code; local git since 2026-09-24. Documents: `CLAUDE.md`, `SCOPE.md`, `PLAN.md`, this plan,
+  `docs/plan-0.2.md`, `research/`.
 - Decided on 2026-09-24: domain `vtherm_smart_boiler`; consent for A1–A5 and A7; Claude's own
   code, test and tool files may be changed without asking; 0.1 and 0.2 are built in one go, in
   order, and 0.2 is the first release.
@@ -22,10 +22,12 @@ with 0.2 (`docs/plan-0.2.md`). Scope: `SCOPE.md`; overview: `PLAN.md`.
 - Everything inside the project: `.tools/`, `.venv/`, `.tmp/`; commands run as
   `scripts/env.sh <command>`; no `sudo`.
 - Claude connects only to the test HA.
-- No git until the user decides. 🔒 marks steps that need the user's consent or action; ✓ marks
-  consent already given.
-- Working mode: each phase ends with all tests and `ruff` passing and a short summary for the
-  user; work stops at every 🔒 step.
+- Local git: a commit after every completed step; no remote without the user's consent.
+- 🔒 marks steps that need the user's consent or action; ✓ marks consent already given; ✅
+  marks a finished step.
+- Working mode: phases run in order without waiting; each phase ends with all tests and `ruff`
+  passing and a short summary for the user; work stops at every 🔒 step and at the review stop
+  after phase B.
 
 ## Layout
 
@@ -85,6 +87,8 @@ so `core` can be imported on its own; `core` tests import it directly.
 | B15 | forecast snapshot model (FC0) |
 
 Done when: every law has unit tests, including missing and stale data.
+
+**Review stop 🔒:** the user reviews the core laws and the model before phase C starts.
 
 ## Phase C — simulator and test harness
 

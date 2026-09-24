@@ -22,7 +22,8 @@ Work starts when `docs/plan-0.1.md` is done; phases run in order.
 - Control choices are the user's (`SCOPE.md` §3, principle 11): each option has a cautious
   default and a description of what it does and what it risks, in the config flow and the README.
 - Nothing reaches a real boiler before every acceptance scenario passes in the test HA.
-- 🔒 marks steps that need the user's consent or action.
+- 🔒 marks steps that need the user's consent or action; ✅ marks a finished step.
+- Working mode as in `docs/plan-0.1.md`; the review stop in this release comes after phase G.
 
 ## Layout additions
 
@@ -65,6 +66,8 @@ G1–G3, G5 and G8 apply to flow-setpoint mode; in room-value mode the boiler ru
 
 Done when: every law has unit tests, including limits, stale data and sensor failure.
 
+**Review stop 🔒:** the user reviews the control laws and write guards before phase H starts.
+
 ## Phase H — write path and VT integration
 
 | Step | Work |
@@ -106,7 +109,7 @@ Done when: every scenario passes.
 |---|---|
 | K1 🔒 | `LICENSE` (official Apache-2.0 text), `NOTICE`, `README.md` marked early with safety notes and a section "Options and risks", `CHANGELOG.md`, `hacs.json` |
 | K2 | workflows: tests, ruff, Hassfest, HACS action |
-| K3 🔒 | `git init`, local history (may come earlier, when the user decides); `.gitignore` written before the first commit: `.tools/`, `.venv/`, `.tmp/`, `data/`, `vendor/`, `research/`, `home-assessment.md`, `devenv/local.env`, `devenv/ssh/` |
+| K3 ✅ | local git since 2026-09-24; `.gitignore` written before the first commit: `.tools/`, `.venv/`, `.tmp/`, `data/`, `vendor/`, `research/`, `home-assessment.md`, `devenv/local.env`, `devenv/ssh/` |
 | K4 🔒 | GitHub repository and a pre-release 0.2.0b1 (private if HACS can install from a private repository — to verify; otherwise public, marked pre-release) |
 | K5 🔒 | the user installs the pre-release on their installation through HACS; 7 days of monitoring; before control is enabled, a written manual fallback (how to return the boiler to its own control) is ready; control starts under supervision in mild weather; several days without errors |
 | K6 🔒 | release 0.2.0, repository public |

@@ -45,10 +45,16 @@ Each topic lives only in its file; do not copy it here.
   `.tmp/`, git-ignored); every command runs as `scripts/env.sh <command>`, which sets the
   variables and runs the command. No `sudo`; no changes to the home directory, shell profile or
   global git config.
-- No git yet: before deleting or overwriting anything, show it and get confirmation.
-  Exception: code, test and tool-configuration files that Claude created under an agreed plan
-  may be changed without asking; documents (`*.md`) and the user's files still need a shown diff
-  and consent.
+- Git is local only (since 2026-09-24): commit after every completed step with a descriptive
+  message; never add a remote or push without the user's consent. Code, test and
+  tool-configuration files may be changed without asking — history keeps every change.
+  Documents (`*.md`) and the user's files still need a shown diff and consent. Anything not
+  tracked by git is shown and confirmed before it is deleted or overwritten.
+- Autonomous work: phases run in order without waiting; work stops at every 🔒 step and at the
+  review stops after phases B and G (`docs/plan-0.1.md`, `docs/plan-0.2.md`); each finished step
+  is marked ✅ in its plan and committed, so the next session knows where to continue.
+  Subagents may be used and are bound by these rules; a multi-agent workflow only when the user
+  asks for one.
 - **Never touch the production Home Assistant instance** (location in Claude's memory): no
   deploys, no writes. The plugin reaches it only as a HACS release.
 - **Neither Claude nor subagents connect to any Home Assistant instance** — by any means (REST,
