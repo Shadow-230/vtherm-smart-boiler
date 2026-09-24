@@ -613,7 +613,9 @@
       "hard_limits_out_of_order": "The highest setpoint must be above the lowest.",
       "frost_release_not_above_limit": "Frost protection must end above the temperature where it starts.",
       "hand_back_timeout_not_expiring": "The device's timeout hands back only with expiring writes; choose a value or a switch.",
-      "hand_back_value_out_of_range": "The hand-back value is outside what the setpoint entity accepts."
+      "hand_back_value_out_of_range": "The hand-back value is outside what the setpoint entity accepts.",
+      "limits_outside_entity_range": "The setpoint entity does not accept this limit; keep the limits within its range.",
+      "off_setpoint_outside_entity_range": "The setpoint entity does not accept this value."
     },
     "abort": {
       "missing_signal": "A required signal is missing.",
@@ -945,6 +947,9 @@
     },
     "blocked_timeout_needs_expiring_writes": {
       "message": "The device's timeout hands back only with expiring writes: choose a hand-back value or a switch in the options. Other reasons: {others}."
+    },
+    "blocked_setpoint_outside_entity_range": {
+      "message": "The setpoint entity does not accept every value control may write (a limit, the \"off\" setpoint or the hand-back value): adjust them to its range in the options. Other reasons: {others}."
     }
   },
   "issues": {

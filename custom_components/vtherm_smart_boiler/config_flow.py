@@ -60,6 +60,7 @@ from .core.guards import WriteType
 from .core.installation import BoilerClass, CircuitControl, DhwType, EmitterType
 from .core.metrics import ModulationScale
 from .core.reference_room import Strategy
+from .transport.entities import read_bounds
 
 # --- field definitions ----------------------------------------------------------------------
 
@@ -618,17 +619,11 @@ def control_details_error(
     return {}
 
 
-def _entity_bounds(state: Any) -> tuple[float | None, float | None]:
-    """The ``min`` and ``max`` a number or input_number entity accepts."""
-    if state is None:
-        return None, None
-    bounds: list[float | None] = []
-    for key in ("min", "max"):
-        try:
-            bounds.append(float(state.attributes[key]))
-        except KeyError, TypeError, ValueError:
-            bounds.append(None)
-    return bounds[0], bounds[1]
+def _outside(value: Any, bounds: tuple[float | None, float | None]) -> bool:
+    low, high = bounds
+    if value in (None, ""):
+        return False
+    return (low is not None and value < low) or (high is not None and value > high)
 
 
 # --- applying user input ----------------------------------------------------------------------
@@ -1079,8 +1074,9 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            state = self.hass.states.get(user_input["setpoint_entity"])
-            errors = control_details_error(user_input, _entity_bounds(state))
+            errors = control_details_error(
+                user_input, read_bounds(self.hass, user_input["setpoint_entity"])
+            )
             if not errors:
                 apply_control_details(self.options, user_input)
                 return await self.async_step_control_curve()
@@ -1120,8 +1116,13 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
+            bounds = self._setpoint_bounds()
             if user_input["hard_min"] >= user_input["hard_max"]:
                 errors["hard_max"] = "hard_limits_out_of_order"
+            elif _outside(user_input["hard_min"], bounds):
+                errors["hard_min"] = "limits_outside_entity_range"
+            elif _outside(user_input["hard_max"], bounds):
+                errors["hard_max"] = "limits_outside_entity_range"
             elif user_input.get("frost_limit", 5.0) >= user_input.get("frost_release", 7.0):
                 errors["frost_release"] = "frost_release_not_above_limit"
             else:
@@ -1136,12 +1137,26 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
     async def async_step_control_behaviour(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            apply_control_behaviour(self.options, user_input)
-            return await self.async_step_control_alarms()
+            if _outside(user_input.get("off_setpoint"), self._setpoint_bounds()):
+                errors["off_setpoint"] = "off_setpoint_outside_entity_range"
+            else:
+                apply_control_behaviour(self.options, user_input)
+                return await self.async_step_control_alarms()
         return self.async_show_form(
-            step_id="control_behaviour", data_schema=control_behaviour_schema(self.options)
+            step_id="control_behaviour",
+            data_schema=control_behaviour_schema(self.options),
+            errors=errors,
         )
+
+    def _setpoint_bounds(self) -> tuple[float | None, float | None]:
+        """What the picked setpoint entity accepts; nothing to check on the gateway paths."""
+        control = self.options.get(CONTROL, {})
+        entity = control.get("setpoint_entity")
+        if control.get("write_path") != WritePath.ENTITY or not entity:
+            return None, None
+        return read_bounds(self.hass, entity)
 
     async def async_step_control_alarms(
         self, user_input: dict[str, Any] | None = None

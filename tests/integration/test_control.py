@@ -688,3 +688,56 @@ async def test_a_timeout_hand_back_needs_expiring_writes(rig: Rig) -> None:
         await rig.switch(True)
     assert err.value.translation_key == "blocked_timeout_needs_expiring_writes"
     assert number.writes == []
+
+
+async def test_the_shutdown_hand_back_lets_the_next_shutdown_job_run(rig: Rig) -> None:
+    from homeassistant.core import HassJob
+
+    await start(rig)
+    await rig.switch(True)
+    ran: list[str] = []
+
+    async def other_job() -> None:
+        ran.append("other")
+
+    rig.hass.async_add_shutdown_job(HassJob(other_job, "another integration's job"))
+    await rig.hass.async_stop()
+    assert rig.gateway.calls[-1] == ("setpoint", 0.0)
+    assert ran == ["other"]  # removing our job while Home Assistant ran the list skipped this
+
+
+async def test_a_setpoint_entity_that_rejects_a_limit_blocks_control(rig: Rig) -> None:
+    number = FakeNumber(rig.hass)
+    number.register()
+    rig.hass.states.async_set(
+        number.entity_id, "50", {"unit_of_measurement": "°C", "min": 20, "max": 50}
+    )
+    await start(
+        rig,
+        write_path="entity",
+        setpoint_entity=number.entity_id,
+        write_type="expiring",
+        hand_back="value",
+        hand_back_value=30,
+        confirmed_entity=number.entity_id,
+        topology="virtual",
+    )
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)  # the hard maximum of 70 °C and "off" at 10 °C fall outside
+    assert err.value.translation_key == "blocked_setpoint_outside_entity_range"
+    assert number.writes == []
+
+
+async def test_nothing_is_handed_back_twice_without_a_write_in_between(rig: Rig) -> None:
+    hass = rig.hass
+    select = er.async_get(hass).async_get_or_create("select", VT_PLATFORM, "central_mode")
+    hass.states.async_set(select.entity_id, "Auto")
+    await start(rig)
+    await rig.switch(True)
+    hass.states.async_set(select.entity_id, "Stopped")
+    await rig.advance(10)
+    assert rig.gateway.setpoints().count(0.0) == 1
+    assert rig.entry is not None
+    assert await hass.config_entries.async_unload(rig.entry.entry_id)
+    await hass.async_block_till_done()
+    assert rig.gateway.setpoints().count(0.0) == 1  # already handed back, nothing written since

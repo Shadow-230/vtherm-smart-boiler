@@ -477,3 +477,44 @@ async def test_control_at_the_advanced_level_and_back(
     await hass.async_block_till_done()
     assert "control" not in hass.config_entries.async_get_entry(entry_id).options
     assert control_switch(hass, entry_id) is None  # its entities are removed too
+
+
+async def test_control_limits_must_suit_the_setpoint_entity(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    hass.states.async_set(
+        "number.boiler_flow", "45", {"unit_of_measurement": "°C", "min": 20, "max": 60}
+    )
+    entry_id = await create_entry(hass, entities, "advanced")
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.boiler_flow"},
+    )
+    details = {
+        "setpoint_entity": "number.boiler_flow",
+        "write_type": "expiring",
+        "hand_back": "value",
+    }
+    result = await options_step(hass, result, details | {"hand_back_value": 5})
+    assert result["errors"] == {"hand_back_value": "hand_back_value_out_of_range"}
+    result = await options_step(hass, result, details | {"hand_back_value": 30})
+    curve = {
+        "design_outdoor": -15,
+        "design_flow": 50,
+        "summer_threshold": 20,
+        "room": 20,
+        "offset": 0,
+        "ceiling_band": 10,
+        "frost_limit": 5,
+        "frost_release": 7,
+    }
+    result = await options_step(hass, result, curve | {"hard_min": 25, "hard_max": 70})
+    assert result["errors"] == {"hard_max": "limits_outside_entity_range"}
+    result = await options_step(hass, result, curve | {"hard_min": 25, "hard_max": 60})
+    assert result["step_id"] == "control_behaviour"
+    result = await options_step(hass, result, {"off_setpoint": 10})
+    assert result["errors"] == {"off_setpoint": "off_setpoint_outside_entity_range"}
+    result = await options_step(hass, result, {"off_setpoint": 20})
+    assert result["step_id"] == "control_alarms"

@@ -46,7 +46,7 @@ from .core.learning import LearningState, ZoneLearning, plan_learning, release_a
 from .core.loop import LoopOutput, LoopState, loop_step
 from .core.readings import BoilerSnapshot, ZoneState
 from .core.signals import SIGNAL_SPECS, Signal
-from .transport.entities import read_temperature, read_weather_temperature
+from .transport.entities import read_bounds, read_temperature, read_weather_temperature
 from .transport.writers import WriteError, Writer, make_writer, writer_services
 from .vtherm_attributes import CentralMode
 
@@ -62,7 +62,13 @@ RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control
 SMARTPI_DOMAIN = "vtherm_smartpi"
 SMARTPI_SERVICE = "set_smartpi_learning"
 # Blockers found while running, besides those of the configuration (translation keys).
-RUNTIME_BLOCKERS = ("ha_starting", "monitoring_period", "vt_central_boiler_active", "control_error")
+RUNTIME_BLOCKERS = (
+    "ha_starting",
+    "monitoring_period",
+    "vt_central_boiler_active",
+    "setpoint_outside_entity_range",
+    "control_error",
+)
 
 _CENTRAL = {
     CentralMode.AUTO: ControlCentralMode.AUTO,
@@ -147,6 +153,8 @@ class ControlUnit:
         self._last_change_at: float | None = None
         self._hand_back_at: float | None = None
         self._hand_back_pending = False  # a hand-back failed and is retried until it goes through
+        # Something was written since the last hand-back (unknown after a start: assumed so).
+        self._wrote_since_hand_back = True
         self._hand_back_retry_at = 0.0
         self._learning_retry_at = 0.0
         self._restored = False
@@ -239,7 +247,7 @@ class ControlUnit:
         add_shutdown_job = getattr(self._hass, "async_add_shutdown_job", None)
         if callable(add_shutdown_job):
             self._stop_unsub = add_shutdown_job(
-                HassJob(self.async_stop, "vtherm_smart_boiler hand-back")
+                HassJob(self._async_shutdown, "vtherm_smart_boiler hand-back")
             )
         else:
             self._stop_unsub = self._hass.bus.async_listen_once(
@@ -249,6 +257,12 @@ class ControlUnit:
     def mark_restored(self) -> None:
         """The switch has restored the user's choice: control steps may run."""
         self._restored = True
+
+    async def _async_shutdown(self) -> None:
+        # Home Assistant is going through its list of shutdown jobs: removing this one from it
+        # now would make it skip the next job, so it stays.
+        self._stop_unsub = None
+        await self.async_stop()
 
     async def _async_ha_stop(self, _event: Event) -> None:
         self._stop_unsub = None  # a one-time listener removes itself
@@ -261,6 +275,11 @@ class ControlUnit:
         if self._stop_unsub is not None:
             self._stop_unsub()
             self._stop_unsub = None
+        if self._session.loop.control.controlling and not self._stopped:
+            # Kept (and stored) until the hand-back has gone through: if Home Assistant cuts
+            # this short, it is retried at the next start.
+            self._hand_back_pending = True
+            self._coordinator.schedule_save()
         async with self._lock:
             if self._stopped:
                 return
@@ -280,9 +299,14 @@ class ControlUnit:
             return
         self._tick_waiting = True
         try:
-            await self.async_tick()
+            async with self._lock:
+                self._tick_waiting = False  # running now: the next timer call may wait
+                if self._stopped:
+                    return
+                await self._async_tick_locked(dt_util.utcnow().timestamp())
         finally:
             self._tick_waiting = False
+        self._notify()
 
     # --- switching ------------------------------------------------------------------------
 
@@ -296,9 +320,34 @@ class ControlUnit:
             found.append("monitoring_period")
         if self._coordinator.link.vt_central_boiler_configured():
             found.append("vt_central_boiler_active")
+        if self._outside_entity_range():
+            found.append("setpoint_outside_entity_range")
         if self._session.failed:
             found.append("control_error")
         return tuple(found)
+
+    def _outside_entity_range(self) -> bool:
+        """A setpoint entity that would reject a value control may write (a limit, the low "off"
+        value or the hand-back value): every write of it would fail."""
+        options = self.options
+        if options.write_path is not WritePath.ENTITY or not options.setpoint_entity:
+            return False
+        low, high = read_bounds(self._hass, options.setpoint_entity)
+        control = options.loop.control
+        highest = min(
+            v
+            for v in (control.limits.hard_max, control.circuit_max, control.boiler_max)
+            if v is not None
+        )
+        values = [control.limits.hard_min, highest]
+        if not options.loop.ch_writes:
+            values.append(options.loop.off_setpoint)
+        if options.hand_back is HandBack.VALUE:
+            values.append(options.hand_back_value)
+        return any(
+            (low is not None and value < low) or (high is not None and value > high)
+            for value in values
+        )
 
     async def async_set_enabled(self, enabled: bool, now: float | None = None) -> None:
         """Switch control on or off; switching off hands back at once."""
@@ -525,6 +574,7 @@ class ControlUnit:
         session.failing.discard(kind)
         if not session.failing:  # each kind of write clears only its own failure
             session.alarms.discard(ControlAlarm.WRITE_FAILED)
+        self._wrote_since_hand_back = True
         if self._hand_back_pending:
             # Control has the boiler again: the earlier hand-back no longer matters.
             self._hand_back_pending = False
@@ -550,8 +600,11 @@ class ControlUnit:
     # --- hand-back ------------------------------------------------------------------------
 
     async def _async_hand_back_writes(self, now: float) -> None:
-        """The hand-back write, which no guard holds back, and the release of learning."""
-        await self._async_try_hand_back(now)
+        """The hand-back write, which no guard holds back, and the release of learning. Without
+        a write since the last hand-back there is nothing to give back (and a wearing hand-back
+        value is not written again)."""
+        if self._wrote_since_hand_back or self._hand_back_pending:
+            await self._async_try_hand_back(now)
         self._hand_back_at = now
         self._last_change_at = now
         self._coordinator.schedule_save()  # a latch set with it must survive a restart
@@ -572,6 +625,7 @@ class ControlUnit:
         if self._hand_back_pending:
             self._hand_back_pending = False
             self._coordinator.schedule_save()
+        self._wrote_since_hand_back = False
         self._count_wearing_hand_back(now)
         return True
 

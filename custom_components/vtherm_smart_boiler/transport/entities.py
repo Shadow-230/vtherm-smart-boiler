@@ -117,3 +117,14 @@ def weather_from_state(state: State | None) -> Reading:
     if value is not None and not -60.0 <= value <= 60.0:
         value = None
     return Reading(value, reported_at(state))
+
+
+def read_bounds(hass: HomeAssistant, entity_id: str) -> tuple[float | None, float | None]:
+    """The ``min`` and ``max`` a number or input_number entity accepts; ``None`` where unknown."""
+    return bounds_from_state(hass.states.get(entity_id))
+
+
+def bounds_from_state(state: State | None) -> tuple[float | None, float | None]:
+    if state is None:
+        return None, None
+    return parse_number(state.attributes.get("min")), parse_number(state.attributes.get("max"))

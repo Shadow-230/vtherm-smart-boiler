@@ -613,7 +613,9 @@
       "hard_limits_out_of_order": "Najwyższa nastawa musi być wyższa od najniższej.",
       "frost_release_not_above_limit": "Ochrona przed mrozem musi kończyć się powyżej temperatury, przy której się zaczyna.",
       "hand_back_timeout_not_expiring": "Limit czasu urządzenia oddaje sterowanie tylko przy zapisach wygasających; wybierz wartość albo przełącznik.",
-      "hand_back_value_out_of_range": "Wartość oddania leży poza zakresem, który przyjmuje encja nastawy."
+      "hand_back_value_out_of_range": "Wartość oddania leży poza zakresem, który przyjmuje encja nastawy.",
+      "limits_outside_entity_range": "Encja nastawy nie przyjmuje tego limitu; utrzymaj limity w jej zakresie.",
+      "off_setpoint_outside_entity_range": "Encja nastawy nie przyjmuje tej wartości."
     },
     "abort": {
       "missing_signal": "Brakuje wymaganego sygnału.",
@@ -945,6 +947,9 @@
     },
     "blocked_timeout_needs_expiring_writes": {
       "message": "Limit czasu urządzenia oddaje sterowanie tylko przy zapisach wygasających: wybierz w opcjach wartość oddania albo przełącznik. Inne powody: {others}."
+    },
+    "blocked_setpoint_outside_entity_range": {
+      "message": "Encja nastawy nie przyjmuje każdej wartości, którą sterowanie może zapisać (limitu, nastawy „wyłączone” albo wartości oddania): dopasuj je w opcjach do jej zakresu. Inne powody: {others}."
     }
   },
   "issues": {
