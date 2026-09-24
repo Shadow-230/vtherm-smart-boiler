@@ -26,8 +26,10 @@ def _resolve_relative(package: str, level: int, module: str | None) -> str:
 
 def _is_allowed(name: str) -> bool:
     top = name.split(".")[0]
-    return top in sys.stdlib_module_names or name == CORE_PACKAGE or name.startswith(
-        CORE_PACKAGE + "."
+    return (
+        top in sys.stdlib_module_names
+        or name == CORE_PACKAGE
+        or name.startswith(CORE_PACKAGE + ".")
     )
 
 

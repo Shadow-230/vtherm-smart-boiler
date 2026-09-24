@@ -41,6 +41,8 @@ select = [
     "ASYNC",  # async pitfalls
     "PT",     # pytest style
 ]
+# Comparisons with UPPER_CASE module constants on the left read naturally in tests.
+ignore = ["SIM300"]
 
 [tool.ruff.lint.isort]
 required-imports = ["from __future__ import annotations"]
