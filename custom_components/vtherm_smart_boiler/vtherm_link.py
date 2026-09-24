@@ -30,7 +30,7 @@ CENTRAL_BOILER_UNIQUE_ID = "central_boiler_state"
 class ZoneAlgorithm:
     proportional_function: str | None = None  # "tpi" or "smartpi"
     smartpi_learning: bool | None = None  # SmartPI's learning flag; None: not SmartPI
-    auto_tpi: bool = False
+    auto_tpi: bool = False  # Auto-TPI learning is on (a session or continuous kext)
     used_by_central_boiler: bool | None = None
 
 
@@ -108,7 +108,9 @@ class VThermLink:
         return ZoneAlgorithm(
             proportional_function=function if isinstance(function, str) else None,
             smartpi_learning=smartpi if isinstance(smartpi, bool) else None,
-            auto_tpi=any(key.startswith("auto_tpi") for key in specific),
+            # VT publishes these keys for every TPI zone; "on" means Auto-TPI is learning.
+            auto_tpi="on"
+            in (specific.get("auto_tpi_state"), specific.get("auto_tpi_continuous_kext")),
             used_by_central_boiler=used if isinstance(used, bool) else None,
         )
 

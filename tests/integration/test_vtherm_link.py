@@ -72,15 +72,29 @@ async def test_zone_algorithm_from_live_attributes(hass: HomeAssistant, zones: F
     tpi = zones.add(
         "tpi",
         configuration={"proportional_function": "tpi", "is_used_by_central_boiler": True},
-        specific_states={"auto_tpi_state": "learning"},
+        specific_states={"auto_tpi_state": "on", "auto_tpi_continuous_kext": "off"},
     )
-    link = VThermLink(hass, [smartpi, tpi])
+    # VT publishes the Auto-TPI keys for every TPI zone; "off" means no Auto-TPI learning.
+    plain = zones.add(
+        "plain",
+        configuration={"proportional_function": "tpi", "is_used_by_central_boiler": True},
+        specific_states={"auto_tpi_state": "off", "auto_tpi_continuous_kext": "off"},
+    )
+    kext = zones.add(
+        "kext",
+        configuration={"proportional_function": "tpi"},
+        specific_states={"auto_tpi_state": "off", "auto_tpi_continuous_kext": "on"},
+    )
+    link = VThermLink(hass, [smartpi, tpi, plain, kext])
     assert link.zone_algorithm(smartpi).smartpi_learning is True
     assert link.zone_algorithm(smartpi).proportional_function == "smartpi"
+    assert not link.zone_algorithm(smartpi).auto_tpi
     algo = link.zone_algorithm(tpi)
     assert algo.auto_tpi
     assert algo.used_by_central_boiler is True
     assert algo.smartpi_learning is None
+    assert not link.zone_algorithm(plain).auto_tpi
+    assert link.zone_algorithm(kext).auto_tpi
     assert link.zone_algorithm("climate.missing").proportional_function is None
 
 
