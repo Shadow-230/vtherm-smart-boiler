@@ -73,11 +73,19 @@ class History:
         return self.signals.get(Signal.OUTDOOR) or self.weather
 
     def zone_demand(self, start: float, end: float) -> Series[bool] | None:
-        """True while any zone calls for heat; ``None`` without zone data."""
-        calls = [z.calling for z in self.zones.values() if len(z.calling)]
-        if not calls:
+        """True while any zone wants heat; ``None`` without zone data.
+
+        A zone wants heat when its valve opening or duty cycle is above a few percent; only
+        without those does its "calling" flag decide (a relay's flag flips within its cycle).
+        """
+        per_zone = [
+            combine([z.valve_open, z.on_percent, z.calling], start, end, _zone_wants_heat)
+            for z in self.zones.values()
+            if len(z.valve_open) or len(z.on_percent) or len(z.calling)
+        ]
+        if not per_zone:
             return None
-        return combine(calls, start, end, _any_known)
+        return combine(per_zone, start, end, _any_known)
 
     def drop_before(self, t: float) -> None:
         for series in self.signals.values():
@@ -86,6 +94,17 @@ class History:
             for series in zone.series():
                 series.drop_before(t)
         self.weather.drop_before(t)
+
+
+DEMAND_OPENING = 0.05
+
+
+def _zone_wants_heat(values: Sequence[object]) -> bool | None:
+    valve, on_percent, calling = values
+    for opening in (valve, on_percent):
+        if isinstance(opening, int | float) and not isinstance(opening, bool):
+            return opening > DEMAND_OPENING
+    return calling if isinstance(calling, bool) else None
 
 
 def _any_known(values: Sequence[bool | None]) -> bool | None:

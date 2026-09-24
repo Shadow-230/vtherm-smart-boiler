@@ -36,6 +36,17 @@ def params(**values: float) -> ParameterSet:
     return result
 
 
+def test_zone_demand_prefers_openings_over_the_calling_flag() -> None:
+    relay = ZoneSeries(
+        "relay",
+        on_percent=Series([(0, 0.4), (30, 0.0)]),
+        calling=Series([(0, True), (5, False), (10, True)]),  # flips within the cycle
+    )
+    demand = History(zones={"relay": relay}).zone_demand(0, 40)
+    assert demand is not None
+    assert [(s.t, s.value) for s in demand] == [(0, True), (30, False)]
+
+
 def test_combine_and_zone_demand() -> None:
     a = ZoneSeries("a", calling=Series([(0, False), (10, True), (20, False)]))
     b = ZoneSeries("b", calling=Series([(0, None), (15, False)]))
