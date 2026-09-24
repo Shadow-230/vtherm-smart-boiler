@@ -115,9 +115,9 @@ metrics. The test HA (`devenv/`, test LXC) is built with 0.2 (`docs/plan-0.2.md`
 | D5 ✅ | coordinator: state events plus a 30 s tick; bounded rolling history in HA storage. Done differently: the rolling history (8 days) is rebuilt from the recorder at start, which keeps these states anyway, and seeded from current states; HA storage keeps only the monitoring start, held emitter factors and measured parameters. Without the recorder the history starts empty after a restart. The analysis (`core/analysis.py`) runs every 5 min on a copy, off the event loop |
 | D6 ✅ | entities: boiler metrics, connection, signal check, per-zone hot water available and emitter power factor, critical zone, reference room, verdict, alarms; advanced entities hidden by default. Entities for a feature exist only when its signals are mapped |
 | D7 ✅ | FC0: `weather.get_forecasts` (hourly and daily) every 30 min, 90-day retention. Stored in weekly partitions, one storage file each |
-| D8 | diagnostics download, redacted |
+| D8 ✅ | diagnostics download, redacted |
 | D9 ✅ | translations EN and PL, key-parity test |
-| D10 | "no writes" test |
+| D10 ✅ | "no writes" test |
 
 Config-flow signal fields — entity pickers filtered by domain and device class, as in VT:
 
