@@ -73,17 +73,24 @@ def plan_learning(
     setpoint: float | None,
     now: float,
     config: LearningConfig,
+    heating: bool | None = None,
 ) -> LearningPlan:
-    """Which zones to pause and resume now."""
+    """Which zones to pause and resume now. ``setpoint`` is the heating setpoint (not a low
+    "off" value); ``heating`` whether the boiler is to heat now (``None``: unknown)."""
     setpoints = tuple(
         (t, v)
         for t, v in (*state.setpoints, *(((now, setpoint),) if setpoint is not None else ()))
         if now - t <= config.swing_window_s
     )
     swing = config.pause_on_water_swing and _swing(setpoints, config)
-    # Resume only once the water is back near its setpoint; when that cannot be told, the
-    # minimum pause alone decides, so a pause never lasts for ever.
-    flow_recovered = flow is None or setpoint is None or flow >= setpoint - config.resume_margin_k
+    # Resume only once the water is back near its setpoint; when that cannot be told, or heating
+    # is off so the water will not come back, the minimum pause alone decides.
+    flow_recovered = (
+        flow is None
+        or setpoint is None
+        or heating is False
+        or flow >= setpoint - config.resume_margin_k
+    )
     paused = dict(state.paused)
     toggles = dict(state.last_toggle)
     pause: list[str] = []

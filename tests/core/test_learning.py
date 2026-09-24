@@ -99,3 +99,15 @@ def test_pauses_can_be_switched_off() -> None:
         LearningState(), [zone("a", foreign=True)], True, 45.0, 45.0, 0.0, config
     )
     assert result.pause == ()
+
+
+def test_with_heating_off_a_hot_water_pause_ends_without_waiting_for_the_flow() -> None:
+    state = plan(LearningState(), [zone("a")], 0, dhw=True).state
+    waiting = plan_learning(
+        state, [zone("a", learning=False)], False, 30.0, 45.0, 12 * MIN, CONFIG, heating=True
+    )
+    assert waiting.resume == ()  # heating: the water must come back first
+    off = plan_learning(
+        state, [zone("a", learning=False)], False, 30.0, 45.0, 12 * MIN, CONFIG, heating=False
+    )
+    assert off.resume == ("a",)  # heating off: the flow will not come back, nothing to wait for

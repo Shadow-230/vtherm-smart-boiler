@@ -16,6 +16,8 @@ from custom_components.vtherm_smart_boiler.core.guards import (
     WriteType,
     plan_setpoint,
     plan_switch,
+    setpoint_failed,
+    switch_failed,
 )
 
 EXPIRING = SetpointGuardConfig(write_type=WriteType.EXPIRING)
@@ -144,15 +146,78 @@ def test_a_new_value_of_ours_is_not_an_outside_change() -> None:
     assert events == ()
 
 
-def test_our_change_renews_the_rewrite() -> None:
+def test_a_second_outside_change_within_a_day_blocks_even_after_our_change() -> None:
     state, _, _ = step(SetpointGuardState(), 45.0, None, 0.0, HELD)
     state, _, _ = step(state, 45.0, 45.0, 10.0, HELD)
     state, _, _ = step(state, 45.0, 60.0, 20.0, HELD)  # rewrite used
     state, _, _ = step(state, 45.0, 45.0, 30.0, HELD)
     state, _, _ = step(state, 50.0, 45.0, 200.0, HELD)  # our new value
     state, _, _ = step(state, 50.0, 50.0, 210.0, HELD)
-    _, action, _ = step(state, 50.0, 60.0, 220.0, HELD)
-    assert action == WriteAction(50.0, WriteKind.REWRITE)
+    state, action, events = step(state, 50.0, 60.0, 220.0, HELD)
+    assert action is None  # a controller writing less often than we change is not fought
+    assert events == (GuardEvent.OUTSIDE_CHANGE,)
+    assert state.blocked is GuardEvent.OUTSIDE_CHANGE
+
+
+def test_a_rewrite_is_allowed_again_a_day_later() -> None:
+    state, _, _ = step(SetpointGuardState(), 45.0, None, 0.0, HELD)
+    state, _, _ = step(state, 45.0, 45.0, 10.0, HELD)
+    state, _, _ = step(state, 45.0, 60.0, 20.0, HELD)  # rewrite used
+    state, _, _ = step(state, 45.0, 45.0, 30.0, HELD)
+    _, action, events = step(state, 45.0, 60.0, 20.0 + 86_400.0 + 1.0, HELD)
+    assert action == WriteAction(45.0, WriteKind.REWRITE)
+    assert events == ()
+
+
+def test_the_daily_cap_applies_to_the_first_write_of_a_session() -> None:
+    state = SetpointGuardState(history=(0.0, 1.0, 2.0))  # three wearing writes today
+    state, action, events = step(state, 45.0, None, 10.0, PERSISTENT)
+    assert action is None
+    assert events == (GuardEvent.DAILY_CAP,)
+    assert state.blocked is GuardEvent.DAILY_CAP
+
+
+def test_the_daily_cap_applies_to_rewrites() -> None:
+    state, _, _ = step(SetpointGuardState(history=(0.0, 1.0)), 45.0, None, 10.0, PERSISTENT)
+    state, _, _ = step(state, 45.0, 45.0, 20.0, PERSISTENT)  # confirmed; three writes today
+    state, action, events = step(state, 45.0, 60.0, 30.0, PERSISTENT)
+    assert action is None
+    assert events == (GuardEvent.DAILY_CAP,)
+
+
+@pytest.mark.parametrize("config", [EXPIRING, PERSISTENT])
+def test_a_failed_write_is_sent_again_at_the_next_step(config) -> None:
+    state, _, _ = step(SetpointGuardState(), 45.0, None, 0.0, config)
+    state = setpoint_failed(state)
+    state, action, events = step(state, 45.0, None, 10.0, config)
+    assert action == WriteAction(45.0, WriteKind.RESEND)
+    assert events == ()
+    _, action, _ = step(state, 45.0, None, 20.0, config)
+    assert action is None  # sent; nothing more until the next keep-alive or change
+
+
+def test_a_failed_change_is_retried_not_taken_for_an_outside_change() -> None:
+    state, _, _ = step(SetpointGuardState(), 45.0, None, 0.0, EXPIRING)
+    state, _, _ = step(state, 45.0, 45.0, 10.0, EXPIRING)  # confirmed
+    state, action, _ = step(state, 50.0, 45.0, 120.0, EXPIRING)
+    assert action == WriteAction(50.0, WriteKind.CHANGE)
+    state = setpoint_failed(state)
+    state, action, events = step(state, 50.0, 45.0, 130.0, EXPIRING)
+    assert action == WriteAction(50.0, WriteKind.RESEND)
+    assert events == ()
+    assert state.rewritten_at is None
+
+
+def test_a_lapse_after_our_own_silence_is_resent_not_rewritten() -> None:
+    state, _, _ = step(SetpointGuardState(), 45.0, None, 0.0, EXPIRING)
+    state, _, _ = step(state, 45.0, 45.0, 10.0, EXPIRING)  # confirmed
+    for t in (40.0, 100.0, 160.0):  # stale data: nothing desired, nothing written
+        state, action, _ = step(state, None, 45.0 if t < 60 else 40.0, t, EXPIRING)
+        assert action is None
+    state, action, events = step(state, 45.0, 40.0, 200.0, EXPIRING)  # the override lapsed
+    assert action == WriteAction(45.0, WriteKind.RESEND)
+    assert events == ()
+    assert state.rewritten_at is None  # the one rewrite is still there for a real outside change
 
 
 def test_nothing_desired_writes_nothing() -> None:
@@ -201,6 +266,14 @@ def test_switch_keepalive_for_expiring_overrides() -> None:
     assert plan_switch(first.state, True, 10.0, config).write is None
     assert plan_switch(first.state, True, 30.0, config).write is True
     assert plan_switch(SwitchGuardState(), None, 0.0, config).write is None
+
+
+def test_a_failed_switch_is_sent_again() -> None:
+    first = plan_switch(SwitchGuardState(), True, 0.0, SWITCH)
+    retried = plan_switch(switch_failed(first.state), True, 10.0, SWITCH)
+    assert retried.write is True
+    assert retried.state.switches == first.state.switches  # not a new switching
+    assert plan_switch(retried.state, True, 20.0, SWITCH).write is None
 
 
 def test_invalid_switch_config() -> None:

@@ -9,10 +9,16 @@ The guards are fixed; their values are options. For a setpoint:
   minute, repeats included (a guard against runaway loops);
 - every write is read back: not confirmed within the timeout → reported as ignored, never assumed
   applied; changed from outside after it was confirmed → written again once, then blocked and
-  reported, also when that one rewrite is not confirmed within the timeout — the plugin does not
-  fight another controller.
+  reported, also when that one rewrite is not confirmed within the timeout; a further outside
+  change within a day of the rewrite is not rewritten, whatever the plugin wrote in between — the
+  plugin does not fight another controller;
+- a write that failed is sent again at the next step, and a mismatch it explains is not taken
+  for another controller; nor is an expiring override that lapsed because the plugin itself
+  went silent (stale data), which is simply sent again;
+- the daily cap on wearing writes applies to every write, the first of a session included.
 
-For heating on/off: minimum on and off times and a cap on switchings per hour.
+For heating on/off: minimum on and off times and a cap on switchings per hour; a failed write is
+sent again, and an expiring override is repeated like a setpoint.
 
 A hand-back write is not planned here: nothing holds it back.
 """
@@ -25,6 +31,7 @@ from enum import StrEnum
 MINUTE = 60.0
 HOUR = 3600.0
 DAY = 86400.0
+REWRITE_WINDOW_S = DAY  # after the one rewrite, further outside changes this soon are not fought
 
 
 class WriteType(StrEnum):
@@ -38,6 +45,7 @@ class WriteKind(StrEnum):
     CHANGE = "change"
     KEEPALIVE = "keepalive"
     REWRITE = "rewrite"
+    RESEND = "resend"  # the same value again: after a failed write or a lapse of our own making
 
 
 class GuardEvent(StrEnum):
@@ -78,9 +86,10 @@ class SetpointGuardState:
     changed_at: float | None = None  # when a different value was last written
     confirmed_at: float | None = None  # when the device confirmed the written value
     history: tuple[float, ...] = ()  # write times of the last day
-    rewritten: bool = False  # the one rewrite after an outside change is used
+    rewritten_at: float | None = None  # when the one rewrite after an outside change was sent
     ignored_reported: bool = False
     blocked: GuardEvent | None = None  # no more writes until the guard is reset
+    retry: bool = False  # the last write failed: send it again
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +107,11 @@ class GuardResult:
 
 def _matches(a: float | None, b: float | None, tolerance: float) -> bool:
     return a is not None and b is not None and abs(a - b) <= tolerance
+
+
+def setpoint_failed(state: SetpointGuardState) -> SetpointGuardState:
+    """The planned write did not go through: it is sent again at the next step."""
+    return replace(state, retry=True)
 
 
 def plan_setpoint(
@@ -122,7 +136,7 @@ def plan_setpoint(
         and not state.ignored_reported
         and now - state.sent_at > config.confirm_timeout_s
     ):
-        if state.rewritten:
+        if state.rewritten_at is not None and state.sent_at == state.rewritten_at:
             # The one rewrite after an outside change did not hold: another controller keeps
             # its value. Stop and report rather than fight it.
             events.append(GuardEvent.OUTSIDE_CHANGE)
@@ -133,34 +147,39 @@ def plan_setpoint(
 
     if state.blocked is not None or desired is None:
         return GuardResult(state, None, tuple(events))
-
-    outside = (
-        state.confirmed_at is not None
-        and confirmed is not None
-        and not _matches(confirmed, state.written, config.tolerance)
-    )
-    if outside:
-        if state.rewritten:
-            events.append(GuardEvent.OUTSIDE_CHANGE)
-            return GuardResult(
-                replace(state, blocked=GuardEvent.OUTSIDE_CHANGE), None, tuple(events)
-            )
-        value = state.written
-        assert value is not None
-        return _write(replace(state, rewritten=True), value, WriteKind.REWRITE, now, config, events)
-
     if state.written is None:
         return _write(state, desired, WriteKind.CHANGE, now, config, events)
+
     differs = not _matches(desired, state.written, config.tolerance)
     if differs and config.wears and abs(desired - state.written) < config.min_change:
         differs = False
     too_soon = (
         state.changed_at is not None and now - state.changed_at < config.min_change_interval_s
     )
+    if state.retry:
+        # Our own write failed: what the device shows says nothing about other controllers.
+        if differs and not too_soon:
+            return _write(state, desired, WriteKind.CHANGE, now, config, events)
+        return _write(state, state.written, WriteKind.RESEND, now, config, events)
+
+    mismatch = (
+        state.confirmed_at is not None
+        and confirmed is not None
+        and not _matches(confirmed, state.written, config.tolerance)
+    )
+    if mismatch:
+        if _lapsed(state, now, config):
+            # We went silent (stale data) long enough for the override to lapse: not another
+            # controller's doing.
+            return _write(state, state.written, WriteKind.RESEND, now, config, events)
+        if state.rewritten_at is not None and now - state.rewritten_at < REWRITE_WINDOW_S:
+            events.append(GuardEvent.OUTSIDE_CHANGE)
+            return GuardResult(
+                replace(state, blocked=GuardEvent.OUTSIDE_CHANGE), None, tuple(events)
+            )
+        return _write(state, state.written, WriteKind.REWRITE, now, config, events)
+
     if differs and not too_soon:
-        if config.wears and len(history) >= config.daily_cap:
-            events.append(GuardEvent.DAILY_CAP)
-            return GuardResult(replace(state, blocked=GuardEvent.DAILY_CAP), None, tuple(events))
         return _write(state, desired, WriteKind.CHANGE, now, config, events)
     # No change now (none wanted, or it must wait): an expiring override still needs its
     # keep-alive, or it would lapse while the change waits.
@@ -173,6 +192,15 @@ def plan_setpoint(
     return GuardResult(state, None, tuple(events))
 
 
+def _lapsed(state: SetpointGuardState, now: float, config: SetpointGuardConfig) -> bool:
+    """An expiring override the plugin stopped repeating long enough for it to lapse."""
+    return (
+        config.write_type is WriteType.EXPIRING
+        and state.written_at is not None
+        and now - state.written_at > 2 * config.keepalive_s
+    )
+
+
 def _write(
     state: SetpointGuardState,
     value: float,
@@ -181,21 +209,27 @@ def _write(
     config: SetpointGuardConfig,
     events: list[GuardEvent],
 ) -> GuardResult:
+    if config.wears and len(state.history) >= config.daily_cap:
+        # Every wearing write counts, the first of a session and a rewrite included.
+        events.append(GuardEvent.DAILY_CAP)
+        return GuardResult(replace(state, blocked=GuardEvent.DAILY_CAP), None, tuple(events))
     recent = [t for t in state.history if now - t < MINUTE]
     if len(recent) >= config.max_writes_per_minute:
         return GuardResult(state, None, tuple(events))
     changed = kind is WriteKind.CHANGE and (
         state.written is None or not _matches(value, state.written, config.tolerance)
     )
+    sent = changed or kind in (WriteKind.REWRITE, WriteKind.RESEND)
     new_state = replace(
         state,
         written=value,
         written_at=now,
-        sent_at=now if changed or kind is WriteKind.REWRITE else state.sent_at,
+        sent_at=now if sent else state.sent_at,
         changed_at=now if changed else state.changed_at,
-        confirmed_at=None if changed or kind is WriteKind.REWRITE else state.confirmed_at,
+        confirmed_at=None if sent else state.confirmed_at,
         ignored_reported=False if changed else state.ignored_reported,
-        rewritten=False if changed else state.rewritten,
+        rewritten_at=now if kind is WriteKind.REWRITE else state.rewritten_at,
+        retry=False,
         history=(*state.history, now),
     )
     return GuardResult(new_state, WriteAction(value, kind), tuple(events))
@@ -225,6 +259,7 @@ class SwitchGuardState:
     written_at: float | None = None
     changed_at: float | None = None
     switches: tuple[float, ...] = ()
+    retry: bool = False  # the last write failed: send it again
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,6 +267,11 @@ class SwitchResult:
     state: SwitchGuardState
     write: bool | None = None  # the state to write now, if any
     hold: SwitchHold | None = None
+
+
+def switch_failed(state: SwitchGuardState) -> SwitchGuardState:
+    """The planned write did not go through: it is sent again at the next step."""
+    return replace(state, retry=True)
 
 
 def plan_switch(
@@ -244,15 +284,16 @@ def plan_switch(
         return SwitchResult(state)
     if state.written is None:
         return SwitchResult(
-            replace(state, written=desired, written_at=now, changed_at=now), desired
+            replace(state, written=desired, written_at=now, changed_at=now, retry=False), desired
         )
     if desired == state.written:
-        if (
+        due = (
             config.keepalive_s is not None
             and state.written_at is not None
             and now - state.written_at >= config.keepalive_s
-        ):
-            return SwitchResult(replace(state, written_at=now), desired)
+        )
+        if state.retry or due:
+            return SwitchResult(replace(state, written_at=now, retry=False), desired)
         return SwitchResult(state)
     since = now - state.changed_at if state.changed_at is not None else None
     if since is not None:
