@@ -4,10 +4,12 @@ Goal: the first release with control — the 0.1 monitor (`docs/plan-0.1.md`) pl
 control in flow-setpoint mode: the plugin decides the water temperature. Room-value mode (the
 boiler's own curve decides it) moves to 0.3. Control is opt-in, marked experimental, and
 available after the monitoring period (default 7 days, `SCOPE.md` §10). On/off-only boilers
-(relay) come later. Before the control work, the monitor goes out as a pre-release (phase E).
+(relay) come later. GitHub and every publication come at the end of 0.2 (the user's decision,
+2026-09-24).
 Scope: `SCOPE.md`; overview: `PLAN.md`.
 
-Phases run in order: E, F, G, H, I, J, K. J2 (the user's test LXC) and S3 can happen at any time.
+Phases run in order: F, G, H, I, J, K — the build first, then the test HA with the user (J2, J4),
+the review and the release. S3 can happen at any time.
 
 ## Rules that shape this release
 
@@ -19,7 +21,7 @@ Phases run in order: E, F, G, H, I, J, K. J2 (the user's test LXC) and S3 can ha
 - Every delegated task includes, in full, every rule of `CLAUDE.md` and every restriction the user
   has given.
 - No Home Assistant instance but the dedicated test HA, and that one only after the user says to
-  start (J4). The author's installation is the user's alone (E4, K5).
+  start (J4). The author's installation is the user's alone (K6).
 - The fixed safeguards (`SCOPE.md` §3 principle 11, §7) cover every write — flow setpoint, CH
   on/off, modulation cap — and are not options.
 - Every write path, for any installation: a writable entity the user picked, and built-in OTGW
@@ -32,7 +34,10 @@ Phases run in order: E, F, G, H, I, J, K. J2 (the user's test LXC) and S3 can ha
   default and a description of what it does and what it risks, in the config flow and the README.
 - Nothing reaches a real boiler before every acceptance scenario passes in the test HA.
 - 🔒 marks steps that need the user's consent or action; ✅ marks a finished step.
-- Working mode as in `docs/plan-0.1.md`; the review stop comes after phase G.
+- Working mode as in `docs/plan-0.1.md`. The build runs to the end without the review stop after
+  phase G: the user reviews everything before anything reaches a real boiler (K4; the user's
+  decision, 2026-09-24). Choices phase F leaves open get the most cautious option as a
+  provisional decision, confirmed at K4.
 
 ## Layout additions
 
@@ -50,23 +55,10 @@ Phases run in order: E, F, G, H, I, J, K. J2 (the user's test LXC) and S3 can ha
 | Step | Work |
 |---|---|
 | S1 ✅ | this plan written and `CLAUDE.md` updated: code and delegation rules (2026-09-24) |
-| S2 | review of the 0.1 monitor laws — moved to K6 (the user's decision, 2026-09-24) |
+| S2 | review of the 0.1 monitor laws — moved to K4 (the user's decision, 2026-09-24) |
 | S3 🔒 | optional, at any time once there is heating data: the user copies their recorder database to `data/`; the importer's results are compared with what the user sees (starts, DHW runs on a shared return) |
 
-## Phase E — monitor pre-release
-
-The 0.1 monitor, read-only, goes out before the control work, so the monitoring period and real
-data start earlier. It is tested in-process, the no-writes test included; the test HA comes with
-phase J.
-
-| Step | Work |
-|---|---|
-| E1 🔒 | `LICENSE` (official Apache-2.0 text, fetched with the user's consent at this step), `NOTICE`, `README.md` (read-only monitor: installation, what each entity means, what stays local, safety notes), `CHANGELOG.md`, `hacs.json`; `manifest.json` code owners, documentation and issue tracker once the repository name is known |
-| E2 | workflows: tests, ruff, Hassfest, HACS action |
-| E3 🔒 | GitHub repository (created by the user, or by Claude with the user's consent) and a pre-release `0.1.0b1` — private if HACS can install from a private repository (to verify), otherwise public, marked pre-release |
-| E4 🔒 | the user installs the pre-release on their installation through HACS; the monitoring period starts; redacted diagnostics the user places in `data/` can be analysed |
-
-## Phase F — checks before control code 🔒
+## Phase F — checks before control code
 
 Reads over the network and of local sources, for facts only; results in `research/`; the user
 decides where a choice is needed.
@@ -81,8 +73,9 @@ decides where a choice is needed.
 | F6 | OTGW firmware over MQTT: command topics, the echo of each command, values after a gateway reset |
 | F7 | The DHW-enable bit when the gateway is master: how it is set and how the plugin keeps it as it was |
 
-Done when: answers recorded, `SCOPE.md` §11 updated, the user has decided the open choices, among
-them the default hand-back method per topology and a possible third write type.
+Done when: answers recorded and `SCOPE.md` §11 updated. Open choices — among them the default
+hand-back method per topology and a possible third write type — get the most cautious option as
+a provisional decision; the user confirms them at K4.
 
 ## Phase G — control core (test first)
 
@@ -105,8 +98,9 @@ Flow-setpoint mode; 0.2 writes one circuit, a second circuit through the boiler 
 Done when: every law has unit tests, including limits, stale data and sensor failure, and the
 closed-loop tests pass.
 
-**Review stop 🔒:** the user reviews the control laws, the write guards and the proposed defaults
-(limits, fallback setpoint, ramp, minimum times), each with its reason, before phase H starts.
+Review: the control laws, the write guards and the proposed defaults (limits, fallback setpoint,
+ramp, minimum times), each with its reason, go to the user's review at K4 — before anything
+reaches a real boiler.
 
 ## Phase H — write path and VT integration
 
@@ -149,12 +143,12 @@ Done when: every scenario passes in the test HA.
 
 | Step | Work |
 |---|---|
-| K1 | README for control: a section "Options and risks", what hand-back does on each write path, a template for the user's manual fallback; `CHANGELOG.md` |
-| K2 | workflows green (from E2) |
+| K1 🔒 | release files: `LICENSE` (official Apache-2.0 text, fetched with the user's consent at this step), `NOTICE`, `README.md` (installation, what each entity means, what stays local, a section "Options and risks", what hand-back does on each write path, a template for the user's manual fallback), `CHANGELOG.md`, `hacs.json`; `manifest.json` code owners, documentation and issue tracker once the repository name is known |
+| K2 | workflows: tests, ruff, Hassfest, HACS action |
 | K3 ✅ | local git since 2026-09-24; `.gitignore` written before the first commit: `.tools/`, `.venv/`, `.tmp/`, `data/`, `vendor/`, `research/`, `home-assessment.md`, `devenv/local.env`, `devenv/ssh/` |
-| K4 🔒 | pre-release `0.2.0b1` |
-| K5 🔒 | the user installs the pre-release on their installation through HACS; 7 days of monitoring (counted since E4); before control is enabled, a written manual fallback (how to return the boiler to its own control) is ready; control starts under supervision in mild weather; several days without errors |
-| K6 🔒 | the user reviews the 0.1 monitor laws together with the finished 0.2 (decided 2026-09-24) |
+| K4 🔒 | the user reviews the 0.1 monitor laws, the control laws, the write guards and the defaults, and confirms the provisional decisions — before anything reaches a real boiler (the user's decisions, 2026-09-24) |
+| K5 🔒 | GitHub repository (created by the user, or by Claude with the user's consent) and a pre-release `0.2.0b1` — private if HACS can install from a private repository (to verify), otherwise public, marked pre-release |
+| K6 🔒 | the user installs the pre-release on their installation through HACS; control is off by default, so it monitors first: 7 days; before control is enabled, a written manual fallback (how to return the boiler to its own control) is ready; control starts under supervision in mild weather; several days without errors; redacted diagnostics the user places in `data/` can be analysed |
 | K7 🔒 | release 0.2.0, repository public |
 
 ## Done for 0.2
@@ -168,8 +162,10 @@ installation has monitored for 7 days and then run control without errors; the u
 - Phase F questions.
 
 Decided on 2026-09-24: 0.2 writes one circuit, CH2 later; room-value mode moves to 0.3; 0.2
-supports every write path, for any installation; the monitor goes out first as a pre-release
-(phase E); the 0.1 monitor laws are reviewed when 0.2 is ready (K6).
+supports every write path, for any installation; GitHub and every publication come at the end of
+0.2, so the monitor pre-release (phase E) is folded into K; the build runs to the end and one
+review — the 0.1 laws, the control laws and the defaults — comes before anything reaches a real
+boiler (K4).
 
 ## Moved to 0.3
 

@@ -36,7 +36,7 @@ Each topic lives only in its file; do not copy it here.
   consented 2026-09-24: `uv` from PyPI into `.tools/bootstrap/` (`docs/plan-0.1.md` A1); Python
   3.14 through `uv` into `.tools/python/` (A2); packages from PyPI into `.venv/` (A3); VT 10.4.0
   and SmartPI 0.4.0 sources in `vendor/` (A5). The official license text only with the user's
-  consent at that step (`docs/plan-0.2.md` E1).
+  consent at that step (`docs/plan-0.2.md` K1).
 - Nothing is created without the user's consent: no files or directories (temporary ones
   included), repositories, installs, environments, issues or pull requests.
   Exceptions: files and directories in the agreed layout (the "Layout" sections of
@@ -53,8 +53,8 @@ Each topic lives only in its file; do not copy it here.
   tool-configuration files may be changed without asking — history keeps every change.
   Documents (`*.md`) and the user's files still need a shown diff and consent. Anything not
   tracked by git is shown and confirmed before it is deleted or overwritten.
-- Autonomous work: phases run in order without waiting; work stops at every 🔒 step and at the
-  review stop after phase G (`docs/plan-0.2.md`); each finished step
+- Autonomous work: phases run in order without waiting; work stops at every 🔒 step; the user
+  reviews before anything reaches a real boiler (`docs/plan-0.2.md`, K4); each finished step
   is marked ✅ in its plan and committed, so the next session knows where to continue; a step
   found unnecessary is marked ✅ with the reason.
   Subagents may be used and are bound by these rules; a multi-agent workflow only when the user

@@ -406,12 +406,12 @@ verdict stays visible and the user decides.
 - 0.2 controls in flow-setpoint mode only; room-value mode comes in 0.3 (2026-09-24).
 - 0.2 supports every write path, for any installation: a writable entity the user picks, and
   built-in OTGW through `opentherm_gw` or its firmware over MQTT (2026-09-24).
-- The monitor goes out as a pre-release before the control work of 0.2 (2026-09-24).
+- GitHub and every publication come at the end of 0.2; the first pre-release is 0.2.0b1, which
+  monitors first because control is off by default (2026-09-24).
 
 ## 12. Release
 
-The monitor goes out first as a pre-release: read-only, tested in-process, installed by the
-author through HACS from a GitHub repository added as a custom repository. 0.2 is the first
-release with control: it passes the test environment, then runs on the author's installation,
-then goes public. Submission to the HACS default list and the VT plugin list later (HACS review
+Public from 0.2, the first release: a GitHub repository, created at the end of 0.2 and installed
+through HACS as a custom repository. 0.2 passes the test environment, then runs on the author's
+installation — monitoring first, since control is off by default — then goes public. Submission to the HACS default list and the VT plugin list later (HACS review
 takes months). Creating the repository and every publication need the author's consent.
