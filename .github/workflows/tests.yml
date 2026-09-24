@@ -1,0 +1,29 @@
+# Tests and lint on every push and pull request (docs/plan-0.2.md, K2). vendor/ (VT and SmartPI)
+# is not in the repository, so the tests that need it are skipped here.
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install the pinned test environment
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --group test
+      - name: Ruff
+        run: ruff check .
+      - name: Tests
+        run: |
+          mkdir -p .tmp
+          python -m pytest -q
