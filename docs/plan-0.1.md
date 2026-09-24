@@ -79,7 +79,7 @@ so `core` can be imported on its own; `core` tests import it directly.
 | B6 ✅ | emitter power factor (EN 442 exponent by emitter type — defaults: radiator 1.3, underfloor 1.1, convector 1.4, advanced override), heating zones only, last value held, unavailable with a reason |
 | B7 ✅ | hot water available per zone: no while DHW is active, while the flow has fallen near room temperature, or while the flow signal is stale |
 | B8 ✅ | reference room: strategies, selection hysteresis, explicit "no active zone" and "no valid measurement" |
-| B9 | critical zone per circuit |
+| B9 ✅ | critical zone per circuit |
 | B10 | signal check: which optional signals are present and fresh; outdoor sensor plausibility against the weather entity |
 | B11 | foreign heat from user-mapped switches or sensors, per zone |
 | B12 | verdict — worth it / not worth it / not enough data (minimum 7 days), always with reasons; compares the building load with the boiler's minimum power |
