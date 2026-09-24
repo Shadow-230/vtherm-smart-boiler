@@ -198,8 +198,12 @@ def zone_schema(options: dict[str, Any], current: dict[str, Any]) -> vol.Schema:
     circuits = [c["id"] for c in options.get(CIRCUITS, [])] or ["main"]
     fields: dict[Any, Any] = {}
     if len(circuits) > 1:
-        fields[vol.Required("circuit", default=current.get("circuit", circuits[0]))] = _select(
-            "circuit", circuits
+        fields[vol.Required("circuit", default=current.get("circuit", circuits[0]))] = (
+            selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=circuits, mode=selector.SelectSelectorMode.DROPDOWN
+                )
+            )
         )
     fields[vol.Required("emitter", default=current.get("emitter", EmitterType.RADIATOR.value))] = (
         _select("emitter", [e.value for e in EmitterType])
@@ -409,6 +413,38 @@ def restore_advanced_defaults(options: dict[str, Any]) -> None:
             source.pop("threshold", None)
     options.get(REFERENCE_ROOM, {}).pop("switch_margin", None)
     options.pop(MONITOR, None)
+
+
+ADVANCED_SIGNALS = tuple(key for key, (_f, simple) in SIGNAL_FIELDS.items() if not simple)
+
+
+def has_hidden_advanced(options: dict[str, Any]) -> bool:
+    """At the simple level: whether any setting only the advanced level shows is set."""
+    if _advanced(options):
+        return False
+    params = options.get(PARAMETERS, {})
+    circuits = options.get(CIRCUITS, [])
+    zones = options.get(ZONES, [])
+    return bool(
+        any(key in options.get(SIGNALS, {}) for key in ADVANCED_SIGNALS)
+        or any(key in options.get(BOILER, {}) for key in ("modulation_scale", "shared_return"))
+        or any(
+            key in params
+            for key in (
+                "max_ch_setpoint",
+                "gas_at_min_power",
+                "gas_at_max_power",
+                *BUILDING_PARAMETER_KEYS,
+            )
+        )
+        or "design_load_kw" in options.get(BUILDING, {})
+        or len(circuits) > 1
+        or any("flow_entity" in c for c in circuits)
+        or any("reference_output_w" in z or "exponent" in z for z in zones)
+        or any("threshold" in s for z in zones for s in z.get("foreign_heat", []))
+        or "switch_margin" in options.get(REFERENCE_ROOM, {})
+        or MONITOR in options
+    )
 
 
 def validate(options: dict[str, Any]) -> str | None:
@@ -644,10 +680,17 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         return "save"
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        menu = ["signals", "boiler", "circuit", "zones", "building", "reference", "level"]
+        menu = ["signals", "boiler", "circuit", "zones", "building", "reference"]
         if _advanced(self.options):
-            menu.insert(-1, "monitor")
+            menu.append("monitor")
+        # At the simple level, say when hidden advanced settings are still active.
+        menu.append("level_hidden" if has_hidden_advanced(self.options) else "level")
         return self.async_show_menu(step_id="init", menu_options=menu)
+
+    async def async_step_level_hidden(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return await self.async_step_level(user_input)
 
     async def async_step_level(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:

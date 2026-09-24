@@ -1,13 +1,520 @@
 {
+  "config": {
+    "step": {
+      "user": {
+        "title": "VTherm Smart Boiler",
+        "description": "Monitors your boiler read-only: it never writes to the boiler or to VT. Pick a name and the level of detail.",
+        "data": {
+          "name": "Name",
+          "level": "Level of detail"
+        },
+        "data_description": {
+          "name": "Shown as the device name.",
+          "level": "Simple shows the essentials with cautious defaults; advanced shows every parameter. The level changes only what you see, never how the plugin behaves."
+        }
+      },
+      "signals": {
+        "title": "Boiler signals",
+        "description": "Pick the entity that provides each signal. Flame and flow temperature are required; every other signal enables more of the monitor. The plugin only reads these entities.",
+        "data": {
+          "flame": "Flame",
+          "flow": "Flow temperature",
+          "return": "Return temperature",
+          "modulation": "Modulation",
+          "dhw_active": "Hot water (DHW) active",
+          "pressure": "Water pressure",
+          "outdoor": "Outdoor temperature (boiler sensor)",
+          "ch_setpoint": "Heating setpoint",
+          "ch_active": "Heating active",
+          "pump_running": "Pump running",
+          "flue_gas": "Flue gas temperature",
+          "gas_meter": "Gas meter",
+          "room_setpoint": "Wired thermostat setpoint",
+          "room_temperature": "Wired thermostat room temperature",
+          "weather": "Weather entity"
+        },
+        "data_description": {
+          "flame": "On while the burner burns. Every burner-cycle metric comes from it: the wrong entity gives wrong starts and burn times.",
+          "flow": "Water leaving the boiler. Used for hot water availability, emitter power and telling DHW runs from heating.",
+          "return": "Water coming back to the boiler. Enables the condensing share; without it condensing cannot be judged.",
+          "modulation": "Burner modulation in percent. With the boiler's power range it estimates heat output and gas use.",
+          "dhw_active": "On while the boiler heats domestic hot water. Without it DHW runs are inferred with less certainty and some may count as heating.",
+          "pressure": "Enables the pressure alarms and the falling-pressure warning.",
+          "outdoor": "The boiler's own outdoor sensor. Used for degree-days and checked against the weather entity.",
+          "ch_setpoint": "The flow setpoint the boiler works to. Helps tell DHW runs from heating.",
+          "ch_active": "On while the boiler heats the rooms. Helps tell DHW from heating when there is no DHW signal.",
+          "pump_running": "On while the heating pump runs. Recorded now; the low-flow warning will need it.",
+          "flue_gas": "Enables the flue gas alarm and the early warning of a fouling heat exchanger.",
+          "gas_meter": "A cumulative gas or energy meter. Gives measured gas per degree-day instead of an estimate.",
+          "room_setpoint": "The room setpoint a wired thermostat sends to the boiler, if there is one. Recorded for the assessment.",
+          "room_temperature": "The room temperature a wired thermostat sends to the boiler, if there is one. Recorded for the assessment.",
+          "weather": "Its forecasts are recorded for later forecast features and its temperature stands in for a missing outdoor sensor. No data leaves your Home Assistant."
+        }
+      },
+      "boiler": {
+        "title": "Boiler",
+        "description": "What you know about your boiler. Leave unknown values empty: the plugin then says what it cannot judge.",
+        "data": {
+          "class": "What the boiler's integration can do",
+          "dhw": "Domestic hot water",
+          "condensing": "Condensing boiler",
+          "boiler_min_power": "Minimum power",
+          "boiler_max_power": "Maximum power",
+          "max_ch_setpoint": "Maximum heating setpoint",
+          "gas_at_min_power": "Gas at minimum power",
+          "gas_at_max_power": "Gas at maximum power",
+          "modulation_scale": "Modulation means",
+          "shared_return": "Heating and DHW share the return sensor"
+        },
+        "data_description": {
+          "class": "Flow setpoint, curve parameters only, on/off or read-only. This version only monitors, whatever you pick; control will use it later.",
+          "dhw": "None, a storage tank or a combi boiler. Used to interpret DHW runs.",
+          "condensing": "Condensing boilers get flue gas limits for condensing appliances; for other boilers the absolute flue gas alarm is off.",
+          "boiler_min_power": "Lowest heating power from the manual, in kW. Compared with the building load: a load often below it means the boiler must cycle.",
+          "boiler_max_power": "Highest heating power in kW. With the minimum and the modulation it estimates heat output.",
+          "max_ch_setpoint": "Highest flow temperature in heating, in °C. Flow above it points to a DHW run.",
+          "gas_at_min_power": "Gas per hour at minimum power, in your gas meter's unit. With the modulation it estimates gas use when there is no meter.",
+          "gas_at_max_power": "Gas per hour at maximum power, in the same unit.",
+          "modulation_scale": "Whether 0 % is the minimum power (the OpenTherm definition) or the value is a percentage of maximum power. The wrong choice skews heat and gas estimates.",
+          "shared_return": "Tick when one return sensor serves both. DHW runs are then kept out of the heating metrics."
+        }
+      },
+      "circuit": {
+        "title": "Heating circuit {number}",
+        "description": "How this circuit's water temperature is set.",
+        "data": {
+          "control": "Control",
+          "max_flow": "Maximum flow temperature",
+          "fixed_temperature": "Fixed temperature",
+          "flow_entity": "Circuit flow sensor",
+          "add_another": "Add another circuit"
+        },
+        "data_description": {
+          "control": "Unmixed and shared: straight from the boiler. Through the boiler: a second circuit the boiler mixes. Separately: an external mixing controller. Passive fixed: a thermostatic mixing valve.",
+          "max_flow": "The most this circuit may receive, in °C, e.g. underfloor heating on an unmixed loop. Recorded now; control will treat it as a hard limit.",
+          "fixed_temperature": "Needed for a passive fixed circuit: the valve's setting in °C.",
+          "flow_entity": "A mixed circuit's own flow temperature. Without it the heat reaching that circuit cannot be told.",
+          "add_another": "Tick to describe one more circuit after this one."
+        }
+      },
+      "zones": {
+        "title": "VT zones",
+        "description": "Pick the Versatile Thermostat zones heated by this boiler. Zones not picked are ignored.",
+        "data": {
+          "zones": "Zones"
+        },
+        "data_description": {
+          "zones": "Only VT climate entities are offered. The plugin only reads them."
+        }
+      },
+      "zone": {
+        "title": "Zone {zone}",
+        "description": "How this zone is heated.",
+        "data": {
+          "circuit": "Circuit",
+          "emitter": "Emitter type",
+          "foreign_heat": "Other heat sources",
+          "reference_output_w": "Emitter output",
+          "exponent": "Emitter exponent",
+          "power_threshold": "Power threshold",
+          "temperature_threshold": "Temperature threshold"
+        },
+        "data_description": {
+          "circuit": "The heating circuit this zone is on.",
+          "emitter": "Radiators, underfloor or convectors. Sets the EN 442 exponent of the emitter power.",
+          "foreign_heat": "A fireplace, stove or electric heater in this room, not the sun: a switch or binary sensor that is on while it heats, or a power or temperature sensor. Shown as foreign heat for the zone.",
+          "reference_output_w": "The emitters' output at their reference condition, in W. Only for an absolute output estimate.",
+          "exponent": "Overrides the EN 442 exponent of the emitter type.",
+          "power_threshold": "A power source counts as heating above this, in W. Default 100 W.",
+          "temperature_threshold": "Needed for a temperature source: it counts as heating above this, in °C."
+        }
+      },
+      "building": {
+        "title": "Building",
+        "description": "A first estimate of your house's heat loss; recorded heating days refine it. Leave empty what you do not know.",
+        "data": {
+          "floor_area": "Heated floor area",
+          "insulation": "Insulation",
+          "thermal_mass": "Thermal mass",
+          "design_load_kw": "Design heat load",
+          "loss_coefficient": "Loss coefficient",
+          "heating_threshold": "Heating threshold",
+          "design_outdoor": "Design outdoor temperature"
+        },
+        "data_description": {
+          "floor_area": "In m². With the insulation class it gives a rough first estimate.",
+          "insulation": "Poor, average, good or very good.",
+          "thermal_mass": "How slowly the house cools. Recorded for later forecast features.",
+          "design_load_kw": "Your own heat-loss calculation, in kW at the design outdoor temperature. Wins over the rough estimate.",
+          "loss_coefficient": "Heat loss per kelvin, in kW/K, if you know it. Wins over every estimate.",
+          "heating_threshold": "Outdoor temperature above which the house needs no heating, in °C; also the degree-day base. Default 15 °C.",
+          "design_outdoor": "The coldest outdoor temperature your design load refers to, in °C. Default −15 °C."
+        }
+      },
+      "reference": {
+        "title": "Reference room",
+        "description": "One room temperature and setpoint for controllers that need a single room.",
+        "data": {
+          "strategy": "Strategy",
+          "zone": "Chosen zone",
+          "switch_margin": "Switch margin"
+        },
+        "data_description": {
+          "strategy": "Largest deficit follows the room furthest below its setpoint; a chosen zone always uses one room; average uses every heating room.",
+          "zone": "Used with the chosen-zone strategy.",
+          "switch_margin": "Another room must be this much colder before the reference switches, in K. Smaller follows faster but switches more often, which can disturb an external controller."
+        }
+      },
+      "monitor": {
+        "title": "Monitor",
+        "description": "Thresholds of the analysis.",
+        "data": {
+          "condensing_return": "Condensing return threshold",
+          "short_burn_min": "Short burn",
+          "monitoring_days": "Monitoring period",
+          "near_room_k": "Near room temperature",
+          "foreign_heat_hold_min": "Foreign heat hold"
+        },
+        "data_description": {
+          "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C.",
+          "short_burn_min": "Burns shorter than this count as short, in minutes. Default 10.",
+          "monitoring_days": "Days of data before the verdict is given, and later before control can be enabled. Default 7; shorter is not allowed.",
+          "near_room_k": "Water within this of the room counts as no hot water, in K. Default 3.",
+          "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60."
+        }
+      }
+    },
+    "error": {
+      "min_power_not_below_max": "The minimum power must be below the maximum power.",
+      "fixed_temperature_missing": "A passive fixed circuit needs its fixed temperature.",
+      "foreign_heat_unsupported": "Only switches, binary sensors and power or temperature sensors can be heat sources.",
+      "temperature_threshold_missing": "A temperature source needs a temperature threshold (advanced level).",
+      "reference_zone_unknown": "Pick one of the configured zones."
+    },
+    "abort": {
+      "missing_signal": "A required signal is missing.",
+      "unknown_signal": "Unknown signal in the configuration.",
+      "unknown_parameter": "Unknown parameter in the configuration.",
+      "implausible_parameter": "A parameter is outside its plausible range.",
+      "unknown_circuit": "A zone refers to a circuit that does not exist.",
+      "zone_without_circuit": "A zone has no circuit.",
+      "fixed_temperature_missing": "A passive fixed circuit needs its fixed temperature.",
+      "reference_zone_unknown": "The chosen reference zone is not one of the zones.",
+      "duplicate_circuit": "Two circuits have the same name.",
+      "duplicate_zone": "A zone is listed twice.",
+      "no_circuit": "At least one circuit is needed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "VTherm Smart Boiler options",
+        "description": "Change one section; every other setting stays as it is.",
+        "menu_options": {
+          "signals": "Boiler signals",
+          "boiler": "Boiler",
+          "circuit": "Heating circuits",
+          "zones": "VT zones",
+          "building": "Building",
+          "reference": "Reference room",
+          "monitor": "Monitor thresholds",
+          "level": "Level of detail",
+          "level_hidden": "Level of detail (some hidden advanced settings are active)"
+        }
+      },
+      "level": {
+        "title": "Level of detail",
+        "description": "The level changes only what you see, never how the plugin behaves.",
+        "data": {
+          "level": "Level of detail",
+          "restore_defaults": "Restore advanced settings to their defaults"
+        },
+        "data_description": {
+          "level": "Simple shows the essentials; advanced shows every parameter.",
+          "restore_defaults": "When switching to simple: tick to reset every advanced setting. Left unticked, they stay active but hidden, and the options show that some differ from their defaults."
+        }
+      },
+      "signals": {
+        "title": "Boiler signals",
+        "description": "Pick the entity that provides each signal. Flame and flow temperature are required; every other signal enables more of the monitor. The plugin only reads these entities.",
+        "data": {
+          "flame": "Flame",
+          "flow": "Flow temperature",
+          "return": "Return temperature",
+          "modulation": "Modulation",
+          "dhw_active": "Hot water (DHW) active",
+          "pressure": "Water pressure",
+          "outdoor": "Outdoor temperature (boiler sensor)",
+          "ch_setpoint": "Heating setpoint",
+          "ch_active": "Heating active",
+          "pump_running": "Pump running",
+          "flue_gas": "Flue gas temperature",
+          "gas_meter": "Gas meter",
+          "room_setpoint": "Wired thermostat setpoint",
+          "room_temperature": "Wired thermostat room temperature",
+          "weather": "Weather entity"
+        },
+        "data_description": {
+          "flame": "On while the burner burns. Every burner-cycle metric comes from it: the wrong entity gives wrong starts and burn times.",
+          "flow": "Water leaving the boiler. Used for hot water availability, emitter power and telling DHW runs from heating.",
+          "return": "Water coming back to the boiler. Enables the condensing share; without it condensing cannot be judged.",
+          "modulation": "Burner modulation in percent. With the boiler's power range it estimates heat output and gas use.",
+          "dhw_active": "On while the boiler heats domestic hot water. Without it DHW runs are inferred with less certainty and some may count as heating.",
+          "pressure": "Enables the pressure alarms and the falling-pressure warning.",
+          "outdoor": "The boiler's own outdoor sensor. Used for degree-days and checked against the weather entity.",
+          "ch_setpoint": "The flow setpoint the boiler works to. Helps tell DHW runs from heating.",
+          "ch_active": "On while the boiler heats the rooms. Helps tell DHW from heating when there is no DHW signal.",
+          "pump_running": "On while the heating pump runs. Recorded now; the low-flow warning will need it.",
+          "flue_gas": "Enables the flue gas alarm and the early warning of a fouling heat exchanger.",
+          "gas_meter": "A cumulative gas or energy meter. Gives measured gas per degree-day instead of an estimate.",
+          "room_setpoint": "The room setpoint a wired thermostat sends to the boiler, if there is one. Recorded for the assessment.",
+          "room_temperature": "The room temperature a wired thermostat sends to the boiler, if there is one. Recorded for the assessment.",
+          "weather": "Its forecasts are recorded for later forecast features and its temperature stands in for a missing outdoor sensor. No data leaves your Home Assistant."
+        }
+      },
+      "boiler": {
+        "title": "Boiler",
+        "description": "What you know about your boiler. Leave unknown values empty: the plugin then says what it cannot judge.",
+        "data": {
+          "class": "What the boiler's integration can do",
+          "dhw": "Domestic hot water",
+          "condensing": "Condensing boiler",
+          "boiler_min_power": "Minimum power",
+          "boiler_max_power": "Maximum power",
+          "max_ch_setpoint": "Maximum heating setpoint",
+          "gas_at_min_power": "Gas at minimum power",
+          "gas_at_max_power": "Gas at maximum power",
+          "modulation_scale": "Modulation means",
+          "shared_return": "Heating and DHW share the return sensor"
+        },
+        "data_description": {
+          "class": "Flow setpoint, curve parameters only, on/off or read-only. This version only monitors, whatever you pick; control will use it later.",
+          "dhw": "None, a storage tank or a combi boiler. Used to interpret DHW runs.",
+          "condensing": "Condensing boilers get flue gas limits for condensing appliances; for other boilers the absolute flue gas alarm is off.",
+          "boiler_min_power": "Lowest heating power from the manual, in kW. Compared with the building load: a load often below it means the boiler must cycle.",
+          "boiler_max_power": "Highest heating power in kW. With the minimum and the modulation it estimates heat output.",
+          "max_ch_setpoint": "Highest flow temperature in heating, in °C. Flow above it points to a DHW run.",
+          "gas_at_min_power": "Gas per hour at minimum power, in your gas meter's unit. With the modulation it estimates gas use when there is no meter.",
+          "gas_at_max_power": "Gas per hour at maximum power, in the same unit.",
+          "modulation_scale": "Whether 0 % is the minimum power (the OpenTherm definition) or the value is a percentage of maximum power. The wrong choice skews heat and gas estimates.",
+          "shared_return": "Tick when one return sensor serves both. DHW runs are then kept out of the heating metrics."
+        }
+      },
+      "circuit": {
+        "title": "Heating circuit {number}",
+        "description": "How this circuit's water temperature is set.",
+        "data": {
+          "control": "Control",
+          "max_flow": "Maximum flow temperature",
+          "fixed_temperature": "Fixed temperature",
+          "flow_entity": "Circuit flow sensor",
+          "add_another": "Add another circuit"
+        },
+        "data_description": {
+          "control": "Unmixed and shared: straight from the boiler. Through the boiler: a second circuit the boiler mixes. Separately: an external mixing controller. Passive fixed: a thermostatic mixing valve.",
+          "max_flow": "The most this circuit may receive, in °C, e.g. underfloor heating on an unmixed loop. Recorded now; control will treat it as a hard limit.",
+          "fixed_temperature": "Needed for a passive fixed circuit: the valve's setting in °C.",
+          "flow_entity": "A mixed circuit's own flow temperature. Without it the heat reaching that circuit cannot be told.",
+          "add_another": "Tick to describe one more circuit after this one."
+        }
+      },
+      "zones": {
+        "title": "VT zones",
+        "description": "Pick the Versatile Thermostat zones heated by this boiler. Zones not picked are ignored.",
+        "data": {
+          "zones": "Zones"
+        },
+        "data_description": {
+          "zones": "Only VT climate entities are offered. The plugin only reads them."
+        }
+      },
+      "zone": {
+        "title": "Zone {zone}",
+        "description": "How this zone is heated.",
+        "data": {
+          "circuit": "Circuit",
+          "emitter": "Emitter type",
+          "foreign_heat": "Other heat sources",
+          "reference_output_w": "Emitter output",
+          "exponent": "Emitter exponent",
+          "power_threshold": "Power threshold",
+          "temperature_threshold": "Temperature threshold"
+        },
+        "data_description": {
+          "circuit": "The heating circuit this zone is on.",
+          "emitter": "Radiators, underfloor or convectors. Sets the EN 442 exponent of the emitter power.",
+          "foreign_heat": "A fireplace, stove or electric heater in this room, not the sun: a switch or binary sensor that is on while it heats, or a power or temperature sensor. Shown as foreign heat for the zone.",
+          "reference_output_w": "The emitters' output at their reference condition, in W. Only for an absolute output estimate.",
+          "exponent": "Overrides the EN 442 exponent of the emitter type.",
+          "power_threshold": "A power source counts as heating above this, in W. Default 100 W.",
+          "temperature_threshold": "Needed for a temperature source: it counts as heating above this, in °C."
+        }
+      },
+      "building": {
+        "title": "Building",
+        "description": "A first estimate of your house's heat loss; recorded heating days refine it. Leave empty what you do not know.",
+        "data": {
+          "floor_area": "Heated floor area",
+          "insulation": "Insulation",
+          "thermal_mass": "Thermal mass",
+          "design_load_kw": "Design heat load",
+          "loss_coefficient": "Loss coefficient",
+          "heating_threshold": "Heating threshold",
+          "design_outdoor": "Design outdoor temperature"
+        },
+        "data_description": {
+          "floor_area": "In m². With the insulation class it gives a rough first estimate.",
+          "insulation": "Poor, average, good or very good.",
+          "thermal_mass": "How slowly the house cools. Recorded for later forecast features.",
+          "design_load_kw": "Your own heat-loss calculation, in kW at the design outdoor temperature. Wins over the rough estimate.",
+          "loss_coefficient": "Heat loss per kelvin, in kW/K, if you know it. Wins over every estimate.",
+          "heating_threshold": "Outdoor temperature above which the house needs no heating, in °C; also the degree-day base. Default 15 °C.",
+          "design_outdoor": "The coldest outdoor temperature your design load refers to, in °C. Default −15 °C."
+        }
+      },
+      "reference": {
+        "title": "Reference room",
+        "description": "One room temperature and setpoint for controllers that need a single room.",
+        "data": {
+          "strategy": "Strategy",
+          "zone": "Chosen zone",
+          "switch_margin": "Switch margin"
+        },
+        "data_description": {
+          "strategy": "Largest deficit follows the room furthest below its setpoint; a chosen zone always uses one room; average uses every heating room.",
+          "zone": "Used with the chosen-zone strategy.",
+          "switch_margin": "Another room must be this much colder before the reference switches, in K. Smaller follows faster but switches more often, which can disturb an external controller."
+        }
+      },
+      "monitor": {
+        "title": "Monitor",
+        "description": "Thresholds of the analysis.",
+        "data": {
+          "condensing_return": "Condensing return threshold",
+          "short_burn_min": "Short burn",
+          "monitoring_days": "Monitoring period",
+          "near_room_k": "Near room temperature",
+          "foreign_heat_hold_min": "Foreign heat hold"
+        },
+        "data_description": {
+          "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C.",
+          "short_burn_min": "Burns shorter than this count as short, in minutes. Default 10.",
+          "monitoring_days": "Days of data before the verdict is given, and later before control can be enabled. Default 7; shorter is not allowed.",
+          "near_room_k": "Water within this of the room counts as no hot water, in K. Default 3.",
+          "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60."
+        }
+      }
+    },
+    "error": {
+      "min_power_not_below_max": "The minimum power must be below the maximum power.",
+      "fixed_temperature_missing": "A passive fixed circuit needs its fixed temperature.",
+      "foreign_heat_unsupported": "Only switches, binary sensors and power or temperature sensors can be heat sources.",
+      "temperature_threshold_missing": "A temperature source needs a temperature threshold (advanced level).",
+      "reference_zone_unknown": "Pick one of the configured zones."
+    },
+    "abort": {
+      "missing_signal": "A required signal is missing.",
+      "unknown_signal": "Unknown signal in the configuration.",
+      "unknown_parameter": "Unknown parameter in the configuration.",
+      "implausible_parameter": "A parameter is outside its plausible range.",
+      "unknown_circuit": "A zone refers to a circuit that does not exist.",
+      "zone_without_circuit": "A zone has no circuit.",
+      "fixed_temperature_missing": "A passive fixed circuit needs its fixed temperature.",
+      "reference_zone_unknown": "The chosen reference zone is not one of the zones.",
+      "duplicate_circuit": "Two circuits have the same name.",
+      "duplicate_zone": "A zone is listed twice.",
+      "no_circuit": "At least one circuit is needed."
+    }
+  },
+  "selector": {
+    "level": {
+      "options": {
+        "simple": "Simple",
+        "advanced": "Advanced"
+      }
+    },
+    "boiler_class": {
+      "options": {
+        "flow_setpoint": "Flow setpoint (OpenTherm, EMS and similar)",
+        "curve_only": "Curve parameters only",
+        "on_off": "On/off (relay)",
+        "read_only": "Read-only"
+      }
+    },
+    "dhw_type": {
+      "options": {
+        "none": "None",
+        "storage": "Storage tank",
+        "combi": "Combi boiler"
+      }
+    },
+    "modulation_scale": {
+      "options": {
+        "range": "0 % is minimum power (OpenTherm)",
+        "capacity": "Percent of maximum power"
+      }
+    },
+    "circuit_control": {
+      "options": {
+        "unmixed_shared": "Unmixed, straight from the boiler",
+        "through_boiler": "Mixed through the boiler",
+        "separate": "Mixed by a separate controller",
+        "passive_fixed": "Thermostatic mixing valve (fixed)"
+      }
+    },
+    "emitter": {
+      "options": {
+        "radiator": "Radiators",
+        "underfloor": "Underfloor",
+        "convector": "Convectors"
+      }
+    },
+    "insulation": {
+      "options": {
+        "poor": "Poor",
+        "average": "Average",
+        "good": "Good",
+        "very_good": "Very good"
+      }
+    },
+    "thermal_mass": {
+      "options": {
+        "light": "Light",
+        "medium": "Medium",
+        "heavy": "Heavy"
+      }
+    },
+    "strategy": {
+      "options": {
+        "largest_deficit": "Largest deficit",
+        "chosen_zone": "Chosen zone",
+        "average": "Average"
+      }
+    }
+  },
   "entity": {
     "sensor": {
-      "starts_per_hour": { "name": "Heating starts per hour" },
-      "median_burn": { "name": "Median heating burn" },
-      "burner_hours": { "name": "Heating burner hours (24 h)" },
-      "short_burn_share": { "name": "Short heating burns" },
-      "condensing_share": { "name": "Condensing share" },
-      "degree_days": { "name": "Degree-days (7 days)" },
-      "gas_per_degree_day": { "name": "Gas per degree-day" },
+      "starts_per_hour": {
+        "name": "Heating starts per hour"
+      },
+      "median_burn": {
+        "name": "Median heating burn"
+      },
+      "burner_hours": {
+        "name": "Heating burner hours (24 h)"
+      },
+      "short_burn_share": {
+        "name": "Short heating burns"
+      },
+      "condensing_share": {
+        "name": "Condensing share"
+      },
+      "degree_days": {
+        "name": "Degree-days (7 days)"
+      },
+      "gas_per_degree_day": {
+        "name": "Gas per degree-day"
+      },
       "verdict": {
         "name": "Control verdict",
         "state": {
@@ -16,29 +523,71 @@
           "not_enough_data": "Not enough data yet"
         }
       },
-      "signal_problems": { "name": "Signal problems" },
-      "reference_room": { "name": "Reference room" },
-      "reference_room_temperature": { "name": "Reference room temperature" },
-      "reference_room_setpoint": { "name": "Reference room setpoint" },
-      "change_report": { "name": "Use against yesterday" },
-      "loss_coefficient": { "name": "Building loss coefficient" },
-      "forecast_snapshots": { "name": "Forecast snapshots" },
-      "critical_zone": { "name": "Critical zone {circuit}" },
-      "emitter_power_factor": { "name": "{zone} emitter power" }
+      "signal_problems": {
+        "name": "Signal problems"
+      },
+      "reference_room": {
+        "name": "Reference room"
+      },
+      "reference_room_temperature": {
+        "name": "Reference room temperature"
+      },
+      "reference_room_setpoint": {
+        "name": "Reference room setpoint"
+      },
+      "change_report": {
+        "name": "Use against yesterday"
+      },
+      "loss_coefficient": {
+        "name": "Building loss coefficient"
+      },
+      "forecast_snapshots": {
+        "name": "Forecast snapshots"
+      },
+      "critical_zone": {
+        "name": "Critical zone {circuit}"
+      },
+      "emitter_power_factor": {
+        "name": "{zone} emitter power"
+      }
     },
     "binary_sensor": {
-      "connection": { "name": "Boiler signals" },
-      "hot_water": { "name": "{zone} hot water" },
-      "foreign_heat": { "name": "{zone} foreign heat" },
-      "alarm_frequent_starts": { "name": "Frequent starts" },
-      "alarm_unstable_ignition": { "name": "Unstable ignition" },
-      "alarm_pressure_low": { "name": "Water pressure low" },
-      "alarm_pressure_high": { "name": "Water pressure high" },
-      "alarm_pressure_falling": { "name": "Water pressure falling" },
-      "alarm_flue_gas_high": { "name": "Flue gas too hot" },
-      "alarm_flue_gas_rising": { "name": "Flue gas rising above return" },
-      "alarm_hysteresis_drift": { "name": "Heating hysteresis drifting" },
-      "outdoor_sensor_problem": { "name": "Outdoor sensor problem" }
+      "connection": {
+        "name": "Boiler signals"
+      },
+      "hot_water": {
+        "name": "{zone} hot water"
+      },
+      "foreign_heat": {
+        "name": "{zone} foreign heat"
+      },
+      "alarm_frequent_starts": {
+        "name": "Frequent starts"
+      },
+      "alarm_unstable_ignition": {
+        "name": "Unstable ignition"
+      },
+      "alarm_pressure_low": {
+        "name": "Water pressure low"
+      },
+      "alarm_pressure_high": {
+        "name": "Water pressure high"
+      },
+      "alarm_pressure_falling": {
+        "name": "Water pressure falling"
+      },
+      "alarm_flue_gas_high": {
+        "name": "Flue gas too hot"
+      },
+      "alarm_flue_gas_rising": {
+        "name": "Flue gas rising above return"
+      },
+      "alarm_hysteresis_drift": {
+        "name": "Heating hysteresis drifting"
+      },
+      "outdoor_sensor_problem": {
+        "name": "Outdoor sensor problem"
+      }
     }
   },
   "exceptions": {
