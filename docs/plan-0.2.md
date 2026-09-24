@@ -85,8 +85,8 @@ Flow-setpoint mode; 0.2 writes one circuit, a second circuit through the boiler 
 |---|---|
 | G0 | control model: a state machine — monitor, heating, idle, summer, frost protection, fallback setpoint, handed back — every decision with its reason |
 | G1 ✅ | heating curve per circuit (entered, or taken from the boiler's parameters); effective outdoor temperature, smoothed, with the weather entity as the fallback source |
-| G2 | limits: hard minimum and maximum, weather-dependent ceiling, underfloor maximum capping a shared unmixed circuit, frost protection |
-| G3 | summer/winter threshold with hysteresis |
+| G2 ✅ | limits: hard minimum and maximum, weather-dependent ceiling, underfloor maximum capping a shared unmixed circuit, frost protection |
+| G3 ✅ | summer/winter threshold with hysteresis |
 | G4 | boiler demand from device count, total power or valve opening |
 | G5 | basic anti-cycling: minimum burn, minimum pause, starts per hour |
 | G6 | failure rules: stale data → no write; failed sensor → safe fallback setpoint (value is an option); low-flow warning when all valves are closed while the pump runs (needs a pump-running or CH-active signal; otherwise unavailable with the reason) |
