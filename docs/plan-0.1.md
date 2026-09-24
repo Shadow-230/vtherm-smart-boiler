@@ -82,7 +82,7 @@ so `core` can be imported on its own; `core` tests import it directly.
 | B9 ✅ | critical zone per circuit |
 | B10 ✅ | signal check: which optional signals are present and fresh; outdoor sensor plausibility against the weather entity |
 | B11 ✅ | foreign heat from user-mapped switches or sensors, per zone |
-| B12 | verdict — worth it / not worth it / not enough data (minimum 7 days), always with reasons; compares the building load with the boiler's minimum power |
+| B12 ✅ | verdict — worth it / not worth it / not enough data (minimum 7 days), always with reasons; compares the building load with the boiler's minimum power |
 | B13 | alarms and early warning (flue gas, ignitions, pressure, hysteresis drift), information only |
 | B14 | report explaining changes (weather, DHW, settings) |
 | B15 | forecast snapshot model (FC0) |
