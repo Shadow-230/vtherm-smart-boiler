@@ -1,0 +1,33 @@
+# Test Home Assistant: only what the tests need. No default_config, so no network discovery
+# looks around the local network.
+homeassistant:
+  name: VTherm Smart Boiler test
+
+frontend:
+config:
+api:
+history:
+logbook:
+system_log:
+recorder:
+  purge_keep_days: 14
+
+logger:
+  default: info
+  logs:
+    custom_components.vtherm_smart_boiler: debug
+    custom_components.boiler_sim: info
+
+# The simulated installation (sim/custom_components/boiler_sim): boiler, house, three radiator
+# zones whose valves VT's thermostats drive, weather, the gateway-like command path and a
+# writable flow setpoint.
+boiler_sim:
+  boiler: condensing_small
+  house: average
+  zones: radiators
+  valves: switch
+  topology: with_thermostat
+  write_type: expiring
+  outdoor: 3.0
+  gateway: true
+  gateway_id: sim

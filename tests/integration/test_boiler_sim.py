@@ -111,3 +111,16 @@ async def test_scenario_services(hass: HomeAssistant, freezer) -> None:
     assert value(hass, "binary_sensor.boiler_sim_dhw_enable") == "off"
     counters = hass.states.get("sensor.boiler_sim_persistent_writes").attributes
     assert counters["dhw_enable_writes"] == 1
+
+
+def test_the_test_ha_configuration_is_valid() -> None:
+    from pathlib import Path
+
+    import yaml
+    from custom_components.boiler_sim import CONFIG_SCHEMA, SIGNALS
+
+    root = Path(__file__).resolve().parents[2]
+    configuration = yaml.safe_load((root / "devenv/config/configuration.yaml").read_text())
+    assert "default_config" not in configuration  # nothing scans the local network
+    CONFIG_SCHEMA({"boiler_sim": configuration["boiler_sim"]})
+    assert "flow" in SIGNALS
