@@ -117,3 +117,15 @@ def test_an_expiring_heating_override_is_repeated() -> None:
     assert out.ch_enable is True
     _state, out = loop_step(state, inputs(30.0), 45.0, config)
     assert out.ch_enable is True  # repeated with the setpoint's keep-alive
+
+
+def test_heating_on_off_follows_a_recovered_setpoint_at_once() -> None:
+    """After a lapse the gateway's heating override is gone with it: the recovery write carries
+    the heating state too, not only the next keep-alive."""
+    config = replace(CONFIG, switch_guard=SwitchGuardConfig(keepalive_s=30.0))
+    state, out = loop_step(LoopState(), inputs(0.0), None, config)
+    state, _ = loop_step(state, inputs(10.0), out.setpoint.value, config)  # confirmed
+    state, out = loop_step(state, inputs(20.0), 30.0, config)  # the gateway dropped it
+    assert out.setpoint is not None
+    assert out.setpoint.kind is WriteKind.REWRITE
+    assert out.ch_enable is True

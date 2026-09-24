@@ -21,6 +21,7 @@ from .guards import (
     SwitchGuardState,
     SwitchHold,
     WriteAction,
+    WriteKind,
     plan_setpoint,
     plan_switch,
 )
@@ -90,6 +91,13 @@ def loop_step(
         heating_on = not off
         ch_write = None
     planned = plan_setpoint(state.setpoint, desired, confirmed_setpoint, now, config.setpoint_guard)
+    recovered = planned.action is not None and planned.action.kind in (
+        WriteKind.REWRITE,
+        WriteKind.RESEND,
+    )
+    if config.ch_writes and recovered and ch_write is None and heating_on is not None:
+        # A setpoint override that had lapsed took the heating override with it: send both.
+        ch_write = heating_on
     new_state = LoopState(control, planned.state, switched.state)
     return new_state, LoopOutput(
         decision,

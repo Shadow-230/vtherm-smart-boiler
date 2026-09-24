@@ -185,15 +185,35 @@ def test_the_daily_cap_applies_to_rewrites() -> None:
     assert events == (GuardEvent.DAILY_CAP,)
 
 
-@pytest.mark.parametrize("config", [EXPIRING, PERSISTENT])
-def test_a_failed_write_is_sent_again_at_the_next_step(config) -> None:
-    state, _, _ = step(SetpointGuardState(), 45.0, None, 0.0, config)
+def test_a_failed_write_is_sent_again_at_the_next_step() -> None:
+    state, _, _ = step(SetpointGuardState(), 45.0, None, 0.0, EXPIRING)
     state = setpoint_failed(state)
-    state, action, events = step(state, 45.0, None, 10.0, config)
+    state, action, events = step(state, 45.0, None, 10.0, EXPIRING)
     assert action == WriteAction(45.0, WriteKind.RESEND)
     assert events == ()
-    _, action, _ = step(state, 45.0, None, 20.0, config)
+    _, action, _ = step(state, 45.0, None, 20.0, EXPIRING)
     assert action is None  # sent; nothing more until the next keep-alive or change
+
+
+def test_a_failed_wearing_write_is_retried_once_a_minute_and_not_counted() -> None:
+    state, _, _ = step(SetpointGuardState(), 45.0, None, 0.0, PERSISTENT)
+    for t in (10.0, 20.0, 30.0):
+        state = setpoint_failed(state)
+        state, action, _ = step(state, 45.0, None, t, PERSISTENT)
+        assert action is None  # a rejected wearing write is not hammered
+    state, action, _ = step(state, 45.0, None, 60.0, PERSISTENT)
+    assert action == WriteAction(45.0, WriteKind.RESEND)
+    assert state.history == (60.0,)  # the failed attempts do not count toward the cap
+
+
+def test_failed_attempts_never_use_up_the_daily_cap() -> None:
+    state = SetpointGuardState()
+    for minute in range(10):  # the entity keeps rejecting the value
+        state, action, events = step(state, 45.0, None, minute * 60.0, PERSISTENT)
+        assert action is not None
+        assert events == ()
+        state = setpoint_failed(state)
+    assert state.history == ()
 
 
 def test_a_failed_change_is_retried_not_taken_for_an_outside_change() -> None:

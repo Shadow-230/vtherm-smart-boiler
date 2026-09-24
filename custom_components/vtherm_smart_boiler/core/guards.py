@@ -12,9 +12,10 @@ The guards are fixed; their values are options. For a setpoint:
   reported, also when that one rewrite is not confirmed within the timeout; a further outside
   change within a day of the rewrite is not rewritten, whatever the plugin wrote in between — the
   plugin does not fight another controller;
-- a write that failed is sent again at the next step, and a mismatch it explains is not taken
-  for another controller; nor is an expiring override that lapsed because the plugin itself
-  went silent (stale data), which is simply sent again;
+- a write that failed is sent again at the next step (a wearing one at most once a minute) and
+  does not count toward the daily cap; a mismatch it explains is not taken for another
+  controller; nor is an expiring override that lapsed because the plugin itself went silent
+  (stale data), which is simply sent again;
 - the daily cap on wearing writes applies to every write, the first of a session included.
 
 For heating on/off: minimum on and off times and a cap on switchings per hour; a failed write is
@@ -110,8 +111,12 @@ def _matches(a: float | None, b: float | None, tolerance: float) -> bool:
 
 
 def setpoint_failed(state: SetpointGuardState) -> SetpointGuardState:
-    """The planned write did not go through: it is sent again at the next step."""
-    return replace(state, retry=True)
+    """The planned write did not go through: it is sent again, and — having reached nothing —
+    it does not count toward the daily cap."""
+    history = state.history
+    if history and history[-1] == state.written_at:
+        history = history[:-1]
+    return replace(state, retry=True, history=history)
 
 
 def plan_setpoint(
@@ -160,6 +165,12 @@ def plan_setpoint(
         # Our own write failed: what the device shows says nothing about other controllers.
         if differs and not too_soon:
             return _write(state, desired, WriteKind.CHANGE, now, config, events)
+        if (
+            config.wears
+            and state.written_at is not None
+            and now - state.written_at < config.min_change_interval_s
+        ):
+            return GuardResult(state, None, tuple(events))  # a rejected write is not hammered
         return _write(state, state.written, WriteKind.RESEND, now, config, events)
 
     mismatch = (
