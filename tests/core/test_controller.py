@@ -313,6 +313,8 @@ def test_long_data_loss_hands_back_once_and_resumes() -> None:
     assert [d.hand_back for d in decisions] == [False, False, False, True, False, False]
     assert decisions[3].mode is ControlMode.HANDED_BACK
     assert Reason.BOILER_LINK_STALE in decisions[3].reasons
+    assert decisions[4].mode is ControlMode.HANDED_BACK  # stays shown until data returns
+    assert decisions[4].command is None
     assert decisions[5].mode is ControlMode.HEATING
     assert state.waiting_since is None
     never = replace(CONFIG, stale_hand_back_s=None)

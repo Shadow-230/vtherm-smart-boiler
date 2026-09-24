@@ -265,8 +265,14 @@ def decide(
         ):
             return _release(state, ControlMode.HANDED_BACK, Reason.BOILER_LINK_STALE)
         reasons = (Reason.BOILER_LINK_STALE,)
-        waiting = replace(state, mode=ControlMode.WAITING_DATA, reasons=reasons, decided_at=None)
-        return waiting, ControlDecision(ControlMode.WAITING_DATA, None, reasons=reasons)
+        # Once handed back for stale data, that stays what is shown until the data returns.
+        mode = (
+            ControlMode.HANDED_BACK
+            if not state.controlling and state.mode is ControlMode.HANDED_BACK
+            else ControlMode.WAITING_DATA
+        )
+        waiting = replace(state, mode=mode, reasons=reasons, decided_at=None)
+        return waiting, ControlDecision(mode, None, reasons=reasons)
     state = replace(state, waiting_since=None)
 
     frost = frost_needed(inputs.zones, now, config.zone_max_age_s, state.frost, config.frost)
