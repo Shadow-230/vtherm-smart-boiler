@@ -10,9 +10,10 @@ with 0.2 (`docs/plan-0.2.md`). Scope: `SCOPE.md`; overview: `PLAN.md`.
   Docker or Podman. Claude does not use `sudo`.
 - No code; local git since 2026-09-24. Documents: `CLAUDE.md`, `SCOPE.md`, `PLAN.md`, this plan,
   `docs/plan-0.2.md`, `research/`.
-- Decided on 2026-09-24: domain `vtherm_smart_boiler`; consent for A1–A5 and A7; Claude's own
-  code, test and tool files may be changed without asking; 0.1 and 0.2 are built in one go, in
-  order, and 0.2 is the first release.
+- Decided on 2026-09-24: domain `vtherm_smart_boiler`; consent for every step of this plan
+  (after A1–A5 and A7, the user accepted all steps needed to build 0.1); Claude's own code, test
+  and tool files may be changed without asking; 0.1 and 0.2 are built in one go, in order, and
+  0.2 is the first release.
 
 ## Rules that shape this step
 
@@ -54,7 +55,7 @@ the project.
 
 | Step | Work | Done when |
 |---|---|---|
-| A4 ✓ | `scripts/env.sh <command>`: sets `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, `UV_PYTHON_BIN_DIR=.tools/bin`, `PIP_CACHE_DIR`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME` (all under `.tools/`), `TMPDIR=.tmp`, `PATH`, then runs the command | written before any install |
+| A4 ✓ ✅ | `scripts/env.sh <command>`: sets `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, `UV_PYTHON_BIN_DIR=.tools/bin`, `PIP_CACHE_DIR`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME` (all under `.tools/`), `TMPDIR=.tmp`, `PATH`, then runs the command | written before any install |
 | A1 ✓ | through `scripts/env.sh`: `.tools/bootstrap` venv from system Python, `uv` installed into it | `uv --version` |
 | A2 ✓ | through `scripts/env.sh`: Python 3.14 into `.tools/python/` without shims outside the project (`--no-bin` or `UV_PYTHON_BIN_DIR` — check against the installed uv version first) | Python ≥ 3.14.2; `uv cache dir`, `uv python dir` and `uv python dir --bin` all point inside the project |
 | A5 ✓ | VT 10.4.0 and SmartPI 0.4.0 sources from their release tags in `vendor/` (git-ignored); newer VT features (e.g. `get_feature_manager` from 10.5) are tested with fakes | loadable in tests and the test HA |
@@ -89,6 +90,8 @@ so `core` can be imported on its own; `core` tests import it directly.
 Done when: every law has unit tests, including missing and stale data.
 
 **Review stop 🔒:** the user reviews the core laws and the model before phase C starts.
+Covered by the consent to every 0.1 step (2026-09-24): work continues without waiting, and the
+core is reviewed together with the rest of 0.1.
 
 ## Phase C — simulator and test harness
 
