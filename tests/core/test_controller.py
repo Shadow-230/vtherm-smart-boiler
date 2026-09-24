@@ -270,3 +270,28 @@ def test_anti_cycling_pause_after_a_burn() -> None:
 def test_invalid_config(kwargs: dict) -> None:
     with pytest.raises(ValueError, match="must"):
         replace(CONFIG, **kwargs)
+
+
+def test_comfort_correction_rises_for_a_saturated_zone_and_falls_back() -> None:
+    config = replace(CONFIG, decision_interval_s=60.0)
+    short = (zone(0.0, temperature=20.0, target=21.0, valve_open=1.0),)
+    state, decisions = run([inputs(t * 60.0, zones=short) for t in range(3)], config)
+    base = CURVE.flow(5.0)
+    assert [d.command.setpoint for d in decisions] == pytest.approx([base + 1, base + 2, base + 3])
+    assert Reason.COMFORT_CORRECTION in decisions[-1].reasons
+    satisfied = (zone(0.0, temperature=21.0, target=21.0, valve_open=0.3),)
+    state, decisions = run(
+        [inputs(180.0 + t * 60.0, zones=satisfied) for t in range(4)], config, state
+    )
+    assert decisions[-1].command.setpoint == pytest.approx(base)
+    assert state.correction == 0.0
+
+
+def test_comfort_correction_stays_within_the_ceiling_band_and_can_be_off() -> None:
+    config = replace(CONFIG, decision_interval_s=60.0, limits=FlowLimits(ceiling_band=3.0))
+    short = (zone(0.0, temperature=19.0, target=21.0, valve_open=1.0),)
+    state, _ = run([inputs(t * 60.0, zones=short) for t in range(6)], config)
+    assert state.correction == 3.0
+    off = replace(config, correction_step_k=None)
+    state, _ = run([inputs(t * 60.0, zones=short) for t in range(3)], off)
+    assert state.correction == 0.0

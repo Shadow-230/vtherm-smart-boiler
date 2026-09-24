@@ -12,6 +12,11 @@ Order of precedence, checked on every tick:
    the curve on the effective outdoor temperature, limits and ramp. Without an outdoor
    temperature the fallback setpoint applies; without fresh zone data heating is assumed to be
    needed — never zero heat on missing data.
+
+Zone signals only correct the curve (weather is counted once): while a zone's valve is fully open
+and the room is still short of its setpoint, the setpoint rises a step per decision; once every
+zone is clearly satisfied it falls back a step per decision. The correction never exceeds the
+ceiling band and every limit still applies.
 """
 
 from __future__ import annotations
@@ -99,6 +104,7 @@ class Reason(StrEnum):
     LIMIT_CIRCUIT_MAX = "limit_circuit_max"
     LIMIT_BOILER_MAX = "limit_boiler_max"
     LIMIT_CEILING = "limit_ceiling"
+    COMFORT_CORRECTION = "comfort_correction"
 
 
 _OUTDOOR_REASON = {
@@ -136,6 +142,7 @@ class ControlConfig:
     min_step: float = 0.0  # smallest setpoint change written (1 K for persistent writes)
     decision_interval_s: float = 300.0
     zone_max_age_s: float = 2 * HOUR
+    correction_step_k: float | None = 1.0  # None: no comfort correction
     outdoor_time_constant_s: float = DEFAULT_TIME_CONSTANT_S
     outdoor_hold_s: float = DEFAULT_HOLD_S
 
@@ -185,6 +192,7 @@ class ControlState:
     reasons: tuple[Reason, ...] = ()
     hold_until: float | None = None
     decided_at: float | None = None
+    correction: float = 0.0  # K added to the curve for a zone that cannot reach its setpoint
 
 
 @dataclass(frozen=True, slots=True)
@@ -298,12 +306,14 @@ def _heating_decision(
     if anti.hold is not None:
         reasons.append(_HOLD_REASON[anti.hold])
 
+    correction = _correction(state, inputs, config)
+    if correction > 0:
+        reasons.append(Reason.COMFORT_CORRECTION)
     if outdoor.effective is None:
-        target = fallback_setpoint(config)
-        curve_value = target
+        curve_value = fallback_setpoint(config)
     else:
-        target = config.curve.flow(outdoor.effective)
-        curve_value = target
+        curve_value = config.curve.flow(outdoor.effective)
+    target = curve_value + correction
     limited = limit_flow(target, curve_value, config.limits, config.circuit_max, config.boiler_max)
     reasons.extend(_LIMIT_REASON[code] for code in limited.applied)
     setpoint = _ramp(state, limited.value, curve_value, now, config, reasons)
@@ -331,6 +341,7 @@ def _heating_decision(
         reasons=tuple(reasons),
         hold_until=anti.until,
         decided_at=now,
+        correction=correction,
     )
     return new_state, ControlDecision(
         mode,
@@ -340,6 +351,37 @@ def _heating_decision(
         effective_outdoor=outdoor.effective,
         hold_until=anti.until,
     )
+
+
+SATURATED = 0.95  # a valve or duty cycle this open cannot give the room more
+SATISFIED = 0.7  # every zone below this opening is clearly satisfied
+SHORT_K = 0.3  # a deficit this large counts as short of the setpoint
+
+
+def _correction(state: ControlState, inputs: ControlInputs, config: ControlConfig) -> float:
+    """Comfort correction for the next decision, within the ceiling band."""
+    step = config.correction_step_k
+    if step is None:
+        return 0.0
+    fresh = [
+        z
+        for z in inputs.zones
+        if z.heating_enabled is True and z.is_fresh(inputs.now, config.zone_max_age_s)
+    ]
+    short = any(
+        z.demand is not None
+        and z.demand >= SATURATED
+        and z.deficit is not None
+        and z.deficit >= SHORT_K
+        for z in fresh
+    )
+    satisfied = bool(fresh) and all(z.demand is not None and z.demand < SATISFIED for z in fresh)
+    correction = state.correction
+    if short:
+        correction += step
+    elif satisfied:
+        correction -= step
+    return min(config.limits.ceiling_band, max(0.0, correction))
 
 
 def _ramp(

@@ -20,6 +20,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from custom_components.vtherm_smart_boiler.core.emitters import EMITTER_REFERENCE
 from custom_components.vtherm_smart_boiler.core.history import History, ZoneSeries
@@ -78,6 +79,44 @@ class DhwSchedule:
         return any(start <= seconds < start + self.duration_s for start in self.times_of_day_s)
 
 
+class WithoutOverride(StrEnum):
+    """What the boiler does when no control override is active."""
+
+    OWN_CURVE = "own_curve"  # its own weather curve, as with a thermostat or on its own
+    OFF = "off"  # no heat: a gateway acting as master without a thermostat
+
+
+@dataclass(frozen=True, slots=True)
+class SimZoneView:
+    zone_id: str
+    temperature: float
+    target: float
+    opening: float
+
+
+@dataclass(frozen=True, slots=True)
+class SimView:
+    """What an external controller sees, rounded like the recorded signals."""
+
+    flame: bool
+    flow: float
+    return_: float
+    dhw: bool
+    outdoor: float
+    confirmed_setpoint: float  # the setpoint the boiler works to now
+    zones: tuple[SimZoneView, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SimCommand:
+    ch_enable: bool | None = None
+    setpoint: float | None = None
+    hand_back: bool = False
+
+
+type Controller = Callable[[float, SimView], SimCommand | None]
+
+
 @dataclass(frozen=True, slots=True)
 class Scenario:
     boiler: BoilerProfile
@@ -90,6 +129,10 @@ class Scenario:
     dhw: DhwSchedule | None = None
     signals: frozenset[Signal] = DEFAULT_SIGNALS
     weather_bias_k: float = 0.5  # the weather entity reads slightly off the boiler's sensor
+    controller: Controller | None = None
+    control_period_s: float = 30.0
+    override_expires_s: float | None = 60.0  # None: an override holds until changed
+    without_override: WithoutOverride = WithoutOverride.OWN_CURVE
 
 
 @dataclass
@@ -101,6 +144,8 @@ class SimResult:
     water_start: float = 0.0
     water_end: float = 0.0
     daily_ch_kwh: list[float] = field(default_factory=list)
+    override_s: float = 0.0  # time an external override was in force
+    commands: int = 0
 
 
 def reference_outputs(scenario: Scenario) -> list[float]:
@@ -144,16 +189,63 @@ def simulate(scenario: Scenario) -> SimResult:
     result = SimResult(History(signals, zone_series, weather), water_start=water)
     day_ch = 0.0
 
+    override_setpoint: float | None = None
+    override_ch: bool | None = None
+    override_at: float | None = None
+    next_control = t0
+    view_flow, view_return, view_flame, view_setpoint = water, water, False, water
+
     for step in range(steps):
         t = t0 + step * dt
         outdoor = scenario.outdoor(t - t0)
-        setpoint = boiler_setpoint(boiler, outdoor)
         openings = [
             min(1.0, max(0.0, (z.target + z.valve_band_k / 2.0 - room[i]) / z.valve_band_k))
             for i, z in enumerate(zones)
         ]
-        demand = any(o > DEMAND_OPENING for o in openings)
         dhw = scenario.dhw is not None and scenario.dhw.active(t - t0)
+        if scenario.controller is not None and t >= next_control:
+            next_control = t + scenario.control_period_s
+            view = SimView(
+                view_flame,
+                round(view_flow, 1),
+                round(view_return, 1),
+                dhw,
+                round(outdoor, 1),
+                round(view_setpoint, 1),
+                tuple(
+                    SimZoneView(z.zone_id, round(room[i], 1), z.target, round(openings[i], 2))
+                    for i, z in enumerate(zones)
+                ),
+            )
+            command = scenario.controller(t, view)
+            if command is not None:
+                result.commands += 1
+                if command.hand_back:
+                    override_setpoint = override_ch = override_at = None
+                else:
+                    if command.setpoint is not None:
+                        override_setpoint = command.setpoint
+                        override_at = t
+                    if command.ch_enable is not None:
+                        override_ch = command.ch_enable
+                        override_at = t
+        active = override_at is not None and (
+            scenario.override_expires_s is None or t - override_at <= scenario.override_expires_s
+        )
+        if active:
+            result.override_s += dt
+            setpoint = (
+                override_setpoint
+                if override_setpoint is not None
+                else boiler_setpoint(boiler, outdoor)
+            )
+            demand = override_ch if override_ch is not None else True
+        elif scenario.without_override is WithoutOverride.OFF:
+            setpoint = boiler_setpoint(boiler, outdoor)
+            demand = False
+        else:
+            setpoint = boiler_setpoint(boiler, outdoor)
+            demand = any(o > DEMAND_OPENING for o in openings)
 
         emitted = [0.0] * len(zones)
         if dhw:
@@ -208,6 +300,7 @@ def simulate(scenario: Scenario) -> SimResult:
             gains = house.gains_kw * z.share
             room[i] += (emitted[i] + gains - loss) * dt_h / (house.capacity_kwh_per_k * z.share)
 
+        view_flow, view_return, view_flame, view_setpoint = flow, return_, burner_now, setpoint
         values: dict[Signal, float | bool] = {
             Signal.FLAME: burner_now,
             Signal.FLOW: round(flow, 1),

@@ -1,0 +1,88 @@
+"""One control step: the controller's decision through the write guards to what is written now.
+
+The same step drives the simulator in tests and the real write path in Home Assistant. When the
+write path cannot switch heating on and off, "off" is written as a low setpoint; the switch guard
+still enforces the minimum on and off times on that logical switch. A hand-back is passed on as
+it is — the guards never hold it back — and resets the guards, so a later control session starts
+fresh.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field, replace
+
+from .controller import ControlConfig, ControlDecision, ControlInputs, ControlState, decide
+from .guards import (
+    GuardEvent,
+    SetpointGuardConfig,
+    SetpointGuardState,
+    SwitchGuardConfig,
+    SwitchGuardState,
+    SwitchHold,
+    WriteAction,
+    plan_setpoint,
+    plan_switch,
+)
+
+DEFAULT_OFF_SETPOINT = 10.0
+
+
+@dataclass(frozen=True, slots=True)
+class LoopConfig:
+    control: ControlConfig
+    setpoint_guard: SetpointGuardConfig = field(default_factory=SetpointGuardConfig)
+    switch_guard: SwitchGuardConfig = field(default_factory=SwitchGuardConfig)
+    ch_writes: bool = True  # the write path can switch heating on and off
+    off_setpoint: float = DEFAULT_OFF_SETPOINT  # written for "off" when it cannot
+
+
+@dataclass(frozen=True, slots=True)
+class LoopState:
+    control: ControlState = field(default_factory=ControlState)
+    setpoint: SetpointGuardState = field(default_factory=SetpointGuardState)
+    switch: SwitchGuardState = field(default_factory=SwitchGuardState)
+
+
+@dataclass(frozen=True, slots=True)
+class LoopOutput:
+    decision: ControlDecision
+    setpoint: WriteAction | None = None  # setpoint to write now
+    ch_enable: bool | None = None  # heating on/off to write now
+    hand_back: bool = False  # give control back now
+    events: tuple[GuardEvent, ...] = ()
+    switch_hold: SwitchHold | None = None
+    heating_on: bool | None = None  # the logical heating state now commanded
+
+
+def loop_step(
+    state: LoopState,
+    inputs: ControlInputs,
+    confirmed_setpoint: float | None,
+    config: LoopConfig,
+) -> tuple[LoopState, LoopOutput]:
+    control, decision = decide(state.control, inputs, config.control)
+    if decision.hand_back:
+        return LoopState(control), LoopOutput(decision, hand_back=True)
+    if decision.command is None:
+        return replace(state, control=control), LoopOutput(decision)
+
+    now = inputs.now
+    switched = plan_switch(state.switch, decision.command.ch_enable, now, config.switch_guard)
+    heating_on = switched.state.written
+    if config.ch_writes:
+        desired = decision.command.setpoint
+        ch_write = switched.write
+    else:
+        desired = decision.command.setpoint if heating_on else config.off_setpoint
+        ch_write = None
+    planned = plan_setpoint(state.setpoint, desired, confirmed_setpoint, now, config.setpoint_guard)
+    new_state = LoopState(control, planned.state, switched.state)
+    return new_state, LoopOutput(
+        decision,
+        planned.action,
+        ch_write,
+        False,
+        planned.events,
+        switched.hold,
+        heating_on,
+    )
