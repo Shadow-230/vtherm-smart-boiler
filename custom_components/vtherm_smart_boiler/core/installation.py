@@ -64,13 +64,15 @@ class Zone:
     """A VT thermostat assigned to a circuit.
 
     ``reference_output_w`` is the emitter size: its output at the emitter type's reference
-    condition, when the user knows it.
+    condition, when the user knows it. ``exponent`` overrides the emitter type's EN 442 exponent
+    (advanced).
     """
 
     zone_id: str
     circuit_id: str
     emitter: EmitterType = EmitterType.RADIATOR
     reference_output_w: float | None = None
+    exponent: float | None = None
 
 
 class IssueCode(StrEnum):
