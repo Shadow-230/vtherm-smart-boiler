@@ -31,7 +31,8 @@ export XDG_DATA_HOME="$TOOLS/data"
 export XDG_CONFIG_HOME="$TOOLS/config"
 
 export TMPDIR="$ROOT/.tmp"
-export PATH="$ROOT/.venv/bin:$TOOLS/bin:$TOOLS/bootstrap/bin:$PATH"
+# The pinned uv in .tools/bootstrap comes first: Home Assistant installs its own uv into .venv.
+export PATH="$TOOLS/bootstrap/bin:$ROOT/.venv/bin:$TOOLS/bin:$PATH"
 
 mkdir -p "$TMPDIR"
 

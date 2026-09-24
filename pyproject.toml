@@ -1,0 +1,47 @@
+# Tooling for the VTherm Smart Boiler plugin. The plugin itself ships as
+# custom_components/vtherm_smart_boiler (HACS); this file is not a package build.
+
+[dependency-groups]
+# Test environment, pinned deliberately (docs/plan-0.1.md, A3). Install with
+#   scripts/env.sh uv pip install --group test -c <homeassistant>/package_constraints.txt
+# so shared packages (numpy, SQLAlchemy, ...) match a real Home Assistant.
+test = [
+    "pytest-homeassistant-custom-component==0.13.366",  # pins homeassistant==2026.9.3
+    "vtherm-api==0.5.0",
+    "ruff==0.16.8",
+    # Requirements of the vendored VT 10.4.0 manifest.
+    "numpy==2.3.2",
+    "scipy==1.18.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# vendor/ holds VT 10.4.0 and SmartPI 0.4.0; vendor/custom_components links their integrations.
+pythonpath = [".", "vendor"]
+addopts = "--basetemp=.tmp/pytest"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+extend-exclude = ["vendor", ".tools", ".venv", ".tmp", "research", "data"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # bugbear
+    "UP",     # pyupgrade
+    "SIM",    # simplify
+    "C4",     # comprehensions
+    "RUF",    # ruff-specific
+    "ASYNC",  # async pitfalls
+    "PT",     # pytest style
+]
+
+[tool.ruff.lint.isort]
+required-imports = ["from __future__ import annotations"]
+known-first-party = ["custom_components.vtherm_smart_boiler", "sim", "tools", "tests"]
