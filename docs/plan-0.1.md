@@ -145,11 +145,22 @@ The VT feature manager is registered in 0.2, not here: its code runs inside VT's
 Done when: integration tests pass for setup, unload, reload, missing entities, stale data and
 replayed history.
 
-## Done for 0.1
+## Done for 0.1 ✅
 
 All unit and integration tests and `ruff` pass. 0.1 is not released on its own: work continues
 with `docs/plan-0.2.md`, and the release steps are there (phase K).
 
+Reached 2026-09-24: 318 tests (core, simulator, importer, integration in-process), `ruff check`
+and `ruff format --check` clean.
+
 ## Open for 0.1
 
 None at the start. New questions go to the user; answers are recorded here.
+
+For the user (2026-09-24):
+
+- Review of the core laws and the model: the review stop after phase B was covered by the
+  consent to every 0.1 step; the review is still to be done.
+- History after a restart comes from the recorder (D5); without the recorder it starts empty.
+- `manifest.json` has no `codeowners`, `documentation` or `issue_tracker` yet; they follow the
+  repository (`docs/plan-0.2.md`, K1 and K4).
