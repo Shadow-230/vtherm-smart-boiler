@@ -36,13 +36,14 @@ Each topic lives only in its file; do not copy it here.
   consented 2026-09-24: `uv` from PyPI into `.tools/bootstrap/` (`docs/plan-0.1.md` A1); Python
   3.14 through `uv` into `.tools/python/` (A2); packages from PyPI into `.venv/` (A3); VT 10.4.0
   and SmartPI 0.4.0 sources in `vendor/` (A5). The official license text only with the user's
-  consent at that step (`docs/plan-0.2.md` K1).
+  consent at that step (`docs/plan-0.2.md` E1).
 - Nothing is created without the user's consent: no files or directories (temporary ones
   included), repositories, installs, environments, issues or pull requests.
   Exceptions: files and directories in the agreed layout (the "Layout" sections of
   `docs/plan-0.1.md` and `docs/plan-0.2.md`) are created without asking; results of network
   reads may be kept in `research/` in the working directory (git-ignored).
-- These rules bind subagents too: every delegated task states them.
+- These rules bind subagents too: every delegated task includes, in full, every rule of this
+  file and every restriction the user has given — not a summary.
 - Tools, Python, package caches and temporary files live inside the project (`.tools/`, `.venv/`,
   `.tmp/`, git-ignored); every command runs as `scripts/env.sh <command>`, which sets the
   variables and runs the command. No `sudo`; no changes to the home directory, shell profile or
@@ -53,7 +54,7 @@ Each topic lives only in its file; do not copy it here.
   Documents (`*.md`) and the user's files still need a shown diff and consent. Anything not
   tracked by git is shown and confirmed before it is deleted or overwritten.
 - Autonomous work: phases run in order without waiting; work stops at every 🔒 step and at the
-  review stops after phases B and G (`docs/plan-0.1.md`, `docs/plan-0.2.md`); each finished step
+  review stop after phase G (`docs/plan-0.2.md`); each finished step
   is marked ✅ in its plan and committed, so the next session knows where to continue; a step
   found unnecessary is marked ✅ with the reason.
   Subagents may be used and are bound by these rules; a multi-agent workflow only when the user
@@ -63,7 +64,8 @@ Each topic lives only in its file; do not copy it here.
 - **Neither Claude nor subagents connect to any Home Assistant instance** — by any means (REST,
   WebSocket, MQTT, SSH, UI, add-ons). Sole exception: the dedicated test HA in its own Proxmox
   LXC. Its address and access data live only in the git-ignored `devenv/local.env`; never
-  connect to an address that is not listed there.
+  connect to an address that is not listed there, and connect only after the user has said to
+  start (`docs/plan-0.2.md`, J4).
 - Use the Explore subagent for repository searches.
 - Read large files in parts (offset and limit, `sed -n`): the harness saves oversized tool
   output outside the project.
@@ -75,7 +77,10 @@ Each topic lives only in its file; do not copy it here.
 - Reference: [KipK/vtherm_hysteresis](https://github.com/KipK/vtherm_hysteresis) shows how a VT
   plugin registers — read, not copied. It registers a proportional algorithm; we register a
   feature manager (`register_feature_manager`).
-- **Never copy code from any project** — ideas only, re-implemented from scratch.
+- **Never use code from another application** — VT and SAT in particular: nothing copied,
+  adapted or translated. Code is written from descriptions of functionality. Another project's
+  code may be read only to verify facts about its interfaces (names, attributes, services,
+  behaviour); SAT's code is not read at all.
 - Python 3.14 (HA requires ≥ 3.14.2 since 2026.3), `from __future__ import annotations`, types
   everywhere.
 - `core/` is pure logic with zero Home Assistant imports, enforced by a test that parses its

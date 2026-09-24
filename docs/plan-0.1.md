@@ -1,8 +1,8 @@
 # Plan 0.1 — Monitor (read-only)
 
 Goal: the read-only monitor that any user configures by picking entities — the first part of
-0.2, not released on its own. Testing in the test HA and on the author's installation happens
-with 0.2 (`docs/plan-0.2.md`). Scope: `SCOPE.md`; overview: `PLAN.md`.
+0.2. It goes out early as a monitor-only pre-release (decided 2026-09-24,
+`docs/plan-0.2.md`, phase E); the test HA comes with 0.2. Scope: `SCOPE.md`; overview: `PLAN.md`.
 
 ## Starting point (2026-09-24)
 
@@ -147,8 +147,8 @@ replayed history.
 
 ## Done for 0.1 ✅
 
-All unit and integration tests and `ruff` pass. 0.1 is not released on its own: work continues
-with `docs/plan-0.2.md`, and the release steps are there (phase K).
+All unit and integration tests and `ruff` pass. 0.1 goes out as a monitor-only pre-release
+(`docs/plan-0.2.md`, phase E); work continues with `docs/plan-0.2.md`.
 
 Reached 2026-09-24: 318 tests (core, simulator, importer, integration in-process), `ruff check`
 and `ruff format --check` clean.
@@ -160,7 +160,8 @@ None at the start. New questions go to the user; answers are recorded here.
 For the user (2026-09-24):
 
 - Review of the core laws and the model: the review stop after phase B was covered by the
-  consent to every 0.1 step; the review is still to be done.
+  consent to every 0.1 step; the review happens when 0.2 is ready (the user's decision,
+  2026-09-24; `docs/plan-0.2.md`, K6).
 - History after a restart comes from the recorder (D5); without the recorder it starts empty.
 - `manifest.json` has no `codeowners`, `documentation` or `issue_tracker` yet; they follow the
-  repository (`docs/plan-0.2.md`, K1 and K4).
+  repository (`docs/plan-0.2.md`, E1 and E3).

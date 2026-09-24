@@ -100,12 +100,12 @@ What the plugin can do depends on what the integration can write:
 
 - Reading works with any integration: the user maps each signal to an entity in the config flow;
   capabilities follow from the filled fields.
-- Control mode (from 0.2), one at a time, the user's choice: **flow setpoint** — the plugin
-  decides the water temperature from its curve and writes the setpoint; **room values** — the
-  plugin sends the reference room's temperature and setpoint (§5, "Reference room") and the
-  boiler's own curve and room influence decide the water temperature; in this mode the plugin
-  changes neither the curve nor the water temperature. Room-value mode needs a device that takes
-  room values (OpenTherm ID 24 / 16 through built-in support, or entities the user picks).
+- Control mode, one at a time, the user's choice: **flow setpoint** (from 0.2) — the plugin
+  decides the water temperature from its curve and writes the setpoint; **room values** (from
+  0.3) — the plugin sends the reference room's temperature and setpoint (§5, "Reference room")
+  and the boiler's own curve and room influence decide the water temperature; in this mode the
+  plugin changes neither the curve nor the water temperature. Room-value mode needs a device that
+  takes room values (OpenTherm ID 24 / 16 through built-in support, or entities the user picks).
 - Writing (from 0.2), in this order: (1) a writable entity the user picks — any integration,
   including entities the user made; (2) built-in support for devices without such an entity —
   first OTGW, through `opentherm_gw` or its firmware over MQTT; (3) otherwise monitor only, with
@@ -199,7 +199,7 @@ emitter type; the burner is shared.
   average. Only zones taking part in heating with valid readings count; temperature and setpoint
   come from the same zone; the choice changes only on a clear difference; no invented fallback —
   "no active zone" and "no valid measurement" are explicit states.
-- In room-value mode (a control mode, off by default) the reference goes to the boiler as
+- In room-value mode (a control mode from 0.3, off by default) the reference goes to the boiler as
   OpenTherm room temperature (ID 24) and room setpoint (ID 16) through built-in support, or to
   entities the user picked. Safeguards: sent only from a valid reference room and within
   plausible room bounds; rate-limited; cleared — never frozen at the last value — when no valid
@@ -385,9 +385,9 @@ verdict stays visible and the user decides.
   without a configured boiler (before 0.2).
 - OTGW topologies (§5, "Gateway topology"): how the mode and a connected thermostat are
   detected; behaviour when `CS` is not repeated; hand-back effects per topology (`CS=0`, monitor
-  mode `GW=0`); whether the gateway mode is stored persistently; room values with a physical
-  thermostat (override) and without one (`AA` injection — does the boiler heat on its own curve
-  without `CS`); firmware version that added `RT` and `BS` (before 0.2).
+  mode `GW=0`); whether the gateway mode is stored persistently (before 0.2). Room values with a
+  physical thermostat (override) and without one (`AA` injection — does the boiler heat on its
+  own curve without `CS`); firmware version that added `RT` and `BS` (before 0.3).
 - Which integrations offer a writable flow-setpoint entity (ESPHome / DIYLess, EMS-ESP, newer
   OTGW firmware) (before 0.2).
 
@@ -403,10 +403,15 @@ verdict stays visible and the user decides.
   `CS` at least once a minute, 30 s keeps a margin.
 - OTGW equipment database: not bundled. The plugin uses the boiler's MemberID and supported
   messages when the integration exposes them; boiler profiles are our own.
+- 0.2 controls in flow-setpoint mode only; room-value mode comes in 0.3 (2026-09-24).
+- 0.2 supports every write path, for any installation: a writable entity the user picks, and
+  built-in OTGW through `opentherm_gw` or its firmware over MQTT (2026-09-24).
+- The monitor goes out as a pre-release before the control work of 0.2 (2026-09-24).
 
 ## 12. Release
 
-Public from 0.2, the first release: a GitHub repository installed through HACS as a custom
-repository; each release passes the test environment, then runs on the author's installation,
+The monitor goes out first as a pre-release: read-only, tested in-process, installed by the
+author through HACS from a GitHub repository added as a custom repository. 0.2 is the first
+release with control: it passes the test environment, then runs on the author's installation,
 then goes public. Submission to the HACS default list and the VT plugin list later (HACS review
 takes months). Creating the repository and every publication need the author's consent.
