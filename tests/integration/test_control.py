@@ -212,6 +212,37 @@ async def start(rig: Rig, **control: Any) -> None:
     rig.entry = entry
 
 
+async def test_a_setup_that_fails_late_leaves_nothing_running(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, hass_storage: dict[str, Any]
+) -> None:
+    """A setup that fails after control has started — here in the platforms — stops the control
+    clock and lets go of VT again: nothing of it runs, writes or stays registered. A hand-back
+    owed from an earlier run is still made before it gives up."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    from custom_components.vtherm_smart_boiler import feature_manager
+
+    async def fail(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("the platforms could not be set up")
+
+    monkeypatch.setattr(rig.hass.config_entries, "async_forward_entry_setups", fail)
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.add_to_hass(rig.hass)
+    hass_storage[f"{DOMAIN}.{entry.entry_id}"] = {
+        "version": 1,
+        "key": f"{DOMAIN}.{entry.entry_id}",
+        "data": {"monitoring_since": 0.0, "control": {"controlling": True}},
+    }
+    assert not await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    assert feature_manager.registration(rig.hass) is None
+    assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]
+    count = len(rig.gateway.calls)
+    await rig.advance(300)
+    assert len(rig.gateway.calls) == count  # no control clock left running
+
+
 async def test_control_is_off_by_default_and_refused_during_monitoring(rig: Rig) -> None:
     await start(rig)
     assert rig.state("switch", "control").state == "off"

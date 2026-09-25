@@ -833,3 +833,19 @@ async def test_a_switch_hand_back_gives_the_boiler_its_own_control(rig: Rig) -> 
     await rig.advance(30)
     assert rig.hass.states.get(external).state == "on"
     assert rig.sim.plant.override_active(rig.now())
+
+
+async def test_a_timeout_hand_back_lets_the_override_lapse(rig: Rig) -> None:
+    """An expiring setpoint entity handed back by its own timeout: control simply stops
+    writing, and within the device's timeout the boiler is on its own."""
+    control = {k: v for k, v in ENTITY_CONTROL.items() if not k.startswith("hand_back")}
+    await start(rig, **control | {"write_type": "expiring"}, hand_back="timeout")
+    await rig.switch(True)
+    await rig.advance(120)
+    assert rig.sim.plant.override_active(rig.now())
+    count = len(entity_setpoints(rig))
+    assert count >= 3  # kept alive
+    await rig.switch(False)
+    await rig.advance(90)  # past the simulated device's one-minute timeout
+    assert len(entity_setpoints(rig)) == count  # nothing written after the hand-back
+    assert not rig.sim.plant.override_active(rig.now())
