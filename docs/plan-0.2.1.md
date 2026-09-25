@@ -41,25 +41,26 @@ the user and does not hold up the build.
 
 The user's answers of 2026-09-25 to the questions this plan raised:
 - **Frost protection stays** as a safety net — the one case where the plugin heats without VT's
-  call (N4).
+  call. It watches every zone, or one zone the user picks (N4).
 - **Summer and winter come from VT.** The plugin has no summer switch of its own: with VT off it
   does not heat; with VT calling it heats (N2).
 - **VT's central modes act through the zones' demand**, as VT applies them per zone; zones
   outside the central mode still count (N2).
 - **"Off" into the boiler's memory depends on what is written and where** — no single rule: it is
-  decided per write target (N6).
+  decided per write target (N6). The form of that rule the user leaves open for now.
 - **Stand-alone gateway: alarm and off.** A lost boiler link raises an alarm and control hands
   back, so heating stops; "no write without fresh data" holds for every topology (M7).
 - **The comfort correction** under bounded learning: at most +3 K, rising slowly (1 K per 30 min,
   only while heat flows), falling twice as fast, no rise while another zone is more than 1 K over
   its setpoint, reset at hand-back and at the end of a session (N5).
 
-## Provisional decisions (the most cautious option; the user confirms them, L4 or K4)
+## Provisional decision (the most cautious option; the user confirms it, L4 or K4)
 
-- Which zones frost protection counts: the zones taking part in heating; a zone VT switched off
-  raises an alarm below the limit instead; the urgent mode is limited in time with an alarm;
-  implausible temperatures are rejected (N4).
-- The form of the per-target rule for "off" (N6), settled with the user in L1.
+- The per-target rule for "off" (N6): the setpoint entity and the heating switch each declare
+  their own write type; "off" goes through a target freely when its type is expiring or held,
+  and within the daily cap, with the reserve kept for heat, when it is persistent; an unknown
+  type counts as persistent; the options state how many on/off cycles fit in the cap. L3's
+  research on the devices informs the user's decision.
 
 ## Rules that shape this release
 
@@ -77,7 +78,7 @@ The user's answers of 2026-09-25 to the questions this plan raised:
 | L1 | `SCOPE.md`, `PLAN.md` and `CLAUDE.md` take the decisions and the provisional decisions above; each specification problem of the review (S01–S32) is settled in the text or assigned to a step (index); a table of the safety options' defaults with their reasons (S25); features without a step are assigned to a release or removed (S27); SCOPE's claim that rate limits and guard times are options is corrected (P85) |
 | L2 | plan corrections (S26): outdated step texts in `docs/plan-0.2.md` (G1, H5, H6, I2); K2's ✅ withdrawn until the validation passes (R1); `vtherm-api>=0.5.0` in `docs/plan-0.1.md` D1; K5 states that HACS installs only from public repositories |
 | L3 | research, sources downloaded into `research/diy/`: does a low "off" setpoint stop the CH pump on ESPHome, DIYLess and EMS-ESP masters (review question 1); the CH-mode bit with the flame on, flame and CH-active over the firmware's MQTT (question 2); flame flicker (question 3); VT finishing its setup after Home Assistant has started, and reloading its central entry (question 9); the PIC 6.6 answer on CH=0 recorded in the F3 note (P02) |
-| L4 🔒 | the user confirms or changes the remaining provisional decisions (which zones frost protection counts; the form of N6) — at any time, at the latest at K4 |
+| L4 🔒 | the user confirms or changes the provisional rule for "off" (N6), after L3 — at any time, at the latest at K4 |
 
 Done when: the specification states every decision, and the steps below have no open question
 left but L4.
@@ -105,9 +106,9 @@ slow step.
 | N1 | heating on/off follows the zones' demand at every step (10 s), both ways, at once; minimum burn, minimum pause, start budget, minimum on and off times and switching budget removed from the code, the options, the translations and the tests; the frequent-starts alarm stays information. Moot by the decisions: P08, P09, P20, P110, S01; the control part of P21; P58's tests rewritten |
 | N2 | VT's modes: central modes through the zones' demand, zones outside the central mode counting (P15, S04); an unknown central mode is not Auto (P84); no summer switch of the plugin's own — summer and winter come from VT, and with VT off the plugin does not heat; the threshold kept for the monitor (P100, S15); VT's central-boiler detection fails closed (P52); VT's load state follows its entries (P111); VT's setup after Home Assistant's start (review question 9, from L3) |
 | N3 | demand from VT: a zone with an unknown or `unavailable` mode is unknown, and with no zone known the curve heats (P03); "auto" and heat_cool heat by `hvac_action` and `on_percent` (P12); the demand source per VT type, VT's minimum activation respected (P40, S31); zone freshness from the temperature's age (P91); `count_threshold` checked against the zones (P19); a criterion can stand alone, as in VT (review question 7) |
-| N4 | frost protection stays as a safety net (the user's decision); which zones count is provisional: zones taking part in heating; a zone VT switched off raises an alarm below the limit; the urgent mode limited in time with an alarm; implausible temperatures rejected (P14, S03) |
+| N4 | frost protection stays as a safety net and watches every zone, or one zone the user picks (the user's decisions); implausible temperatures rejected; frost heating that goes on without the zone warming raises an alarm — it is not stopped (P14, S03) |
 | N5 | bounded learning on the comfort correction: band +3 K, 1 K per 30 min only while heat flows, falling twice as fast, a zone without opening data not blocking the fall, no rise while another zone is more than 1 K over its setpoint, reset at hand-back and at the end of a session, information when it stays at the band's edge for hours; its interaction with the zones' PI integrators and with the outdoor terms of TPI and SmartPI described, with recommended VT settings (P13, P24, S13, S30, review question 8) |
-| N6 | "off" per write target (the user: it depends on what is written and where): the setpoint entity and the heating switch each declare their own write type; "off" goes through a target only as its type allows — freely when expiring or held, within the daily cap with the reserve kept for heat when persistent, unknown counting as persistent; the options state how many on/off cycles fit in the cap; a daily cap of 3 or less no longer silently drops "off"; the form settled with the user in L1 (S01, S07, P09, P51) |
+| N6 | "off" per write target (the user: it depends on what is written and where; the rule below is provisional): the setpoint entity and the heating switch each declare their own write type; "off" goes through a target only as its type allows — freely when expiring or held, within the daily cap with the reserve kept for heat when persistent, unknown counting as persistent; the options state how many on/off cycles fit in the cap; a daily cap of 3 or less no longer silently drops "off" (S01, S07, P09, P51) |
 | N7 | the curve's inputs: an outdoor sensor found stuck or deviating hands the curve to the weather entity or the fallback setpoint, with an alarm (P16, S05); the outdoor reading's age under the one freshness rule (P26, O1); fallback setpoint = the last effective outdoor temperature for a limited time, then the design point (P25, S16); the ramp in K per minute at every step, not one step per decision (P83) |
 | N8 | limits and option dependencies: the weather ceiling never below `hard_min` (P27, S10); the "off" setpoint checked against `hard_min` and the entity (P51, S10); an opening threshold of 0 refused, a passive fixed circuit's maximum flow applied (P51); the emitter type without a default, or a warning (P60); what "one written circuit" means with several configured circuits (S32) |
 
