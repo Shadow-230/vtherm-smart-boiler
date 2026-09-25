@@ -267,7 +267,7 @@ def zone_schema(options: dict[str, Any], current: dict[str, Any]) -> vol.Schema:
     )
     sources = [s["entity_id"] for s in current.get("foreign_heat", [])]
     # A temperature sensor needs its threshold, entered at the advanced level only.
-    offered = [
+    offered: list[dict[str, Any]] = [
         {"domain": ["switch", "binary_sensor"]},
         {"domain": "sensor", "device_class": "power"},
     ]
@@ -823,7 +823,7 @@ def _schema_defaults(schema: vol.Schema) -> dict[str, Any]:
     return {
         str(key): key.default()
         for key in schema.schema
-        if isinstance(key, vol.Required) and key.default is not vol.UNDEFINED
+        if isinstance(key, vol.Required) and callable(key.default)
     }
 
 
@@ -943,9 +943,10 @@ class _Steps:
         if not errors and self._problem is not None and self._problem[0] == step_id:
             errors = self._problem[1]
             self._problem = None
-        return self.async_show_form(  # type: ignore[attr-defined]
+        result: ConfigFlowResult = self.async_show_form(  # type: ignore[attr-defined]
             step_id=step_id, data_schema=data_schema, errors=errors or {}, **kwargs
         )
+        return result
 
     async def _back_to_problem(self, code: str, subject: str | None) -> ConfigFlowResult:
         """The answers stay: the step that can fix the problem is shown again, with it."""
@@ -957,7 +958,8 @@ class _Steps:
         raise NotImplementedError
 
     async def _goto(self, step: str) -> ConfigFlowResult:
-        return await getattr(self, f"async_step_{step}")()
+        result: ConfigFlowResult = await getattr(self, f"async_step_{step}")()
+        return result
 
     async def async_step_signals(
         self, user_input: dict[str, Any] | None = None

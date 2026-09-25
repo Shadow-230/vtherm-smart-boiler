@@ -250,13 +250,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         A store that cannot be read at all hands back first, as the last run may have held the
         boiler; an unreadable start of monitoring starts it again (control waits longer)."""
         try:
-            stored = await self._store.async_load() or {}
+            stored = _mapping(await self._store.async_load())
         except Exception:  # an unsupported version, a read error: the defaults, cautiously
             _LOGGER.exception("Could not read the stored data; a hand-back is made first")
             stored = {"control": {"controlling": True}}
-        if not isinstance(stored, dict):
-            _LOGGER.warning("Ignoring stored data that is not a mapping")
-            stored = {}
         try:
             self.monitoring_since = float(stored.get("monitoring_since", now))
         except TypeError, ValueError:
@@ -798,7 +795,15 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             self._failing.discard(job)
 
 
-def _append(series: Series, t: float, value: object) -> None:
+def _mapping(value: object) -> dict[str, Any]:
+    """Stored data as the mapping it should be: whatever the file holds, whatever its type
+    says; nothing stored, or anything else, is empty."""
+    if value is not None and not isinstance(value, dict):
+        _LOGGER.warning("Ignoring stored data that is not a mapping")
+    return value if isinstance(value, dict) else {}
+
+
+def _append(series: Series[Any], t: float, value: object) -> None:
     last = series.last
     series.append(max(t, last.t) if last is not None else t, value)
 
@@ -819,7 +824,7 @@ def local_days(start: float, end: float) -> list[tuple[float, float]]:
 
 
 def _recorder(hass: HomeAssistant) -> Any:
-    from homeassistant.components.recorder import get_instance
+    from homeassistant.helpers.recorder import get_instance
 
     return get_instance(hass)
 

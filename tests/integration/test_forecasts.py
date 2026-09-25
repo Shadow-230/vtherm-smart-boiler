@@ -106,3 +106,39 @@ async def test_removing_the_entry_removes_its_files(
     await hass.async_block_till_done()
     assert await hass.async_add_executor_job(_present, storage, names) == [False]
     assert f"{DOMAIN}.gone" not in hass_storage
+
+
+async def test_an_odd_forecast_answer_costs_a_snapshot_not_the_job(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    """A weather integration answering in another shape: what cannot be read is skipped, the
+    rest is kept, and the recording goes on."""
+    answers = iter(
+        [
+            {WEATHER_ENTITY: ["not", "an", "object"]},
+            {
+                WEATHER_ENTITY: {
+                    "forecast": [
+                        "junk",
+                        {"datetime": "2026-01-21T12:00:00+00:00", "temperature": 5.0},
+                    ]
+                }
+            },
+        ]
+    )
+
+    async def handle(call: ServiceCall) -> dict[str, Any]:
+        return next(answers)
+
+    hass.services.async_register(
+        "weather", "get_forecasts", handle, supports_response=SupportsResponse.ONLY
+    )
+    hass.states.async_set(
+        WEATHER_ENTITY, "cloudy", {"supported_features": 1, "temperature_unit": "°C"}
+    )
+    recorder = ForecastRecorder(hass, "entry", WEATHER_ENTITY)
+    assert await recorder.async_take(NOW) == 0
+    assert await recorder.async_take(NOW + 1800) == 1
+    await recorder.async_flush()
+    (snapshot,) = hass_storage[_key(partition_of(NOW))]["data"]["snapshots"]
+    assert snapshot["dt"] == [24 * 3600 - 1800]  # the one readable point, a day after NOW

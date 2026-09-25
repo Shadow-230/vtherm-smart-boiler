@@ -22,6 +22,7 @@ from homeassistant.util import dt as dt_util
 from .coordinator import MonitorData, SmartBoilerCoordinator
 from .core.controller import ControlMode
 from .core.emitters import FactorStatus
+from .core.monitor import MonitorSummary
 from .core.parameters import ParameterKey, Source
 from .core.signal_check import Feature, FeatureStatus, SignalStatus
 from .core.signals import Signal
@@ -39,11 +40,11 @@ class BoilerSensorDescription(SensorEntityDescription):
     needs: Feature | None = None  # created only when this feature is available or degraded
 
 
-def _day(data: MonitorData):
+def _day(data: MonitorData) -> MonitorSummary | None:
     return data.analysis.day if data.analysis is not None else None
 
 
-def _week(data: MonitorData):
+def _week(data: MonitorData) -> MonitorSummary | None:
     return data.analysis.week if data.analysis is not None else None
 
 

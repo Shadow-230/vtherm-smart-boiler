@@ -23,6 +23,7 @@ from .alarms import (
     trend_warning,
 )
 from .building import LoadFit, fit_daily_load
+from .cycles import ClassifiedBurn
 from .daily import DaySummary, fit_points, summarize_day, verdict_over_days
 from .history import History
 from .monitor import MonitorOptions, MonitorSummary, summarize
@@ -117,7 +118,7 @@ def _trends(history: History, full: MonitorSummary, now: float) -> dict[AlarmKin
             AlarmKind.PRESSURE_FALLING, trend, DEFAULT_PRESSURE_DROP_BAR, direction=-1
         )
 
-    def burns_in(window: tuple[float, float]):
+    def burns_in(window: tuple[float, float]) -> list[ClassifiedBurn]:
         return [b for b in full.burns if window[0] <= b.burn.start < window[1]]
 
     if history.is_mapped(Signal.FLUE_GAS) and history.is_mapped(Signal.RETURN):
@@ -159,11 +160,7 @@ def _period(
         return None
     heat, dhw_heat = summary.heat_output_kwh, summary.dhw_output_kwh
     if heat is not None and dhw_heat is not None and heat.complete and dhw_heat.complete:
-        heating, dhw, unit = (
-            summary.heat_output_kwh.amount,
-            summary.dhw_output_kwh.amount,
-            ReportUnit.KWH,
-        )
+        heating, dhw, unit = heat.amount, dhw_heat.amount, ReportUnit.KWH
     else:
         heating = summary.heating.burn_s / 3600.0
         dhw = summary.dhw.burn_s / 3600.0

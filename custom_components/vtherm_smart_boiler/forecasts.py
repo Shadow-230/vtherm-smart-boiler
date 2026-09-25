@@ -42,9 +42,7 @@ _WIND_TO_MS = {"m/s": 1.0, "km/h": 1 / 3.6, "mph": 0.44704, "kn": 0.514444, "ft/
 _RAIN_TO_MM = {"mm": 1.0, "cm": 10.0, "in": 25.4}
 
 
-def parse_forecast(
-    items: Sequence[Mapping[str, Any]], units: Mapping[str, Any]
-) -> tuple[ForecastPoint, ...]:
+def parse_forecast(items: Sequence[object], units: Mapping[str, Any]) -> tuple[ForecastPoint, ...]:
     """Forecast items of ``weather.get_forecasts`` in core units; unreadable items are skipped."""
     temperature_unit = units.get("temperature_unit")
     wind = _WIND_TO_MS.get(str(units.get("wind_speed_unit")))
@@ -56,6 +54,8 @@ def parse_forecast(
 
     points: list[ForecastPoint] = []
     for item in items:
+        if not isinstance(item, Mapping):
+            continue
         moment = dt_util.parse_datetime(str(item.get("datetime", "")))
         if moment is None:
             continue
@@ -135,7 +135,8 @@ class ForecastRecorder:
             except HomeAssistantError as err:
                 _LOGGER.debug("No %s forecast from %s: %s", kind, self._weather, err)
                 continue
-            items = ((response or {}).get(self._weather) or {}).get("forecast")
+            answer = (response or {}).get(self._weather)
+            items = answer.get("forecast") if isinstance(answer, dict) else None
             if not isinstance(items, list) or not items:
                 continue
             snapshot = ForecastSnapshot(now, kind, parse_forecast(items, units))

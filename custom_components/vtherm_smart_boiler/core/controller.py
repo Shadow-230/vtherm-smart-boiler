@@ -330,6 +330,7 @@ def _heating_decision(
     else:
         assert prior_target is not None
         assert prior_upper is not None
+        assert state.decided_at is not None
         target, upper, correction = prior_target, prior_upper, state.correction
         water_reasons, decided_at = state.water_reasons, state.decided_at
     previous = state.command.setpoint if state.command is not None else None

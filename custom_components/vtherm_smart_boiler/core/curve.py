@@ -41,7 +41,7 @@ class HeatingCurve:
         """Flow temperature needed at ``outdoor``; the room temperature (plus offset) above it."""
         span = self.room - self.design_outdoor
         load = max(0.0, (self.room - outdoor) / span)
-        excess = (self.design_flow - self.room) * load ** (1.0 / self.exponent)
+        excess = (self.design_flow - self.room) * math.pow(load, 1.0 / self.exponent)
         return self.room + excess + self.offset
 
 

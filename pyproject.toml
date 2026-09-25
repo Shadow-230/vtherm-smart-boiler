@@ -3,16 +3,22 @@
 
 [dependency-groups]
 # Test environment, pinned deliberately (docs/plan-0.1.md, A3). Install with
-#   scripts/env.sh uv pip install --group test -c <homeassistant>/package_constraints.txt
+#   scripts/env.sh uv pip install --group test --group ha -c <homeassistant>/package_constraints.txt
 # so shared packages (numpy, SQLAlchemy, ...) match a real Home Assistant.
 test = [
-    "pytest-homeassistant-custom-component==0.13.366",  # pins homeassistant==2026.9.3
     "vtherm-api==0.5.0",
     "ruff==0.16.8",
+    # Home Assistant 2026.9.3's own test pins (requirements_test.txt).
+    "mypy==2.3.1",
+    "pytest-cov==7.1.0",
     # Requirements of the vendored VT 10.4.0 manifest.
     "numpy==2.3.2",
     "scipy==1.18.1",
 ]
+# Home Assistant with its test harness: the version tested, and the declared minimum
+# (hacs.json), on which CI runs the tests too.
+ha = ["pytest-homeassistant-custom-component==0.13.366"]  # pins homeassistant==2026.9.3
+ha-minimum = ["pytest-homeassistant-custom-component==0.13.363"]  # pins homeassistant==2026.9.0
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -49,3 +55,25 @@ allowed-confusables = ["−", "–"]
 [tool.ruff.lint.isort]
 required-imports = ["from __future__ import annotations"]
 known-first-party = ["custom_components.vtherm_smart_boiler", "sim", "tools", "tests"]
+
+[tool.mypy]
+python_version = "3.14"
+packages = ["custom_components.vtherm_smart_boiler"]
+strict = true
+warn_unreachable = true
+cache_dir = ".tmp/mypy"
+untyped_calls_exclude = ["vtherm_api"]
+
+# vtherm_api ships no type marker; its sources are read for the names the plugin uses.
+[[tool.mypy.overrides]]
+module = ["vtherm_api", "vtherm_api.*"]
+follow_untyped_imports = true
+
+[tool.coverage.run]
+source = ["custom_components.vtherm_smart_boiler"]
+data_file = ".tmp/coverage"
+
+[tool.coverage.report]
+skip_covered = true
+show_missing = true
+fail_under = 95  # 97 % when set (R3); a floor for regressions, not a goal

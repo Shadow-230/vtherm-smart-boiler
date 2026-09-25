@@ -9,7 +9,7 @@ inferred from flow temperature against the CH setpoint and from zone demand, wit
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -117,12 +117,16 @@ def classify_burn(burn: Burn, inputs: DhwInputs) -> ClassifiedBurn:
         coverage = known_duration(signal, burn.start, burn.end) / burn.duration
         if coverage < SIGNAL_COVERAGE:
             continue
-        dhw_time = duration_where(signal, burn.start, burn.end, lambda v, w=dhw_when: v is w)
+        dhw_time = duration_where(signal, burn.start, burn.end, _is(dhw_when))
         dhw_share = dhw_time / (coverage * burn.duration)
         kind = BurnKind.DHW if dhw_share >= 0.5 else BurnKind.CH
         share = dhw_share if kind is BurnKind.DHW else 1.0 - dhw_share
         return ClassifiedBurn(burn, kind, weight * coverage * share, (evidence,))
     return _infer(burn, inputs)
+
+
+def _is(wanted: bool) -> Callable[[bool], bool]:
+    return lambda value: value is wanted
 
 
 def classify_burns(burns: Sequence[Burn], inputs: DhwInputs) -> list[ClassifiedBurn]:
@@ -140,10 +144,10 @@ def _infer(burn: Burn, inputs: DhwInputs) -> ClassifiedBurn:
         if known >= SIGNAL_COVERAGE * burn.duration and above >= 0.5 * known:
             found.append(Evidence.FLOW_ABOVE_MAX_CH)
     if flow is not None and inputs.ch_setpoint is not None:
-        above = _share_over_time(burn, flow, inputs.ch_setpoint, inputs.setpoint_margin)
-        if above is not None:
+        share = _share_over_time(burn, flow, inputs.ch_setpoint, inputs.setpoint_margin)
+        if share is not None:
             found.append(
-                Evidence.FLOW_ABOVE_SETPOINT if above >= 0.5 else Evidence.FLOW_WITHIN_SETPOINT
+                Evidence.FLOW_ABOVE_SETPOINT if share >= 0.5 else Evidence.FLOW_WITHIN_SETPOINT
             )
     if inputs.zone_demand is not None:
         known = known_duration(inputs.zone_demand, burn.start, burn.end)

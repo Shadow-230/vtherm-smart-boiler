@@ -113,7 +113,7 @@ async def async_get_config_entry_diagnostics(
             "trends": {kind.value: asdict(alarm) for kind, alarm in analysis.trends.items()},
             "fit": None if analysis.fit is None else asdict(analysis.fit),
         }
-    return redact(
+    document: dict[str, Any] = redact(
         {
             "options": dict(entry.options),
             "capabilities": asdict(data.capabilities),
@@ -152,6 +152,7 @@ async def async_get_config_entry_diagnostics(
             },
         }
     )
+    return document
 
 
 def _feature_manager(hass: HomeAssistant) -> dict[str, Any]:

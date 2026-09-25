@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, SupportsFloat
 
 from .const import (
     BOILER,
@@ -367,7 +367,9 @@ def _control(
 def _float_or_none(value: object) -> float | None:
     if value is None or value == "":
         return None
-    return float(value)  # type: ignore[arg-type]
+    if not isinstance(value, str | SupportsFloat):
+        raise TypeError(f"not a number: {value!r}")
+    return float(value)
 
 
 def _value_or(value: float | None, default: float) -> float:

@@ -84,7 +84,9 @@ def power_factor(
         excess = max(0.0, (supply - room) * share)
     else:
         excess = mean_excess(supply, return_, room)
-    return (excess / reference.excess) ** (exponent if exponent is not None else reference.exponent)
+    return math.pow(
+        excess / reference.excess, exponent if exponent is not None else reference.exponent
+    )
 
 
 class FactorStatus(StrEnum):

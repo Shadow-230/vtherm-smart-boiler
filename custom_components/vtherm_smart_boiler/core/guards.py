@@ -222,7 +222,8 @@ def _follow_read_back(
     """Note a confirmation, follow another value the read-back holds, and judge a send the
     device has not confirmed within the timeout. An "ignored" report ends once the value has
     held for the timeout."""
-    if not config.read_back or state.written is None or state.sent_at is None:
+    sent_at = state.sent_at
+    if not config.read_back or state.written is None or sent_at is None:
         return state, _Verdict.NONE
     if state.confirmed_at is not None:
         held = (
@@ -235,9 +236,9 @@ def _follow_read_back(
         return replace(state, confirmed_at=now, foreign=None), _Verdict.NONE
     if confirmed is not None and not _matches(confirmed, state.foreign, config.tolerance):
         state = replace(state, foreign=None)  # the read-back moved: nothing steady
-    if now - state.sent_at <= config.confirm_timeout_s:
+    if now - sent_at <= config.confirm_timeout_s:
         return state, _Verdict.NONE
-    if state.rewritten_at is not None and state.sent_at == state.rewritten_at:
+    if state.rewritten_at is not None and sent_at == state.rewritten_at:
         return state, _Verdict.REWRITE_FAILED
     if _matches(confirmed, state.foreign, config.tolerance):
         return state, _Verdict.FOREIGN

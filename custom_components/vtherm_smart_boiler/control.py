@@ -320,12 +320,18 @@ class ControlUnit:
                 _LOGGER.warning("Ignoring unreadable stored control data: %s", key)
                 return default
 
-        paused = field("paused", lambda raw: {str(z): float(t) for z, t in raw.items()}, {})
-        resuming = field("resuming", lambda raw: {str(z): float(t) for z, t in raw.items()}, {})
-        alarms = field("alarms", _kept_alarms, set())
-        latched_by = field("latched_by", lambda raw: tuple(str(a) for a in raw), ())
-        rewritten_at = field("rewritten_at", float, None)
-        heating_rewritten_at = field("heating_rewritten_at", float, None)
+        paused: dict[str, float] = field(
+            "paused", lambda raw: {str(z): float(t) for z, t in raw.items()}, {}
+        )
+        resuming: dict[str, float] = field(
+            "resuming", lambda raw: {str(z): float(t) for z, t in raw.items()}, {}
+        )
+        alarms: set[ControlAlarm] = field("alarms", _kept_alarms, set())
+        latched_by: tuple[str, ...] = field(
+            "latched_by", lambda raw: tuple(str(a) for a in raw), ()
+        )
+        rewritten_at: float | None = field("rewritten_at", float, None)
+        heating_rewritten_at: float | None = field("heating_rewritten_at", float, None)
         latched = _flag(data.get("latched"))
         self._session = _Session(
             loop=LoopState(

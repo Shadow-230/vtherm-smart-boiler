@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 from .building import DayPoint, LoadModel
 from .cycles import BurnKind, ClassifiedBurn, DhwInputs, classify_burns, find_burns
@@ -77,7 +78,7 @@ def dhw_inputs(
 ) -> DhwInputs:
     """What the history offers to tell DHW burns from heating burns."""
 
-    def mapped(signal: Signal) -> Series | None:
+    def mapped(signal: Signal) -> Series[Any] | None:
         return history.signals.get(signal)
 
     return DhwInputs(

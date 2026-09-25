@@ -148,6 +148,8 @@ class CentralMode(StrEnum):
 
 
 def central_mode(state: object) -> CentralMode | None:
+    if not isinstance(state, str):
+        return None
     try:
         return CentralMode(state)
     except ValueError:

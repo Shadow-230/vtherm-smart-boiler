@@ -408,6 +408,29 @@ async def test_a_store_with_broken_fields_still_loads(
     )
 
 
+async def test_a_store_that_is_not_a_mapping_is_ignored(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    zones: FakeZones,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Stored data of another shape starts from the defaults, with a warning."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler, zones)
+    hass_storage[f"{DOMAIN}.{entry.entry_id}"] = {
+        "version": 1,
+        "key": f"{DOMAIN}.{entry.entry_id}",
+        "data": ["not", "a", "mapping"],
+    }
+    await setup(hass, entry)
+    assert entry.state is ConfigEntryState.LOADED
+    assert "Ignoring stored data that is not a mapping" in caplog.text
+    assert entry.runtime_data.monitoring_since == pytest.approx(
+        datetime.now(UTC).timestamp(), abs=60
+    )
+
+
 async def test_a_stopped_installation_writes_nothing_more(
     hass: HomeAssistant, hass_storage: dict[str, Any], zones: FakeZones
 ) -> None:

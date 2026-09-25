@@ -1,5 +1,7 @@
-# Tests and lint on every push and pull request (docs/plan-0.2.md, K2). vendor/ (VT and SmartPI)
-# is not in the repository, so the tests that need it are skipped here.
+# Tests, lint, formatting and types on every push and pull request (docs/plan-0.2.md, K2;
+# docs/plan-0.2.1.md, R3), on the Home Assistant version tested and on the declared minimum
+# (hacs.json). vendor/ (VT and SmartPI) is not in the repository, so the tests that need it are
+# skipped here.
 name: Tests
 
 on:
@@ -11,19 +13,42 @@ permissions:
 
 jobs:
   tests:
+    name: Tests (${{ matrix.homeassistant }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Dependency groups in pyproject.toml.
+        homeassistant: [ha, ha-minimum]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-      - name: Install the pinned test environment
+      - name: Install the pinned test environment under Home Assistant's constraints
+        env:
+          GROUP: ${{ matrix.homeassistant }}
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --group test
+          python -m pip install --group "$GROUP"
+          constraints="$(python -c 'import homeassistant, pathlib; print(pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt")')"
+          python -m pip install --group test --group "$GROUP" -c "$constraints"
+      - name: The minimum is the version hacs.json declares
+        if: matrix.homeassistant == 'ha-minimum'
+        run: |
+          python - <<'PY'
+          import json
+          from homeassistant.const import __version__
+          minimum = json.load(open("hacs.json", encoding="utf-8"))["homeassistant"]
+          assert __version__ == minimum, (__version__, minimum)
+          PY
       - name: Ruff
         run: ruff check .
-      - name: Tests
+      - name: Formatting
+        run: ruff format --check .
+      - name: Types
+        run: mypy
+      - name: Tests with coverage
         run: |
           mkdir -p .tmp
-          python -m pytest -q
+          python -m pytest -q --cov --cov-report=term

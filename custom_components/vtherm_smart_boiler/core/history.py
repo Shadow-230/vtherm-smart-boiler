@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 from .readings import ZONE_OPEN, ZoneState
 from .series import Series
@@ -41,7 +42,7 @@ class ZoneSeries:
             reported_at=t,
         )
 
-    def series(self) -> tuple[Series, ...]:
+    def series(self) -> tuple[Series[Any], ...]:
         return (
             self.temperature,
             self.target,
@@ -57,11 +58,11 @@ class ZoneSeries:
 class History:
     """Boiler signals (only the mapped ones), zones and the weather entity's temperature."""
 
-    signals: dict[Signal, Series] = field(default_factory=dict)
+    signals: dict[Signal, Series[Any]] = field(default_factory=dict)
     zones: dict[str, ZoneSeries] = field(default_factory=dict)
     weather: Series[float] = field(default_factory=Series)
 
-    def signal(self, signal: Signal) -> Series:
+    def signal(self, signal: Signal) -> Series[Any]:
         """The series of a signal; empty (always unknown) when not mapped."""
         return self.signals.get(signal, Series())
 
@@ -149,16 +150,16 @@ def _any_known(values: Sequence[bool | None]) -> bool | None:
     return False
 
 
-def combine[T, R](
-    inputs: Sequence[Series[T]],
+def combine[R](
+    inputs: Sequence[Series[Any]],
     start: float,
     end: float,
-    fn: Callable[[Sequence[T | None]], R | None],
+    fn: Callable[[Sequence[Any]], R | None],
 ) -> Series[R]:
     """A series of ``fn`` applied to the inputs' values at every change in ``[start, end)``."""
     times = sorted({start, *_times_within(inputs, start, end)})
     return Series((t, fn([s.value_at(t) for s in inputs])) for t in times)
 
 
-def _times_within(inputs: Iterable[Series], start: float, end: float) -> set[float]:
+def _times_within(inputs: Iterable[Series[Any]], start: float, end: float) -> set[float]:
     return {sample.t for series in inputs for sample in series if start < sample.t < end}
