@@ -460,14 +460,16 @@
           "setpoint_entity": "Encja nastawy",
           "write_type": "Typ zapisu",
           "ch_entity": "Przełącznik grzania",
+          "ch_write_type": "Typ zapisu przełącznika grzania",
           "hand_back": "Sposób oddania sterowania",
           "hand_back_value": "Wartość oddania",
           "hand_back_entity": "Przełącznik sterowania zewnętrznego"
         },
         "data_description": {
           "setpoint_entity": "Liczba (number albo input_number), która ustawia temperaturę zasilania kotła.",
-          "write_type": "Wygasający: urządzenie porzuca wartość, jeśli nie jest powtarzana; jest powtarzana co 30 s. Trwały: zapisywany w pamięci kotła, a każdy zapis ją zużywa; zapis tylko przy zmianie o co najmniej minimalną zmianę i w granicach dziennego limitu. Trzymany: urządzenie zachowuje wartość i samo ją przekazuje; zapis tylko przy zmianie. Nieznany (domyślnie) liczy się jako trwały. Wygasający na urządzeniu, które zapisuje każdą wartość do pamięci, zapisywałby ją co 30 s i szybko ją zużył.",
-          "ch_entity": "Opcjonalny, używany tylko przy zapisach wygasających lub trzymanych: przełącznik, który włącza i wyłącza grzanie, włączany z powrotem przy oddaniu sterowania. Przy zapisach trwałych lub nieznanych, albo bez przełącznika, „wyłącz” jest zapisywane jako niska nastawa. Nigdy nie wybieraj przełącznika zapisywanego w pamięci kotła (np. parametru kotła „grzanie aktywne”): każde przełączenie by ją zużywało.",
+          "write_type": "Wygasający: urządzenie porzuca wartość, jeśli nie jest powtarzana; jest powtarzana co 30 s. Trzymany: urządzenie zachowuje wartość i samo ją przekazuje; zapis tylko przy zmianie. Trwały lub nieznany (domyślnie): zapisywany w pamięci kotła albo może być — wtyczka nigdy nie zapisuje trwałej pamięci kotła, więc sterowanie z taką encją jest niedostępne. Ryzyko: parametr zapisywany w pamięci, zadeklarowany jako wygasający, byłby zapisywany co 30 s, około 2900 razy na dobę, i zużyłby pamięć kotła.",
+          "ch_entity": "Opcjonalny: przełącznik, który włącza i wyłącza grzanie, włączany z powrotem przy oddaniu sterowania; poniżej trzeba podać jego typ zapisu. Bez przełącznika „wyłącz” jest zapisywane jako niska nastawa. Nigdy nie wybieraj przełącznika zapisywanego w pamięci kotła (np. parametru kotła „grzanie aktywne”): każde przełączenie by ją zużywało.",
+          "ch_write_type": "Potrzebny przy przełączniku grzania: co urządzenie robi z jego stanem. Wygasający: porzucany, jeśli nie jest powtarzany; powtarzany co 30 s. Trzymany: urządzenie go zachowuje. Wtyczka nigdy nie zapisuje trwałej pamięci kotła, więc przełącznik zadeklarowany jako trwały lub nieznany jest odrzucany.",
           "hand_back": "Jak sterowanie wraca do kotła przy każdym wyjściu: zapis wartości oddania; zaprzestanie zapisów, po którym przejmuje własny limit czasu urządzenia (tylko dla zapisów wygasających); albo wyłączenie przełącznika, który włącza sterowanie zewnętrzne. Wymagany; bez niego sterowania nie da się włączyć.",
           "hand_back_value": "Nastawa zapisywana przy oddaniu sterowania, dla sposobu „wartość”: ta, której kocioł używa sam, albo 0, jeśli to oddaje mu sterowanie. Wymagana dla sposobu „wartość”.",
           "hand_back_entity": "Dla sposobu „przełącznik”: przełącznik, który włącza sterowanie zewnętrzne. Jest włączany na początku sterowania i wyłączany przy oddaniu."
@@ -539,9 +541,6 @@
           "max_switches_per_hour": "Przełączenia na godzinę",
           "ramp_k_per_min": "Rampa nastawy",
           "decision_interval_min": "Odstęp decyzji",
-          "min_change": "Minimalna zmiana",
-          "daily_cap": "Dzienny limit zapisów",
-          "cap_reaction": "Po osiągnięciu limitu",
           "off_setpoint": "Nastawa „wyłączone”",
           "count_threshold": "Strefy wołające",
           "power_threshold_kw": "Moc wołająca",
@@ -558,9 +557,6 @@
           "max_switches_per_hour": "Największa liczba włączeń i wyłączeń grzania w ciągu godziny. Domyślnie 6.",
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
           "decision_interval_min": "Jak często nastawa jest wyznaczana na nowo, w minutach. Domyślnie 5.",
-          "min_change": "Najmniejsza zmiana nastawy zapisywana przy typie zapisu trwałym lub nieznanym, w K. Domyślnie 1. Mniejsza szybciej zużywa pamięć kotła.",
-          "daily_cap": "Największa liczba zapisów na dobę przy typie zapisu trwałym lub nieznanym. Domyślnie 48.",
-          "cap_reaction": "Trzymaj (domyślnie): zachowaj ostatnią wartość i zgłoś alarm. Oddaj: zwróć sterowanie kotłowi.",
           "off_setpoint": "Zapisywana jako „wyłączone”, gdy nie ma przełącznika grzania, w °C. Domyślnie 10 °C.",
           "count_threshold": "Grzanie jest potrzebne, gdy o ciepło woła co najmniej tyle stref. Domyślnie 1.",
           "power_threshold_kw": "Opcjonalnie: grzanie jest potrzebne, gdy moc wołających stref sumuje się do tej wartości, w kW.",
@@ -615,7 +611,9 @@
       "hand_back_timeout_not_expiring": "Limit czasu urządzenia oddaje sterowanie tylko przy zapisach wygasających; wybierz wartość albo przełącznik.",
       "hand_back_value_out_of_range": "Wartość oddania leży poza zakresem, który przyjmuje encja nastawy.",
       "limits_outside_entity_range": "Encja nastawy nie przyjmuje tego limitu; utrzymaj limity w jej zakresie.",
-      "off_setpoint_outside_entity_range": "Encja nastawy nie przyjmuje tej wartości."
+      "off_setpoint_outside_entity_range": "Encja nastawy nie przyjmuje tej wartości.",
+      "write_type_not_supported": "Wtyczka nigdy nie zapisuje trwałej pamięci kotła: zadeklaruj encję nastawy jako wygasającą lub trzymaną albo wybierz „Bez sterowania”.",
+      "ch_write_type_not_supported": "Zadeklaruj przełącznik grzania jako wygasający lub trzymany albo zostaw przełącznik pusty: wtyczka nigdy nie zapisuje trwałej pamięci kotła."
     },
     "abort": {
       "missing_signal": "Brakuje wymaganego sygnału.",
@@ -716,9 +714,9 @@
     },
     "write_type": {
       "options": {
-        "unknown": "Nieznany (liczony jako trwały)",
+        "unknown": "Nieznany (bez zapisu)",
         "expiring": "Wygasający",
-        "persistent": "Trwały",
+        "persistent": "Trwały (bez zapisu)",
         "held": "Trzymany przez urządzenie"
       }
     },
@@ -727,12 +725,6 @@
         "value": "Zapis wartości",
         "timeout": "Limit czasu urządzenia",
         "switch": "Wyłączenie przełącznika"
-      }
-    },
-    "cap_reaction": {
-      "options": {
-        "hold": "Trzymaj ostatnią wartość i zgłoś alarm",
-        "hand_back": "Oddaj sterowanie"
       }
     },
     "alarm_reaction": {
@@ -867,9 +859,6 @@
       "alarm_outside_change": {
         "name": "Sterowanie: nastawa zmieniona z zewnątrz"
       },
-      "alarm_daily_cap": {
-        "name": "Sterowanie: dzienny limit zapisów osiągnięty"
-      },
       "alarm_control_error": {
         "name": "Sterowanie: błąd wewnętrzny"
       },
@@ -905,6 +894,9 @@
     },
     "blocked_no_setpoint_entity": {
       "message": "Wybierz encję, która przyjmuje nastawę zasilania. Inne powody: {others}."
+    },
+    "blocked_write_type_not_supported": {
+      "message": "Encja nastawy jest zadeklarowana jako trwała lub o nieznanym typie zapisu, a wtyczka nigdy nie zapisuje trwałej pamięci kotła: zadeklaruj ją w opcjach jako wygasającą lub trzymaną. Inne powody: {others}."
     },
     "blocked_no_hand_back": {
       "message": "Wybierz, jak sterowanie wraca do kotła: wartość, własny limit czasu urządzenia albo przełącznik. Inne powody: {others}."

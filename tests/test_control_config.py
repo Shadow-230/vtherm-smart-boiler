@@ -6,7 +6,6 @@ import pytest
 
 from custom_components.vtherm_smart_boiler.control_config import (
     AlarmReaction,
-    CapReaction,
     HandBack,
     Topology,
     WritePath,
@@ -54,37 +53,42 @@ def test_otgw_defaults_are_cautious() -> None:
     assert control.boiler_max == 65.0
     assert control.limits.hard_min == 25.0
     assert control.anticycling.min_pause_s == 300.0
-    assert control.min_step == 0.0  # expiring writes need no coarse steps
     assert options.learning_pauses
-    assert options.cap_reaction is CapReaction.HOLD
     assert options.reaction("outside_change") is AlarmReaction.HAND_BACK
     assert options.reaction("pressure_low") is AlarmReaction.INFO
     assert config_blockers(options, RADIATORS) == []
 
 
-def test_entity_path_with_persistent_writes() -> None:
-    data = {
-        "write_path": "entity",
-        "setpoint_entity": "number.boiler_flow",
-        "write_type": "persistent",
-        "hand_back": "value",
-        "hand_back_value": 0,
-        "confirmed_entity": "sensor.boiler_flow_setpoint",
-        "topology": "virtual",
-        "curve": CURVE,
-        "min_change": 2.0,
-        "daily_cap": 24,
-        "cap_reaction": "hand_back",
-    }
-    options = parse_control(data, RADIATORS, None)
-    assert options.write_type is WriteType.PERSISTENT
+ENTITY = {
+    "write_path": "entity",
+    "setpoint_entity": "number.boiler_flow",
+    "write_type": "held",
+    "hand_back": "value",
+    "hand_back_value": 0,
+    "confirmed_entity": "sensor.boiler_flow_setpoint",
+    "topology": "virtual",
+    "curve": CURVE,
+}
+
+
+def test_entity_path_with_a_held_setpoint() -> None:
+    options = parse_control(ENTITY, RADIATORS, None)
+    assert options.write_type is WriteType.HELD
     assert not options.loop.ch_writes  # no heating switch: "off" is a low setpoint
-    assert options.loop.control.min_step == 2.0
-    assert options.loop.setpoint_guard.daily_cap == 24
     assert options.hand_back is HandBack.VALUE
-    assert options.cap_reaction is CapReaction.HAND_BACK
     assert options.entities == ("number.boiler_flow", "sensor.boiler_flow_setpoint")
     assert config_blockers(options, RADIATORS) == []
+
+
+@pytest.mark.parametrize("write_type", ["persistent", "unknown"])
+def test_nothing_goes_to_the_boilers_persistent_memory(write_type: str) -> None:
+    """A setpoint the boiler stores, or might, keeps control off: it is never written."""
+    options = parse_control(ENTITY | {"write_type": write_type}, RADIATORS, None)
+    assert config_blockers(options, RADIATORS) == ["write_type_not_supported"]
+    assert not options.loop.setpoint_guard.writable
+    default = parse_control({k: v for k, v in ENTITY.items() if k != "write_type"}, RADIATORS, None)
+    assert default.write_type is WriteType.UNKNOWN
+    assert "write_type_not_supported" in config_blockers(default, RADIATORS)
 
 
 def test_underfloor_exponent_and_circuit_cap() -> None:
@@ -198,22 +202,20 @@ def test_hand_back_effect_follows_the_topology(changes: dict, effect: str | None
 
 
 @pytest.mark.parametrize(
-    ("write_type", "switched"),
-    [("expiring", True), ("held", True), ("persistent", False), ("unknown", False)],
+    ("ch_write_type", "switched"),
+    [("expiring", True), ("held", True), ("persistent", False), ("unknown", False), (None, False)],
 )
 def test_a_heating_switch_only_with_writes_that_do_not_wear(
-    write_type: str, switched: bool
+    ch_write_type: str | None, switched: bool
 ) -> None:
-    data = {
-        "write_path": "entity",
-        "setpoint_entity": "number.flow",
-        "ch_entity": "switch.ch",
-        "write_type": write_type,
-        "hand_back": "value",
-    }
+    """The heating switch declares its own write type; one the boiler may store is left alone
+    and "off" goes as a low setpoint instead."""
+    data = ENTITY | {"ch_entity": "switch.ch"}
+    if ch_write_type is not None:
+        data["ch_write_type"] = ch_write_type
     options = parse_control(data, RADIATORS, None)
-    # With wearing writes "off" is a low setpoint, so every write counts toward the daily cap.
     assert options.loop.ch_writes is switched
+    assert config_blockers(options, RADIATORS) == []
 
 
 @pytest.mark.parametrize(
@@ -239,14 +241,10 @@ def test_an_expiring_heating_override_is_repeated_with_the_setpoint() -> None:
     otgw = parse_control(OTGW, RADIATORS, None)
     assert otgw.loop.switch_guard.keepalive_s == 30.0
     held = parse_control(
-        {
-            "write_path": "entity",
-            "setpoint_entity": "number.flow",
-            "ch_entity": "switch.ch",
-            "write_type": "held",
-            "hand_back": "value",
-        },
-        RADIATORS,
-        None,
+        ENTITY | {"ch_entity": "switch.ch", "ch_write_type": "held"}, RADIATORS, None
     )
     assert held.loop.switch_guard.keepalive_s is None  # the device keeps it
+    expiring = parse_control(
+        ENTITY | {"ch_entity": "switch.ch", "ch_write_type": "expiring"}, RADIATORS, None
+    )
+    assert expiring.loop.switch_guard.keepalive_s == 30.0

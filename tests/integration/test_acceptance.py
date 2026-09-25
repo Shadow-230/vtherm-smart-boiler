@@ -337,9 +337,10 @@ async def test_control_is_refused_where_it_may_not_run(
 async def test_control_is_refused_without_a_hand_back(rig: Rig) -> None:
     await start(
         rig,
-        sim={"write_type": "persistent"},
+        sim={"write_type": "held"},
         write_path="entity",
         setpoint_entity="number.boiler_sim_flow_setpoint",
+        write_type="held",
         topology="virtual",
     )
     with pytest.raises(ServiceValidationError) as err:
@@ -371,34 +372,26 @@ async def test_an_outside_change_is_rewritten_once_then_alarmed(rig: Rig) -> Non
     assert len(rig.setpoints()) == count  # no fight
 
 
-async def test_persistent_writes_the_daily_cap_and_a_hand_back_past_it(rig: Rig) -> None:
+@pytest.mark.parametrize("write_type", ["persistent", "unknown"])
+async def test_nothing_is_written_to_the_boilers_persistent_memory(
+    rig: Rig, write_type: str
+) -> None:
+    """A setpoint the boiler stores, or might, keeps control off: never a single write."""
     await start(
         rig,
         sim={"write_type": "persistent"},
         write_path="entity",
         setpoint_entity="number.boiler_sim_flow_setpoint",
-        write_type="persistent",
+        write_type=write_type,
         hand_back="value",
         hand_back_value=0,
         topology="virtual",
-        daily_cap=3,
-        decision_interval_min=1,
-        ramp_k_per_min=10,
     )
-    await rig.switch(True)
-    for outdoor in (-4, -7, -10, -13, -16):
-        await rig.hass.services.async_call(
-            SIM, "set_outdoor", {"temperature": outdoor}, blocking=True
-        )
-        await rig.advance(120)
-    writes = entity_setpoints(rig)
-    assert len(writes) == 3  # stopped at the cap
-    assert all(abs(b - a) >= 1.0 for a, b in pairwise(writes))
-    assert rig.state("binary_sensor", "alarm_daily_cap").state == "on"
-    assert rig.sim.plant.override_active(rig.now())  # the last value is held
-    await rig.switch(False)
-    assert entity_setpoints(rig)[-1] == 0.0
-    assert not rig.sim.plant.override_active(rig.now())
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)
+    assert err.value.translation_key == "blocked_write_type_not_supported"
+    await rig.advance(600)
+    assert entity_setpoints(rig) == []
 
 
 def entity_setpoints(rig: Rig) -> list[float]:

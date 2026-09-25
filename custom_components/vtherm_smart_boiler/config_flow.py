@@ -41,7 +41,6 @@ from .const import (
 from .control_config import (
     DEFAULT_REACTIONS,
     AlarmReaction,
-    CapReaction,
     HandBack,
     Topology,
     WritePath,
@@ -374,9 +373,6 @@ CONTROL_ADVANCED_KEYS = (
     "max_switches_per_hour",
     "ramp_k_per_min",
     "decision_interval_min",
-    "min_change",
-    "daily_cap",
-    "cap_reaction",
     "off_setpoint",
     "learning_pauses",
     "comfort_correction",
@@ -410,6 +406,9 @@ def control_entity_schema(options: dict[str, Any]) -> vol.Schema:
                 "write_type", default=control.get("write_type", WriteType.UNKNOWN.value)
             ): _select("write_type", [t.value for t in WriteType]),
             _optional("ch_entity", control): _entity(_ON_OFF_ENTITY),
+            vol.Required(
+                "ch_write_type", default=control.get("ch_write_type", WriteType.UNKNOWN.value)
+            ): _select("write_type", [t.value for t in WriteType]),
             vol.Required("hand_back", default=control.get("hand_back", vol.UNDEFINED)): _select(
                 "hand_back", [h.value for h in HandBack]
             ),
@@ -501,13 +500,6 @@ def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
             **required("max_switches_per_hour", 6, _number(1, 20, 1)),
             **required("ramp_k_per_min", 1.0, _number(0.1, 10, 0.1, "K/min")),
             **required("decision_interval_min", 5.0, _number(1, 30, 1, "min")),
-            **required("min_change", 1.0, _number(0, 5, 0.5, "K")),
-            **required("daily_cap", 48, _number(1, 500, 1)),
-            **required(
-                "cap_reaction",
-                CapReaction.HOLD.value,
-                _select("cap_reaction", [c.value for c in CapReaction]),
-            ),
             **required("off_setpoint", 10.0, _number(0, 30, 0.5, "°C")),
             **required("count_threshold", 1, _number(1, 20, 1)),
             _optional("power_threshold_kw", control): _number(0, 100, 0.1, "kW"),
@@ -542,8 +534,8 @@ def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     control = dict(options.get(CONTROL, {}))
     if control.get("write_path") != user_input["write_path"]:
         for key in (
-            "setpoint_entity", "write_type", "ch_entity", "hand_back", "hand_back_value",
-            "hand_back_entity", "gateway_id", "mqtt_top", "mqtt_node",
+            "setpoint_entity", "write_type", "ch_entity", "ch_write_type", "hand_back",
+            "hand_back_value", "hand_back_entity", "gateway_id", "mqtt_top", "mqtt_node",
         ):  # fmt: skip
             control.pop(key, None)
     _set_or_drop(control, user_input, ("write_path", "topology", "confirmed_entity"))
@@ -553,8 +545,8 @@ def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
 def apply_control_details(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     control = dict(options.get(CONTROL, {}))
     keys = (
-        "setpoint_entity", "write_type", "ch_entity", "hand_back", "hand_back_value",
-        "hand_back_entity", "gateway_id", "mqtt_top", "mqtt_node",
+        "setpoint_entity", "write_type", "ch_entity", "ch_write_type", "hand_back",
+        "hand_back_value", "hand_back_entity", "gateway_id", "mqtt_top", "mqtt_node",
     )  # fmt: skip
     _set_or_drop(control, user_input, tuple(k for k in keys if k in user_input or k in control))
     options[CONTROL] = control
@@ -602,7 +594,14 @@ def _set_or_drop(target: dict[str, Any], user_input: dict[str, Any], keys: tuple
 def control_details_error(
     user_input: dict[str, Any], bounds: tuple[float | None, float | None] = (None, None)
 ) -> dict[str, str]:
-    """What the chosen hand-back method needs; ``bounds``: what the setpoint entity accepts."""
+    """What the write types and the chosen hand-back method need; ``bounds``: what the setpoint
+    entity accepts. Nothing goes to the boiler's persistent memory, so the setpoint entity and a
+    heating switch must each be declared expiring or held."""
+    writable = (WriteType.EXPIRING, WriteType.HELD)
+    if "write_type" in user_input and user_input["write_type"] not in writable:
+        return {"write_type": "write_type_not_supported"}
+    if user_input.get("ch_entity") and user_input.get("ch_write_type") not in writable:
+        return {"ch_write_type": "ch_write_type_not_supported"}
     method = user_input.get("hand_back")
     value = user_input.get("hand_back_value")
     if method == HandBack.VALUE:

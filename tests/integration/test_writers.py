@@ -102,6 +102,7 @@ async def test_entity_writer_with_value_hand_back(hass: HomeAssistant) -> None:
             setpoint_entity="number.flow",
             ch_entity="switch.ch",
             write_type="expiring",
+            ch_write_type="expiring",
             hand_back="value",
             hand_back_value=0,
         ),
@@ -128,12 +129,16 @@ async def test_entity_writer_with_value_hand_back(hass: HomeAssistant) -> None:
     assert ("switch", "turn_on", ch) not in calls
 
 
-async def test_a_wearing_write_type_leaves_the_heating_switch_alone(hass: HomeAssistant) -> None:
+@pytest.mark.parametrize("ch_write_type", ["persistent", "unknown"])
+async def test_a_heating_switch_the_boiler_may_store_is_left_alone(
+    hass: HomeAssistant, ch_write_type: str
+) -> None:
     data = {
         "write_path": "entity",
         "setpoint_entity": "number.flow",
         "ch_entity": "switch.ch",
-        "write_type": "persistent",
+        "write_type": "expiring",
+        "ch_write_type": ch_write_type,
         "hand_back": "value",
         "hand_back_value": 0,
     }
@@ -231,6 +236,7 @@ async def test_each_hand_back_step_is_tried_whatever_the_others_do(hass: HomeAss
             setpoint_entity="number.flow",
             ch_entity="switch.ch",
             write_type="expiring",
+            ch_write_type="expiring",
             hand_back="value",
             hand_back_value=0,
         ),

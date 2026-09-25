@@ -204,7 +204,7 @@ def test_frost_does_not_wait_for_the_interval() -> None:
     assert decisions[1].mode is ControlMode.FROST
 
 
-def test_ramp_limits_the_rise_and_min_step_coarsens_it() -> None:
+def test_ramp_limits_the_rise() -> None:
     config = replace(CONFIG, ramp_k_per_min=1.0, decision_interval_s=60.0)
     _state, decisions = run(
         [inputs(0.0, outdoor_sensor=15.0), inputs(60.0, outdoor_sensor=-10.0)], config
@@ -215,19 +215,6 @@ def test_ramp_limits_the_rise_and_min_step_coarsens_it() -> None:
     assert second is not None
     assert second.setpoint == pytest.approx(first.setpoint + 1.0)
     assert Reason.RAMP in decisions[1].reasons
-    coarse = replace(config, ramp_k_per_min=0.2, min_step=1.0)
-    _state, decisions = run(
-        [inputs(0.0, outdoor_sensor=15.0), inputs(60.0, outdoor_sensor=-10.0)], coarse
-    )
-    assert decisions[1].command.setpoint == pytest.approx(decisions[0].command.setpoint + 1.0)
-
-
-def test_small_changes_below_the_min_step_are_not_written() -> None:
-    config = replace(CONFIG, min_step=1.0, decision_interval_s=60.0)
-    _state, decisions = run(
-        [inputs(0.0, outdoor_sensor=5.0), inputs(60.0, outdoor_sensor=4.8)], config
-    )
-    assert decisions[1].command.setpoint == decisions[0].command.setpoint
 
 
 def test_a_lowered_cap_applies_at_once() -> None:
@@ -265,7 +252,7 @@ def test_anti_cycling_pause_after_a_burn() -> None:
 
 
 @pytest.mark.parametrize(
-    "kwargs", [{"decision_interval_s": 0.0}, {"ramp_k_per_min": 0.0}, {"min_step": -1.0}]
+    "kwargs", [{"decision_interval_s": 0.0}, {"ramp_k_per_min": 0.0}]
 )
 def test_invalid_config(kwargs: dict) -> None:
     with pytest.raises(ValueError, match="must"):

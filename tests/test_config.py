@@ -145,7 +145,7 @@ def test_coarse_building_answers_give_a_default_loss() -> None:
         ),
         (MINIMAL | {"control": {"write_path": "carrier_pigeon"}}, "invalid_control"),
         (
-            MINIMAL | {"control": {"write_path": "entity", "daily_cap": "many"}},
+            MINIMAL | {"control": {"write_path": "entity", "ch_write_type": "sometimes"}},
             "invalid_control",
         ),
     ],

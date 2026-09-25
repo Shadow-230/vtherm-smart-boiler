@@ -383,7 +383,21 @@ async def test_control_with_an_entity_checks_the_hand_back(
         {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.boiler_flow"},
     )
     assert result["step_id"] == "control_entity"
-    details = {"setpoint_entity": "number.boiler_flow", "write_type": "unknown"}
+    for write_type in ("unknown", "persistent"):  # nothing goes to the boiler's memory
+        result = await options_step(
+            hass,
+            result,
+            {"setpoint_entity": "number.boiler_flow", "write_type": write_type}
+            | {"hand_back": "value", "hand_back_value": 0},
+        )
+        assert result["errors"] == {"write_type": "write_type_not_supported"}
+    details = {"setpoint_entity": "number.boiler_flow", "write_type": "held"}
+    result = await options_step(
+        hass,
+        result,
+        details | {"hand_back": "value", "hand_back_value": 0, "ch_entity": "switch.heating"},
+    )
+    assert result["errors"] == {"ch_write_type": "ch_write_type_not_supported"}
     result = await options_step(hass, result, details | {"hand_back": "value"})
     assert result["errors"] == {"hand_back_value": "hand_back_value_missing"}
     result = await options_step(hass, result, details | {"hand_back": "switch"})
@@ -401,7 +415,7 @@ async def test_control_with_an_entity_checks_the_hand_back(
     control = hass.config_entries.async_get_entry(entry_id).options["control"]
     assert control["hand_back"] == "value"
     assert control["hand_back_value"] == 0
-    assert control["write_type"] == "unknown"
+    assert control["write_type"] == "held"
 
 
 async def test_control_at_the_advanced_level_and_back(
@@ -439,7 +453,7 @@ async def test_control_at_the_advanced_level_and_back(
         },
     )
     assert result["step_id"] == "control_behaviour"
-    result = await options_step(hass, result, {"min_burn_min": 8, "daily_cap": 24})
+    result = await options_step(hass, result, {"min_burn_min": 8, "off_setpoint": 12})
     assert result["step_id"] == "control_alarms"
     assert result["data_schema"]({})["outside_change"] == "hand_back"  # the default
     result = await options_step(hass, result, {"pressure_low": "hand_back"})
@@ -455,7 +469,8 @@ async def test_control_at_the_advanced_level_and_back(
         "offset": 1,
     }
     assert control["min_burn_min"] == 8
-    assert control["cap_reaction"] == "hold"
+    assert control["off_setpoint"] == 12
+    assert "daily_cap" not in control  # nothing is written to the boiler's memory
     assert control["alarm_reactions"]["pressure_low"] == "hand_back"
     assert control["alarm_reactions"]["outside_change"] == "hand_back"
     assert entry.runtime_data.config.control.loop.control.anticycling.min_burn_s == 480.0

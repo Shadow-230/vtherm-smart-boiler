@@ -2,21 +2,20 @@
 
 The guards are fixed; their values are options. For a setpoint:
 
+- nothing goes to the boiler's persistent memory: a target declared persistent, or of unknown
+  write type, is never written (the configuration keeps control off for it anyway);
 - how often it is written follows the write type: an expiring override is repeated every
-  keep-alive period; a persistent write (or an unknown one) only on a change of at least the
-  minimum change and within a daily cap; a value the gateway holds, on change only;
+  keep-alive period; a value the device holds, on change only;
 - a new value no sooner than the minimum change interval, and never more than a few writes a
-  minute, repeats included (a guard against runaway loops);
+  minute, repeats and failed attempts included (a guard against runaway loops);
 - every write is read back: not confirmed within the timeout → reported as ignored, never assumed
   applied; changed from outside after it was confirmed → written again once, then blocked and
   reported, also when that one rewrite is not confirmed within the timeout; a further outside
   change within a day of the rewrite is not rewritten, whatever the plugin wrote in between — the
   plugin does not fight another controller;
-- a write that failed is sent again at the next step (a wearing one at most once a minute) and
-  does not count toward the daily cap; a mismatch it explains is not taken for another
-  controller; nor is an expiring override that lapsed because the plugin itself went silent
-  (stale data), which is simply sent again;
-- the daily cap on wearing writes applies to every write, the first of a session included.
+- a write that failed is sent again at the next step; a mismatch it explains is not taken for
+  another controller; nor is an expiring override that lapsed because the plugin itself went
+  silent (stale data), which is simply sent again.
 
 For heating on/off: minimum on and off times and a cap on switchings per hour; a failed write is
 sent again, and an expiring override is repeated like a setpoint.
@@ -37,9 +36,9 @@ REWRITE_WINDOW_S = DAY  # after the one rewrite, further outside changes this so
 
 class WriteType(StrEnum):
     EXPIRING = "expiring"  # an override that lapses unless repeated
-    PERSISTENT = "persistent"  # stored in the boiler's memory: every write wears it
+    PERSISTENT = "persistent"  # stored in the boiler's memory: every write wears it; never written
     HELD = "held"  # kept by the gateway and sent on by itself: no repeat, no wear
-    UNKNOWN = "unknown"  # treated as persistent
+    UNKNOWN = "unknown"  # may be persistent: never written
 
 
 class WriteKind(StrEnum):
@@ -52,7 +51,6 @@ class WriteKind(StrEnum):
 class GuardEvent(StrEnum):
     IGNORED = "ignored"
     OUTSIDE_CHANGE = "outside_change"
-    DAILY_CAP = "daily_cap"
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,8 +59,6 @@ class SetpointGuardConfig:
     keepalive_s: float = 30.0
     min_change_interval_s: float = MINUTE
     max_writes_per_minute: int = 4
-    min_change: float = 1.0  # persistent and unknown writes only
-    daily_cap: int = 48  # persistent and unknown writes only
     confirm_timeout_s: float = 2 * MINUTE
     tolerance: float = 0.5
 
@@ -71,12 +67,13 @@ class SetpointGuardConfig:
             raise ValueError("keep-alive and confirmation timeout must be positive")
         if self.max_writes_per_minute < 2:
             raise ValueError("at least two writes a minute must be allowed (keep-alive)")
-        if self.daily_cap < 1 or self.min_change < 0 or self.tolerance < 0:
-            raise ValueError("daily cap, minimum change and tolerance must be sensible")
+        if self.tolerance < 0:
+            raise ValueError("the tolerance must not be negative")
 
     @property
-    def wears(self) -> bool:
-        return self.write_type in (WriteType.PERSISTENT, WriteType.UNKNOWN)
+    def writable(self) -> bool:
+        """Only values that expire or that the device holds; nothing the boiler stores."""
+        return self.write_type in (WriteType.EXPIRING, WriteType.HELD)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +83,7 @@ class SetpointGuardState:
     sent_at: float | None = None  # when the current value was first sent (keep-alives aside)
     changed_at: float | None = None  # when a different value was last written
     confirmed_at: float | None = None  # when the device confirmed the written value
-    history: tuple[float, ...] = ()  # write times of the last day
+    history: tuple[float, ...] = ()  # write attempts of the last minute
     rewritten_at: float | None = None  # when the one rewrite after an outside change was sent
     ignored_reported: bool = False
     blocked: GuardEvent | None = None  # no more writes until the guard is reset
@@ -111,12 +108,9 @@ def _matches(a: float | None, b: float | None, tolerance: float) -> bool:
 
 
 def setpoint_failed(state: SetpointGuardState) -> SetpointGuardState:
-    """The planned write did not go through: it is sent again, and — having reached nothing —
-    it does not count toward the daily cap."""
-    history = state.history
-    if history and history[-1] == state.written_at:
-        history = history[:-1]
-    return replace(state, retry=True, history=history)
+    """The planned write did not go through: it is sent again at the next step. The attempt
+    still counts toward the write rate, so a target that keeps rejecting is not hammered."""
+    return replace(state, retry=True)
 
 
 def plan_setpoint(
@@ -127,8 +121,9 @@ def plan_setpoint(
     config: SetpointGuardConfig,
 ) -> GuardResult:
     """What to write for a setpoint now, given what the device confirms (``None``: unknown)."""
-    window = DAY if config.wears else MINUTE
-    history = tuple(t for t in state.history if now - t < window)
+    if not config.writable:
+        return GuardResult(state)
+    history = tuple(t for t in state.history if now - t < MINUTE)
     state = replace(state, history=history)
     events: list[GuardEvent] = []
 
@@ -156,8 +151,6 @@ def plan_setpoint(
         return _write(state, desired, WriteKind.CHANGE, now, config, events)
 
     differs = not _matches(desired, state.written, config.tolerance)
-    if differs and config.wears and abs(desired - state.written) < config.min_change:
-        differs = False
     too_soon = (
         state.changed_at is not None and now - state.changed_at < config.min_change_interval_s
     )
@@ -165,12 +158,6 @@ def plan_setpoint(
         # Our own write failed: what the device shows says nothing about other controllers.
         if differs and not too_soon:
             return _write(state, desired, WriteKind.CHANGE, now, config, events)
-        if (
-            config.wears
-            and state.written_at is not None
-            and now - state.written_at < config.min_change_interval_s
-        ):
-            return GuardResult(state, None, tuple(events))  # a rejected write is not hammered
         return _write(state, state.written, WriteKind.RESEND, now, config, events)
 
     mismatch = (
@@ -220,10 +207,6 @@ def _write(
     config: SetpointGuardConfig,
     events: list[GuardEvent],
 ) -> GuardResult:
-    if config.wears and len(state.history) >= config.daily_cap:
-        # Every wearing write counts, the first of a session and a rewrite included.
-        events.append(GuardEvent.DAILY_CAP)
-        return GuardResult(replace(state, blocked=GuardEvent.DAILY_CAP), None, tuple(events))
     recent = [t for t in state.history if now - t < MINUTE]
     if len(recent) >= config.max_writes_per_minute:
         return GuardResult(state, None, tuple(events))

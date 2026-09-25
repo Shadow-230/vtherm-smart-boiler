@@ -21,7 +21,6 @@ from custom_components.vtherm_smart_boiler.core.guards import (
 )
 
 EXPIRING = SetpointGuardConfig(write_type=WriteType.EXPIRING)
-PERSISTENT = SetpointGuardConfig(write_type=WriteType.PERSISTENT, daily_cap=3)
 HELD = SetpointGuardConfig(write_type=WriteType.HELD)
 
 
@@ -39,37 +38,24 @@ def test_first_write_and_expiring_keepalive() -> None:
     assert action == WriteAction(45.0, WriteKind.KEEPALIVE)
 
 
-def test_held_and_persistent_write_on_change_only() -> None:
-    for config in (HELD, PERSISTENT):
-        state, action, _ = step(SetpointGuardState(), 45.0, None, 0.0, config)
-        assert action is not None
-        state, action, _ = step(state, 45.0, 45.0, 600.0, config)
-        assert action is None  # no keep-alive
-
-
-def test_persistent_minimum_change_and_daily_cap() -> None:
-    state, _, _ = step(SetpointGuardState(), 45.0, None, 0.0, PERSISTENT)
-    state, action, _ = step(state, 45.6, 45.0, 120.0, PERSISTENT)
-    assert action is None  # below the 1 K minimum change
-    state, action, _ = step(state, 47.0, 45.0, 240.0, PERSISTENT)
-    assert action == WriteAction(47.0, WriteKind.CHANGE)
-    state, action, _ = step(state, 49.0, 47.0, 360.0, PERSISTENT)
+def test_held_writes_on_change_only() -> None:
+    state, action, _ = step(SetpointGuardState(), 45.0, None, 0.0, HELD)
     assert action is not None
-    state, action, events = step(state, 51.0, 49.0, 480.0, PERSISTENT)
-    assert action is None
-    assert events == (GuardEvent.DAILY_CAP,)
-    assert state.blocked is GuardEvent.DAILY_CAP
-    _, action, events = step(state, 40.0, 49.0, 600.0, PERSISTENT)
-    assert action is None
-    assert events == ()  # reported once
+    state, action, _ = step(state, 45.0, 45.0, 600.0, HELD)
+    assert action is None  # no keep-alive
 
 
-def test_daily_cap_counts_one_day() -> None:
-    state = SetpointGuardState(
-        written=45.0, written_at=0.0, changed_at=0.0, history=(0.0, 1.0, 2.0)
-    )
-    _, action, _ = step(state, 50.0, 45.0, 86_400.0 + 3.0, PERSISTENT)
-    assert action is not None
+@pytest.mark.parametrize("write_type", [WriteType.PERSISTENT, WriteType.UNKNOWN])
+def test_nothing_goes_to_the_boilers_persistent_memory(write_type: WriteType) -> None:
+    """A target that stores what it is given (or might) is never written, whatever is asked."""
+    config = SetpointGuardConfig(write_type=write_type)
+    state, action, events = step(SetpointGuardState(), 45.0, None, 0.0, config)
+    assert (action, events) == (None, ())
+    state = SetpointGuardState(written=45.0, written_at=0.0, sent_at=0.0, confirmed_at=5.0)
+    for desired, confirmed in ((50.0, 45.0), (45.0, 60.0)):  # a change, an outside change
+        _, action, _ = step(state, desired, confirmed, 600.0, config)
+        assert action is None
+    assert not config.writable
 
 
 def test_minimum_change_interval() -> None:
@@ -169,22 +155,6 @@ def test_a_rewrite_is_allowed_again_a_day_later() -> None:
     assert events == ()
 
 
-def test_the_daily_cap_applies_to_the_first_write_of_a_session() -> None:
-    state = SetpointGuardState(history=(0.0, 1.0, 2.0))  # three wearing writes today
-    state, action, events = step(state, 45.0, None, 10.0, PERSISTENT)
-    assert action is None
-    assert events == (GuardEvent.DAILY_CAP,)
-    assert state.blocked is GuardEvent.DAILY_CAP
-
-
-def test_the_daily_cap_applies_to_rewrites() -> None:
-    state, _, _ = step(SetpointGuardState(history=(0.0, 1.0)), 45.0, None, 10.0, PERSISTENT)
-    state, _, _ = step(state, 45.0, 45.0, 20.0, PERSISTENT)  # confirmed; three writes today
-    state, action, events = step(state, 45.0, 60.0, 30.0, PERSISTENT)
-    assert action is None
-    assert events == (GuardEvent.DAILY_CAP,)
-
-
 def test_a_failed_write_is_sent_again_at_the_next_step() -> None:
     state, _, _ = step(SetpointGuardState(), 45.0, None, 0.0, EXPIRING)
     state = setpoint_failed(state)
@@ -195,25 +165,16 @@ def test_a_failed_write_is_sent_again_at_the_next_step() -> None:
     assert action is None  # sent; nothing more until the next keep-alive or change
 
 
-def test_a_failed_wearing_write_is_retried_once_a_minute_and_not_counted() -> None:
-    state, _, _ = step(SetpointGuardState(), 45.0, None, 0.0, PERSISTENT)
-    for t in (10.0, 20.0, 30.0):
-        state = setpoint_failed(state)
-        state, action, _ = step(state, 45.0, None, t, PERSISTENT)
-        assert action is None  # a rejected wearing write is not hammered
-    state, action, _ = step(state, 45.0, None, 60.0, PERSISTENT)
-    assert action == WriteAction(45.0, WriteKind.RESEND)
-    assert state.history == (60.0,)  # the failed attempts do not count toward the cap
-
-
-def test_failed_attempts_never_use_up_the_daily_cap() -> None:
+def test_failed_attempts_count_toward_the_write_rate() -> None:
+    """A target that keeps rejecting the value is not hammered: failed attempts are writes too."""
+    config = SetpointGuardConfig(write_type=WriteType.EXPIRING, max_writes_per_minute=3)
     state = SetpointGuardState()
-    for minute in range(10):  # the entity keeps rejecting the value
-        state, action, events = step(state, 45.0, None, minute * 60.0, PERSISTENT)
-        assert action is not None
-        assert events == ()
+    attempts = 0
+    for t in range(0, 60, 10):
+        state, action, _ = step(state, 45.0, None, float(t), config)
+        attempts += action is not None
         state = setpoint_failed(state)
-    assert state.history == ()
+    assert attempts == 3
 
 
 def test_a_failed_change_is_retried_not_taken_for_an_outside_change() -> None:
@@ -247,7 +208,7 @@ def test_nothing_desired_writes_nothing() -> None:
 
 @pytest.mark.parametrize(
     "kwargs",
-    [{"keepalive_s": 0.0}, {"max_writes_per_minute": 1}, {"daily_cap": 0}, {"min_change": -1.0}],
+    [{"keepalive_s": 0.0}, {"max_writes_per_minute": 1}, {"tolerance": -1.0}],
 )
 def test_invalid_setpoint_config(kwargs: dict) -> None:
     with pytest.raises(ValueError, match="must"):

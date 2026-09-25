@@ -26,7 +26,6 @@ from homeassistant.util import dt as dt_util
 from .const import CONTROL_TICK_SECONDS
 from .control_config import (
     AlarmReaction,
-    CapReaction,
     ControlOptions,
     HandBack,
     WritePath,
@@ -36,7 +35,6 @@ from .core.controller import CentralMode as ControlCentralMode
 from .core.controller import ControlInputs, ControlMode, ControlState
 from .core.guards import (
     GuardEvent,
-    SetpointGuardState,
     WriteAction,
     WriteKind,
     setpoint_failed,
@@ -83,7 +81,6 @@ class ControlAlarm(StrEnum):
     WRITE_FAILED = "write_failed"
     WRITE_IGNORED = "write_ignored"
     OUTSIDE_CHANGE = "outside_change"
-    DAILY_CAP = "daily_cap"
     HAND_BACK_FAILED = "hand_back_failed"
     CONTROL_ERROR = "control_error"
 
@@ -91,7 +88,6 @@ class ControlAlarm(StrEnum):
 _EVENT_ALARM = {
     GuardEvent.IGNORED: ControlAlarm.WRITE_IGNORED,
     GuardEvent.OUTSIDE_CHANGE: ControlAlarm.OUTSIDE_CHANGE,
-    GuardEvent.DAILY_CAP: ControlAlarm.DAILY_CAP,
 }
 # Alarms kept across a restart: they explain a latch that survives it.
 _KEPT_ALARMS = frozenset({ControlAlarm.OUTSIDE_CHANGE, ControlAlarm.CONTROL_ERROR})
@@ -197,13 +193,9 @@ class ControlUnit:
             update()
 
     def stored(self) -> dict[str, Any]:
-        """What must survive a restart: recent wearing writes (daily cap), paused zones, latches
-        and a hand-back still to be done."""
+        """What must survive a restart: paused zones, latches and a hand-back still to be done."""
         session = self._session
-        guard = session.loop.setpoint
-        writes = list(guard.history) if self.options.loop.setpoint_guard.wears else []
         return {
-            "writes": writes,
             "paused": dict(session.learning.paused),
             "latched": session.loop.control.latched,
             "failed": session.failed,
@@ -213,17 +205,13 @@ class ControlUnit:
 
     def restore(self, data: Mapping[str, Any]) -> None:
         try:
-            writes = tuple(float(t) for t in data.get("writes", []))
             paused = {str(z): float(t) for z, t in dict(data.get("paused", {})).items()}
             alarms = {ControlAlarm(a) for a in data.get("alarms", [])} & _KEPT_ALARMS
         except TypeError, ValueError:
             _LOGGER.warning("Ignoring unreadable stored control data")
             return
         self._session = _Session(
-            loop=LoopState(
-                control=ControlState(latched=bool(data.get("latched", False))),
-                setpoint=SetpointGuardState(history=writes),
-            ),
+            loop=LoopState(control=ControlState(latched=bool(data.get("latched", False)))),
             learning=LearningState(paused=paused, last_toggle=dict(paused)),
             alarms=alarms,
             failed=bool(data.get("failed", False)),
@@ -363,13 +351,9 @@ class ControlUnit:
         self._notify()
 
     def _end_session(self) -> None:
-        """A new session starts fresh; only the record of wearing writes and pauses carries on
-        (a pending hand-back and its alarm belong to the unit, not the session)."""
-        old = self._session
-        self._session = _Session(
-            loop=LoopState(setpoint=SetpointGuardState(history=old.loop.setpoint.history)),
-            learning=old.learning,
-        )
+        """A new session starts fresh; only the learning pauses carry on (a pending hand-back and
+        its alarm belong to the unit, not the session)."""
+        self._session = _Session(learning=self._session.learning)
         self._writer = None
         self._coordinator.schedule_save()
 
@@ -418,7 +402,6 @@ class ControlUnit:
         if self.enabled and not blockers and self._writer is None:
             self._writer = self._writer_factory(self._hass, self.options)
         zones = self._coordinator.link.zones()
-        self._unblock_daily_cap(now)
         snapshot = self._coordinator.transport.snapshot(now)
         inputs = self._inputs(now, snapshot, zones, blockers)
         confirmed = self._confirmed()
@@ -523,10 +506,7 @@ class ControlUnit:
         for alarm in sorted(self._session.alarms):
             if alarm in (ControlAlarm.CONTROL_ERROR, ControlAlarm.HAND_BACK_FAILED):
                 continue  # a blocker, and a retry of its own
-            if alarm is ControlAlarm.DAILY_CAP:
-                if self.options.cap_reaction is CapReaction.HAND_BACK:
-                    active.append(alarm.value)
-            elif self.options.reaction(alarm.value) is AlarmReaction.HAND_BACK:
+            if self.options.reaction(alarm.value) is AlarmReaction.HAND_BACK:
                 active.append(alarm.value)
         return tuple(active)
 
@@ -581,28 +561,13 @@ class ControlUnit:
             self._coordinator.schedule_save()
         if action is None or action.kind is not WriteKind.KEEPALIVE:
             self._last_change_at = now
-        if action is not None and self.options.loop.setpoint_guard.wears:
-            self._coordinator.schedule_save()
         return True
-
-    def _unblock_daily_cap(self, now: float) -> None:
-        """A daily cap frees up as its 24-hour window moves on."""
-        guard = self._session.loop.setpoint
-        if guard.blocked is not GuardEvent.DAILY_CAP:
-            return
-        recent = tuple(t for t in guard.history if now - t < DAY)
-        if len(recent) < self.options.loop.setpoint_guard.daily_cap:
-            self._session.loop = replace(
-                self._session.loop, setpoint=replace(guard, blocked=None, history=recent)
-            )
-            self._session.alarms.discard(ControlAlarm.DAILY_CAP)
 
     # --- hand-back ------------------------------------------------------------------------
 
     async def _async_hand_back_writes(self, now: float) -> None:
         """The hand-back write, which no guard holds back, and the release of learning. Without
-        a write since the last hand-back there is nothing to give back (and a wearing hand-back
-        value is not written again)."""
+        a write since the last hand-back there is nothing to give back."""
         if self._wrote_since_hand_back or self._hand_back_pending:
             await self._async_try_hand_back(now)
         self._hand_back_at = now
@@ -626,22 +591,7 @@ class ControlUnit:
             self._hand_back_pending = False
             self._coordinator.schedule_save()
         self._wrote_since_hand_back = False
-        self._count_wearing_hand_back(now)
         return True
-
-    def _count_wearing_hand_back(self, now: float) -> None:
-        """A hand-back value written to a wearing setpoint wears it too: it counts toward the
-        daily cap, though nothing holds it back."""
-        options = self.options
-        if (
-            options.write_path is WritePath.ENTITY
-            and options.hand_back is HandBack.VALUE
-            and options.loop.setpoint_guard.wears
-        ):
-            loop = self._session.loop
-            guard = replace(loop.setpoint, history=(*loop.setpoint.history, now))
-            self._session.loop = replace(loop, setpoint=guard)
-            self._coordinator.schedule_save()
 
     async def _async_hand_back_now(self, now: float) -> None:
         """Hand back at once if control holds the boiler (unload, stop, error)."""
@@ -650,8 +600,7 @@ class ControlUnit:
             await self._async_hand_back_writes(now)
             loop = self._session.loop
             control = replace(loop.control, controlling=False, command=None, decided_at=None)
-            fresh = SetpointGuardState(history=loop.setpoint.history)
-            self._session.loop = LoopState(control, fresh)
+            self._session.loop = LoopState(control)
         else:
             if self._hand_back_pending:
                 await self._async_try_hand_back(now, full=True)

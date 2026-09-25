@@ -540,48 +540,34 @@ class FakeNumber:
         self.hass.states.async_set(self.entity_id, str(value), {"unit_of_measurement": "°C"})
 
 
-async def test_persistent_writes_follow_the_minimum_change_and_stop_at_the_daily_cap(
-    rig: Rig,
-) -> None:
+async def test_a_held_setpoint_is_written_on_change_only(rig: Rig) -> None:
     number = FakeNumber(rig.hass)
     number.register()
     await start(
         rig,
         write_path="entity",
         setpoint_entity=number.entity_id,
-        write_type="persistent",
+        write_type="held",
         hand_back="value",
         hand_back_value=50,
         confirmed_entity=number.entity_id,
         topology="virtual",
-        daily_cap=3,
         decision_interval_min=1,
         ramp_k_per_min=10,
     )
     await rig.switch(True)
     assert number.writes == [EXPECTED]
     await rig.advance(120)
-    assert number.writes == [EXPECTED]  # no keep-alive for a persistent write
+    assert number.writes == [EXPECTED]  # the device holds it: no keep-alive
 
-    async def outdoor(value: float) -> None:
-        rig.outdoor = value
-        await rig.advance(120)
-
-    await outdoor(4.5)  # the curve moves by less than 1 K: nothing written
-    assert number.writes == [EXPECTED]
-    await outdoor(0.0)
-    await outdoor(-5.0)
-    assert len(number.writes) == 3
-    assert all(abs(b - a) >= 1.0 for a, b in pairwise(number.writes))
-    await outdoor(-10.0)  # a fourth write would exceed the daily cap of 3
-    assert len(number.writes) == 3
-    assert rig.state("binary_sensor", "alarm_daily_cap").state == "on"
-    assert rig.state("sensor", "control_state").state == "heating"  # holds its last value
+    rig.outdoor = -5.0
+    await rig.advance(120)
+    assert len(number.writes) == 2
+    assert number.writes[-1] > EXPECTED
     await rig.switch(False)
-    assert number.writes[-1] == 50.0  # the hand-back passes the cap
+    assert number.writes[-1] == 50.0  # the hand-back value
     assert rig.entry is not None
-    writes = rig.entry.runtime_data.control.stored()["writes"]
-    assert len(writes) == 4  # and wears the memory too: it counts toward the cap
+    assert "writes" not in rig.entry.runtime_data.control.stored()  # no daily cap to keep
 
 
 async def test_mqtt_path_calls_only_its_publish(rig: Rig) -> None:
@@ -679,7 +665,7 @@ async def test_a_timeout_hand_back_needs_expiring_writes(rig: Rig) -> None:
         rig,
         write_path="entity",
         setpoint_entity=number.entity_id,
-        write_type="unknown",
+        write_type="held",
         hand_back="timeout",
         confirmed_entity=number.entity_id,
         topology="virtual",

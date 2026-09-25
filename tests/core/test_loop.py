@@ -8,6 +8,7 @@ from custom_components.vtherm_smart_boiler.core.controller import ControlConfig,
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.guards import (
     SetpointGuardConfig,
+    SetpointGuardState,
     SwitchGuardConfig,
     WriteKind,
     WriteType,
@@ -52,18 +53,8 @@ def test_hand_back_passes_and_resets_the_guards() -> None:
     state, out = loop_step(state, inputs(30.0, enabled=False), 45.0, CONFIG)
     assert out.hand_back
     assert out.setpoint is None
-    assert state.setpoint.written is None
+    assert state.setpoint == SetpointGuardState()  # a later session starts afresh
     assert state.switch.written is None
-
-
-def test_hand_back_keeps_the_record_of_wearing_writes() -> None:
-    config = replace(CONFIG, setpoint_guard=SetpointGuardConfig(write_type=WriteType.PERSISTENT))
-    state, _ = loop_step(LoopState(), inputs(0.0), None, config)
-    assert state.setpoint.history == (0.0,)
-    state, out = loop_step(state, inputs(30.0, enabled=False), 45.0, config)
-    assert out.hand_back
-    assert state.setpoint.written is None
-    assert state.setpoint.history == (0.0,)  # the daily cap still counts the earlier write
 
 
 def test_without_a_switch_off_is_a_low_setpoint() -> None:
@@ -81,34 +72,6 @@ def test_nothing_is_written_while_waiting_for_data() -> None:
     assert out.setpoint is None
     assert out.ch_enable is None
     assert not out.hand_back
-
-
-def test_near_the_daily_cap_a_wearing_setpoint_stops_switching_off() -> None:
-    """The last writes before the cap return to heat, so the value held at the cap is never the
-    low "off" setpoint (a cold house for the rest of the day)."""
-    guard = SetpointGuardConfig(write_type=WriteType.PERSISTENT, daily_cap=4)
-    config = replace(CONFIG, setpoint_guard=guard, ch_writes=False, off_setpoint=10.0)
-    heat = inputs(0.0)
-    state, out = loop_step(LoopState(), heat, None, config)
-    heating = out.setpoint.value
-    # Two writes left before the cap: off is no longer written.
-    state = replace(state, setpoint=replace(state.setpoint, history=(0.0, 1.0, 2.0)))
-    state = replace(state, switch=replace(state.switch, changed_at=-3600.0))
-    _state, out = loop_step(state, inputs(4000.0, opening=0.0), heating, config)
-    assert out.setpoint is None  # still heating: no write
-    assert out.heating_on is True
-
-
-def test_near_the_daily_cap_a_wearing_setpoint_returns_to_heat() -> None:
-    guard = SetpointGuardConfig(write_type=WriteType.PERSISTENT, daily_cap=4)
-    config = replace(CONFIG, setpoint_guard=guard, ch_writes=False, off_setpoint=10.0)
-    state, out = loop_step(LoopState(), inputs(0.0, opening=0.0), None, config)
-    assert out.setpoint.value == 10.0  # off, far from the cap
-    state = replace(state, setpoint=replace(state.setpoint, history=(0.0, 1.0, 2.0)))
-    _state, out = loop_step(state, inputs(4000.0, opening=0.0), 10.0, config)
-    assert out.setpoint is not None
-    assert out.setpoint.value > 10.0  # back to heat with the last spare write
-    assert out.heating_on is True
 
 
 def test_an_expiring_heating_override_is_repeated() -> None:

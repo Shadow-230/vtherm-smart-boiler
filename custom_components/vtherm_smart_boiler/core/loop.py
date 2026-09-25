@@ -2,10 +2,9 @@
 
 The same step drives the simulator in tests and the real write path in Home Assistant. When the
 write path cannot switch heating on and off, "off" is written as a low setpoint; the switch guard
-still enforces the minimum on and off times on that logical switch, and with wearing writes "off"
-stops two writes short of the daily cap, so the value held at the cap is a heating one. A
-hand-back is passed on as it is — the guards never hold it back — and resets the guards, so a
-later control session starts fresh; only the record of recent writes is kept, for the daily cap.
+still enforces the minimum on and off times on that logical switch. A hand-back is passed on as
+it is — the guards never hold it back — and resets the guards, so a later control session starts
+fresh.
 """
 
 from __future__ import annotations
@@ -27,8 +26,6 @@ from .guards import (
 )
 
 DEFAULT_OFF_SETPOINT = 10.0
-DAY = 86400.0
-CAP_RESERVE = 2  # wearing writes kept back from the daily cap for returning to heat
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,10 +63,7 @@ def loop_step(
 ) -> tuple[LoopState, LoopOutput]:
     control, decision = decide(state.control, inputs, config.control)
     if decision.hand_back:
-        # Fresh guards, but the record of recent writes stays: the daily cap on wearing writes
-        # must not restart with every hand-back.
-        fresh = SetpointGuardState(history=state.setpoint.history)
-        return LoopState(control, fresh), LoopOutput(decision, hand_back=True)
+        return LoopState(control), LoopOutput(decision, hand_back=True)
     if decision.command is None:
         return replace(state, control=control), LoopOutput(decision)
 
@@ -80,13 +74,7 @@ def loop_step(
         desired = decision.command.setpoint
         ch_write = switched.write
     else:
-        # "Off" is a low setpoint. With wearing writes the last writes before the daily cap are
-        # kept for heat, so the value held once the cap is reached is never "off".
-        guard = config.setpoint_guard
-        reserve = guard.wears and (
-            sum(1 for t in state.setpoint.history if now - t < DAY) >= guard.daily_cap - CAP_RESERVE
-        )
-        off = heating_on is False and not reserve
+        off = heating_on is False  # "off" is a low setpoint
         desired = config.off_setpoint if off else decision.command.setpoint
         heating_on = not off
         ch_write = None

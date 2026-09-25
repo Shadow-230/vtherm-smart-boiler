@@ -140,7 +140,6 @@ class ControlConfig:
     anticycling: AntiCycleConfig = field(default_factory=AntiCycleConfig)
     fallback_setpoint: float | None = None  # None: the curve at FALLBACK_OUTDOOR
     ramp_k_per_min: float | None = 1.0  # None: no ramp
-    min_step: float = 0.0  # smallest setpoint change written (1 K for persistent writes)
     decision_interval_s: float = 300.0
     zone_max_age_s: float = 2 * HOUR
     correction_step_k: float | None = 1.0  # None: no comfort correction
@@ -153,8 +152,6 @@ class ControlConfig:
             raise ValueError("the decision interval must be positive")
         if self.ramp_k_per_min is not None and self.ramp_k_per_min <= 0:
             raise ValueError("the ramp must be positive")
-        if self.min_step < 0:
-            raise ValueError("the minimum step must not be negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -410,8 +407,8 @@ def _ramp(
     config: ControlConfig,
     reasons: list[Reason],
 ) -> float:
-    """Move from the last setpoint towards ``target`` at the ramp rate, in steps of at least
-    ``min_step``; a cap that fell below the last setpoint applies at once."""
+    """Move from the last setpoint towards ``target`` at the ramp rate; a cap that fell below
+    the last setpoint applies at once."""
     previous = state.command.setpoint if state.command is not None else None
     if previous is None:
         return target
@@ -419,7 +416,7 @@ def _ramp(
     if previous > upper:
         return target
     delta = target - previous
-    if abs(delta) < max(config.min_step, 1e-9):
+    if abs(delta) < 1e-9:
         return previous
     step = delta
     if config.ramp_k_per_min is not None and state.decided_at is not None:
@@ -427,6 +424,4 @@ def _ramp(
         if abs(delta) > allowed:
             step = allowed if delta > 0 else -allowed
             reasons.append(Reason.RAMP)
-    if abs(step) < config.min_step:
-        step = config.min_step if delta > 0 else -config.min_step
     return previous + step

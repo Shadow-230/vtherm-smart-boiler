@@ -1,8 +1,10 @@
 """Control options (flow-setpoint mode) as core objects, and what keeps control from starting.
 
 No Home Assistant imports. Every value has a cautious default; a blocker is a translation key
-naming what the user must provide or fix before control may be switched on. Provisional decisions
-of phase F (to be confirmed at the review, `docs/plan-0.2.md` K4): control only for an
+naming what the user must provide or fix before control may be switched on. Nothing goes to the
+boiler's persistent memory: a picked setpoint entity must be declared expiring or held, and a
+heating switch declared otherwise is left alone ("off" is then a low setpoint). Provisional
+decisions of phase F (to be confirmed at the review, `docs/plan-0.2.md` K4): control only for an
 installation with one circuit fed by the boiler flow (unmixed, or passive fixed); the curve must
 be entered, never silently defaulted; VT's central boiler must not run alongside.
 """
@@ -60,16 +62,12 @@ class AlarmReaction(StrEnum):
     HAND_BACK = "hand_back"
 
 
-class CapReaction(StrEnum):
-    HOLD = "hold"  # keep the last value and raise an alarm
-    HAND_BACK = "hand_back"
-
-
 # Everything ``config_blockers`` may report (translation keys).
 CONFIG_BLOCKERS = (
     "no_write_path",
     "boiler_not_flow_setpoint",
     "no_setpoint_entity",
+    "write_type_not_supported",
     "no_hand_back",
     "timeout_needs_expiring_writes",
     "no_gateway",
@@ -82,6 +80,8 @@ CONFIG_BLOCKERS = (
     "underfloor_without_max_flow",
 )
 OTGW_PATHS = frozenset({WritePath.OPENTHERM_GW, WritePath.OTGW_MQTT})
+# Write types control may use: nothing the boiler stores in its memory.
+WRITABLE_TYPES = frozenset({WriteType.EXPIRING, WriteType.HELD})
 CONTROLLABLE_TOPOLOGIES = frozenset(
     {Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT, Topology.VIRTUAL}
 )
@@ -100,6 +100,7 @@ class ControlOptions:
     setpoint_entity: str | None = None
     ch_entity: str | None = None
     write_type: WriteType = WriteType.UNKNOWN
+    ch_write_type: WriteType = WriteType.UNKNOWN
     hand_back: HandBack | None = None
     hand_back_value: float = 0.0
     hand_back_entity: str | None = None
@@ -112,7 +113,6 @@ class ControlOptions:
     loop: LoopConfig = field(default_factory=lambda: LoopConfig(ControlConfig(HeatingCurve())))
     learning: LearningConfig = field(default_factory=LearningConfig)
     learning_pauses: bool = True
-    cap_reaction: CapReaction = CapReaction.HOLD
     alarm_reactions: Mapping[str, AlarmReaction] = field(default_factory=dict)
 
     @property
@@ -160,17 +160,15 @@ def parse_control(
         exponent=float(curve_data.get("exponent", default_exponent)),
         offset=float(curve_data.get("offset", 0.0)),
     )
-    write_type = (
-        WriteType.EXPIRING
-        if path in OTGW_PATHS
-        else WriteType(data.get("write_type", WriteType.UNKNOWN))
-    )
+    if path in OTGW_PATHS:
+        write_type = ch_write_type = WriteType.EXPIRING  # CS and CH lapse unless repeated
+    else:
+        write_type = WriteType(data.get("write_type", WriteType.UNKNOWN))
+        ch_write_type = WriteType(data.get("ch_write_type", WriteType.UNKNOWN))
     circuit_max = circuit.max_flow if circuit is not None else None
     if circuit is not None and circuit.control is CircuitControl.PASSIVE_FIXED:
         circuit_max = None  # the mixing valve protects the emitters itself
     ramp = _float(data, "ramp_k_per_min", 1.0)
-    wears = write_type in (WriteType.PERSISTENT, WriteType.UNKNOWN)
-    min_change = _float(data, "min_change", 1.0) or 0.0
     control = ControlConfig(
         curve=curve,
         limits=FlowLimits(
@@ -201,27 +199,22 @@ def parse_control(
         ),
         fallback_setpoint=_float(data, "fallback_setpoint", None),
         ramp_k_per_min=ramp,
-        min_step=min_change if wears else 0.0,
         decision_interval_s=_minutes(data, "decision_interval_min", 5.0),
         correction_step_k=1.0 if data.get("comfort_correction", True) else None,
     )
     loop = LoopConfig(
         control=control,
-        setpoint_guard=SetpointGuardConfig(
-            write_type=write_type,
-            min_change=min_change,
-            daily_cap=int(data.get("daily_cap", 48)),
-        ),
+        setpoint_guard=SetpointGuardConfig(write_type=write_type),
         switch_guard=SwitchGuardConfig(
             min_on_s=_minutes(data, "min_on_min", 5.0),
             min_off_s=_minutes(data, "min_off_min", 5.0),
             max_switches_per_hour=int(data.get("max_switches_per_hour", 6)),
             # An expiring heating override is repeated with the setpoint's keep-alive.
-            keepalive_s=KEEPALIVE_S if write_type is WriteType.EXPIRING else None,
+            keepalive_s=KEEPALIVE_S if ch_write_type is WriteType.EXPIRING else None,
         ),
-        # A heating switch only for writes that do not wear: with persistent or unknown writes,
-        # "off" is a low setpoint, so every write counts toward the daily cap.
-        ch_writes=path in OTGW_PATHS or (bool(data.get("ch_entity")) and not wears),
+        # A heating switch the boiler may store is left alone: "off" is then a low setpoint.
+        ch_writes=path in OTGW_PATHS
+        or (bool(data.get("ch_entity")) and ch_write_type in WRITABLE_TYPES),
         off_setpoint=float(data.get("off_setpoint", DEFAULT_OFF_SETPOINT)),
     )
     reactions = {
@@ -233,6 +226,7 @@ def parse_control(
         setpoint_entity=data.get("setpoint_entity") or None,
         ch_entity=data.get("ch_entity") or None,
         write_type=write_type,
+        ch_write_type=ch_write_type,
         hand_back=HandBack(data["hand_back"]) if data.get("hand_back") else None,
         hand_back_value=float(data.get("hand_back_value", 0.0)),
         hand_back_entity=data.get("hand_back_entity") or None,
@@ -245,7 +239,6 @@ def parse_control(
         loop=loop,
         learning=LearningConfig(),
         learning_pauses=bool(data.get("learning_pauses", True)),
-        cap_reaction=CapReaction(data.get("cap_reaction", CapReaction.HOLD)),
         alarm_reactions=reactions,
     )
 
@@ -270,6 +263,8 @@ def config_blockers(control: ControlOptions, installation: Installation) -> list
     if path is WritePath.ENTITY:
         if not control.setpoint_entity:
             found.append("no_setpoint_entity")
+        if control.write_type not in WRITABLE_TYPES:
+            found.append("write_type_not_supported")
         if control.hand_back is None or (
             control.hand_back is HandBack.SWITCH and not control.hand_back_entity
         ):
