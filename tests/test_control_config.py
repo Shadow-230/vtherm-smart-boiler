@@ -244,15 +244,26 @@ def test_a_timeout_hand_back_needs_writes_that_lapse(write_type: str, blocked: b
 
 def test_an_expiring_heating_override_is_repeated_with_the_setpoint() -> None:
     otgw = parse_control(OTGW, RADIATORS, None)
-    assert otgw.loop.switch_guard.keepalive_s == 30.0
+    assert otgw.loop.switch_guard.write_type is WriteType.EXPIRING
+    assert otgw.loop.switch_guard.keepalive_s == otgw.loop.setpoint_guard.keepalive_s == 30.0
     held = parse_control(
         ENTITY | {"ch_entity": "switch.ch", "ch_write_type": "held"}, RADIATORS, None
     )
-    assert held.loop.switch_guard.keepalive_s is None  # the device keeps it
+    assert held.loop.switch_guard.write_type is WriteType.HELD  # the device keeps it: no repeat
     expiring = parse_control(
         ENTITY | {"ch_entity": "switch.ch", "ch_write_type": "expiring"}, RADIATORS, None
     )
-    assert expiring.loop.switch_guard.keepalive_s == 30.0
+    assert expiring.loop.switch_guard.write_type is WriteType.EXPIRING
+
+
+def test_heating_on_off_is_judged_only_with_an_echo() -> None:
+    """Without an echo heating on/off is never judged, only shown unverified; with one it falls
+    under the one-rewrite rule, as a two-valued target."""
+    assert not parse_control(OTGW, RADIATORS, None).loop.switch_guard.read_back
+    echoed = parse_control(OTGW | {"ch_confirmed_entity": "binary_sensor.ch"}, RADIATORS, None)
+    assert echoed.loop.switch_guard.read_back
+    assert echoed.loop.switch_guard.two_valued
+    assert "binary_sensor.ch" in echoed.entities
 
 
 @pytest.mark.parametrize("missing", ["hand_back_value", "hand_back_value_effect"])

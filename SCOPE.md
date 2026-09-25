@@ -418,6 +418,9 @@ Options, each with a cautious default and its risks described:
   OpenTherm master), written on change only; **persistent**, or **unknown** (default) — not
   written: control stays off for a setpoint target, and a heating switch is left unused.
   Built-in OTGW repeats `CS` every 30 s.
+- A heating on/off read-back: none by default — heating on/off is then shown unverified (risk:
+  another controller switching it goes unnoticed; picking the thermostat's request instead of
+  what the boiler receives stops control as an outside change).
 - An age limit per signal (freshness): none by default (risk: without one a frozen source is not
   caught; with one shorter than the source's reporting interval, control stops in steady
   weather).

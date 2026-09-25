@@ -365,6 +365,7 @@ NO_CONTROL = "none"
 _SETPOINT_ENTITY = {"domain": ["number", "input_number"]}
 _ON_OFF_ENTITY = {"domain": ["switch", "input_boolean"]}
 _READ_BACK_ENTITY = {"domain": ["sensor", "number", "input_number"]}
+_ECHO_ENTITY = {"domain": ["binary_sensor", "switch", "input_boolean"]}
 # Alarms whose reaction the user may choose (a reached daily cap has its own field; an internal
 # error always hands back).
 REACTION_ALARMS = (
@@ -411,6 +412,7 @@ def control_schema(options: dict[str, Any]) -> vol.Schema:
             ),
             _optional("topology", control): _select("topology", [t.value for t in Topology]),
             _optional("confirmed_entity", control): _entity(_READ_BACK_ENTITY),
+            _optional("ch_confirmed_entity", control): _entity(_ECHO_ENTITY),
         }
     )
 
@@ -560,7 +562,9 @@ def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
             "mqtt_top", "mqtt_node",
         ):  # fmt: skip
             control.pop(key, None)
-    _set_or_drop(control, user_input, ("write_path", "topology", "confirmed_entity"))
+    _set_or_drop(
+        control, user_input, ("write_path", "topology", "confirmed_entity", "ch_confirmed_entity")
+    )
     options[CONTROL] = control
 
 

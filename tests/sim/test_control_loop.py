@@ -10,7 +10,7 @@ import pytest
 from custom_components.vtherm_smart_boiler.core.controller import ControlConfig, ControlInputs
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.cycles import find_burns
-from custom_components.vtherm_smart_boiler.core.guards import SetpointGuardConfig, WriteType
+from custom_components.vtherm_smart_boiler.core.guards import GuardConfig, WriteType
 from custom_components.vtherm_smart_boiler.core.limits import FlowLimits
 from custom_components.vtherm_smart_boiler.core.loop import LoopConfig, LoopState, loop_step
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
@@ -30,7 +30,7 @@ from sim.simulator import (
 CURVE = HeatingCurve(design_outdoor=-15.0, design_flow=55.0, room=20.0, exponent=1.3)
 LOOP = LoopConfig(
     control=ControlConfig(curve=CURVE, limits=FlowLimits(hard_min=25.0, hard_max=60.0)),
-    setpoint_guard=SetpointGuardConfig(write_type=WriteType.EXPIRING),
+    setpoint_guard=GuardConfig(write_type=WriteType.EXPIRING),
 )
 
 

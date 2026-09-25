@@ -7,10 +7,9 @@ from dataclasses import replace
 from custom_components.vtherm_smart_boiler.core.controller import ControlConfig, ControlInputs
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.guards import (
+    GuardConfig,
     GuardEvent,
-    SetpointGuardConfig,
-    SetpointGuardState,
-    SwitchGuardConfig,
+    GuardState,
     WriteKind,
     WriteType,
 )
@@ -23,8 +22,12 @@ from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 
 CONFIG = LoopConfig(
     control=ControlConfig(curve=HeatingCurve(), ramp_k_per_min=None),
-    setpoint_guard=SetpointGuardConfig(write_type=WriteType.EXPIRING),
+    setpoint_guard=GuardConfig(write_type=WriteType.EXPIRING),
 )
+
+
+EXPIRING_SWITCH = GuardConfig(write_type=WriteType.EXPIRING, read_back=False, two_valued=True)
+ECHOED_SWITCH = GuardConfig(write_type=WriteType.HELD, two_valued=True)
 
 
 def inputs(t: float, opening: float = 0.6, **kw) -> ControlInputs:
@@ -54,7 +57,7 @@ def test_hand_back_passes_and_resets_the_guards() -> None:
     state, out = loop_step(state, inputs(30.0, enabled=False), 45.0, CONFIG)
     assert out.hand_back
     assert out.setpoint is None
-    assert state.setpoint == SetpointGuardState()  # a later session starts afresh
+    assert state.setpoint == GuardState()  # a later session starts afresh
     assert state.switch.written is None
 
 
@@ -76,7 +79,7 @@ def test_nothing_is_written_while_waiting_for_data() -> None:
 
 
 def test_an_expiring_heating_override_is_repeated() -> None:
-    config = replace(CONFIG, switch_guard=SwitchGuardConfig(keepalive_s=30.0))
+    config = replace(CONFIG, switch_guard=EXPIRING_SWITCH)
     state, out = loop_step(LoopState(), inputs(0.0), None, config)
     assert out.ch_enable is True
     _state, out = loop_step(state, inputs(30.0), 45.0, config)
@@ -86,7 +89,7 @@ def test_an_expiring_heating_override_is_repeated() -> None:
 def test_heating_on_off_follows_a_recovered_setpoint_at_once() -> None:
     """After a lapse the gateway's heating override is gone with it: the recovery write carries
     the heating state too, not only the next keep-alive."""
-    config = replace(CONFIG, switch_guard=SwitchGuardConfig(keepalive_s=30.0))
+    config = replace(CONFIG, switch_guard=EXPIRING_SWITCH)
     state, out = loop_step(LoopState(), inputs(0.0), None, config)
     state, _ = loop_step(state, inputs(10.0), out.setpoint.value, config)  # confirmed
     state, out = loop_step(state, inputs(20.0), 30.0, config)  # the gateway dropped it
@@ -98,7 +101,7 @@ def test_heating_on_off_follows_a_recovered_setpoint_at_once() -> None:
 def test_a_blocked_setpoint_stops_the_heating_writes_too() -> None:
     """P53: another controller has the boiler: every write stops, heating on/off included,
     whatever the alarm's reaction."""
-    config = replace(CONFIG, switch_guard=SwitchGuardConfig(keepalive_s=30.0))
+    config = replace(CONFIG, switch_guard=EXPIRING_SWITCH)
     state, out = loop_step(LoopState(), inputs(0.0), None, config)
     blocked = replace(state.setpoint, blocked=GuardEvent.OUTSIDE_CHANGE)
     state = replace(state, setpoint=blocked)
@@ -106,3 +109,43 @@ def test_a_blocked_setpoint_stops_the_heating_writes_too() -> None:
     assert out.setpoint is None
     assert out.ch_enable is None
     assert out.blocked
+
+
+def test_heating_is_confirmed_by_its_echo() -> None:
+    config = replace(CONFIG, switch_guard=ECHOED_SWITCH)
+    state, out = loop_step(LoopState(), inputs(0.0), None, config, False)
+    assert out.ch_enable is True
+    state, out = loop_step(state, inputs(10.0), out.setpoint.value, config, True)
+    assert state.switch.confirmed_at == 10.0
+
+
+def test_heating_switched_from_outside_stops_every_write() -> None:
+    """P22: with an echo, heating on/off falls under the one-rewrite rule; the second outside
+    change stops the setpoint writes too."""
+    config = replace(CONFIG, switch_guard=ECHOED_SWITCH)
+    state, out = loop_step(LoopState(), inputs(0.0), None, config, False)
+    setpoint = out.setpoint.value
+    state, _ = loop_step(state, inputs(10.0), setpoint, config, True)  # confirmed
+    state, out = loop_step(state, inputs(20.0), setpoint, config, False)  # switched off outside
+    assert out.heating is not None
+    assert out.heating.kind is WriteKind.REWRITE
+    state, _ = loop_step(state, inputs(30.0), setpoint, config, True)
+    state, out = loop_step(state, inputs(40.0), setpoint, config, False)  # again
+    assert out.blocked
+    assert out.events == (GuardEvent.OUTSIDE_CHANGE,)
+    _state, out = loop_step(state, inputs(70.0), setpoint, config, False)
+    assert (out.setpoint, out.heating, out.blocked) == (None, None, True)  # no keep-alive either
+
+
+def test_a_blocked_setpoint_leaves_this_steps_heating_write_unmade() -> None:
+    config = replace(CONFIG, switch_guard=EXPIRING_SWITCH)
+    state, out = loop_step(LoopState(), inputs(0.0), None, config)
+    setpoint = out.setpoint.value
+    state, _ = loop_step(state, inputs(10.0), setpoint, config)  # confirmed
+    state, _ = loop_step(state, inputs(20.0), 60.0, config)  # the one rewrite
+    state, _ = loop_step(state, inputs(25.0), setpoint, config)
+    before = state.switch
+    state, out = loop_step(state, inputs(35.0, opening=0.0), 60.0, config)  # heating off asked
+    assert out.blocked
+    assert out.heating is None
+    assert state.switch == before  # not recorded as written

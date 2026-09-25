@@ -466,12 +466,14 @@
         "data": {
           "write_path": "Write path",
           "topology": "Gateway connection",
-          "confirmed_entity": "Setpoint read-back"
+          "confirmed_entity": "Setpoint read-back",
+          "ch_confirmed_entity": "Heating on/off read-back"
         },
         "data_description": {
           "write_path": "No control (default); a writable entity you pick, e.g. an EMS-ESP or ESPHome OpenTherm number; the OpenTherm Gateway through Home Assistant's OpenTherm Gateway integration; or the OTGW firmware's MQTT commands. Pick the path your boiler interface really offers: a wrong one means writes that fail or go nowhere.",
           "topology": "How the gateway sits between thermostat and boiler. With a thermostat: on hand-back the thermostat takes over. Stand-alone, without a thermostat: on hand-back, and whenever Home Assistant stops for more than about a minute, the boiler stops heating. Monitor mode: the gateway only listens and control is not possible. Virtual: a controller on the Home Assistant side, e.g. ESPHome, drives the boiler. Required; declare it as it is — the plugin never changes the gateway's mode. A lost link to the boiler's data raises an alarm and hands back in every topology — stand-alone, heating stops until the data returns.",
-          "confirmed_entity": "The entity that reports the setpoint the boiler received, e.g. the gateway's control setpoint sensor. Required: every write is checked against it, and a write the boiler ignores or another controller overwrites is reported. Picking the value you write instead of the boiler's report hides both."
+          "confirmed_entity": "The entity that reports the setpoint the boiler received, e.g. the gateway's \"Control setpoint 1\" on its boiler device — it shows what the gateway sends, so the setpoint is shown as confirmed by the gateway, not by the boiler. Required: every write is checked against it, and a write the boiler ignores or another controller overwrites is reported. The plugin's setpoint entity shows only a confirmed value, otherwise unknown. Picking the entity you write confirms nothing: the setpoint is then shown as unverified.",
+          "ch_confirmed_entity": "Optional: an entity that reports whether the boiler receives heating enabled — e.g. the gateway's \"Central heating 1\" on its boiler device, which shows what the gateway sends to the boiler. With it, heating on/off is checked like the setpoint: a switch the boiler ignores is reported, and one another controller changes is written again once, then every write stops. Without it, heating on/off is shown as unverified and another controller switching it goes unnoticed. Picking the entity you write, or the thermostat's request instead of what the boiler receives, confirms nothing or stops control."
         }
       },
       "control_entity": {

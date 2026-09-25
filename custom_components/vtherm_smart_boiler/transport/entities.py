@@ -83,6 +83,12 @@ def temperature_from_state(state: State | None) -> Reading:
     return Reading(value, reported_at(state))
 
 
+def read_on_off(hass: HomeAssistant, entity_id: str) -> bool | None:
+    """An on/off entity (e.g. an echo of heating on/off); anything else is unknown."""
+    state = hass.states.get(entity_id)
+    return None if state is None else parse_binary(state.state)
+
+
 def read_source(hass: HomeAssistant, entity_id: str, kind: SourceKind) -> bool | float | None:
     """A foreign-heat source: on/off for switches and binary sensors, W or °C for sensors."""
     state = hass.states.get(entity_id)

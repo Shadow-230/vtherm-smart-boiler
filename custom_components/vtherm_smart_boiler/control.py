@@ -35,6 +35,7 @@ from homeassistant.util.async_ import create_eager_task
 
 from .const import CONTROL_TICK_SECONDS, DOMAIN
 from .control_config import (
+    OTGW_PATHS,
     AlarmReaction,
     ControlOptions,
     HandBack,
@@ -43,19 +44,26 @@ from .control_config import (
 )
 from .core.controller import ControlInputs, ControlMode, ControlState, Reason
 from .core.guards import (
+    Confirmation,
+    GuardConfig,
     GuardEvent,
-    SetpointGuardState,
+    GuardState,
     WriteAction,
     WriteKind,
-    setpoint_failed,
-    switch_failed,
+    confirmation,
+    write_failed,
 )
 from .core.learning import LearningState, ZoneLearning, plan_learning, release_all
-from .core.loop import LoopOutput, LoopState, loop_step
+from .core.loop import ON, LoopOutput, LoopState, loop_step
 from .core.readings import BoilerSnapshot, ZoneState
 from .core.signal_check import OutdoorStatus
 from .core.signals import Signal
-from .transport.entities import read_bounds, read_temperature, read_weather_temperature
+from .transport.entities import (
+    read_bounds,
+    read_on_off,
+    read_temperature,
+    read_weather_temperature,
+)
 from .transport.writers import HandBackCheck, WriteError, Writer, make_writer, writer_services
 
 if TYPE_CHECKING:
@@ -79,6 +87,24 @@ RUNTIME_BLOCKERS = (
     "setpoint_outside_entity_range",
     "control_error",
 )
+CONFIRMED_BY_GATEWAY = "confirmed_by_gateway"
+_SHOWN_CONFIRMED = frozenset({Confirmation.CONFIRMED.value, CONFIRMED_BY_GATEWAY})
+
+
+def _moment(raw: Any) -> float | None:
+    return None if raw is None else float(raw)
+
+
+def _shown(check: Confirmation | None, gateway: bool, self_echo: bool) -> str | None:
+    """How a write's standing is shown. An OTGW read-back is confirmed by the gateway: it shows
+    what the gateway sends, not what the boiler accepted. A read-back taken from the written
+    entity itself confirms nothing."""
+    if check is Confirmation.CONFIRMED:
+        if self_echo:
+            return Confirmation.UNVERIFIED.value
+        if gateway:
+            return CONFIRMED_BY_GATEWAY
+    return None if check is None else check.value
 
 class ControlAlarm(StrEnum):
     WRITE_FAILED = "write_failed"
@@ -110,10 +136,12 @@ class ControlStatus:
     blockers: tuple[str, ...] = ()
     mode: ControlMode = ControlMode.DISABLED
     reasons: tuple[str, ...] = ()
-    setpoint: float | None = None  # the setpoint last written
+    requested: float | None = None  # the setpoint last written
     target: float | None = None  # the decided setpoint before the ramp
-    heating_on: bool | None = None
-    confirmed: float | None = None  # what the boiler reports back
+    heating_on: bool | None = None  # heating on/off last commanded
+    read_back: float | None = None  # what the device reports back for the setpoint
+    setpoint_check: str | None = None  # a Confirmation value, or "confirmed_by_gateway"
+    heating_check: str | None = None  # the same for heating on/off
     last_change_at: float | None = None  # last write of a new value (keep-alives aside)
     hand_back_at: float | None = None
     alarms: frozenset[ControlAlarm] = frozenset()
@@ -121,6 +149,11 @@ class ControlStatus:
     latched_by: tuple[str, ...] = ()  # the alarms that latched control, while it stays latched
     unknown_zones: tuple[str, ...] = ()  # zones whose state is not known now
     writes_stopped: bool = False  # another controller has the boiler: nothing is written
+
+    @property
+    def confirmed_setpoint(self) -> float | None:
+        """The setpoint as the device confirms it; unknown otherwise, never the requested one."""
+        return self.read_back if self.setpoint_check in _SHOWN_CONFIRMED else None
 
 
 @dataclass
@@ -240,6 +273,7 @@ class ControlUnit:
             "latched_by": list(session.loop.control.latched_by),
             # The one rewrite after an outside change: within a day of it, no more are made.
             "rewritten_at": session.loop.setpoint.rewritten_at,
+            "heating_rewritten_at": session.loop.switch.rewritten_at,
             "failed": session.failed,
             "alarms": sorted(alarm.value for alarm in session.alarms & _KEPT_ALARMS),
             "hand_back_pending": self._hand_back_pending,
@@ -250,8 +284,8 @@ class ControlUnit:
             paused = {str(z): float(t) for z, t in dict(data.get("paused", {})).items()}
             alarms = {ControlAlarm(a) for a in data.get("alarms", [])} & _KEPT_ALARMS
             latched_by = tuple(str(a) for a in data.get("latched_by") or ())
-            rewritten = data.get("rewritten_at")
-            rewritten_at = None if rewritten is None else float(rewritten)
+            rewritten_at = _moment(data.get("rewritten_at"))
+            heating_rewritten_at = _moment(data.get("heating_rewritten_at"))
         except TypeError, ValueError:
             _LOGGER.warning("Ignoring unreadable stored control data")
             return
@@ -259,7 +293,8 @@ class ControlUnit:
         self._session = _Session(
             loop=LoopState(
                 control=ControlState(latched=latched, latched_by=latched_by if latched else ()),
-                setpoint=SetpointGuardState(rewritten_at=rewritten_at),
+                setpoint=GuardState(rewritten_at=rewritten_at),
+                switch=GuardState(rewritten_at=heating_rewritten_at),
             ),
             learning=LearningState(paused=paused, last_toggle=dict(paused)),
             alarms=alarms,
@@ -489,7 +524,9 @@ class ControlUnit:
         snapshot = self._coordinator.transport.snapshot(now)
         inputs = self._inputs(now, snapshot, zones, blockers)
         confirmed = self._confirmed()
-        session.loop, out = loop_step(session.loop, inputs, confirmed, self.options.loop)
+        session.loop, out = loop_step(
+            session.loop, inputs, confirmed, self.options.loop, self._confirmed_heating()
+        )
         if out.hand_back:
             await self._async_hand_back_writes(now)
         else:
@@ -519,6 +556,7 @@ class ControlUnit:
         setpoint = session.loop.setpoint
         if setpoint.confirmed_at is not None and not setpoint.ignored_reported:
             session.alarms.discard(ControlAlarm.WRITE_IGNORED)  # the value holds
+        setpoint_check, heating_check = self._checks()
         command = out.decision.command
         await self._async_learning(
             now,
@@ -534,10 +572,12 @@ class ControlUnit:
             blockers=blockers,
             mode=out.decision.mode,
             reasons=tuple(r.value for r in out.decision.reasons),
-            setpoint=session.loop.setpoint.written,
+            requested=session.loop.setpoint.written,
             target=out.decision.target,
             heating_on=out.heating_on,
-            confirmed=confirmed,
+            read_back=confirmed,
+            setpoint_check=setpoint_check,
+            heating_check=heating_check,
             last_change_at=self._last_change_at,
             hand_back_at=self._hand_back_at,
             alarms=frozenset(self._alarms()),
@@ -640,6 +680,30 @@ class ControlUnit:
                 active.append(alarm.value)
         return tuple(active)
 
+    def _checks(self) -> tuple[str | None, str | None]:
+        """Where the setpoint and heating on/off stand with the device, as shown."""
+        options = self.options
+        loop = self._session.loop
+        gateway = options.write_path in OTGW_PATHS
+        self_echo = bool(options.confirmed_entity) and (
+            options.confirmed_entity == options.setpoint_entity
+        )
+        setpoint = _shown(
+            confirmation(loop.setpoint, options.loop.setpoint_guard), gateway, self_echo
+        )
+        if not options.loop.ch_writes:
+            return setpoint, setpoint  # "off" goes as a low setpoint
+        switch: GuardConfig = options.loop.switch_guard
+        self_echo = bool(options.ch_confirmed_entity) and (
+            options.ch_confirmed_entity == options.ch_entity
+        )
+        return setpoint, _shown(confirmation(loop.switch, switch), gateway, self_echo)
+
+    def _confirmed_heating(self) -> bool | None:
+        """Heating on/off as its echo reports it; ``None`` without one."""
+        entity = self.options.ch_confirmed_entity
+        return read_on_off(self._hass, entity) if entity else None
+
     def _confirmed(self) -> float | None:
         """The setpoint the boiler reports back; ``None`` when unknown. A read-back that reports
         only on change keeps its value, so its age does not make it unknown."""
@@ -654,7 +718,7 @@ class ControlUnit:
     async def _async_writes(self, out: LoopOutput, now: float) -> None:
         writer = self._writer
         if writer is None:
-            if out.ch_enable is not None or out.setpoint is not None:
+            if out.heating is not None or out.setpoint is not None:
                 _LOGGER.error("Control asked for a write without a writer; nothing written")
             return
         loop = self._session.loop
@@ -663,16 +727,14 @@ class ControlUnit:
         if out.setpoint is not None and not await self._async_write(
             "setpoint", writer.write_setpoint(out.setpoint.value), now, out.setpoint
         ):
-            loop = replace(loop, setpoint=setpoint_failed(loop.setpoint))
-        if out.ch_enable is not None and not await self._async_write(
-            "heating", writer.write_heating(out.ch_enable), now, None
+            loop = replace(loop, setpoint=write_failed(loop.setpoint))
+        if out.heating is not None and not await self._async_write(
+            "heating", writer.write_heating(out.heating.value == ON), now, out.heating
         ):
-            loop = replace(loop, switch=switch_failed(loop.switch))
+            loop = replace(loop, switch=write_failed(loop.switch))
         self._session.loop = loop
 
-    async def _async_write(
-        self, kind: str, call: Any, now: float, action: WriteAction | None
-    ) -> bool:
+    async def _async_write(self, kind: str, call: Any, now: float, action: WriteAction) -> bool:
         session = self._session
         if not self._holding:
             # Before the attempt: a write reported as failed may still reach the boiler.
@@ -691,7 +753,7 @@ class ControlUnit:
         if self._hand_back_pending:
             # Control has the boiler again: the earlier hand-back no longer matters.
             self._hand_back_done()
-        if action is None or action.kind is not WriteKind.KEEPALIVE:
+        if action.kind is not WriteKind.KEEPALIVE:  # a repeat changes nothing
             self._last_change_at = now
         return True
 

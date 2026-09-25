@@ -19,7 +19,7 @@ from typing import Any
 from .core.controller import ControlConfig
 from .core.curve import HeatingCurve
 from .core.demand import DemandConfig
-from .core.guards import SetpointGuardConfig, SwitchGuardConfig, WriteType
+from .core.guards import GuardConfig, WriteType
 from .core.installation import BoilerClass, CircuitControl, EmitterType, Installation
 from .core.learning import LearningConfig
 from .core.limits import FlowLimits, FrostConfig
@@ -120,6 +120,7 @@ class ControlOptions:
     mqtt_top: str | None = None
     mqtt_node: str | None = None
     confirmed_entity: str | None = None
+    ch_confirmed_entity: str | None = None  # echoes heating on/off as the boiler gets it
     topology: Topology | None = None
     curve_entered: bool = False
     loop: LoopConfig = field(default_factory=lambda: LoopConfig(ControlConfig(HeatingCurve())))
@@ -139,7 +140,13 @@ class ControlOptions:
     @property
     def entities(self) -> tuple[str, ...]:
         """Entities the control part reads (read-back) or writes."""
-        found = (self.setpoint_entity, self.ch_entity, self.hand_back_entity, self.confirmed_entity)
+        found = (
+            self.setpoint_entity,
+            self.ch_entity,
+            self.hand_back_entity,
+            self.confirmed_entity,
+            self.ch_confirmed_entity,
+        )
         return tuple(e for e in found if e)
 
 
@@ -219,10 +226,14 @@ def parse_control(
     )
     loop = LoopConfig(
         control=control,
-        setpoint_guard=SetpointGuardConfig(write_type=write_type),
-        switch_guard=SwitchGuardConfig(
-            # An expiring heating override is repeated with the setpoint's keep-alive.
-            keepalive_s=KEEPALIVE_S if ch_write_type is WriteType.EXPIRING else None,
+        setpoint_guard=GuardConfig(write_type=write_type, keepalive_s=KEEPALIVE_S),
+        switch_guard=GuardConfig(
+            # An expiring heating override is repeated with the setpoint's keep-alive; without an
+            # echo, heating on/off is never judged, only shown unverified.
+            write_type=ch_write_type,
+            keepalive_s=KEEPALIVE_S,
+            read_back=bool(data.get("ch_confirmed_entity")),
+            two_valued=True,
         ),
         # A heating switch the boiler may store is left alone: "off" is then a low setpoint.
         ch_writes=path in OTGW_PATHS
@@ -251,6 +262,7 @@ def parse_control(
         mqtt_top=data.get("mqtt_top") or None,
         mqtt_node=data.get("mqtt_node") or None,
         confirmed_entity=data.get("confirmed_entity") or None,
+        ch_confirmed_entity=data.get("ch_confirmed_entity") or None,
         topology=Topology(data["topology"]) if data.get("topology") else None,
         curve_entered=bool(curve_data.get("design_flow")),
         loop=loop,

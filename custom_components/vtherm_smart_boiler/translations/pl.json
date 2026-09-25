@@ -466,12 +466,14 @@
         "data": {
           "write_path": "Ścieżka zapisu",
           "topology": "Podłączenie bramki",
-          "confirmed_entity": "Odczyt zwrotny nastawy"
+          "confirmed_entity": "Odczyt zwrotny nastawy",
+          "ch_confirmed_entity": "Odczyt zwrotny włączenia ogrzewania"
         },
         "data_description": {
           "write_path": "Bez sterowania (domyślnie); wybrana przez ciebie encja do zapisu, np. liczba EMS-ESP albo ESPHome OpenTherm; bramka OpenTherm Gateway przez integrację OpenTherm Gateway w Home Assistant; albo polecenia MQTT firmware OTGW. Wybierz ścieżkę, którą naprawdę oferuje twój interfejs kotła: zła oznacza zapisy, które się nie udają albo trafiają donikąd.",
           "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Tryb monitora: bramka tylko słucha i sterowanie jest niemożliwe. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki. Utrata danych kotła podnosi alarm i oddaje sterowanie w każdej topologii — bez termostatu grzanie ustaje, dopóki dane nie wrócą.",
-          "confirmed_entity": "Encja, która pokazuje nastawę odebraną przez kocioł, np. czujnik nastawy sterowania bramki. Wymagana: każdy zapis jest z nią porównywany, a zapis zignorowany przez kocioł albo nadpisany przez inny sterownik zostaje zgłoszony. Wybranie wartości, którą zapisujesz, zamiast odczytu z kotła ukrywa oba przypadki."
+          "confirmed_entity": "Encja, która pokazuje nastawę odebraną przez kocioł, np. „Control setpoint 1” urządzenia kotła w bramce — pokazuje ona, co bramka wysyła, więc nastawa jest pokazywana jako potwierdzona przez bramkę, nie przez kocioł. Wymagana: każdy zapis jest z nią porównywany, a zapis zignorowany przez kocioł albo nadpisany przez inny sterownik zostaje zgłoszony. Encja nastawy wtyczki pokazuje tylko potwierdzoną wartość, w przeciwnym razie stan nieznany. Wybranie encji, do której się pisze, niczego nie potwierdza: nastawa jest wtedy pokazywana jako niezweryfikowana.",
+          "ch_confirmed_entity": "Opcjonalnie: encja, która pokazuje, czy kocioł dostaje włączone ogrzewanie — np. „Central heating 1” urządzenia kotła w bramce, pokazujące, co bramka wysyła do kotła. Z nią włączanie i wyłączanie ogrzewania jest sprawdzane jak nastawa: przełączenie zignorowane przez kocioł jest zgłaszane, a zmienione przez inny sterownik zapisywane jeszcze raz, po czym wszystkie zapisy ustają. Bez niej włączenie ogrzewania jest pokazywane jako niezweryfikowane, a przełączenie przez inny sterownik pozostaje niezauważone. Wybranie encji, do której się pisze, albo żądania termostatu zamiast tego, co dostaje kocioł, niczego nie potwierdza albo zatrzymuje sterowanie."
         }
       },
       "control_entity": {

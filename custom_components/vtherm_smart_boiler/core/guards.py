@@ -1,6 +1,7 @@
 """Write guards: what may actually be written, whatever the controller asks for.
 
-The guards are fixed; their values are options. For a setpoint:
+One guard per write target — the flow setpoint, and heating on/off as 1 and 0. The guards are
+fixed; their values are options:
 
 - nothing goes to the boiler's persistent memory: a target declared persistent, or of unknown
   write type, is never written (the configuration keeps control off for it anyway);
@@ -8,7 +9,8 @@ The guards are fixed; their values are options. For a setpoint:
   keep-alive period; a value the device holds, on change only;
 - a write-rate guard against a runaway loop: a write repeated within one control step waits for
   the next one — failed attempts count too, and nothing waits longer;
-- every write is read back: not confirmed within the timeout → reported as ignored, never assumed
+- every write is read back where something echoes it (a target without an echo is never judged,
+  only shown unverified): not confirmed within the timeout → reported as ignored, never assumed
   applied; changed from outside after it was confirmed → written again once, then blocked and
   reported, also when that one rewrite is not confirmed within the timeout (whatever was reported
   before it); a further outside change within a day of the rewrite is not rewritten, whatever the
@@ -21,12 +23,12 @@ The guards are fixed; their values are options. For a setpoint:
   the override dropped: a boiler's Data-Invalid answer clears an OTGW's override, a gateway reset
   loses it — nor an expiring override that lapsed because the plugin itself went silent (stale
   data): both are simply sent again, and a drop that keeps coming back is reported as ignored.
+  Heating on/off has only two values, so its fall back cannot be told from another controller:
+  any change after a confirmation counts as changed from outside.
 
-Keep-alive repeats of an expiring override are not rewrites.
-
-For heating on/off: it follows what the controller asks at once — nothing counted or timed holds
-it against VT (``SCOPE.md`` principle 12) beyond the same one-step write-rate guard; a failed
-write is sent again, and an expiring override is repeated like a setpoint.
+Keep-alive repeats of an expiring override are not rewrites. Heating on/off follows what the
+controller asks at once: nothing counted or timed holds it against VT (``SCOPE.md`` principle 12)
+beyond the one-step write-rate guard.
 
 A hand-back write is not planned here: nothing holds it back.
 """
@@ -62,13 +64,25 @@ class GuardEvent(StrEnum):
     OUTSIDE_CHANGE = "outside_change"
 
 
+class Confirmation(StrEnum):
+    """Where the value last written stands with the device."""
+
+    CONFIRMED = "confirmed"
+    WAITING = "waiting"  # sent, not confirmed yet
+    NOT_CONFIRMED = "not_confirmed"  # not confirmed within the timeout: reported as ignored
+    CHANGED_FROM_OUTSIDE = "changed_from_outside"  # another controller: writes stopped
+    UNVERIFIED = "unverified"  # nothing echoes the value
+
+
 @dataclass(frozen=True, slots=True)
-class SetpointGuardConfig:
+class GuardConfig:
     write_type: WriteType = WriteType.UNKNOWN
     keepalive_s: float = 30.0
     confirm_timeout_s: float = 120.0
-    tolerance: float = 0.5
+    tolerance: float = 0.5  # on/off as 1 and 0: any tolerance below 1
     min_interval_s: float = MIN_WRITE_INTERVAL_S
+    read_back: bool = True  # False: nothing echoes the value; it is never judged
+    two_valued: bool = False  # on/off: a fall back to the value before the session is no drop
 
     def __post_init__(self) -> None:
         if self.keepalive_s <= 0 or self.confirm_timeout_s <= 0:
@@ -85,7 +99,7 @@ class SetpointGuardConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class SetpointGuardState:
+class GuardState:
     written: float | None = None
     written_at: float | None = None  # the last write attempt, failed ones included
     sent_at: float | None = None  # when the current value was last sent (keep-alives aside)
@@ -108,7 +122,7 @@ class WriteAction:
 
 @dataclass(frozen=True, slots=True)
 class GuardResult:
-    state: SetpointGuardState
+    state: GuardState
     action: WriteAction | None = None
     events: tuple[GuardEvent, ...] = ()
 
@@ -117,22 +131,37 @@ def _matches(a: float | None, b: float | None, tolerance: float) -> bool:
     return a is not None and b is not None and abs(a - b) <= tolerance
 
 
-def setpoint_failed(state: SetpointGuardState) -> SetpointGuardState:
+def write_failed(state: GuardState) -> GuardState:
     """The planned write did not go through: it is sent again at the next step. The attempt
     still counts for the write-rate guard."""
     return replace(state, retry=True)
 
 
-def plan_setpoint(
-    state: SetpointGuardState,
+def confirmation(state: GuardState, config: GuardConfig) -> Confirmation | None:
+    """Where the value last written stands; ``None`` before the first write."""
+    if state.blocked is not None:
+        return Confirmation.CHANGED_FROM_OUTSIDE
+    if state.written is None:
+        return None
+    if not config.read_back:
+        return Confirmation.UNVERIFIED
+    if state.confirmed_at is not None:
+        return Confirmation.CONFIRMED
+    return Confirmation.NOT_CONFIRMED if state.ignored_reported else Confirmation.WAITING
+
+
+def plan_write(
+    state: GuardState,
     desired: float | None,
     confirmed: float | None,
     now: float,
-    config: SetpointGuardConfig,
+    config: GuardConfig,
 ) -> GuardResult:
-    """What to write for a setpoint now, given what the device confirms (``None``: unknown)."""
+    """What to write to one target now, given what the device confirms (``None``: unknown)."""
     if not config.writable or state.blocked is not None:
         return GuardResult(state)
+    if not config.read_back:
+        confirmed = None  # nothing to judge: never ignored, never another controller
     state, verdict = _follow_read_back(state, confirmed, now, config)
     events: list[GuardEvent] = []
     if verdict is _Verdict.IGNORED:
@@ -185,15 +214,15 @@ class _Verdict(StrEnum):
 
 
 def _follow_read_back(
-    state: SetpointGuardState,
+    state: GuardState,
     confirmed: float | None,
     now: float,
-    config: SetpointGuardConfig,
-) -> tuple[SetpointGuardState, _Verdict]:
+    config: GuardConfig,
+) -> tuple[GuardState, _Verdict]:
     """Note a confirmation, follow another value the read-back holds, and judge a send the
     device has not confirmed within the timeout. An "ignored" report ends once the value has
     held for the timeout."""
-    if state.written is None or state.sent_at is None:
+    if not config.read_back or state.written is None or state.sent_at is None:
         return state, _Verdict.NONE
     if state.confirmed_at is not None:
         held = (
@@ -217,12 +246,12 @@ def _follow_read_back(
     return state, _Verdict.IGNORED
 
 
-def _differs(state: SetpointGuardState, desired: float, config: SetpointGuardConfig) -> bool:
+def _differs(state: GuardState, desired: float, config: GuardConfig) -> bool:
     return not _matches(desired, state.written, config.tolerance)
 
 
 def _mismatch(
-    state: SetpointGuardState, confirmed: float | None, config: SetpointGuardConfig
+    state: GuardState, confirmed: float | None, config: GuardConfig
 ) -> bool:
     """The device confirmed our value, and now shows another."""
     return (
@@ -233,24 +262,24 @@ def _mismatch(
 
 
 def _dropped(
-    state: SetpointGuardState, confirmed: float | None, config: SetpointGuardConfig
+    state: GuardState, confirmed: float | None, config: GuardConfig
 ) -> bool:
     """The read-back fell back to its value from before the session: our override dropped."""
-    return _mismatch(state, confirmed, config) and _matches(
-        confirmed, state.baseline, config.tolerance
+    return (
+        not config.two_valued
+        and _mismatch(state, confirmed, config)
+        and _matches(confirmed, state.baseline, config.tolerance)
     )
 
 
 def _changed_from_outside(
-    state: SetpointGuardState, confirmed: float | None, config: SetpointGuardConfig
+    state: GuardState, confirmed: float | None, config: GuardConfig
 ) -> bool:
     """Another value after ours was confirmed — not our dropped override, nor our own lapse."""
-    return _mismatch(state, confirmed, config) and not _matches(
-        confirmed, state.baseline, config.tolerance
-    )
+    return _mismatch(state, confirmed, config) and not _dropped(state, confirmed, config)
 
 
-def _lapsed(state: SetpointGuardState, now: float, config: SetpointGuardConfig) -> bool:
+def _lapsed(state: GuardState, now: float, config: GuardConfig) -> bool:
     """An expiring override the plugin stopped repeating long enough for it to lapse."""
     return (
         config.write_type is WriteType.EXPIRING
@@ -259,18 +288,18 @@ def _lapsed(state: SetpointGuardState, now: float, config: SetpointGuardConfig) 
     )
 
 
-def _block(state: SetpointGuardState, events: list[GuardEvent]) -> GuardResult:
+def _block(state: GuardState, events: list[GuardEvent]) -> GuardResult:
     events.append(GuardEvent.OUTSIDE_CHANGE)
     return GuardResult(replace(state, blocked=GuardEvent.OUTSIDE_CHANGE), None, tuple(events))
 
 
 def _write(
-    state: SetpointGuardState,
+    state: GuardState,
     value: float | None,
     kind: WriteKind,
     confirmed: float | None,
     now: float,
-    config: SetpointGuardConfig,
+    config: GuardConfig,
     events: list[GuardEvent],
 ) -> GuardResult:
     if value is None or (
@@ -308,53 +337,3 @@ def _write(
         retry=False,
     )
     return GuardResult(new_state, WriteAction(value, kind), tuple(events))
-
-
-@dataclass(frozen=True, slots=True)
-class SwitchGuardConfig:
-    keepalive_s: float | None = None  # repeat the same state this often, for expiring overrides
-    min_interval_s: float = MIN_WRITE_INTERVAL_S
-
-    def __post_init__(self) -> None:
-        if self.min_interval_s <= 0 or (
-            self.keepalive_s is not None and self.keepalive_s <= self.min_interval_s
-        ):
-            raise ValueError("the write interval must be positive and below the keep-alive")
-
-
-@dataclass(frozen=True, slots=True)
-class SwitchGuardState:
-    written: bool | None = None
-    written_at: float | None = None  # the last write attempt, failed ones included
-    retry: bool = False  # the last write failed: send it again
-
-
-@dataclass(frozen=True, slots=True)
-class SwitchResult:
-    state: SwitchGuardState
-    write: bool | None = None  # the state to write now, if any
-
-
-def switch_failed(state: SwitchGuardState) -> SwitchGuardState:
-    """The planned write did not go through: it is sent again at the next step."""
-    return replace(state, retry=True)
-
-
-def plan_switch(
-    state: SwitchGuardState, desired: bool | None, now: float, config: SwitchGuardConfig
-) -> SwitchResult:
-    """Heating on or off as asked, at once: nothing counted or timed holds it against VT, beyond
-    the one-step write-rate guard. An expiring override is repeated; a failed write is sent
-    again."""
-    if desired is None:
-        return SwitchResult(state)
-    if state.written_at is not None and now - state.written_at < config.min_interval_s:
-        return SwitchResult(state)  # waits for the next step
-    due = (
-        config.keepalive_s is not None
-        and state.written_at is not None
-        and now - state.written_at >= config.keepalive_s
-    )
-    if desired != state.written or state.retry or due:
-        return SwitchResult(SwitchGuardState(desired, now), desired)
-    return SwitchResult(state)

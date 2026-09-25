@@ -329,6 +329,7 @@ async def test_control_through_the_gateway_at_the_simple_level(
 
     MockConfigEntry(domain="opentherm_gw", data={"id": "living_room_gw"}).add_to_hass(hass)
     hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
+    hass.states.async_set("binary_sensor.gw_central_heating", "on")
     entry_id = await create_entry(hass, entities, "simple")
     result = await open_control(hass, entry_id)
     assert result["step_id"] == "control"
@@ -339,6 +340,7 @@ async def test_control_through_the_gateway_at_the_simple_level(
             "write_path": "opentherm_gw",
             "topology": "gateway_with_thermostat",
             "confirmed_entity": "sensor.gw_control_setpoint",
+            "ch_confirmed_entity": "binary_sensor.gw_central_heating",
         },
     )
     assert result["step_id"] == "control_gateway"
@@ -362,6 +364,7 @@ async def test_control_through_the_gateway_at_the_simple_level(
         "write_path": "opentherm_gw",
         "topology": "gateway_with_thermostat",
         "confirmed_entity": "sensor.gw_control_setpoint",
+        "ch_confirmed_entity": "binary_sensor.gw_central_heating",
         "gateway_id": "living_room_gw",
         "curve": {"design_outdoor": -18, "design_flow": 52},
         "hard_min": 25,

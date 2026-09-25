@@ -36,6 +36,7 @@ pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 SIGNALS = (Signal.FLAME, Signal.FLOW, Signal.OUTDOOR, Signal.DHW_ACTIVE)
 CONFIRMED = "sensor.fake_gateway_control_setpoint"
+CH_ECHO = "binary_sensor.fake_gateway_central_heating"
 OUTDOOR = 5.0
 EXPECTED = round(HeatingCurve().flow(OUTDOOR), 1)  # the curve's setpoint at 5 °C outside
 START = datetime(2026, 1, 12, 8, tzinfo=UTC)
@@ -52,6 +53,8 @@ class FakeGateway:
     readable: bool = True  # False: the control setpoint entity reports nothing known
     forced: float | None = None
     override: float | None = None
+    ch: bool = True  # heating on/off as the boiler receives it
+    forced_ch: bool | None = None  # another controller switches heating
     fail_after: bool = False  # the setpoint arrives, but the call reports a failure (a timeout)
     block: asyncio.Event | None = None  # a heating setpoint's call waits for this (a slow gateway)
     calls: list[tuple[str, Any]] = field(default_factory=list)
@@ -71,6 +74,8 @@ class FakeGateway:
 
         async def heating(call: ServiceCall) -> None:
             self.calls.append(("ch", call.data["ch_override"]))
+            self.ch = bool(call.data["ch_override"])
+            self.publish()
             if self.fail_after:
                 raise HomeAssistantError("timed out")
 
@@ -79,6 +84,8 @@ class FakeGateway:
         self.publish()
 
     def publish(self) -> None:
+        ch = self.ch if self.forced_ch is None else self.forced_ch
+        self.hass.states.async_set(CH_ECHO, "on" if ch else "off")
         if not self.readable:
             self.hass.states.async_set(CONFIRMED, "unknown", {"unit_of_measurement": "°C"})
             return
@@ -236,13 +243,19 @@ async def test_switching_on_writes_keeps_alive_and_switching_off_hands_back(rig:
     assert rig.gateway.calls[:2] == [("setpoint", EXPECTED), ("ch", True)]
     state = rig.state("sensor", "control_state")
     assert state.state == "heating"
-    assert rig.state("sensor", "control_setpoint").state == str(EXPECTED)
+    assert state.attributes["heating_confirmation"] == "unverified"  # no heating echo
+    setpoint = rig.state("sensor", "control_setpoint")
+    assert setpoint.state == "unknown"  # never the requested value before it is confirmed
+    assert setpoint.attributes["requested"] == EXPECTED
+    assert setpoint.attributes["confirmation"] == "waiting"
 
     await rig.advance(300)
     times = [t for t, (kind, _) in enumerate(rig.gateway.calls) if kind == "setpoint"]
     assert len(times) >= 10  # a keep-alive at least every 30 s over five minutes
     assert set(rig.gateway.setpoints()) == {EXPECTED}
-    assert rig.state("sensor", "control_setpoint").attributes["confirmed"] == EXPECTED
+    setpoint = rig.state("sensor", "control_setpoint")
+    assert setpoint.state == str(EXPECTED)
+    assert setpoint.attributes["confirmation"] == "confirmed_by_gateway"
     assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"
 
     await rig.switch(False)
@@ -1339,3 +1352,50 @@ async def test_a_user_freshness_limit_stops_writes_on_a_frozen_source(rig: Rig) 
     assert rig.state("sensor", "control_state").state == "waiting_data"
     await rig.advance(300)
     assert rig.gateway.calls[count:] == [("ch", True), ("setpoint", 0.0)]
+
+
+async def test_heating_switched_from_outside_is_written_once_then_handed_back(rig: Rig) -> None:
+    """P22: with a heating echo, heating on/off is confirmed by the gateway, and another
+    controller switching it is written again once; the next time, every write stops."""
+    await start(rig, ch_confirmed_entity=CH_ECHO)
+    await rig.switch(True)
+    await rig.advance(30)
+    assert rig.state("sensor", "control_state").attributes["heating_confirmation"] == (
+        "confirmed_by_gateway"
+    )
+    rig.gateway.forced_ch = False  # another controller switches heating off
+    count = len(rig.gateway.calls)
+    await rig.advance(10)
+    assert ("ch", True) in rig.gateway.calls[count:]  # the one rewrite
+    rig.gateway.forced_ch = None
+    await rig.advance(20)  # ours again
+    rig.gateway.forced_ch = False  # and switched off again
+    await rig.advance(10)
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
+    await rig.advance(10)
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]  # the hand-back
+
+
+async def test_keep_alives_do_not_move_the_last_change(rig: Rig) -> None:
+    """P88: repeating the same value changes nothing, heating on/off included."""
+    await start(rig)
+    await rig.switch(True)
+    first = rig.state("sensor", "control_setpoint").attributes["last_change"]
+    await rig.advance(120)
+    assert rig.gateway.calls.count(("ch", True)) > 1  # heating on/off was repeated
+    assert rig.state("sensor", "control_setpoint").attributes["last_change"] == first
+
+
+async def test_a_read_back_from_the_written_entity_confirms_nothing(rig: Rig) -> None:
+    """P75: the setpoint entity read back as its own echo is shown unverified, and the plugin's
+    setpoint entity stays unknown."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(rig, **held_entity(number))
+    await rig.switch(True)
+    await rig.advance(30)
+    setpoint = rig.state("sensor", "control_setpoint")
+    assert setpoint.attributes["confirmation"] == "unverified"
+    assert setpoint.state == "unknown"
+    assert setpoint.attributes["requested"] == EXPECTED

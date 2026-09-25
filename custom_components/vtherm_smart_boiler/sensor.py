@@ -420,6 +420,7 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "blockers": list(status.blockers),
             "target": _round(status.target, 1),
             "heating_on": status.heating_on,
+            "heating_confirmation": status.heating_check,
             "hand_back_at": _time(status.hand_back_at),
             "latched_by": list(status.latched_by),
             "unknown_zones": list(status.unknown_zones),
@@ -429,7 +430,8 @@ class ControlStateSensor(ControlEntity, SensorEntity):
 
 
 class ControlSetpointSensor(ControlEntity, SensorEntity):
-    """The flow setpoint control last wrote, with what the boiler reports back."""
+    """The flow setpoint as the device confirms it — unknown otherwise, never the requested one —
+    with the value written and what the device reports back."""
 
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
@@ -440,12 +442,14 @@ class ControlSetpointSensor(ControlEntity, SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        return _round(self.control.status.setpoint, 1)
+        return _round(self.control.status.confirmed_setpoint, 1)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         status = self.control.status
         return {
-            "confirmed": _round(status.confirmed, 1),
+            "requested": _round(status.requested, 1),
+            "read_back": _round(status.read_back, 1),
+            "confirmation": status.setpoint_check,
             "last_change": _time(status.last_change_at),
         }
