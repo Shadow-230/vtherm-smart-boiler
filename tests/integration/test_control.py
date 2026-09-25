@@ -49,6 +49,7 @@ class FakeGateway:
     hass: HomeAssistant
     thermostat: float = 40.0
     echo: bool = True
+    readable: bool = True  # False: the control setpoint entity reports nothing known
     forced: float | None = None
     override: float | None = None
     fail_after: bool = False  # the setpoint arrives, but the call reports a failure (a timeout)
@@ -78,6 +79,9 @@ class FakeGateway:
         self.publish()
 
     def publish(self) -> None:
+        if not self.readable:
+            self.hass.states.async_set(CONFIRMED, "unknown", {"unit_of_measurement": "°C"})
+            return
         if self.forced is not None:
             value = self.forced
         elif self.echo and self.override is not None:
@@ -391,8 +395,8 @@ async def test_an_outside_change_is_rewritten_once_then_handed_back(rig: Rig) ->
     assert len(rig.gateway.calls) == count  # latched: no fight
 
 
-async def test_an_ignored_write_is_reported_and_writing_goes_on(rig: Rig) -> None:
-    rig.gateway.echo = False  # the boiler keeps the thermostat's value
+async def test_an_unconfirmed_write_is_reported_and_writing_goes_on(rig: Rig) -> None:
+    rig.gateway.readable = False  # nothing says whether the value arrived
     await start(rig)
     await rig.switch(True)
     await rig.advance(90)
@@ -400,6 +404,65 @@ async def test_an_ignored_write_is_reported_and_writing_goes_on(rig: Rig) -> Non
     await rig.advance(60)
     assert rig.state("binary_sensor", "alarm_write_ignored").state == "on"
     assert rig.state("sensor", "control_state").state == "heating"  # information only
+    count = len(rig.gateway.setpoints())
+    await rig.advance(60)
+    assert len(rig.gateway.setpoints()) > count  # the keep-alive goes on
+
+
+async def test_a_value_never_taken_from_the_start_is_an_outside_change(rig: Rig) -> None:
+    """The user's decision: the read-back keeps another steady value — the thermostat's — from
+    the start, so ours is never confirmed: one rewrite, then an outside change, which hands
+    back by default."""
+    rig.gateway.echo = False
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(130)
+    assert rig.gateway.calls.count(("setpoint", EXPECTED)) >= 2  # the first write and the rewrite
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
+    await rig.advance(140)  # the rewrite not confirmed in time; the next step hands back
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    assert rig.gateway.calls[-1] == ("setpoint", 0.0)
+
+
+async def test_a_dropped_override_is_sent_again_not_fought(rig: Rig) -> None:
+    """A boiler's Data-Invalid answer clears the gateway's override: the read-back falls back
+    to the thermostat's value from before the session. Sent again at once, no outside change;
+    when it keeps falling back, the write is reported as ignored."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(30)  # confirmed
+    count = len(rig.gateway.setpoints())
+    rig.gateway.override = None  # dropped
+    await rig.advance(10)
+    assert rig.gateway.setpoints()[count:] == [EXPECTED]  # at once, not at the keep-alive
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
+    for _ in range(3):  # it keeps falling back
+        await rig.advance(10)
+        rig.gateway.override = None
+        await rig.advance(10)
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "on"
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
+    assert rig.state("sensor", "control_state").state == "heating"
+
+
+async def test_an_outside_change_set_to_information_stops_every_write(rig: Rig) -> None:
+    """P53: another controller has the boiler. With the alarm set to information, control stays
+    on, but nothing is written — heating on/off included."""
+    await start(rig, alarm_reactions={"outside_change": "info"})
+    await rig.switch(True)
+    await rig.advance(30)  # confirmed
+    rig.gateway.forced = 60.0
+    await rig.advance(180)
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
+    state = rig.state("sensor", "control_state")
+    assert state.attributes["writes_stopped"] is True
+    assert state.state == "heating"  # the decision goes on; nothing is sent
+    count = len(rig.gateway.calls)
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await rig.advance(120)
+    assert len(rig.gateway.calls) == count  # no heating off, no keep-alive
 
 
 async def test_a_failing_write_raises_an_alarm(rig: Rig) -> None:

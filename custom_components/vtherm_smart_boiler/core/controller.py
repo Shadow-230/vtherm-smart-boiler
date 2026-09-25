@@ -89,6 +89,7 @@ class Reason(StrEnum):
     LIMIT_CIRCUIT_MAX = "limit_circuit_max"
     LIMIT_BOILER_MAX = "limit_boiler_max"
     LIMIT_CEILING = "limit_ceiling"
+    LIMIT_FIXED_CIRCUIT = "limit_fixed_circuit"
     COMFORT_CORRECTION = "comfort_correction"
 
 
@@ -104,6 +105,7 @@ _LIMIT_REASON = {
     LimitCode.CIRCUIT_MAX: Reason.LIMIT_CIRCUIT_MAX,
     LimitCode.BOILER_MAX: Reason.LIMIT_BOILER_MAX,
     LimitCode.CEILING: Reason.LIMIT_CEILING,
+    LimitCode.FIXED_CIRCUIT: Reason.LIMIT_FIXED_CIRCUIT,
 }
 
 

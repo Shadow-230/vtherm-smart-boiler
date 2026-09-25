@@ -424,6 +424,7 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "latched_by": list(status.latched_by),
             "unknown_zones": list(status.unknown_zones),
             "learning_paused": list(status.paused_zones),
+            "writes_stopped": status.writes_stopped,
         }
 
 

@@ -323,12 +323,18 @@ async def test_a_failed_outdoor_sensor_falls_back_to_the_weather(rig: Rig) -> No
     assert rig.sim.plant.override_active(rig.now())  # heating goes on
 
 
-async def test_an_ignored_command_is_detected(rig: Rig) -> None:
+async def test_a_command_never_taken_is_detected_and_not_fought(rig: Rig) -> None:
+    """The boiler keeps its own steady value from the start and never takes ours: as another
+    controller (the user's decision) — one rewrite, then the alarm and a hand-back."""
     await start(rig)
     await rig.hass.services.async_call(SIM, "ignore_writes", {"enabled": True}, blocking=True)
     await rig.switch(True)
     await rig.advance(180)
-    assert rig.state("binary_sensor", "alarm_write_ignored").state == "on"
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "off"  # the one rewrite
+    await rig.advance(110)
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    assert rig.setpoints()[-1] == 0.0
 
 
 async def test_vt_stopped_means_no_demand_not_a_hand_back(rig: Rig) -> None:

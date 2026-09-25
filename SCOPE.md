@@ -366,7 +366,11 @@ room values:
   write stops, heating on and off included, whatever the alarm's reaction — the plugin never
   fights another controller. A value never confirmed, because the read-back shows another steady
   value from the start of the session, counts as changed from outside (the user's decision,
-  2026-09-25). Keep-alive repeats of an expiring override are not rewrites.
+  2026-09-25); a read-back still showing the plugin's previous value only means ignored.
+  Keep-alive repeats of an expiring override are not rewrites. A read-back that falls back to its
+  value from before the session is the plugin's override dropped — a boiler's Data-Invalid answer
+  clears an OTGW's override, a gateway reset loses it — not another controller: it is sent again
+  at once, and reported as ignored when it keeps falling back.
 - Every exit — unload, reload, error, data loss, an alarm set to hand back — stops every loop but
   the hand-back's own retry, hands control back and clears every override.
 - A hand-back write is not a control decision: no guard holds it back — not freshness or the

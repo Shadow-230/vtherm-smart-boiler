@@ -7,6 +7,7 @@ from dataclasses import replace
 from custom_components.vtherm_smart_boiler.core.controller import ControlConfig, ControlInputs
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.guards import (
+    GuardEvent,
     SetpointGuardConfig,
     SetpointGuardState,
     SwitchGuardConfig,
@@ -92,3 +93,16 @@ def test_heating_on_off_follows_a_recovered_setpoint_at_once() -> None:
     assert out.setpoint is not None
     assert out.setpoint.kind is WriteKind.REWRITE
     assert out.ch_enable is True
+
+
+def test_a_blocked_setpoint_stops_the_heating_writes_too() -> None:
+    """P53: another controller has the boiler: every write stops, heating on/off included,
+    whatever the alarm's reaction."""
+    config = replace(CONFIG, switch_guard=SwitchGuardConfig(keepalive_s=30.0))
+    state, out = loop_step(LoopState(), inputs(0.0), None, config)
+    blocked = replace(state.setpoint, blocked=GuardEvent.OUTSIDE_CHANGE)
+    state = replace(state, setpoint=blocked)
+    _state, out = loop_step(state, inputs(30.0, opening=0.0), 60.0, config)
+    assert out.setpoint is None
+    assert out.ch_enable is None
+    assert out.blocked

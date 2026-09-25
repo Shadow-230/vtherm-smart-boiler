@@ -7,6 +7,7 @@ from dataclasses import replace
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.controller import (
+    _LIMIT_REASON,
     BoilerCommand,
     ControlConfig,
     ControlInputs,
@@ -17,7 +18,7 @@ from custom_components.vtherm_smart_boiler.core.controller import (
     fallback_setpoint,
 )
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
-from custom_components.vtherm_smart_boiler.core.limits import FlowLimits
+from custom_components.vtherm_smart_boiler.core.limits import FlowLimits, LimitCode
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 
 MIN = 60.0
@@ -258,6 +259,19 @@ def test_limits_apply_to_the_curve() -> None:
     _state, [mild] = run([inputs(0.0, outdoor_sensor=15.0)], config)
     assert mild.command.setpoint == 30.0
     assert Reason.LIMIT_HARD_MIN in mild.reasons
+
+
+@pytest.mark.parametrize("code", list(LimitCode))
+def test_every_limit_is_shown_with_a_reason(code: LimitCode) -> None:
+    assert code in _LIMIT_REASON
+
+
+def test_a_fixed_circuit_keeps_the_flow_above_its_temperature() -> None:
+    """A mixing valve set to 45 °C needs at least that from the boiler, whatever the curve."""
+    config = replace(CONFIG, circuit_floor=45.0)
+    _state, [mild] = run([inputs(0.0, outdoor_sensor=15.0)], config)
+    assert mild.command.setpoint == 45.0
+    assert Reason.LIMIT_FIXED_CIRCUIT in mild.reasons
 
 
 @pytest.mark.parametrize("kwargs", [{"decision_interval_s": 0.0}, {"ramp_k_per_min": 0.0}])

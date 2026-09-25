@@ -1,9 +1,10 @@
 """One control step: the controller's decision through the write guards to what is written now.
 
 The same step drives the simulator in tests and the real write path in Home Assistant. When the
-write path cannot switch heating on and off, "off" is written as a low setpoint. A hand-back is
-passed on as it is — the guards never hold it back — and resets the guards, so a later control
-session starts fresh.
+write path cannot switch heating on and off, "off" is written as a low setpoint. Once the setpoint
+guard has found another controller, every write stops — heating on/off included, whatever the
+alarm's reaction: the plugin never fights it. A hand-back is passed on as it is — the guards never
+hold it back — and resets the guards, so a later control session starts fresh.
 """
 
 from __future__ import annotations
@@ -50,6 +51,7 @@ class LoopOutput:
     hand_back: bool = False  # give control back now
     events: tuple[GuardEvent, ...] = ()
     heating_on: bool | None = None  # the logical heating state now commanded
+    blocked: bool = False  # another controller has the boiler: nothing is written
 
 
 def loop_step(
@@ -62,7 +64,8 @@ def loop_step(
     if decision.hand_back:
         return LoopState(control), LoopOutput(decision, hand_back=True)
     if decision.command is None:
-        return replace(state, control=control), LoopOutput(decision)
+        blocked = state.setpoint.blocked is not None
+        return replace(state, control=control), LoopOutput(decision, blocked=blocked)
 
     now = inputs.now
     switched = plan_switch(state.switch, decision.command.ch_enable, now, config.switch_guard)
@@ -76,6 +79,11 @@ def loop_step(
         heating_on = not off
         ch_write = None
     planned = plan_setpoint(state.setpoint, desired, confirmed_setpoint, now, config.setpoint_guard)
+    if planned.state.blocked is not None:
+        # Another controller: heating on/off stops with the setpoint, and nothing is commanded.
+        return LoopState(control, planned.state, state.switch), LoopOutput(
+            decision, events=planned.events, blocked=True
+        )
     recovered = planned.action is not None and planned.action.kind in (
         WriteKind.REWRITE,
         WriteKind.RESEND,

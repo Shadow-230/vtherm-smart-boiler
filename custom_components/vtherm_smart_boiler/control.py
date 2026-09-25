@@ -120,6 +120,7 @@ class ControlStatus:
     paused_zones: tuple[str, ...] = ()
     latched_by: tuple[str, ...] = ()  # the alarms that latched control, while it stays latched
     unknown_zones: tuple[str, ...] = ()  # zones whose state is not known now
+    writes_stopped: bool = False  # another controller has the boiler: nothing is written
 
 
 @dataclass
@@ -515,8 +516,9 @@ class ControlUnit:
             session.alarms.add(_EVENT_ALARM[event])
         if out.events:
             self._coordinator.schedule_save()
-        if session.loop.setpoint.confirmed_at is not None:
-            session.alarms.discard(ControlAlarm.WRITE_IGNORED)
+        setpoint = session.loop.setpoint
+        if setpoint.confirmed_at is not None and not setpoint.ignored_reported:
+            session.alarms.discard(ControlAlarm.WRITE_IGNORED)  # the value holds
         command = out.decision.command
         await self._async_learning(
             now,
@@ -524,6 +526,7 @@ class ControlUnit:
             zones,
             None if command is None else command.setpoint,
             out.heating_on,
+            out.blocked,
         )
         self._status = ControlStatus(
             configured=True,
@@ -541,6 +544,7 @@ class ControlUnit:
             paused_zones=tuple(sorted(session.learning.paused)),
             latched_by=session.loop.control.latched_by if session.loop.control.latched else (),
             unknown_zones=unknown,
+            writes_stopped=out.blocked,
         )
 
     def _follow_unknown_zones(self, now: float, zones: Sequence[ZoneState]) -> tuple[str, ...]:
@@ -808,8 +812,10 @@ class ControlUnit:
         zones: Sequence[ZoneState],
         heating_setpoint: float | None,
         heating: bool | None,
+        writes_stopped: bool = False,
     ) -> None:
-        if not (self.options.learning_pauses and self._session.loop.control.controlling):
+        controlling = self._session.loop.control.controlling and not writes_stopped
+        if not (self.options.learning_pauses and controlling):
             await self._async_release_learning(now)
             return
         coordinator = self._coordinator
