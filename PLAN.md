@@ -75,3 +75,5 @@ Checks before control code: `docs/plan-0.2.md`, phase F (done 2026-09-24; answer
 
 - 0.1 — `docs/plan-0.1.md`
 - 0.2 — `docs/plan-0.2.md`
+- 0.2.1 — `docs/plan-0.2.1.md`: the corrections after the review of 2026-09-24 and the user's
+  decisions of 2026-09-25, before the test HA; the first version to be published

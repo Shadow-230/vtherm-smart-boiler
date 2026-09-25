@@ -13,8 +13,10 @@ the review and the release. S3 can happen at any time.
 
 Status on 2026-09-24: built through phase J in-process — F to I, J1, J3 and K2 done, J4's
 in-process scenarios pass (`tests/integration/test_acceptance.py`); the control code went through
-two independent reviews, every finding fixed or listed below under "Open for 0.2". Waiting for
-the user at J2 (the test HA), then J4 in the test HA and phase K. S3 stays optional.
+two independent reviews, every finding fixed or listed below under "Open for 0.2". A third,
+wider review (`docs/review-2026-09-24.md`) and the user's decisions of 2026-09-25 come first as
+0.2.1 (`docs/plan-0.2.1.md`); then J2 (the test HA), J4 in the test HA and phase K, which
+publish 0.2.1. S3 stays optional.
 
 ## Rules that shape this release
 

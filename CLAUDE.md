@@ -2,13 +2,15 @@
 
 Working rules, code conventions and verified facts for Claude. **Where to continue:** the first
 step without ✅ (optional ones aside) in [`docs/plan-0.1.md`](docs/plan-0.1.md), then in
-[`docs/plan-0.2.md`](docs/plan-0.2.md), whose status line says where the build stands; phases
+[`docs/plan-0.2.1.md`](docs/plan-0.2.1.md) (corrections that come before the rest of 0.2), then
+in [`docs/plan-0.2.md`](docs/plan-0.2.md), whose status line says where the build stands; phases
 run in order. 0.1 and 0.2 are built in one go;
 0.2 is the first release.
 
 - **Scope** (general, any installation): [`SCOPE.md`](SCOPE.md)
 - **Development plan:** [`PLAN.md`](PLAN.md); plans per release:
-  [`docs/plan-0.1.md`](docs/plan-0.1.md), [`docs/plan-0.2.md`](docs/plan-0.2.md)
+  [`docs/plan-0.1.md`](docs/plan-0.1.md), [`docs/plan-0.2.md`](docs/plan-0.2.md),
+  [`docs/plan-0.2.1.md`](docs/plan-0.2.1.md)
 - **Research** (network reads, dated): `research/`
 - **Author's own assessment**, private — never a source of values for code, defaults, tests or
   docs: [`home-assessment.md`](home-assessment.md)
