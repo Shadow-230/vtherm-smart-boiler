@@ -593,3 +593,14 @@ async def test_a_setpoint_entity_must_be_in_a_temperature_unit(
         },
     )
     assert result["errors"] == {"setpoint_entity": "setpoint_unit_not_supported"}
+
+
+async def test_one_entry_per_home_assistant(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """P36: two entries could control one boiler; the plugin serves one boiler per Home
+    Assistant."""
+    await create_entry(hass, entities, "simple")
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "single_instance_allowed"
