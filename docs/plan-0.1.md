@@ -108,7 +108,7 @@ metrics. The test HA (`devenv/`, test LXC) is built with 0.2 (`docs/plan-0.2.md`
 
 | Step | Work |
 |---|---|
-| D1 ✅ | `manifest.json`: `vtherm-api>=0.4.0`, config flow, local; newer VT features detected at runtime |
+| D1 ✅ | `manifest.json`: `vtherm-api>=0.4.0`, config flow, local; newer VT features detected at runtime (raised to `vtherm-api>=0.5.0` in 0.2.1, R1: the feature-manager contract was checked on 0.5.0) |
 | D2 ✅ | config flow, simple and advanced: boiler class and power, optional gas consumption at minimum and maximum power, entity fields per signal (required: flame, flow temperature), circuits, VT zones per circuit with emitter type and size, foreign-heat switches or sensors per zone, building (coarse answers or heat loss), weather entity, reference-room strategy; options flow; every option with a cautious default and a description of what it does and what it risks |
 | D3 ✅ | transport from mapped entities: freshness per signal, capabilities from filled fields |
 | D4 ✅ | `vtherm_link.py`: VT zones, `central_mode`, device power; capability detection |
