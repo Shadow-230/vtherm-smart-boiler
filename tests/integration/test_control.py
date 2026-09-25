@@ -1225,7 +1225,9 @@ async def test_a_steady_outdoor_reading_is_not_a_stale_one(rig: Rig) -> None:
     assert "outdoor_sensor" in rig.state("sensor", "control_state").attributes["reasons"]
 
 
-async def test_a_stuck_outdoor_sensor_leaves_the_curve(rig: Rig) -> None:
+async def test_a_stuck_outdoor_sensor_leaves_the_curve(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The monitor found the sensor stuck (or far from the weather): the curve holds its last
     value, then the fallback, and the user is told."""
     from custom_components.vtherm_smart_boiler.core.signal_check import (
@@ -1236,13 +1238,18 @@ async def test_a_stuck_outdoor_sensor_leaves_the_curve(rig: Rig) -> None:
     await start(rig)
     await rig.switch(True)
     assert rig.entry is not None
+    from dataclasses import replace as replaced
+
     coordinator = rig.entry.runtime_data
+    await coordinator.async_run_analysis()
     real = coordinator.analysis
+    assert real is not None
 
-    class Suspect:
-        outdoor = OutdoorCheck(OutdoorStatus.STUCK, 0.0, 0.0)
+    async def no_analysis(*_args: Any) -> None:
+        return None  # the monitor's own analysis would replace the finding meanwhile
 
-    coordinator.analysis = Suspect()
+    monkeypatch.setattr(coordinator, "async_run_analysis", no_analysis)
+    coordinator.analysis = replaced(real, outdoor=OutdoorCheck(OutdoorStatus.STUCK, 0.0, 0.0))
     await rig.advance(300)  # the next water decision
     state = rig.state("sensor", "control_state")
     assert "outdoor_sensor" not in state.attributes["reasons"]

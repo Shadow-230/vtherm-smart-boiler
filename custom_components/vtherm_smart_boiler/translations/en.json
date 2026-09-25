@@ -607,7 +607,8 @@
       "hand_back_value_effect_missing": "The value method needs its effect: what the device does with the hand-back value.",
       "hand_back_pending": "A hand-back has not reached the boiler yet: the write path and what control writes to cannot change until it does. Bring the target back, or choose \"No control\": the hand-back is still retried.",
       "count_threshold_above_zones": "More zones than are configured: heating would never be asked for.",
-      "no_demand_criterion": "Set at least one criterion: a zone count of 0 needs a power or an opening threshold."
+      "no_demand_criterion": "Set at least one criterion: a zone count of 0 needs a power or an opening threshold.",
+      "off_setpoint_not_below_hard_min": "\"Off\" must be below the lowest flow setpoint, or it would heat."
     },
     "abort": {
       "missing_signal": "A required signal is missing.",
@@ -962,6 +963,9 @@
     },
     "blocked_setpoint_outside_entity_range": {
       "message": "The setpoint entity does not accept every value control may write (a limit, the \"off\" setpoint or the hand-back value): adjust them to its range in the options. Other reasons: {others}."
+    },
+    "blocked_off_setpoint_not_below_hard_min": {
+      "message": "The \"off\" setpoint is not below the lowest flow setpoint, so \"off\" would heat: lower it in the options. Other reasons: {others}."
     }
   },
   "issues": {

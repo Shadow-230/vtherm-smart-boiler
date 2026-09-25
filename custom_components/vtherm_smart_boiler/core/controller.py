@@ -113,6 +113,7 @@ class ControlConfig:
     limits: FlowLimits = field(default_factory=FlowLimits)
     circuit_max: float | None = None
     boiler_max: float | None = None
+    circuit_floor: float | None = None  # a fixed circuit's temperature: the boiler flow's floor
     frost: FrostConfig = field(default_factory=FrostConfig)
     demand: DemandConfig = field(default_factory=DemandConfig)
     fallback_setpoint: float | None = None  # None: the curve at its design point
@@ -315,12 +316,13 @@ def _heating_decision(
             curve_value = config.curve.flow(outdoor.effective)
         limited = limit_flow(
             curve_value + correction, curve_value, config.limits, config.circuit_max,
-            config.boiler_max,
+            config.boiler_max, config.circuit_floor,
         )  # fmt: skip
         water.extend(_LIMIT_REASON[code] for code in limited.applied)
         upper = limit_flow(
-            1e6, curve_value, config.limits, config.circuit_max, config.boiler_max
-        ).value
+            1e6, curve_value, config.limits, config.circuit_max, config.boiler_max,
+            config.circuit_floor,
+        ).value  # fmt: skip
         target: float = limited.value
         water_reasons, decided_at = tuple(water), now
     else:

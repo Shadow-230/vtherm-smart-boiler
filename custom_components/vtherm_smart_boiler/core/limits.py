@@ -1,8 +1,10 @@
 """Limits on the flow setpoint and frost protection.
 
 Every setpoint the plugin writes passes ``limit_flow``. Caps that protect the installation — the
-hard maximum, a circuit's maximum (underfloor on an unmixed loop), the boiler's own maximum and
-the weather-dependent ceiling — win over the hard minimum when the two conflict.
+hard maximum, a circuit's maximum (underfloor on an unmixed loop), the boiler's own maximum —
+win over the hard minimum when the two conflict. The weather-dependent ceiling protects nothing
+but gas, so it never falls below the hard minimum, nor below the temperature a fixed circuit (a
+thermostatic mixing valve) needs from the boiler.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ class LimitCode(StrEnum):
     CIRCUIT_MAX = "circuit_max"
     BOILER_MAX = "boiler_max"
     CEILING = "ceiling"
+    FIXED_CIRCUIT = "fixed_circuit"  # a fixed circuit needs at least its temperature
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,23 +52,29 @@ def limit_flow(
     limits: FlowLimits,
     circuit_max: float | None = None,
     boiler_max: float | None = None,
+    floor: float | None = None,
 ) -> Limited:
-    """``requested`` within the limits; the caps win when they fall below the hard minimum."""
-    caps = [
-        (limits.hard_max, LimitCode.HARD_MAX),
-        (curve_value + limits.ceiling_band, LimitCode.CEILING),
-    ]
+    """``requested`` within the limits. ``floor``: what a fixed circuit needs from the boiler.
+    Installation caps win over the lower bounds; the weather ceiling gives way to them."""
+    caps = [(limits.hard_max, LimitCode.HARD_MAX)]
     if circuit_max is not None:
         caps.append((circuit_max, LimitCode.CIRCUIT_MAX))
     if boiler_max is not None:
         caps.append((boiler_max, LimitCode.BOILER_MAX))
-    upper, upper_code = min(caps, key=lambda cap: cap[0])
+    install, install_code = min(caps, key=lambda cap: cap[0])
+    lower, lower_code = limits.hard_min, LimitCode.HARD_MIN
+    if floor is not None and floor > lower:
+        lower, lower_code = floor, LimitCode.FIXED_CIRCUIT
+    ceiling = max(curve_value + limits.ceiling_band, lower)
+    upper, upper_code = (
+        (install, install_code) if install <= ceiling else (ceiling, LimitCode.CEILING)
+    )
     if requested > upper:
         return Limited(upper, (upper_code,))
-    if requested < limits.hard_min:
-        if limits.hard_min > upper:
-            return Limited(upper, (LimitCode.HARD_MIN, upper_code))
-        return Limited(limits.hard_min, (LimitCode.HARD_MIN,))
+    if requested < lower:
+        if lower > install:
+            return Limited(install, (lower_code, install_code))
+        return Limited(lower, (lower_code,))
     return Limited(requested)
 
 

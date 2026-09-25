@@ -123,7 +123,14 @@ def test_the_count_never_asks_for_more_zones_than_are_known() -> None:
 
 
 @pytest.mark.parametrize(
-    "kwargs", [{"count_threshold": -1}, {"zone_opening": 1.0}, {"count_threshold": 0}]
+    "kwargs",
+    [
+        {"count_threshold": -1},
+        {"zone_opening": 1.0},
+        {"count_threshold": 0},
+        {"opening_threshold": 0.0},  # would mean demand for ever
+        {"power_threshold_kw": 0.0},
+    ],
 )
 def test_invalid_config(kwargs: dict) -> None:
     with pytest.raises(ValueError, match="must"):

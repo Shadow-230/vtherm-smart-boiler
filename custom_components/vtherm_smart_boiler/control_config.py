@@ -85,6 +85,7 @@ CONFIG_BLOCKERS = (
     "one_direct_circuit_only",
     "underfloor_without_max_flow",
     "count_threshold_above_zones",
+    "off_setpoint_not_below_hard_min",
 )
 OTGW_PATHS = frozenset({WritePath.OPENTHERM_GW, WritePath.OTGW_MQTT})
 # Write types control may use: nothing the boiler stores in its memory.
@@ -179,8 +180,11 @@ def parse_control(
         write_type = WriteType(data.get("write_type", WriteType.UNKNOWN))
         ch_write_type = WriteType(data.get("ch_write_type", WriteType.UNKNOWN))
     circuit_max = circuit.max_flow if circuit is not None else None
+    circuit_floor = None
     if circuit is not None and circuit.control is CircuitControl.PASSIVE_FIXED:
-        circuit_max = None  # the mixing valve protects the emitters itself
+        # The mixing valve needs at least its temperature from the boiler; a maximum the user
+        # declared still applies.
+        circuit_floor = circuit.fixed_temperature
     ramp = _float(data, "ramp_k_per_min", 1.0)
     frost_zone = data.get("frost_zone") or None
     control = ControlConfig(
@@ -192,6 +196,7 @@ def parse_control(
         ),
         circuit_max=circuit_max,
         boiler_max=boiler_max,
+        circuit_floor=circuit_floor,
         frost=FrostConfig(
             room_limit=float(data.get("frost_limit", 5.0)),
             release=float(data.get("frost_release", 7.0)),
@@ -322,4 +327,8 @@ def config_blockers(control: ControlOptions, installation: Installation) -> list
             found.append("underfloor_without_max_flow")
     if control.loop.control.demand.count_threshold > len(installation.zones):
         found.append("count_threshold_above_zones")  # heating would never be asked for
+    if not control.loop.ch_writes and (
+        control.loop.off_setpoint >= control.loop.control.limits.hard_min
+    ):
+        found.append("off_setpoint_not_below_hard_min")  # "off" would heat
     return found

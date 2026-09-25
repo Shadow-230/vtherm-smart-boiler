@@ -37,10 +37,25 @@ def test_the_lowest_cap_wins() -> None:
     assert boiler == Limited(55.0, (LimitCode.BOILER_MAX,))
 
 
-def test_caps_win_over_the_hard_minimum() -> None:
+def test_caps_that_protect_the_installation_win_over_the_hard_minimum() -> None:
     limits = FlowLimits(hard_min=30.0, hard_max=70.0)
     result = limit_flow(20.0, 20.0, limits, circuit_max=28.0)
     assert result == Limited(28.0, (LimitCode.HARD_MIN, LimitCode.CIRCUIT_MAX))
+
+
+def test_the_weather_ceiling_never_falls_below_the_hard_minimum() -> None:
+    """The ceiling protects nothing but gas: it gives way to the hard minimum."""
+    limits = FlowLimits(hard_min=30.0, hard_max=70.0, ceiling_band=5.0)
+    assert limit_flow(40.0, 20.0, limits) == Limited(30.0, (LimitCode.CEILING,))
+    assert limit_flow(20.0, 20.0, limits) == Limited(30.0, (LimitCode.HARD_MIN,))
+
+
+def test_a_fixed_temperature_circuit_keeps_the_boiler_flow_above_it() -> None:
+    """A thermostatic mixing valve set to 40 °C needs at least that from the boiler."""
+    assert limit_flow(32.0, 32.0, LIMITS, floor=40.0) == Limited(40.0, (LimitCode.FIXED_CIRCUIT,))
+    assert limit_flow(32.0, 32.0, LIMITS, floor=40.0, circuit_max=38.0) == Limited(
+        38.0, (LimitCode.FIXED_CIRCUIT, LimitCode.CIRCUIT_MAX)
+    )
 
 
 @pytest.mark.parametrize(

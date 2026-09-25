@@ -225,8 +225,9 @@ def zone_schema(options: dict[str, Any], current: dict[str, Any]) -> vol.Schema:
                 )
             )
         )
-    fields[vol.Required("emitter", default=current.get("emitter", EmitterType.RADIATOR.value))] = (
-        _select("emitter", [e.value for e in EmitterType])
+    # No default: underfloor needs its own maximum flow, and a wrong type would hide that.
+    fields[vol.Required("emitter", default=current.get("emitter", vol.UNDEFINED))] = _select(
+        "emitter", [e.value for e in EmitterType]
     )
     sources = [s["entity_id"] for s in current.get("foreign_heat", [])]
     fields[vol.Optional("foreign_heat", default=sources)] = _entity(
@@ -505,8 +506,8 @@ def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
             **required("decision_interval_min", 5.0, _number(1, 30, 1, "min")),
             **required("off_setpoint", 10.0, _number(0, 30, 0.5, "°C")),
             **required("count_threshold", 1, _number(0, 20, 1)),
-            _optional("power_threshold_kw", control): _number(0, 100, 0.1, "kW"),
-            _optional("opening_threshold", control): _number(0, 100, 1, "%"),
+            _optional("power_threshold_kw", control): _number(0.1, 100, 0.1, "kW"),
+            _optional("opening_threshold", control): _number(1, 100, 1, "%"),
             **required("learning_pauses", True, selector.BooleanSelector()),
             **required("comfort_correction", True, selector.BooleanSelector()),
         }
@@ -1180,8 +1181,11 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             count = int(user_input.get("count_threshold", 1))
+            hard_min = float(self.options.get(CONTROL, {}).get("hard_min", 25.0))
             if _outside(user_input.get("off_setpoint"), self._setpoint_bounds()):
                 errors["off_setpoint"] = "off_setpoint_outside_entity_range"
+            elif float(user_input.get("off_setpoint", 10.0)) >= hard_min:
+                errors["off_setpoint"] = "off_setpoint_not_below_hard_min"
             elif count > len(self.options.get(ZONES, [])):
                 errors["count_threshold"] = "count_threshold_above_zones"
             elif count == 0 and not (

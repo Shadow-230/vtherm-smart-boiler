@@ -607,7 +607,8 @@
       "hand_back_value_effect_missing": "Metoda wartości wymaga skutku: co urządzenie robi z wartością oddania.",
       "hand_back_pending": "Oddanie sterowania jeszcze nie dotarło do kotła: ścieżka zapisu i to, do czego sterowanie pisze, nie mogą się zmienić, dopóki nie dotrze. Przywróć cel albo wybierz „Bez sterowania”: oddanie jest nadal ponawiane.",
       "count_threshold_above_zones": "Więcej stref, niż jest skonfigurowanych: grzanie nigdy nie zostałoby wezwane.",
-      "no_demand_criterion": "Ustaw co najmniej jedno kryterium: liczba stref 0 wymaga progu mocy albo otwarcia."
+      "no_demand_criterion": "Ustaw co najmniej jedno kryterium: liczba stref 0 wymaga progu mocy albo otwarcia.",
+      "off_setpoint_not_below_hard_min": "„Wyłącz” musi być poniżej najniższej nastawy zasilania, inaczej by grzało."
     },
     "abort": {
       "missing_signal": "Brakuje wymaganego sygnału.",
@@ -962,6 +963,9 @@
     },
     "blocked_setpoint_outside_entity_range": {
       "message": "Encja nastawy nie przyjmuje każdej wartości, którą sterowanie może zapisać (limitu, nastawy „wyłączone” albo wartości oddania): dopasuj je w opcjach do jej zakresu. Inne powody: {others}."
+    },
+    "blocked_off_setpoint_not_below_hard_min": {
+      "message": "Nastawa „wyłącz” nie jest poniżej najniższej nastawy zasilania, więc „wyłącz” by grzało: obniż ją w opcjach. Inne powody: {others}."
     }
   },
   "issues": {

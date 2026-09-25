@@ -178,7 +178,12 @@ def test_every_blocker_is_listed() -> None:
         (Circuit("main"),),
         (Zone("climate.a", "main", EmitterType.UNDERFLOOR),),
     )
-    cases += [(OTGW, two), (OTGW, floor), (OTGW | {"count_threshold": 5}, RADIATORS)]
+    cases += [
+        (OTGW, two),
+        (OTGW, floor),
+        (OTGW | {"count_threshold": 5}, RADIATORS),
+        (ENTITY | {"off_setpoint": 30}, RADIATORS),
+    ]
     for data, installation in cases:
         found |= set(config_blockers(parse_control(data, RADIATORS, None), installation))
     assert found == set(CONFIG_BLOCKERS)
@@ -293,3 +298,22 @@ def test_frost_protection_watches_the_zone_picked_or_every_zone() -> None:
     # A zone no longer configured must not leave frost protection watching nothing.
     gone = parse_control(OTGW | {"frost_zone": "climate.gone"}, RADIATORS, None)
     assert gone.loop.control.frost.zone is None
+
+
+def test_off_as_a_low_setpoint_must_be_below_the_hard_minimum() -> None:
+    """Else "off" would heat; with a heating switch the low setpoint is not used for "off"."""
+    options = parse_control(ENTITY | {"off_setpoint": 30}, RADIATORS, None)
+    assert config_blockers(options, RADIATORS) == ["off_setpoint_not_below_hard_min"]
+    otgw = parse_control(OTGW | {"off_setpoint": 30}, RADIATORS, None)
+    assert config_blockers(otgw, RADIATORS) == []
+
+
+def test_a_passive_fixed_circuit_sets_the_floor_and_keeps_its_maximum() -> None:
+    fixed = Installation(
+        Boiler(BoilerClass.FLOW_SETPOINT),
+        (Circuit("main", CircuitControl.PASSIVE_FIXED, 40.0, 55.0),),
+        (Zone("climate.a", "main"),),
+    )
+    control = parse_control(OTGW, fixed, None).loop.control
+    assert control.circuit_floor == 40.0
+    assert control.circuit_max == 55.0

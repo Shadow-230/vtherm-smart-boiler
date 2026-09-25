@@ -228,7 +228,7 @@ async def create_entry(
         | ({"modulation_scale": "range", "shared_return": True} if level == "advanced" else {}),
         {"control": "unmixed_shared"} | ({"add_another": False} if level == "advanced" else {}),
         {"zones": [entities[zone] for zone in zones]},
-        *({} for _zone in zones),
+        *({"emitter": "radiator"} for _zone in zones),
         {},
         {"strategy": "average"},
     ):
@@ -465,6 +465,8 @@ async def test_control_at_the_advanced_level_and_back(
     assert result["errors"] == {"count_threshold": "count_threshold_above_zones"}
     result = await options_step(hass, result, {"count_threshold": 0})
     assert result["errors"] == {"count_threshold": "no_demand_criterion"}
+    result = await options_step(hass, result, {"off_setpoint": 30})  # hard minimum 25
+    assert result["errors"] == {"off_setpoint": "off_setpoint_not_below_hard_min"}
     result = await options_step(hass, result, {"ramp_k_per_min": 0.5, "off_setpoint": 12})
     assert result["step_id"] == "control_alarms"
     assert result["data_schema"]({})["outside_change"] == "hand_back"  # the default

@@ -148,7 +148,9 @@ What the plugin can do depends on what the integration can write:
   hour). What stale inputs lead to — boiler off, or back to the previous controller — is the
   user's choice, with its risks described.
 - A second circuit controlled through the boiler (e.g. OpenTherm CH2) comes later; 0.2 writes
-  one circuit. The data model covers several circuits from the start.
+  one circuit: control needs exactly one configured circuit fed by the boiler flow, unmixed or
+  passive fixed; with any other layout the monitor runs and a blocker says why. The data model
+  covers several circuits from the start.
 
 ### Gateway topology
 

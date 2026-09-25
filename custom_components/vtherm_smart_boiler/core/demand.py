@@ -37,6 +37,10 @@ class DemandConfig:
             and self.opening_threshold is None
         ):
             raise ValueError("at least one demand criterion must be set")
+        if self.power_threshold_kw is not None and self.power_threshold_kw <= 0:
+            raise ValueError("a power threshold must be above 0: 0 would mean demand for ever")
+        if self.opening_threshold is not None and not 0.0 < self.opening_threshold <= 1.0:
+            raise ValueError("an opening threshold must be above 0: 0 would mean demand for ever")
 
 
 @dataclass(frozen=True, slots=True)
