@@ -35,20 +35,20 @@
         },
         "data_description": {
           "flame": "Włączony, gdy palnik pali. Z niego pochodzi każda metryka cykli: zła encja da złe starty i czasy palenia.",
-          "flow": "Woda wychodząca z kotła. Służy do dostępności ciepłej wody, mocy grzejników i odróżniania c.w.u. od c.o.",
-          "return": "Woda wracająca do kotła. Włącza udział kondensacji; bez niej kondensacji nie da się ocenić.",
-          "modulation": "Modulacja palnika w procentach. Z zakresem mocy kotła szacuje oddane ciepło i zużycie gazu.",
-          "dhw_active": "Włączona, gdy kocioł grzeje ciepłą wodę użytkową. Bez niej grzanie c.w.u. jest wnioskowane mniej pewnie i część może zostać policzona jako c.o.",
-          "pressure": "Włącza alarmy ciśnienia i ostrzeżenie o spadającym ciśnieniu.",
-          "outdoor": "Własny czujnik zewnętrzny kotła. Służy do stopniodni i jest porównywany z encją pogody.",
-          "ch_setpoint": "Nastawa zasilania, do której dąży kocioł. Pomaga odróżnić c.w.u. od c.o.",
+          "flow": "Woda wypływająca z kotła. Służy do dostępności ciepłej wody, mocy grzejników i odróżniania grzania CWU od c.o.; przy sterowaniu jest częścią łącza z kotłem. Zła encja wprowadza w błąd je wszystkie.",
+          "return": "Woda wracająca do kotła. Umożliwia udział kondensacji; bez niej kondensacji nie da się ocenić. Zła encja daje zły udział kondensacji.",
+          "modulation": "Modulacja palnika w procentach. Razem z zakresem mocy kotła szacuje moc cieplną i zużycie gazu. Czujnik w innej jednostce jest odrzucany.",
+          "dhw_active": "Włączony, gdy kocioł grzeje ciepłą wodę użytkową. Bez niego grzanie CWU jest wnioskowane mniej pewnie i część może liczyć się jako c.o.; przy sterowaniu ładowanie CWU mniej pewnie wstrzymuje naukę.",
+          "pressure": "Umożliwia alarmy ciśnienia i ostrzeżenie o spadku ciśnienia. Zła encja daje fałszywe alarmy albo żadne.",
+          "outdoor": "Własny czujnik zewnętrzny kotła. Służy do stopniodni, krzywej sterowania i jest porównywany z encją pogody: czujnik zablokowany albo odbiegający jest pomijany w krzywej. Zły czujnik wygina krzywą, dopóki sprawdzenie tego nie wykryje.",
+          "ch_setpoint": "Nastawa zasilania, do której pracuje kocioł — temperatura. Pomaga odróżnić grzanie CWU od c.o.",
           "ch_active": "Włączone, gdy kocioł grzeje pomieszczenia. Pomaga odróżnić c.w.u. od c.o., gdy nie ma sygnału c.w.u.",
-          "pump_running": "Włączona, gdy pracuje pompa c.o. Zapisywana już teraz; będzie potrzebna ostrzeżeniu o braku przepływu.",
+          "pump_running": "Włączony, gdy pracuje pompa c.o. Umożliwia ostrzeżenie o małym przepływie: wszystkie zawory zamknięte przy pracującej pompie.",
           "flue_gas": "Włącza alarm spalin i wczesne ostrzeżenie o zabrudzonym wymienniku.",
           "gas_meter": "Licznik narastający gazu lub energii. Daje zmierzony gaz na stopniodzień zamiast szacunku.",
           "room_setpoint": "Nastawa pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
           "room_temperature": "Temperatura pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
-          "weather": "Jej prognozy są zapisywane dla przyszłych funkcji prognozy, a jej temperatura zastępuje brakujący czujnik zewnętrzny. Żadne dane nie opuszczają Twojego Home Assistanta."
+          "weather": "Jej prognozy są zapisywane na potrzeby przyszłych funkcji prognoz, a jej temperatura zastępuje brakujący albo podejrzany czujnik zewnętrzny — w stopniodniach i krzywej sterowania. Żadne dane nie opuszczają Home Assistant."
         }
       },
       "boiler": {
@@ -68,13 +68,13 @@
         },
         "data_description": {
           "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Sterowanie (eksperymentalne) wymaga klasy „Nastawa zasilania”; przy pozostałych wtyczka tylko monitoruje.",
-          "dhw": "Brak, zasobnik albo kocioł dwufunkcyjny. Służy do interpretacji grzania c.w.u.",
-          "condensing": "Kotły kondensacyjne dostają progi spalin dla kondensacji; dla innych bezwzględny alarm spalin jest wyłączony.",
-          "boiler_min_power": "Najniższa moc grzewcza z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować.",
-          "boiler_max_power": "Najwyższa moc grzewcza w kW. Z minimalną i modulacją szacuje oddane ciepło.",
-          "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie c.w.u.",
-          "gas_at_min_power": "Gaz na godzinę przy mocy minimalnej, w jednostce Twojego licznika. Z modulacją szacuje zużycie, gdy nie ma licznika.",
-          "gas_at_max_power": "Gaz na godzinę przy mocy maksymalnej, w tej samej jednostce.",
+          "dhw": "Brak, zasobnik albo kocioł dwufunkcyjny. Służy do interpretacji grzania CWU; zły typ liczy ciepłą wodę jako c.o. albo odwrotnie.",
+          "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych; dla innych kotłów bezwzględny alarm spalin jest wyłączony. Zły wybór ostrzega za późno albo bez powodu.",
+          "boiler_min_power": "Najmniejsza moc grzania z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować. Zła wartość wypacza tę ocenę w werdykcie.",
+          "boiler_max_power": "Największa moc grzania w kW. Z minimum i modulacją szacuje moc cieplną; zła wartość wypacza szacunki ciepła i gazu.",
+          "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie CWU; za niska sprawia, że c.o. liczy się jako ciepła woda.",
+          "gas_at_min_power": "Zużycie gazu na godzinę przy mocy minimalnej, w jednostce licznika gazu. Z modulacją szacuje zużycie gazu, gdy nie ma licznika; zła wartość wypacza gaz na stopniodzień.",
+          "gas_at_max_power": "Zużycie gazu na godzinę przy mocy maksymalnej, w tej samej jednostce; zła wartość wypacza szacunki gazu.",
           "modulation_scale": "Czy 0 % to moc minimalna (definicja OpenTherm), czy wartość to procent mocy maksymalnej. Zły wybór zniekształca szacunki ciepła i gazu.",
           "shared_return": "Zaznacz, gdy jeden czujnik powrotu obsługuje oba. Grzanie c.w.u. jest wtedy wyłączane z metryk c.o."
         }
@@ -90,9 +90,9 @@
           "add_another": "Dodaj kolejny obieg"
         },
         "data_description": {
-          "control": "Bez mieszania, wspólny: prosto z kotła. Przez kocioł: drugi obieg mieszany przez kocioł. Osobno: zewnętrzny sterownik mieszający. Pasywny stały: termostatyczny zawór mieszający.",
-          "max_flow": "Najwyższa temperatura, jaką może dostać ten obieg, w °C, np. podłogówka na obiegu bez mieszania. Zapisywana teraz; sterowanie potraktuje ją jako twardy limit.",
-          "fixed_temperature": "Potrzebna dla obiegu pasywnego stałego: nastawa zaworu w °C.",
+          "control": "Bez mieszania, prosto z kotła; mieszany przez kocioł (drugi obieg mieszany przez kocioł); mieszany przez osobny sterownik; albo termostatyczny zawór mieszający (stały). Sterowanie działa tylko dla jednego obiegu zasilanego prosto z kotła albo przez stały zawór. Zły typ sprawia, że sterowanie odmawia albo źle ocenia, co dociera do pokoi.",
+          "max_flow": "Najwyższa temperatura, jaką może dostać ten obieg, w °C, np. podłogówka na obiegu bez mieszania. Sterowanie traktuje ją jako twardy limit — woda nigdy jej nie przekracza; podłogówka na obiegu bez mieszania wymaga jej, zanim sterowanie ruszy. Za wysoka przegrzewa podłogę.",
+          "fixed_temperature": "Potrzebna dla termostatycznego zaworu mieszającego (stałego): jego nastawa w °C. Sterowanie utrzymuje zasilanie kotła co najmniej tak ciepłe; wyższa niż nastawa zaworu sprawia, że woda jest cieplejsza niż trzeba.",
           "flow_entity": "Własna temperatura zasilania obiegu mieszanego. Bez niej nie da się stwierdzić, czy ciepło do niego dociera.",
           "add_another": "Zaznacz, aby po tym opisać jeszcze jeden obieg."
         }
@@ -104,7 +104,7 @@
           "zones": "Strefy"
         },
         "data_description": {
-          "zones": "Proponowane są tylko encje climate VT. Wtyczka je tylko czyta."
+          "zones": "Oferowane są tylko encje klimatu VT. Wtyczka je odczytuje; przy włączonym sterowaniu i wstrzymywaniu nauki także wstrzymuje i wznawia ich naukę SmartPI. Pominięta strefa nie zgłasza zapotrzebowania i nie jest pilnowana przed mrozem."
         }
       },
       "zone": {
@@ -120,13 +120,13 @@
           "temperature_threshold": "Próg temperatury"
         },
         "data_description": {
-          "circuit": "Obieg grzewczy, na którym jest ta strefa.",
-          "emitter": "Grzejniki, podłogówka albo konwektory. Ustala wykładnik EN 442 mocy grzejnika.",
-          "foreign_heat": "Kominek, piec albo grzejnik elektryczny w tym pomieszczeniu, nie słońce: przełącznik lub czujnik binarny włączony, gdy grzeje, albo czujnik mocy lub temperatury. Widoczne jako obce ciepło strefy.",
-          "reference_output_w": "Moc grzejników w warunkach odniesienia, w W. Tylko do szacunku mocy bezwzględnej.",
-          "exponent": "Zastępuje wykładnik EN 442 typu grzejnika.",
-          "power_threshold": "Źródło mocy liczy się jako grzejące powyżej tej wartości, w W. Domyślnie 100 W.",
-          "temperature_threshold": "Potrzebny dla źródła temperatury: liczy się jako grzejące powyżej tej wartości, w °C."
+          "circuit": "Obieg grzewczy tej strefy. Zły obieg przypisuje ciepło strefy niewłaściwej wodzie.",
+          "emitter": "Grzejniki, podłogówka albo konwektory. Ustala wykładnik EN 442 mocy grzejnika i domyślny kształt krzywej; zły typ wypacza oba.",
+          "foreign_heat": "Kominek, piec albo grzejnik elektryczny w tym pokoju, nie słońce: przełącznik albo czujnik binarny włączony, gdy grzeje, albo czujnik mocy (czujnik temperatury na poziomie zaawansowanym, gdzie ustawia się jego próg). Pokazywane jako obce ciepło strefy; przy sterowaniu nauka strefy jest w tym czasie wstrzymana.",
+          "reference_output_w": "Moc grzejników w warunkach odniesienia, w W. Tylko do bezwzględnego szacunku mocy; zła wartość wypacza tylko ten szacunek.",
+          "exponent": "Zastępuje wykładnik EN 442 typu grzejnika. Zły wykładnik wypacza współczynnik mocy grzejnika.",
+          "power_threshold": "Źródło mocy liczy się jako grzejące powyżej tej wartości, w W. Domyślnie 100 W. Za niska liczy czuwanie jako grzanie; za wysoka pomija mały grzejnik.",
+          "temperature_threshold": "Potrzebna dla źródła temperatury: liczy się jako grzejące powyżej tej wartości, w °C. Za niska liczy zimny piec jako grzejący; za wysoka go pomija."
         }
       },
       "building": {
@@ -142,13 +142,13 @@
           "design_outdoor": "Projektowa temperatura zewnętrzna"
         },
         "data_description": {
-          "floor_area": "W m². Z klasą izolacji daje zgrubny pierwszy szacunek.",
-          "insulation": "Słaba, przeciętna, dobra albo bardzo dobra.",
-          "thermal_mass": "Jak wolno dom stygnie. Zapisywana dla przyszłych funkcji prognozy.",
-          "design_load_kw": "Twoje własne obliczenie strat ciepła, w kW przy projektowej temperaturze zewnętrznej. Wygrywa ze zgrubnym szacunkiem.",
-          "loss_coefficient": "Straty ciepła na kelwin, w kW/K, jeśli go znasz. Wygrywa z każdym szacunkiem.",
-          "heating_threshold": "Temperatura zewnętrzna, powyżej której dom nie potrzebuje grzania, w °C; także baza stopniodni. Domyślnie 15 °C.",
-          "design_outdoor": "Najniższa temperatura zewnętrzna, do której odnosi się obciążenie projektowe, w °C. Domyślnie −15 °C."
+          "floor_area": "W m². Z klasą izolacji daje zgrubny pierwszy szacunek, zastępowany w miarę napływu danych; zła powierzchnia wypacza pierwsze dni werdyktu.",
+          "insulation": "Słaba, średnia, dobra albo bardzo dobra. Część zgrubnego pierwszego szacunku.",
+          "thermal_mass": "Jak wolno dom się wychładza. Zapisywane na potrzeby przyszłych funkcji prognoz.",
+          "design_load_kw": "Twoje własne obliczenie strat ciepła, w kW przy projektowej temperaturze zewnętrznej. Wygrywa ze zgrubnym szacunkiem; wartość, jakiej nie ma żaden dom, jest odrzucana.",
+          "loss_coefficient": "Strata ciepła na kelwin, w kW/K, jeśli ją znasz. Wygrywa z każdym szacunkiem, także zmierzonym: zła wartość zostaje zła.",
+          "heating_threshold": "Temperatura zewnętrzna, powyżej której dom nie potrzebuje ogrzewania, w °C; także podstawa stopniodni. Domyślnie 15 °C. Zła wypacza stopniodnie i gaz na stopniodzień.",
+          "design_outdoor": "Najzimniejsza temperatura zewnętrzna, do której odnosi się Twoje obciążenie projektowe, w °C. Domyślnie −15 °C. Zła wypacza szacunek z obciążenia projektowego."
         }
       },
       "reference": {
@@ -160,8 +160,8 @@
           "switch_margin": "Margines przełączenia"
         },
         "data_description": {
-          "strategy": "Największy deficyt śledzi pokój najbardziej poniżej nastawy; wybrana strefa zawsze używa jednego pokoju; średnia używa wszystkich grzanych pokoi.",
-          "zone": "Używana przy strategii wybranej strefy.",
+          "strategy": "Największy niedobór śledzi pokój najbardziej poniżej nastawy; wybrana strefa zawsze używa jednego pokoju; średnia używa każdego grzejącego pokoju. Jest tylko publikowany dla zewnętrznych sterowników; wybrana strefa niedostępna zostawia je bez odniesienia.",
+          "zone": "Używana przy strategii wybranej strefy. Pokój często wyłączony albo niedostępny zostawia odniesienie nieznane.",
           "switch_margin": "Inny pokój musi być o tyle zimniejszy, zanim odniesienie się przełączy, w K. Mniejszy szybciej nadąża, ale częściej przełącza, co może zaburzać zewnętrzny sterownik."
         }
       },
@@ -180,29 +180,29 @@
           "pressure_high_alarm": "Alarm: wysokie ciśnienie",
           "flue_gas_warning": "Ostrzeżenie: spaliny",
           "flue_gas_alarm": "Alarm: spaliny",
-          "starts_per_hour_limit": "Częste zapłony",
+          "starts_per_hour_limit": "Częste starty",
           "unstable_burns_limit": "Niestabilny zapłon"
         },
         "data_description": {
-          "condensing_return": "Powrót poniżej tej wartości liczy się jako kondensacja, w °C. Domyślnie 55 °C.",
-          "short_burn_min": "Palenia krótsze niż ta wartość liczą się jako krótkie, w minutach. Domyślnie 10.",
+          "condensing_return": "Powrót poniżej tej wartości liczy się jako kondensacja, w °C. Domyślnie 55 °C. Za wysoka zawyża udział kondensacji.",
+          "short_burn_min": "Palenia krótsze niż ta wartość liczą się jako krótkie, w minutach. Domyślnie 10. Dłuższa czyni więcej paleń krótkimi, a werdykt surowszym.",
           "monitoring_days": "Dni danych przed werdyktem, a później przed możliwością włączenia sterowania. Domyślnie 7; krócej nie można.",
-          "near_room_k": "Woda w tej odległości od temperatury pokoju oznacza brak ciepłej wody, w K. Domyślnie 3.",
-          "foreign_heat_hold_min": "Jak długo pokój nadal liczy się jako ogrzany po wyłączeniu źródła, w minutach. Domyślnie 60.",
-          "pressure_low_warning": "Ciśnienie poniżej tej wartości daje ostrzeżenie, w barach. Domyślnie 1,0. Weź wartość z instrukcji kotła.",
+          "near_room_k": "Woda w tej odległości od temperatury pokoju liczy się jako brak ciepłej wody, w K. Domyślnie 3. Większa szybciej mówi „brak ciepłej wody”.",
+          "foreign_heat_hold_min": "Jak długo pokój liczy się jako ogrzany po wyłączeniu źródła, w minutach. Domyślnie 60. Dłużej trzyma naukę wstrzymaną dłużej po kominku.",
+          "pressure_low_warning": "Ciśnienie poniżej tej wartości daje ostrzeżenie, w barach. Domyślnie 1,0. Weź wartość z instrukcji kotła: za niska ostrzega za późno.",
           "pressure_low_alarm": "Ciśnienie poniżej tej wartości daje alarm, w barach. Domyślnie 0,7. Musi być niższe od ostrzeżenia.",
-          "pressure_high_warning": "Ciśnienie powyżej tej wartości daje ostrzeżenie, w barach. Domyślnie 2,5.",
+          "pressure_high_warning": "Ciśnienie powyżej tej wartości daje ostrzeżenie, w barach. Domyślnie 2,5. Za wysoka ostrzega za późno.",
           "pressure_high_alarm": "Ciśnienie powyżej tej wartości daje alarm, w barach. Domyślnie 2,8, poniżej typowego zaworu bezpieczeństwa 3 bar. Musi być wyższe od ostrzeżenia.",
-          "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C.",
+          "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
-          "starts_per_hour_limit": "Więcej zapłonów w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12.",
-          "unstable_burns_limit": "Więcej niż tyle spalań krótszych niż minuta w ciągu doby daje ostrzeżenie. Domyślnie 10."
+          "starts_per_hour_limit": "Więcej startów palnika w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12. Za wysoka ukrywa taktowanie.",
+          "unstable_burns_limit": "Więcej paleń krótszych niż minuta w ciągu doby niż ta wartość daje ostrzeżenie. Domyślnie 10. Za wysoka ukrywa problem z zapłonem."
         }
       }
     },
     "error": {
       "min_power_not_below_max": "Moc minimalna musi być mniejsza od maksymalnej.",
-      "fixed_temperature_missing": "Obieg pasywny stały potrzebuje swojej temperatury stałej.",
+      "fixed_temperature_missing": "Termostatyczny zawór mieszający (stały) wymaga swojej nastawy temperatury.",
       "foreign_heat_unsupported": "Źródłem ciepła mogą być tylko przełączniki, czujniki binarne oraz czujniki mocy lub temperatury.",
       "temperature_threshold_missing": "Źródło temperatury potrzebuje progu temperatury (poziom zaawansowany).",
       "reference_zone_unknown": "Wybierz jedną ze skonfigurowanych stref.",
@@ -273,20 +273,20 @@
         },
         "data_description": {
           "flame": "Włączony, gdy palnik pali. Z niego pochodzi każda metryka cykli: zła encja da złe starty i czasy palenia.",
-          "flow": "Woda wychodząca z kotła. Służy do dostępności ciepłej wody, mocy grzejników i odróżniania c.w.u. od c.o.",
-          "return": "Woda wracająca do kotła. Włącza udział kondensacji; bez niej kondensacji nie da się ocenić.",
-          "modulation": "Modulacja palnika w procentach. Z zakresem mocy kotła szacuje oddane ciepło i zużycie gazu.",
-          "dhw_active": "Włączona, gdy kocioł grzeje ciepłą wodę użytkową. Bez niej grzanie c.w.u. jest wnioskowane mniej pewnie i część może zostać policzona jako c.o.",
-          "pressure": "Włącza alarmy ciśnienia i ostrzeżenie o spadającym ciśnieniu.",
-          "outdoor": "Własny czujnik zewnętrzny kotła. Służy do stopniodni i jest porównywany z encją pogody.",
-          "ch_setpoint": "Nastawa zasilania, do której dąży kocioł. Pomaga odróżnić c.w.u. od c.o.",
+          "flow": "Woda wypływająca z kotła. Służy do dostępności ciepłej wody, mocy grzejników i odróżniania grzania CWU od c.o.; przy sterowaniu jest częścią łącza z kotłem. Zła encja wprowadza w błąd je wszystkie.",
+          "return": "Woda wracająca do kotła. Umożliwia udział kondensacji; bez niej kondensacji nie da się ocenić. Zła encja daje zły udział kondensacji.",
+          "modulation": "Modulacja palnika w procentach. Razem z zakresem mocy kotła szacuje moc cieplną i zużycie gazu. Czujnik w innej jednostce jest odrzucany.",
+          "dhw_active": "Włączony, gdy kocioł grzeje ciepłą wodę użytkową. Bez niego grzanie CWU jest wnioskowane mniej pewnie i część może liczyć się jako c.o.; przy sterowaniu ładowanie CWU mniej pewnie wstrzymuje naukę.",
+          "pressure": "Umożliwia alarmy ciśnienia i ostrzeżenie o spadku ciśnienia. Zła encja daje fałszywe alarmy albo żadne.",
+          "outdoor": "Własny czujnik zewnętrzny kotła. Służy do stopniodni, krzywej sterowania i jest porównywany z encją pogody: czujnik zablokowany albo odbiegający jest pomijany w krzywej. Zły czujnik wygina krzywą, dopóki sprawdzenie tego nie wykryje.",
+          "ch_setpoint": "Nastawa zasilania, do której pracuje kocioł — temperatura. Pomaga odróżnić grzanie CWU od c.o.",
           "ch_active": "Włączone, gdy kocioł grzeje pomieszczenia. Pomaga odróżnić c.w.u. od c.o., gdy nie ma sygnału c.w.u.",
-          "pump_running": "Włączona, gdy pracuje pompa c.o. Zapisywana już teraz; będzie potrzebna ostrzeżeniu o braku przepływu.",
+          "pump_running": "Włączony, gdy pracuje pompa c.o. Umożliwia ostrzeżenie o małym przepływie: wszystkie zawory zamknięte przy pracującej pompie.",
           "flue_gas": "Włącza alarm spalin i wczesne ostrzeżenie o zabrudzonym wymienniku.",
           "gas_meter": "Licznik narastający gazu lub energii. Daje zmierzony gaz na stopniodzień zamiast szacunku.",
           "room_setpoint": "Nastawa pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
           "room_temperature": "Temperatura pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
-          "weather": "Jej prognozy są zapisywane dla przyszłych funkcji prognozy, a jej temperatura zastępuje brakujący czujnik zewnętrzny. Żadne dane nie opuszczają Twojego Home Assistanta."
+          "weather": "Jej prognozy są zapisywane na potrzeby przyszłych funkcji prognoz, a jej temperatura zastępuje brakujący albo podejrzany czujnik zewnętrzny — w stopniodniach i krzywej sterowania. Żadne dane nie opuszczają Home Assistant."
         }
       },
       "freshness": {
@@ -326,13 +326,13 @@
         },
         "data_description": {
           "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Sterowanie (eksperymentalne) wymaga klasy „Nastawa zasilania”; przy pozostałych wtyczka tylko monitoruje.",
-          "dhw": "Brak, zasobnik albo kocioł dwufunkcyjny. Służy do interpretacji grzania c.w.u.",
-          "condensing": "Kotły kondensacyjne dostają progi spalin dla kondensacji; dla innych bezwzględny alarm spalin jest wyłączony.",
-          "boiler_min_power": "Najniższa moc grzewcza z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować.",
-          "boiler_max_power": "Najwyższa moc grzewcza w kW. Z minimalną i modulacją szacuje oddane ciepło.",
-          "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie c.w.u.",
-          "gas_at_min_power": "Gaz na godzinę przy mocy minimalnej, w jednostce Twojego licznika. Z modulacją szacuje zużycie, gdy nie ma licznika.",
-          "gas_at_max_power": "Gaz na godzinę przy mocy maksymalnej, w tej samej jednostce.",
+          "dhw": "Brak, zasobnik albo kocioł dwufunkcyjny. Służy do interpretacji grzania CWU; zły typ liczy ciepłą wodę jako c.o. albo odwrotnie.",
+          "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych; dla innych kotłów bezwzględny alarm spalin jest wyłączony. Zły wybór ostrzega za późno albo bez powodu.",
+          "boiler_min_power": "Najmniejsza moc grzania z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować. Zła wartość wypacza tę ocenę w werdykcie.",
+          "boiler_max_power": "Największa moc grzania w kW. Z minimum i modulacją szacuje moc cieplną; zła wartość wypacza szacunki ciepła i gazu.",
+          "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie CWU; za niska sprawia, że c.o. liczy się jako ciepła woda.",
+          "gas_at_min_power": "Zużycie gazu na godzinę przy mocy minimalnej, w jednostce licznika gazu. Z modulacją szacuje zużycie gazu, gdy nie ma licznika; zła wartość wypacza gaz na stopniodzień.",
+          "gas_at_max_power": "Zużycie gazu na godzinę przy mocy maksymalnej, w tej samej jednostce; zła wartość wypacza szacunki gazu.",
           "modulation_scale": "Czy 0 % to moc minimalna (definicja OpenTherm), czy wartość to procent mocy maksymalnej. Zły wybór zniekształca szacunki ciepła i gazu.",
           "shared_return": "Zaznacz, gdy jeden czujnik powrotu obsługuje oba. Grzanie c.w.u. jest wtedy wyłączane z metryk c.o."
         }
@@ -348,9 +348,9 @@
           "add_another": "Dodaj kolejny obieg"
         },
         "data_description": {
-          "control": "Bez mieszania, wspólny: prosto z kotła. Przez kocioł: drugi obieg mieszany przez kocioł. Osobno: zewnętrzny sterownik mieszający. Pasywny stały: termostatyczny zawór mieszający.",
-          "max_flow": "Najwyższa temperatura, jaką może dostać ten obieg, w °C, np. podłogówka na obiegu bez mieszania. Zapisywana teraz; sterowanie potraktuje ją jako twardy limit.",
-          "fixed_temperature": "Potrzebna dla obiegu pasywnego stałego: nastawa zaworu w °C.",
+          "control": "Bez mieszania, prosto z kotła; mieszany przez kocioł (drugi obieg mieszany przez kocioł); mieszany przez osobny sterownik; albo termostatyczny zawór mieszający (stały). Sterowanie działa tylko dla jednego obiegu zasilanego prosto z kotła albo przez stały zawór. Zły typ sprawia, że sterowanie odmawia albo źle ocenia, co dociera do pokoi.",
+          "max_flow": "Najwyższa temperatura, jaką może dostać ten obieg, w °C, np. podłogówka na obiegu bez mieszania. Sterowanie traktuje ją jako twardy limit — woda nigdy jej nie przekracza; podłogówka na obiegu bez mieszania wymaga jej, zanim sterowanie ruszy. Za wysoka przegrzewa podłogę.",
+          "fixed_temperature": "Potrzebna dla termostatycznego zaworu mieszającego (stałego): jego nastawa w °C. Sterowanie utrzymuje zasilanie kotła co najmniej tak ciepłe; wyższa niż nastawa zaworu sprawia, że woda jest cieplejsza niż trzeba.",
           "flow_entity": "Własna temperatura zasilania obiegu mieszanego. Bez niej nie da się stwierdzić, czy ciepło do niego dociera.",
           "add_another": "Zaznacz, aby po tym opisać jeszcze jeden obieg."
         }
@@ -362,7 +362,7 @@
           "zones": "Strefy"
         },
         "data_description": {
-          "zones": "Proponowane są tylko encje climate VT. Wtyczka je tylko czyta."
+          "zones": "Oferowane są tylko encje klimatu VT. Wtyczka je odczytuje; przy włączonym sterowaniu i wstrzymywaniu nauki także wstrzymuje i wznawia ich naukę SmartPI. Pominięta strefa nie zgłasza zapotrzebowania i nie jest pilnowana przed mrozem."
         }
       },
       "zone": {
@@ -378,13 +378,13 @@
           "temperature_threshold": "Próg temperatury"
         },
         "data_description": {
-          "circuit": "Obieg grzewczy, na którym jest ta strefa.",
-          "emitter": "Grzejniki, podłogówka albo konwektory. Ustala wykładnik EN 442 mocy grzejnika.",
-          "foreign_heat": "Kominek, piec albo grzejnik elektryczny w tym pomieszczeniu, nie słońce: przełącznik lub czujnik binarny włączony, gdy grzeje, albo czujnik mocy lub temperatury. Widoczne jako obce ciepło strefy.",
-          "reference_output_w": "Moc grzejników w warunkach odniesienia, w W. Tylko do szacunku mocy bezwzględnej.",
-          "exponent": "Zastępuje wykładnik EN 442 typu grzejnika.",
-          "power_threshold": "Źródło mocy liczy się jako grzejące powyżej tej wartości, w W. Domyślnie 100 W.",
-          "temperature_threshold": "Potrzebny dla źródła temperatury: liczy się jako grzejące powyżej tej wartości, w °C."
+          "circuit": "Obieg grzewczy tej strefy. Zły obieg przypisuje ciepło strefy niewłaściwej wodzie.",
+          "emitter": "Grzejniki, podłogówka albo konwektory. Ustala wykładnik EN 442 mocy grzejnika i domyślny kształt krzywej; zły typ wypacza oba.",
+          "foreign_heat": "Kominek, piec albo grzejnik elektryczny w tym pokoju, nie słońce: przełącznik albo czujnik binarny włączony, gdy grzeje, albo czujnik mocy (czujnik temperatury na poziomie zaawansowanym, gdzie ustawia się jego próg). Pokazywane jako obce ciepło strefy; przy sterowaniu nauka strefy jest w tym czasie wstrzymana.",
+          "reference_output_w": "Moc grzejników w warunkach odniesienia, w W. Tylko do bezwzględnego szacunku mocy; zła wartość wypacza tylko ten szacunek.",
+          "exponent": "Zastępuje wykładnik EN 442 typu grzejnika. Zły wykładnik wypacza współczynnik mocy grzejnika.",
+          "power_threshold": "Źródło mocy liczy się jako grzejące powyżej tej wartości, w W. Domyślnie 100 W. Za niska liczy czuwanie jako grzanie; za wysoka pomija mały grzejnik.",
+          "temperature_threshold": "Potrzebna dla źródła temperatury: liczy się jako grzejące powyżej tej wartości, w °C. Za niska liczy zimny piec jako grzejący; za wysoka go pomija."
         }
       },
       "building": {
@@ -400,13 +400,13 @@
           "design_outdoor": "Projektowa temperatura zewnętrzna"
         },
         "data_description": {
-          "floor_area": "W m². Z klasą izolacji daje zgrubny pierwszy szacunek.",
-          "insulation": "Słaba, przeciętna, dobra albo bardzo dobra.",
-          "thermal_mass": "Jak wolno dom stygnie. Zapisywana dla przyszłych funkcji prognozy.",
-          "design_load_kw": "Twoje własne obliczenie strat ciepła, w kW przy projektowej temperaturze zewnętrznej. Wygrywa ze zgrubnym szacunkiem.",
-          "loss_coefficient": "Straty ciepła na kelwin, w kW/K, jeśli go znasz. Wygrywa z każdym szacunkiem.",
-          "heating_threshold": "Temperatura zewnętrzna, powyżej której dom nie potrzebuje grzania, w °C; także baza stopniodni. Domyślnie 15 °C.",
-          "design_outdoor": "Najniższa temperatura zewnętrzna, do której odnosi się obciążenie projektowe, w °C. Domyślnie −15 °C."
+          "floor_area": "W m². Z klasą izolacji daje zgrubny pierwszy szacunek, zastępowany w miarę napływu danych; zła powierzchnia wypacza pierwsze dni werdyktu.",
+          "insulation": "Słaba, średnia, dobra albo bardzo dobra. Część zgrubnego pierwszego szacunku.",
+          "thermal_mass": "Jak wolno dom się wychładza. Zapisywane na potrzeby przyszłych funkcji prognoz.",
+          "design_load_kw": "Twoje własne obliczenie strat ciepła, w kW przy projektowej temperaturze zewnętrznej. Wygrywa ze zgrubnym szacunkiem; wartość, jakiej nie ma żaden dom, jest odrzucana.",
+          "loss_coefficient": "Strata ciepła na kelwin, w kW/K, jeśli ją znasz. Wygrywa z każdym szacunkiem, także zmierzonym: zła wartość zostaje zła.",
+          "heating_threshold": "Temperatura zewnętrzna, powyżej której dom nie potrzebuje ogrzewania, w °C; także podstawa stopniodni. Domyślnie 15 °C. Zła wypacza stopniodnie i gaz na stopniodzień.",
+          "design_outdoor": "Najzimniejsza temperatura zewnętrzna, do której odnosi się Twoje obciążenie projektowe, w °C. Domyślnie −15 °C. Zła wypacza szacunek z obciążenia projektowego."
         }
       },
       "reference": {
@@ -418,8 +418,8 @@
           "switch_margin": "Margines przełączenia"
         },
         "data_description": {
-          "strategy": "Największy deficyt śledzi pokój najbardziej poniżej nastawy; wybrana strefa zawsze używa jednego pokoju; średnia używa wszystkich grzanych pokoi.",
-          "zone": "Używana przy strategii wybranej strefy.",
+          "strategy": "Największy niedobór śledzi pokój najbardziej poniżej nastawy; wybrana strefa zawsze używa jednego pokoju; średnia używa każdego grzejącego pokoju. Jest tylko publikowany dla zewnętrznych sterowników; wybrana strefa niedostępna zostawia je bez odniesienia.",
+          "zone": "Używana przy strategii wybranej strefy. Pokój często wyłączony albo niedostępny zostawia odniesienie nieznane.",
           "switch_margin": "Inny pokój musi być o tyle zimniejszy, zanim odniesienie się przełączy, w K. Mniejszy szybciej nadąża, ale częściej przełącza, co może zaburzać zewnętrzny sterownik."
         }
       },
@@ -438,23 +438,23 @@
           "pressure_high_alarm": "Alarm: wysokie ciśnienie",
           "flue_gas_warning": "Ostrzeżenie: spaliny",
           "flue_gas_alarm": "Alarm: spaliny",
-          "starts_per_hour_limit": "Częste zapłony",
+          "starts_per_hour_limit": "Częste starty",
           "unstable_burns_limit": "Niestabilny zapłon"
         },
         "data_description": {
-          "condensing_return": "Powrót poniżej tej wartości liczy się jako kondensacja, w °C. Domyślnie 55 °C.",
-          "short_burn_min": "Palenia krótsze niż ta wartość liczą się jako krótkie, w minutach. Domyślnie 10.",
+          "condensing_return": "Powrót poniżej tej wartości liczy się jako kondensacja, w °C. Domyślnie 55 °C. Za wysoka zawyża udział kondensacji.",
+          "short_burn_min": "Palenia krótsze niż ta wartość liczą się jako krótkie, w minutach. Domyślnie 10. Dłuższa czyni więcej paleń krótkimi, a werdykt surowszym.",
           "monitoring_days": "Dni danych przed werdyktem, a później przed możliwością włączenia sterowania. Domyślnie 7; krócej nie można.",
-          "near_room_k": "Woda w tej odległości od temperatury pokoju oznacza brak ciepłej wody, w K. Domyślnie 3.",
-          "foreign_heat_hold_min": "Jak długo pokój nadal liczy się jako ogrzany po wyłączeniu źródła, w minutach. Domyślnie 60.",
-          "pressure_low_warning": "Ciśnienie poniżej tej wartości daje ostrzeżenie, w barach. Domyślnie 1,0. Weź wartość z instrukcji kotła.",
+          "near_room_k": "Woda w tej odległości od temperatury pokoju liczy się jako brak ciepłej wody, w K. Domyślnie 3. Większa szybciej mówi „brak ciepłej wody”.",
+          "foreign_heat_hold_min": "Jak długo pokój liczy się jako ogrzany po wyłączeniu źródła, w minutach. Domyślnie 60. Dłużej trzyma naukę wstrzymaną dłużej po kominku.",
+          "pressure_low_warning": "Ciśnienie poniżej tej wartości daje ostrzeżenie, w barach. Domyślnie 1,0. Weź wartość z instrukcji kotła: za niska ostrzega za późno.",
           "pressure_low_alarm": "Ciśnienie poniżej tej wartości daje alarm, w barach. Domyślnie 0,7. Musi być niższe od ostrzeżenia.",
-          "pressure_high_warning": "Ciśnienie powyżej tej wartości daje ostrzeżenie, w barach. Domyślnie 2,5.",
+          "pressure_high_warning": "Ciśnienie powyżej tej wartości daje ostrzeżenie, w barach. Domyślnie 2,5. Za wysoka ostrzega za późno.",
           "pressure_high_alarm": "Ciśnienie powyżej tej wartości daje alarm, w barach. Domyślnie 2,8, poniżej typowego zaworu bezpieczeństwa 3 bar. Musi być wyższe od ostrzeżenia.",
-          "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C.",
+          "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
-          "starts_per_hour_limit": "Więcej zapłonów w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12.",
-          "unstable_burns_limit": "Więcej niż tyle spalań krótszych niż minuta w ciągu doby daje ostrzeżenie. Domyślnie 10."
+          "starts_per_hour_limit": "Więcej startów palnika w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12. Za wysoka ukrywa taktowanie.",
+          "unstable_burns_limit": "Więcej paleń krótszych niż minuta w ciągu doby niż ta wartość daje ostrzeżenie. Domyślnie 10. Za wysoka ukrywa problem z zapłonem."
         }
       },
       "control": {
@@ -537,17 +537,17 @@
           "frost_zone": "Strefa przeciwmrozowa"
         },
         "data_description": {
-          "design_outdoor": "Najniższa temperatura zewnętrzna, na którą zaprojektowano ogrzewanie, w °C. Domyślnie: projektowa temperatura zewnętrzna budynku albo −15 °C.",
+          "design_outdoor": "Najzimniejsza temperatura zewnętrzna, na którą zaprojektowano ogrzewanie, w °C. Domyślnie: projektowa temperatura zewnętrzna budynku albo −15 °C. Zbyt zimna wartość daje za mało wody w mrozy.",
           "design_flow": "Temperatura zasilania potrzebna przy projektowej temperaturze zewnętrznej, w °C, np. wartość z krzywej ustawionej w kotle. Wymagana; nie ma wartości domyślnej. Za wysoka marnuje gaz i powoduje taktowanie palnika; za niska zostawia chłodne pokoje w silny mróz.",
-          "hard_min": "Żadna nastawa poniżej tej wartości, w °C. Domyślnie 25 °C.",
+          "hard_min": "Żadnej nastawy poniżej tej wartości, w °C. Domyślnie 25 °C. Za wysoka grzeje pokoje przy łagodnej pogodzie i marnuje gaz; nastawa „wyłączone” musi być poniżej niej.",
           "hard_max": "Żadna nastawa powyżej tej wartości, cokolwiek wyliczy krzywa lub korekta, w °C. Domyślnie 70 °C. Ogrzewanie podłogowe wymaga też maksymalnego zasilania swojego obiegu.",
-          "room": "Temperatura pokojowa, dla której zbudowana jest krzywa, w °C. Domyślnie 20 °C.",
-          "exponent": "Jak wygina się krzywa. Puste pole dobiera go według grzejników: grzejniki 1,3, konwektory 1,4, podłogówka 1,1.",
-          "offset": "Przesuwa całą krzywą w górę lub w dół, w K. Domyślnie 0.",
-          "ceiling_band": "Jak wysoko ponad krzywą może sięgnąć korekta komfortu, w K. Domyślnie 10 K; 0 w praktyce wyłącza korektę.",
+          "room": "Temperatura pokoju, dla której zbudowano krzywą, w °C. Domyślnie 20 °C. Za wysoka podnosi całą krzywą i marnuje gaz.",
+          "exponent": "Jak wygina się krzywa. Puste pole bierze go z grzejników: grzejniki 1,3, konwektory 1,4, podłogówka 1,1. Złe wygięcie niedogrzewa w mrozy albo przegrzewa przy łagodnej pogodzie.",
+          "offset": "Przesuwa całą krzywą w górę albo w dół, w K. Domyślnie 0. W górę marnuje gaz; w dół zostawia zimne pokoje.",
+          "ceiling_band": "Jak wysoko ponad krzywą może pójść korekta komfortu, w K. Domyślnie 10 K; 0 w praktyce wyłącza korektę. Większa pozwala jednemu zimnemu pokojowi podnieść wodę dla wszystkich.",
           "fallback_setpoint": "Używana, gdy temperatura zewnętrzna jest nieznana — czujnik zawiódł albo monitor uznał go za zawieszony lub odbiegający od pogody, a encji pogody też brak — po trzech godzinach trzymania ostatniej temperatury efektywnej, w °C. Puste (domyślnie): krzywa w punkcie projektowym, najwięcej ciepła, jakie daje: nigdy za mało ciepła, zawory chronią pomieszczenia przed przegrzaniem.",
-          "frost_limit": "Każda strefa chłodniejsza niż ta wartość uruchamia grzanie bez względu na inne warunki, w °C. Domyślnie 5 °C.",
-          "frost_release": "Ochrona przed mrozem kończy się, gdy każda strefa przekroczy tę wartość, w °C. Domyślnie 7 °C.",
+          "frost_limit": "Każda pilnowana strefa zimniejsza niż ta wartość uruchamia grzanie, bez względu na resztę, w °C. Domyślnie 5 °C. Za niska grozi zamarznięciem rur; za wysoka grzeje pokoje, które trzymasz wyłączone.",
+          "frost_release": "Ochrona przed mrozem kończy się, gdy każda pilnowana strefa jest powyżej tej wartości, w °C. Domyślnie 7 °C, powyżej progu. Blisko progu grzanie przeciwmrozowe włącza się i wyłącza częściej.",
           "frost_zone": "Opcjonalnie: pilnuj przed mrozem tylko tej strefy. Puste (domyślnie): wszystkich stref, także wyłączonych w Versatile Thermostat — nieogrzewane pomieszczenie poniżej progu podtrzymuje wtedy grzanie przeciwmrozowe. Grzanie przeciwmrozowe, które przez dwie godziny nie ogrzewa pomieszczenia, podnosi alarm; nigdy nie jest przerywane."
         }
       },
@@ -568,9 +568,9 @@
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
           "decision_interval_min": "Jak często temperatura wody jest wyznaczana na nowo, w minutach; domyślnie 5, domyślny cykl VT. Włączanie i wyłączanie ogrzewania nadąża za strefami co 10 s niezależnie od tej wartości; wtyczka nie odczytuje własnych cykli stref. Krócej: woda szybciej podąża za pogodą i pokojami, ale algorytmy stref częściej widzą jej zmiany; dłużej: spokojniejsza woda, która wolniej nadąża.",
           "off_setpoint": "Nastawa zapisywana jako „wyłącz”, gdy nie ma przełącznika grzania, w °C. Domyślnie 10: dużo poniżej każdej wartości grzania i poniżej najniższej nastawy zasilania. Ryzyko: niska nastawa nie wyłącza grzania w kotle — mastery ESPHome i DIYLess zostawiają CH włączone, a kotły według zgłoszeń dalej pracują pompą CH; przełącznik grzania albo CH=0 bramki OpenTherm naprawdę wyłącza grzanie.",
-          "count_threshold": "Grzanie jest potrzebne, gdy co najmniej tyle stref wzywa ciepła. Domyślnie 1; najwyżej liczba stref. 0 wyłącza liczenie stref, zostawiając sam próg mocy albo otwarcia, jak w Versatile Thermostat.",
-          "power_threshold_kw": "Opcjonalnie: grzanie jest potrzebne, gdy moc wołających stref sumuje się do tej wartości, w kW.",
-          "opening_threshold": "Opcjonalnie: grzanie jest potrzebne, gdy otwarcia zaworów stref sumują się do tej wartości, w %.",
+          "count_threshold": "Ogrzewanie jest potrzebne, gdy co najmniej tyle stref zgłasza zapotrzebowanie. Domyślnie 1; najwyżej liczba stref. 0 wyłącza liczenie, zostawiając sam próg mocy albo otwarcia, jak w Versatile Thermostat. Wyższa zostawia pojedynczy wołający pokój bez ciepła.",
+          "power_threshold_kw": "Opcjonalnie: ogrzewanie jest potrzebne, gdy moc wołających stref, każda ważona otwarciem jej zaworu, sumuje się do tej wartości, w kW. Za wysoka zostawia małe pokoje bez ciepła.",
+          "opening_threshold": "Opcjonalnie: ogrzewanie jest potrzebne, gdy największe otwarcie zaworu wśród wołających stref osiąga tę wartość, w %. Za wysoka zostawia bez ciepła pokój, który otwiera zawór tylko trochę.",
           "learning_pauses": "Wstrzymuj naukę SmartPI podczas grzania ciepłej wody, gdy strefę grzeje obce źródło i przy dużych wahaniach temperatury wody, żeby nie uczyła się tego, co zrobił kocioł; każde wstrzymanie i wznowienie jest sprawdzane w SmartPI. Domyślnie włączone. Auto-TPI nie da się wstrzymać bez skasowania tego, czego się nauczyło, więc strefy z nim są tylko zgłaszane. Wyłączone: SmartPI uczy się także w tych chwilach, co może zafałszować jego model.",
           "comfort_correction": "Włączona (domyślnie): gdy zawór strefy jest całkiem otwarty, a pomieszczenie nadal nie dochodzi do nastawy, woda rośnie do 3 K ponad krzywą — 1 K na 30 minut, tylko gdy płynie ciepło — i spada dwa razy szybciej; nie rośnie, gdy inna strefa jest o ponad 1 K za ciepła, zeruje się przy oddaniu sterowania, a po trzech godzinach na 3 K informuje, że krzywa jest pewnie za niska. Działa szeregowo z regulatorami PI stref (SmartPI, TPI): jej wolne tempo pozwala im najpierw się ustalić. Człon zewnętrzny algorytmu strefy (współczynnik zewnętrzny TPI) liczy pogodę drugi raz: trzymaj go mały, gdy wtyczka ustala wodę. Wyłączona: sama krzywa."
         }
@@ -582,7 +582,7 @@
           "pressure_low": "Niskie ciśnienie",
           "pressure_high": "Wysokie ciśnienie",
           "flue_gas_high": "Wysoka temperatura spalin",
-          "frequent_starts": "Częste zapłony",
+          "frequent_starts": "Częste starty",
           "unstable_ignition": "Niestabilny zapłon",
           "pressure_falling": "Spadające ciśnienie",
           "flue_gas_rising": "Rosnąca temperatura spalin",
@@ -610,7 +610,7 @@
     },
     "error": {
       "min_power_not_below_max": "Moc minimalna musi być mniejsza od maksymalnej.",
-      "fixed_temperature_missing": "Obieg pasywny stały potrzebuje swojej temperatury stałej.",
+      "fixed_temperature_missing": "Termostatyczny zawór mieszający (stały) wymaga swojej nastawy temperatury.",
       "foreign_heat_unsupported": "Źródłem ciepła mogą być tylko przełączniki, czujniki binarne oraz czujniki mocy lub temperatury.",
       "temperature_threshold_missing": "Źródło temperatury potrzebuje progu temperatury (poziom zaawansowany).",
       "reference_zone_unknown": "Wybierz jedną ze skonfigurowanych stref.",
@@ -794,7 +794,22 @@
         "name": "Problemy z sygnałami"
       },
       "reference_room": {
-        "name": "Pokój odniesienia"
+        "name": "Pokój odniesienia",
+        "state_attributes": {
+          "status": {
+            "name": "Stan",
+            "state": {
+              "ok": "OK",
+              "no_active_zone": "Żadna strefa nie grzeje",
+              "no_valid_measurement": "Brak poprawnego pomiaru"
+            }
+          }
+        },
+        "state": {
+          "no_active_zone": "Żadna strefa nie grzeje",
+          "no_valid_measurement": "Brak poprawnego pomiaru",
+          "average": "Średnia stref"
+        }
       },
       "reference_room_temperature": {
         "name": "Temperatura pokoju odniesienia"
@@ -812,10 +827,41 @@
         "name": "Migawki prognozy"
       },
       "critical_zone": {
-        "name": "Strefa krytyczna {circuit}"
+        "name": "Strefa krytyczna {circuit}",
+        "state_attributes": {
+          "status": {
+            "name": "Stan",
+            "state": {
+              "ok": "OK",
+              "no_active_zone": "Żadna strefa nie grzeje",
+              "no_valid_measurement": "Brak poprawnego pomiaru"
+            }
+          }
+        }
       },
       "emitter_power_factor": {
-        "name": "{zone} moc grzejnika"
+        "name": "{zone} moc grzejnika",
+        "state_attributes": {
+          "status": {
+            "name": "Stan",
+            "state": {
+              "computed": "Obliczony teraz",
+              "held": "Ostatnia wartość, utrzymana",
+              "unavailable": "Niedostępny"
+            }
+          },
+          "reason": {
+            "name": "Dlaczego niedostępny",
+            "state": {
+              "flow_unknown": "Temperatura zasilania nieznana",
+              "flow_stale": "Odczyt zasilania jest za stary",
+              "circuit_not_measured": "Zasilanie obiegu nie jest mierzone",
+              "room_unknown": "Temperatura pokoju nieznana",
+              "zone_unknown": "Stan strefy nieznany",
+              "not_heating_yet": "Strefa jeszcze nie grzała"
+            }
+          }
+        }
       },
       "control_state": {
         "name": "Stan sterowania",
@@ -828,10 +874,36 @@
           "idle": "Postój",
           "frost": "Ochrona przed mrozem",
           "fallback": "Nastawa awaryjna"
+        },
+        "state_attributes": {
+          "heating_confirmation": {
+            "name": "Odczyt zwrotny włączenia ogrzewania",
+            "state": {
+              "confirmed": "Potwierdzone przez urządzenie",
+              "confirmed_by_gateway": "Potwierdzone przez bramkę (to, co wysyła, nie to, co przyjął kocioł)",
+              "waiting": "Wysłane, czeka na odczyt zwrotny",
+              "not_confirmed": "Niepotwierdzone: kocioł może to ignorować",
+              "changed_from_outside": "Zmienione przez inny sterownik: zapisy wstrzymane",
+              "unverified": "Niezweryfikowane: nic tego nie odczytuje"
+            }
+          }
         }
       },
       "control_setpoint": {
-        "name": "Nastawa zasilania ze sterowania"
+        "name": "Nastawa zasilania ze sterowania",
+        "state_attributes": {
+          "confirmation": {
+            "name": "Odczyt zwrotny",
+            "state": {
+              "confirmed": "Potwierdzone przez urządzenie",
+              "confirmed_by_gateway": "Potwierdzone przez bramkę (to, co wysyła, nie to, co przyjął kocioł)",
+              "waiting": "Wysłane, czeka na odczyt zwrotny",
+              "not_confirmed": "Niepotwierdzone: kocioł może to ignorować",
+              "changed_from_outside": "Zmienione przez inny sterownik: zapisy wstrzymane",
+              "unverified": "Niezweryfikowane: nic tego nie odczytuje"
+            }
+          }
+        }
       }
     },
     "binary_sensor": {
@@ -839,49 +911,154 @@
         "name": "Sygnały kotła"
       },
       "hot_water": {
-        "name": "{zone} ciepła woda"
+        "name": "{zone} ciepła woda",
+        "state_attributes": {
+          "reason": {
+            "name": "Dlaczego nie",
+            "state": {
+              "dhw_active": "Kocioł grzeje ciepłą wodę",
+              "flow_near_room": "Woda ledwie cieplejsza od pokoju",
+              "flow_stale": "Odczyt zasilania jest za stary",
+              "flow_unknown": "Temperatura zasilania nieznana",
+              "circuit_not_measured": "Zasilanie obiegu nie jest mierzone",
+              "room_unknown": "Temperatura pokoju nieznana"
+            }
+          }
+        }
       },
       "foreign_heat": {
         "name": "{zone} obce ciepło"
       },
       "alarm_frequent_starts": {
-        "name": "Częste starty"
+        "name": "Częste starty",
+        "state_attributes": {
+          "level": {
+            "name": "Poziom",
+            "state": {
+              "warning": "Ostrzeżenie",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "alarm_unstable_ignition": {
-        "name": "Niestabilny zapłon"
+        "name": "Niestabilny zapłon",
+        "state_attributes": {
+          "level": {
+            "name": "Poziom",
+            "state": {
+              "warning": "Ostrzeżenie",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "alarm_pressure_low": {
-        "name": "Niskie ciśnienie wody"
+        "name": "Niskie ciśnienie wody",
+        "state_attributes": {
+          "level": {
+            "name": "Poziom",
+            "state": {
+              "warning": "Ostrzeżenie",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "alarm_pressure_high": {
-        "name": "Wysokie ciśnienie wody"
+        "name": "Wysokie ciśnienie wody",
+        "state_attributes": {
+          "level": {
+            "name": "Poziom",
+            "state": {
+              "warning": "Ostrzeżenie",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "alarm_pressure_falling": {
-        "name": "Spadające ciśnienie wody"
+        "name": "Spadające ciśnienie wody",
+        "state_attributes": {
+          "level": {
+            "name": "Poziom",
+            "state": {
+              "warning": "Ostrzeżenie",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "alarm_flue_gas_high": {
-        "name": "Za gorące spaliny"
+        "name": "Za gorące spaliny",
+        "state_attributes": {
+          "level": {
+            "name": "Poziom",
+            "state": {
+              "warning": "Ostrzeżenie",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "alarm_flue_gas_rising": {
-        "name": "Spaliny coraz cieplejsze od powrotu"
+        "name": "Spaliny coraz cieplejsze od powrotu",
+        "state_attributes": {
+          "level": {
+            "name": "Poziom",
+            "state": {
+              "warning": "Ostrzeżenie",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "alarm_hysteresis_drift": {
-        "name": "Dryf histerezy c.o."
+        "name": "Dryf histerezy c.o.",
+        "state_attributes": {
+          "level": {
+            "name": "Poziom",
+            "state": {
+              "warning": "Ostrzeżenie",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "outdoor_sensor_problem": {
-        "name": "Problem z czujnikiem zewnętrznym"
+        "name": "Problem z czujnikiem zewnętrznym",
+        "state_attributes": {
+          "status": {
+            "name": "Sprawdzenie",
+            "state": {
+              "ok": "Zgodny z pogodą",
+              "deviates": "Długo niezgodny z pogodą",
+              "stuck": "Nie zmienia się, choć pogoda się zmienia",
+              "unknown": "Za mało danych, by ocenić"
+            }
+          }
+        }
       },
       "alarm_low_flow": {
-        "name": "Brak przepływu: wszystkie zawory zamknięte przy pracującej pompie"
+        "name": "Brak przepływu: wszystkie zawory zamknięte przy pracującej pompie",
+        "state_attributes": {
+          "level": {
+            "name": "Poziom",
+            "state": {
+              "warning": "Ostrzeżenie",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "alarm_write_failed": {
         "name": "Sterowanie: zapis nieudany"
       },
       "alarm_write_ignored": {
-        "name": "Sterowanie: kocioł ignoruje nastawę"
+        "name": "Sterowanie: kocioł nie przyjmuje zapisu"
       },
       "alarm_outside_change": {
-        "name": "Sterowanie: nastawa zmieniona z zewnątrz"
+        "name": "Sterowanie: zmiana przez inny sterownik"
       },
       "alarm_control_error": {
         "name": "Sterowanie: błąd wewnętrzny"
@@ -915,6 +1092,13 @@
               "thermostat_takes_over": "Przejmuje termostat",
               "heating_stops": "Grzanie staje do powrotu sterowania",
               "device_decides": "Działa własne zabezpieczenie urządzenia"
+            }
+          },
+          "off_by": {
+            "name": "Wyłączanie ogrzewania przez",
+            "state": {
+              "heating_switch": "Przełącznik ogrzewania",
+              "low_setpoint": "Niską nastawę"
             }
           }
         }

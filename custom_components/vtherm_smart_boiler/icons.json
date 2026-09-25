@@ -1,0 +1,52 @@
+{
+  "entity": {
+    "sensor": {
+      "starts_per_hour": { "default": "mdi:counter" },
+      "median_burn": { "default": "mdi:timer-outline" },
+      "burner_hours": { "default": "mdi:fire" },
+      "short_burn_share": { "default": "mdi:fire-alert" },
+      "condensing_share": { "default": "mdi:water-percent" },
+      "degree_days": { "default": "mdi:thermometer-lines" },
+      "gas_per_degree_day": { "default": "mdi:meter-gas" },
+      "verdict": { "default": "mdi:scale-balance" },
+      "signal_problems": { "default": "mdi:alert-circle-outline" },
+      "reference_room": { "default": "mdi:home-thermometer" },
+      "reference_room_setpoint": { "default": "mdi:thermostat" },
+      "change_report": { "default": "mdi:chart-line" },
+      "loss_coefficient": { "default": "mdi:home-export-outline" },
+      "forecast_snapshots": { "default": "mdi:weather-partly-cloudy" },
+      "critical_zone": { "default": "mdi:radiator" },
+      "emitter_power_factor": { "default": "mdi:radiator" },
+      "control_state": { "default": "mdi:state-machine" },
+      "control_setpoint": { "default": "mdi:thermometer-water" }
+    },
+    "binary_sensor": {
+      "connection": { "default": "mdi:lan-connect", "state": { "off": "mdi:lan-disconnect" } },
+      "hot_water": { "default": "mdi:water-thermometer", "state": { "off": "mdi:water-off" } },
+      "foreign_heat": { "default": "mdi:fireplace", "state": { "off": "mdi:fireplace-off" } },
+      "alarm_frequent_starts": { "default": "mdi:fire-alert" },
+      "alarm_unstable_ignition": { "default": "mdi:fire-alert" },
+      "alarm_pressure_low": { "default": "mdi:gauge-low" },
+      "alarm_pressure_high": { "default": "mdi:gauge-full" },
+      "alarm_pressure_falling": { "default": "mdi:gauge-low" },
+      "alarm_flue_gas_high": { "default": "mdi:smoke" },
+      "alarm_flue_gas_rising": { "default": "mdi:smoke" },
+      "alarm_hysteresis_drift": { "default": "mdi:chart-bell-curve" },
+      "alarm_low_flow": { "default": "mdi:pump-off" },
+      "outdoor_sensor_problem": { "default": "mdi:thermometer-alert" },
+      "alarm_write_failed": { "default": "mdi:pencil-off" },
+      "alarm_write_ignored": { "default": "mdi:pencil-remove" },
+      "alarm_outside_change": { "default": "mdi:account-switch" },
+      "alarm_control_error": { "default": "mdi:alert-octagon" },
+      "alarm_hand_back_failed": { "default": "mdi:hand-back-left-off" },
+      "alarm_boiler_link_lost": { "default": "mdi:lan-disconnect" },
+      "alarm_zone_unknown": { "default": "mdi:help-circle-outline" },
+      "alarm_frost_not_warming": { "default": "mdi:snowflake-alert" },
+      "alarm_correction_at_limit": { "default": "mdi:chart-bell-curve-cumulative" },
+      "alarm_outdoor_sensor_suspect": { "default": "mdi:thermometer-alert" }
+    },
+    "switch": {
+      "control": { "default": "mdi:radiator", "state": { "off": "mdi:radiator-off" } }
+    }
+  }
+}

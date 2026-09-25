@@ -35,20 +35,20 @@
         },
         "data_description": {
           "flame": "On while the burner burns. Every burner-cycle metric comes from it: the wrong entity gives wrong starts and burn times.",
-          "flow": "Water leaving the boiler. Used for hot water availability, emitter power and telling DHW runs from heating.",
-          "return": "Water coming back to the boiler. Enables the condensing share; without it condensing cannot be judged.",
-          "modulation": "Burner modulation in percent. With the boiler's power range it estimates heat output and gas use.",
-          "dhw_active": "On while the boiler heats domestic hot water. Without it DHW runs are inferred with less certainty and some may count as heating.",
-          "pressure": "Enables the pressure alarms and the falling-pressure warning.",
-          "outdoor": "The boiler's own outdoor sensor. Used for degree-days and checked against the weather entity.",
-          "ch_setpoint": "The flow setpoint the boiler works to. Helps tell DHW runs from heating.",
+          "flow": "Water leaving the boiler. Used for hot water availability, emitter power and telling DHW runs from heating; with control, it is part of the boiler link. The wrong entity misleads all of them.",
+          "return": "Water coming back to the boiler. Enables the condensing share; without it condensing cannot be judged. The wrong entity gives a wrong condensing share.",
+          "modulation": "Burner modulation in percent. With the boiler's power range it estimates heat output and gas use. A sensor in another unit is refused.",
+          "dhw_active": "On while the boiler heats domestic hot water. Without it DHW runs are inferred with less certainty and some may count as heating; with control, hot-water charging is then less sure to pause learning.",
+          "pressure": "Enables the pressure alarms and the falling-pressure warning. The wrong entity gives false alarms or none.",
+          "outdoor": "The boiler's own outdoor sensor. Used for degree-days, for control's curve, and checked against the weather entity: one found stuck or far off is left out of the curve. A wrong sensor bends the curve until the check catches it.",
+          "ch_setpoint": "The flow setpoint the boiler works to, a temperature. Helps tell DHW runs from heating.",
           "ch_active": "On while the boiler heats the rooms. Helps tell DHW from heating when there is no DHW signal.",
-          "pump_running": "On while the heating pump runs. Recorded now; the low-flow warning will need it.",
+          "pump_running": "On while the heating pump runs. Enables the low-flow warning: every valve closed while the pump runs.",
           "flue_gas": "Enables the flue gas alarm and the early warning of a fouling heat exchanger.",
           "gas_meter": "A cumulative gas or energy meter. Gives measured gas per degree-day instead of an estimate.",
           "room_setpoint": "The room setpoint a wired thermostat sends to the boiler, if there is one. Recorded for the assessment.",
           "room_temperature": "The room temperature a wired thermostat sends to the boiler, if there is one. Recorded for the assessment.",
-          "weather": "Its forecasts are recorded for later forecast features and its temperature stands in for a missing outdoor sensor. No data leaves your Home Assistant."
+          "weather": "Its forecasts are recorded for later forecast features, and its temperature stands in for a missing or suspect outdoor sensor — for degree-days and control's curve. No data leaves your Home Assistant."
         }
       },
       "boiler": {
@@ -68,13 +68,13 @@
         },
         "data_description": {
           "class": "Flow setpoint, curve parameters only, on/off or read-only. Control (experimental) needs \"Flow setpoint\"; with the other classes the plugin only monitors.",
-          "dhw": "None, a storage tank or a combi boiler. Used to interpret DHW runs.",
-          "condensing": "Condensing boilers get flue gas limits for condensing appliances; for other boilers the absolute flue gas alarm is off.",
-          "boiler_min_power": "Lowest heating power from the manual, in kW. Compared with the building load: a load often below it means the boiler must cycle.",
-          "boiler_max_power": "Highest heating power in kW. With the minimum and the modulation it estimates heat output.",
-          "max_ch_setpoint": "Highest flow temperature in heating, in °C. Flow above it points to a DHW run.",
-          "gas_at_min_power": "Gas per hour at minimum power, in your gas meter's unit. With the modulation it estimates gas use when there is no meter.",
-          "gas_at_max_power": "Gas per hour at maximum power, in the same unit.",
+          "dhw": "None, a storage tank or a combi boiler. Used to interpret DHW runs; the wrong type counts hot water as heating or the reverse.",
+          "condensing": "Condensing boilers get flue gas limits for condensing appliances; for other boilers the absolute flue gas alarm is off. The wrong choice warns too late or for nothing.",
+          "boiler_min_power": "Lowest heating power from the manual, in kW. Compared with the building load: a load often below it means the boiler must cycle. A wrong value skews that judgement in the verdict.",
+          "boiler_max_power": "Highest heating power in kW. With the minimum and the modulation it estimates heat output; a wrong value skews heat and gas estimates.",
+          "max_ch_setpoint": "Highest flow temperature in heating, in °C. Flow above it points to a DHW run; set too low, heating counts as hot water.",
+          "gas_at_min_power": "Gas per hour at minimum power, in your gas meter's unit. With the modulation it estimates gas use when there is no meter; a wrong value skews gas per degree-day.",
+          "gas_at_max_power": "Gas per hour at maximum power, in the same unit; a wrong value skews the gas estimates.",
           "modulation_scale": "Whether 0 % is the minimum power (the OpenTherm definition) or the value is a percentage of maximum power. The wrong choice skews heat and gas estimates.",
           "shared_return": "Tick when one return sensor serves both. DHW runs are then kept out of the heating metrics."
         }
@@ -90,9 +90,9 @@
           "add_another": "Add another circuit"
         },
         "data_description": {
-          "control": "Unmixed and shared: straight from the boiler. Through the boiler: a second circuit the boiler mixes. Separately: an external mixing controller. Passive fixed: a thermostatic mixing valve.",
-          "max_flow": "The most this circuit may receive, in °C, e.g. underfloor heating on an unmixed loop. Recorded now; control will treat it as a hard limit.",
-          "fixed_temperature": "Needed for a passive fixed circuit: the valve's setting in °C.",
+          "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); mixed by a separate controller; or a thermostatic mixing valve (fixed). Control runs only for one circuit fed straight from the boiler, or through a fixed valve. The wrong type makes control refuse, or misjudge what reaches the rooms.",
+          "max_flow": "The most this circuit may receive, in °C, e.g. underfloor heating on an unmixed loop. Control treats it as a hard limit — the water never goes above it; underfloor heating on an unmixed loop needs it before control can run. Too high overheats the floor.",
+          "fixed_temperature": "Needed for a thermostatic mixing valve (fixed): its setting in °C. Control keeps the boiler's flow at least this warm; set higher than the valve's setting, the water runs hotter than needed.",
           "flow_entity": "A mixed circuit's own flow temperature. Without it the heat reaching that circuit cannot be told.",
           "add_another": "Tick to describe one more circuit after this one."
         }
@@ -104,7 +104,7 @@
           "zones": "Zones"
         },
         "data_description": {
-          "zones": "Only VT climate entities are offered. The plugin only reads them."
+          "zones": "Only VT climate entities are offered. The plugin reads them; with control and learning pauses on, it also pauses and resumes their SmartPI learning. A zone left out neither calls for heat nor is watched for frost."
         }
       },
       "zone": {
@@ -120,13 +120,13 @@
           "temperature_threshold": "Temperature threshold"
         },
         "data_description": {
-          "circuit": "The heating circuit this zone is on.",
-          "emitter": "Radiators, underfloor or convectors. Sets the EN 442 exponent of the emitter power.",
-          "foreign_heat": "A fireplace, stove or electric heater in this room, not the sun: a switch or binary sensor that is on while it heats, or a power or temperature sensor. Shown as foreign heat for the zone.",
-          "reference_output_w": "The emitters' output at their reference condition, in W. Only for an absolute output estimate.",
-          "exponent": "Overrides the EN 442 exponent of the emitter type.",
-          "power_threshold": "A power source counts as heating above this, in W. Default 100 W.",
-          "temperature_threshold": "Needed for a temperature source: it counts as heating above this, in °C."
+          "circuit": "The heating circuit this zone is on. The wrong circuit attributes the zone's heat to the wrong water.",
+          "emitter": "Radiators, underfloor or convectors. Sets the EN 442 exponent of the emitter power and the curve's default shape; the wrong type skews both.",
+          "foreign_heat": "A fireplace, stove or electric heater in this room, not the sun: a switch or binary sensor that is on while it heats, or a power sensor (a temperature sensor at the advanced level, where its threshold is set). Shown as foreign heat for the zone; with control, its learning is paused meanwhile.",
+          "reference_output_w": "The emitters' output at their reference condition, in W. Only for an absolute output estimate; a wrong value only skews that estimate.",
+          "exponent": "Overrides the EN 442 exponent of the emitter type. A wrong exponent skews the emitter power factor.",
+          "power_threshold": "A power source counts as heating above this, in W. Default 100 W. Too low counts standby as heating; too high misses a small heater.",
+          "temperature_threshold": "Needed for a temperature source: it counts as heating above this, in °C. Too low counts a cold stove as heating; too high misses it."
         }
       },
       "building": {
@@ -142,13 +142,13 @@
           "design_outdoor": "Design outdoor temperature"
         },
         "data_description": {
-          "floor_area": "In m². With the insulation class it gives a rough first estimate.",
-          "insulation": "Poor, average, good or very good.",
+          "floor_area": "In m². With the insulation class it gives a rough first estimate, replaced as data comes in; a wrong area skews the first days of the verdict.",
+          "insulation": "Poor, average, good or very good. Part of the rough first estimate.",
           "thermal_mass": "How slowly the house cools. Recorded for later forecast features.",
-          "design_load_kw": "Your own heat-loss calculation, in kW at the design outdoor temperature. Wins over the rough estimate.",
-          "loss_coefficient": "Heat loss per kelvin, in kW/K, if you know it. Wins over every estimate.",
-          "heating_threshold": "Outdoor temperature above which the house needs no heating, in °C; also the degree-day base. Default 15 °C.",
-          "design_outdoor": "The coldest outdoor temperature your design load refers to, in °C. Default −15 °C."
+          "design_load_kw": "Your own heat-loss calculation, in kW at the design outdoor temperature. Wins over the rough estimate; a value no house has is refused.",
+          "loss_coefficient": "Heat loss per kelvin, in kW/K, if you know it. Wins over every estimate, measured ones included: a wrong value stays wrong.",
+          "heating_threshold": "Outdoor temperature above which the house needs no heating, in °C; also the degree-day base. Default 15 °C. Wrong, degree-days and gas per degree-day are skewed.",
+          "design_outdoor": "The coldest outdoor temperature your design load refers to, in °C. Default −15 °C. Wrong, the estimate from your design load is skewed."
         }
       },
       "reference": {
@@ -160,8 +160,8 @@
           "switch_margin": "Switch margin"
         },
         "data_description": {
-          "strategy": "Largest deficit follows the room furthest below its setpoint; a chosen zone always uses one room; average uses every heating room.",
-          "zone": "Used with the chosen-zone strategy.",
+          "strategy": "Largest deficit follows the room furthest below its setpoint; a chosen zone always uses one room; average uses every heating room. It is only published for external controllers; a chosen zone that is away leaves them without a reference.",
+          "zone": "Used with the chosen-zone strategy. A room that is often off or away leaves the reference unknown.",
           "switch_margin": "Another room must be this much colder before the reference switches, in K. Smaller follows faster but switches more often, which can disturb an external controller."
         }
       },
@@ -184,25 +184,25 @@
           "unstable_burns_limit": "Unstable ignition"
         },
         "data_description": {
-          "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C.",
-          "short_burn_min": "Burns shorter than this count as short, in minutes. Default 10.",
+          "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C. Too high overstates the condensing share.",
+          "short_burn_min": "Burns shorter than this count as short, in minutes. Default 10. Longer makes more burns short, and the verdict harsher.",
           "monitoring_days": "Days of data before the verdict is given, and later before control can be enabled. Default 7; shorter is not allowed.",
-          "near_room_k": "Water within this of the room counts as no hot water, in K. Default 3.",
-          "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60.",
-          "pressure_low_warning": "Pressure below this raises a warning, in bar. Default 1.0. Take the value from your boiler's manual.",
+          "near_room_k": "Water within this of the room counts as no hot water, in K. Default 3. Larger says 'no hot water' sooner.",
+          "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60. Longer keeps learning paused longer after a fire.",
+          "pressure_low_warning": "Pressure below this raises a warning, in bar. Default 1.0. Take the value from your boiler's manual: too low warns too late.",
           "pressure_low_alarm": "Pressure below this raises an alarm, in bar. Default 0.7. Must be below the warning.",
-          "pressure_high_warning": "Pressure above this raises a warning, in bar. Default 2.5.",
+          "pressure_high_warning": "Pressure above this raises a warning, in bar. Default 2.5. Too high warns too late.",
           "pressure_high_alarm": "Pressure above this raises an alarm, in bar. Default 2.8, below a typical 3 bar safety valve. Must be above the warning.",
-          "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C.",
+          "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C. Too high warns too late.",
           "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
-          "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12.",
-          "unstable_burns_limit": "More than this many burns under a minute in a day raise a warning. Default 10."
+          "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12. Too high hides short-cycling.",
+          "unstable_burns_limit": "More than this many burns under a minute in a day raise a warning. Default 10. Too high hides an ignition problem."
         }
       }
     },
     "error": {
       "min_power_not_below_max": "The minimum power must be below the maximum power.",
-      "fixed_temperature_missing": "A passive fixed circuit needs its fixed temperature.",
+      "fixed_temperature_missing": "A thermostatic mixing valve (fixed) needs its temperature setting.",
       "foreign_heat_unsupported": "Only switches, binary sensors and power or temperature sensors can be heat sources.",
       "temperature_threshold_missing": "A temperature source needs a temperature threshold (advanced level).",
       "reference_zone_unknown": "Pick one of the configured zones.",
@@ -273,20 +273,20 @@
         },
         "data_description": {
           "flame": "On while the burner burns. Every burner-cycle metric comes from it: the wrong entity gives wrong starts and burn times.",
-          "flow": "Water leaving the boiler. Used for hot water availability, emitter power and telling DHW runs from heating.",
-          "return": "Water coming back to the boiler. Enables the condensing share; without it condensing cannot be judged.",
-          "modulation": "Burner modulation in percent. With the boiler's power range it estimates heat output and gas use.",
-          "dhw_active": "On while the boiler heats domestic hot water. Without it DHW runs are inferred with less certainty and some may count as heating.",
-          "pressure": "Enables the pressure alarms and the falling-pressure warning.",
-          "outdoor": "The boiler's own outdoor sensor. Used for degree-days and checked against the weather entity.",
-          "ch_setpoint": "The flow setpoint the boiler works to. Helps tell DHW runs from heating.",
+          "flow": "Water leaving the boiler. Used for hot water availability, emitter power and telling DHW runs from heating; with control, it is part of the boiler link. The wrong entity misleads all of them.",
+          "return": "Water coming back to the boiler. Enables the condensing share; without it condensing cannot be judged. The wrong entity gives a wrong condensing share.",
+          "modulation": "Burner modulation in percent. With the boiler's power range it estimates heat output and gas use. A sensor in another unit is refused.",
+          "dhw_active": "On while the boiler heats domestic hot water. Without it DHW runs are inferred with less certainty and some may count as heating; with control, hot-water charging is then less sure to pause learning.",
+          "pressure": "Enables the pressure alarms and the falling-pressure warning. The wrong entity gives false alarms or none.",
+          "outdoor": "The boiler's own outdoor sensor. Used for degree-days, for control's curve, and checked against the weather entity: one found stuck or far off is left out of the curve. A wrong sensor bends the curve until the check catches it.",
+          "ch_setpoint": "The flow setpoint the boiler works to, a temperature. Helps tell DHW runs from heating.",
           "ch_active": "On while the boiler heats the rooms. Helps tell DHW from heating when there is no DHW signal.",
-          "pump_running": "On while the heating pump runs. Recorded now; the low-flow warning will need it.",
+          "pump_running": "On while the heating pump runs. Enables the low-flow warning: every valve closed while the pump runs.",
           "flue_gas": "Enables the flue gas alarm and the early warning of a fouling heat exchanger.",
           "gas_meter": "A cumulative gas or energy meter. Gives measured gas per degree-day instead of an estimate.",
           "room_setpoint": "The room setpoint a wired thermostat sends to the boiler, if there is one. Recorded for the assessment.",
           "room_temperature": "The room temperature a wired thermostat sends to the boiler, if there is one. Recorded for the assessment.",
-          "weather": "Its forecasts are recorded for later forecast features and its temperature stands in for a missing outdoor sensor. No data leaves your Home Assistant."
+          "weather": "Its forecasts are recorded for later forecast features, and its temperature stands in for a missing or suspect outdoor sensor — for degree-days and control's curve. No data leaves your Home Assistant."
         }
       },
       "freshness": {
@@ -326,13 +326,13 @@
         },
         "data_description": {
           "class": "Flow setpoint, curve parameters only, on/off or read-only. Control (experimental) needs \"Flow setpoint\"; with the other classes the plugin only monitors.",
-          "dhw": "None, a storage tank or a combi boiler. Used to interpret DHW runs.",
-          "condensing": "Condensing boilers get flue gas limits for condensing appliances; for other boilers the absolute flue gas alarm is off.",
-          "boiler_min_power": "Lowest heating power from the manual, in kW. Compared with the building load: a load often below it means the boiler must cycle.",
-          "boiler_max_power": "Highest heating power in kW. With the minimum and the modulation it estimates heat output.",
-          "max_ch_setpoint": "Highest flow temperature in heating, in °C. Flow above it points to a DHW run.",
-          "gas_at_min_power": "Gas per hour at minimum power, in your gas meter's unit. With the modulation it estimates gas use when there is no meter.",
-          "gas_at_max_power": "Gas per hour at maximum power, in the same unit.",
+          "dhw": "None, a storage tank or a combi boiler. Used to interpret DHW runs; the wrong type counts hot water as heating or the reverse.",
+          "condensing": "Condensing boilers get flue gas limits for condensing appliances; for other boilers the absolute flue gas alarm is off. The wrong choice warns too late or for nothing.",
+          "boiler_min_power": "Lowest heating power from the manual, in kW. Compared with the building load: a load often below it means the boiler must cycle. A wrong value skews that judgement in the verdict.",
+          "boiler_max_power": "Highest heating power in kW. With the minimum and the modulation it estimates heat output; a wrong value skews heat and gas estimates.",
+          "max_ch_setpoint": "Highest flow temperature in heating, in °C. Flow above it points to a DHW run; set too low, heating counts as hot water.",
+          "gas_at_min_power": "Gas per hour at minimum power, in your gas meter's unit. With the modulation it estimates gas use when there is no meter; a wrong value skews gas per degree-day.",
+          "gas_at_max_power": "Gas per hour at maximum power, in the same unit; a wrong value skews the gas estimates.",
           "modulation_scale": "Whether 0 % is the minimum power (the OpenTherm definition) or the value is a percentage of maximum power. The wrong choice skews heat and gas estimates.",
           "shared_return": "Tick when one return sensor serves both. DHW runs are then kept out of the heating metrics."
         }
@@ -348,9 +348,9 @@
           "add_another": "Add another circuit"
         },
         "data_description": {
-          "control": "Unmixed and shared: straight from the boiler. Through the boiler: a second circuit the boiler mixes. Separately: an external mixing controller. Passive fixed: a thermostatic mixing valve.",
-          "max_flow": "The most this circuit may receive, in °C, e.g. underfloor heating on an unmixed loop. Recorded now; control will treat it as a hard limit.",
-          "fixed_temperature": "Needed for a passive fixed circuit: the valve's setting in °C.",
+          "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); mixed by a separate controller; or a thermostatic mixing valve (fixed). Control runs only for one circuit fed straight from the boiler, or through a fixed valve. The wrong type makes control refuse, or misjudge what reaches the rooms.",
+          "max_flow": "The most this circuit may receive, in °C, e.g. underfloor heating on an unmixed loop. Control treats it as a hard limit — the water never goes above it; underfloor heating on an unmixed loop needs it before control can run. Too high overheats the floor.",
+          "fixed_temperature": "Needed for a thermostatic mixing valve (fixed): its setting in °C. Control keeps the boiler's flow at least this warm; set higher than the valve's setting, the water runs hotter than needed.",
           "flow_entity": "A mixed circuit's own flow temperature. Without it the heat reaching that circuit cannot be told.",
           "add_another": "Tick to describe one more circuit after this one."
         }
@@ -362,7 +362,7 @@
           "zones": "Zones"
         },
         "data_description": {
-          "zones": "Only VT climate entities are offered. The plugin only reads them."
+          "zones": "Only VT climate entities are offered. The plugin reads them; with control and learning pauses on, it also pauses and resumes their SmartPI learning. A zone left out neither calls for heat nor is watched for frost."
         }
       },
       "zone": {
@@ -378,13 +378,13 @@
           "temperature_threshold": "Temperature threshold"
         },
         "data_description": {
-          "circuit": "The heating circuit this zone is on.",
-          "emitter": "Radiators, underfloor or convectors. Sets the EN 442 exponent of the emitter power.",
-          "foreign_heat": "A fireplace, stove or electric heater in this room, not the sun: a switch or binary sensor that is on while it heats, or a power or temperature sensor. Shown as foreign heat for the zone.",
-          "reference_output_w": "The emitters' output at their reference condition, in W. Only for an absolute output estimate.",
-          "exponent": "Overrides the EN 442 exponent of the emitter type.",
-          "power_threshold": "A power source counts as heating above this, in W. Default 100 W.",
-          "temperature_threshold": "Needed for a temperature source: it counts as heating above this, in °C."
+          "circuit": "The heating circuit this zone is on. The wrong circuit attributes the zone's heat to the wrong water.",
+          "emitter": "Radiators, underfloor or convectors. Sets the EN 442 exponent of the emitter power and the curve's default shape; the wrong type skews both.",
+          "foreign_heat": "A fireplace, stove or electric heater in this room, not the sun: a switch or binary sensor that is on while it heats, or a power sensor (a temperature sensor at the advanced level, where its threshold is set). Shown as foreign heat for the zone; with control, its learning is paused meanwhile.",
+          "reference_output_w": "The emitters' output at their reference condition, in W. Only for an absolute output estimate; a wrong value only skews that estimate.",
+          "exponent": "Overrides the EN 442 exponent of the emitter type. A wrong exponent skews the emitter power factor.",
+          "power_threshold": "A power source counts as heating above this, in W. Default 100 W. Too low counts standby as heating; too high misses a small heater.",
+          "temperature_threshold": "Needed for a temperature source: it counts as heating above this, in °C. Too low counts a cold stove as heating; too high misses it."
         }
       },
       "building": {
@@ -400,13 +400,13 @@
           "design_outdoor": "Design outdoor temperature"
         },
         "data_description": {
-          "floor_area": "In m². With the insulation class it gives a rough first estimate.",
-          "insulation": "Poor, average, good or very good.",
+          "floor_area": "In m². With the insulation class it gives a rough first estimate, replaced as data comes in; a wrong area skews the first days of the verdict.",
+          "insulation": "Poor, average, good or very good. Part of the rough first estimate.",
           "thermal_mass": "How slowly the house cools. Recorded for later forecast features.",
-          "design_load_kw": "Your own heat-loss calculation, in kW at the design outdoor temperature. Wins over the rough estimate.",
-          "loss_coefficient": "Heat loss per kelvin, in kW/K, if you know it. Wins over every estimate.",
-          "heating_threshold": "Outdoor temperature above which the house needs no heating, in °C; also the degree-day base. Default 15 °C.",
-          "design_outdoor": "The coldest outdoor temperature your design load refers to, in °C. Default −15 °C."
+          "design_load_kw": "Your own heat-loss calculation, in kW at the design outdoor temperature. Wins over the rough estimate; a value no house has is refused.",
+          "loss_coefficient": "Heat loss per kelvin, in kW/K, if you know it. Wins over every estimate, measured ones included: a wrong value stays wrong.",
+          "heating_threshold": "Outdoor temperature above which the house needs no heating, in °C; also the degree-day base. Default 15 °C. Wrong, degree-days and gas per degree-day are skewed.",
+          "design_outdoor": "The coldest outdoor temperature your design load refers to, in °C. Default −15 °C. Wrong, the estimate from your design load is skewed."
         }
       },
       "reference": {
@@ -418,8 +418,8 @@
           "switch_margin": "Switch margin"
         },
         "data_description": {
-          "strategy": "Largest deficit follows the room furthest below its setpoint; a chosen zone always uses one room; average uses every heating room.",
-          "zone": "Used with the chosen-zone strategy.",
+          "strategy": "Largest deficit follows the room furthest below its setpoint; a chosen zone always uses one room; average uses every heating room. It is only published for external controllers; a chosen zone that is away leaves them without a reference.",
+          "zone": "Used with the chosen-zone strategy. A room that is often off or away leaves the reference unknown.",
           "switch_margin": "Another room must be this much colder before the reference switches, in K. Smaller follows faster but switches more often, which can disturb an external controller."
         }
       },
@@ -442,19 +442,19 @@
           "unstable_burns_limit": "Unstable ignition"
         },
         "data_description": {
-          "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C.",
-          "short_burn_min": "Burns shorter than this count as short, in minutes. Default 10.",
+          "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C. Too high overstates the condensing share.",
+          "short_burn_min": "Burns shorter than this count as short, in minutes. Default 10. Longer makes more burns short, and the verdict harsher.",
           "monitoring_days": "Days of data before the verdict is given, and later before control can be enabled. Default 7; shorter is not allowed.",
-          "near_room_k": "Water within this of the room counts as no hot water, in K. Default 3.",
-          "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60.",
-          "pressure_low_warning": "Pressure below this raises a warning, in bar. Default 1.0. Take the value from your boiler's manual.",
+          "near_room_k": "Water within this of the room counts as no hot water, in K. Default 3. Larger says 'no hot water' sooner.",
+          "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60. Longer keeps learning paused longer after a fire.",
+          "pressure_low_warning": "Pressure below this raises a warning, in bar. Default 1.0. Take the value from your boiler's manual: too low warns too late.",
           "pressure_low_alarm": "Pressure below this raises an alarm, in bar. Default 0.7. Must be below the warning.",
-          "pressure_high_warning": "Pressure above this raises a warning, in bar. Default 2.5.",
+          "pressure_high_warning": "Pressure above this raises a warning, in bar. Default 2.5. Too high warns too late.",
           "pressure_high_alarm": "Pressure above this raises an alarm, in bar. Default 2.8, below a typical 3 bar safety valve. Must be above the warning.",
-          "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C.",
+          "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C. Too high warns too late.",
           "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
-          "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12.",
-          "unstable_burns_limit": "More than this many burns under a minute in a day raise a warning. Default 10."
+          "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12. Too high hides short-cycling.",
+          "unstable_burns_limit": "More than this many burns under a minute in a day raise a warning. Default 10. Too high hides an ignition problem."
         }
       },
       "control": {
@@ -537,17 +537,17 @@
           "frost_zone": "Frost zone"
         },
         "data_description": {
-          "design_outdoor": "The coldest outdoor temperature your heating is designed for, in °C. Default: the building's design outdoor temperature, or −15 °C.",
+          "design_outdoor": "The coldest outdoor temperature your heating is designed for, in °C. Default: the building's design outdoor temperature, or −15 °C. Too cold a value gives too little water in frost.",
           "design_flow": "The flow temperature the heating needs at the design outdoor temperature, in °C, e.g. the value on your boiler's own curve. Required; there is no default. Too high wastes gas and makes the burner cycle; too low leaves rooms cold in hard frost.",
-          "hard_min": "No setpoint below this, in °C. Default 25 °C.",
+          "hard_min": "No setpoint below this, in °C. Default 25 °C. Too high heats rooms in mild weather and wastes gas; the \"off\" setpoint must stay below it.",
           "hard_max": "No setpoint above this, whatever the curve or a correction asks, in °C. Default 70 °C. Underfloor heating also needs its circuit's maximum flow.",
-          "room": "The room temperature the curve is built for, in °C. Default 20 °C.",
-          "exponent": "How the curve bends. Empty picks it from the emitters: radiators 1.3, convectors 1.4, underfloor 1.1.",
-          "offset": "Shifts the whole curve up or down, in K. Default 0.",
-          "ceiling_band": "How far above the curve a comfort correction may go, in K. Default 10 K; 0 turns correction off in effect.",
+          "room": "The room temperature the curve is built for, in °C. Default 20 °C. Too high raises the whole curve and wastes gas.",
+          "exponent": "How the curve bends. Empty picks it from the emitters: radiators 1.3, convectors 1.4, underfloor 1.1. The wrong bend under-heats in frost or overheats in mild weather.",
+          "offset": "Shifts the whole curve up or down, in K. Default 0. Up wastes gas; down leaves rooms cold.",
+          "ceiling_band": "How far above the curve a comfort correction may go, in K. Default 10 K; 0 turns correction off in effect. Larger lets one cold room push the water up for every room.",
           "fallback_setpoint": "Used when no outdoor temperature is known — the sensor failed, or the monitor found it stuck or far from the weather, and the weather entity is missing too — once the last effective temperature has been held for three hours, in °C. Empty (default): the curve at its design point, the most heat the curve gives: never too little heat, the valves keep rooms from overheating.",
-          "frost_limit": "Any zone colder than this starts heating, whatever else applies, in °C. Default 5 °C.",
-          "frost_release": "Frost protection ends once every zone is above this, in °C. Default 7 °C.",
+          "frost_limit": "Any watched zone colder than this starts heating, whatever else applies, in °C. Default 5 °C. Too low risks frozen pipes; too high heats rooms you keep off.",
+          "frost_release": "Frost protection ends once every watched zone is above this, in °C. Default 7 °C, above the limit. Close to the limit, frost heating starts and stops more often.",
           "frost_zone": "Optional: watch only this zone for frost. Empty (default): every zone, those Versatile Thermostat has switched off included — an unheated room below the limit then keeps frost heating on. Frost heating that does not warm the room for two hours raises an alarm; it is never stopped."
         }
       },
@@ -568,9 +568,9 @@
           "ramp_k_per_min": "The fastest setpoint change, in K per minute. Default 1. Faster changes stress the boiler and make zones overshoot.",
           "decision_interval_min": "How often the water temperature is decided anew, in minutes; default 5, VT's default cycle. Heating on and off follows the zones at every 10 s step, whatever this is; the plugin does not read the zones' own cycles. Shorter: the water follows the weather and the rooms sooner, but the zones' algorithms see it move more often; longer: steadier water that follows more slowly.",
           "off_setpoint": "The setpoint written for \"off\" when there is no heating switch, in °C. Default 10: far below any heating value, and below the lowest flow setpoint. Risk: a low setpoint does not switch the boiler's heating off — ESPHome and DIYLess masters keep CH enabled, and boilers are reported to keep their CH pump running; a heating switch, or an OpenTherm Gateway's CH=0, really turns heating off.",
-          "count_threshold": "Heating is needed when at least this many zones call for heat. Default 1; at most the number of zones. 0 turns the count off, leaving the power or opening threshold alone, as in Versatile Thermostat.",
-          "power_threshold_kw": "Optional: heating is needed when the calling zones' power adds up to this, in kW.",
-          "opening_threshold": "Optional: heating is needed when the zones' valve openings add up to this, in %.",
+          "count_threshold": "Heating is needed when at least this many zones call for heat. Default 1; at most the number of zones. 0 turns the count off, leaving the power or opening threshold alone, as in Versatile Thermostat. Higher leaves a single calling room without heat.",
+          "power_threshold_kw": "Optional: heating is needed when the calling zones' power, each weighted by its valve opening, adds up to this, in kW. Too high leaves small rooms without heat.",
+          "opening_threshold": "Optional: heating is needed when the widest valve opening among the calling zones reaches this, in %. Too high leaves a room that opens a little without heat.",
           "learning_pauses": "Pause SmartPI learning while hot water runs, while foreign heat warms a zone and while the water temperature swings, so it does not learn what the boiler did; each pause and resume is read back from SmartPI. Default on. Auto-TPI cannot be paused without resetting what it learned, so zones running it are reported instead. Off: SmartPI learns through those moments too, which can skew its model.",
           "comfort_correction": "On (default): while a zone's valve is fully open and its room stays short of its setpoint, the water goes up to 3 K above the curve — 1 K per 30 minutes, only while heat flows — and falls twice as fast; it never rises while another zone is more than 1 K too warm, resets at hand-back, and after three hours at 3 K tells you the curve is probably too low. It acts in series with the zones' own PI (SmartPI, TPI): its slow rate lets them settle first. A zone algorithm's outdoor term (TPI's external coefficient) counts the weather a second time: keep it small while the plugin sets the water. Off: the curve alone."
         }
@@ -610,7 +610,7 @@
     },
     "error": {
       "min_power_not_below_max": "The minimum power must be below the maximum power.",
-      "fixed_temperature_missing": "A passive fixed circuit needs its fixed temperature.",
+      "fixed_temperature_missing": "A thermostatic mixing valve (fixed) needs its temperature setting.",
       "foreign_heat_unsupported": "Only switches, binary sensors and power or temperature sensors can be heat sources.",
       "temperature_threshold_missing": "A temperature source needs a temperature threshold (advanced level).",
       "reference_zone_unknown": "Pick one of the configured zones.",
@@ -794,7 +794,22 @@
         "name": "Signal problems"
       },
       "reference_room": {
-        "name": "Reference room"
+        "name": "Reference room",
+        "state_attributes": {
+          "status": {
+            "name": "Status",
+            "state": {
+              "ok": "OK",
+              "no_active_zone": "No zone is heating",
+              "no_valid_measurement": "No valid measurement"
+            }
+          }
+        },
+        "state": {
+          "no_active_zone": "No zone is heating",
+          "no_valid_measurement": "No valid measurement",
+          "average": "Average of the zones"
+        }
       },
       "reference_room_temperature": {
         "name": "Reference room temperature"
@@ -812,10 +827,41 @@
         "name": "Forecast snapshots"
       },
       "critical_zone": {
-        "name": "Critical zone {circuit}"
+        "name": "Critical zone {circuit}",
+        "state_attributes": {
+          "status": {
+            "name": "Status",
+            "state": {
+              "ok": "OK",
+              "no_active_zone": "No zone is heating",
+              "no_valid_measurement": "No valid measurement"
+            }
+          }
+        }
       },
       "emitter_power_factor": {
-        "name": "{zone} emitter power"
+        "name": "{zone} emitter power",
+        "state_attributes": {
+          "status": {
+            "name": "Status",
+            "state": {
+              "computed": "Computed now",
+              "held": "Last value, held",
+              "unavailable": "Unavailable"
+            }
+          },
+          "reason": {
+            "name": "Why unavailable",
+            "state": {
+              "flow_unknown": "The flow is unknown",
+              "flow_stale": "The flow reading is too old",
+              "circuit_not_measured": "The circuit's own flow is not measured",
+              "room_unknown": "The room temperature is unknown",
+              "zone_unknown": "The zone's state is unknown",
+              "not_heating_yet": "The zone has not heated yet"
+            }
+          }
+        }
       },
       "control_state": {
         "name": "Control state",
@@ -828,10 +874,36 @@
           "idle": "Idle",
           "frost": "Frost protection",
           "fallback": "Fallback setpoint"
+        },
+        "state_attributes": {
+          "heating_confirmation": {
+            "name": "Heating on/off read-back",
+            "state": {
+              "confirmed": "Confirmed by the device",
+              "confirmed_by_gateway": "Confirmed by the gateway (what it sends, not what the boiler accepted)",
+              "waiting": "Sent, waiting for the read-back",
+              "not_confirmed": "Not confirmed: the boiler may ignore it",
+              "changed_from_outside": "Changed by another controller: writes stopped",
+              "unverified": "Unverified: nothing echoes it"
+            }
+          }
         }
       },
       "control_setpoint": {
-        "name": "Control flow setpoint"
+        "name": "Control flow setpoint",
+        "state_attributes": {
+          "confirmation": {
+            "name": "Read-back",
+            "state": {
+              "confirmed": "Confirmed by the device",
+              "confirmed_by_gateway": "Confirmed by the gateway (what it sends, not what the boiler accepted)",
+              "waiting": "Sent, waiting for the read-back",
+              "not_confirmed": "Not confirmed: the boiler may ignore it",
+              "changed_from_outside": "Changed by another controller: writes stopped",
+              "unverified": "Unverified: nothing echoes it"
+            }
+          }
+        }
       }
     },
     "binary_sensor": {
@@ -839,49 +911,154 @@
         "name": "Boiler signals"
       },
       "hot_water": {
-        "name": "{zone} hot water"
+        "name": "{zone} hot water",
+        "state_attributes": {
+          "reason": {
+            "name": "Why not",
+            "state": {
+              "dhw_active": "The boiler heats hot water",
+              "flow_near_room": "The water is barely above the room",
+              "flow_stale": "The flow reading is too old",
+              "flow_unknown": "The flow is unknown",
+              "circuit_not_measured": "The circuit's own flow is not measured",
+              "room_unknown": "The room temperature is unknown"
+            }
+          }
+        }
       },
       "foreign_heat": {
         "name": "{zone} foreign heat"
       },
       "alarm_frequent_starts": {
-        "name": "Frequent starts"
+        "name": "Frequent starts",
+        "state_attributes": {
+          "level": {
+            "name": "Level",
+            "state": {
+              "warning": "Warning",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "alarm_unstable_ignition": {
-        "name": "Unstable ignition"
+        "name": "Unstable ignition",
+        "state_attributes": {
+          "level": {
+            "name": "Level",
+            "state": {
+              "warning": "Warning",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "alarm_pressure_low": {
-        "name": "Water pressure low"
+        "name": "Water pressure low",
+        "state_attributes": {
+          "level": {
+            "name": "Level",
+            "state": {
+              "warning": "Warning",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "alarm_pressure_high": {
-        "name": "Water pressure high"
+        "name": "Water pressure high",
+        "state_attributes": {
+          "level": {
+            "name": "Level",
+            "state": {
+              "warning": "Warning",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "alarm_pressure_falling": {
-        "name": "Water pressure falling"
+        "name": "Water pressure falling",
+        "state_attributes": {
+          "level": {
+            "name": "Level",
+            "state": {
+              "warning": "Warning",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "alarm_flue_gas_high": {
-        "name": "Flue gas too hot"
+        "name": "Flue gas too hot",
+        "state_attributes": {
+          "level": {
+            "name": "Level",
+            "state": {
+              "warning": "Warning",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "alarm_flue_gas_rising": {
-        "name": "Flue gas rising above return"
+        "name": "Flue gas rising above return",
+        "state_attributes": {
+          "level": {
+            "name": "Level",
+            "state": {
+              "warning": "Warning",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "alarm_hysteresis_drift": {
-        "name": "Heating hysteresis drifting"
+        "name": "Heating hysteresis drifting",
+        "state_attributes": {
+          "level": {
+            "name": "Level",
+            "state": {
+              "warning": "Warning",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "outdoor_sensor_problem": {
-        "name": "Outdoor sensor problem"
+        "name": "Outdoor sensor problem",
+        "state_attributes": {
+          "status": {
+            "name": "Check",
+            "state": {
+              "ok": "Agrees with the weather",
+              "deviates": "Disagrees with the weather for long",
+              "stuck": "Does not move while the weather does",
+              "unknown": "Not enough data to tell"
+            }
+          }
+        }
       },
       "alarm_low_flow": {
-        "name": "Low flow: all valves closed while the pump runs"
+        "name": "Low flow: all valves closed while the pump runs",
+        "state_attributes": {
+          "level": {
+            "name": "Level",
+            "state": {
+              "warning": "Warning",
+              "alarm": "Alarm"
+            }
+          }
+        }
       },
       "alarm_write_failed": {
         "name": "Control: write failed"
       },
       "alarm_write_ignored": {
-        "name": "Control: boiler ignores the setpoint"
+        "name": "Control: the boiler does not take a write"
       },
       "alarm_outside_change": {
-        "name": "Control: setpoint changed from outside"
+        "name": "Control: changed by another controller"
       },
       "alarm_control_error": {
         "name": "Control: internal error"
@@ -915,6 +1092,13 @@
               "thermostat_takes_over": "The thermostat takes over",
               "heating_stops": "Heating stops until control resumes",
               "device_decides": "The device's own fallback applies"
+            }
+          },
+          "off_by": {
+            "name": "Heating off by",
+            "state": {
+              "heating_switch": "The heating switch",
+              "low_setpoint": "A low setpoint"
             }
           }
         }

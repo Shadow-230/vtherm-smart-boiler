@@ -98,7 +98,14 @@ async def test_setup_creates_entities_and_reads_signals(
     hot = hass.states.get(entity_id(hass, entry, "binary_sensor", "hot_water", living))
     assert hot is not None
     assert hot.state == "on"
-    factor = hass.states.get(entity_id(hass, entry, "sensor", "emitter_power_factor", living))
+    # A power user's diagnostic: registered, hidden until enabled (P104).
+    factor_id = entity_id(hass, entry, "sensor", "emitter_power_factor", living)
+    registry = er.async_get(hass)
+    assert registry.async_get(factor_id).disabled_by is er.RegistryEntryDisabler.INTEGRATION
+    registry.async_update_entity(factor_id, disabled_by=None)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    factor = hass.states.get(factor_id)
     assert factor is not None
     assert float(factor.state) > 0
     reference = hass.states.get(entity_id(hass, entry, "sensor", "reference_room_temperature"))

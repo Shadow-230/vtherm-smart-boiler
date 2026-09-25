@@ -24,6 +24,9 @@ TRANSIENT_BLOCKERS = frozenset({"ha_starting", "vt_central_boiler_unknown"})
 CLEARED_BY_SWITCHING = frozenset({"control_error"})
 
 
+PARALLEL_UPDATES = 1  # one switch action at a time
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,

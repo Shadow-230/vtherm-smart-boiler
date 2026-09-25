@@ -145,3 +145,50 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
         issue = SOURCE["issues"][key]
         assert "{zones}" in issue["description"]
         assert issue["title"]
+
+
+def _values(entity: dict, attribute: str) -> set[str]:
+    return set(entity["state_attributes"][attribute]["state"])
+
+
+def test_coded_states_and_attributes_are_translated() -> None:
+    """P50: no raw code reaches the user where Home Assistant can translate it."""
+    from custom_components.vtherm_smart_boiler.control import CONFIRMED_BY_GATEWAY
+    from custom_components.vtherm_smart_boiler.core.alarms import AlarmKind, Level
+    from custom_components.vtherm_smart_boiler.core.emitters import FactorReason, FactorStatus
+    from custom_components.vtherm_smart_boiler.core.guards import Confirmation
+    from custom_components.vtherm_smart_boiler.core.hot_water import HotWaterReason
+    from custom_components.vtherm_smart_boiler.core.signal_check import OutdoorStatus
+    from custom_components.vtherm_smart_boiler.core.zones import SelectionStatus
+
+    sensors = SOURCE["entity"]["sensor"]
+    binary = SOURCE["entity"]["binary_sensor"]
+    confirmations = {c.value for c in Confirmation} | {CONFIRMED_BY_GATEWAY}
+    assert _values(binary["hot_water"], "reason") == {r.value for r in HotWaterReason}
+    factor = sensors["emitter_power_factor"]
+    assert _values(factor, "status") == {s.value for s in FactorStatus}
+    assert _values(factor, "reason") == {r.value for r in FactorReason}
+    selection = {s.value for s in SelectionStatus}
+    assert _values(sensors["critical_zone"], "status") == selection
+    assert _values(sensors["reference_room"], "status") == selection
+    assert set(sensors["reference_room"]["state"]) == (selection - {"ok"}) | {"average"}
+    assert _values(binary["outdoor_sensor_problem"], "status") == {s.value for s in OutdoorStatus}
+    for kind in AlarmKind:
+        assert _values(binary[f"alarm_{kind.value}"], "level") == {lv.value for lv in Level}
+    assert _values(sensors["control_setpoint"], "confirmation") == confirmations
+    assert _values(sensors["control_state"], "heating_confirmation") == confirmations
+    assert _values(SOURCE["entity"]["switch"]["control"], "off_by") == {
+        "heating_switch",
+        "low_setpoint",
+    }
+
+
+def test_every_icon_belongs_to_an_entity() -> None:
+    """An icon under a key no entity has would silently never show."""
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).parent.parent / "custom_components/vtherm_smart_boiler/icons.json"
+    icons = json.loads(path.read_text())
+    for domain, keys in icons["entity"].items():
+        assert set(keys) <= set(SOURCE["entity"][domain]), domain

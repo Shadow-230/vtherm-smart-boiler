@@ -42,6 +42,9 @@ def _alarm_kinds(coordinator: SmartBoilerCoordinator) -> list[AlarmKind]:
     return kinds
 
 
+PARALLEL_UPDATES = 0  # read from the coordinator: no update requests to limit
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,

@@ -292,6 +292,9 @@ BOILER_SENSORS: tuple[BoilerSensorDescription, ...] = (
 )
 
 
+PARALLEL_UPDATES = 0  # read from the coordinator: no update requests to limit
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -392,6 +395,9 @@ class CriticalZoneSensor(SmartBoilerEntity, SensorEntity):
 
 class EmitterFactorSensor(SmartBoilerEntity, SensorEntity):
     _unrecorded_attributes = frozenset({"status", "reason", "computed_at", "output_w", "held"})
+    # A power user's diagnostic (SCOPE.md §4): there, but hidden until enabled.
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
 
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
