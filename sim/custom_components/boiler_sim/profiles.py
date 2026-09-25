@@ -46,6 +46,15 @@ BOILERS: dict[str, BoilerProfile] = {
         min_setpoint=40.0,
         max_setpoint=80.0,
     ),
+    # Oversized and holding little water: in mild weather it starts every few minutes.
+    "short_cycling": BoilerProfile(
+        8.0,
+        24.0,
+        8.0,
+        hysteresis_on_k=3.0,
+        hysteresis_off_k=3.0,
+        anti_cycle_s=30.0,
+    ),
 }
 
 

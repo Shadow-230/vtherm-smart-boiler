@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 from custom_components.boiler_sim import SimHub
+from custom_components.boiler_sim.plant import PlantOutput
 from homeassistant.const import EVENT_CALL_SERVICE
 from homeassistant.core import Event, HomeAssistant, State
 from homeassistant.exceptions import ServiceValidationError
@@ -57,9 +58,11 @@ class Rig:
     hass: HomeAssistant
     freezer: Any
     zones: FakeZones
+    storage: dict[str, Any] = field(default_factory=dict)
     hub: SimHub | None = None
     entry: MockConfigEntry | None = None
     vt_mode: str = "heat"  # the HVAC mode VT gives its thermostats (VT's own modes act on it)
+    over_climate: set[str] = field(default_factory=set)  # zones of VT's over_climate type
     calls: list[tuple[float, str, str, dict[str, Any]]] = field(default_factory=list)
 
     @property
@@ -75,6 +78,22 @@ class Rig:
         for zone in self.sim.zones:
             opening = self.sim.opening(zone.zone_id)
             index = [z.zone_id for z in self.sim.zones].index(zone.zone_id)
+            entity_id = self.zones.entities[zone.zone_id]
+            if self.vt_mode == "unavailable":
+                self.hass.states.async_set(entity_id, "unavailable", {})
+                continue
+            if zone.zone_id in self.over_climate:
+                # It drives a device with its own regulation: no opening, only whether it heats.
+                self.hass.states.async_set(
+                    entity_id,
+                    self.vt_mode,
+                    {
+                        "current_temperature": round(self.sim.room(zone.zone_id), 1),
+                        "temperature": self.sim.plant.targets[index],
+                        "hvac_action": "heating" if opening > 0.05 else "idle",
+                    },
+                )
+                continue
             self.zones.set(
                 zone.zone_id,
                 self.vt_mode,
@@ -126,7 +145,14 @@ class Rig:
         return {(d, s) for _t, d, s, _data in self.calls if d not in ("switch", SIM)}
 
 
-async def start(rig: Rig, sim: dict[str, Any] | None = None, **control: Any) -> None:
+async def start(
+    rig: Rig,
+    sim: dict[str, Any] | None = None,
+    stored: dict[str, Any] | None = None,
+    monitor: dict[str, Any] | None = None,
+    **control: Any,
+) -> None:
+    """The simulator, VT's zones and the plugin; ``stored``: what an earlier run left."""
     hass = rig.hass
     assert await async_setup_component(hass, SIM, {SIM: {"outdoor": -2.0} | (sim or {})})
     await hass.async_block_till_done()
@@ -140,20 +166,23 @@ async def start(rig: Rig, sim: dict[str, Any] | None = None, **control: Any) -> 
         "boiler": {"class": "flow_setpoint", "dhw": "combi"},
         "parameters": {"boiler_min_power": 2.5, "boiler_max_power": 15.0},
         "zones": [{"entity_id": e} for e in rig.zones.entities.values()],
-        "monitor": {"monitoring_days": 0},
+        "monitor": {"monitoring_days": 0} | (monitor or {}),
         "control": GATEWAY_CONTROL | control,
     }
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
     entry.add_to_hass(hass)
+    if stored is not None:
+        key = f"{DOMAIN}.{entry.entry_id}"
+        rig.storage[key] = {"version": 1, "key": key, "data": stored}
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     rig.entry = entry
 
 
 @pytest.fixture
-async def rig(hass: HomeAssistant, freezer, zones: FakeZones) -> Rig:
+async def rig(hass: HomeAssistant, freezer, zones: FakeZones, hass_storage: dict[str, Any]) -> Rig:
     freezer.move_to(START)
-    rig = Rig(hass, freezer, zones)
+    rig = Rig(hass, freezer, zones, hass_storage)
 
     def record(event: Event) -> None:
         data = event.data
@@ -167,9 +196,8 @@ async def rig(hass: HomeAssistant, freezer, zones: FakeZones) -> Rig:
 
 
 async def test_a_cold_day_under_control(rig: Rig) -> None:
-    """Six hours at −2 °C: rooms held, limits kept, keep-alive never lapses, heating switched
-    within its minimum times and budget, the DHW-enable bit never touched, only allowed
-    services called."""
+    """Six hours at −2 °C: rooms held, limits kept, keep-alive never lapses, the DHW-enable bit
+    never touched, only allowed services called."""
     await start(rig)
     await rig.advance(1800, step=30.0)  # the boiler on its own curve first
     await rig.switch(True)
@@ -181,10 +209,6 @@ async def test_a_cold_day_under_control(rig: Rig) -> None:
     assert all(25.0 <= v <= 70.0 for v in values)
     gaps = [b[0] - a[0] for a, b in pairwise(setpoints)]
     assert max(gaps) <= 45.0  # the gateway's one-minute limit is never reached
-    switches = [(t, v) for t, _k, v in rig.gateway("ch")]
-    changes = [(t, v) for (t, v), (_t0, v0) in zip(switches[1:], switches, strict=False) if v != v0]
-    for (a, _), (b, _) in pairwise(changes):
-        assert b - a >= 300.0  # minimum on and off times
     for zone in rig.sim.zones:
         index = [z.zone_id for z in rig.sim.zones].index(zone.zone_id)
         assert abs(rig.sim.room(zone.zone_id) - rig.sim.plant.targets[index]) < 1.5, zone
@@ -458,3 +482,174 @@ async def test_nothing_is_written_to_the_boilers_persistent_memory(
 
 def entity_setpoints(rig: Rig) -> list[float]:
     return [float(v) for _t, kind, v in rig.sim.commands.entity if kind == "setpoint"]  # type: ignore[arg-type]
+
+
+# --- hand-back kept and retried; a restart without a clean stop -----------------------------
+
+
+async def test_a_hand_back_is_kept_and_retried_until_the_gateway_takes_it(rig: Rig) -> None:
+    """A hand-back whose target is away is shown as failed, kept and sent again every minute;
+    once it goes through, the alarm clears and nothing more is sent."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(60)
+    hass = rig.hass
+    away = hass.services.async_services()["opentherm_gw"]
+    for name in away:
+        hass.services.async_remove("opentherm_gw", name)
+    await rig.switch(False)
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+    await rig.advance(180)
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+    for name, service in away.items():
+        hass.services.async_register("opentherm_gw", name, service.job.target, service.schema)
+    await rig.advance(70)
+    assert [(k, v) for _t, k, v in rig.gateway()][-2:] == [("ch", True), ("setpoint", 0.0)]
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
+    count = len(rig.gateway())
+    await rig.advance(180)
+    assert len(rig.gateway()) == count  # given back: nothing more is sent
+
+
+async def test_a_restart_without_a_clean_stop_hands_back_first(rig: Rig) -> None:
+    """The last run held the boiler and never gave it back (a crash, a power cut): the first
+    step gives it back in full, and control stays off until the user switches it on."""
+    await start(rig, stored={"control": {"controlling": True}})
+    await rig.advance(30)
+    assert [(k, v) for _t, k, v in rig.gateway()][:2] == [("ch", True), ("setpoint", 0.0)]
+    assert rig.state("switch", "control").state == "off"
+    count = len(rig.gateway())
+    await rig.advance(180)
+    assert len(rig.gateway()) == count
+
+
+# --- VT's zones as VT has them ------------------------------------------------------------
+
+
+async def test_zones_that_cannot_be_read_mean_heat_not_cold(rig: Rig) -> None:
+    """Every VT zone unavailable: whether to heat is unknown, so the boiler heats on the curve's
+    water — never a cold house for want of data — and after half an hour the alarm says so."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(60)
+    rig.vt_mode = "unavailable"
+    rig.mirror_zones()
+    await rig.advance(600, step=30.0)
+    attributes = rig.state("sensor", "control_state").attributes
+    assert "zones_unknown" in attributes["reasons"]
+    assert len(attributes["unknown_zones"]) == len(rig.sim.zones)
+    assert rig.gateway("ch")[-1][2] is True
+    assert rig.setpoints()[-1] > 0.0
+    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "off"
+    await rig.advance(1260, step=30.0)
+    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "on"
+    assert rig.gateway("ch")[-1][2] is True
+
+
+@pytest.mark.parametrize("kind", ["auto", "over_climate"])
+async def test_zones_in_auto_or_of_the_over_climate_type_decide_as_well(
+    rig: Rig, kind: str
+) -> None:
+    """A thermostat in "auto", or one that drives a device with its own regulation (no opening
+    published), still asks for heat, and stops asking."""
+    await start(rig)
+    if kind == "auto":
+        rig.vt_mode = "auto"
+    else:
+        rig.over_climate = {zone.zone_id for zone in rig.sim.zones}
+    plant = rig.sim.plant
+
+    def rooms(offset: float) -> None:
+        plant.room = [target + offset for target in plant.targets]
+        rig.sim.advance(rig.now())
+        rig.mirror_zones()
+
+    rooms(-2.0)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.gateway("ch")[-1][2] is True
+    assert "demand" in rig.state("sensor", "control_state").attributes["reasons"]
+    rooms(2.0)
+    await rig.advance(20)
+    assert rig.gateway("ch")[-1][2] is False
+
+
+# --- bounded learning, alarms, a short-cycling boiler, no outdoor reading ------------------
+
+
+async def test_the_comfort_correction_stays_within_3_k(rig: Rig) -> None:
+    """A room that cannot reach its setpoint with its valve fully open raises the water, by
+    3 K at most, and the user is told once it has sat at that edge."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(900, step=30.0)
+    attributes = rig.state("sensor", "control_state").attributes
+    assert "comfort_correction" not in attributes["reasons"]
+    base = attributes["target"]
+    rig.sim.plant.targets[0] = 30.0  # out of reach: its valve stays fully open
+    targets = []
+    for _ in range(60):  # five hours
+        await rig.advance(300, step=30.0)
+        targets.append(rig.state("sensor", "control_state").attributes["target"])
+    assert max(targets) > base + 1.0  # the correction worked
+    assert max(targets) <= base + 3.0 + 0.1  # and stayed within its band
+    assert max(rig.setpoints()) <= base + 3.0 + 0.1
+    assert rig.state("binary_sensor", "alarm_correction_at_limit").state == "on"
+
+
+async def test_an_alarm_that_hands_back_does(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An alarm whose reaction is a hand-back — here the water pressure falling past its alarm
+    limit, as with a leak — gives the boiler back, and control does not take it again."""
+    await start(rig, alarm_reactions={"pressure_low": "hand_back"})
+    await rig.switch(True)
+    await rig.advance(60)
+    assert rig.sim.plant.override_active(rig.now())
+    monkeypatch.setattr(PlantOutput, "pressure", property(lambda _output: 0.4))
+    await rig.advance(60)
+    assert rig.state("binary_sensor", "alarm_pressure_low").state == "on"
+    control_state = rig.state("sensor", "control_state")
+    assert control_state.state == "handed_back"
+    assert "alarm_hand_back" in control_state.attributes["reasons"]
+    assert rig.setpoints()[-1] == 0.0
+    assert not rig.sim.plant.override_active(rig.now())
+    count = len(rig.gateway())
+    await rig.advance(180)
+    assert len(rig.gateway()) == count
+
+
+async def test_a_short_cycling_boiler_is_never_held_off(rig: Rig) -> None:
+    """An oversized boiler in mild weather starts often on its own; heating still follows VT's
+    zones and is never switched off while a zone calls."""
+    await start(rig, sim={"boiler": "short_cycling", "outdoor": 10.0})
+    await rig.switch(True)
+    seen: list[tuple[float, bool]] = []  # when the zones were mirrored, and whether one called
+    starts, flame = 0, rig.sim.last.flame
+    for _ in range(360):  # an hour
+        await rig.advance(10)
+        seen.append((rig.now(), any(rig.sim.opening(z.zone_id) > 0.05 for z in rig.sim.zones)))
+        starts += rig.sim.last.flame and not flame
+        flame = rig.sim.last.flame
+    assert starts >= 6, "the boiler must cycle for this scenario to mean anything"
+    assert any(calling for _at, calling in seen)
+    assert rig.gateway("ch")
+    for written_at, _kind, on in rig.gateway("ch"):
+        before = [calling for at, calling in seen if at < written_at]
+        if on is False and before:
+            assert not before[-1], written_at  # off only when no zone called
+
+
+async def test_without_any_outdoor_reading_the_fallback_setpoint_heats(rig: Rig) -> None:
+    """The boiler's outdoor sensor and the weather entity both gone: the last value stands in
+    for three hours, then the fallback setpoint — never zero heat."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(60)
+    for signal in ("outdoor", "weather"):
+        await rig.hass.services.async_call(SIM, "fail_signal", {"signal": signal}, blocking=True)
+    await rig.advance(900, step=30.0)
+    assert "outdoor_held" in rig.state("sensor", "control_state").attributes["reasons"]
+    await rig.advance(3 * 3600, step=60.0)
+    assert "outdoor_unknown" in rig.state("sensor", "control_state").attributes["reasons"]
+    assert rig.setpoints()[-1] >= 25.0
+    assert rig.gateway("ch")[-1][2] is True
+    assert rig.sim.plant.override_active(rig.now())
