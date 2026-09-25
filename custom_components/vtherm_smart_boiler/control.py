@@ -53,7 +53,8 @@ from .core.guards import (
 from .core.learning import LearningState, ZoneLearning, plan_learning, release_all
 from .core.loop import LoopOutput, LoopState, loop_step
 from .core.readings import BoilerSnapshot, ZoneState
-from .core.signals import SIGNAL_SPECS, Signal
+from .core.signal_check import OutdoorStatus
+from .core.signals import Signal
 from .transport.entities import read_bounds, read_temperature, read_weather_temperature
 from .transport.writers import HandBackCheck, WriteError, Writer, make_writer, writer_services
 
@@ -89,6 +90,7 @@ class ControlAlarm(StrEnum):
     ZONE_UNKNOWN = "zone_unknown"  # a zone unknown for long: frost protection cannot see it
     FROST_NOT_WARMING = "frost_not_warming"  # frost heating for long without the room warming
     CORRECTION_AT_LIMIT = "correction_at_limit"  # the comfort correction at 3 K for hours
+    OUTDOOR_SENSOR_SUSPECT = "outdoor_sensor_suspect"  # stuck or far from the weather: not used
 
 
 _EVENT_ALARM = {
@@ -503,6 +505,7 @@ class ControlUnit:
         for flagged, alarm in (
             (out.decision.frost_stuck, ControlAlarm.FROST_NOT_WARMING),  # heating goes on
             (out.decision.correction_at_limit, ControlAlarm.CORRECTION_AT_LIMIT),  # information
+            (self._outdoor_suspect(), ControlAlarm.OUTDOOR_SENSOR_SUSPECT),  # left out
         ):
             if flagged:
                 session.alarms.add(alarm)
@@ -580,16 +583,16 @@ class ControlUnit:
     ) -> ControlInputs:
         coordinator = self._coordinator
         config = coordinator.config
-        # A missing outdoor reading only moves the curve to the weather entity, so its age limit
-        # stays: a sensor stuck at a mild value must not keep the house in summer mode.
-        outdoor_age = _capped(
-            config.freshness.get(Signal.OUTDOOR), SIGNAL_SPECS[Signal.OUTDOOR].max_age_s
-        )
+        # One freshness rule: a steady reading is not a stale one, so its age counts only with a
+        # limit the user set. A sensor the monitor found stuck or far from the weather leaves
+        # the curve to the weather entity, then the held value and the fallback.
+        outdoor_age = config.freshness.get(Signal.OUTDOOR)
         weather = None
         if config.weather:
             reading = read_weather_temperature(self._hass, config.weather)
-            if reading.is_fresh(now, SIGNAL_SPECS[Signal.OUTDOOR].max_age_s):
+            if reading.is_fresh(now, outdoor_age):
                 weather = float(reading.value) if reading.value is not None else None
+        sensor = None if self._outdoor_suspect() else snapshot.number(Signal.OUTDOOR, outdoor_age)
         return ControlInputs(
             now=now,
             enabled=self.enabled,
@@ -598,10 +601,15 @@ class ControlUnit:
             boiler_link=self._boiler_link(snapshot, now),
             flame=snapshot.flag(Signal.FLAME),
             dhw=coordinator.dhw_now(snapshot),
-            outdoor_sensor=snapshot.number(Signal.OUTDOOR, outdoor_age),
+            outdoor_sensor=sensor,
             outdoor_weather=weather,
             zones=tuple(zones),
         )
+
+    def _outdoor_suspect(self) -> bool:
+        """The monitor's check found the outdoor sensor stuck, or far from the weather."""
+        check = getattr(self._coordinator.analysis, "outdoor", None)
+        return check is not None and check.status in (OutdoorStatus.STUCK, OutdoorStatus.DEVIATES)
 
     def _hand_back_alarms(self) -> tuple[str, ...]:
         """Active alarms whose reaction is to hand control back."""
@@ -621,6 +629,7 @@ class ControlUnit:
                 ControlAlarm.ZONE_UNKNOWN,
                 ControlAlarm.FROST_NOT_WARMING,
                 ControlAlarm.CORRECTION_AT_LIMIT,
+                ControlAlarm.OUTDOOR_SENSOR_SUSPECT,
             ):
                 continue  # a blocker, a retry of its own, and a hand-back already made
             if self.options.reaction(alarm.value) is AlarmReaction.HAND_BACK:
@@ -884,11 +893,3 @@ class ControlUnit:
             return False
         return True
 
-
-def _capped(configured: float | None, limit: float | None) -> float | None:
-    """A freshness limit: the user's, but never longer than ``limit``."""
-    if configured is None:
-        return limit
-    if limit is None:
-        return configured
-    return min(configured, limit)

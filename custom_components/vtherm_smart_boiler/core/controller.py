@@ -57,7 +57,6 @@ CORRECTION_LIMIT_S = 3 * HOUR  # at the band's edge this long: tell the user
 OVERHEAT_K = 1.0  # a zone this far over its setpoint stops the rise
 FROST_ALARM_S = 2 * HOUR  # frost heating this long without the room warming is reported
 FROST_WARMING_K = 0.5  # the watched room must have warmed by this much
-FALLBACK_OUTDOOR = 0.0  # the fallback setpoint defaults to the curve at this outdoor temperature
 
 
 class ControlMode(StrEnum):
@@ -116,7 +115,7 @@ class ControlConfig:
     boiler_max: float | None = None
     frost: FrostConfig = field(default_factory=FrostConfig)
     demand: DemandConfig = field(default_factory=DemandConfig)
-    fallback_setpoint: float | None = None  # None: the curve at FALLBACK_OUTDOOR
+    fallback_setpoint: float | None = None  # None: the curve at its design point
     ramp_k_per_min: float | None = 1.0  # None: no ramp
     decision_interval_s: float = 300.0
     zone_max_age_s: float = 2 * HOUR
@@ -172,6 +171,7 @@ class ControlState:
     correction: float = 0.0  # K added to the curve for a zone that cannot reach its setpoint
     heat_s: float = 0.0  # seconds heat has flowed since the last water decision
     last_step_at: float | None = None
+    upper: float | None = None  # the highest setpoint the limits allow, at the last decision
     correction_limit_since: float | None = None  # when the correction reached its band's edge
     waiting_since: float | None = None  # when the boiler's signals went stale
 
@@ -189,9 +189,11 @@ class ControlDecision:
 
 
 def fallback_setpoint(config: ControlConfig) -> float:
+    """Without any outdoor temperature (the last one held for a while): the user's value, else
+    the curve's design point — never too little heat; the valves keep rooms from overheating."""
     if config.fallback_setpoint is not None:
         return config.fallback_setpoint
-    return config.curve.flow(FALLBACK_OUTDOOR)
+    return config.curve.flow(config.curve.design_outdoor)
 
 
 def _release(
@@ -274,8 +276,9 @@ def _heating_decision(
         state = replace(state, frost_since=now, frost_from=coldest)
     elif not frost:
         state = replace(state, frost_since=None, frost_from=None)
-    if state.last_step_at is not None and want_heat_now(inputs, config, frost) and not inputs.dhw:
-        state = replace(state, heat_s=state.heat_s + max(0.0, now - state.last_step_at))
+    step_s = 0.0 if state.last_step_at is None else max(0.0, now - state.last_step_at)
+    if want_heat_now(inputs, config, frost) and not inputs.dhw:
+        state = replace(state, heat_s=state.heat_s + step_s)
     state = replace(state, last_step_at=now)
     # Frost heating is never stopped; heating that does not warm the room is reported.
     frost_stuck = (
@@ -288,9 +291,12 @@ def _heating_decision(
     )
     want_heat, heat_reason = _want_heat(inputs, config, frost)
 
+    prior_target, prior_upper = state.target, state.upper
     due = (
         state.decided_at is None
         or state.command is None
+        or prior_target is None
+        or prior_upper is None
         or now - state.decided_at >= config.decision_interval_s
         or frost != state.frost
     )
@@ -312,13 +318,18 @@ def _heating_decision(
             config.boiler_max,
         )  # fmt: skip
         water.extend(_LIMIT_REASON[code] for code in limited.applied)
-        setpoint = _ramp(state, limited.value, curve_value, now, config, water)
-        target: float | None = limited.value
+        upper = limit_flow(
+            1e6, curve_value, config.limits, config.circuit_max, config.boiler_max
+        ).value
+        target: float = limited.value
         water_reasons, decided_at = tuple(water), now
     else:
-        assert state.command is not None
-        setpoint, target, correction = state.command.setpoint, state.target, state.correction
+        assert prior_target is not None
+        assert prior_upper is not None
+        target, upper, correction = prior_target, prior_upper, state.correction
         water_reasons, decided_at = state.water_reasons, state.decided_at
+    previous = state.command.setpoint if state.command is not None else None
+    setpoint, ramping = _ramp(previous, target, upper, step_s, config.ramp_k_per_min)
 
     if frost:
         mode = ControlMode.FROST
@@ -330,6 +341,8 @@ def _heating_decision(
         mode = ControlMode.IDLE
 
     reasons = (*water_reasons[:1], heat_reason, *water_reasons[1:])
+    if ramping:
+        reasons = (*reasons, Reason.RAMP)
     command = BoilerCommand(want_heat, setpoint)
     new_state = replace(
         state,
@@ -338,6 +351,7 @@ def _heating_decision(
         frost=frost,
         command=command,
         target=target,
+        upper=upper,
         reasons=reasons,
         water_reasons=water_reasons,
         decided_at=decided_at,
@@ -416,28 +430,15 @@ def _correction(state: ControlState, inputs: ControlInputs, config: ControlConfi
 
 
 def _ramp(
-    state: ControlState,
-    target: float,
-    curve_value: float,
-    now: float,
-    config: ControlConfig,
-    reasons: list[Reason],
-) -> float:
-    """Move from the last setpoint towards ``target`` at the ramp rate; a cap that fell below
-    the last setpoint applies at once."""
-    previous = state.command.setpoint if state.command is not None else None
-    if previous is None:
-        return target
-    upper = limit_flow(1e6, curve_value, config.limits, config.circuit_max, config.boiler_max).value
-    if previous > upper:
-        return target
+    previous: float | None, target: float, upper: float, step_s: float, rate: float | None
+) -> tuple[float, bool]:
+    """The setpoint for this step: towards ``target`` at ``rate`` K per minute, at every step.
+    The first setpoint of a session is the target itself; a cap that fell below the last
+    setpoint applies at once. Whether the ramp held the setpoint back."""
+    if previous is None or previous > upper or rate is None:
+        return target, False
     delta = target - previous
-    if abs(delta) < 1e-9:
-        return previous
-    step = delta
-    if config.ramp_k_per_min is not None and state.decided_at is not None:
-        allowed = config.ramp_k_per_min * max(0.0, now - state.decided_at) / 60.0
-        if abs(delta) > allowed:
-            step = allowed if delta > 0 else -allowed
-            reasons.append(Reason.RAMP)
-    return previous + step
+    allowed = rate * step_s / 60.0
+    if abs(delta) <= allowed:
+        return target, False
+    return previous + (allowed if delta > 0 else -allowed), True

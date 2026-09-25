@@ -169,17 +169,33 @@ def test_summer_and_winter_come_from_vt() -> None:
 
 
 def test_missing_outdoor_temperature_uses_the_fallback_setpoint() -> None:
+    """The last effective outdoor temperature holds for three hours; then the curve's design
+    point — never too little heat, the valves keep the rooms from overheating."""
     steps = [
         inputs(0.0),
-        inputs(1800.0, outdoor_sensor=None),
         inputs(2 * 3600.0, outdoor_sensor=None),
+        inputs(3 * 3600.0 + 60.0, outdoor_sensor=None),
     ]
     config = replace(CONFIG, decision_interval_s=60.0)
     _state, decisions = run(steps, config)
     assert Reason.OUTDOOR_HELD in decisions[1].reasons
+    assert decisions[1].command == BoilerCommand(True, pytest.approx(CURVE.flow(5.0)))
     assert decisions[2].mode is ControlMode.FALLBACK
-    assert decisions[2].command == BoilerCommand(True, pytest.approx(CURVE.flow(0.0)))
+    assert decisions[2].command == BoilerCommand(True, pytest.approx(CURVE.design_flow))
     assert fallback_setpoint(replace(CONFIG, fallback_setpoint=48.0)) == 48.0
+
+
+def test_the_ramp_moves_at_every_step() -> None:
+    """1 K a minute spread over the steps, not one jump per decision."""
+    config = replace(CONFIG, ramp_k_per_min=1.0, decision_interval_s=300.0)
+    steps = [inputs(0.0, outdoor_sensor=15.0)] + [
+        inputs(t * 10.0, outdoor_sensor=-10.0) for t in range(30, 37)
+    ]
+    _state, decisions = run(steps, config)
+    first = decisions[0].command.setpoint
+    raised = [d.command.setpoint - first for d in decisions[1:]]
+    # The colder curve arrives with the decision at 300 s; from there 1/6 K every 10 s step.
+    assert raised == pytest.approx([k / 6.0 + 5.0 for k in range(7)], abs=1e-6)
 
 
 def test_weather_entity_stands_in_for_the_sensor() -> None:

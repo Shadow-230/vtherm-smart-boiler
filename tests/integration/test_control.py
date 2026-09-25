@@ -103,15 +103,17 @@ class Rig:
     outdoor: float = OUTDOOR
     flow_reported: bool = True  # False: the flow is not reported again (a source that reports
     # only on change, as MQTT entities do)
+    outdoor_reported: bool = True  # the same for the outdoor temperature
     services: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
 
     def live(self) -> None:
         """The gateway's periodic reports: fresh boiler signals and setpoint echo."""
         values: dict[Signal, float | bool | None] = {
             Signal.FLAME: False,
-            Signal.OUTDOOR: self.outdoor,
             Signal.DHW_ACTIVE: self.dhw,
         }
+        if self.outdoor_reported:
+            values[Signal.OUTDOOR] = self.outdoor
         if self.flow_reported:
             values[Signal.FLOW] = self.flow
         self.boiler.set_many(values)
@@ -591,8 +593,11 @@ async def test_a_held_setpoint_is_written_on_change_only(rig: Rig) -> None:
 
     rig.outdoor = -5.0
     await rig.advance(120)
-    assert len(number.writes) == 2
     assert number.writes[-1] > EXPECTED
+    assert number.writes == sorted(number.writes)  # the ramp spreads the rise over the steps
+    count = len(number.writes)
+    await rig.advance(120)
+    assert len(number.writes) == count  # steady: nothing more written
     await rig.switch(False)
     assert number.writes[-1] == 50.0  # the hand-back value
     assert rig.entry is not None
@@ -1208,3 +1213,41 @@ async def test_without_a_heating_switch_off_is_a_low_setpoint(rig: Rig) -> None:
     number.register()
     await start(rig, **held_entity(number))
     assert rig.state("switch", "control").attributes["off_by"] == "low_setpoint"
+
+
+async def test_a_steady_outdoor_reading_is_not_a_stale_one(rig: Rig) -> None:
+    """Many sources report only on change: without a user-set age limit the outdoor sensor keeps
+    feeding the curve however old its last report."""
+    await start(rig)
+    await rig.switch(True)
+    rig.outdoor_reported = False
+    await rig.advance(3 * 3600, step=300)
+    assert "outdoor_sensor" in rig.state("sensor", "control_state").attributes["reasons"]
+
+
+async def test_a_stuck_outdoor_sensor_leaves_the_curve(rig: Rig) -> None:
+    """The monitor found the sensor stuck (or far from the weather): the curve holds its last
+    value, then the fallback, and the user is told."""
+    from custom_components.vtherm_smart_boiler.core.signal_check import (
+        OutdoorCheck,
+        OutdoorStatus,
+    )
+
+    await start(rig)
+    await rig.switch(True)
+    assert rig.entry is not None
+    coordinator = rig.entry.runtime_data
+    real = coordinator.analysis
+
+    class Suspect:
+        outdoor = OutdoorCheck(OutdoorStatus.STUCK, 0.0, 0.0)
+
+    coordinator.analysis = Suspect()
+    await rig.advance(300)  # the next water decision
+    state = rig.state("sensor", "control_state")
+    assert "outdoor_sensor" not in state.attributes["reasons"]
+    assert "outdoor_held" in state.attributes["reasons"]
+    assert rig.state("binary_sensor", "alarm_outdoor_sensor_suspect").state == "on"
+    coordinator.analysis = real
+    await rig.advance(10)
+    assert rig.state("binary_sensor", "alarm_outdoor_sensor_suspect").state == "off"

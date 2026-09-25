@@ -63,7 +63,7 @@ class OutdoorState:
 
 
 DEFAULT_TIME_CONSTANT_S = 3 * HOUR
-DEFAULT_HOLD_S = HOUR
+DEFAULT_HOLD_S = 3 * HOUR  # the last effective value stands in this long, then the fallback
 
 
 def update_outdoor(

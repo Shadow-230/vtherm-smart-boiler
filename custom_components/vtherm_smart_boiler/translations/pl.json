@@ -525,7 +525,7 @@
           "exponent": "Jak wygina się krzywa. Puste pole dobiera go według grzejników: grzejniki 1,3, konwektory 1,4, podłogówka 1,1.",
           "offset": "Przesuwa całą krzywą w górę lub w dół, w K. Domyślnie 0.",
           "ceiling_band": "Jak wysoko ponad krzywą może sięgnąć korekta komfortu, w K. Domyślnie 10 K; 0 w praktyce wyłącza korektę.",
-          "fallback_setpoint": "Nastawa używana, gdy temperatura zewnętrzna jest nieznana, w °C. Puste pole: krzywa przy 0 °C na zewnątrz.",
+          "fallback_setpoint": "Używana, gdy temperatura zewnętrzna jest nieznana — czujnik zawiódł albo monitor uznał go za zawieszony lub odbiegający od pogody, a encji pogody też brak — po trzech godzinach trzymania ostatniej temperatury efektywnej, w °C. Puste (domyślnie): krzywa w punkcie projektowym, najwięcej ciepła, jakie daje: nigdy za mało ciepła, zawory chronią pomieszczenia przed przegrzaniem.",
           "frost_limit": "Każda strefa chłodniejsza niż ta wartość uruchamia grzanie bez względu na inne warunki, w °C. Domyślnie 5 °C.",
           "frost_release": "Ochrona przed mrozem kończy się, gdy każda strefa przekroczy tę wartość, w °C. Domyślnie 7 °C.",
           "frost_zone": "Opcjonalnie: pilnuj przed mrozem tylko tej strefy. Puste (domyślnie): wszystkich stref, także wyłączonych w Versatile Thermostat — nieogrzewane pomieszczenie poniżej progu podtrzymuje wtedy grzanie przeciwmrozowe. Grzanie przeciwmrozowe, które przez dwie godziny nie ogrzewa pomieszczenia, podnosi alarm; nigdy nie jest przerywane."
@@ -875,6 +875,9 @@
       },
       "alarm_correction_at_limit": {
         "name": "Sterowanie: korekta komfortu na granicy"
+      },
+      "alarm_outdoor_sensor_suspect": {
+        "name": "Sterowanie: czujnik zewnętrzny pominięty"
       }
     },
     "switch": {
