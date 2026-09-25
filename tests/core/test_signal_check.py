@@ -14,6 +14,7 @@ from custom_components.vtherm_smart_boiler.core.signal_check import (
     SignalStatus,
     check_outdoor,
     check_signals,
+    curve_sensor,
     features,
     required_problems,
 )
@@ -124,3 +125,25 @@ def test_outdoor_unknown_without_overlap() -> None:
     sensor = hourly([5.0, None, None])
     weather = hourly([None, 5.0, 5.0])
     assert check_outdoor(sensor, weather, 0, 3 * HOUR).status is OutdoorStatus.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    ("status", "sensor", "weather", "used"),
+    [
+        (OutdoorStatus.OK, -5.0, 0.0, -5.0),
+        (None, -5.0, None, -5.0),  # not judged yet
+        (OutdoorStatus.STUCK, -5.0, 0.0, None),  # never a frozen value
+        (OutdoorStatus.STUCK, 5.0, 0.0, None),
+        # Deviating: the colder of the two — more heat, which the valves throttle; the warmer
+        # could leave the house cold (a sensor in a cold-air pool, a weather entity elsewhere).
+        (OutdoorStatus.DEVIATES, -9.0, -2.0, -9.0),
+        (OutdoorStatus.DEVIATES, 4.0, -2.0, None),  # the weather entity's colder value then
+        (OutdoorStatus.DEVIATES, -9.0, None, -9.0),  # nothing colder to fall back on
+        (OutdoorStatus.OK, None, 0.0, None),
+    ],
+)
+def test_what_the_curve_takes_from_the_outdoor_sensor(
+    status: OutdoorStatus | None, sensor: float | None, weather: float | None, used: float | None
+) -> None:
+    """A3: a deviating sensor is dropped only where the weather entity reads colder."""
+    assert curve_sensor(status, sensor, weather) == used

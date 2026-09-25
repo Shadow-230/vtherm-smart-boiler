@@ -157,6 +157,11 @@ notes in `research/2026-09-24-code-review/findings.md`):
 
 ## Provisional decision (the most cautious option; the user confirms it, L4 or K4)
 
+- An outdoor sensor deviating from the weather entity (R6, A3): the curve takes the colder of
+  the two, so a sensor right in a cold-air pool, or a weather entity for somewhere else, cannot
+  leave the house cold; a stuck sensor is replaced as before. Was: a deviating sensor always
+  gave way to the weather entity (N7).
+
 - How "off" is sent (N6): through the heating switch where one is configured and declared
   expiring or held (built-in OTGW: `CH=0` with `CS` of at least 8 °C); without one, as a low
   setpoint. L3 finds out whether a low setpoint stops the CH pump on the usual masters; the user

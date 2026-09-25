@@ -1547,6 +1547,50 @@ async def test_a_stuck_outdoor_sensor_leaves_the_curve(
     assert rig.state("binary_sensor", "alarm_outdoor_sensor_suspect").state == "off"
 
 
+@pytest.mark.parametrize(("weather", "used"), [(12.0, "outdoor_sensor"), (-2.0, "outdoor_weather")])
+async def test_a_deviating_outdoor_sensor_gives_way_only_to_colder_weather(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, weather: float, used: str
+) -> None:
+    """A3: the monitor found the sensor (5 °C) far from the weather entity. The curve takes
+    the colder of the two: the sensor against a weather at 12 °C, the weather at -2 °C."""
+    from dataclasses import replace as replaced
+
+    from custom_components.vtherm_smart_boiler.core.signal_check import (
+        OutdoorCheck,
+        OutdoorStatus,
+    )
+
+    rig.hass.states.async_set(
+        "weather.fake_home", "cloudy", {"temperature": weather, "temperature_unit": "°C"}
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=options(rig.zones) | {"weather": "weather.fake_home"},
+    )
+    entry.add_to_hass(rig.hass)
+    assert await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    rig.entry = entry
+    await rig.switch(True)
+    coordinator = entry.runtime_data
+    await coordinator.async_run_analysis()
+    real = coordinator.analysis
+    assert real is not None
+
+    async def no_analysis(*_args: Any) -> None:
+        return None
+
+    monkeypatch.setattr(coordinator, "async_run_analysis", no_analysis)
+    coordinator.analysis = replaced(
+        real, outdoor=OutdoorCheck(OutdoorStatus.DEVIATES, 5.0 - weather, 86400.0)
+    )
+    await rig.advance(300)  # the next water decision
+    assert used in rig.state("sensor", "control_state").attributes["reasons"]
+    assert rig.state("binary_sensor", "alarm_outdoor_sensor_suspect").state == "on"
+
+
 async def test_a_user_freshness_limit_stops_writes_on_a_frozen_source(rig: Rig) -> None:
     """The flow stops reporting while its entity stays available (MQTT without availability):
     with a limit of ten minutes set, nothing is written after it, and control hands back."""

@@ -185,3 +185,17 @@ def check_outdoor(
     if abs(mean_difference) > max_deviation:
         return OutdoorCheck(OutdoorStatus.DEVIATES, mean_difference, overlap)
     return OutdoorCheck(OutdoorStatus.OK, mean_difference, overlap)
+
+
+def curve_sensor(
+    status: OutdoorStatus | None, sensor: float | None, weather: float | None
+) -> float | None:
+    """The boiler's outdoor sensor as the curve may take it. A stuck sensor is never used. One
+    that deviates from the weather entity is used only while it reads colder: the colder value
+    asks for more heat, which the valves throttle, where the warmer one could leave the house
+    cold — a sensor in a cold-air pool is right, a weather entity for somewhere else is not."""
+    if sensor is None or status is OutdoorStatus.STUCK:
+        return None
+    if status is OutdoorStatus.DEVIATES and weather is not None and sensor > weather:
+        return None
+    return sensor

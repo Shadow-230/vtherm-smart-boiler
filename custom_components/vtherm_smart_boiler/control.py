@@ -64,7 +64,7 @@ from .core.learning import (
 )
 from .core.loop import ON, LoopOutput, LoopState, loop_step
 from .core.readings import BoilerSnapshot, ZoneState
-from .core.signal_check import OutdoorStatus
+from .core.signal_check import OutdoorStatus, curve_sensor
 from .core.signals import Signal
 from .transport.entities import (
     read_bounds,
@@ -139,7 +139,7 @@ class ControlAlarm(StrEnum):
     ZONE_UNKNOWN = "zone_unknown"  # a zone unknown for long: frost protection cannot see it
     FROST_NOT_WARMING = "frost_not_warming"  # frost heating for long without the room warming
     CORRECTION_AT_LIMIT = "correction_at_limit"  # the comfort correction at 3 K for hours
-    OUTDOOR_SENSOR_SUSPECT = "outdoor_sensor_suspect"  # stuck or far from the weather: not used
+    OUTDOOR_SENSOR_SUSPECT = "outdoor_sensor_suspect"  # stuck, or far from the weather
 
 
 _EVENT_ALARM = {
@@ -673,15 +673,21 @@ class ControlUnit:
         coordinator = self._coordinator
         config = coordinator.config
         # One freshness rule: a steady reading is not a stale one, so its age counts only with a
-        # limit the user set. A sensor the monitor found stuck or far from the weather leaves
-        # the curve to the weather entity, then the held value and the fallback.
+        # limit the user set. A sensor the monitor found stuck leaves the curve to the weather
+        # entity, then the held value and the fallback; one far from the weather gives way only
+        # where the weather reads colder (more heat, which the valves throttle).
         outdoor_age = config.freshness.get(Signal.OUTDOOR)
         weather = None
         if config.weather:
             reading = read_weather_temperature(self._hass, config.weather)
             if reading.is_fresh(now, outdoor_age):
                 weather = float(reading.value) if reading.value is not None else None
-        sensor = None if self._outdoor_suspect() else snapshot.number(Signal.OUTDOOR, outdoor_age)
+        check = getattr(self._coordinator.analysis, "outdoor", None)
+        sensor = curve_sensor(
+            check.status if check is not None else None,
+            snapshot.number(Signal.OUTDOOR, outdoor_age),
+            weather,
+        )
         return ControlInputs(
             now=now,
             enabled=self.enabled,
