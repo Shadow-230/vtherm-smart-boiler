@@ -1114,6 +1114,7 @@ class _Steps:
 
 class SmartBoilerConfigFlow(_Steps, ConfigFlow, domain=DOMAIN):
     VERSION = 1
+    MINOR_VERSION = 2  # 2: the options 0.2.1 removed are gone (see async_migrate_entry)
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}

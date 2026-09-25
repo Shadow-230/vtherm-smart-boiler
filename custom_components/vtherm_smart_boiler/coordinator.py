@@ -168,6 +168,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # A lasting failure of a periodic job is logged once, with its trace, and its end once.
         self._failing: set[str] = set()
         self._save_due: float | None = None  # when the pending delayed save runs
+        self._stopped = False
         # The entities the platforms create now (disabled ones too): the rest are stale.
         self.expected_unique_ids: set[str] = set()
         self.control: ControlUnit | None = None
@@ -221,6 +222,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
 
     async def async_stop(self) -> None:
         """Stop every listener and timer and write what is pending."""
+        self._stopped = True
         while self._unsubs:
             self._unsubs.pop()()
         for key in ("auto_tpi_blocked", "learning_not_paused"):
@@ -233,20 +235,41 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     # --- storage --------------------------------------------------------------------------
 
     async def _async_load_store(self, now: float) -> None:
-        stored = await self._store.async_load() or {}
-        self.monitoring_since = float(stored.get("monitoring_since", now))
+        """What the last run stored, field by field: a broken field is skipped, not the rest.
+        A store that cannot be read at all hands back first, as the last run may have held the
+        boiler; an unreadable start of monitoring starts it again (control waits longer)."""
+        try:
+            stored = await self._store.async_load() or {}
+        except Exception:  # an unsupported version, a read error: the defaults, cautiously
+            _LOGGER.exception("Could not read the stored data; a hand-back is made first")
+            stored = {"control": {"controlling": True}}
+        if not isinstance(stored, dict):
+            _LOGGER.warning("Ignoring stored data that is not a mapping")
+            stored = {}
+        try:
+            self.monitoring_since = float(stored.get("monitoring_since", now))
+        except TypeError, ValueError:
+            _LOGGER.warning("Ignoring an unreadable start of monitoring: it starts again now")
+            self.monitoring_since = now
         control = stored.get("control")
         self.stored_control = control if isinstance(control, dict) else {}
-        for zone_id, data in stored.get("factors", {}).items():
-            if zone_id in self.config.zone_entities and data.get("value") is not None:
-                self._factors[zone_id] = FactorResult(
-                    float(data["value"]),
-                    FactorStatus.HELD,
-                    None,
-                    data.get("at"),
-                    data.get("output_w"),
-                )
-        for key, data in stored.get("measured", {}).items():
+        factors = stored.get("factors")
+        for zone_id, data in (factors.items() if isinstance(factors, dict) else ()):
+            if zone_id not in self.config.zone_entities or not isinstance(data, dict):
+                continue
+            try:
+                if data.get("value") is not None:
+                    self._factors[zone_id] = FactorResult(
+                        float(data["value"]),
+                        FactorStatus.HELD,
+                        None,
+                        _optional_float(data.get("at")),
+                        _optional_float(data.get("output_w")),
+                    )
+            except TypeError, ValueError:
+                _LOGGER.warning("Ignoring an unreadable stored emitter factor for %s", zone_id)
+        measured = stored.get("measured")
+        for key, data in (measured.items() if isinstance(measured, dict) else ()):
             try:
                 estimate = Estimate(
                     float(data["value"]),
@@ -296,7 +319,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     def schedule_save(self, delay: float = SAVE_DELAY_S) -> None:
         """Save within ``delay``. Each delayed save restarts the store's timer, so one is
         scheduled only when it comes sooner than the one pending: frequent updates would
-        otherwise postpone the write for ever."""
+        otherwise postpone the write for ever. A stopped installation saves nothing more: the
+        one set up after a reload owns the store."""
+        if self._stopped:
+            return
         due = dt_util.utcnow().timestamp() + delay
         if self._save_due is None or due < self._save_due:
             self._save_due = due
@@ -601,9 +627,12 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             self.history.drop_before(now - HISTORY_DAYS * DAY)
             copy = self.history.copy_window(now - HISTORY_DAYS * DAY, now)
             days = local_days(now - HISTORY_DAYS * DAY, now)
-            self.analysis = await self.hass.async_add_executor_job(
+            analysis = await self.hass.async_add_executor_job(
                 analyse, copy, self.parameters, self.config.monitor.monitor, now, days
             )
+            if self._stopped:
+                return  # a reload came meanwhile: the new installation analyses for itself
+            self.analysis = analysis
             fit = self.analysis.fit
             if fit is not None:
                 self.parameters = self.parameters.with_estimate(
@@ -677,3 +706,7 @@ def _significant_states() -> Any:
     from homeassistant.components.recorder import history as recorder_history
 
     return recorder_history.get_significant_states
+
+
+def _optional_float(raw: Any) -> float | None:
+    return None if raw is None else float(raw)

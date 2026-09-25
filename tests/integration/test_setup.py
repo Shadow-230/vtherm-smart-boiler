@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from homeassistant.config_entries import ConfigEntryState
@@ -378,6 +379,82 @@ async def test_zone_entities_from_before_move_to_the_stable_key(
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert entity_id(hass, entry, "binary_sensor", "hot_water", living) == old.entity_id
+
+
+async def test_a_store_with_broken_fields_still_loads(
+    hass: HomeAssistant, hass_storage: dict[str, Any], zones: FakeZones
+) -> None:
+    """P66: a broken field is skipped, not the whole store; an unreadable start of monitoring
+    starts it again, which keeps control off for another monitoring period."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    living = zones.add("living")
+    entry = entry_for(boiler, zones)
+    hass_storage[f"{DOMAIN}.{entry.entry_id}"] = {
+        "version": 1,
+        "key": f"{DOMAIN}.{entry.entry_id}",
+        "data": {
+            "monitoring_since": "long ago",
+            "factors": {living: {"value": "high"}, "climate.gone": 3},
+            "measured": ["not", "a", "mapping"],
+            "control": {},
+        },
+    }
+    await setup(hass, entry)
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.monitoring_since == pytest.approx(
+        datetime.now(UTC).timestamp(), abs=60
+    )
+
+
+async def test_a_stopped_installation_writes_nothing_more(
+    hass: HomeAssistant, hass_storage: dict[str, Any], zones: FakeZones
+) -> None:
+    """P66: after a reload the old installation's analysis may still end; it must not write
+    over the store of the new one."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    old = entry.runtime_data
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    old.monitoring_since = 0.0  # what the old one would write
+    old.schedule_save()
+    await old.async_run_analysis()
+    async_fire_time_changed(hass, datetime.now(UTC) + timedelta(minutes=20))  # past any delay
+    await hass.async_block_till_done()
+    assert hass_storage[f"{DOMAIN}.{entry.entry_id}"]["data"]["monitoring_since"] != 0.0
+
+
+async def test_an_entry_from_before_drops_the_options_that_are_gone(
+    hass: HomeAssistant,
+) -> None:
+    """P71: an entry migration: options removed in 0.2.1 (anti-cycling, the daily cap, the
+    summer threshold) leave the stored options."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    old_control = {
+        "write_path": "entity",
+        "min_burn_min": 5,
+        "min_pause_min": 10,
+        "daily_cap": 100,
+        "cap_reaction": "hand_back",
+        "summer_threshold": 16,
+        "max_starts_per_hour": 4,
+    }
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options={**entry.options, "control": old_control},
+        version=1,
+        minor_version=1,
+    )
+    await setup(hass, entry)
+    assert entry.minor_version == 2
+    assert entry.options["control"] == {"write_path": "entity"}
 
 
 async def test_invalid_options_fail_setup_with_a_reason(hass: HomeAssistant) -> None:

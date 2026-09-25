@@ -100,8 +100,21 @@ CONFIRMED_BY_GATEWAY = "confirmed_by_gateway"
 _SHOWN_CONFIRMED = frozenset({Confirmation.CONFIRMED.value, CONFIRMED_BY_GATEWAY})
 
 
-def _moment(raw: Any) -> float | None:
-    return None if raw is None else float(raw)
+def _flag(raw: Any) -> bool:
+    """A stored flag; anything that is not a clear "no" counts as set (the cautious side)."""
+    return raw not in (None, False, 0)
+
+
+def _kept_alarms(raw: Any) -> set[ControlAlarm]:
+    kept = set()
+    for value in raw:
+        try:
+            alarm = ControlAlarm(value)
+        except ValueError:
+            continue  # an alarm this version no longer has
+        if alarm in _KEPT_ALARMS:
+            kept.add(alarm)
+    return kept
 
 
 def _shown(check: Confirmation | None, gateway: bool, self_echo: bool) -> str | None:
@@ -292,17 +305,27 @@ class ControlUnit:
         }
 
     def restore(self, data: Mapping[str, Any]) -> None:
-        try:
-            paused = {str(z): float(t) for z, t in dict(data.get("paused", {})).items()}
-            resuming = {str(z): float(t) for z, t in dict(data.get("resuming") or {}).items()}
-            alarms = {ControlAlarm(a) for a in data.get("alarms", [])} & _KEPT_ALARMS
-            latched_by = tuple(str(a) for a in data.get("latched_by") or ())
-            rewritten_at = _moment(data.get("rewritten_at"))
-            heating_rewritten_at = _moment(data.get("heating_rewritten_at"))
-        except TypeError, ValueError:
-            _LOGGER.warning("Ignoring unreadable stored control data")
-            return
-        latched = bool(data.get("latched", False))
+        """What the last run stored, field by field: a broken field is skipped and logged, the
+        rest restored. Whether the boiler may hold a value of ours, a hand-back owed and a latch
+        read cautiously: what cannot be read counts as set."""
+
+        def field[T](key: str, parse: Callable[[Any], T], default: T) -> T:
+            raw = data.get(key)
+            if raw is None:
+                return default
+            try:
+                return parse(raw)
+            except TypeError, ValueError, AttributeError:
+                _LOGGER.warning("Ignoring unreadable stored control data: %s", key)
+                return default
+
+        paused = field("paused", lambda raw: {str(z): float(t) for z, t in raw.items()}, {})
+        resuming = field("resuming", lambda raw: {str(z): float(t) for z, t in raw.items()}, {})
+        alarms = field("alarms", _kept_alarms, set())
+        latched_by = field("latched_by", lambda raw: tuple(str(a) for a in raw), ())
+        rewritten_at = field("rewritten_at", float, None)
+        heating_rewritten_at = field("heating_rewritten_at", float, None)
+        latched = _flag(data.get("latched"))
         self._session = _Session(
             loop=LoopState(
                 control=ControlState(latched=latched, latched_by=latched_by if latched else ()),
@@ -311,12 +334,12 @@ class ControlUnit:
             ),
             learning=LearningState(paused=paused, last_toggle=dict(paused), resuming=resuming),
             alarms=alarms,
-            failed=bool(data.get("failed", False)),
+            failed=_flag(data.get("failed")),
         )
-        self._holding = bool(data.get("controlling", False))
+        self._holding = _flag(data.get("controlling"))
         # The last run held the boiler and never confirmed a hand-back (a crash, a power cut):
         # handed back in full at the first step; control may take the boiler again afterwards.
-        self._hand_back_pending = bool(data.get("hand_back_pending", False)) or self._holding
+        self._hand_back_pending = _flag(data.get("hand_back_pending")) or self._holding
 
     # --- lifecycle ------------------------------------------------------------------------
 

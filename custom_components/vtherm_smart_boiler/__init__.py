@@ -78,6 +78,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Bring an entry stored by an earlier version to this one's options."""
+    from .const import REMOVED_CONTROL_OPTIONS
+
+    if entry.version > 1:
+        return False  # from a newer version: nothing here can read it
+    if entry.minor_version < 2:
+        options = dict(entry.options)
+        control = options.get(CONTROL)
+        if isinstance(control, dict):
+            options[CONTROL] = {
+                key: value for key, value in control.items() if key not in REMOVED_CONTROL_OPTIONS
+            }
+        hass.config_entries.async_update_entry(entry, options=options, minor_version=2)
+    return True
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from . import feature_manager
 

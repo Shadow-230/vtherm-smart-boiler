@@ -1578,3 +1578,35 @@ async def test_a_resume_smartpi_skipped_is_sent_again_until_it_reads_on(rig: Rig
     assert rig.hass.states.get(rig.zones.entities["living"]).attributes["specific_states"][
         "smartpi_learning_enabled"
     ] is True
+
+
+async def test_unreadable_control_data_still_restores_what_matters(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """P66: one broken field no longer throws the rest away — a hand-back owed and a latch are
+    kept whatever else is unreadable."""
+    await start_with_stored(
+        rig,
+        hass_storage,
+        {
+            "controlling": True,
+            "latched": True,
+            "latched_by": ["outside_change"],
+            "paused": "not a mapping",
+            "rewritten_at": "yesterday",
+            "alarms": ["no_such_alarm"],
+        },
+    )
+    assert rig.entry is not None
+    unit = rig.entry.runtime_data.control
+    assert unit.hand_back_owed
+    assert unit.status.latched_by == ("outside_change",) or unit._session.loop.control.latched
+
+
+async def test_control_data_that_cannot_be_read_hands_back(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """P66: when whether the plugin held the boiler cannot be read, it is taken that it did."""
+    await start_with_stored(rig, hass_storage, {"controlling": "maybe"})
+    assert rig.entry is not None
+    assert rig.entry.runtime_data.control.hand_back_owed
