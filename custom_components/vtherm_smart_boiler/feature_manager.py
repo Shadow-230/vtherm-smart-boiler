@@ -298,10 +298,10 @@ def async_check(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> Non
         and dt_util.utcnow().timestamp() - current.registered_at >= RELOAD_GRACE_S
         and data is not None
     ):
+        link = coordinator.link
         for zone_id in coordinator.config.zone_entities:
-            state = hass.states.get(zone_id)
-            if zone_id in data.zones and state is not None and ATTRIBUTE not in state.attributes:
-                missing.append(coordinator.link.zone_name(zone_id))
+            if zone_id in data.zones and link.shows_attribute(zone_id, ATTRIBUTE) is False:
+                missing.append(link.zone_name(zone_id))
     if missing:
         ir.async_create_issue(
             hass,

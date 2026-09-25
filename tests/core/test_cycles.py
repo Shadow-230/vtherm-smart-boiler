@@ -9,11 +9,9 @@ from custom_components.vtherm_smart_boiler.core.cycles import (
     BurnKind,
     DhwInputs,
     Evidence,
-    Pause,
     classify_burn,
     classify_burns,
     find_burns,
-    find_pauses,
 )
 from custom_components.vtherm_smart_boiler.core.series import Series
 
@@ -48,11 +46,6 @@ def test_edges_hidden_by_unknown_are_not_seen() -> None:
 def test_no_flame_data_gives_no_burns() -> None:
     assert find_burns(Series[bool](), 0, 60 * MIN) == []
     assert find_burns(flame((0, None)), 0, 60 * MIN) == []
-
-
-def test_pauses_need_a_seen_burn_on_both_sides() -> None:
-    series = flame((0, False), (10, True), (20, False), (30, True), (40, None), (50, False))
-    assert find_pauses(series, 0, 60 * MIN) == [Pause(20 * MIN, 30 * MIN)]
 
 
 BURN = Burn(0, 10 * MIN, True, True)

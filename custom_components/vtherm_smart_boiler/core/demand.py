@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from .readings import ZoneState
+from .readings import ZONE_OPEN, ZoneState
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,7 +24,7 @@ class DemandConfig:
     count_threshold: int = 1  # zones wanting heat; 0 turns the count off
     power_threshold_kw: float | None = None  # their power times opening, summed
     opening_threshold: float | None = None  # the widest opening, 0 to 1
-    zone_opening: float = 0.05  # a zone wants heat above this opening or duty cycle
+    zone_opening: float = ZONE_OPEN  # a zone wants heat above this opening or duty cycle
 
     def __post_init__(self) -> None:
         if self.count_threshold < 0:

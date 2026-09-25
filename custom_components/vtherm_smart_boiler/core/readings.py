@@ -34,6 +34,10 @@ class Reading:
 
 UNKNOWN = Reading()
 
+# One meaning each, wherever a zone's valve opening or duty cycle is judged.
+ZONE_OPEN = 0.05  # above this the zone takes heat: it calls, it heats
+ZONE_SATURATED = 0.95  # this open, the zone cannot give its room more
+
 
 def plausible_reading(signal: Signal, value: Value | None, reported_at: float | None) -> Reading:
     """A reading with values of the wrong type or outside the plausible range made unknown."""

@@ -10,12 +10,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from .readings import ZoneState
+from .readings import ZONE_SATURATED, ZoneState
 from .zones import SelectionStatus, eligible_zones
 
 DEFAULT_DEMAND_MARGIN = 0.1
 DEFAULT_DEFICIT_MARGIN_K = 0.3
-SATURATED_DEMAND = 0.95
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +76,6 @@ def critical_zone(
     demand = best.demand
     deficit = best.deficit
     saturated = (
-        demand is not None and demand >= SATURATED_DEMAND and deficit is not None and deficit > 0
+        demand is not None and demand >= ZONE_SATURATED and deficit is not None and deficit > 0
     )
     return CriticalZone(circuit_id, SelectionStatus.OK, best.zone_id, demand, deficit, saturated)

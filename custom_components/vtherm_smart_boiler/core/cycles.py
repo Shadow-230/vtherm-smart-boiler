@@ -32,18 +32,6 @@ class Burn:
         return self.start_seen and self.end_seen
 
 
-@dataclass(frozen=True, slots=True)
-class Pause:
-    """Flame off between two burns, both edges seen."""
-
-    start: float
-    end: float
-
-    @property
-    def duration(self) -> float:
-        return self.end - self.start
-
-
 def find_burns(flame: Series[bool], start: float, end: float) -> list[Burn]:
     """Flame-on stretches in ``[start, end)``."""
     segments = list(flame.segments(start, end))
@@ -55,19 +43,6 @@ def find_burns(flame: Series[bool], start: float, end: float) -> list[Burn]:
         after = segments[index + 1].value if index + 1 < len(segments) else None
         burns.append(Burn(segment.start, segment.end, before is False, after is False))
     return burns
-
-
-def find_pauses(flame: Series[bool], start: float, end: float) -> list[Pause]:
-    """Flame-off stretches in ``[start, end)`` with a seen burn on both sides."""
-    segments = list(flame.segments(start, end))
-    return [
-        Pause(segment.start, segment.end)
-        for index, segment in enumerate(segments)
-        if segment.value is False
-        and 0 < index < len(segments) - 1
-        and segments[index - 1].value is True
-        and segments[index + 1].value is True
-    ]
 
 
 class BurnKind(StrEnum):

@@ -16,7 +16,7 @@ from itertools import pairwise
 
 from .cycles import ClassifiedBurn
 from .metrics import CH_KINDS
-from .readings import ZoneState
+from .readings import ZONE_OPEN, ZoneState
 from .series import Series
 
 MIN = 60.0
@@ -242,7 +242,6 @@ def hysteresis_samples(
     return samples
 
 
-LOW_FLOW_OPENING = 0.05
 
 
 def low_flow(
@@ -264,5 +263,5 @@ def low_flow(
     if not fresh or any(z.valve_open is None for z in fresh):
         return Alarm(kind, False)
     widest = max(z.valve_open for z in fresh if z.valve_open is not None)
-    active = pump_running and widest <= LOW_FLOW_OPENING
-    return Alarm(kind, active, Level.WARNING if active else None, widest, LOW_FLOW_OPENING)
+    active = pump_running and widest <= ZONE_OPEN
+    return Alarm(kind, active, Level.WARNING if active else None, widest, ZONE_OPEN)

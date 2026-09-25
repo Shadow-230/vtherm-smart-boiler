@@ -7,11 +7,9 @@ import pytest
 from custom_components.vtherm_smart_boiler.core.series import (
     Segment,
     Series,
-    Transition,
     duration_where,
     known_duration,
     time_weighted_mean,
-    transitions,
 )
 
 
@@ -92,17 +90,6 @@ def test_time_weighted_mean_uses_known_data_only() -> None:
     assert mean.value == pytest.approx(50.0)
     assert mean.known_s == 20
     assert time_weighted_mean(Series[float](), 0, 10).value is None
-
-
-def test_transitions_skip_changes_across_unknown() -> None:
-    flame = Series([(0, False), (10, True), (20, None), (30, False), (40, True)])
-    assert transitions(flame, 0, 50) == [Transition(10, False, True), Transition(40, False, True)]
-
-
-def test_transition_at_window_start_is_not_counted() -> None:
-    flame = Series([(0, False), (10, True)])
-    assert transitions(flame, 10, 20) == []
-    assert transitions(flame, 5, 20) == [Transition(10, False, True)]
 
 
 def test_older_samples_go_before_the_first_one() -> None:

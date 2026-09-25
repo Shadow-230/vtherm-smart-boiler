@@ -46,6 +46,14 @@ class VtCapabilities:
     smartpi_loaded: bool
 
 
+def zone_name(hass: HomeAssistant, entity_id: str) -> str:
+    """A zone's name as the user sees it; its entity ID while the thermostat is away."""
+    state = hass.states.get(entity_id)
+    if state is not None and state.name:
+        return state.name
+    return entity_id
+
+
 def vt_climate_entities(hass: HomeAssistant) -> list[str]:
     """Every climate entity registered by VT."""
     registry = er.async_get(hass)
@@ -103,10 +111,16 @@ class VThermLink:
         return [self.zone(entity_id) for entity_id in self._zones]
 
     def zone_name(self, entity_id: str) -> str:
+        return zone_name(self._hass, entity_id)
+
+    def recorded_state(self, entity_id: str) -> State | None:
+        """A zone's current state as the history records it."""
+        return self._hass.states.get(entity_id)
+
+    def shows_attribute(self, entity_id: str, attribute: str) -> bool | None:
+        """Whether a zone's thermostat carries an attribute now; ``None`` when it is away."""
         state = self._hass.states.get(entity_id)
-        if state is not None and state.name:
-            return state.name
-        return entity_id
+        return None if state is None else attribute in state.attributes
 
     def zone_algorithm(self, entity_id: str) -> ZoneAlgorithm:
         """What runs a zone, from VT's live attributes (not kept by the recorder)."""

@@ -273,7 +273,7 @@ In practice: a lighter, tidier integration with clear texts; one entry per boile
 | U8 ✅ | entity registry: a stable `unique_id`, clean-up after option changes (P39) |
 | U9 ✅ | user-facing texts: translated states and reasons, every option with its risk, 0.1 descriptions updated, the `opening_threshold` wording, consistent naming, `icons.json`, `PARALLEL_UPDATES`, the emitter factor hidden by default (P50, P101, P104, P108) |
 | U10 ✅ | storage and lifecycle: loading robust to corrupt data, no analysis in progress overwriting the store after a reload, restore not all-or-nothing, an entry migration, `async_remove_entry` (P66, P71, P72) |
-| U11 | code hygiene: dead code and duplicated constants removed, the coupling between the control unit and the coordinator loosened, options defined once, VT states read only through `vtherm_link.py`, outdated docstrings (P68, P76, P78, P81) |
+| U11 ✅ | code hygiene: dead code and duplicated constants removed, the coupling between the control unit and the coordinator loosened, options defined once, VT states read only through `vtherm_link.py`, outdated docstrings (P68, P76, P78, P81) |
 | U12 | diagnostics: non-personal data no longer redacted; the control section tested (P69) |
 
 ## Phase W — monitor

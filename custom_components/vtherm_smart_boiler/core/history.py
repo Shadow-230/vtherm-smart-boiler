@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 
-from .readings import ZoneState
+from .readings import ZONE_OPEN, ZoneState
 from .series import Series
 from .signals import Signal
 
@@ -120,14 +120,13 @@ class History:
         self.weather.drop_before(t)
 
 
-DEMAND_OPENING = 0.05
 
 
 def _zone_wants_heat(values: Sequence[object]) -> bool | None:
     valve, on_percent, calling = values
     for opening in (valve, on_percent):
         if isinstance(opening, int | float) and not isinstance(opening, bool):
-            return opening > DEMAND_OPENING
+            return opening > ZONE_OPEN
     return calling if isinstance(calling, bool) else None
 
 

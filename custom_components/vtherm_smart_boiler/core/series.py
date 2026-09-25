@@ -69,9 +69,7 @@ class Series[T]:
         """Put the samples of ``older`` that come before this series' first sample in front of
         it (a backfill arriving after live samples)."""
         first = self.first_time
-        merged: Series[T] = Series(
-            (s.t, s.value) for s in older if first is None or s.t < first
-        )
+        merged: Series[T] = Series((s.t, s.value) for s in older if first is None or s.t < first)
         for t, value in zip(self._times, self._values, strict=True):
             merged.append(t, value)
         self._times, self._values = merged._times, merged._values
@@ -164,31 +162,3 @@ def time_weighted_mean(series: Series[float], start: float, end: float) -> Mean:
         total += segment.value * segment.duration
         known += segment.duration
     return Mean(total / known if known > 0 else None, known)
-
-
-@dataclass(frozen=True, slots=True)
-class Transition[T]:
-    """A change from one known value to another at time ``t``."""
-
-    t: float
-    before: T
-    after: T
-
-
-def transitions[T](series: Series[T], start: float, end: float) -> list[Transition[T]]:
-    """Changes between known values inside ``(start, end)``.
-
-    A change across an unknown stretch (known → unknown → known) is not a transition: nobody
-    saw when it happened.
-    """
-    found: list[Transition[T]] = []
-    previous: T | None = None
-    for segment in series.segments(start, end):
-        value = segment.value
-        if value is None:
-            previous = None
-            continue
-        if previous is not None and value != previous and segment.start > start:
-            found.append(Transition(segment.start, previous, value))
-        previous = value
-    return found

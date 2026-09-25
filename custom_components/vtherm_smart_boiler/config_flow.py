@@ -40,6 +40,8 @@ from .const import (
     ZONES,
 )
 from .control_config import (
+    CONTROL_DEFAULTS,
+    CURVE_DEFAULTS,
     DEFAULT_REACTIONS,
     INFO_ONLY_ALARMS,
     AlarmReaction,
@@ -63,6 +65,7 @@ from .core.installation import BoilerClass, CircuitControl, DhwType, EmitterType
 from .core.metrics import ModulationScale
 from .core.reference_room import Strategy
 from .transport.entities import read_bounds, temperature_unit_of
+from .vtherm_link import zone_name
 
 # --- field definitions ----------------------------------------------------------------------
 
@@ -374,8 +377,8 @@ _SETPOINT_ENTITY = {"domain": ["number", "input_number"]}
 _ON_OFF_ENTITY = {"domain": ["switch", "input_boolean"]}
 _READ_BACK_ENTITY = {"domain": ["sensor", "number", "input_number"]}
 _ECHO_ENTITY = {"domain": ["binary_sensor", "switch", "input_boolean"]}
-# Alarms whose reaction the user may choose (a reached daily cap has its own field; an internal
-# error always hands back).
+# Alarms whose reaction the user may choose (an internal error always hands back; frequent starts
+# stay information, as nothing counted may hold heating against VT).
 REACTION_ALARMS = (
     *(kind.value for kind in AlarmKind if kind.value not in INFO_ONLY_ALARMS),
     "write_failed",
@@ -480,34 +483,39 @@ def control_curve_schema(options: dict[str, Any]) -> vol.Schema:
     control = options.get(CONTROL, {})
     curve = control.get("curve", {})
     design_outdoor = curve.get(
-        "design_outdoor", options.get(PARAMETERS, {}).get("design_outdoor", -15.0)
+        "design_outdoor",
+        options.get(PARAMETERS, {}).get("design_outdoor", CURVE_DEFAULTS["design_outdoor"]),
     )
+
+    def default(key: str) -> Any:
+        return control.get(key, CONTROL_DEFAULTS[key])
+
     fields: dict[Any, Any] = {
         vol.Required("design_outdoor", default=design_outdoor): _number(-40, 10, 0.5, "°C"),
         # The curve is the user's to enter: no silent default for the design flow.
         vol.Required(
             "design_flow", default=curve.get("design_flow", vol.UNDEFINED)
         ): _number(25, 80, 0.5, "°C"),
-        vol.Required("hard_min", default=control.get("hard_min", 25.0)): _number(
-            10, 50, 0.5, "°C"
-        ),
-        vol.Required("hard_max", default=control.get("hard_max", 70.0)): _number(
-            30, 90, 0.5, "°C"
-        ),
+        vol.Required("hard_min", default=default("hard_min")): _number(10, 50, 0.5, "°C"),
+        vol.Required("hard_max", default=default("hard_max")): _number(30, 90, 0.5, "°C"),
     }
     if _advanced(options):
         fields |= {
-            vol.Required("room", default=curve.get("room", 20.0)): _number(15, 25, 0.5, "°C"),
+            vol.Required("room", default=curve.get("room", CURVE_DEFAULTS["room"])): _number(
+                15, 25, 0.5, "°C"
+            ),
             _optional("exponent", curve): _number(1.0, 2.0, 0.05),
-            vol.Required("offset", default=curve.get("offset", 0.0)): _number(-10, 10, 0.5, "K"),
-            vol.Required("ceiling_band", default=control.get("ceiling_band", 10.0)): _number(
+            vol.Required("offset", default=curve.get("offset", CURVE_DEFAULTS["offset"])): (
+                _number(-10, 10, 0.5, "K")
+            ),
+            vol.Required("ceiling_band", default=default("ceiling_band")): _number(
                 0, 20, 0.5, "K"
             ),
             _optional("fallback_setpoint", control): _number(25, 80, 0.5, "°C"),
-            vol.Required("frost_limit", default=control.get("frost_limit", 5.0)): _number(
+            vol.Required("frost_limit", default=default("frost_limit")): _number(
                 3, 10, 0.5, "°C"
             ),
-            vol.Required("frost_release", default=control.get("frost_release", 7.0)): _number(
+            vol.Required("frost_release", default=default("frost_release")): _number(
                 4, 12, 0.5, "°C"
             ),
             _optional("frost_zone", control): selector.EntitySelector(
@@ -524,19 +532,19 @@ def _zone_entities(options: dict[str, Any]) -> list[str]:
 def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
     control = options.get(CONTROL, {})
 
-    def required(key: str, default: Any, field: Any) -> dict[Any, Any]:
-        return {vol.Required(key, default=control.get(key, default)): field}
+    def required(key: str, field: Any) -> dict[Any, Any]:
+        return {vol.Required(key, default=control.get(key, CONTROL_DEFAULTS[key])): field}
 
     return vol.Schema(
         {
-            **required("ramp_k_per_min", 1.0, _number(0.1, 10, 0.1, "K/min")),
-            **required("decision_interval_min", 5.0, _number(1, 30, 1, "min")),
-            **required("off_setpoint", 10.0, _number(0, 30, 0.5, "°C")),
-            **required("count_threshold", 1, _number(0, 20, 1)),
+            **required("ramp_k_per_min", _number(0.1, 10, 0.1, "K/min")),
+            **required("decision_interval_min", _number(1, 30, 1, "min")),
+            **required("off_setpoint", _number(0, 30, 0.5, "°C")),
+            **required("count_threshold", _number(0, 20, 1)),
             _optional("power_threshold_kw", control): _number(0.1, 100, 0.1, "kW"),
             _optional("opening_threshold", control): _number(1, 100, 1, "%"),
-            **required("learning_pauses", True, selector.BooleanSelector()),
-            **required("comfort_correction", True, selector.BooleanSelector()),
+            **required("learning_pauses", selector.BooleanSelector()),
+            **required("comfort_correction", selector.BooleanSelector()),
         }
     )
 
@@ -1059,12 +1067,11 @@ class _Steps:
                 self._zones_done.append(zone)
                 self._zone_queue.pop(0)
                 return await self.async_step_zone()
-        name_state = self.hass.states.get(entity_id)  # type: ignore[attr-defined]
         return self._form(
             step_id="zone",
             data_schema=zone_schema(self.options, current),
             errors=errors,
-            description_placeholders={"zone": name_state.name if name_state else entity_id},
+            description_placeholders={"zone": zone_name(self.hass, entity_id)},  # type: ignore[attr-defined]
         )
 
     async def async_step_building(
@@ -1333,7 +1340,9 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 errors["hard_min"] = "limits_outside_entity_range"
             elif _outside(user_input["hard_max"], bounds):
                 errors["hard_max"] = "limits_outside_entity_range"
-            elif user_input.get("frost_limit", 5.0) >= user_input.get("frost_release", 7.0):
+            elif user_input.get(
+                "frost_limit", CONTROL_DEFAULTS["frost_limit"]
+            ) >= user_input.get("frost_release", CONTROL_DEFAULTS["frost_release"]):
                 errors["frost_release"] = "frost_release_not_above_limit"
             else:
                 apply_control_curve(self.options, user_input)
@@ -1350,10 +1359,15 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             count = int(user_input.get("count_threshold", 1))
-            hard_min = float(self.options.get(CONTROL, {}).get("hard_min", 25.0))
+            hard_min = float(
+                self.options.get(CONTROL, {}).get("hard_min", CONTROL_DEFAULTS["hard_min"])
+            )
             if _outside(user_input.get("off_setpoint"), self._setpoint_bounds()):
                 errors["off_setpoint"] = "off_setpoint_outside_entity_range"
-            elif float(user_input.get("off_setpoint", 10.0)) >= hard_min:
+            elif (
+                float(user_input.get("off_setpoint", CONTROL_DEFAULTS["off_setpoint"]))
+                >= hard_min
+            ):
                 errors["off_setpoint"] = "off_setpoint_not_below_hard_min"
             elif count > len(self.options.get(ZONES, [])):
                 errors["count_threshold"] = "count_threshold_above_zones"

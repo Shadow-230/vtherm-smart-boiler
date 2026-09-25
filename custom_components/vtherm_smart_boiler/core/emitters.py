@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from .installation import EmitterType, Zone
-from .readings import ZoneState
+from .readings import ZONE_OPEN, ZoneState
 from .supply import Supply, SupplyReason
 
 
@@ -40,7 +40,6 @@ EMITTER_REFERENCE: dict[EmitterType, EmitterReference] = {
     EmitterType.CONVECTOR: EmitterReference(75.0, 65.0, 20.0, 1.4),
     EmitterType.UNDERFLOOR: EmitterReference(35.0, 30.0, 20.0, 1.1),
 }
-HEATING_OPENING = 0.05  # a valve or duty cycle above this counts as heating
 
 
 def mean_excess(flow: float, return_: float, room: float) -> float:
@@ -113,7 +112,7 @@ def is_heating(zone: ZoneState) -> bool | None:
     """Whether a zone takes heat now: its valve or duty cycle is open, or it calls for heat."""
     demand = zone.demand
     if demand is not None:
-        return demand > HEATING_OPENING
+        return demand > ZONE_OPEN
     return zone.calling
 
 

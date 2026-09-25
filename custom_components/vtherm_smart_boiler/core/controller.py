@@ -48,7 +48,7 @@ from .limits import (
     limit_flow,
     watched_temperatures,
 )
-from .readings import ZoneState
+from .readings import ZONE_SATURATED, ZoneState
 
 HOUR = 3600.0
 CORRECTION_MAX_K = 3.0  # the firm band of the comfort correction
@@ -392,7 +392,6 @@ def _want_heat(
     return demand.wanted, Reason.DEMAND if demand.wanted else Reason.NO_DEMAND
 
 
-SATURATED = 0.95  # a valve or duty cycle this open cannot give the room more
 SATISFIED = 0.7  # every zone below this opening is clearly satisfied
 SHORT_K = 0.3  # a deficit this large counts as short of the setpoint
 
@@ -402,7 +401,7 @@ def _saturated(zone: ZoneState) -> bool:
     demand = zone.demand
     if demand is None:
         return False
-    limit = SATURATED
+    limit = ZONE_SATURATED
     if zone.max_on_percent is not None:
         limit = min(limit, zone.max_on_percent - 0.01)
     return demand >= limit

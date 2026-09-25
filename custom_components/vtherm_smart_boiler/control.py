@@ -345,6 +345,7 @@ class ControlUnit:
 
     async def async_start(self) -> None:
         """Start the control clock and hand back when Home Assistant stops."""
+        self._coordinator.provide_stored_control(self.stored)
         if not self.options.configured:
             return
         self._report_owed()
@@ -523,15 +524,6 @@ class ControlUnit:
         self._coordinator.schedule_save()
 
     # --- the step -------------------------------------------------------------------------
-
-    async def async_tick(self, now: float | None = None) -> None:
-        """One control step and its writes; never raises."""
-        async with self._lock:
-            if self._stopped:
-                return
-            await self._async_run_step(dt_util.utcnow().timestamp() if now is None else now)
-        await self._async_learning_calls()
-        self._notify()
 
     async def _async_tick_locked(self, now: float) -> None:
         if not self.options.configured:

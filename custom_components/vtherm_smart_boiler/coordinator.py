@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
@@ -175,6 +176,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # Control left the options while a hand-back was still owed: this unit only hands back.
         self.hand_back_unit: ControlUnit | None = None
         self.stored_control: dict[str, Any] = {}
+        self._control_provider: Callable[[], dict[str, Any]] | None = None
 
     # --- lifecycle ------------------------------------------------------------------------
 
@@ -185,8 +187,12 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         await self._async_load_store(now)
         # Current states seed the history too: without the recorder they are all there is, and
         # an entity that does not change would otherwise never enter it.
+        zones = set(self.config.zone_entities)
         for entity_id in self.config.watched_entities:
-            state = self.hass.states.get(entity_id)
+            if entity_id in zones:  # zone data only through the VT link
+                state = self.link.recorded_state(entity_id)
+            else:
+                state = self.hass.states.get(entity_id)
             if state is not None:
                 self._record(entity_id, state, state.last_updated.timestamp())
         self._unsubs.append(
@@ -303,11 +309,14 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             "control": self._stored_control(),
         }
 
+    def provide_stored_control(self, provider: Callable[[], dict[str, Any]]) -> None:
+        """What control keeps across restarts comes from the unit that runs it; kept after the
+        unit stops, for the last save."""
+        self._control_provider = provider
+
     def _stored_control(self) -> dict[str, Any]:
-        for unit in (self.control, self.hand_back_unit):
-            if unit is not None:
-                return unit.stored()
-        return self.stored_control
+        provider = self._control_provider
+        return provider() if provider is not None else self.stored_control
 
     async def async_save_now(self) -> None:
         """Write the store at once: for what a crash must not lose (the controlling marker)."""

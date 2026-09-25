@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any
 
 from .core.controller import ControlConfig
@@ -27,6 +28,27 @@ from .core.loop import DEFAULT_OFF_SETPOINT, LoopConfig
 
 MINUTE = 60.0
 KEEPALIVE_S = 30.0
+
+# Every control option's default, in the unit the options store: the parser and the options
+# forms both read them here.
+CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
+    {
+        "hard_min": 25.0,
+        "hard_max": 70.0,
+        "ceiling_band": 10.0,
+        "frost_limit": 5.0,
+        "frost_release": 7.0,
+        "count_threshold": 1,
+        "ramp_k_per_min": 1.0,
+        "decision_interval_min": 5.0,
+        "off_setpoint": DEFAULT_OFF_SETPOINT,
+        "learning_pauses": True,
+        "comfort_correction": True,
+    }
+)
+CURVE_DEFAULTS: Mapping[str, float] = MappingProxyType(
+    {"design_outdoor": -15.0, "design_flow": 55.0, "room": 20.0, "offset": 0.0}
+)
 
 
 class WritePath(StrEnum):
@@ -174,13 +196,15 @@ def parse_control(
     circuit = installation.circuits[0] if installation.circuits else None
     emitters = installation.emitters_in(circuit.circuit_id) if circuit is not None else frozenset()
     default_exponent = min((EXPONENT_BY_EMITTER[e] for e in emitters), default=1.3)
+    curve_value = {**CURVE_DEFAULTS, **curve_data}
     curve = HeatingCurve(
-        design_outdoor=float(curve_data.get("design_outdoor", -15.0)),
-        design_flow=float(curve_data.get("design_flow", 55.0)),
-        room=float(curve_data.get("room", 20.0)),
+        design_outdoor=float(curve_value["design_outdoor"]),
+        design_flow=float(curve_value["design_flow"]),
+        room=float(curve_value["room"]),
         exponent=float(curve_data.get("exponent", default_exponent)),
-        offset=float(curve_data.get("offset", 0.0)),
+        offset=float(curve_value["offset"]),
     )
+    value = {**CONTROL_DEFAULTS, **{k: v for k, v in data.items() if v is not None}}
     if path in OTGW_PATHS:
         write_type = ch_write_type = WriteType.EXPIRING  # CS and CH lapse unless repeated
     else:
@@ -192,26 +216,26 @@ def parse_control(
         # The mixing valve needs at least its temperature from the boiler; a maximum the user
         # declared still applies.
         circuit_floor = circuit.fixed_temperature
-    ramp = _float(data, "ramp_k_per_min", 1.0)
+    ramp = _float(value, "ramp_k_per_min", None)
     frost_zone = data.get("frost_zone") or None
     control = ControlConfig(
         curve=curve,
         limits=FlowLimits(
-            hard_min=float(data.get("hard_min", 25.0)),
-            hard_max=float(data.get("hard_max", 70.0)),
-            ceiling_band=float(data.get("ceiling_band", 10.0)),
+            hard_min=float(value["hard_min"]),
+            hard_max=float(value["hard_max"]),
+            ceiling_band=float(value["ceiling_band"]),
         ),
         circuit_max=circuit_max,
         boiler_max=boiler_max,
         circuit_floor=circuit_floor,
         frost=FrostConfig(
-            room_limit=float(data.get("frost_limit", 5.0)),
-            release=float(data.get("frost_release", 7.0)),
+            room_limit=float(value["frost_limit"]),
+            release=float(value["frost_release"]),
             # A zone no longer configured must not leave frost protection watching nothing.
             zone=frost_zone if frost_zone in {z.zone_id for z in installation.zones} else None,
         ),
         demand=DemandConfig(
-            count_threshold=int(data.get("count_threshold", 1)),
+            count_threshold=int(value["count_threshold"]),
             power_threshold_kw=_float(data, "power_threshold_kw", None),
             opening_threshold=(
                 None
@@ -221,8 +245,8 @@ def parse_control(
         ),
         fallback_setpoint=_float(data, "fallback_setpoint", None),
         ramp_k_per_min=ramp,
-        decision_interval_s=_minutes(data, "decision_interval_min", 5.0),
-        comfort_correction=bool(data.get("comfort_correction", True)),
+        decision_interval_s=_minutes(value, "decision_interval_min", 5.0),
+        comfort_correction=bool(value["comfort_correction"]),
     )
     loop = LoopConfig(
         control=control,
@@ -238,7 +262,7 @@ def parse_control(
         # A heating switch the boiler may store is left alone: "off" is then a low setpoint.
         ch_writes=path in OTGW_PATHS
         or (bool(data.get("ch_entity")) and ch_write_type in WRITABLE_TYPES),
-        off_setpoint=float(data.get("off_setpoint", DEFAULT_OFF_SETPOINT)),
+        off_setpoint=float(value["off_setpoint"]),
     )
     reactions = {
         str(alarm): AlarmReaction(reaction)
@@ -267,7 +291,7 @@ def parse_control(
         curve_entered=bool(curve_data.get("design_flow")),
         loop=loop,
         learning=LearningConfig(),
-        learning_pauses=bool(data.get("learning_pauses", True)),
+        learning_pauses=bool(value["learning_pauses"]),
         alarm_reactions=reactions,
     )
 
