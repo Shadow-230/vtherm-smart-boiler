@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from custom_components.vtherm_smart_boiler.core.building import fit_daily_load
 from custom_components.vtherm_smart_boiler.core.history import History, ZoneSeries
@@ -62,6 +62,13 @@ class MappingError(ValueError):
     pass
 
 
+# What the mapping may hold: anything else is a misspelling that would be silently ignored.
+SECTIONS = ("boiler", "zones", "parameters", "options", "weather")
+OPTION_KEYS = ("condensing_return", "modulation_scale", "temperature_unit")
+TEMPERATURE_UNITS = ("°C", "°F")  # Home Assistant's unit systems
+CONDENSING_RETURN = (40.0, 65.0)  # as the plugin's options allow
+
+
 def load_mapping(path: Path) -> EntityMapping:
     with path.open("rb") as file:
         data = tomllib.load(file)
@@ -69,6 +76,9 @@ def load_mapping(path: Path) -> EntityMapping:
 
 
 def parse_mapping(data: Mapping[str, Any]) -> EntityMapping:
+    for name in data:
+        if name not in SECTIONS:
+            raise MappingError(f"[{name}]: not a known section ({', '.join(SECTIONS)})")
     boiler = _table(data, "boiler")
     signals: dict[Signal, str] = {}
     for key, entity in boiler.items():
@@ -84,8 +94,8 @@ def parse_mapping(data: Mapping[str, Any]) -> EntityMapping:
         raise MappingError(f"[boiler] missing required signals: {', '.join(missing)}")
     zones: dict[str, str] = {}
     for name, entity in _table(data, "zones").items():
-        if not isinstance(entity, str) or "." not in entity:
-            raise MappingError(f"[zones] {name}: expected an entity ID")
+        if not isinstance(entity, str) or not entity.startswith("climate."):
+            raise MappingError(f"[zones] {name}: expected a VT thermostat (climate.*)")
         zones[str(name)] = entity
     parameters = ParameterSet()
     for key, value in _table(data, "parameters").items():
@@ -98,7 +108,7 @@ def parse_mapping(data: Mapping[str, Any]) -> EntityMapping:
             parameters = parameters.with_estimate(parameter, estimate)
         except (TypeError, ValueError) as err:
             raise MappingError(f"[parameters] {key}: {err}") from err
-    options_data = _table(data, "options")
+    options_data = _table(data, "options", OPTION_KEYS)
     try:
         options = MonitorOptions(
             condensing_return=float(options_data.get("condensing_return", 55.0)),
@@ -106,24 +116,29 @@ def parse_mapping(data: Mapping[str, Any]) -> EntityMapping:
         )
     except (TypeError, ValueError) as err:
         raise MappingError(f"[options] condensing_return or modulation_scale: {err}") from err
-    weather = _table(data, "weather").get("entity")
+    low, high = CONDENSING_RETURN
+    if not low <= options.condensing_return <= high:
+        raise MappingError(f"[options] condensing_return: expected {low:g} to {high:g} °C")
+    unit = options_data.get("temperature_unit", "°C")
+    if unit not in TEMPERATURE_UNITS:
+        raise MappingError(f"[options] temperature_unit: expected {' or '.join(TEMPERATURE_UNITS)}")
+    weather = _table(data, "weather", ("entity",)).get("entity")
     if weather is not None and (not isinstance(weather, str) or "." not in weather):
         raise MappingError("[weather] entity: expected an entity ID")
-    return EntityMapping(
-        signals,
-        weather,
-        zones,
-        parameters,
-        options,
-        str(options_data.get("temperature_unit", "°C")),
-    )
+    return EntityMapping(signals, weather, zones, parameters, options, unit)
 
 
-def _table(data: Mapping[str, Any], name: str) -> Mapping[str, Any]:
-    """A section of the mapping; anything but a table is explained, not a traceback."""
+def _table(
+    data: Mapping[str, Any], name: str, keys: Sequence[str] | None = None
+) -> Mapping[str, Any]:
+    """A section of the mapping; anything but a table, or a key it does not know, is explained,
+    not a traceback."""
     section = data.get(name, {})
     if not isinstance(section, Mapping):
         raise MappingError(f"[{name}]: expected a table (e.g. [{name}] with keys under it)")
+    for key in section:
+        if keys is not None and key not in keys:
+            raise MappingError(f"[{name}] {key}: not a known key ({', '.join(keys)})")
     return section
 
 
@@ -264,8 +279,38 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--end", help="day after the last, YYYY-MM-DD (default: last state)")
     parser.add_argument("--tz", default="UTC", help="time zone for day boundaries")
     args = parser.parse_args(argv)
-    tz = ZoneInfo(args.tz)
-    mapping = load_mapping(args.mapping)
+    try:
+        return _run(args)
+    except _UsageError as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 2
+
+
+class _UsageError(Exception):
+    """A mistake in the arguments or the mapping, told in one line."""
+
+
+def _run(args: argparse.Namespace) -> int:
+    try:
+        tz = ZoneInfo(args.tz)
+    except (ZoneInfoNotFoundError, ValueError) as err:
+        raise _UsageError(f"--tz {args.tz}: not a known time zone") from err
+    try:
+        mapping = load_mapping(args.mapping)
+    except MappingError as err:
+        raise _UsageError(f"mapping {args.mapping}: {err}") from err
+    except (OSError, tomllib.TOMLDecodeError) as err:
+        raise _UsageError(f"mapping {args.mapping}: {err}") from err
+    requested = {}
+    for name in ("start", "end"):
+        text = getattr(args, name)
+        if text:
+            try:
+                requested[name] = _parse_date(text, tz)
+            except ValueError as err:
+                raise _UsageError(f"--{name} {text}: expected a date as YYYY-MM-DD") from err
+    if "start" in requested and "end" in requested and requested["end"] <= requested["start"]:
+        raise _UsageError("--end must come after --start")
     with RecorderDatabase(args.db) as db:
         if db.wal_warning:
             print(
@@ -276,8 +321,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if span is None:
             print("the database holds no states", file=sys.stderr)
             return 1
-        start = _parse_date(args.start, tz) if args.start else span[0]
-        end = _parse_date(args.end, tz) if args.end else span[1]
+        start = requested.get("start", span[0])
+        end = requested.get("end", span[1])
         unknown = [e for e in mapping.signals.values() if e not in db.entity_ids()]
         if unknown:
             print(f"warning: not in the database: {', '.join(unknown)}", file=sys.stderr)

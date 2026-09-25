@@ -15,6 +15,8 @@ flow = "sensor.boiler_flow_temperature"
 # pressure = "sensor.boiler_water_pressure"
 # flue_gas = "sensor.boiler_flue_gas_temperature"
 # outdoor = "sensor.boiler_outdoor_temperature"
+# room_setpoint = "sensor.thermostat_room_setpoint"          # a wired room thermostat's
+# room_temperature = "sensor.thermostat_room_temperature"
 # gas_meter = "sensor.gas_meter"
 
 [weather]
