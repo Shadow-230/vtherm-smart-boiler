@@ -23,7 +23,12 @@ from custom_components.vtherm_smart_boiler.core.installation import (
     Zone,
 )
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
-from custom_components.vtherm_smart_boiler.core.supply import Supply, SupplyReason, circuit_supply
+from custom_components.vtherm_smart_boiler.core.supply import (
+    Supply,
+    SupplyReason,
+    circuit_return,
+    circuit_supply,
+)
 
 # --- supply -------------------------------------------------------------------------------
 
@@ -149,3 +154,28 @@ def test_zone_exponent_override_and_unknown_size() -> None:
     expected = mean_excess(45.0, 40.0, 20.0) / EMITTER_REFERENCE[EmitterType.RADIATOR].excess
     assert result.value == pytest.approx(expected)
     assert result.output_w is None
+
+
+def test_the_factor_is_held_while_hot_water_heats() -> None:
+    """P48: while the boiler heats hot water no heat reaches the zone: nothing to compute."""
+    computed = update_factor(None, ZONE, HEATING, Supply(55.0), 45.0, now=10.0)
+    held = update_factor(computed, ZONE, HEATING, Supply(70.0), 60.0, now=20.0, dhw=True)
+    assert held == FactorResult(computed.value, FactorStatus.HELD, None, 10.0, computed.output_w)
+
+
+def test_a_mixed_circuit_uses_no_boiler_return() -> None:
+    """P48: the boiler's return is not a mixed circuit's return."""
+    assert circuit_return(Circuit("m", CircuitControl.THROUGH_BOILER), 40.0) is None
+    fixed = Circuit("p", CircuitControl.PASSIVE_FIXED, fixed_temperature=40)
+    assert circuit_return(fixed, 35.0) is None
+    assert circuit_return(Circuit("u", CircuitControl.UNMIXED_SHARED), 40.0) == 40.0
+
+
+def test_the_mean_excess_is_continuous_near_room_temperature() -> None:
+    """P62: no jump where the return reaches the room temperature."""
+    at = mean_excess(50.0, 20.0, 20.0)
+    assert mean_excess(50.0, 20.01, 20.0) == pytest.approx(at, abs=0.05)
+    assert mean_excess(50.0, 19.0, 20.0) == at
+    values = [mean_excess(50.0, r, 20.0) for r in (18, 20, 22, 25, 30, 35, 40, 45, 50)]
+    assert values == sorted(values)
+    assert mean_excess(50.0, 35.0, 20.0) == pytest.approx(15.0 / math.log(2.0))  # LMTD

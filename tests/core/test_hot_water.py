@@ -28,9 +28,10 @@ def test_unknown_dhw_state_does_not_block() -> None:
 @pytest.mark.parametrize(
     ("supply", "expected"),
     [
-        (Supply(None, SupplyReason.FLOW_STALE), HotWater(False, HotWaterReason.FLOW_STALE)),
-        (Supply(None, SupplyReason.FLOW_UNKNOWN), HotWater(False, HotWaterReason.FLOW_UNKNOWN)),
-        (Supply(None), HotWater(False, HotWaterReason.FLOW_UNKNOWN)),
+        # The user's decision: unknown while the flow is unknown or stale, not "no".
+        (Supply(None, SupplyReason.FLOW_STALE), HotWater(None, HotWaterReason.FLOW_STALE)),
+        (Supply(None, SupplyReason.FLOW_UNKNOWN), HotWater(None, HotWaterReason.FLOW_UNKNOWN)),
+        (Supply(None), HotWater(None, HotWaterReason.FLOW_UNKNOWN)),
         (
             Supply(None, SupplyReason.CIRCUIT_NOT_MEASURED),
             HotWater(None, HotWaterReason.CIRCUIT_NOT_MEASURED),

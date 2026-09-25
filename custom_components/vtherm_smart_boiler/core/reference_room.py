@@ -68,13 +68,18 @@ def select_reference(
     valid = found.zones
 
     if strategy is Strategy.AVERAGE:
-        count = len(valid)
+        # Temperature and setpoint averaged over one and the same set of zones (S29).
+        pairs = [
+            (z.zone_id, z.temperature, z.target)
+            for z in valid
+            if z.temperature is not None and z.target is not None
+        ]
         return ReferenceRoom(
             SelectionStatus.OK,
             None,
-            sum(z.temperature for z in valid if z.temperature is not None) / count,
-            sum(z.target for z in valid if z.target is not None) / count,
-            tuple(sorted(z.zone_id for z in valid)),
+            sum(temperature for _, temperature, _ in pairs) / len(pairs),
+            sum(target for _, _, target in pairs) / len(pairs),
+            tuple(sorted(zone_id for zone_id, _, _ in pairs)),
         )
 
     # Largest signed deficit: an overheated room wins only when every room is overheated.

@@ -48,7 +48,7 @@ from .limits import (
     limit_flow,
     watched_temperatures,
 )
-from .readings import ZONE_SATURATED, ZoneState
+from .readings import ZoneState
 
 HOUR = 3600.0
 CORRECTION_MAX_K = 3.0  # the firm band of the comfort correction
@@ -397,14 +397,7 @@ SHORT_K = 0.3  # a deficit this large counts as short of the setpoint
 
 
 def _saturated(zone: ZoneState) -> bool:
-    """As open as the zone gets: fully, or at VT's cap on its duty cycle."""
-    demand = zone.demand
-    if demand is None:
-        return False
-    limit = ZONE_SATURATED
-    if zone.max_on_percent is not None:
-        limit = min(limit, zone.max_on_percent - 0.01)
-    return demand >= limit
+    return zone.fully_open  # one meaning, shared with the critical zone
 
 
 def _correction(state: ControlState, inputs: ControlInputs, config: ControlConfig) -> float:

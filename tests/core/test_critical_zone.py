@@ -68,3 +68,18 @@ def test_no_zone_states() -> None:
     assert pick([off]).status is SelectionStatus.NO_ACTIVE_ZONE
     stale = ZoneState("a", 20.0, 21.0, heating_enabled=True, reported_at=NOW - 2 * AGE)
     assert pick([stale]) == CriticalZone("c", SelectionStatus.NO_VALID_MEASUREMENT)
+
+
+def test_within_the_demand_margin_the_colder_zone_wins() -> None:
+    """P61: as the docstring says — among zones with about the same demand, the one furthest
+    below its setpoint."""
+    result = pick([zone("a", 20.8, 21.0, 0.85), zone("b", 19.5, 21.0, 0.8)])
+    assert result.zone_id == "b"
+
+
+def test_a_zone_at_vts_cap_is_as_open_as_it_gets() -> None:
+    """P61: one meaning of "fully open" — VT's cap on the duty cycle counts, as in control."""
+    capped = ZoneState(
+        "a", 19.0, 21.0, True, on_percent=0.8, max_on_percent=0.8, reported_at=NOW
+    )
+    assert pick([capped]).saturated

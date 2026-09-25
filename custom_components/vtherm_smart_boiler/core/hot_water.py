@@ -48,9 +48,10 @@ def hot_water_available(
     if supply.temperature is None:
         if supply.reason is SupplyReason.CIRCUIT_NOT_MEASURED:
             return HotWater(None, HotWaterReason.CIRCUIT_NOT_MEASURED)
+        # Unknown, not "no", while the flow is unknown or stale (the user's decision).
         if supply.reason is SupplyReason.FLOW_STALE:
-            return HotWater(False, HotWaterReason.FLOW_STALE)
-        return HotWater(False, HotWaterReason.FLOW_UNKNOWN)
+            return HotWater(None, HotWaterReason.FLOW_STALE)
+        return HotWater(None, HotWaterReason.FLOW_UNKNOWN)
     if room is None:
         return HotWater(None, HotWaterReason.ROOM_UNKNOWN)
     excess = supply.temperature - room

@@ -22,6 +22,12 @@ class Supply:
     reason: SupplyReason | None = None
 
 
+def circuit_return(circuit: Circuit, boiler_return: float | None) -> float | None:
+    """The return of a circuit's emitters: the boiler's return only for a circuit fed straight
+    from the boiler — a mixed circuit's water goes back through its own mixing."""
+    return boiler_return if circuit.control is CircuitControl.UNMIXED_SHARED else None
+
+
 def circuit_supply(
     circuit: Circuit,
     boiler_flow: float | None,

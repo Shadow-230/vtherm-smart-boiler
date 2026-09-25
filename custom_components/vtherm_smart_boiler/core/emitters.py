@@ -42,21 +42,31 @@ EMITTER_REFERENCE: dict[EmitterType, EmitterReference] = {
 }
 
 
+# Below this ratio of return excess to flow excess the logarithmic mean falls towards zero,
+# which a radiator whose top is hot does not: from here down to a return at room temperature,
+# the mean runs straight to half the flow excess — no jump where the return reaches the room.
+LOG_MEAN_FROM = 0.5
+
+
 def mean_excess(flow: float, return_: float, room: float) -> float:
     """Mean excess of the water over the room, in K; zero when the water is not warmer.
 
-    Logarithmic mean when flow > return > room; arithmetic mean when the return is not below
-    the flow; half the flow excess when the return is not above the room.
+    Logarithmic mean for a return well above the room; arithmetic mean when the return is not
+    below the flow; half the flow excess when the return is not above the room; in between, a
+    straight line from there to the logarithmic mean, so the mean is continuous (P62).
     """
     flow_excess = flow - room
     if flow_excess <= 0:
         return 0.0
     return_excess = return_ - room
-    if return_excess <= 0:
-        return flow_excess / 2.0
     if return_ >= flow:
         return (flow_excess + return_excess) / 2.0
-    return (flow - return_) / math.log(flow_excess / return_excess)
+    ratio = max(0.0, return_excess / flow_excess)
+    if ratio >= LOG_MEAN_FROM:
+        return (flow - return_) / math.log(flow_excess / return_excess)
+    edge = (1.0 - LOG_MEAN_FROM) / math.log(1.0 / LOG_MEAN_FROM)  # log mean at the edge, / ΔT
+    share = 0.5 + (edge - 0.5) * ratio / LOG_MEAN_FROM
+    return flow_excess * share
 
 
 def power_factor(
@@ -123,12 +133,14 @@ def update_factor(
     supply: Supply,
     return_: float | None,
     now: float,
+    dhw: bool | None = None,
 ) -> FactorResult:
-    """The factor for a zone: computed while heating, else held; unavailable without data."""
+    """The factor for a zone: computed while heating, else held; unavailable without data.
+    While the boiler heats hot water no heat reaches the zone: the last value is held."""
     heating = is_heating(zone)
     if heating is None:
         return FactorResult(None, FactorStatus.UNAVAILABLE, FactorReason.ZONE_UNKNOWN)
-    if not heating:
+    if not heating or dhw is True:
         if previous is not None and previous.value is not None:
             return FactorResult(
                 previous.value, FactorStatus.HELD, None, previous.at, previous.output_w

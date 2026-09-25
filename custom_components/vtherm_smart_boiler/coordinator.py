@@ -75,7 +75,7 @@ from .core.signal_check import (
     required_problems,
 )
 from .core.signals import Signal
-from .core.supply import circuit_supply
+from .core.supply import circuit_return, circuit_supply
 from .forecasts import ForecastRecorder
 from .transport.entities import (
     EntityTransport,
@@ -552,7 +552,13 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             )
             self._hot_water[zone.zone_id] = hot.available
             factor = update_factor(
-                self._factors.get(zone.zone_id), zone, state, supply, return_temp, now
+                self._factors.get(zone.zone_id),
+                zone,
+                state,
+                supply,
+                circuit_return(circuit, return_temp),  # a mixed circuit's is not the boiler's
+                now,
+                dhw,
             )
             if factor.status is FactorStatus.COMPUTED:
                 self.schedule_save(FACTOR_SAVE_DELAY_S)

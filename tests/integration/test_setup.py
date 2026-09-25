@@ -312,11 +312,11 @@ async def test_a_slow_analysis_does_not_set_the_quick_path_back(
     freezer.tick(timedelta(hours=1))
     zones.set("living", hvac_action="heating", valve_open_percent=50)
     await coordinator.async_refresh()
-    assert hass.states.get(hot_id).state == "off"  # the flow is stale now
+    assert hass.states.get(hot_id).state == "unknown"  # the flow is stale now
     release.set()
     await task
     await hass.async_block_till_done()
-    assert hass.states.get(hot_id).state == "off"
+    assert hass.states.get(hot_id).state == "unknown"
 
 
 async def test_entities_the_options_no_longer_create_are_removed(
@@ -662,7 +662,7 @@ async def test_a_steady_flow_is_stale_only_past_a_user_limit(
     await entry.runtime_data.async_refresh()  # whatever the timers did under load
     await hass.async_block_till_done()
     state = hass.states.get(hot_id)
-    assert (state.state == "off") is stale
+    assert (state.state == "unknown") is stale  # unknown, not "no" (the user's decision)
     if stale:
         assert state.attributes["reason"] == "flow_stale"
 

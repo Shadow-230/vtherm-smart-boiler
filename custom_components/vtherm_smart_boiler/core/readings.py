@@ -123,6 +123,17 @@ class ZoneState:
         return self.target - self.temperature
 
     @property
+    def fully_open(self) -> bool:
+        """As open as the zone gets: fully, or at VT's cap on its duty cycle."""
+        demand = self.demand
+        if demand is None:
+            return False
+        limit = ZONE_SATURATED
+        if self.max_on_percent is not None:
+            limit = min(limit, self.max_on_percent - 0.01)
+        return demand >= limit
+
+    @property
     def demand(self) -> float | None:
         """How hard the zone's own controller works, 0 to 1: valve opening, else on-percent."""
         if self.valve_open is not None:
