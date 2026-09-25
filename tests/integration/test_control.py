@@ -1069,6 +1069,33 @@ async def test_changing_the_write_path_is_refused_while_a_hand_back_is_owed(rig:
     assert flow["errors"] == {"write_path": "hand_back_pending"}
 
 
+async def test_choosing_no_control_while_a_hand_back_is_owed_keeps_handing_back(
+    rig: Rig,
+) -> None:
+    """In the options, "no control" is allowed with a hand-back still owed — it asks for less,
+    not for another device — and the hand-back is still made once its target is back, with a
+    repair issue until then."""
+    number = await owe_a_hand_back(rig)
+    await rig.switch(False)
+    assert rig.entry is not None
+    flow = await rig.hass.config_entries.options.async_init(rig.entry.entry_id)
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"], {"next_step_id": "control"}
+    )
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"], {"write_path": "none"}
+    )
+    assert flow["type"] == "create_entry"
+    await rig.hass.async_block_till_done()
+    assert "control" not in rig.entry.options
+    assert issue(rig, "hand_back_owed") is not None
+    number.set_available(True)
+    await rig.advance(70)
+    assert number.writes[-1] == 50.0
+    await rig.advance(10)
+    assert issue(rig, "hand_back_owed") is None
+
+
 async def test_removing_the_entry_with_a_hand_back_owed_raises_a_repair_issue(rig: Rig) -> None:
     await owe_a_hand_back(rig)
     assert rig.entry is not None

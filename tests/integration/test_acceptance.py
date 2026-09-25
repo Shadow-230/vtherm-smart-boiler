@@ -810,3 +810,26 @@ async def test_an_entity_hand_back_waits_for_its_target_and_is_stored(rig: Rig) 
     assert entity_setpoints(rig)[-1] == 0.0
     assert not rig.sim.plant.override_active(rig.now())
     assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
+
+
+async def test_a_switch_hand_back_gives_the_boiler_its_own_control(rig: Rig) -> None:
+    """The entity path with a switch that enables external control: taking control turns it
+    on, the hand-back turns it off — confirmed by its state — and the boiler is on its own."""
+    external = "switch.boiler_sim_external_control"
+    control = {k: v for k, v in ENTITY_CONTROL.items() if not k.startswith("hand_back")}
+    await start(
+        rig, sim={"write_type": "held"}, **control, hand_back="switch", hand_back_entity=external
+    )
+    await rig.switch(True)
+    await rig.advance(60)
+    assert rig.hass.states.get(external).state == "on"
+    assert rig.sim.plant.override_active(rig.now())
+    await rig.switch(False)
+    await rig.advance(20)
+    assert rig.hass.states.get(external).state == "off"
+    assert not rig.sim.plant.override_active(rig.now())
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
+    await rig.switch(True)
+    await rig.advance(30)
+    assert rig.hass.states.get(external).state == "on"
+    assert rig.sim.plant.override_active(rig.now())
