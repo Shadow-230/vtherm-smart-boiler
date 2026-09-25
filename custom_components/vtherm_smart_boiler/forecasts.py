@@ -1,13 +1,18 @@
 """Forecast recording (FC0): snapshots from ``weather.get_forecasts`` kept in HA storage.
 
-The only service the plugin calls in the monitor is ``weather.get_forecasts``. Snapshots are
-stored in weekly partitions, one storage file each, so a save rewrites only the current week.
+The only service the plugin calls in the monitor is ``weather.get_forecasts``, and only for the
+forecast types the weather entity says it offers. Snapshots are stored in weekly partitions, one
+storage file each: a save serialises and writes only its own week, in the executor, from the
+snapshots captured when it was planned. Weeks past the retention are removed, also those a
+restart no longer loads.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -31,6 +36,8 @@ _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 1
 SAVE_DELAY_S = 60
 
+# The forecast types a weather entity offers (Home Assistant's WeatherEntityFeature).
+_FEATURE = {ForecastKind.DAILY: 1, ForecastKind.HOURLY: 2}
 _WIND_TO_MS = {"m/s": 1.0, "km/h": 1 / 3.6, "mph": 0.44704, "kn": 0.514444, "ft/s": 0.3048}
 _RAIN_TO_MM = {"mm": 1.0, "cm": 10.0, "in": 25.4}
 
@@ -81,12 +88,16 @@ class ForecastRecorder:
 
     def _storage(self, partition: int) -> Store[dict[str, Any]]:
         if partition not in self._stores:
-            key = f"{DOMAIN}.{self._entry_id}.forecast_{partition}"
-            self._stores[partition] = Store(self._hass, STORAGE_VERSION, key)
+            self._stores[partition] = Store(
+                self._hass,
+                STORAGE_VERSION,
+                partition_key(self._entry_id, partition),
+                serialize_in_event_loop=False,
+            )
         return self._stores[partition]
 
     async def async_load(self, now: float) -> None:
-        """Load the partitions still inside the retention."""
+        """Load the partitions still inside the retention; remove the files of older ones."""
         first = partition_of(now - DEFAULT_RETENTION_S)
         loaded = []
         for partition in range(first, partition_of(now) + 1):
@@ -96,13 +107,21 @@ class ForecastRecorder:
         skipped = self.store.load(loaded)
         if skipped:
             _LOGGER.warning("Skipped %s unreadable stored forecast snapshots", skipped)
+        await self._hass.async_add_executor_job(
+            remove_partition_files, Path(self._hass.config.path(".storage")), self._entry_id, first
+        )
 
     async def async_take(self, now: float) -> int:
         """Take one snapshot of every supported forecast type; returns how many were stored."""
         state = self._hass.states.get(self._weather)
         units = state.attributes if state is not None else {}
+        features = units.get("supported_features")
         taken = 0
         for kind in (ForecastKind.HOURLY, ForecastKind.DAILY):
+            if isinstance(features, int) and not features & _FEATURE[kind]:
+                self.unsupported.add(kind)  # the entity does not offer it: never asked for
+            else:
+                self.unsupported.discard(kind)
             if kind in self.unsupported:
                 continue
             try:
@@ -115,8 +134,6 @@ class ForecastRecorder:
                 )
             except HomeAssistantError as err:
                 _LOGGER.debug("No %s forecast from %s: %s", kind, self._weather, err)
-                if "does not support" in str(err):
-                    self.unsupported.add(kind)
                 continue
             items = ((response or {}).get(self._weather) or {}).get("forecast")
             if not isinstance(items, list) or not items:
@@ -130,9 +147,12 @@ class ForecastRecorder:
         return taken
 
     def _schedule_save(self, partition: int) -> None:
+        # Captured now, in the event loop: the save runs in the executor and must not read the
+        # store while the loop changes it. A later snapshot plans a save of its own.
+        snapshots = tuple(self.store.in_partition(partition))
+
         def data() -> dict[str, Any]:
-            self._dirty.discard(partition)
-            return {"snapshots": self.store.partitions().get(partition, [])}
+            return {"snapshots": [snapshot.to_dict() for snapshot in snapshots]}
 
         self._dirty.add(partition)
         self._storage(partition).async_delay_save(data, SAVE_DELAY_S)
@@ -144,8 +164,26 @@ class ForecastRecorder:
             await self._stores.pop(partition).async_remove()
 
     async def async_flush(self) -> None:
-        """Write partitions with unsaved snapshots now (on unload)."""
-        partitions = self.store.partitions()
+        """Write the partitions changed since they were loaded now (on unload)."""
         for partition in sorted(self._dirty):
-            await self._storage(partition).async_save({"snapshots": partitions.get(partition, [])})
+            snapshots = self.store.in_partition(partition)
+            await self._storage(partition).async_save(
+                {"snapshots": [snapshot.to_dict() for snapshot in snapshots]}
+            )
         self._dirty.clear()
+
+
+def partition_key(entry_id: str, partition: int) -> str:
+    return f"{DOMAIN}.{entry_id}.forecast_{partition}"
+
+
+def remove_partition_files(storage: Path, entry_id: str, before: int | None = None) -> None:
+    """Remove an entry's forecast partition files — those older than ``before``, or all.
+    Blocking: run it in the executor."""
+    pattern = re.compile(re.escape(f"{DOMAIN}.{entry_id}.forecast_") + r"(-?\d+)")
+    if not storage.is_dir():
+        return
+    for path in storage.iterdir():
+        match = pattern.fullmatch(path.name)
+        if match and (before is None or int(match.group(1)) < before):
+            path.unlink(missing_ok=True)

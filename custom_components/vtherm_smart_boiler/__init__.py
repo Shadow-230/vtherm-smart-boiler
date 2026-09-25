@@ -102,10 +102,13 @@ async def _async_stop(coordinator: SmartBoilerCoordinator) -> None:
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """The entry is gone: a hand-back it still owed can no longer be retried, so the user is
     told, with a repair issue that outlives the entry."""
+    from pathlib import Path
+
     from homeassistant.helpers import issue_registry as ir
     from homeassistant.helpers.storage import Store
 
     from .coordinator import STORAGE_VERSION
+    from .forecasts import remove_partition_files
 
     for key in (
         "hand_back_owed",
@@ -130,6 +133,11 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
             severity=ir.IssueSeverity.ERROR,
             translation_key="hand_back_owed_after_removal",
         )
+    # Nothing of the entry stays behind: its store and its forecast weeks.
+    await store.async_remove()
+    await hass.async_add_executor_job(
+        remove_partition_files, Path(hass.config.path(".storage")), entry.entry_id
+    )
 
 
 def _report_control_problem(hass: HomeAssistant, entry: ConfigEntry, config: EntryConfig) -> None:

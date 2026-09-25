@@ -81,6 +81,17 @@ def test_partitions_round_trip_and_skip_broken_entries() -> None:
     assert restored.snapshots()[0].points[1].temperature == 2.0
 
 
+def test_one_partition_alone() -> None:
+    """P31: a save needs one week's snapshots, not every week's serialised to pick one."""
+    store = ForecastStore()
+    store.add(hourly(T0, [1.0]))
+    store.add(hourly(T0 + PARTITION_S, [3.0], first=T0 + PARTITION_S))
+    store.add(hourly(T0 + PARTITION_S + HOUR, [4.0], first=T0 + PARTITION_S + HOUR))
+    week = store.in_partition(partition_of(T0) + 1)
+    assert [s.taken_at for s in week] == [T0 + PARTITION_S, T0 + PARTITION_S + HOUR]
+    assert store.in_partition(partition_of(T0) + 5) == []
+
+
 def test_forecast_errors_by_horizon() -> None:
     observed = Series([(T0, 0.0)])  # it stayed at 0 °C
     snapshots = [

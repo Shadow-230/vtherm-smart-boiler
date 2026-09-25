@@ -10,6 +10,7 @@ only rewrites the current week.
 from __future__ import annotations
 
 import math
+from bisect import bisect_left
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -97,6 +98,10 @@ def _as_float(value: object) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _taken_at(snapshot: ForecastSnapshot) -> float:
+    return snapshot.taken_at
+
+
 def partition_of(taken_at: float) -> int:
     """Weekly storage partition of a snapshot."""
     return int(taken_at // PARTITION_S)
@@ -134,6 +139,12 @@ class ForecastStore:
             for s in self._snapshots
             if (kind is None or s.kind is kind) and (since is None or s.taken_at >= since)
         ]
+
+    def in_partition(self, partition: int) -> list[ForecastSnapshot]:
+        """The snapshots of one weekly partition, in time order."""
+        start = bisect_left(self._snapshots, partition * PARTITION_S, key=_taken_at)
+        end = bisect_left(self._snapshots, (partition + 1) * PARTITION_S, key=_taken_at)
+        return self._snapshots[start:end]
 
     def partitions(self) -> dict[int, list[dict[str, Any]]]:
         """Snapshots in their weekly partitions, in the compact form."""
