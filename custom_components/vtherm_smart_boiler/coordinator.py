@@ -93,7 +93,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 1
 DAY = 86400.0
-ZONE_MAX_AGE_S = 2 * 3600.0
+ZONE_MAX_AGE_S: float | None = None  # one freshness rule: a steady room is not a stale one
 SAVE_DELAY_S = 120
 # An emitter factor is recomputed at every update while its zone heats: saved at this pace, so
 # the store is not rewritten every two minutes all winter.

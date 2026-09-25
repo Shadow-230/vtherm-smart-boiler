@@ -121,7 +121,10 @@ class ControlConfig:
     fallback_setpoint: float | None = None  # None: the curve at its design point
     ramp_k_per_min: float | None = 1.0  # None: no ramp
     decision_interval_s: float = 300.0
-    zone_max_age_s: float = 2 * HOUR
+    # One freshness rule (O1): a steady reading is not a stale one. VT reports when its room
+    # sensor last changed, which a steady room does not do for hours; a zone is unknown by its
+    # state (unavailable, not started), and a room sensor gone quiet is VT's own safety mode's.
+    zone_max_age_s: float | None = None
     comfort_correction: bool = True
     stale_hand_back_s: float | None = 300.0  # hand back after this long without fresh data
     outdoor_time_constant_s: float = DEFAULT_TIME_CONSTANT_S

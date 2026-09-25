@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant
@@ -154,3 +156,27 @@ async def test_a_vt_thermostat_already_running_shows_the_values_after_vt_reloads
     await entry.runtime_data.async_refresh()
     await heat_to(hass, 21.5)
     assert hass.states.get(LIVING).attributes.get("smart_boiler") is not None
+
+
+async def test_a_steady_room_under_real_vt_stays_known(hass: HomeAssistant, freezer: Any) -> None:
+    """T2 with VT itself: VT reports when its room sensor last changed, so after three hours of a
+    steady room its temperature time is three hours old — and the zone is still known."""
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    from custom_components.vtherm_smart_boiler.coordinator import ZONE_MAX_AGE_S
+
+    entry = await room_and_boiler(hass)
+    await setup(hass, entry)
+    await setup(hass, vt_thermostat())
+    await heat_to(hass, 21.0)
+    freezer.tick(timedelta(hours=3))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    now = dt_util.utcnow().timestamp()
+    zone = entry.runtime_data.link.zone(LIVING)
+    assert zone.temperature_at is not None
+    assert now - zone.temperature_at >= 3 * 3600 - 60  # the sensor has not changed
+    assert zone.is_known(now, ZONE_MAX_AGE_S)

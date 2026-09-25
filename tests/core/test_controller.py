@@ -149,12 +149,16 @@ def test_no_demand_is_idle() -> None:
 
 
 def test_unknown_zones_mean_heat() -> None:
-    stale = zone(-10 * 3600.0)
-    _state, [decision] = run([inputs(0.0, zones=(stale,))])
+    unavailable = zone(0.0, heating_enabled=None, valve_open=None)  # VT's state not known
+    _state, [decision] = run([inputs(0.0, zones=(unavailable,))])
     assert decision.mode is ControlMode.HEATING
     assert Reason.ZONES_UNKNOWN in decision.reasons
     _state, [none] = run([inputs(0.0, zones=())])
     assert Reason.ZONES_UNKNOWN in none.reasons
+    # Age counts only against a limit that is set: then a zone not heard of longer is unknown.
+    stale = zone(-10 * 3600.0)
+    _state, [aged] = run([inputs(0.0, zones=(stale,))], replace(CONFIG, zone_max_age_s=7200.0))
+    assert Reason.ZONES_UNKNOWN in aged.reasons
 
 
 def test_summer_and_winter_come_from_vt() -> None:
@@ -445,3 +449,31 @@ def test_frost_heating_that_warms_the_zone_is_not_reported() -> None:
     _state, decisions = run(steps)
     assert decisions[12].mode is ControlMode.FROST
     assert not decisions[12].frost_stuck
+
+
+HOUR = 3600.0
+
+
+def test_a_steady_room_is_not_an_unknown_one() -> None:
+    """T2: VT reports when its room sensor last changed (the sensor's ``last_updated``), and a
+    steady room does not change for hours. With VT off in summer that must stay "no heat" —
+    not "zones unknown", which heats against VT — as long as VT itself reports."""
+    now = 10 * HOUR
+    off = zone(now, heating_enabled=False, valve_open=0.0, temperature_at=now - 3 * HOUR)
+    _state, [decision] = run([inputs(now, zones=(off,))])
+    assert decision.mode is ControlMode.IDLE
+    assert Reason.ZONES_UNKNOWN not in decision.reasons
+    assert decision.command is not None
+    assert decision.command.ch_enable is False
+
+
+def test_frost_protection_sees_a_steady_cold_room() -> None:
+    """T2: a room steady at 4 °C for hours is still a room at 4 °C."""
+    now = 10 * HOUR
+    cold = zone(
+        now, heating_enabled=False, valve_open=0.0, temperature=4.0, temperature_at=now - 3 * HOUR
+    )
+    _state, [decision] = run([inputs(now, zones=(cold,))])
+    assert decision.mode is ControlMode.FROST
+    assert decision.command is not None
+    assert decision.command.ch_enable is True
