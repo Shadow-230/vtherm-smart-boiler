@@ -829,7 +829,27 @@
         "name": "Use against yesterday"
       },
       "loss_coefficient": {
-        "name": "Building loss coefficient"
+        "name": "Building loss coefficient",
+        "state_attributes": {
+          "source": {
+            "name": "Source"
+          },
+          "confidence": {
+            "name": "Confidence"
+          },
+          "entered": {
+            "name": "Entered"
+          },
+          "measured": {
+            "name": "Measured"
+          },
+          "measured_confidence": {
+            "name": "Measured confidence"
+          },
+          "mismatch": {
+            "name": "Entered and measured disagree"
+          }
+        }
       },
       "forecast_snapshots": {
         "name": "Forecast snapshots"

@@ -148,3 +148,20 @@ def test_fit_rejects_scattered_data() -> None:
     energies = [50, 5, 60, 3, 70, 2, 55, 4]
     days = [DayPoint(t, e) for t, e in zip([0, 1, 2, 3, 4, 5, 6, 7], energies, strict=True)]
     assert fit_daily_load(days, threshold=15.0) is None
+
+
+def test_a_fit_beyond_any_house_is_clamped_and_not_trusted() -> None:
+    """P44: a fit outside the plausible range no longer raises at every analysis; it is kept at
+    the bound with a confidence too low to be used."""
+    fit = fit_daily_load(_days(8.0, 16.0, list(range(-10, 12, 2))), threshold=15.0)
+    assert fit is not None
+    assert fit.loss.value == 5.0
+    assert fit.loss.confidence < 0.5
+
+
+def test_a_month_of_good_days_gives_a_usable_confidence() -> None:
+    """P44: confidence reachable — with thirty days of a clean fit it passes 0.5."""
+    outdoors = [(-5 + (i % 15)) * 1.0 for i in range(30)]
+    fit = fit_daily_load(_days(0.2, 16.0, outdoors), threshold=15.0)
+    assert fit is not None
+    assert fit.loss.confidence >= 0.5

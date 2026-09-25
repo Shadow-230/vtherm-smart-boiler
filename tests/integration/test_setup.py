@@ -575,6 +575,34 @@ async def test_short_hot_water_draws_are_no_ignition_problem(
     assert ignition.state == alarm
 
 
+async def test_an_entered_loss_that_the_measurement_disagrees_with_is_shown(
+    hass: HomeAssistant,
+) -> None:
+    """P77: the mismatch between the value entered and the one measured is shown."""
+    from custom_components.vtherm_smart_boiler.core.parameters import (
+        Estimate,
+        ParameterKey,
+        Source,
+    )
+
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    options = {**entry.options, "parameters": {"loss_coefficient": 0.2}}
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    coordinator.parameters = coordinator.parameters.with_estimate(
+        ParameterKey.LOSS_COEFFICIENT, Estimate(0.4, Source.MEASURED, 0.8)
+    )
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    state = hass.states.get(entity_id(hass, entry, "sensor", "loss_coefficient"))
+    assert state.attributes["entered"] == 0.2
+    assert state.attributes["measured"] == 0.4
+    assert state.attributes["mismatch"] is True
+
+
 async def test_invalid_options_fail_setup_with_a_reason(hass: HomeAssistant) -> None:
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", options={"signals": {}})
     entry.add_to_hass(hass)

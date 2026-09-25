@@ -23,9 +23,9 @@ from .alarms import (
     trend_warning,
 )
 from .building import LoadFit, fit_daily_load
-from .daily import DaySummary, summarize_day, verdict_over_days
+from .daily import DaySummary, fit_points, summarize_day, verdict_over_days
 from .history import History
-from .monitor import MonitorOptions, MonitorSummary, daily_points, summarize
+from .monitor import MonitorOptions, MonitorSummary, summarize
 from .parameters import ParameterKey, ParameterSet
 from .report import ChangeReport, PeriodSummary, explain_change
 from .series import duration_where, time_weighted_mean
@@ -79,8 +79,9 @@ def analyse(
     day = summarize(history, parameters, now - DAY, now, options)
     threshold = parameters.value(ParameterKey.HEATING_THRESHOLD)
     fit = None
-    if threshold is not None and days:
-        fit = fit_daily_load(daily_points(history, parameters, days, options), threshold, now)
+    points = fit_points([*kept, *new_days])  # every day kept, not only the rolling few
+    if threshold is not None and points:
+        fit = fit_daily_load(points, threshold, now)
     report, unit = _report(history, parameters, options, now, threshold)
     return Analysis(
         at=now,

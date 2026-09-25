@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .parameters import Estimate, ParameterKey, ParameterSet, Source
+from .parameters import PARAMETER_DEFS, Estimate, ParameterKey, ParameterSet, Source
 
 HOURS_PER_DAY = 24.0
 
@@ -129,6 +129,8 @@ MIN_OUTDOOR_SPREAD_K = 4.0
 MIN_QUALITY = 0.5  # R² for the two-parameter fit, 1 − relative RMS error otherwise
 MAX_FIT_CONFIDENCE = 0.95
 SINGLE_PARAMETER_PENALTY = 0.7
+FULL_COVERAGE_DAYS = 30  # this many heating days give the fit its full weight
+CLAMPED_CONFIDENCE = 0.3  # a fit held at a bound of the plausible range: shown, never used
 
 
 def fit_daily_load(
@@ -146,7 +148,7 @@ def fit_daily_load(
     xs = [d.outdoor_mean for d in usable]
     ys = [d.energy_kwh for d in usable]
     n = len(usable)
-    coverage = min(1.0, n / 30.0)
+    coverage = min(1.0, n / FULL_COVERAGE_DAYS)
     if max(xs) - min(xs) >= MIN_OUTDOOR_SPREAD_K:
         mean_x = sum(xs) / n
         mean_y = sum(ys) / n
@@ -159,12 +161,14 @@ def fit_daily_load(
         r_squared = _r_squared(ys, [intercept + slope * x for x in xs])
         if r_squared < MIN_QUALITY:
             return None
-        loss = -slope / HOURS_PER_DAY
-        fitted_threshold = intercept / -slope
+        loss, loss_clamped = _clamped(ParameterKey.LOSS_COEFFICIENT, -slope / HOURS_PER_DAY)
+        fitted, threshold_clamped = _clamped(ParameterKey.HEATING_THRESHOLD, intercept / -slope)
         confidence = min(MAX_FIT_CONFIDENCE, coverage * r_squared)
+        if loss_clamped or threshold_clamped:
+            confidence = min(confidence, CLAMPED_CONFIDENCE)
         return LoadFit(
             Estimate(loss, Source.MEASURED, confidence, at),
-            Estimate(fitted_threshold, Source.MEASURED, confidence, at),
+            Estimate(fitted, Source.MEASURED, confidence, at),
             n,
             r_squared,
         )
@@ -176,9 +180,17 @@ def fit_daily_load(
     if loss_per_day <= 0 or quality < MIN_QUALITY:
         return None
     confidence = min(MAX_FIT_CONFIDENCE, coverage * quality * SINGLE_PARAMETER_PENALTY)
-    return LoadFit(
-        Estimate(loss_per_day / HOURS_PER_DAY, Source.MEASURED, confidence, at), None, n, quality
-    )
+    loss, clamped = _clamped(ParameterKey.LOSS_COEFFICIENT, loss_per_day / HOURS_PER_DAY)
+    if clamped:
+        confidence = min(confidence, CLAMPED_CONFIDENCE)
+    return LoadFit(Estimate(loss, Source.MEASURED, confidence, at), None, n, quality)
+
+
+def _clamped(key: ParameterKey, value: float) -> tuple[float, bool]:
+    """A fitted value within the parameter's plausible range, and whether it had to be held."""
+    definition = PARAMETER_DEFS[key]
+    held = min(definition.high, max(definition.low, value))
+    return held, held != value
 
 
 def _r_squared(observed: Sequence[float], predicted: Sequence[float]) -> float:

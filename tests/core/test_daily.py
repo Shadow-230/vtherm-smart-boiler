@@ -6,6 +6,7 @@ import pytest
 
 from custom_components.vtherm_smart_boiler.core.daily import (
     DaySummary,
+    fit_points,
     summarize_day,
     verdict_over_days,
 )
@@ -98,3 +99,18 @@ def test_the_window_takes_the_latest_days_with_data() -> None:
     assert codes["few_starts"] == pytest.approx(1.0)
     everything = verdict_over_days([*busy, *calm, empty], options)
     assert "few_starts" not in {r.code.value for r in everything.reasons}
+
+
+def test_a_day_keeps_its_outdoor_mean_and_heat_for_the_building_fit() -> None:
+    """P44: the fit uses every day kept, not only the few the rolling history holds."""
+    history = cycling(1)
+    history.signals[Signal.MODULATION] = Series([(0, 50.0)])
+    parameters = PARAMETERS.with_estimate(
+        ParameterKey.BOILER_MIN_POWER, Estimate(4.0, Source.ENTERED)
+    ).with_estimate(ParameterKey.BOILER_MAX_POWER, Estimate(24.0, Source.ENTERED))
+    day = summarize_day(history, parameters, 0, DAY)
+    assert day.outdoor_mean == pytest.approx(8.0)
+    assert day.heat_kwh == pytest.approx(8 * 14.0)
+    [point] = fit_points([day])
+    assert (point.outdoor_mean, point.energy_kwh) == (day.outdoor_mean, day.heat_kwh)
+    assert fit_points([DaySummary.empty(0, DAY)]) == []

@@ -829,7 +829,27 @@
         "name": "Zużycie wobec wczoraj"
       },
       "loss_coefficient": {
-        "name": "Współczynnik strat budynku"
+        "name": "Współczynnik strat budynku",
+        "state_attributes": {
+          "source": {
+            "name": "Źródło"
+          },
+          "confidence": {
+            "name": "Pewność"
+          },
+          "entered": {
+            "name": "Wpisana"
+          },
+          "measured": {
+            "name": "Zmierzona"
+          },
+          "measured_confidence": {
+            "name": "Pewność pomiaru"
+          },
+          "mismatch": {
+            "name": "Wpisana i zmierzona się różnią"
+          }
+        }
       },
       "forecast_snapshots": {
         "name": "Migawki prognozy"

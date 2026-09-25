@@ -12,14 +12,17 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .building import DayPoint
 from .history import History
 from .metrics import CH_KINDS, CycleStats, Share
 from .monitor import MonitorOptions, summarize
 from .parameters import ParameterSet
+from .series import time_weighted_mean
 from .verdict import VerdictOptions, VerdictResult, assess
 
 DAY = 86400.0
 KEEP_DAYS = 365
+FIT_COVERAGE = 0.9  # a day the fit uses is known for this much of it
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,10 +42,23 @@ class DaySummary:
     load_known: bool  # a load model and a minimum power existed that day
     degree_days: float | None
     gas: float | None  # heating gas, hot water left out where known
+    outdoor_mean: float | None = None  # over the day, when known for most of it
+    heat_kwh: float | None = None  # heating output, when known for every burn
 
     @classmethod
     def empty(cls, start: float, end: float) -> DaySummary:
         return cls(start, end, 0.0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, False, None, None)
+
+    @property
+    def fit_point(self) -> DayPoint | None:
+        """The day as the building fit uses it: known outdoor, complete heat, most of it seen."""
+        if (
+            self.outdoor_mean is None
+            or self.heat_kwh is None
+            or self.observed_s < FIT_COVERAGE * (self.end - self.start)
+        ):
+            return None
+        return DayPoint(self.outdoor_mean, self.heat_kwh)
 
     @property
     def has_data(self) -> bool:
@@ -77,6 +93,8 @@ class DaySummary:
             load_known=bool(data["load_known"]),
             degree_days=optional("degree_days"),
             gas=optional("gas"),
+            outdoor_mean=optional("outdoor_mean"),
+            heat_kwh=optional("heat_kwh"),
         )
 
 
@@ -90,6 +108,8 @@ def summarize_day(
     """One day of history, reduced to what adds up."""
     summary = summarize(history, parameters, start, end, options)
     heating = summary.heating
+    outdoor = time_weighted_mean(history.outdoor(), start, end)
+    heat = summary.heat_output_kwh
     condensing = summary.condensing
     load = summary.load_below_min
     return DaySummary(
@@ -108,7 +128,16 @@ def summarize_day(
         load_known=load is not None,
         degree_days=None if summary.degree_days is None else summary.degree_days.value,
         gas=None if summary.gas is None else summary.gas.amount,
+        outdoor_mean=(
+            outdoor.value if outdoor.known_s >= FIT_COVERAGE * (end - start) else None
+        ),
+        heat_kwh=heat.amount if heat is not None and heat.complete else None,
     )
+
+
+def fit_points(days: Sequence[DaySummary]) -> list[DayPoint]:
+    """Every kept day the building fit can use."""
+    return [point for day in days if (point := day.fit_point) is not None]
 
 
 def _part(share: Share | None) -> float:

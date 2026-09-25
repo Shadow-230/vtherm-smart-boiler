@@ -22,7 +22,7 @@ from homeassistant.util import dt as dt_util
 from .coordinator import MonitorData, SmartBoilerCoordinator
 from .core.controller import ControlMode
 from .core.emitters import FactorStatus
-from .core.parameters import ParameterKey
+from .core.parameters import ParameterKey, Source
 from .core.signal_check import Feature, FeatureStatus, SignalStatus
 from .core.signals import Signal
 from .core.verdict import Verdict
@@ -182,10 +182,22 @@ def _loss_value(data: MonitorData) -> Value:
 
 
 def _loss_attributes(data: MonitorData) -> dict[str, Any]:
-    effective = data.parameters.get(ParameterKey.LOSS_COEFFICIENT).effective()
+    """Where the value comes from; and the value entered beside the one measured, with whether
+    they disagree beyond the tolerance (P77)."""
+    parameter = data.parameters.get(ParameterKey.LOSS_COEFFICIENT)
+    effective = parameter.effective()
     if effective is None:
         return {}
-    return {"source": effective.source.value, "confidence": round(effective.confidence, 2)}
+    entered = parameter.estimate(Source.ENTERED)
+    measured = parameter.estimate(Source.MEASURED)
+    return {
+        "source": effective.source.value,
+        "confidence": round(effective.confidence, 2),
+        "entered": None if entered is None else round(entered.value, 3),
+        "measured": None if measured is None else round(measured.value, 3),
+        "measured_confidence": None if measured is None else round(measured.confidence, 2),
+        "mismatch": parameter.mismatch() is not None,
+    }
 
 
 def _round(value: float | None, digits: int) -> float | None:
