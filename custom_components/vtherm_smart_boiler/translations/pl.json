@@ -1015,6 +1015,14 @@
     "learning_not_paused": {
       "title": "Wtyczka nie może wstrzymać nauki w części stref",
       "description": "Sterowanie wstrzymuje naukę stref podczas grzania ciepłej wody, gdy strefę grzeje obce źródło i przy wahaniach temperatury wody, ale tych stref wstrzymać nie może: {zones}. Auto-TPI dałoby się wstrzymać tylko przez skasowanie tego, czego się nauczyło, więc wtyczka go nie rusza; SmartPI, które nie publikuje flagi nauki, też nie może być wstrzymane. Uczą się one także w tych chwilach, co może zafałszować to, czego się uczą. Żeby tego uniknąć, zatrzymaj naukę Auto-TPI w VT, gdy już się nauczyło, albo zaktualizuj SmartPI — do tego czasu strefa zostaje bez ochrony wtyczki."
+    },
+    "vt_feature_manager_unsupported": {
+      "title": "Termostaty VT nie mogą pokazać wartości stref wtyczki",
+      "description": "Zainstalowany tu Versatile Thermostat nie ma menedżerów funkcji (wymagają VT 10.4 lub nowszego z vtherm_api 0.5 lub nowszym), więc jego termostaty nie mogą pokazać wartości ciepłej wody i grzejników wtyczki. Do tego czasu pokazują je encje stref samej wtyczki. Zaktualizuj Versatile Thermostat, żeby pokazać je także na termostatach."
+    },
+    "vt_reload_needed": {
+      "title": "Część termostatów VT wymaga przeładowania, żeby pokazać wartości wtyczki",
+      "description": "Te termostaty działały już, gdy wtyczka zarejestrowała się w Versatile Thermostat, i przejmą ją dopiero po przeładowaniu VT: {zones}. Przeładuj Versatile Thermostat, żeby pokazać na nich wartości ciepłej wody i grzejników wtyczki; do tego czasu pokazują je encje stref samej wtyczki. Nic innego od tego nie zależy."
     }
   }
 }

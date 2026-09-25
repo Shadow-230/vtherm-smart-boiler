@@ -34,6 +34,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
+from . import feature_manager
 from .config import EntryConfig
 from .const import (
     DOMAIN,
@@ -363,6 +364,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     # --- quick path -----------------------------------------------------------------------
 
     async def _async_update_data(self) -> MonitorData:
+        feature_manager.async_check(self.hass, self)
         return self._compute(dt_util.utcnow().timestamp())
 
     def _max_age(self, signal: Signal) -> float | None:

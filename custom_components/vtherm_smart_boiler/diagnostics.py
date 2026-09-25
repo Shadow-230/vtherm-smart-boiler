@@ -9,6 +9,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from . import feature_manager
 from .coordinator import SmartBoilerCoordinator
 from .core.parameters import ParameterKey, Source
 
@@ -103,6 +104,7 @@ async def async_get_config_entry_diagnostics(
         {
             "options": dict(entry.options),
             "capabilities": asdict(data.capabilities),
+            "vt_feature_manager": _feature_manager(hass),
             "central_mode": None if data.central_mode is None else data.central_mode.value,
             "monitoring_since": data.monitoring_since,
             "history_samples": {
@@ -137,3 +139,10 @@ async def async_get_config_entry_diagnostics(
             },
         }
     )
+
+
+def _feature_manager(hass: HomeAssistant) -> dict[str, Any]:
+    registration = feature_manager.registration(hass)
+    if registration is None:
+        return {"state": None}
+    return {"state": registration.state.value, "registered_at": registration.registered_at}

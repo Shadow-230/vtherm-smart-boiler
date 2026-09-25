@@ -1015,6 +1015,14 @@
     "learning_not_paused": {
       "title": "The plugin cannot pause learning in some zones",
       "description": "Control pauses zone learning while hot water charges, while foreign heat warms a zone and while the water temperature swings, but it cannot pause these zones: {zones}. Auto-TPI could only be paused by resetting what it learned, so the plugin leaves it alone; a SmartPI that does not publish its learning flag cannot be paused either. They keep learning through those moments, which can skew what they learn. To avoid it, stop Auto-TPI's learning in VT once it has learned, or update SmartPI — either leaves the zone without the plugin's protection until then."
+    },
+    "vt_feature_manager_unsupported": {
+      "title": "VT's thermostats cannot show the plugin's zone values",
+      "description": "The Versatile Thermostat installed here has no feature managers (they need VT 10.4 or newer, with vtherm_api 0.5 or newer), so its thermostats cannot show the plugin's hot-water and emitter values. The plugin's own zone entities show them meanwhile. Update Versatile Thermostat to show them on the thermostats too."
+    },
+    "vt_reload_needed": {
+      "title": "Some VT thermostats need a reload to show the plugin's values",
+      "description": "These thermostats were already running when the plugin registered with Versatile Thermostat, and pick it up only when VT reloads: {zones}. Reload Versatile Thermostat to show the plugin's hot-water and emitter values on them; the plugin's own zone entities show them meanwhile. Nothing else depends on it."
     }
   }
 }
