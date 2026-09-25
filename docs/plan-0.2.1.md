@@ -12,11 +12,83 @@ Scope: `SCOPE.md`; overview: `PLAN.md`.
 Phases run in order: L, M, N, O, U, W, R. R1 and R4 are small and may come earlier. L4 waits for
 the user and does not hold up the build.
 
+## In short
+
+- **Handing the boiler back must never fail silently.** Today some hand-backs only look done
+  (phase M).
+- **VT's thermostats decide whether to heat.** The plugin switches heating on and off exactly
+  when VT's zones ask, and only chooses how warm the water is (phase N).
+- **Nothing the plugin counts or times can keep the house cold.** Budgets and anti-cycling
+  timers go (phase N).
+- **Whatever the plugin adjusts by itself stays within firm limits**, and stops at "good enough"
+  (phase N).
+- **The plugin knows whether its data and its writes are real** (phase O).
+- **The integration becomes a good Home Assistant citizen**, and the monitor's verdict and
+  numbers get right (phases U, W).
+- **The release passes Home Assistant's and HACS's checks**, and the test HA works (phase R).
+
+## How to read this plan
+
+- Steps are named by phase letter and number: L1, M2, N5… The review's findings keep the
+  review's own names: P01–P111 are problems in the code, S01–S32 problems in the specification;
+  "review question 1–10" are the review's open questions. The index at the end gives the step for
+  every one of them.
+- 🔒 marks a step that needs the user's consent or action; ✅ marks a finished step.
+- A provisional decision is the most cautious option, used until the user decides; it is marked
+  as such where it applies.
+
+## Terms
+
+- **Hand-back** — the plugin gives the boiler back to its own control or its thermostat: it
+  cancels what it set (an OTGW gets `CS=0`; a picked entity gets its hand-back value, or the
+  external-control switch goes off). It happens on every exit: switching control off, reload,
+  unload, Home Assistant stopping, an error, lost data, an alarm set to hand back.
+- **Write path** — how the plugin reaches the boiler: an entity the user picked (e.g. an
+  EMS-ESP or ESPHome number), the OpenTherm Gateway integration's services, or the OTGW
+  firmware's MQTT commands.
+- **Write type** — what the device does with a written value:
+  - *expiring* — dropped unless repeated, so the plugin repeats it every 30 s (the
+    *keep-alive*); OTGW's `CS` is one;
+  - *persistent* — stored in the boiler's memory, which every write wears, so it is written
+    rarely, only on a change of at least 1 K and within a *daily cap* of writes;
+  - *held* — kept by the device, which repeats it by itself (e.g. an ESPHome OpenTherm master);
+  - *unknown* — treated as persistent.
+- **Reserve for heat** — the last writes before the daily cap are kept for returning to heat, so
+  the boiler is never left holding "off" for the rest of the day.
+- **Read-back** — the value the boiler (or the gateway) reports back, compared with what was
+  written: a write the boiler ignores, or another controller's value, is noticed.
+- **Outside change** — another controller has changed the value. The plugin writes its own once;
+  if it changes again within a day, the plugin stops writing and raises an alarm — no fight.
+- **Latch** — after some alarms control stays handed back until the user switches it off and on.
+- **Blocker** — a reason control may not run now (a missing setting, the monitoring period, VT's
+  own central boiler configured…), shown on the control switch.
+- **Topology** — how the gateway sits between thermostat and boiler: *with a thermostat* (on
+  hand-back the thermostat takes over), *stand-alone* (no thermostat: on hand-back heating
+  stops), *monitor mode* (it only listens: no control), *virtual* (a controller on the Home
+  Assistant side).
+- **Demand** — whether VT's zones want heat: from their valve opening, duty cycle or heating
+  action, against a threshold (number of zones, power, opening).
+- **Budget** (removed by the decisions below) — a count per hour of burner starts or of heating
+  on/off switchings which, once used up, held heating off for up to tens of minutes.
+- **Anti-cycling timers** (removed) — a minimum burn and a minimum pause that held heating on or
+  off regardless of VT.
+- **Comfort correction** — when a zone's valve is fully open and its room is still cold, the
+  plugin raises the water a little above the curve.
+- **Bounded learning** — the rules for every value the plugin adjusts by itself (below).
+- **Frost protection** — heating when a room falls below 5 °C, even without VT's call.
+- **Freshness** — whether a reading is still valid: its entity available and, if the user set an
+  age limit, reported within it.
+- **VT's central modes** — VT's global modes (Auto, Stopped, Heat only, Cool only, Frost
+  protection); VT applies them only to zones that follow the central mode.
+- **`CS` / `CH` (OTGW)** — `CS` sets the control setpoint, the water temperature; `CH` enables or
+  disables central heating.
+
 ## Decisions of 2026-09-25 (the user)
 
 - **VT decides whether to heat.** The plugin replaces VT's central boiler: heating on/off follows
   the zones' demand at once, in both directions, at every control step. The plugin decides only
   the water temperature — the curve, the limits and the ramp.
+  Why: the thermostats know the rooms; a second on/off policy in the plugin only fights them.
 - **No hard blocking of the boiler.** No counter or timer holds heating off, or on, against VT:
   minimum burn, minimum pause, the budget of starts, minimum on and off times and the switching
   budget go. Old boilers with a high minimum output cycle a lot on their own; blocking would leave
@@ -24,6 +96,7 @@ the user and does not hold up the build.
   Technical safeguards stay because they do not decide whether to heat: the hard limits of the
   water temperature, a write-rate guard against a runaway loop (a repeated write waits at most one
   step) and hand-back on every exit.
+  Why: the review showed the budgets holding heating off for 20–40 minutes while rooms called.
 - **Bounded learning.** Every value the plugin adapts or learns by itself — now and in later
   releases — follows fixed rules that are not options:
   1. a firm band around its starting point (the user's entry or the default), never left;
@@ -36,6 +109,8 @@ the user and does not hold up the build.
      weather;
   6. at the band's edge it informs instead of pushing on — the starting point is probably wrong;
   7. every learned value is visible and can be reset; hand-back resets it.
+
+  Why: pushing one quantity to its ideal can break another (warm one room, overheat the rest).
 - Recorded on 2026-09-24, already in `CLAUDE.md`: the language is Home Assistant's; DIY interface
   sources are downloaded on purpose into `research/diy/`.
 
@@ -61,6 +136,9 @@ The user's answers of 2026-09-25 to the questions this plan raised:
   and within the daily cap, with the reserve kept for heat, when it is persistent; an unknown
   type counts as persistent; the options state how many on/off cycles fit in the cap. L3's
   research on the devices informs the user's decision.
+  Example: a boiler with a persistent flow-temperature parameter and a plain relay for heating
+  on/off — "off" goes through the relay (it wears nothing); the parameter only follows the curve,
+  written rarely.
 
 ## Rules that shape this release
 
@@ -73,6 +151,11 @@ The user's answers of 2026-09-25 to the questions this plan raised:
 
 ## Phase L — specification and research
 
+Why: the decisions have to be written into the specification before the code changes, and a few
+questions need facts from the devices' own sources first.
+In practice: `SCOPE.md`, `PLAN.md` and `CLAUDE.md` say what the plugin now does; the research
+answers are kept in `research/`.
+
 | Step | Work |
 |---|---|
 | L1 | `SCOPE.md`, `PLAN.md` and `CLAUDE.md` take the decisions and the provisional decisions above; each specification problem of the review (S01–S32) is settled in the text or assigned to a step (index); a table of the safety options' defaults with their reasons (S25); features without a step are assigned to a release or removed (S27); SCOPE's claim that rate limits and guard times are options is corrected (P85) |
@@ -84,6 +167,14 @@ Done when: the specification states every decision, and the steps below have no 
 left but L4.
 
 ## Phase M — hand-back that holds (review §7.1)
+
+Why: hand-back is the last line of safety — when anything goes wrong, the boiler must return to
+its own control. The review found hand-backs that only looked done: to an entity that was
+unavailable (Home Assistant drops such a call without an error), to an OTGW that keeps its
+`CH=0` after `CS=0` (so the thermostat calls and the boiler does not heat), after a crash of Home
+Assistant, or after an options change.
+In practice: every hand-back is checked, remembered and retried until it is confirmed, and the
+user sees when one is pending.
 
 | Step | Work |
 |---|---|
@@ -100,6 +191,13 @@ clean stop, an option change while a hand-back is pending, and Home Assistant st
 slow step.
 
 ## Phase N — VT decides, no hard blocks, bounded learning (review §7.2, §7.3)
+
+Why: the user's decisions change what the plugin decides. The review also found that missing VT
+data could mean no heat: a VT zone that is `unavailable`, or in "auto" mode, counted as "does not
+want heat", and the comfort correction could climb 10 K and stay there.
+In practice: heating follows VT at once, both ways; when VT's data is missing the plugin heats on
+the curve rather than not at all; the correction stays within +3 K; frost protection remains the
+only case where the plugin heats on its own.
 
 | Step | Work |
 |---|---|
@@ -118,6 +216,12 @@ band; and the right demand for `unavailable`, "auto" and over_climate zones.
 
 ## Phase O — freshness, read-back, units, guards (review §7.4)
 
+Why: the plugin must tell real data and real writes from stale or lost ones. The review found no
+way for the user to set a freshness limit, a gap in the "no fight" guard after an ignored write,
+no use of the heating on/off echo where one exists, and °F entities receiving °C values.
+In practice: one freshness rule the user can tighten; the setpoint shown is the one the boiler
+confirmed; units are converted; the guard never fights another controller.
+
 | Step | Work |
 |---|---|
 | O1 | one freshness rule for the monitor and control: availability, plus an age limit per signal the user may set in the options flow, with its risk described (P10, P26, P43, S11) |
@@ -128,6 +232,11 @@ band; and the right demand for `unavailable`, "auto" and over_climate zones.
 | O6 | learning pauses: SmartPI's flag read back after a pause or resume (P41); learning the user switched off never resumed; a resume tolerance and a longest pause (S20); the Auto-TPI warning states its cost (S19) |
 
 ## Phase U — Home Assistant integration
+
+Why: the plugin must not slow Home Assistant down or leave clutter behind. The review found
+blocking work in the event loop, a large forecast store saved too often, lost feature-manager
+values after a reload, raw codes in the interface and a few gaps in the options flow.
+In practice: a lighter, tidier integration with clear texts; one entry per boiler.
 
 | Step | Work |
 |---|---|
@@ -146,6 +255,12 @@ band; and the right demand for `unavailable`, "auto" and over_climate zones.
 
 ## Phase W — monitor
 
+Why: the monitor's verdict ("is control worth it") could practically never appear — a few
+seconds of unknown flame state reset it — and some numbers were skewed (hot water taken for
+heating, gas-meter resets, starts per hour diluted over idle hours).
+In practice: a verdict that appears after the monitoring period, and metrics that match what the
+boiler did.
+
 | Step | Work |
 |---|---|
 | W1 | verdict: reachable despite short data gaps, its window equal to `monitoring_days`, starts per hour counted over hours of heating, the degree-day definition in the specification (P17, P49, S17, review questions 4 and 5) |
@@ -156,6 +271,12 @@ band; and the right demand for `unavailable`, "auto" and over_climate zones.
 | W6 | alarms: hysteresis kept with unknown values and between levels; the low-flow warning with exclusions (pump overrun, hot water, bypass) and its unavailability reason (P64, P65, S28) |
 
 ## Phase R — release validation, tools, test environment, review
+
+Why: Home Assistant's and HACS's checks fail today (a text with `<…>`, missing manifest fields),
+the test HA's simulator could not load its physics, and restart and the passage of time are
+hardly tested. An independent review closes the release.
+In practice: a release that validates, a test HA that runs, and tests for what happens over days
+and across restarts.
 
 | Step | Work |
 |---|---|
