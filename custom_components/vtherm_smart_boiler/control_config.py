@@ -210,7 +210,7 @@ def parse_control(
         fallback_setpoint=_float(data, "fallback_setpoint", None),
         ramp_k_per_min=ramp,
         decision_interval_s=_minutes(data, "decision_interval_min", 5.0),
-        correction_step_k=1.0 if data.get("comfort_correction", True) else None,
+        comfort_correction=bool(data.get("comfort_correction", True)),
     )
     loop = LoopConfig(
         control=control,

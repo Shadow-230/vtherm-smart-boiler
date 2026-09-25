@@ -112,3 +112,9 @@ def test_vt_readiness_device_activity_and_temperature_age() -> None:
     assert values.temperature_at == pytest.approx(1768204800.0)
     bare = zone_values("heat", {"specific_states": {"last_temperature_datetime": "bogus"}})
     assert (bare.ready, bare.device_active, bare.temperature_at) == (None, None, None)
+
+
+@pytest.mark.parametrize(("raw", "cap"), [(0.8, 0.8), (80, 0.8), (1, 1.0), (None, None), (0, None)])
+def test_vt_cap_on_the_duty_cycle(raw: object, cap: float | None) -> None:
+    values = zone_values("heat", {"configuration": {"max_on_percent": raw}})
+    assert values.max_on_percent == (None if cap is None else pytest.approx(cap))

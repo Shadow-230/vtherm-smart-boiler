@@ -88,6 +88,7 @@ class ControlAlarm(StrEnum):
     BOILER_LINK_LOST = "boiler_link_lost"  # handed back without the boiler's data
     ZONE_UNKNOWN = "zone_unknown"  # a zone unknown for long: frost protection cannot see it
     FROST_NOT_WARMING = "frost_not_warming"  # frost heating for long without the room warming
+    CORRECTION_AT_LIMIT = "correction_at_limit"  # the comfort correction at 3 K for hours
 
 
 _EVENT_ALARM = {
@@ -499,10 +500,14 @@ class ControlUnit:
         elif inputs.boiler_link:
             session.alarms.discard(ControlAlarm.BOILER_LINK_LOST)
         unknown = self._follow_unknown_zones(now, zones)
-        if out.decision.frost_stuck:
-            session.alarms.add(ControlAlarm.FROST_NOT_WARMING)  # reported; heating goes on
-        else:
-            session.alarms.discard(ControlAlarm.FROST_NOT_WARMING)
+        for flagged, alarm in (
+            (out.decision.frost_stuck, ControlAlarm.FROST_NOT_WARMING),  # heating goes on
+            (out.decision.correction_at_limit, ControlAlarm.CORRECTION_AT_LIMIT),  # information
+        ):
+            if flagged:
+                session.alarms.add(alarm)
+            else:
+                session.alarms.discard(alarm)
         for event in out.events:
             session.alarms.add(_EVENT_ALARM[event])
         if out.events:
@@ -615,6 +620,7 @@ class ControlUnit:
                 ControlAlarm.BOILER_LINK_LOST,
                 ControlAlarm.ZONE_UNKNOWN,
                 ControlAlarm.FROST_NOT_WARMING,
+                ControlAlarm.CORRECTION_AT_LIMIT,
             ):
                 continue  # a blocker, a retry of its own, and a hand-back already made
             if self.options.reaction(alarm.value) is AlarmReaction.HAND_BACK:

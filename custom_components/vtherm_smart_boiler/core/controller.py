@@ -16,10 +16,13 @@ Order of precedence, checked on every tick:
    temperature the fallback setpoint applies; without fresh zone data heating is assumed to be
    needed — never zero heat on missing data.
 
-Zone signals only correct the curve (weather is counted once): while a zone's valve is fully open
-and the room is still short of its setpoint, the setpoint rises a step per decision; once every
-zone is clearly satisfied it falls back a step per decision. The correction never exceeds the
-ceiling band and every limit still applies.
+Zone signals only correct the curve (weather is counted once). The comfort correction follows the
+rules of bounded learning: while a zone's valve is fully open (or at VT's cap) and its room is
+still short of its setpoint, the water rises above the curve — at most 3 K, by 1 K per 30 minutes
+and only while heat flows; it falls twice as fast once the zones with an opening are clearly
+satisfied, or while another zone is more than 1 K too warm; a zone without an opening never
+blocks the fall. It resets at hand-back and with a new session, and when it stays at 3 K for
+hours the decision says so: the curve is probably too low. Every limit still applies.
 """
 
 from __future__ import annotations
@@ -48,6 +51,10 @@ from .limits import (
 from .readings import ZoneState
 
 HOUR = 3600.0
+CORRECTION_MAX_K = 3.0  # the firm band of the comfort correction
+CORRECTION_RISE_S = 30 * 60.0  # seconds of heat flow per kelvin of rise; the fall is twice as fast
+CORRECTION_LIMIT_S = 3 * HOUR  # at the band's edge this long: tell the user
+OVERHEAT_K = 1.0  # a zone this far over its setpoint stops the rise
 FROST_ALARM_S = 2 * HOUR  # frost heating this long without the room warming is reported
 FROST_WARMING_K = 0.5  # the watched room must have warmed by this much
 FALLBACK_OUTDOOR = 0.0  # the fallback setpoint defaults to the curve at this outdoor temperature
@@ -113,7 +120,7 @@ class ControlConfig:
     ramp_k_per_min: float | None = 1.0  # None: no ramp
     decision_interval_s: float = 300.0
     zone_max_age_s: float = 2 * HOUR
-    correction_step_k: float | None = 1.0  # None: no comfort correction
+    comfort_correction: bool = True
     stale_hand_back_s: float | None = 300.0  # hand back after this long without fresh data
     outdoor_time_constant_s: float = DEFAULT_TIME_CONSTANT_S
     outdoor_hold_s: float = DEFAULT_HOLD_S
@@ -163,6 +170,9 @@ class ControlState:
     water_reasons: tuple[Reason, ...] = ()  # why the water temperature is what it is
     decided_at: float | None = None  # when the water temperature was last decided
     correction: float = 0.0  # K added to the curve for a zone that cannot reach its setpoint
+    heat_s: float = 0.0  # seconds heat has flowed since the last water decision
+    last_step_at: float | None = None
+    correction_limit_since: float | None = None  # when the correction reached its band's edge
     waiting_since: float | None = None  # when the boiler's signals went stale
 
 
@@ -175,6 +185,7 @@ class ControlDecision:
     target: float | None = None  # setpoint before the ramp
     effective_outdoor: float | None = None
     frost_stuck: bool = False  # frost heating for long without the room warming: tell the user
+    correction_at_limit: bool = False  # the correction at its band's edge for hours: tell the user
 
 
 def fallback_setpoint(config: ControlConfig) -> float:
@@ -186,7 +197,8 @@ def fallback_setpoint(config: ControlConfig) -> float:
 def _release(
     state: ControlState, mode: ControlMode, reason: Reason
 ) -> tuple[ControlState, ControlDecision]:
-    """No command; hand back once if we were controlling. A latch stays as it is."""
+    """No command; hand back once if we were controlling. A latch stays as it is; what the
+    session learned (the comfort correction) goes."""
     new_state = replace(
         state,
         mode=mode,
@@ -194,6 +206,10 @@ def _release(
         command=None,
         reasons=(reason,),
         decided_at=None,
+        correction=0.0,
+        heat_s=0.0,
+        last_step_at=None,
+        correction_limit_since=None,
     )
     return new_state, ControlDecision(mode, None, hand_back=state.controlling, reasons=(reason,))
 
@@ -258,6 +274,9 @@ def _heating_decision(
         state = replace(state, frost_since=now, frost_from=coldest)
     elif not frost:
         state = replace(state, frost_since=None, frost_from=None)
+    if state.last_step_at is not None and want_heat_now(inputs, config, frost) and not inputs.dhw:
+        state = replace(state, heat_s=state.heat_s + max(0.0, now - state.last_step_at))
+    state = replace(state, last_step_at=now)
     # Frost heating is never stopped; heating that does not warm the room is reported.
     frost_stuck = (
         frost
@@ -278,6 +297,10 @@ def _heating_decision(
     if due:
         water: list[Reason] = [_OUTDOOR_REASON[outdoor.source]]
         correction = _correction(state, inputs, config)
+        limit_since = (
+            (state.correction_limit_since or now) if correction >= CORRECTION_MAX_K else None
+        )
+        state = replace(state, heat_s=0.0, correction_limit_since=limit_since)
         if correction > 0:
             water.append(Reason.COMFORT_CORRECTION)
         if outdoor.effective is None:
@@ -327,7 +350,15 @@ def _heating_decision(
         target=target,
         effective_outdoor=outdoor.effective,
         frost_stuck=frost_stuck,
+        correction_at_limit=(
+            state.correction_limit_since is not None
+            and now - state.correction_limit_since >= CORRECTION_LIMIT_S
+        ),
     )
+
+
+def want_heat_now(inputs: ControlInputs, config: ControlConfig, frost: bool) -> bool:
+    return _want_heat(inputs, config, frost)[0]
 
 
 def _want_heat(
@@ -348,30 +379,40 @@ SATISFIED = 0.7  # every zone below this opening is clearly satisfied
 SHORT_K = 0.3  # a deficit this large counts as short of the setpoint
 
 
+def _saturated(zone: ZoneState) -> bool:
+    """As open as the zone gets: fully, or at VT's cap on its duty cycle."""
+    demand = zone.demand
+    if demand is None:
+        return False
+    limit = SATURATED
+    if zone.max_on_percent is not None:
+        limit = min(limit, zone.max_on_percent - 0.01)
+    return demand >= limit
+
+
 def _correction(state: ControlState, inputs: ControlInputs, config: ControlConfig) -> float:
-    """Comfort correction for the next decision, within the ceiling band."""
-    step = config.correction_step_k
-    if step is None:
+    """The comfort correction for this water decision, within its firm band (bounded learning)."""
+    if not config.comfort_correction:
         return 0.0
-    fresh = [
+    now = inputs.now
+    known = [
         z
         for z in inputs.zones
-        if z.heating_enabled is True and z.is_fresh(inputs.now, config.zone_max_age_s)
+        if z.heating_enabled is True and z.is_known(now, config.zone_max_age_s)
     ]
-    short = any(
-        z.demand is not None
-        and z.demand >= SATURATED
-        and z.deficit is not None
-        and z.deficit >= SHORT_K
-        for z in fresh
+    too_warm = any(z.deficit is not None and z.deficit < -OVERHEAT_K for z in known)
+    short = any(_saturated(z) and z.deficit is not None and z.deficit >= SHORT_K for z in known)
+    opened = [z for z in known if z.demand is not None]  # no opening: never blocks the fall
+    satisfied = bool(opened) and all(
+        z.demand is not None and z.demand < SATISFIED for z in opened
     )
-    satisfied = bool(fresh) and all(z.demand is not None and z.demand < SATISFIED for z in fresh)
     correction = state.correction
-    if short:
-        correction += step
-    elif satisfied:
-        correction -= step
-    return min(config.limits.ceiling_band, max(0.0, correction))
+    if too_warm or (satisfied and not short):
+        elapsed = now - state.decided_at if state.decided_at is not None else 0.0
+        correction -= 2.0 * elapsed / CORRECTION_RISE_S
+    elif short:
+        correction += state.heat_s / CORRECTION_RISE_S  # only while heat flows
+    return min(CORRECTION_MAX_K, max(0.0, correction))
 
 
 def _ramp(

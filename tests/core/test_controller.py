@@ -250,28 +250,91 @@ def test_invalid_config(kwargs: dict) -> None:
         replace(CONFIG, **kwargs)
 
 
-def test_comfort_correction_rises_for_a_saturated_zone_and_falls_back() -> None:
-    config = replace(CONFIG, decision_interval_s=60.0)
-    short = (zone(0.0, temperature=20.0, target=21.0, valve_open=1.0),)
-    state, decisions = run([inputs(t * 60.0, zones=short) for t in range(3)], config)
-    base = CURVE.flow(5.0)
-    assert [d.command.setpoint for d in decisions] == pytest.approx([base + 1, base + 2, base + 3])
+WATER = replace(CONFIG, decision_interval_s=60.0)
+
+
+def short(t: float, zone_id: str = "z", **kw: float) -> ZoneState:
+    """A zone whose valve is fully open and whose room is still a kelvin short."""
+    kw.setdefault("valve_open", 1.0)
+    return ZoneState(zone_id, 20.0, 21.0, True, reported_at=t, **kw)
+
+
+def satisfied(t: float, zone_id: str = "z", **kw: float) -> ZoneState:
+    kw.setdefault("valve_open", 0.3)
+    return ZoneState(zone_id, 21.0, 21.0, True, reported_at=t, **kw)
+
+
+def minutes(start: float, count: int, zones, **kw):
+    return [inputs(start + m * 60.0, zones=zones(start + m * 60.0), **kw) for m in range(count)]
+
+
+def test_comfort_correction_rises_1k_per_30_min_while_heat_flows_up_to_3k() -> None:
+    state, decisions = run(minutes(0.0, 31, lambda t: (short(t),)), WATER)
+    assert state.correction == pytest.approx(1.0)
+    assert decisions[-1].command.setpoint == pytest.approx(CURVE.flow(5.0) + 1.0)
     assert Reason.COMFORT_CORRECTION in decisions[-1].reasons
-    satisfied = (zone(0.0, temperature=21.0, target=21.0, valve_open=0.3),)
-    state, decisions = run(
-        [inputs(180.0 + t * 60.0, zones=satisfied) for t in range(4)], config, state
-    )
-    assert decisions[-1].command.setpoint == pytest.approx(base)
+    state, _ = run(minutes(1860.0, 150, lambda t: (short(t),)), WATER, state)
+    assert state.correction == 3.0  # the band is firm
+
+
+def test_comfort_correction_does_not_grow_while_no_heat_flows() -> None:
+    state, _ = run(minutes(0.0, 31, lambda t: (short(t),), dhw=True), WATER)
     assert state.correction == 0.0
 
 
-def test_comfort_correction_stays_within_the_ceiling_band_and_can_be_off() -> None:
-    config = replace(CONFIG, decision_interval_s=60.0, limits=FlowLimits(ceiling_band=3.0))
-    short = (zone(0.0, temperature=19.0, target=21.0, valve_open=1.0),)
-    state, _ = run([inputs(t * 60.0, zones=short) for t in range(6)], config)
-    assert state.correction == 3.0
-    off = replace(config, correction_step_k=None)
-    state, _ = run([inputs(t * 60.0, zones=short) for t in range(3)], off)
+def test_comfort_correction_falls_twice_as_fast() -> None:
+    state, _ = run(minutes(0.0, 91, lambda t: (short(t),)), WATER)
+    assert state.correction == pytest.approx(3.0)
+    state, _ = run(minutes(5460.0, 30, lambda t: (satisfied(t),)), WATER, state)
+    assert state.correction == pytest.approx(1.0)  # 2 K in 30 minutes
+
+
+def test_a_zone_without_opening_data_does_not_block_the_fall() -> None:
+    state, _ = run(minutes(0.0, 31, lambda t: (short(t),)), WATER)
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        # an over_climate zone without valve regulation: no opening at all
+        return (satisfied(t), ZoneState("b", 21.0, 21.0, True, reported_at=t))
+
+    state, _ = run(minutes(1860.0, 16, zones), WATER, state)
+    assert state.correction == pytest.approx(0.0)
+
+
+def test_no_rise_while_another_zone_is_too_warm() -> None:
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        return (short(t), ZoneState("b", 22.5, 21.0, True, reported_at=t, valve_open=0.0))
+
+    state, _ = run(minutes(0.0, 31, zones), WATER)
+    assert state.correction == 0.0
+
+
+def test_comfort_correction_resets_at_hand_back() -> None:
+    state, _ = run(minutes(0.0, 31, lambda t: (short(t),)), WATER)
+    assert state.correction > 0.0
+    state, _ = run([inputs(1900.0, enabled=False)], WATER, state)
+    assert state.correction == 0.0
+
+
+def test_comfort_correction_at_its_limit_for_hours_is_reported() -> None:
+    state, decisions = run(minutes(0.0, 91, lambda t: (short(t),)), WATER)
+    assert not decisions[-1].correction_at_limit
+    _state, decisions = run(minutes(5460.0, 181, lambda t: (short(t),)), WATER, state)
+    assert decisions[-1].correction_at_limit  # 3 K for three hours: the curve is probably low
+
+
+def test_a_zone_capped_by_vt_counts_as_saturated() -> None:
+    """VT's max_on_percent below full: that cap is as open as the zone gets."""
+    capped = replace(WATER)
+    state, _ = run(
+        minutes(0.0, 31, lambda t: (short(t, valve_open=0.8, max_on_percent=0.8),)), capped
+    )
+    assert state.correction == pytest.approx(1.0)
+
+
+def test_comfort_correction_can_be_off() -> None:
+    state, _ = run(
+        minutes(0.0, 31, lambda t: (short(t),)), replace(WATER, comfort_correction=False)
+    )
     assert state.correction == 0.0
 
 

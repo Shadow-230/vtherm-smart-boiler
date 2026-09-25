@@ -109,6 +109,7 @@ class ZoneState:
     device_active: bool | None = None
     ready: bool | None = None
     temperature_at: float | None = None
+    max_on_percent: float | None = None  # VT's cap on the duty cycle, 0 to 1
 
     @property
     def deficit(self) -> float | None:

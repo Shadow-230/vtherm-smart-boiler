@@ -87,6 +87,7 @@ class VThermLink:
             device_active=values.device_active,
             ready=values.ready,
             temperature_at=values.temperature_at,
+            max_on_percent=values.max_on_percent,
         )
 
     def zones(self) -> list[ZoneState]:

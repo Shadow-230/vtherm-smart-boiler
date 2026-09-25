@@ -41,6 +41,7 @@ class ZoneValues:
     device_active: bool | None = None  # live only
     ready: bool | None = None
     temperature_at: float | None = None  # epoch seconds, live only
+    max_on_percent: float | None = None  # 0 to 1, live only
 
 
 def zone_values(
@@ -49,6 +50,8 @@ def zone_values(
     """Zone values from a VT climate entity; anything missing or implausible is ``None``."""
     specific = attributes.get("specific_states")
     specific = specific if isinstance(specific, Mapping) else {}
+    configuration = attributes.get("configuration")
+    configuration = configuration if isinstance(configuration, Mapping) else {}
     active = specific.get("is_device_active")
     ready = attributes.get("is_ready")
     return ZoneValues(
@@ -63,6 +66,7 @@ def zone_values(
         device_active=active if isinstance(active, bool) else None,
         ready=ready if isinstance(ready, bool) else None,
         temperature_at=_moment(specific.get("last_temperature_datetime")),
+        max_on_percent=_cap(configuration.get("max_on_percent")),
     )
 
 
@@ -85,6 +89,16 @@ def _calling(action: object) -> bool | None:
     if action in INACTIVE_ACTIONS:
         return False
     return None
+
+
+def _cap(raw: object) -> float | None:
+    """VT's cap on the duty cycle: a fraction, or a percentage in older setups."""
+    number = parse_number(raw)
+    if number is None or number <= 0.0:
+        return None
+    if number <= 1.0:
+        return number
+    return number / 100.0 if number <= 100.0 else None
 
 
 def _moment(raw: object) -> float | None:

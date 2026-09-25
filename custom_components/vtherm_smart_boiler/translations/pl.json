@@ -552,7 +552,7 @@
           "power_threshold_kw": "Opcjonalnie: grzanie jest potrzebne, gdy moc wołających stref sumuje się do tej wartości, w kW.",
           "opening_threshold": "Opcjonalnie: grzanie jest potrzebne, gdy otwarcia zaworów stref sumują się do tej wartości, w %.",
           "learning_pauses": "Wstrzymuj naukę SmartPI podczas grzania ciepłej wody, gdy strefę grzeje obce źródło i przy dużych wahaniach temperatury wody, żeby nie uczyła się tego, co zrobił kocioł. Domyślnie włączone.",
-          "comfort_correction": "Podnoś nastawę o krok, gdy zawór strefy jest w pełni otwarty, a pokój nie osiąga nastawy, w granicach zakresu korekty; obniżaj ją, gdy wszystkie strefy są zaspokojone. Domyślnie włączone."
+          "comfort_correction": "Włączona (domyślnie): gdy zawór strefy jest całkiem otwarty, a pomieszczenie nadal nie dochodzi do nastawy, woda rośnie do 3 K ponad krzywą — 1 K na 30 minut, tylko gdy płynie ciepło — i spada dwa razy szybciej; nie rośnie, gdy inna strefa jest o ponad 1 K za ciepła, zeruje się przy oddaniu sterowania, a po trzech godzinach na 3 K informuje, że krzywa jest pewnie za niska. Działa szeregowo z regulatorami PI stref (SmartPI, TPI): jej wolne tempo pozwala im najpierw się ustalić. Człon zewnętrzny algorytmu strefy (współczynnik zewnętrzny TPI) liczy pogodę drugi raz: trzymaj go mały, gdy wtyczka ustala wodę. Wyłączona: sama krzywa."
         }
       },
       "control_alarms": {
@@ -872,6 +872,9 @@
       },
       "alarm_frost_not_warming": {
         "name": "Sterowanie: grzanie przeciwmrozowe nie ogrzewa pomieszczenia"
+      },
+      "alarm_correction_at_limit": {
+        "name": "Sterowanie: korekta komfortu na granicy"
       }
     },
     "switch": {
