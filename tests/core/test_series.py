@@ -103,3 +103,14 @@ def test_transition_at_window_start_is_not_counted() -> None:
     flame = Series([(0, False), (10, True)])
     assert transitions(flame, 10, 20) == []
     assert transitions(flame, 5, 20) == [Transition(10, False, True)]
+
+
+def test_older_samples_go_before_the_first_one() -> None:
+    """A backfill from the recorder arrives after live samples: it goes before them, and only
+    what is older than the first live sample."""
+    live = Series([(100.0, 2.0), (200.0, 3.0)])
+    live.prepend(Series([(0.0, 1.0), (50.0, 2.0), (150.0, 9.0)]))
+    assert [(s.t, s.value) for s in live] == [(0.0, 1.0), (50.0, 2.0), (200.0, 3.0)]
+    empty: Series[float] = Series()
+    empty.prepend(Series([(0.0, 1.0)]))
+    assert [(s.t, s.value) for s in empty] == [(0.0, 1.0)]

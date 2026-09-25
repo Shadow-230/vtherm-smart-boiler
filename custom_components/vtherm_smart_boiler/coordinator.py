@@ -15,7 +15,6 @@ import copy
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
-from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -148,10 +147,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self.options: dict[str, Any] = copy.deepcopy(dict(entry.options))
         self.transport = EntityTransport(hass, config.signals)
         self.link = VThermLink(hass, config.zone_entities)
-        self.history = History(
-            signals={signal: Series() for signal in config.signals},
-            zones={zone: ZoneSeries(zone) for zone in config.zone_entities},
-        )
+        self.history = self._empty_history()
         self.parameters = config.parameters
         self.monitoring_since = dt_util.utcnow().timestamp()
         self.forecasts = (
@@ -184,7 +180,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         now = dt_util.utcnow().timestamp()
         await self.link.async_detect()
         await self._async_load_store(now)
-        await self._async_backfill(now)
         # Current states seed the history too: without the recorder they are all there is, and
         # an entity that does not change would otherwise never enter it.
         for entity_id in self.config.watched_entities:
@@ -211,10 +206,11 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self.schedule_save()
 
     def async_start_background(self) -> None:
-        """First analysis and first forecast snapshot, without holding up setup."""
+        """The recorder's history, then the first analysis, and the first forecast snapshot,
+        without holding up setup."""
         self.check_learning()
         self.config_entry.async_create_background_task(
-            self.hass, self.async_run_analysis(), f"{DOMAIN} analysis"
+            self.hass, self._async_backfill_then_analyse(), f"{DOMAIN} analysis"
         )
         if self.forecasts is not None:
             self.config_entry.async_create_background_task(
@@ -303,39 +299,47 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
 
     # --- history --------------------------------------------------------------------------
 
+    async def _async_backfill_then_analyse(self) -> None:
+        await self._async_backfill(dt_util.utcnow().timestamp())
+        await self.async_run_analysis()
+
     async def _async_backfill(self, now: float) -> None:
-        """Rebuild the rolling history from the recorder, when it is loaded."""
+        """Rebuild the rolling history from the recorder, when it is loaded: read and turned
+        into samples in the recorder's executor, then put before the samples recorded live
+        since setup."""
         if "recorder" not in self.hass.config.components:
             return
         try:
-            from homeassistant.components.recorder import get_instance
-            from homeassistant.components.recorder import history as recorder_history
+            recorder, significant_states = _recorder(self.hass), _significant_states()
         except ImportError:
             return
         start = dt_util.utc_from_timestamp(now - HISTORY_DAYS * DAY)
         entity_ids = list(self.config.watched_entities)
-        try:
-            states = await get_instance(self.hass).async_add_executor_job(
-                partial(
-                    recorder_history.get_significant_states,
-                    self.hass,
-                    start,
-                    None,
-                    entity_ids,
-                    None,
-                    True,
-                    False,
-                    False,
-                    False,
-                )
+
+        def read() -> History:
+            states = significant_states(
+                self.hass,
+                start,
+                end_time=None,
+                entity_ids=entity_ids,
+                include_start_time_state=True,
+                significant_changes_only=False,  # every change, as the live history keeps
+                minimal_response=False,
+                no_attributes=False,  # zones need their attributes
             )
-        except Exception:  # the history is a convenience; never fail setup over it
+            history = self._empty_history()
+            for entity_id, rows in states.items():
+                for state in rows:
+                    if isinstance(state, State):
+                        self._record(entity_id, state, state.last_updated.timestamp(), history)
+            return history
+
+        try:
+            older = await recorder.async_add_executor_job(read)
+        except Exception:  # the history is a convenience; never fail over it
             _LOGGER.warning("Could not read the recorder history", exc_info=True)
             return
-        for entity_id, rows in states.items():
-            for state in rows:
-                if isinstance(state, State):
-                    self._record(entity_id, state, state.last_updated.timestamp())
+        self.history.prepend(older)
 
     @callback
     def _handle_state_event(self, event: Event[EventStateChangedData]) -> None:
@@ -346,13 +350,24 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._record(event.data["entity_id"], state, float(moment))
         self.config_entry.async_create_task(self.hass, self.async_request_refresh())
 
-    def _record(self, entity_id: str, state: State | None, t: float) -> None:
+    def _empty_history(self) -> History:
+        return History(
+            signals={signal: Series() for signal in self.config.signals},
+            zones={zone: ZoneSeries(zone) for zone in self.config.zone_entities},
+        )
+
+    def _record(
+        self, entity_id: str, state: State | None, t: float, history: History | None = None
+    ) -> None:
+        """A state into the history (the live one, or one being rebuilt off the event loop:
+        nothing here writes to Home Assistant)."""
+        history = self.history if history is None else history
         signal = self.transport.signal_of(entity_id)
         if signal is not None:
-            _append(self.history.signals[signal], t, reading_from_state(signal, state).value)
-        if entity_id in self.history.zones:
+            _append(history.signals[signal], t, reading_from_state(signal, state).value)
+        if entity_id in history.zones:
             zone = self.link.zone_from_state(entity_id, state)
-            series = self.history.zones[entity_id]
+            series = history.zones[entity_id]
             for target, value in (
                 (series.temperature, zone.temperature),
                 (series.target, zone.target),
@@ -364,7 +379,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             ):
                 _append(target, t, value)
         if entity_id == self.config.weather:
-            _append(self.history.weather, t, weather_from_state(state).value)
+            _append(history.weather, t, weather_from_state(state).value)
 
     # --- quick path -----------------------------------------------------------------------
 
@@ -643,3 +658,15 @@ def local_days(start: float, end: float) -> list[tuple[float, float]]:
         if begin >= start and finish <= end:
             days.append((begin, finish))
         day += timedelta(days=1)
+
+
+def _recorder(hass: HomeAssistant) -> Any:
+    from homeassistant.components.recorder import get_instance
+
+    return get_instance(hass)
+
+
+def _significant_states() -> Any:
+    from homeassistant.components.recorder import history as recorder_history
+
+    return recorder_history.get_significant_states

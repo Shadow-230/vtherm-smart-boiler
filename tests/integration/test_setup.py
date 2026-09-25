@@ -207,6 +207,61 @@ async def test_a_new_emitter_factor_is_saved_slowly_a_latch_soon(hass: HomeAssis
     assert delays == [FACTOR_SAVE_DELAY_S, SAVE_DELAY_S]
 
 
+async def test_the_recorder_backfill_runs_after_setup_and_goes_before_live_samples(
+    hass: HomeAssistant, freezer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P34, P109: eight days of history are read after setup, in the background, with named
+    arguments, and turned into samples off the event loop; they go before the samples recorded
+    live meanwhile."""
+    import asyncio
+
+    from homeassistant.core import State
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.vtherm_smart_boiler import coordinator as coordinator_module
+
+    freezer.move_to(datetime(2026, 1, 10, 12, tzinfo=UTC))
+    now = dt_util.utcnow()
+    release = asyncio.Event()
+    asked: list[dict] = []
+
+    def significant_states(hass, start_time, *, end_time=None, entity_ids=None, filters=None,
+                           include_start_time_state=True, significant_changes_only=True,
+                           minimal_response=False, no_attributes=False):  # fmt: skip
+        asked.append({"entity_ids": entity_ids, "significant": significant_changes_only})
+        flow = boiler.entity(Signal.FLOW)
+        unit = {"unit_of_measurement": "°C"}
+        return {
+            flow: [
+                State(flow, "30.0", unit, last_updated=now - timedelta(days=2)),
+                State(flow, "40.0", unit, last_updated=now - timedelta(days=1)),
+            ]
+        }
+
+    class Recorder:
+        async def async_add_executor_job(self, target, *args):
+            await release.wait()
+            return await hass.async_add_executor_job(target, *args)
+
+    monkeypatch.setattr(coordinator_module, "_recorder", lambda hass: Recorder())
+    monkeypatch.setattr(
+        coordinator_module, "_significant_states", lambda: significant_states
+    )
+    hass.config.components.add("recorder")
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0})
+    entry = entry_for(boiler)
+    await setup(hass, entry)  # does not wait for the recorder
+    assert entry.state is ConfigEntryState.LOADED
+    history = entry.runtime_data.history.signals[Signal.FLOW]
+    assert [s.value for s in history] == [45.0]
+    release.set()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert [s.value for s in history] == [30.0, 40.0, 45.0]
+    watched = list(entry.runtime_data.config.watched_entities)
+    assert asked == [{"entity_ids": watched, "significant": False}]
+
+
 async def test_invalid_options_fail_setup_with_a_reason(hass: HomeAssistant) -> None:
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", options={"signals": {}})
     entry.add_to_hass(hass)

@@ -65,6 +65,17 @@ class Series[T]:
         self._times.append(t)
         self._values.append(value)
 
+    def prepend(self, older: Series[T]) -> None:
+        """Put the samples of ``older`` that come before this series' first sample in front of
+        it (a backfill arriving after live samples)."""
+        first = self.first_time
+        merged: Series[T] = Series(
+            (s.t, s.value) for s in older if first is None or s.t < first
+        )
+        for t, value in zip(self._times, self._values, strict=True):
+            merged.append(t, value)
+        self._times, self._values = merged._times, merged._values
+
     def __len__(self) -> int:
         return len(self._times)
 

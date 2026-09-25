@@ -98,6 +98,19 @@ class History:
             weather=self.weather.window(start, end),
         )
 
+    def prepend(self, older: History) -> None:
+        """Put an older history in front of this one, series by series (a backfill)."""
+        for signal, series in self.signals.items():
+            if signal in older.signals:
+                series.prepend(older.signals[signal])
+        for zone_id, zone in self.zones.items():
+            if zone_id in older.zones:
+                for series, earlier in zip(
+                    zone.series(), older.zones[zone_id].series(), strict=True
+                ):
+                    series.prepend(earlier)
+        self.weather.prepend(older.weather)
+
     def drop_before(self, t: float) -> None:
         for series in self.signals.values():
             series.drop_before(t)
