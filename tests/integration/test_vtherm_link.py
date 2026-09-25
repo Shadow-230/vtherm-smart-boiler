@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -123,23 +125,73 @@ async def test_zone_algorithm_from_live_attributes(hass: HomeAssistant, zones: F
     assert link.zone_algorithm("climate.missing").proportional_function is None
 
 
-async def test_vt_central_boiler_detection(hass: HomeAssistant) -> None:
-    link = VThermLink(hass, [])
-    assert not link.vt_central_boiler_configured()
-    entry = er.async_get(hass).async_get_or_create(
-        "binary_sensor", VT_PLATFORM, "central_boiler_state"
+def vt_central_entry(hass: HomeAssistant, feature: bool | None) -> tuple[Any, str]:
+    """VT's central configuration entry, loaded, and the registry entry of its central-boiler
+    sensor, as VT 10.4.0 leaves them."""
+    from homeassistant.config_entries import ConfigEntryState
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    data = {} if feature is None else {"use_central_boiler_feature": feature}
+    central = MockConfigEntry(
+        domain="versatile_thermostat", data=data, state=ConfigEntryState.LOADED
     )
-    hass.states.async_set(entry.entity_id, "off", {"is_central_boiler_configured": False})
-    assert not link.vt_central_boiler_configured()
-    hass.states.async_set(entry.entity_id, "on", {"is_central_boiler_configured": True})
-    assert link.vt_central_boiler_configured()
-    # VT's own central boiler cannot be ruled out while its entity is away (a reload of VT's
-    # central entry, a late start): unknown, which keeps control waiting — never "not there".
+    central.add_to_hass(hass)
+    entry = er.async_get(hass).async_get_or_create(
+        "binary_sensor", VT_PLATFORM, "central_boiler_state", config_entry=central
+    )
+    return central, entry.entity_id
+
+
+async def test_vt_central_boiler_detection(hass: HomeAssistant) -> None:
+    from homeassistant.config_entries import ConfigEntryState
+
+    link = VThermLink(hass, [])
+    assert link.vt_central_boiler_configured() is False  # no such entity at all
+    central, entity_id = vt_central_entry(hass, True)
+    hass.states.async_set(entity_id, "off", {"is_central_boiler_configured": False})
+    assert link.vt_central_boiler_configured() is False
+    hass.states.async_set(entity_id, "on", {"is_central_boiler_configured": True})
+    assert link.vt_central_boiler_configured() is True
+    # VT's own central boiler cannot be ruled out while its entity is away and VT's central
+    # entry is being set up again (a reload, a late start): unknown, and control waits.
+    central.mock_state(hass, ConfigEntryState.SETUP_IN_PROGRESS)
     for state in ("unavailable", "unknown"):
-        hass.states.async_set(entry.entity_id, state)
+        hass.states.async_set(entity_id, state)
         assert link.vt_central_boiler_configured() is None
-    hass.states.async_remove(entry.entity_id)
+    er.async_get(hass).async_get(entity_id).write_unavailable_state(hass)
     assert link.vt_central_boiler_configured() is None
+    hass.states.async_remove(entity_id)
+    assert link.vt_central_boiler_configured() is None
+
+
+@pytest.mark.parametrize("feature", [False, None])
+async def test_vt_central_boiler_switched_off_is_not_there(
+    hass: HomeAssistant, feature: bool | None
+) -> None:
+    """H1: the user switched VT's central boiler off, as control asks. VT sets its central
+    entry up again without the sensor, and Home Assistant keeps the old registry entry with a
+    stand-in state for good: the feature is not there — not "unknown", which would keep
+    control waiting for ever."""
+    link = VThermLink(hass, [])
+    _central, entity_id = vt_central_entry(hass, feature)
+    er.async_get(hass).async_get(entity_id).write_unavailable_state(hass)  # the stand-in
+    assert hass.states.get(entity_id).attributes.get("restored") is True
+    assert link.vt_central_boiler_configured() is False
+
+
+async def test_a_disabled_vt_central_boiler_sensor_follows_the_feature(
+    hass: HomeAssistant,
+) -> None:
+    """The sensor disabled by the user shows nothing: VT's own setting then decides, and while
+    the feature is on, VT's central boiler still counts as there."""
+    registry = er.async_get(hass)
+    link = VThermLink(hass, [])
+    central, entity_id = vt_central_entry(hass, True)
+    registry.async_update_entity(entity_id, disabled_by=er.RegistryEntryDisabler.USER)
+    assert hass.states.get(entity_id) is None
+    assert link.vt_central_boiler_configured() is True
+    hass.config_entries.async_update_entry(central, data={"use_central_boiler_feature": False})
+    assert link.vt_central_boiler_configured() is False
 
 
 async def test_vt_is_loaded_only_with_a_loaded_entry(hass: HomeAssistant) -> None:

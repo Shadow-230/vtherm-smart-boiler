@@ -14,6 +14,7 @@ from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import ATTR_RESTORED
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_loaded_integration
@@ -28,6 +29,7 @@ _LOGGER = logging.getLogger(__name__)
 SMARTPI_DOMAIN = "vtherm_smartpi"
 CENTRAL_MODE_UNIQUE_ID = "central_mode"
 CENTRAL_BOILER_UNIQUE_ID = "central_boiler_state"
+CENTRAL_BOILER_FEATURE = "use_central_boiler_feature"  # in VT's central entry (VT 10.4.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,8 +147,12 @@ class VThermLink:
 
     def vt_central_boiler_configured(self) -> bool | None:
         """Whether VT's own central boiler feature is set up (then it must not run alongside);
-        ``None`` while VT's entity for it is registered but away (a reload of VT's central entry,
-        a late start) — it cannot be ruled out then."""
+        ``None`` while it cannot be ruled out — VT's entity for it is away while VT sets its
+        central entry up (a reload, a late start).
+
+        VT creates the entity only while the feature is on, and Home Assistant keeps its
+        registry entry, with a stand-in "unavailable" state, once VT no longer provides it: with
+        VT's central entry loaded, that stand-in means the feature is off."""
         registry = er.async_get(self._hass)
         entity_id = registry.async_get_entity_id(
             "binary_sensor", VT_DOMAIN, CENTRAL_BOILER_UNIQUE_ID
@@ -154,6 +160,20 @@ class VThermLink:
         if entity_id is None:
             return False
         state = self._hass.states.get(entity_id)
+        entry = registry.async_get(entity_id)
+        provided = state is not None and not state.attributes.get(ATTR_RESTORED)
+        if not provided or (entry is not None and entry.disabled):
+            owner = (
+                self._hass.config_entries.async_get_entry(entry.config_entry_id)
+                if entry is not None and entry.config_entry_id
+                else None
+            )
+            if owner is None:
+                return False  # left behind by a VT entry that is gone
+            if owner.state is not ConfigEntryState.LOADED:
+                return None
+            feature = owner.data.get(CENTRAL_BOILER_FEATURE)
+            return feature if isinstance(feature, bool) else False
         configured = None if state is None else state.attributes.get("is_central_boiler_configured")
         if state is None or state.state in ("unavailable", "unknown") or configured is None:
             return None

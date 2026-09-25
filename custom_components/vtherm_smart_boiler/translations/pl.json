@@ -1203,7 +1203,7 @@
       "message": "Skonfigurowany jest kocioł centralny Versatile Thermostat. Najpierw go usuń, żeby kotłem sterował tylko jeden sterownik. Inne powody: {others}."
     },
     "blocked_vt_central_boiler_unknown": {
-      "message": "Nie da się jeszcze wykluczyć centralnego kotła Versatile Thermostat: jego encja jest niedostępna (VT startuje albo przeładowuje się). Sterowanie na nią czeka. Inne powody: {others}."
+      "message": "Nie da się jeszcze wykluczyć centralnego kotła Versatile Thermostat: centralna konfiguracja VT nie jest załadowana (startuje, przeładowuje się albo nie udało się jej załadować — zobacz Ustawienia → Urządzenia i usługi). Sterowanie na nią czeka. Inne powody: {others}."
     },
     "blocked_control_error": {
       "message": "Sterowanie zatrzymało się po błędzie wewnętrznym. Sprawdź log, potem wyłącz i włącz sterowanie. Inne powody: {others}."
