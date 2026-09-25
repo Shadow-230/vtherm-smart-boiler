@@ -218,3 +218,10 @@ def test_the_verdict_window_is_never_shorter_than_the_monitoring_period() -> Non
     assert EntryConfig.from_options(options).monitor.monitor.verdict_window_days == 14
     options["monitor"] = {"monitoring_days": 7}
     assert EntryConfig.from_options(options).monitor.monitor.verdict_window_days is None
+
+
+def test_the_verdict_knows_whether_the_boiler_condenses() -> None:
+    assert EntryConfig.from_options(MINIMAL).monitor.monitor.verdict.condensing_boiler is True
+    options = MINIMAL | {"boiler": {"condensing": False}}
+    verdict = EntryConfig.from_options(options).monitor.monitor.verdict
+    assert verdict.condensing_boiler is False

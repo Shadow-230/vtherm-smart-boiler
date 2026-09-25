@@ -68,6 +68,8 @@ class VerdictOptions:
     good_condensing_share: float = 0.8
     below_min_power_share: float = 0.3
     rarely_below_min_power_share: float = 0.1
+    # A boiler not built to condense runs its return hot on purpose: condensing is no reason.
+    condensing_boiler: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,26 +148,27 @@ def assess(
     elif short is not None:
         reasons.append(Reason(ReasonCode.LONG_BURNS, ReasonKind.FINE, short, opts.short_burn_share))
 
-    if condensing is None or condensing.value is None:
-        reasons.append(Reason(ReasonCode.CONDENSING_UNKNOWN, ReasonKind.MISSING))
-    elif condensing.value < opts.low_condensing_share:
-        reasons.append(
-            Reason(
-                ReasonCode.LOW_CONDENSING,
-                ReasonKind.PROBLEM,
-                condensing.value,
-                opts.low_condensing_share,
+    if opts.condensing_boiler:  # a boiler not built to condense is not judged on it
+        if condensing is None or condensing.value is None:
+            reasons.append(Reason(ReasonCode.CONDENSING_UNKNOWN, ReasonKind.MISSING))
+        elif condensing.value < opts.low_condensing_share:
+            reasons.append(
+                Reason(
+                    ReasonCode.LOW_CONDENSING,
+                    ReasonKind.PROBLEM,
+                    condensing.value,
+                    opts.low_condensing_share,
+                )
             )
-        )
-    elif condensing.value >= opts.good_condensing_share:
-        reasons.append(
-            Reason(
-                ReasonCode.GOOD_CONDENSING,
-                ReasonKind.FINE,
-                condensing.value,
-                opts.good_condensing_share,
+        elif condensing.value >= opts.good_condensing_share:
+            reasons.append(
+                Reason(
+                    ReasonCode.GOOD_CONDENSING,
+                    ReasonKind.FINE,
+                    condensing.value,
+                    opts.good_condensing_share,
+                )
             )
-        )
 
     if load_below_min is None or load_below_min.value is None:
         reasons.append(Reason(ReasonCode.LOAD_UNKNOWN, ReasonKind.MISSING))

@@ -308,7 +308,9 @@ def _monitor(data: Mapping[str, Any], boiler: Mapping[str, Any]) -> MonitorConfi
             modulation_scale=ModulationScale(boiler.get("modulation_scale", ModulationScale.RANGE)),
             # Declared without hot water: every burn heats. Never declared: burns are told apart.
             has_dhw=boiler.get("dhw") != DhwType.NONE,
-            verdict=VerdictOptions(min_days=monitoring_days),
+            verdict=VerdictOptions(
+                min_days=monitoring_days, condensing_boiler=bool(boiler.get("condensing", True))
+            ),
             # Never shorter than the monitoring period: the verdict could not be reached.
             verdict_window_days=(
                 None

@@ -12,6 +12,7 @@ from custom_components.vtherm_smart_boiler.core.verdict import (
     ReasonCode,
     ReasonKind,
     Verdict,
+    VerdictOptions,
     assess,
     load_below_min_share,
 )
@@ -93,3 +94,19 @@ def test_load_below_min_share_over_heating_season_time() -> None:
     assert share.basis_s == 3 * HOUR  # the warm hour is outside the heating season
     assert share.value == pytest.approx(2 / 3)
     assert load_below_min_share(Series([(0, 20.0)]), model, 3.0, 0, HOUR).value is None
+
+
+def test_a_non_condensing_boiler_is_not_judged_on_condensing() -> None:
+    """A1: a boiler not built to condense runs its return hot on purpose — no reason to enable
+    control — and one that condenses often is no merit either."""
+    from dataclasses import replace
+
+    options = replace(VerdictOptions(), condensing_boiler=False)
+    hot_return = assess(10 * DAY, stats(1.0, 0.1), Share(0.0, DAY), Share(0.05, DAY), options)
+    assert hot_return.verdict is Verdict.NOT_WORTH_IT
+    condensing = assess(10 * DAY, stats(1.0, 0.1), Share(0.95, DAY), Share(0.05, DAY), options)
+    assert not {
+        ReasonCode.LOW_CONDENSING,
+        ReasonCode.GOOD_CONDENSING,
+        ReasonCode.CONDENSING_UNKNOWN,
+    } & (codes(hot_return) | codes(condensing))

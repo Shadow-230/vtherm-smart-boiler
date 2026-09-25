@@ -69,7 +69,7 @@
         "data_description": {
           "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Sterowanie (eksperymentalne) wymaga klasy „Nastawa zasilania”; przy pozostałych wtyczka tylko monitoruje.",
           "dhw": "Brak, zasobnik albo kocioł dwufunkcyjny; wymagane. Służy do interpretacji paleń: przy „brak” każde palenie liczy się jako c.o. — zadeklarowane w kotle, który grzeje ciepłą wodę, jej pobory liczyłyby się jako starty c.o.; zły typ liczy ciepłą wodę jako c.o. albo odwrotnie.",
-          "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych; dla innych kotłów bezwzględny alarm spalin jest wyłączony. Zły wybór ostrzega za późno albo bez powodu.",
+          "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych i są oceniane po tym, jak często kondensują; dla innych kotłów bezwzględny alarm spalin jest wyłączony, a kondensacja nie wpływa na werdykt. Zły wybór ostrzega za późno albo bez powodu i myli werdykt.",
           "boiler_min_power": "Najmniejsza moc grzania z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować. Zła wartość wypacza tę ocenę w werdykcie.",
           "boiler_max_power": "Największa moc grzania w kW. Z minimum i modulacją szacuje moc cieplną; zła wartość wypacza szacunki ciepła i gazu.",
           "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie CWU; za niska sprawia, że c.o. liczy się jako ciepła woda.",
@@ -329,7 +329,7 @@
         "data_description": {
           "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Sterowanie (eksperymentalne) wymaga klasy „Nastawa zasilania”; przy pozostałych wtyczka tylko monitoruje.",
           "dhw": "Brak, zasobnik albo kocioł dwufunkcyjny; wymagane. Służy do interpretacji paleń: przy „brak” każde palenie liczy się jako c.o. — zadeklarowane w kotle, który grzeje ciepłą wodę, jej pobory liczyłyby się jako starty c.o.; zły typ liczy ciepłą wodę jako c.o. albo odwrotnie.",
-          "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych; dla innych kotłów bezwzględny alarm spalin jest wyłączony. Zły wybór ostrzega za późno albo bez powodu.",
+          "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych i są oceniane po tym, jak często kondensują; dla innych kotłów bezwzględny alarm spalin jest wyłączony, a kondensacja nie wpływa na werdykt. Zły wybór ostrzega za późno albo bez powodu i myli werdykt.",
           "boiler_min_power": "Najmniejsza moc grzania z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować. Zła wartość wypacza tę ocenę w werdykcie.",
           "boiler_max_power": "Największa moc grzania w kW. Z minimum i modulacją szacuje moc cieplną; zła wartość wypacza szacunki ciepła i gazu.",
           "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie CWU; za niska sprawia, że c.o. liczy się jako ciepła woda.",

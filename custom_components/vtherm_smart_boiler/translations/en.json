@@ -69,7 +69,7 @@
         "data_description": {
           "class": "Flow setpoint, curve parameters only, on/off or read-only. Control (experimental) needs \"Flow setpoint\"; with the other classes the plugin only monitors.",
           "dhw": "None, a storage tank or a combi boiler; required. Used to interpret burns: with \"none\" every burn counts as heating — declared on a boiler that heats hot water, its draws would count as heating starts; the wrong type counts hot water as heating or the reverse.",
-          "condensing": "Condensing boilers get flue gas limits for condensing appliances; for other boilers the absolute flue gas alarm is off. The wrong choice warns too late or for nothing.",
+          "condensing": "Condensing boilers get flue gas limits for condensing appliances and are judged on how often they condense; for other boilers the absolute flue gas alarm is off and condensing plays no part in the verdict. The wrong choice warns too late or for nothing, and misjudges the verdict.",
           "boiler_min_power": "Lowest heating power from the manual, in kW. Compared with the building load: a load often below it means the boiler must cycle. A wrong value skews that judgement in the verdict.",
           "boiler_max_power": "Highest heating power in kW. With the minimum and the modulation it estimates heat output; a wrong value skews heat and gas estimates.",
           "max_ch_setpoint": "Highest flow temperature in heating, in °C. Flow above it points to a DHW run; set too low, heating counts as hot water.",
@@ -329,7 +329,7 @@
         "data_description": {
           "class": "Flow setpoint, curve parameters only, on/off or read-only. Control (experimental) needs \"Flow setpoint\"; with the other classes the plugin only monitors.",
           "dhw": "None, a storage tank or a combi boiler; required. Used to interpret burns: with \"none\" every burn counts as heating — declared on a boiler that heats hot water, its draws would count as heating starts; the wrong type counts hot water as heating or the reverse.",
-          "condensing": "Condensing boilers get flue gas limits for condensing appliances; for other boilers the absolute flue gas alarm is off. The wrong choice warns too late or for nothing.",
+          "condensing": "Condensing boilers get flue gas limits for condensing appliances and are judged on how often they condense; for other boilers the absolute flue gas alarm is off and condensing plays no part in the verdict. The wrong choice warns too late or for nothing, and misjudges the verdict.",
           "boiler_min_power": "Lowest heating power from the manual, in kW. Compared with the building load: a load often below it means the boiler must cycle. A wrong value skews that judgement in the verdict.",
           "boiler_max_power": "Highest heating power in kW. With the minimum and the modulation it estimates heat output; a wrong value skews heat and gas estimates.",
           "max_ch_setpoint": "Highest flow temperature in heating, in °C. Flow above it points to a DHW run; set too low, heating counts as hot water.",
