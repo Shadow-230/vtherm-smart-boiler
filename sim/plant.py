@@ -102,6 +102,10 @@ class Plant:
         self.zones = tuple(zones)
         self.override_expires_s = override_expires_s
         self.without_override = without_override
+        # A gateway's CH=0 (PIC 6.6 CHModeOff): it survives CS=0 and the override's lapse until
+        # CH=1 or a gateway reset, masking CH enable under a CS override and the demand of an
+        # on/off thermostat — the thermostat modelled here (an OpenTherm one would pass).
+        self.gateway_ch_off = False
         self.outputs = reference_outputs(house, self.zones)
         self.references = [EMITTER_REFERENCE[z.emitter] for z in self.zones]
         self.ref_excess = [(r.flow + r.return_) / 2.0 - r.room for r in self.references]
@@ -185,12 +189,13 @@ class Plant:
                 else boiler_setpoint(boiler, outdoor)
             )
             demand = self.override_ch if self.override_ch is not None else True
+            demand = demand and not self.gateway_ch_off
         elif self.without_override is WithoutOverride.OFF:
             setpoint = boiler_setpoint(boiler, outdoor)
             demand = False
         else:
             setpoint = boiler_setpoint(boiler, outdoor)
-            demand = any(o > DEMAND_OPENING for o in opened)
+            demand = any(o > DEMAND_OPENING for o in opened) and not self.gateway_ch_off
 
         emitted = [0.0] * len(zones)
         ch_power = 0.0

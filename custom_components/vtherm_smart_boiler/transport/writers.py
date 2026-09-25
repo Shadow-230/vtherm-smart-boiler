@@ -6,19 +6,24 @@ unavailable entity without an error (and a missing one with a log line only), so
 entity first checks that it is there and available; an entity hand-back also says what each
 target must show once it has taken the hand-back, and it is done only when they do.
 
-OpenTherm Gateway facts (OTGW firmware documentation, research/2026-09-24-otgw-topologies-f3-f7.md):
-a control-setpoint override of 8 °C or more lapses unless repeated within a minute; one between
-1 and 7 °C never lapses and would lock out a thermostat for good if Home Assistant stopped, so it
-is refused; 0 cancels the override (hand-back). The CH override applies only while a setpoint
-override is active. The plugin never touches the DHW-enable override.
+OpenTherm Gateway facts (OTGW firmware documentation and the PIC 6.6 source,
+research/2026-09-24-otgw-topologies-f3-f7.md): a control-setpoint override of 8 °C or more lapses
+unless repeated within a minute; one between 1 and 7 °C never lapses and would lock out a
+thermostat for good if Home Assistant stopped, so it is refused; 0 cancels the override. ``CH=0``
+sets a flag the gateway keeps through ``CS=0`` and the override's lapse until ``CH=1`` or a reset:
+it masks CH enable under any later setpoint override and the demand of an on/off thermostat. So
+a hand-back sends ``CH=1`` first, then ``CS=0`` — should the second fail, the boiler heats at most
+until the override lapses, rather than staying cold while the thermostat calls. The plugin never
+touches the DHW-enable override.
 """
 
 from __future__ import annotations
 
 import asyncio
 import math
+from collections.abc import Coroutine
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ..control_config import ControlOptions, HandBack, WritePath
 
@@ -218,9 +223,18 @@ class OpenthermGwWriter(_ServiceWriter):
         )
 
     async def hand_back(self, full: bool = False) -> tuple[HandBackCheck, ...]:
-        # 0 cancels the setpoint override; the CH override applies only alongside it.
-        await self._call(
-            self.DOMAIN, "set_control_setpoint", {"gateway_id": self._gateway, "temperature": 0}
+        """``CH=1``, then ``CS=0``; each is tried whatever the other does."""
+        await _all_of(
+            self._call(
+                self.DOMAIN,
+                "set_central_heating_ovrd",
+                {"gateway_id": self._gateway, "ch_override": True},
+            ),
+            self._call(
+                self.DOMAIN,
+                "set_control_setpoint",
+                {"gateway_id": self._gateway, "temperature": 0},
+            ),
         )
         return ()
 
@@ -250,8 +264,21 @@ class OtgwMqttWriter(_ServiceWriter):
         await self._publish("chenable", "1" if on else "0")
 
     async def hand_back(self, full: bool = False) -> tuple[HandBackCheck, ...]:
-        await self._publish("ctrlsetpt", "0")
+        """``CH=1``, then ``CS=0``; each is tried whatever the other does."""
+        await _all_of(self._publish("chenable", "1"), self._publish("ctrlsetpt", "0"))
         return ()
+
+
+async def _all_of(*steps: Coroutine[Any, Any, None]) -> None:
+    """Run every step in order, each whatever the others do; raise their failures at the end."""
+    errors: list[WriteError] = []
+    for step in steps:
+        try:
+            await step
+        except WriteError as err:
+            errors.append(err)
+    if errors:
+        raise WriteError("; ".join(str(err) for err in errors))
 
 
 def make_writer(hass: HomeAssistant, options: ControlOptions) -> Writer:

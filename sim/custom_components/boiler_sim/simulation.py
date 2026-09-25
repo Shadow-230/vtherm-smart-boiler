@@ -138,12 +138,12 @@ class Simulation:
             self.plant.set_override(now, value, None, holds=value < GATEWAY_MIN_EXPIRING)
 
     def gateway_heating(self, now: float, on: bool) -> None:
-        """``CH=``: applies only while a setpoint override is in force."""
+        """``CH=``: sets or clears the gateway's CH-off flag (PIC 6.6), which survives ``CS=0``
+        until ``CH=1``; it does not renew the control setpoint's one-minute vigilance."""
         self.commands.gateway.append((now, "ch", on))
-        if self.ignore_writes or not self.plant.override_active(now):
+        if self.ignore_writes:
             return
-        # CH= does not renew the control setpoint's one-minute vigilance: only CS= does.
-        self.plant.set_override(now, None, on, renew=False)
+        self.plant.gateway_ch_off = not on
 
     def gateway_hot_water(self, now: float, value: object) -> None:
         """``HW=``: stored in the gateway's memory; the plugin must never send it."""

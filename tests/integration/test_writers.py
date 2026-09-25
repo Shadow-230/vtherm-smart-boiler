@@ -65,6 +65,8 @@ async def test_opentherm_gw_writer(hass: HomeAssistant) -> None:
     assert calls == [
         ("opentherm_gw", "set_control_setpoint", {"gateway_id": "gw1", "temperature": 45.0}),
         ("opentherm_gw", "set_central_heating_ovrd", {"gateway_id": "gw1", "ch_override": False}),
+        # The gateway keeps a CH=0 through CS=0 (PIC 6.6): CH=1 first, then the setpoint.
+        ("opentherm_gw", "set_central_heating_ovrd", {"gateway_id": "gw1", "ch_override": True}),
         ("opentherm_gw", "set_control_setpoint", {"gateway_id": "gw1", "temperature": 0}),
     ]
     assert writer.services == {
@@ -95,6 +97,7 @@ async def test_mqtt_writer(hass: HomeAssistant) -> None:
     await writer.hand_back()
     assert calls == [
         ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/ctrlsetpt", "payload": "38.3"}),
+        ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/chenable", "payload": "1"}),
         ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/chenable", "payload": "1"}),
         ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/ctrlsetpt", "payload": "0"}),
     ]
@@ -292,3 +295,14 @@ async def test_a_missing_or_unavailable_target_is_a_failure(
     hass.states.async_set("switch.ch", "unavailable")
     with pytest.raises(WriteError, match=r"switch\.ch"):
         await writer.write_heating(False)
+
+
+async def test_an_otgw_hand_back_tries_both_steps(hass: HomeAssistant) -> None:
+    """CH=1 and CS=0 are each tried whatever the other does; a failure is raised at the end."""
+    calls = record(hass, ("opentherm_gw", "set_control_setpoint"))  # CH's service is missing
+    writer = make_writer(hass, options(write_path="opentherm_gw", gateway_id="gw1"))
+    with pytest.raises(WriteError, match="set_central_heating_ovrd"):
+        await writer.hand_back()
+    assert calls == [
+        ("opentherm_gw", "set_control_setpoint", {"gateway_id": "gw1", "temperature": 0})
+    ]

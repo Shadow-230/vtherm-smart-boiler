@@ -283,7 +283,7 @@ async def test_stale_data_stops_writes_and_hands_back_after_five_minutes(rig: Ri
     assert len(rig.gateway.calls) == count  # no keep-alive: the gateway's override lapses
     assert rig.state("sensor", "control_state").state == "waiting_data"
     await rig.advance(70)
-    assert rig.gateway.calls[count:] == [("setpoint", 0.0)]
+    assert rig.gateway.calls[count:] == [("ch", True), ("setpoint", 0.0)]
     assert rig.state("sensor", "control_state").state == "handed_back"
     resumed = len(rig.gateway.calls)
     rig.flow = 35.0
@@ -947,3 +947,13 @@ async def test_removing_the_entry_with_a_hand_back_owed_raises_a_repair_issue(ri
     await rig.hass.async_block_till_done()
     issues = ir.async_get(rig.hass)
     assert issues.async_get_issue(DOMAIN, f"hand_back_owed_after_removal_{entry_id}") is not None
+
+
+async def test_an_otgw_hand_back_clears_the_heating_override(rig: Rig) -> None:
+    await start(rig)
+    await rig.switch(True)
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await rig.advance(310)  # the next decision: no demand, heating off
+    assert ("ch", False) in rig.gateway.calls
+    await rig.switch(False)
+    assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]

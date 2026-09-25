@@ -240,6 +240,24 @@ async def test_hand_back_on_every_exit(rig: Rig, exit_path: str) -> None:
         assert len(rig.gateway()) == count  # no loop left running
 
 
+async def test_a_thermostat_heats_again_after_a_hand_back_that_followed_off(rig: Rig) -> None:
+    """The gateway keeps a CH=0 through CS=0 (PIC 6.6): a hand-back that sent only CS=0 after
+    control had switched heating off would leave the thermostat calling and the boiler cold."""
+    await start(rig)
+    await rig.switch(True)
+    plant = rig.sim.plant
+    plant.room = [target + 2.0 for target in plant.targets]  # every room warm: no demand
+    rig.mirror_zones()
+    await rig.advance(360)
+    assert rig.gateway("ch")[-1][2] is False  # control switched heating off
+    await rig.switch(False)
+    plant.room = [target - 3.0 for target in plant.targets]  # the rooms cool: the thermostat calls
+    rig.mirror_zones()
+    await rig.advance(30)
+    assert not plant.override_active(rig.now())
+    assert rig.sim.last.demand  # the thermostat's call reaches the boiler
+
+
 async def test_keep_alive_loss_lets_the_gateway_fall_back(rig: Rig) -> None:
     await start(rig)
     await rig.switch(True)
