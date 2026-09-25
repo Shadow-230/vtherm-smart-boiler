@@ -54,26 +54,30 @@ async def test_the_gateway_path_lapses_unless_repeated(hass: HomeAssistant, free
     await setup_sim(hass, freezer, outdoor=5.0)
     own = float(value(hass, "sensor.boiler_sim_ch_setpoint"))
     await hass.services.async_call(
-        "opentherm_gw", "set_control_setpoint", {"gateway_id": "sim", "temperature": 52.0},
+        "opentherm_gw",
+        "set_control_setpoint",
+        {"gateway_id": "sim", "temperature": 52.0},
         blocking=True,
     )
     assert float(value(hass, "sensor.boiler_sim_ch_setpoint")) == 52.0
     await advance(hass, freezer, 80)
     assert float(value(hass, "sensor.boiler_sim_ch_setpoint")) == own  # lapsed
     await hass.services.async_call(
-        "opentherm_gw", "set_control_setpoint", {"gateway_id": "sim", "temperature": 5.0},
+        "opentherm_gw",
+        "set_control_setpoint",
+        {"gateway_id": "sim", "temperature": 5.0},
         blocking=True,
     )
     await advance(hass, freezer, 600)
     assert float(value(hass, "sensor.boiler_sim_ch_setpoint")) == 5.0  # below 8 °C: holds
 
 
-async def test_a_persistent_setpoint_holds_and_counts_writes(
-    hass: HomeAssistant, freezer
-) -> None:
+async def test_a_persistent_setpoint_holds_and_counts_writes(hass: HomeAssistant, freezer) -> None:
     await setup_sim(hass, freezer, write_type="persistent")
     await hass.services.async_call(
-        "number", "set_value", {"entity_id": "number.boiler_sim_flow_setpoint", "value": 48},
+        "number",
+        "set_value",
+        {"entity_id": "number.boiler_sim_flow_setpoint", "value": 48},
         blocking=True,
     )
     await advance(hass, freezer, 600)
@@ -87,9 +91,7 @@ async def test_a_persistent_setpoint_holds_and_counts_writes(
 
 async def test_scenario_services(hass: HomeAssistant, freezer) -> None:
     await setup_sim(hass, freezer)
-    await hass.services.async_call(
-        "boiler_sim", "fail_signal", {"signal": "flow"}, blocking=True
-    )
+    await hass.services.async_call("boiler_sim", "fail_signal", {"signal": "flow"}, blocking=True)
     assert value(hass, "sensor.boiler_sim_flow") == "unavailable"
     await hass.services.async_call(
         "boiler_sim", "fail_signal", {"signal": "flow", "failed": False}, blocking=True
@@ -97,7 +99,9 @@ async def test_scenario_services(hass: HomeAssistant, freezer) -> None:
     assert value(hass, "sensor.boiler_sim_flow") != "unavailable"
     await hass.services.async_call("boiler_sim", "force_setpoint", {"value": 61}, blocking=True)
     await hass.services.async_call(
-        "opentherm_gw", "set_control_setpoint", {"gateway_id": "sim", "temperature": 40.0},
+        "opentherm_gw",
+        "set_control_setpoint",
+        {"gateway_id": "sim", "temperature": 40.0},
         blocking=True,
     )
     await advance(hass, freezer, 20)
@@ -105,7 +109,9 @@ async def test_scenario_services(hass: HomeAssistant, freezer) -> None:
     await hass.services.async_call("boiler_sim", "set_outdoor", {"temperature": -8}, blocking=True)
     assert float(value(hass, "sensor.boiler_sim_outdoor")) == -8.0
     await hass.services.async_call(
-        "opentherm_gw", "set_hot_water_ovrd", {"gateway_id": "sim", "dhw_override": "0"},
+        "opentherm_gw",
+        "set_hot_water_ovrd",
+        {"gateway_id": "sim", "dhw_override": "0"},
         blocking=True,
     )
     assert value(hass, "binary_sensor.boiler_sim_dhw_enable") == "off"

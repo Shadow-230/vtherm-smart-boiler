@@ -129,9 +129,7 @@ def summarize_day(
         load_known=load is not None,
         degree_days=None if summary.degree_days is None else summary.degree_days.value,
         gas=None if summary.gas is None else summary.gas.amount,
-        outdoor_mean=(
-            outdoor.value if outdoor.known_s >= FIT_COVERAGE * (end - start) else None
-        ),
+        outdoor_mean=(outdoor.value if outdoor.known_s >= FIT_COVERAGE * (end - start) else None),
         heat_kwh=heat.amount if heat is not None and heat.complete else None,
     )
 

@@ -229,9 +229,7 @@ async def test_control_is_off_by_default_and_refused_during_monitoring(rig: Rig)
     await hass.async_block_till_done()
     switch = er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_control")
     with pytest.raises(ServiceValidationError) as err:
-        await hass.services.async_call(
-            "switch", "turn_on", {"entity_id": switch}, blocking=True
-        )
+        await hass.services.async_call("switch", "turn_on", {"entity_id": switch}, blocking=True)
     assert err.value.translation_key == "blocked_monitoring_period"
     assert hass.states.get(switch).state == "off"
     assert rig.gateway.calls == []
@@ -583,9 +581,7 @@ async def test_only_allowed_services_are_called(rig: Rig) -> None:
     }
 
 
-async def test_the_switch_comes_back_after_a_restart(
-    hass: HomeAssistant, rig: Rig
-) -> None:
+async def test_the_switch_comes_back_after_a_restart(hass: HomeAssistant, rig: Rig) -> None:
     mock_restore_cache(hass, [State("switch.boiler_boiler_control_experimental", "on")])
     await start(rig)
     assert rig.state("switch", "control").state == "on"
@@ -601,15 +597,14 @@ async def test_auto_tpi_zones_that_cannot_learn_raise_a_repair_issue(rig: Rig) -
     )
     await start(rig)
     assert rig.entry is not None
-    issue = ir.async_get(rig.hass).async_get_issue(
-        DOMAIN, f"auto_tpi_blocked_{rig.entry.entry_id}"
-    )
+    issue = ir.async_get(rig.hass).async_get_issue(DOMAIN, f"auto_tpi_blocked_{rig.entry.entry_id}")
     assert issue is not None
     assert issue.translation_key == "auto_tpi_blocked"
     # Blocked from learning: not also reported as learning without pauses.
-    assert ir.async_get(rig.hass).async_get_issue(
-        DOMAIN, f"learning_not_paused_{rig.entry.entry_id}"
-    ) is None
+    assert (
+        ir.async_get(rig.hass).async_get_issue(DOMAIN, f"learning_not_paused_{rig.entry.entry_id}")
+        is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -631,9 +626,10 @@ async def test_learning_the_plugin_cannot_pause_raises_a_repair_issue(
     )
     assert issue is not None
     await start(rig, learning_pauses=False)  # a second entry, without pauses: nothing promised
-    assert ir.async_get(rig.hass).async_get_issue(
-        DOMAIN, f"learning_not_paused_{rig.entry.entry_id}"
-    ) is None
+    assert (
+        ir.async_get(rig.hass).async_get_issue(DOMAIN, f"learning_not_paused_{rig.entry.entry_id}")
+        is None
+    )
 
 
 @dataclass
@@ -1211,9 +1207,7 @@ async def test_the_one_rewrite_is_remembered_across_a_restart(
     """An outside change was rewritten an hour before the restart: within the day another one is
     not fought, even in the new run."""
     now = START.timestamp()
-    mock_restore_cache(
-        rig.hass, [State("switch.boiler_boiler_control_experimental", "on")]
-    )
+    mock_restore_cache(rig.hass, [State("switch.boiler_boiler_control_experimental", "on")])
     await start_with_stored(rig, hass_storage, {"rewritten_at": now - 3600.0})
     await rig.advance(20)
     assert rig.gateway.setpoints()[-1] == EXPECTED
@@ -1294,6 +1288,7 @@ async def test_a_zone_unknown_for_long_raises_an_alarm(rig: Rig) -> None:
 async def test_frost_heating_that_does_not_warm_the_room_raises_an_alarm(rig: Rig) -> None:
     """Frost protection is never stopped; heating that leaves the room as cold for two hours is
     reported."""
+
     async def cold_for(seconds: int) -> None:
         for _ in range(seconds // 60):  # VT keeps reporting the room, as cold as it was
             rig.zones.set("living", "off", current_temperature=3.0, hvac_action="off")
@@ -1575,9 +1570,12 @@ async def test_a_resume_smartpi_skipped_is_sent_again_until_it_reads_on(rig: Rig
     count = len(calls)
     await rig.advance(180)
     assert len(calls) == count  # read back on: done
-    assert rig.hass.states.get(rig.zones.entities["living"]).attributes["specific_states"][
-        "smartpi_learning_enabled"
-    ] is True
+    assert (
+        rig.hass.states.get(rig.zones.entities["living"]).attributes["specific_states"][
+            "smartpi_learning_enabled"
+        ]
+        is True
+    )
 
 
 async def test_unreadable_control_data_still_restores_what_matters(

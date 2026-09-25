@@ -157,8 +157,11 @@ def plan_learning(
             pause.append(zone.zone_id)
             paused[zone.zone_id] = now
             toggles[zone.zone_id] = now
-        elif not reasons and since is not None and settled and (
-            flow_recovered or now - since >= config.max_pause_s
+        elif (
+            not reasons
+            and since is not None
+            and settled
+            and (flow_recovered or now - since >= config.max_pause_s)
         ):
             if zone.learning is not True:
                 resume.append(zone.zone_id)

@@ -79,7 +79,5 @@ def test_within_the_demand_margin_the_colder_zone_wins() -> None:
 
 def test_a_zone_at_vts_cap_is_as_open_as_it_gets() -> None:
     """P61: one meaning of "fully open" — VT's cap on the duty cycle counts, as in control."""
-    capped = ZoneState(
-        "a", 19.0, 21.0, True, on_percent=0.8, max_on_percent=0.8, reported_at=NOW
-    )
+    capped = ZoneState("a", 19.0, 21.0, True, on_percent=0.8, max_on_percent=0.8, reported_at=NOW)
     assert pick([capped]).saturated

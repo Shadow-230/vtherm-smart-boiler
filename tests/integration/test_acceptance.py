@@ -157,9 +157,7 @@ async def rig(hass: HomeAssistant, freezer, zones: FakeZones) -> Rig:
 
     def record(event: Event) -> None:
         data = event.data
-        rig.calls.append(
-            (rig.now(), data["domain"], data["service"], dict(data["service_data"]))
-        )
+        rig.calls.append((rig.now(), data["domain"], data["service"], dict(data["service_data"])))
 
     hass.bus.async_listen(EVENT_CALL_SERVICE, record)
     return rig

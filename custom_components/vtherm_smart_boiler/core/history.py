@@ -131,8 +131,6 @@ class History:
         self.weather.drop_before(t)
 
 
-
-
 def _zone_wants_heat(values: Sequence[object]) -> bool | None:
     valve, on_percent, calling = values
     for opening in (valve, on_percent):

@@ -260,9 +260,7 @@ async def test_the_recorder_backfill_runs_after_setup_and_goes_before_live_sampl
             return await hass.async_add_executor_job(target, *args)
 
     monkeypatch.setattr(coordinator_module, "_recorder", lambda hass: Recorder())
-    monkeypatch.setattr(
-        coordinator_module, "_significant_states", lambda: significant_states
-    )
+    monkeypatch.setattr(coordinator_module, "_significant_states", lambda: significant_states)
     hass.config.components.add("recorder")
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0})

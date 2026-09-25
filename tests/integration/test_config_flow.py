@@ -593,9 +593,7 @@ async def test_a_setpoint_entity_must_be_in_a_temperature_unit(
     assert result["errors"] == {"setpoint_entity": "setpoint_unit_not_supported"}
 
 
-async def test_one_entry_per_home_assistant(
-    hass: HomeAssistant, entities: dict[str, str]
-) -> None:
+async def test_one_entry_per_home_assistant(hass: HomeAssistant, entities: dict[str, str]) -> None:
     """P36: two entries could control one boiler; the plugin serves one boiler per Home
     Assistant."""
     await create_entry(hass, entities, "simple")
@@ -709,9 +707,7 @@ async def test_restoring_defaults_keeps_the_installation(
     """P38: "restore defaults" resets tuning, never facts about the installation."""
     options = _rich_options(entities) | {"level": "advanced"}
     entry_id = await _entry(hass, options)
-    options = await _section(
-        hass, entry_id, "level", {"level": "simple", "restore_defaults": True}
-    )
+    options = await _section(hass, entry_id, "level", {"level": "simple", "restore_defaults": True})
     assert options["boiler"]["modulation_scale"] == "capacity"
     assert [c["id"] for c in options["circuits"]] == ["main", "circuit_2"]
     assert options["circuits"][0]["flow_entity"] == entities["return"]
@@ -727,9 +723,7 @@ async def test_hidden_settings_are_those_that_differ_from_defaults(
     """P74: a stored value equal to its default is nothing hidden."""
     options = _rich_options(entities)
     options["circuits"] = [{"id": "main", "control": "unmixed_shared"}]
-    options["zones"] = [
-        {"entity_id": entities["living"], "emitter": "radiator", "circuit": "main"}
-    ]
+    options["zones"] = [{"entity_id": entities["living"], "emitter": "radiator", "circuit": "main"}]
     options["boiler"]["modulation_scale"] = "range"
     options["reference_room"] = {"strategy": "largest_deficit", "switch_margin": 0.3}
     options["monitor"] = {"monitoring_days": 7.0, "near_room_k": 3.0}
@@ -806,9 +800,7 @@ def test_signal_fields_follow_the_d2_table() -> None:
     ]
 
 
-async def test_modulation_must_be_in_percent(
-    hass: HomeAssistant, entities: dict[str, str]
-) -> None:
+async def test_modulation_must_be_in_percent(hass: HomeAssistant, entities: dict[str, str]) -> None:
     hass.states.async_set("sensor.boiler_power", "12", {"unit_of_measurement": "kW"})
     hass.states.async_set("sensor.boiler_modulation", "40", {"unit_of_measurement": "%"})
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})

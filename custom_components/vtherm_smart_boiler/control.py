@@ -128,6 +128,7 @@ def _shown(check: Confirmation | None, gateway: bool, self_echo: bool) -> str | 
             return CONFIRMED_BY_GATEWAY
     return None if check is None else check.value
 
+
 class ControlAlarm(StrEnum):
     WRITE_FAILED = "write_failed"
     WRITE_IGNORED = "write_ignored"
@@ -1030,4 +1031,3 @@ class ControlUnit:
             _LOGGER.info("SmartPI learning of %s can be set again", zone_id)
             self._learning_failing.discard(zone_id)
         return True
-

@@ -138,9 +138,7 @@ class EntryConfig:
         return tuple(dict.fromkeys(entities))
 
     @classmethod
-    def from_options(
-        cls, options: Mapping[str, Any], strict_control: bool = True
-    ) -> EntryConfig:
+    def from_options(cls, options: Mapping[str, Any], strict_control: bool = True) -> EntryConfig:
         """The entry's configuration. ``strict_control=False`` (at setup): a control section that
         cannot be used leaves control out with ``control_problem`` set instead of failing, so
         the monitor keeps running and a hand-back still owed can go out."""
@@ -361,9 +359,7 @@ def _control(
     data: Mapping[str, Any] | None, installation: Installation, parameters: ParameterSet
 ) -> ControlOptions:
     try:
-        return parse_control(
-            data, installation, parameters.value(ParameterKey.MAX_CH_SETPOINT)
-        )
+        return parse_control(data, installation, parameters.value(ParameterKey.MAX_CH_SETPOINT))
     except (KeyError, TypeError, ValueError) as err:
         raise ConfigError("invalid_control", str(err)) from err
 

@@ -154,9 +154,7 @@ class EntityWriter(_ServiceWriter):
         self._switched = False
         self._hand_back = options.hand_back
         self._hand_back_value = options.hand_back_value
-        self._external = (
-            options.hand_back_entity if options.hand_back is HandBack.SWITCH else None
-        )
+        self._external = options.hand_back_entity if options.hand_back is HandBack.SWITCH else None
         self._taken = False
 
     @property

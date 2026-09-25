@@ -379,9 +379,7 @@ def want_heat_now(inputs: ControlInputs, config: ControlConfig, frost: bool) -> 
     return _want_heat(inputs, config, frost)[0]
 
 
-def _want_heat(
-    inputs: ControlInputs, config: ControlConfig, frost: bool
-) -> tuple[bool, Reason]:
+def _want_heat(inputs: ControlInputs, config: ControlConfig, frost: bool) -> tuple[bool, Reason]:
     """Whether to heat now and why: frost protection, else the zones' demand — VT's central mode
     and summer or winter act on the zones themselves."""
     if frost:
@@ -413,9 +411,7 @@ def _correction(state: ControlState, inputs: ControlInputs, config: ControlConfi
     too_warm = any(z.deficit is not None and z.deficit < -OVERHEAT_K for z in known)
     short = any(_saturated(z) and z.deficit is not None and z.deficit >= SHORT_K for z in known)
     opened = [z for z in known if z.demand is not None]  # no opening: never blocks the fall
-    satisfied = bool(opened) and all(
-        z.demand is not None and z.demand < SATISFIED for z in opened
-    )
+    satisfied = bool(opened) and all(z.demand is not None and z.demand < SATISFIED for z in opened)
     correction = state.correction
     if too_warm or (satisfied and not short):
         elapsed = now - state.decided_at if state.decided_at is not None else 0.0

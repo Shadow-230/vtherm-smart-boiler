@@ -507,9 +507,9 @@ def control_curve_schema(options: dict[str, Any]) -> vol.Schema:
     fields: dict[Any, Any] = {
         vol.Required("design_outdoor", default=design_outdoor): _number(-40, 10, 0.5, "°C"),
         # The curve is the user's to enter: no silent default for the design flow.
-        vol.Required(
-            "design_flow", default=curve.get("design_flow", vol.UNDEFINED)
-        ): _number(25, 80, 0.5, "°C"),
+        vol.Required("design_flow", default=curve.get("design_flow", vol.UNDEFINED)): _number(
+            25, 80, 0.5, "°C"
+        ),
         vol.Required("hard_min", default=default("hard_min")): _number(10, 50, 0.5, "°C"),
         vol.Required("hard_max", default=default("hard_max")): _number(30, 90, 0.5, "°C"),
     }
@@ -522,13 +522,9 @@ def control_curve_schema(options: dict[str, Any]) -> vol.Schema:
             vol.Required("offset", default=curve.get("offset", CURVE_DEFAULTS["offset"])): (
                 _number(-10, 10, 0.5, "K")
             ),
-            vol.Required("ceiling_band", default=default("ceiling_band")): _number(
-                0, 20, 0.5, "K"
-            ),
+            vol.Required("ceiling_band", default=default("ceiling_band")): _number(0, 20, 0.5, "K"),
             _optional("fallback_setpoint", control): _number(25, 80, 0.5, "°C"),
-            vol.Required("frost_limit", default=default("frost_limit")): _number(
-                3, 10, 0.5, "°C"
-            ),
+            vol.Required("frost_limit", default=default("frost_limit")): _number(3, 10, 0.5, "°C"),
             vol.Required("frost_release", default=default("frost_release")): _number(
                 4, 12, 0.5, "°C"
             ),
@@ -988,9 +984,7 @@ class _Steps:
             else:
                 apply_boiler(self.options, user_input)
                 return await self._goto(self._next_after("boiler"))
-        return self._form(
-            step_id="boiler", data_schema=boiler_schema(self.options), errors=errors
-        )
+        return self._form(step_id="boiler", data_schema=boiler_schema(self.options), errors=errors)
 
     async def async_step_circuit(
         self, user_input: dict[str, Any] | None = None
@@ -1030,9 +1024,7 @@ class _Steps:
             self._zone_queue = list(user_input.get("zones", []))
             self._zones_done = []
             return await self.async_step_zone()
-        return self._form(
-            step_id="zones", data_schema=zones_schema(self.options)
-        )
+        return self._form(step_id="zones", data_schema=zones_schema(self.options))
 
     async def async_step_zone(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if not self._zone_queue:
@@ -1094,9 +1086,7 @@ class _Steps:
         if user_input is not None:
             apply_building(self.options, user_input)
             return await self._goto(self._next_after("building"))
-        return self._form(
-            step_id="building", data_schema=building_schema(self.options)
-        )
+        return self._form(step_id="building", data_schema=building_schema(self.options))
 
     async def async_step_reference(
         self, user_input: dict[str, Any] | None = None
@@ -1128,9 +1118,7 @@ class _Steps:
         if user_input is not None:
             apply_monitor(self.options, user_input)
             return await self._goto(self._next_after("monitor"))
-        return self._form(
-            step_id="monitor", data_schema=monitor_schema(self.options)
-        )
+        return self._form(step_id="monitor", data_schema=monitor_schema(self.options))
 
 
 class SmartBoilerConfigFlow(_Steps, ConfigFlow, domain=DOMAIN):
@@ -1198,8 +1186,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
     def _changes_hand_back(self, user_input: dict[str, Any]) -> bool:
         current = self.config_entry.options.get(CONTROL, {})
         return any(
-            key in user_input and user_input.get(key) != current.get(key)
-            for key in HAND_BACK_KEYS
+            key in user_input and user_input.get(key) != current.get(key) for key in HAND_BACK_KEYS
         )
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -1232,9 +1219,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         if user_input is not None:
             apply_freshness(self.options, user_input)
             return await self.async_step_save()
-        return self._form(
-            step_id="freshness", data_schema=freshness_schema(self.options)
-        )
+        return self._form(step_id="freshness", data_schema=freshness_schema(self.options))
 
     async def async_step_save(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         problem = validate_problem(self.options)
@@ -1346,9 +1331,9 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 errors["hard_min"] = "limits_outside_entity_range"
             elif _outside(user_input["hard_max"], bounds):
                 errors["hard_max"] = "limits_outside_entity_range"
-            elif user_input.get(
-                "frost_limit", CONTROL_DEFAULTS["frost_limit"]
-            ) >= user_input.get("frost_release", CONTROL_DEFAULTS["frost_release"]):
+            elif user_input.get("frost_limit", CONTROL_DEFAULTS["frost_limit"]) >= user_input.get(
+                "frost_release", CONTROL_DEFAULTS["frost_release"]
+            ):
                 errors["frost_release"] = "frost_release_not_above_limit"
             else:
                 apply_control_curve(self.options, user_input)
@@ -1371,8 +1356,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             if _outside(user_input.get("off_setpoint"), self._setpoint_bounds()):
                 errors["off_setpoint"] = "off_setpoint_outside_entity_range"
             elif (
-                float(user_input.get("off_setpoint", CONTROL_DEFAULTS["off_setpoint"]))
-                >= hard_min
+                float(user_input.get("off_setpoint", CONTROL_DEFAULTS["off_setpoint"])) >= hard_min
             ):
                 errors["off_setpoint"] = "off_setpoint_not_below_hard_min"
             elif count > len(self.options.get(ZONES, [])):
@@ -1404,6 +1388,4 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         if user_input is not None:
             apply_control_alarms(self.options, user_input)
             return await self.async_step_save()
-        return self._form(
-            step_id="control_alarms", data_schema=control_alarms_schema(self.options)
-        )
+        return self._form(step_id="control_alarms", data_schema=control_alarms_schema(self.options))

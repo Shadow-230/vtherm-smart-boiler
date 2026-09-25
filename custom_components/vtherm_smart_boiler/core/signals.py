@@ -62,26 +62,16 @@ class SignalSpec:
 
 SIGNAL_SPECS: dict[Signal, SignalSpec] = {
     Signal.FLAME: SignalSpec(SignalKind.BINARY, required=True),
-    Signal.FLOW: SignalSpec(
-        SignalKind.TEMPERATURE, required=True, low=-20.0, high=110.0
-    ),
+    Signal.FLOW: SignalSpec(SignalKind.TEMPERATURE, required=True, low=-20.0, high=110.0),
     Signal.RETURN: SignalSpec(SignalKind.TEMPERATURE, low=-20.0, high=110.0),
     Signal.MODULATION: SignalSpec(SignalKind.PERCENT, low=0.0, high=100.0),
-    Signal.CH_SETPOINT: SignalSpec(
-        SignalKind.TEMPERATURE, low=0.0, high=100.0
-    ),
+    Signal.CH_SETPOINT: SignalSpec(SignalKind.TEMPERATURE, low=0.0, high=100.0),
     Signal.DHW_ACTIVE: SignalSpec(SignalKind.BINARY),
     Signal.PRESSURE: SignalSpec(SignalKind.PRESSURE, low=0.0, high=6.0),
-    Signal.FLUE_GAS: SignalSpec(
-        SignalKind.TEMPERATURE, low=-20.0, high=300.0
-    ),
+    Signal.FLUE_GAS: SignalSpec(SignalKind.TEMPERATURE, low=-20.0, high=300.0),
     Signal.OUTDOOR: SignalSpec(SignalKind.TEMPERATURE, low=-60.0, high=60.0),
-    Signal.ROOM_SETPOINT: SignalSpec(
-        SignalKind.TEMPERATURE, low=0.0, high=40.0
-    ),
-    Signal.ROOM_TEMPERATURE: SignalSpec(
-        SignalKind.TEMPERATURE, low=-10.0, high=50.0
-    ),
+    Signal.ROOM_SETPOINT: SignalSpec(SignalKind.TEMPERATURE, low=0.0, high=40.0),
+    Signal.ROOM_TEMPERATURE: SignalSpec(SignalKind.TEMPERATURE, low=-10.0, high=50.0),
     Signal.CH_ACTIVE: SignalSpec(SignalKind.BINARY),
     Signal.PUMP_RUNNING: SignalSpec(SignalKind.BINARY),
     Signal.GAS_METER: SignalSpec(SignalKind.COUNTER, low=0.0),

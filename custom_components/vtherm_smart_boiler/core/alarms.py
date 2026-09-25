@@ -250,8 +250,6 @@ def hysteresis_samples(
     return samples
 
 
-
-
 # A pump runs on after the burner, and rooms close their valves as they warm: only a closed
 # circuit that lasts this long is a warning (S28; one boiler seen running on for 15 min, L3).
 LOW_FLOW_HOLD_S = 15 * 60.0

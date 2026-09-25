@@ -303,11 +303,15 @@ def hand_back_effect(control: ControlOptions) -> HandBackEffect | None:
         if control.hand_back_value_effect is ValueEffect.HEATING_STOPS:
             return HandBackEffect.HEATING_STOPS
         return HandBackEffect.DEVICE_DECIDES
-    return {
-        Topology.GATEWAY_WITH_THERMOSTAT: HandBackEffect.THERMOSTAT_TAKES_OVER,
-        Topology.GATEWAY_STANDALONE: HandBackEffect.HEATING_STOPS,
-        Topology.VIRTUAL: HandBackEffect.DEVICE_DECIDES,
-    }.get(control.topology) if control.topology is not None else None
+    return (
+        {
+            Topology.GATEWAY_WITH_THERMOSTAT: HandBackEffect.THERMOSTAT_TAKES_OVER,
+            Topology.GATEWAY_STANDALONE: HandBackEffect.HEATING_STOPS,
+            Topology.VIRTUAL: HandBackEffect.DEVICE_DECIDES,
+        }.get(control.topology)
+        if control.topology is not None
+        else None
+    )
 
 
 def config_blockers(control: ControlOptions, installation: Installation) -> list[str]:

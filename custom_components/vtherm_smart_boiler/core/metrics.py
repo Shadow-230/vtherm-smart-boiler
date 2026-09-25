@@ -93,9 +93,7 @@ def hours_with(burns: Iterable[Burn], window: tuple[float, float] | None = None)
         if burn.end > burn.start:
             hours.update(range(math.floor(burn.start / HOUR), math.ceil(burn.end / HOUR)))
     low, high = window if window is not None else (-math.inf, math.inf)
-    return sum(
-        max(0.0, min((hour + 1) * HOUR, high) - max(hour * HOUR, low)) for hour in hours
-    )
+    return sum(max(0.0, min((hour + 1) * HOUR, high) - max(hour * HOUR, low)) for hour in hours)
 
 
 @dataclass(frozen=True, slots=True)

@@ -54,9 +54,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await coordinator.async_config_entry_first_refresh()
         _report_control_problem(hass, entry, config)
         if config.control.configured:
-            control = ControlUnit(
-                hass, coordinator, config.control, raw=entry.options.get(CONTROL)
-            )
+            control = ControlUnit(hass, coordinator, config.control, raw=entry.options.get(CONTROL))
             control.restore(coordinator.stored_control)
             coordinator.control = control
             await control.async_start()
@@ -197,7 +195,7 @@ def _hand_back_unit(
     taken_with = stored.get("taken_with")
     try:
         options = parse_control(taken_with, config.installation, None)
-    except (KeyError, TypeError, ValueError):
+    except KeyError, TypeError, ValueError:
         options = None
     if options is None or not options.configured:
         logging.getLogger(__name__).error(

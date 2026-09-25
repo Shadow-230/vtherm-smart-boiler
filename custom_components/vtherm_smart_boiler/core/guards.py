@@ -250,9 +250,7 @@ def _differs(state: GuardState, desired: float, config: GuardConfig) -> bool:
     return not _matches(desired, state.written, config.tolerance)
 
 
-def _mismatch(
-    state: GuardState, confirmed: float | None, config: GuardConfig
-) -> bool:
+def _mismatch(state: GuardState, confirmed: float | None, config: GuardConfig) -> bool:
     """The device confirmed our value, and now shows another."""
     return (
         state.confirmed_at is not None
@@ -261,9 +259,7 @@ def _mismatch(
     )
 
 
-def _dropped(
-    state: GuardState, confirmed: float | None, config: GuardConfig
-) -> bool:
+def _dropped(state: GuardState, confirmed: float | None, config: GuardConfig) -> bool:
     """The read-back fell back to its value from before the session: our override dropped."""
     return (
         not config.two_valued
@@ -272,9 +268,7 @@ def _dropped(
     )
 
 
-def _changed_from_outside(
-    state: GuardState, confirmed: float | None, config: GuardConfig
-) -> bool:
+def _changed_from_outside(state: GuardState, confirmed: float | None, config: GuardConfig) -> bool:
     """Another value after ours was confirmed — not our dropped override, nor our own lapse."""
     return _mismatch(state, confirmed, config) and not _dropped(state, confirmed, config)
 

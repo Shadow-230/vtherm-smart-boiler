@@ -265,7 +265,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         control = stored.get("control")
         self.stored_control = control if isinstance(control, dict) else {}
         factors = stored.get("factors")
-        for zone_id, data in (factors.items() if isinstance(factors, dict) else ()):
+        for zone_id, data in factors.items() if isinstance(factors, dict) else ():
             if zone_id not in self.config.zone_entities or not isinstance(data, dict):
                 continue
             try:
@@ -289,7 +289,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             if day.start >= now - KEEP_DAYS * DAY:
                 self.daily[day.start] = day
         measured = stored.get("measured")
-        for key, data in (measured.items() if isinstance(measured, dict) else ()):
+        for key, data in measured.items() if isinstance(measured, dict) else ():
             try:
                 estimate = Estimate(
                     float(data["value"]),
