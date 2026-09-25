@@ -1127,6 +1127,46 @@ async def test_choosing_no_control_while_a_hand_back_is_owed_keeps_handing_back(
     assert issue(rig, "hand_back_owed") is None
 
 
+async def test_clearing_the_heating_switch_is_refused_while_a_hand_back_is_owed(
+    rig: Rig,
+) -> None:
+    """H2: the frontend leaves a cleared optional field out of the answer, so an owed
+    hand-back's heating switch must not be dropped just because it is absent."""
+    from homeassistant.setup import async_setup_component
+
+    assert await async_setup_component(
+        rig.hass, "input_boolean", {"input_boolean": {"fake_ch": {}}}
+    )
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(rig, **held_entity(number, ch_entity="input_boolean.fake_ch", ch_write_type="held"))
+    await rig.switch(True)
+    number.set_available(False)
+    await rig.switch(False)
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+    assert rig.entry is not None
+    flow = await rig.hass.config_entries.options.async_init(rig.entry.entry_id)
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"], {"next_step_id": "control"}
+    )
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"],
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": number.entity_id},
+    )
+    assert flow["step_id"] == "control_entity"
+    unchanged = {
+        "setpoint_entity": number.entity_id,
+        "write_type": "held",
+        "ch_write_type": "held",
+        "hand_back": "value",
+        "hand_back_value": 50,
+        "hand_back_value_effect": "own_control",
+    }  # everything as it is, the heating switch cleared (left out)
+    flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], unchanged)
+    assert flow["errors"] == {"base": "hand_back_pending"}
+    assert rig.entry.options["control"]["ch_entity"] == "input_boolean.fake_ch"
+
+
 async def test_removing_the_entry_with_a_hand_back_owed_raises_a_repair_issue(rig: Rig) -> None:
     await owe_a_hand_back(rig)
     assert rig.entry is not None

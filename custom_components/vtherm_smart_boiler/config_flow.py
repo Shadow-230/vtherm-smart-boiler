@@ -8,6 +8,7 @@ the options dictionary that ``config.EntryConfig`` interprets.
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
@@ -1185,10 +1186,18 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         units = [getattr(coordinator, name, None) for name in ("control", "hand_back_unit")]
         return any(unit is not None and unit.hand_back_owed for unit in units)
 
-    def _changes_hand_back(self, user_input: dict[str, Any]) -> bool:
+    def _changes_hand_back(self, user_input: dict[str, Any], schema: vol.Schema) -> bool:
+        """Whether the answer changes how the boiler is given back. A field the form shows but
+        the answer leaves out was cleared: the frontend leaves an emptied optional field out."""
         current = self.config_entry.options.get(CONTROL, {})
+        shown = {str(marker) for marker in schema.schema}
+
+        def value(data: Mapping[str, Any], key: str) -> Any:
+            found = data.get(key)
+            return None if found in (None, "") else found
+
         return any(
-            key in user_input and user_input.get(key) != current.get(key) for key in HAND_BACK_KEYS
+            value(user_input, key) != value(current, key) for key in HAND_BACK_KEYS if key in shown
         )
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -1268,7 +1277,11 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 errors = control_details_error(
                     user_input, read_bounds(self.hass, user_input["setpoint_entity"])
                 )
-            if not errors and self._hand_back_owed() and self._changes_hand_back(user_input):
+            if (
+                not errors
+                and self._hand_back_owed()
+                and self._changes_hand_back(user_input, control_entity_schema(self.options))
+            ):
                 errors = {"base": "hand_back_pending"}
             if not errors:
                 apply_control_details(self.options, user_input)
@@ -1291,7 +1304,9 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         if user_input is not None:
             if user_input["gateway_id"] not in gateways:
                 errors = {"gateway_id": "gateway_unknown"}  # every write would fail
-            elif self._hand_back_owed() and self._changes_hand_back(user_input):
+            elif self._hand_back_owed() and self._changes_hand_back(
+                user_input, control_gateway_schema(self.options, gateways)
+            ):
                 errors = {"base": "hand_back_pending"}
             else:
                 apply_control_details(self.options, user_input)
@@ -1312,7 +1327,11 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 for key in ("mqtt_top", "mqtt_node")
                 if not mqtt_topic_valid(user_input.get(key))
             }
-            if not errors and self._hand_back_owed() and self._changes_hand_back(user_input):
+            if (
+                not errors
+                and self._hand_back_owed()
+                and self._changes_hand_back(user_input, control_mqtt_schema(self.options))
+            ):
                 errors = {"base": "hand_back_pending"}
             if not errors:
                 apply_control_details(self.options, user_input)
