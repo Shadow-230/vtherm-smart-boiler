@@ -1,4 +1,5 @@
-"""Diagnostics download, redacted: entity IDs are replaced by stable placeholders."""
+"""Diagnostics download, redacted: entity IDs are replaced by stable placeholders and the
+gateway's identifiers hidden; what is not personal — service names, versions — stays readable."""
 
 from __future__ import annotations
 
@@ -8,6 +9,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 
 from . import feature_manager
 from .coordinator import SmartBoilerCoordinator
@@ -20,13 +22,24 @@ REDACTED_KEYS = frozenset({"gateway_id", "mqtt_node", "mqtt_top"})
 
 class _Redactor:
     """Replaces every entity ID with ``entity_N``, the same N for the same ID, and hides device
-    identifiers."""
+    identifiers. An entity ID is what Home Assistant knows as one, or what an option names as
+    one; a service name or a version only looks like one and stays."""
 
-    def __init__(self) -> None:
+    def __init__(self, hass: HomeAssistant, entities: frozenset[str] = frozenset()) -> None:
+        self._hass = hass
+        self._registry = er.async_get(hass)
+        self._entities = entities
         self._names: dict[str, str] = {}
 
+    def _is_entity(self, value: str) -> bool:
+        return bool(ENTITY_ID.match(value)) and (
+            value in self._entities
+            or self._hass.states.get(value) is not None
+            or self._registry.async_get(value) is not None
+        )
+
     def __call__(self, value: Any) -> Any:
-        if isinstance(value, str) and ENTITY_ID.match(value):
+        if isinstance(value, str) and self._is_entity(value):
             return self._names.setdefault(value, f"entity_{len(self._names) + 1}")
         if isinstance(value, dict):
             return {
@@ -74,7 +87,7 @@ async def async_get_config_entry_diagnostics(
 ) -> dict[str, Any]:
     coordinator: SmartBoilerCoordinator = entry.runtime_data
     data = coordinator.data
-    redact = _Redactor()
+    redact = _Redactor(hass, _named_entities(entry.options))
     analysis = data.analysis
     summary: dict[str, Any] | None = None
     if analysis is not None:
@@ -146,3 +159,14 @@ def _feature_manager(hass: HomeAssistant) -> dict[str, Any]:
     if registration is None:
         return {"state": None}
     return {"state": registration.state.value, "registered_at": registration.registered_at}
+
+
+def _named_entities(value: Any) -> frozenset[str]:
+    """Every entity ID the options name — also one that is away now."""
+    if isinstance(value, str):
+        return frozenset({value}) if ENTITY_ID.match(value) else frozenset()
+    if isinstance(value, dict):
+        value = list(value.values())
+    if isinstance(value, list | tuple):
+        return frozenset().union(*(_named_entities(item) for item in value))
+    return frozenset()
