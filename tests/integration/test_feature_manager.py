@@ -163,6 +163,24 @@ async def test_registered_again_after_vt_recreates_its_api(
     assert new.list_feature_managers() == [DOMAIN]
 
 
+async def test_a_new_vt_api_gets_the_factory_before_its_thermostat_starts(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """VT drops its API with its last entry (VT 10.4.0 ``remove_entry``); set up again, it
+    builds a thermostat, which writes its first state, and only then starts it and asks for
+    feature managers. The factory is registered with the new API at that first state — the
+    plugin's next update would come after the start, and the thermostat would never ask again
+    until the next reload, which would drop the API once more."""
+    api = vt_is_set_up(hass)
+    await setup(hass, zones)
+    assert api.list_feature_managers() == [DOMAIN]
+    VThermAPI.reset_vtherm_api()
+    new = VThermAPI.get_vtherm_api(hass)
+    assert new.list_feature_managers() == []
+    hass.states.async_set("climate.rebuilt_thermostat", "heat")  # its first state
+    assert new.list_feature_managers() == [DOMAIN]  # at once, with no update in between
+
+
 async def test_a_vt_without_feature_managers_is_reported(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:

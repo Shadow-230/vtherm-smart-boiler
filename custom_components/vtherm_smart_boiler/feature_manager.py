@@ -21,8 +21,8 @@ from collections.abc import Callable
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.const import EVENT_COMPONENT_LOADED
-from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
+from homeassistant.const import EVENT_COMPONENT_LOADED, EVENT_STATE_CHANGED
+from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 
@@ -166,6 +166,25 @@ class SmartBoilerFeatureFactory:
         return SmartBoilerFeatureManager(self._hass, thermostat, self._lookup)
 
 
+@callback
+def _is_climate(data: EventStateChangedData) -> bool:
+    return data["entity_id"].startswith("climate.")
+
+
+def _api_name() -> str:
+    try:
+        from vtherm_api.const import VTHERM_API_NAME
+    except ImportError:
+        return "vtherm_api"  # the name in vtherm_api 0.5.0
+    return str(VTHERM_API_NAME)
+
+
+def _stored_api(hass: HomeAssistant) -> Any | None:
+    """The API instance VT keeps, without creating one."""
+    data = hass.data.get(VT_DOMAIN)
+    return data.get(_api_name()) if isinstance(data, dict) else None
+
+
 def _api(hass: HomeAssistant) -> tuple[Any | None, RegistrationState]:
     """VT's API once VT has created it, with what it allows. ``get_vtherm_api`` is called only
     when the instance exists, as it would create a bare one otherwise."""
@@ -175,12 +194,7 @@ def _api(hass: HomeAssistant) -> tuple[Any | None, RegistrationState]:
         from vtherm_api.vtherm_api import VThermAPI
     except ImportError:
         return None, RegistrationState.UNSUPPORTED
-    try:
-        from vtherm_api.const import VTHERM_API_NAME
-    except ImportError:
-        VTHERM_API_NAME = "vtherm_api"  # the name in vtherm_api 0.5.0
-    data = hass.data.get(VT_DOMAIN)
-    if not isinstance(data, dict) or data.get(VTHERM_API_NAME) is None:
+    if _stored_api(hass) is None:
         return None, RegistrationState.WAITING
     try:
         api = VThermAPI.get_vtherm_api(hass)
@@ -205,6 +219,7 @@ class FeatureRegistration:
         )
         self._api: Any | None = None
         self._unsub: CALLBACK_TYPE | None = None
+        self._unsub_states: CALLBACK_TYPE | None = None
         self.state = RegistrationState.WAITING
         self.registered_at: float | None = None  # when the current API got the factory
 
@@ -213,8 +228,20 @@ class FeatureRegistration:
         return self._api is not None
 
     def start(self) -> None:
+        # VT drops its API with its last entry and creates a new one when set up again; a
+        # thermostat it then builds writes its first state before it starts and asks for
+        # feature managers, so the new API is given the factory right then.
+        self._unsub_states = self._hass.bus.async_listen(
+            EVENT_STATE_CHANGED, self._on_climate_state, event_filter=_is_climate
+        )
         if not self.check():
             self._unsub = self._hass.bus.async_listen(EVENT_COMPONENT_LOADED, self._on_loaded)
+
+    @callback
+    def _on_climate_state(self, _event: Event[EventStateChangedData]) -> None:
+        stored = _stored_api(self._hass)
+        if stored is not None and stored is not self._api:
+            self.check()
 
     @callback
     def _on_loaded(self, event: Event) -> None:
@@ -258,6 +285,9 @@ class FeatureRegistration:
         if self._unsub is not None:
             self._unsub()
             self._unsub = None
+        if self._unsub_states is not None:
+            self._unsub_states()
+            self._unsub_states = None
         ir.async_delete_issue(self._hass, DOMAIN, UNSUPPORTED_ISSUE)
         api, self._api = self._api, None
         if api is None or not hasattr(api, "unregister_feature_manager"):
