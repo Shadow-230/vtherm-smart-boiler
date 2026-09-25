@@ -114,7 +114,9 @@ Each topic lives only in its file; do not copy it here.
   creates a bare API when VT has none yet — call it only once VT's instance exists. A factory is
   picked up when a thermostat starts; a running one sees it only after VT's reload.
 - **VT central configuration**: `select.central_mode` (Auto, Stopped, Heat only, Cool only, Frost
-  protection) — the plugin obeys it. Central boiler: binary sensor on device count or total power
+  protection); VT applies it only to thermostats that follow the central mode
+  (`is_controlled_by_central_mode`, VT 10.4.0 `base_thermostat.py`), so the plugin sees it
+  through the zones' demand. Central boiler: binary sensor on device count or total power
   thresholds, calls on/off actions — the plugin replaces it.
 - **VT** uses current outdoor temperature only; forecast is on its "future improvements" list.
   Auto-TPI learns in sessions (≥ 50 cycles). `set_auto_tpi_mode` is not a pure pause: the
