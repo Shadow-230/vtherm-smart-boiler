@@ -52,8 +52,15 @@ async def setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     await hass.async_block_till_done()
 
 
-def entity_id(hass: HomeAssistant, entry: MockConfigEntry, domain: str, key: str) -> str:
+def entity_id(
+    hass: HomeAssistant, entry: MockConfigEntry, domain: str, key: str, zone: str | None = None
+) -> str:
+    """One of the plugin's entities; a zone's are keyed on the thermostat's registry entry."""
     registry = er.async_get(hass)
+    if zone is not None:
+        zone_entry = registry.async_get(zone)
+        assert zone_entry is not None, zone
+        key = f"{key}_{zone_entry.id}"
     found = registry.async_get_entity_id(domain, DOMAIN, f"{entry.entry_id}_{key}")
     assert found is not None, key
     return found
@@ -88,10 +95,10 @@ async def test_setup_creates_entities_and_reads_signals(
     connection = hass.states.get(entity_id(hass, entry, "binary_sensor", "connection"))
     assert connection is not None
     assert connection.state == "on"
-    hot = hass.states.get(entity_id(hass, entry, "binary_sensor", f"hot_water_{living}"))
+    hot = hass.states.get(entity_id(hass, entry, "binary_sensor", "hot_water", living))
     assert hot is not None
     assert hot.state == "on"
-    factor = hass.states.get(entity_id(hass, entry, "sensor", f"emitter_power_factor_{living}"))
+    factor = hass.states.get(entity_id(hass, entry, "sensor", "emitter_power_factor", living))
     assert factor is not None
     assert float(factor.state) > 0
     reference = hass.states.get(entity_id(hass, entry, "sensor", "reference_room_temperature"))
@@ -280,7 +287,7 @@ async def test_a_slow_analysis_does_not_set_the_quick_path_back(
     await setup(hass, entry)
     await hass.async_block_till_done(wait_background_tasks=True)
     coordinator = entry.runtime_data
-    hot_id = entity_id(hass, entry, "binary_sensor", f"hot_water_{living}")
+    hot_id = entity_id(hass, entry, "binary_sensor", "hot_water", living)
     release = threading.Event()
     real = coordinator_module.analyse
 
@@ -299,6 +306,71 @@ async def test_a_slow_analysis_does_not_set_the_quick_path_back(
     await task
     await hass.async_block_till_done()
     assert hass.states.get(hot_id).state == "off"
+
+
+async def test_entities_the_options_no_longer_create_are_removed(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """P39: a zone taken out of the options takes its entities with it; an entity the user
+    disabled stays disabled, not removed."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    living = zones.add("living")
+    bedroom = zones.add("bedroom")
+    entry = entry_for(boiler, zones)
+    await setup(hass, entry)
+    registry = er.async_get(hass)
+    gone = entity_id(hass, entry, "binary_sensor", "hot_water", bedroom)
+    disabled = entity_id(hass, entry, "sensor", "emitter_power_factor", living)
+    registry.async_update_entity(disabled, disabled_by=er.RegistryEntryDisabler.USER)
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, "zones": [{"entity_id": living}]}
+    )
+    await hass.async_block_till_done()
+    assert registry.async_get(gone) is None
+    assert registry.async_get(disabled) is not None
+
+
+async def test_zone_entities_keep_their_identity_when_the_thermostat_is_renamed(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """P39: keyed on the thermostat's registry entry, not its entity ID."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    living = zones.add("living")
+    entry = entry_for(boiler, zones)
+    await setup(hass, entry)
+    before = entity_id(hass, entry, "binary_sensor", "hot_water", living)
+    registry = er.async_get(hass)
+    registry.async_update_entity(living, new_entity_id="climate.lounge")
+    hass.states.async_set("climate.lounge", "heat", {"current_temperature": 20.0})
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, "zones": [{"entity_id": "climate.lounge"}]}
+    )
+    await hass.async_block_till_done()
+    assert entity_id(hass, entry, "binary_sensor", "hot_water", "climate.lounge") == before
+
+
+async def test_zone_entities_from_before_move_to_the_stable_key(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """An entity keyed on the thermostat's entity ID (up to 0.2) keeps its entity and history."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    living = zones.add("living")
+    entry = entry_for(boiler, zones)
+    entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    old = registry.async_get_or_create(
+        "binary_sensor",
+        DOMAIN,
+        f"{entry.entry_id}_hot_water_{living}",
+        config_entry=entry,
+        suggested_object_id="living_hot_water",
+    )
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entity_id(hass, entry, "binary_sensor", "hot_water", living) == old.entity_id
 
 
 async def test_invalid_options_fail_setup_with_a_reason(hass: HomeAssistant) -> None:
@@ -336,7 +408,7 @@ async def test_a_steady_flow_is_stale_only_past_a_user_limit(
     extra = {} if limit is None else {"freshness": {"flow": limit}}
     entry = entry_for(boiler, zones, **extra)
     await setup(hass, entry)
-    hot_id = entity_id(hass, entry, "binary_sensor", f"hot_water_{living}")
+    hot_id = entity_id(hass, entry, "binary_sensor", "hot_water", living)
     assert hass.states.get(hot_id).state == "on"
     freezer.tick(timedelta(hours=1))
     zones.set("living", hvac_action="heating", valve_open_percent=50)  # the zone stays fresh

@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .control import ControlUnit
 from .coordinator import SmartBoilerCoordinator
+
+
+def zone_key(hass: HomeAssistant, zone: str) -> str:
+    """What a zone's entities are keyed on: the thermostat's registry entry, which stays when
+    its entity ID is renamed; the entity ID only for a thermostat outside the registry."""
+    entry = er.async_get(hass).async_get(zone)
+    return entry.id if entry is not None else zone
 
 
 class SmartBoilerEntity(CoordinatorEntity[SmartBoilerCoordinator]):
@@ -28,7 +37,7 @@ class SmartBoilerEntity(CoordinatorEntity[SmartBoilerCoordinator]):
         self.key = key
         self.zone = zone
         self.circuit = circuit
-        scope = zone or circuit
+        scope = zone_key(coordinator.hass, zone) if zone is not None else circuit
         self._attr_unique_id = f"{entry.entry_id}_{key}" + (f"_{scope}" if scope else "")
         self._attr_translation_key = key
         if zone is not None:

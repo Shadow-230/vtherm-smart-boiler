@@ -315,6 +315,7 @@ async def async_setup_entry(
     ]
     if coordinator.control is not None:
         entities += [ControlStateSensor(coordinator), ControlSetpointSensor(coordinator)]
+    coordinator.expect_entities(entities)
     async_add_entities(entities)
 
 

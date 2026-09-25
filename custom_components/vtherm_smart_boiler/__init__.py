@@ -23,7 +23,7 @@ PLATFORMS = ("sensor", "binary_sensor", "switch")
 
 # Loaded through Home Assistant's import executor before first use: importing them in the event
 # loop would read them from disk there.
-_RUNTIME_MODULES = ("config", "coordinator", "control", "feature_manager")
+_RUNTIME_MODULES = ("config", "coordinator", "control", "feature_manager", "entity")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -65,10 +65,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if coordinator.hand_back_unit is not None:
                 await coordinator.hand_back_unit.async_start()
         entry.runtime_data = coordinator
+        await _async_migrate_zone_unique_ids(hass, entry, config)
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         feature_manager.async_attach(hass, coordinator)
-        if not config.control.configured:
-            _remove_control_entities(hass, entry)
+        _remove_stale_entities(hass, entry, coordinator.expected_unique_ids)
     except Exception:
         feature_manager.async_detach(hass, coordinator)
         await _async_stop(coordinator)  # no control clock is left running
@@ -205,20 +205,35 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
         await hass.config_entries.async_reload(entry.entry_id)
 
 
-def _remove_control_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Control was removed from the options: its entities go from the registry too."""
+def _remove_stale_entities(hass: HomeAssistant, entry: ConfigEntry, expected: set[str]) -> None:
+    """Entities the options no longer create — a zone or circuit taken out, a signal unmapped,
+    control removed — go from the registry. Disabled ones the platforms still create stay."""
     from homeassistant.helpers import entity_registry as er
 
-    from .control import ControlAlarm
-
-    keys = [
-        ("switch", "control"),
-        ("sensor", "control_state"),
-        ("sensor", "control_setpoint"),
-        *(("binary_sensor", f"alarm_{kind.value}") for kind in ControlAlarm),
-    ]
     registry = er.async_get(hass)
-    for domain, key in keys:
-        entity_id = registry.async_get_entity_id(domain, DOMAIN, f"{entry.entry_id}_{key}")
-        if entity_id is not None:
-            registry.async_remove(entity_id)
+    for registered in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if registered.unique_id not in expected:
+            registry.async_remove(registered.entity_id)
+
+
+async def _async_migrate_zone_unique_ids(
+    hass: HomeAssistant, entry: ConfigEntry, config: EntryConfig
+) -> None:
+    """Up to 0.2 a zone's entities were keyed on the thermostat's entity ID; they move to its
+    registry entry, keeping their entity and history."""
+    from homeassistant.core import callback
+    from homeassistant.helpers import entity_registry as er
+
+    from .entity import zone_key
+
+    old_keys = {zone: zone_key(hass, zone) for zone in config.zone_entities}
+
+    @callback
+    def migrate(registered: er.RegistryEntry) -> dict[str, str] | None:
+        for zone, key in old_keys.items():
+            suffix = f"_{zone}"
+            if zone != key and registered.unique_id.endswith(suffix):
+                return {"new_unique_id": registered.unique_id[: -len(suffix)] + f"_{key}"}
+        return None
+
+    await er.async_migrate_entries(hass, entry.entry_id, migrate)

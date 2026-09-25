@@ -168,6 +168,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # A lasting failure of a periodic job is logged once, with its trace, and its end once.
         self._failing: set[str] = set()
         self._save_due: float | None = None  # when the pending delayed save runs
+        # The entities the platforms create now (disabled ones too): the rest are stale.
+        self.expected_unique_ids: set[str] = set()
         self.control: ControlUnit | None = None
         # Control left the options while a hand-back was still owed: this unit only hands back.
         self.hand_back_unit: ControlUnit | None = None
@@ -287,6 +289,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     async def async_save_now(self) -> None:
         """Write the store at once: for what a crash must not lose (the controlling marker)."""
         await self._store.async_save(self._stored_data())
+
+    def expect_entities(self, entities: list[Any]) -> None:
+        self.expected_unique_ids.update(e.unique_id for e in entities if e.unique_id)
 
     def schedule_save(self, delay: float = SAVE_DELAY_S) -> None:
         """Save within ``delay``. Each delayed save restarts the store's timer, so one is

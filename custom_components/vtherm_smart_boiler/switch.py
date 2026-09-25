@@ -31,7 +31,9 @@ async def async_setup_entry(
 ) -> None:
     coordinator: SmartBoilerCoordinator = entry.runtime_data
     if coordinator.control is not None:
-        async_add_entities([ControlSwitch(coordinator)])
+        entities = [ControlSwitch(coordinator)]
+        coordinator.expect_entities(entities)
+        async_add_entities(entities)
 
 
 class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):

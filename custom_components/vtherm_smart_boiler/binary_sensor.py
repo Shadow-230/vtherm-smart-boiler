@@ -60,6 +60,7 @@ async def async_setup_entry(
         entities.append(OutdoorSensorProblem(coordinator))
     if coordinator.control is not None:
         entities += [ControlAlarmSensor(coordinator, kind) for kind in ControlAlarm]
+    coordinator.expect_entities(entities)
     async_add_entities(entities)
 
 
