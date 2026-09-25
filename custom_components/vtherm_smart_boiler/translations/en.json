@@ -449,7 +449,7 @@
         },
         "data_description": {
           "write_path": "No control (default); a writable entity you pick, e.g. an EMS-ESP or ESPHome OpenTherm number; the OpenTherm Gateway through Home Assistant's OpenTherm Gateway integration; or the OTGW firmware's MQTT commands. Pick the path your boiler interface really offers: a wrong one means writes that fail or go nowhere.",
-          "topology": "How the gateway sits between thermostat and boiler. With a thermostat: on hand-back the thermostat takes over. Stand-alone, without a thermostat: on hand-back, and whenever Home Assistant stops for more than about a minute, the boiler stops heating. Monitor mode: the gateway only listens and control is not possible. Virtual: a controller on the Home Assistant side, e.g. ESPHome, drives the boiler. Required; declare it as it is — the plugin never changes the gateway's mode.",
+          "topology": "How the gateway sits between thermostat and boiler. With a thermostat: on hand-back the thermostat takes over. Stand-alone, without a thermostat: on hand-back, and whenever Home Assistant stops for more than about a minute, the boiler stops heating. Monitor mode: the gateway only listens and control is not possible. Virtual: a controller on the Home Assistant side, e.g. ESPHome, drives the boiler. Required; declare it as it is — the plugin never changes the gateway's mode. A lost link to the boiler's data raises an alarm and hands back in every topology — stand-alone, heating stops until the data returns.",
           "confirmed_entity": "The entity that reports the setpoint the boiler received, e.g. the gateway's control setpoint sensor. Required: every write is checked against it, and a write the boiler ignores or another controller overwrites is reported. Picking the value you write instead of the boiler's report hides both."
         }
       },
@@ -874,6 +874,9 @@
       },
       "alarm_hand_back_failed": {
         "name": "Control: hand-back failed"
+      },
+      "alarm_boiler_link_lost": {
+        "name": "Control: boiler link lost"
       }
     },
     "switch": {

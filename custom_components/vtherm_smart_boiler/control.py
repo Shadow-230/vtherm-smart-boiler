@@ -42,7 +42,7 @@ from .control_config import (
     config_blockers,
 )
 from .core.controller import CentralMode as ControlCentralMode
-from .core.controller import ControlInputs, ControlMode, ControlState
+from .core.controller import ControlInputs, ControlMode, ControlState, Reason
 from .core.guards import (
     GuardEvent,
     SetpointGuardState,
@@ -94,6 +94,7 @@ class ControlAlarm(StrEnum):
     OUTSIDE_CHANGE = "outside_change"
     HAND_BACK_FAILED = "hand_back_failed"
     CONTROL_ERROR = "control_error"
+    BOILER_LINK_LOST = "boiler_link_lost"  # handed back without the boiler's data
 
 
 _EVENT_ALARM = {
@@ -490,6 +491,14 @@ class ControlUnit:
             await self._async_hand_back_writes(now)
         else:
             await self._async_writes(out, now)
+        if Reason.BOILER_LINK_STALE in out.decision.reasons and (
+            out.hand_back or out.decision.mode is ControlMode.HANDED_BACK
+        ):
+            # Every topology: without the boiler's data control hands back; stand-alone that
+            # stops heating, so the user is told.
+            session.alarms.add(ControlAlarm.BOILER_LINK_LOST)
+        elif inputs.boiler_link:
+            session.alarms.discard(ControlAlarm.BOILER_LINK_LOST)
         for event in out.events:
             session.alarms.add(_EVENT_ALARM[event])
         if out.events:
@@ -585,8 +594,12 @@ class ControlUnit:
                 if alarm.active and self.options.reaction(kind.value) is AlarmReaction.HAND_BACK
             ]
         for alarm in sorted(self._session.alarms):
-            if alarm in (ControlAlarm.CONTROL_ERROR, ControlAlarm.HAND_BACK_FAILED):
-                continue  # a blocker, and a retry of its own
+            if alarm in (
+                ControlAlarm.CONTROL_ERROR,
+                ControlAlarm.HAND_BACK_FAILED,
+                ControlAlarm.BOILER_LINK_LOST,
+            ):
+                continue  # a blocker, a retry of its own, and a hand-back already made
             if self.options.reaction(alarm.value) is AlarmReaction.HAND_BACK:
                 active.append(alarm.value)
         return tuple(active)

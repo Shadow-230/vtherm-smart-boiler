@@ -449,7 +449,7 @@
         },
         "data_description": {
           "write_path": "Bez sterowania (domyślnie); wybrana przez ciebie encja do zapisu, np. liczba EMS-ESP albo ESPHome OpenTherm; bramka OpenTherm Gateway przez integrację OpenTherm Gateway w Home Assistant; albo polecenia MQTT firmware OTGW. Wybierz ścieżkę, którą naprawdę oferuje twój interfejs kotła: zła oznacza zapisy, które się nie udają albo trafiają donikąd.",
-          "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Tryb monitora: bramka tylko słucha i sterowanie jest niemożliwe. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki.",
+          "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Tryb monitora: bramka tylko słucha i sterowanie jest niemożliwe. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki. Utrata danych kotła podnosi alarm i oddaje sterowanie w każdej topologii — bez termostatu grzanie ustaje, dopóki dane nie wrócą.",
           "confirmed_entity": "Encja, która pokazuje nastawę odebraną przez kocioł, np. czujnik nastawy sterowania bramki. Wymagana: każdy zapis jest z nią porównywany, a zapis zignorowany przez kocioł albo nadpisany przez inny sterownik zostaje zgłoszony. Wybranie wartości, którą zapisujesz, zamiast odczytu z kotła ukrywa oba przypadki."
         }
       },
@@ -874,6 +874,9 @@
       },
       "alarm_hand_back_failed": {
         "name": "Sterowanie: oddanie nieudane"
+      },
+      "alarm_boiler_link_lost": {
+        "name": "Sterowanie: utracono dane kotła"
       }
     },
     "switch": {

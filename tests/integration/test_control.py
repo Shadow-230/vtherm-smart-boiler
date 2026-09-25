@@ -1106,3 +1106,38 @@ async def test_the_one_rewrite_is_remembered_across_a_restart(
     await rig.advance(20)
     assert rig.gateway.setpoints().count(EXPECTED) == 1  # not written again
     assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
+
+
+@pytest.mark.parametrize("topology", ["gateway_standalone", "gateway_with_thermostat"])
+async def test_a_lost_boiler_link_raises_an_alarm_and_hands_back(rig: Rig, topology: str) -> None:
+    """In every topology: no write without the boiler's data, an alarm, and after five minutes a
+    hand-back — stand-alone, heating stops, as the switch says. Control resumes with the data."""
+    await start(rig, topology=topology)
+    await rig.switch(True)
+    effect = rig.state("switch", "control").attributes["hand_back_effect"]
+    standalone = topology == "gateway_standalone"
+    assert effect == ("heating_stops" if standalone else "thermostat_takes_over")
+    rig.flow = None
+    rig.live()
+    count = len(rig.gateway.calls)
+    await rig.advance(310)
+    assert rig.gateway.calls[count:] == [("ch", True), ("setpoint", 0.0)]
+    assert rig.state("binary_sensor", "alarm_boiler_link_lost").state == "on"
+    rig.flow = 35.0
+    await rig.advance(20)
+    assert rig.state("binary_sensor", "alarm_boiler_link_lost").state == "off"
+    assert rig.gateway.setpoints()[-1] == EXPECTED  # control resumed
+
+
+async def test_a_failed_outdoor_sensor_is_not_a_lost_link(rig: Rig) -> None:
+    """Without the outdoor temperature the fallback setpoint heats; nothing is handed back."""
+    await start(rig)
+    await rig.switch(True)
+    rig.outdoor = None  # type: ignore[assignment]
+    await rig.advance(400)
+    assert ("setpoint", 0.0) not in rig.gateway.calls
+    assert rig.state("binary_sensor", "alarm_boiler_link_lost").state == "off"
+    state = rig.state("sensor", "control_state")
+    assert state.state in ("heating", "fallback")  # the curve holds the last value, then falls back
+    assert "outdoor_held" in state.attributes["reasons"]
+    assert rig.gateway.setpoints()[-1] >= 25.0  # still heating
