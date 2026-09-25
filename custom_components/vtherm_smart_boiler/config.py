@@ -265,17 +265,23 @@ def _parameters(data: Mapping[str, Any], building: Mapping[str, Any]) -> Paramet
     indoor = _value_or(parameters.value(ParameterKey.INDOOR_REFERENCE), 20.0)
     if parameters.get(ParameterKey.LOSS_COEFFICIENT).estimate(Source.ENTERED) is None:
         loss: Estimate | None = None
-        if building.get("design_load_kw"):
-            loss = loss_from_design_load(float(building["design_load_kw"]), design_outdoor, indoor)
-        elif building.get("floor_area") and building.get("insulation"):
-            loss = loss_from_coarse_answers(
-                float(building["floor_area"]),
-                InsulationClass(building["insulation"]),
-                design_outdoor,
-                indoor,
-            )
-        if loss is not None:
-            parameters = parameters.with_estimate(ParameterKey.LOSS_COEFFICIENT, loss)
+        source = "design_load_kw" if building.get("design_load_kw") else "floor_area"
+        try:
+            if building.get("design_load_kw"):
+                loss = loss_from_design_load(
+                    float(building["design_load_kw"]), design_outdoor, indoor
+                )
+            elif building.get("floor_area") and building.get("insulation"):
+                loss = loss_from_coarse_answers(
+                    float(building["floor_area"]),
+                    InsulationClass(building["insulation"]),
+                    design_outdoor,
+                    indoor,
+                )
+            if loss is not None:
+                parameters = parameters.with_estimate(ParameterKey.LOSS_COEFFICIENT, loss)
+        except ValueError as err:  # a heat loss no house has: the answers do not fit together
+            raise ConfigError("implausible_parameter", source) from err
     if building.get("thermal_mass"):
         parameters = parameters.with_estimate(
             ParameterKey.THERMAL_TIME_CONSTANT,

@@ -205,22 +205,19 @@
       "fixed_temperature_missing": "Obieg pasywny stały potrzebuje swojej temperatury stałej.",
       "foreign_heat_unsupported": "Źródłem ciepła mogą być tylko przełączniki, czujniki binarne oraz czujniki mocy lub temperatury.",
       "temperature_threshold_missing": "Źródło temperatury potrzebuje progu temperatury (poziom zaawansowany).",
-      "reference_zone_unknown": "Wybierz jedną ze skonfigurowanych stref."
-    },
-    "abort": {
+      "reference_zone_unknown": "Wybierz jedną ze skonfigurowanych stref.",
       "missing_signal": "Brakuje wymaganego sygnału.",
       "unknown_signal": "Nieznany sygnał w konfiguracji.",
       "unknown_parameter": "Nieznany parametr w konfiguracji.",
       "implausible_parameter": "Parametr jest poza wiarygodnym zakresem.",
       "unknown_circuit": "Strefa wskazuje obieg, który nie istnieje.",
       "zone_without_circuit": "Strefa nie ma obiegu.",
-      "fixed_temperature_missing": "Obieg pasywny stały potrzebuje swojej temperatury stałej.",
-      "reference_zone_unknown": "Wybrana strefa odniesienia nie jest jedną ze stref.",
       "duplicate_circuit": "Dwa obiegi mają tę samą nazwę.",
       "duplicate_zone": "Strefa jest podana dwa razy.",
       "no_circuit": "Potrzebny jest co najmniej jeden obieg.",
       "invalid_control": "Ustawień sterowania nie da się użyć.",
-      "alarm_limits_out_of_order": "Próg alarmu musi leżeć za progiem ostrzeżenia."
+      "alarm_limits_out_of_order": "Próg alarmu musi leżeć za progiem ostrzeżenia.",
+      "modulation_not_percent": "Modulacja to procent zakresu kotła: wybierz czujnik w %."
     }
   },
   "options": {
@@ -251,7 +248,7 @@
         },
         "data_description": {
           "level": "Prosty pokazuje to, co najważniejsze; zaawansowany pokazuje każdy parametr.",
-          "restore_defaults": "Przy przejściu na prosty: zaznacz, aby przywrócić domyślne wszystkie ustawienia zaawansowane. Niezaznaczone zostają aktywne, ale ukryte, a opcje pokazują, że część różni się od domyślnych."
+          "restore_defaults": "Przy przejściu na prosty: zaznacz, aby przywrócić domyślne strojenie zaawansowane — kształt krzywej, limity i zachowanie sterowania, reakcje na alarmy, progi monitora, margines pokoju odniesienia. Fakty o instalacji zostają niezależnie od wyboru: zmapowane sygnały, kocioł, obiegi, wielkości grzejników i wpisane wartości. Niezaznaczone strojenie zostaje aktywne, ale ukryte, a opcje pokazują, że część ustawień zaawansowanych jest aktywna."
         }
       },
       "signals": {
@@ -632,22 +629,25 @@
       "count_threshold_above_zones": "Więcej stref, niż jest skonfigurowanych: grzanie nigdy nie zostałoby wezwane.",
       "no_demand_criterion": "Ustaw co najmniej jedno kryterium: liczba stref 0 wymaga progu mocy albo otwarcia.",
       "off_setpoint_not_below_hard_min": "„Wyłącz” musi być poniżej najniższej nastawy zasilania, inaczej by grzało.",
-      "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury (°C, °F lub K): zapisana wartość znaczyłaby dla niej coś innego. Wybierz encję nastawy temperatury zasilania kotła."
-    },
-    "abort": {
+      "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury (°C, °F lub K): zapisana wartość znaczyłaby dla niej coś innego. Wybierz encję nastawy temperatury zasilania kotła.",
       "missing_signal": "Brakuje wymaganego sygnału.",
       "unknown_signal": "Nieznany sygnał w konfiguracji.",
       "unknown_parameter": "Nieznany parametr w konfiguracji.",
       "implausible_parameter": "Parametr jest poza wiarygodnym zakresem.",
       "unknown_circuit": "Strefa wskazuje obieg, który nie istnieje.",
       "zone_without_circuit": "Strefa nie ma obiegu.",
-      "fixed_temperature_missing": "Obieg pasywny stały potrzebuje swojej temperatury stałej.",
-      "reference_zone_unknown": "Wybrana strefa odniesienia nie jest jedną ze stref.",
       "duplicate_circuit": "Dwa obiegi mają tę samą nazwę.",
       "duplicate_zone": "Strefa jest podana dwa razy.",
       "no_circuit": "Potrzebny jest co najmniej jeden obieg.",
       "invalid_control": "Ustawień sterowania nie da się użyć.",
-      "alarm_limits_out_of_order": "Próg alarmu musi leżeć za progiem ostrzeżenia."
+      "alarm_limits_out_of_order": "Próg alarmu musi leżeć za progiem ostrzeżenia.",
+      "confirmed_entity_missing": "Wybierz encję, która pokazuje nastawę odebraną przez kocioł: każdy zapis jest z nią porównywany.",
+      "topology_missing": "Określ, jak bramka jest podłączona między termostatem a kotłem: od tego zależy, co robi oddanie sterowania.",
+      "topology_no_control": "W trybie monitorowania bramka tylko nasłuchuje: sterowanie nie jest możliwe.",
+      "topology_not_for_path": "Ta ścieżka zapisu prowadzi przez wbudowaną bramkę OpenTherm: wybierz jedno z podłączeń bramki.",
+      "gateway_unknown": "Żadna bramka OpenTherm skonfigurowana w Home Assistant nie ma tego identyfikatora: każdy zapis by się nie udał.",
+      "mqtt_topic_invalid": "Wpisz poziom tematu tak, jak używa go firmware bramki, bez spacji i symboli wieloznacznych + i #.",
+      "modulation_not_percent": "Modulacja to procent zakresu kotła: wybierz czujnik w %."
     }
   },
   "selector": {

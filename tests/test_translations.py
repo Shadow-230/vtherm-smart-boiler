@@ -122,7 +122,8 @@ def test_every_config_error_code_can_be_shown() -> None:
     }
     codes |= {"invalid_control", "alarm_limits_out_of_order"}
     for section in ("config", "options"):
-        assert codes <= set(SOURCE[section]["abort"]), sorted(codes - set(SOURCE[section]["abort"]))
+        errors = set(SOURCE[section]["error"])  # shown on the step that can fix them
+        assert codes <= errors, sorted(codes - errors)
 
 
 def test_every_control_entity_blocker_and_issue_is_translated() -> None:

@@ -609,7 +609,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                         ParameterKey.HEATING_THRESHOLD, fit.threshold
                     )
                 self.schedule_save()
-            self.async_set_updated_data(self._compute(now))
+            # Published as of now, not as of the analysis' start: the quick path may have
+            # moved on meanwhile (a reading gone stale), and must not be set back.
+            self.async_set_updated_data(self._compute(dt_util.utcnow().timestamp()))
         except Exception:  # the monitor keeps its last results; the next run tries again
             self._job_failed("The periodic analysis")
         else:

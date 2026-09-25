@@ -1049,7 +1049,11 @@ async def test_changing_the_write_path_is_refused_while_a_hand_back_is_owed(rig:
     )
     flow = await rig.hass.config_entries.options.async_configure(
         flow["flow_id"],
-        {"write_path": "opentherm_gw", "topology": "virtual", "confirmed_entity": CONFIRMED},
+        {
+            "write_path": "opentherm_gw",
+            "topology": "gateway_with_thermostat",
+            "confirmed_entity": CONFIRMED,
+        },
     )
     assert flow["errors"] == {"write_path": "hand_back_pending"}
 

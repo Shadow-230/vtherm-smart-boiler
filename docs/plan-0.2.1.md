@@ -269,7 +269,7 @@ In practice: a lighter, tidier integration with clear texts; one entry per boile
 | U4 ✅ | recorder: changing attributes excluded (P33) |
 | U5 ✅ | recorder backfill in the background, with named arguments, off the loop, tested (P34, P109) |
 | U6 ✅ | a single config entry (P36, S18) |
-| U7 | config and options flow: form errors instead of aborts; the simple level merges with the stored options; "restore defaults" keeps facts about the installation; an incomplete control configuration refused; MQTT topic and gateway ID validated; the write path checked against the topology; signal filters as in plan-0.1 D2 (P37, P38, P74, P79, P85, P99); a foreign-heat temperature sensor at the simple level gets its threshold field, or is not offered there |
+| U7 ✅ | config and options flow: form errors instead of aborts; the simple level merges with the stored options; "restore defaults" keeps facts about the installation; an incomplete control configuration refused; MQTT topic and gateway ID validated; the write path checked against the topology; signal filters as in plan-0.1 D2 (P37, P38, P74, P79, P85, P99); a foreign-heat temperature sensor at the simple level gets its threshold field, or is not offered there |
 | U8 | entity registry: a stable `unique_id`, clean-up after option changes (P39) |
 | U9 | user-facing texts: translated states and reasons, every option with its risk, 0.1 descriptions updated, the `opening_threshold` wording, consistent naming, `icons.json`, `PARALLEL_UPDATES`, the emitter factor hidden by default (P50, P101, P104, P108) |
 | U10 | storage and lifecycle: loading robust to corrupt data, no analysis in progress overwriting the store after a reload, restore not all-or-nothing, an entry migration, `async_remove_entry` (P66, P71, P72) |

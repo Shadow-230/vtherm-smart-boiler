@@ -74,11 +74,11 @@ SIGNAL_FIELDS: dict[str, tuple[dict[str, Any], bool]] = {
     "flame": (_BINARY, True),
     "flow": (_TEMPERATURE, True),
     "return": (_TEMPERATURE, True),
-    "modulation": ({"domain": "sensor"}, True),
+    "modulation": ({"domain": "sensor"}, True),  # in %: no device class, checked on submit
     "dhw_active": (_BINARY, True),
     "pressure": ({"domain": "sensor", "device_class": "pressure"}, True),
     "outdoor": (_TEMPERATURE, True),
-    "ch_setpoint": ({"domain": ["sensor", "number"]}, False),
+    "ch_setpoint": ({"domain": ["sensor", "number"], "device_class": "temperature"}, False),
     "ch_active": (_BINARY, False),
     "pump_running": (_BINARY, False),
     "flue_gas": (_TEMPERATURE, False),
@@ -89,9 +89,12 @@ SIGNAL_FIELDS: dict[str, tuple[dict[str, Any], bool]] = {
 REQUIRED_FIELDS = ("flame", "flow")
 
 
-def _entity(filter_: dict[str, Any], multiple: bool = False) -> selector.EntitySelector:
+def _entity(
+    filter_: dict[str, Any] | list[dict[str, Any]], multiple: bool = False
+) -> selector.EntitySelector:
+    filters = filter_ if isinstance(filter_, list) else [filter_]
     return selector.EntitySelector(
-        selector.EntitySelectorConfig(filter=[filter_], multiple=multiple)  # type: ignore[typeddict-item]
+        selector.EntitySelectorConfig(filter=filters, multiple=multiple)  # type: ignore[typeddict-item]
     )
 
 
@@ -247,9 +250,14 @@ def zone_schema(options: dict[str, Any], current: dict[str, Any]) -> vol.Schema:
         "emitter", [e.value for e in EmitterType]
     )
     sources = [s["entity_id"] for s in current.get("foreign_heat", [])]
-    fields[vol.Optional("foreign_heat", default=sources)] = _entity(
-        {"domain": ["switch", "binary_sensor", "sensor"]}, multiple=True
-    )
+    # A temperature sensor needs its threshold, entered at the advanced level only.
+    offered = [
+        {"domain": ["switch", "binary_sensor"]},
+        {"domain": "sensor", "device_class": "power"},
+    ]
+    if _advanced(options):
+        offered.append({"domain": "sensor", "device_class": "temperature"})
+    fields[vol.Optional("foreign_heat", default=sources)] = _entity(offered, multiple=True)
     if _advanced(options):
         fields[_optional("reference_output_w", current)] = _number(50, 20000, 10, "W")
         fields[_optional("exponent", current)] = _number(1.0, 2.0, 0.01)
@@ -618,6 +626,45 @@ def _set_or_drop(target: dict[str, Any], user_input: dict[str, Any], keys: tuple
             target[key] = value
 
 
+# Write paths through a built-in OTGW need a gateway topology; "virtual" is a controller on the
+# Home Assistant side, reached through an entity.
+_PATH_TOPOLOGIES = {
+    WritePath.OPENTHERM_GW: {Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT},
+    WritePath.OTGW_MQTT: {Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT},
+    WritePath.ENTITY: {
+        Topology.GATEWAY_STANDALONE,
+        Topology.GATEWAY_WITH_THERMOSTAT,
+        Topology.VIRTUAL,
+    },
+}
+
+
+def control_error(user_input: dict[str, Any]) -> dict[str, str]:
+    """What the first control step needs: every write is checked against a read-back, and the
+    topology decides what a hand-back does — both required, and suited to the write path."""
+    path = user_input.get("write_path")
+    if path in (None, NO_CONTROL):
+        return {}
+    if not user_input.get("confirmed_entity"):
+        return {"confirmed_entity": "confirmed_entity_missing"}
+    topology = user_input.get("topology")
+    if not topology:
+        return {"topology": "topology_missing"}
+    if Topology(topology) is Topology.MONITOR_MODE:
+        return {"topology": "topology_no_control"}
+    if Topology(topology) not in _PATH_TOPOLOGIES[WritePath(path)]:
+        return {"topology": "topology_not_for_path"}
+    return {}
+
+
+def mqtt_topic_valid(value: object) -> bool:
+    """A topic level the plugin can publish under: no wildcards, spaces or empty text."""
+    if not isinstance(value, str):
+        return False
+    level = value.strip().strip("/")
+    return bool(level) and not any(c in "+#" or c.isspace() for c in level)
+
+
 def control_details_error(
     user_input: dict[str, Any], bounds: tuple[float | None, float | None] = (None, None)
 ) -> dict[str, str]:
@@ -737,35 +784,9 @@ def apply_monitor(options: dict[str, Any], user_input: dict[str, Any]) -> None:
 
 
 def restore_advanced_defaults(options: dict[str, Any]) -> None:
-    """Drop every value only the advanced level shows, so its default applies again."""
-    signals = options.get(SIGNALS, {})
-    for key, (_filter, simple) in SIGNAL_FIELDS.items():
-        if not simple:
-            signals.pop(key, None)
-    boiler = options.get(BOILER, {})
-    for key in ("modulation_scale", "shared_return"):
-        boiler.pop(key, None)
-    params = options.get(PARAMETERS, {})
-    for key in (
-        "max_ch_setpoint",
-        "gas_at_min_power",
-        "gas_at_max_power",
-        *BUILDING_PARAMETER_KEYS,
-    ):
-        params.pop(key, None)
-    options.get(BUILDING, {}).pop("design_load_kw", None)
-    circuits = options.get(CIRCUITS, [])
-    if circuits:
-        first = {k: v for k, v in circuits[0].items() if k != "flow_entity"}
-        options[CIRCUITS] = [first]
-        first_id = first["id"]
-        for zone in options.get(ZONES, []):
-            zone["circuit"] = first_id
-    for zone in options.get(ZONES, []):
-        zone.pop("reference_output_w", None)
-        zone.pop("exponent", None)
-        for source in zone.get("foreign_heat", []):
-            source.pop("threshold", None)
+    """Drop every tuning value only the advanced level shows, so its default applies again.
+    Facts about the installation — what is mapped, the boiler, circuits, emitter sizes, values
+    the user entered — stay (``SCOPE.md`` principle 10)."""
     options.get(REFERENCE_ROOM, {}).pop("switch_margin", None)
     options.pop(MONITOR, None)
     control = options.get(CONTROL, {})
@@ -776,18 +797,43 @@ def restore_advanced_defaults(options: dict[str, Any]) -> None:
 
 
 ADVANCED_SIGNALS = tuple(key for key, (_f, simple) in SIGNAL_FIELDS.items() if not simple)
+_MISSING = object()
+
+
+def _schema_defaults(schema: vol.Schema) -> dict[str, Any]:
+    """The defaults a form offers, read from its schema so they are written once."""
+    return {
+        str(key): key.default()
+        for key in schema.schema
+        if isinstance(key, vol.Required) and key.default is not vol.UNDEFINED
+    }
+
+
+def _differ(values: dict[str, Any], defaults: dict[str, Any], keys: Any) -> bool:
+    return any(key in values and values[key] != defaults.get(key, _MISSING) for key in keys)
 
 
 def has_hidden_advanced(options: dict[str, Any]) -> bool:
-    """At the simple level: whether any setting only the advanced level shows is set."""
+    """At the simple level: whether anything only the advanced level shows is active — a fact
+    the user gave, or a setting that differs from its default."""
     if _advanced(options):
         return False
+    advanced = {LEVEL: LEVEL_ADVANCED}
     params = options.get(PARAMETERS, {})
     circuits = options.get(CIRCUITS, [])
     zones = options.get(ZONES, [])
+    control = options.get(CONTROL, {})
+    monitor = options.get(MONITOR, {})
+    curve_defaults = _schema_defaults(control_curve_schema(advanced))
+    control_defaults = curve_defaults | _schema_defaults(control_behaviour_schema({}))
+    reactions = _schema_defaults(control_alarms_schema({}))
     return bool(
         any(key in options.get(SIGNALS, {}) for key in ADVANCED_SIGNALS)
-        or any(key in options.get(BOILER, {}) for key in ("modulation_scale", "shared_return"))
+        or _differ(
+            options.get(BOILER, {}),
+            _schema_defaults(boiler_schema(advanced)),
+            ("modulation_scale", "shared_return"),
+        )
         or any(
             key in params
             for key in (
@@ -802,23 +848,58 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
         or any("flow_entity" in c for c in circuits)
         or any("reference_output_w" in z or "exponent" in z for z in zones)
         or any("threshold" in s for z in zones for s in z.get("foreign_heat", []))
-        or "switch_margin" in options.get(REFERENCE_ROOM, {})
-        or MONITOR in options
-        or any(key in options.get(CONTROL, {}) for key in CONTROL_ADVANCED_KEYS)
-        or any(
-            key in options.get(CONTROL, {}).get("curve", {})
-            for key in ("room", "exponent", "offset")
+        or _differ(
+            options.get(REFERENCE_ROOM, {}),
+            _schema_defaults(reference_schema(advanced)),
+            ("switch_margin",),
         )
+        or _differ(monitor, _schema_defaults(monitor_schema({})), monitor)
+        or _differ(
+            control, control_defaults, [k for k in CONTROL_ADVANCED_KEYS if k != "alarm_reactions"]
+        )
+        or any(
+            control.get("alarm_reactions", {}).get(alarm, default) != default
+            for alarm, default in reactions.items()
+        )
+        or _differ(control.get("curve", {}), curve_defaults, ("room", "exponent", "offset"))
     )
 
 
 def validate(options: dict[str, Any]) -> str | None:
     """A translation key of the first problem, or None."""
+    problem = validate_problem(options)
+    return None if problem is None else problem[0]
+
+
+def validate_problem(options: dict[str, Any]) -> tuple[str, str | None] | None:
+    """The first problem as a translation key and what it concerns, or None."""
     try:
         EntryConfig.from_options(options)
     except ConfigError as err:
-        return err.code
+        return err.code, err.subject
     return None
+
+
+_PROBLEM_STEPS = {
+    "missing_signal": "signals",
+    "unknown_signal": "signals",
+    "no_circuit": "circuit",
+    "duplicate_circuit": "circuit",
+    "unknown_circuit": "circuit",
+    "fixed_temperature_missing": "circuit",
+    "duplicate_zone": "zones",
+    "zone_without_circuit": "zones",
+    "reference_zone_unknown": "reference",
+    "alarm_limits_out_of_order": "monitor",
+    "invalid_control": "control",
+}
+
+
+def problem_step(code: str, subject: str | None) -> str:
+    """The step where the user can fix a problem the last check found."""
+    if code in ("unknown_parameter", "implausible_parameter"):
+        return "boiler" if subject in BOILER_PARAMETER_KEYS else "building"
+    return _PROBLEM_STEPS.get(code, "signals")
 
 
 # --- flows ------------------------------------------------------------------------------------
@@ -831,6 +912,28 @@ class _Steps:
     _zone_queue: list[str]
     _zones_done: list[dict[str, Any]]
     _circuits_done: list[dict[str, Any]]
+    # A problem the last check found: shown on its step, which the flow goes back to.
+    _problem: tuple[str, dict[str, str]] | None = None
+
+    def _form(
+        self,
+        step_id: str,
+        data_schema: vol.Schema,
+        errors: dict[str, str] | None = None,
+        **kwargs: Any,
+    ) -> ConfigFlowResult:
+        if not errors and self._problem is not None and self._problem[0] == step_id:
+            errors = self._problem[1]
+            self._problem = None
+        return self.async_show_form(  # type: ignore[attr-defined]
+            step_id=step_id, data_schema=data_schema, errors=errors or {}, **kwargs
+        )
+
+    async def _back_to_problem(self, code: str, subject: str | None) -> ConfigFlowResult:
+        """The answers stay: the step that can fix the problem is shown again, with it."""
+        step = problem_step(code, subject)
+        self._problem = (step, {"base": code})
+        return await self._goto(step)
 
     def _next_after(self, step: str) -> str:
         raise NotImplementedError
@@ -843,9 +946,14 @@ class _Steps:
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            apply_signals(self.options, user_input)
-            return await self._goto(self._next_after("signals"))
-        return self.async_show_form(  # type: ignore[attr-defined]
+            modulation = user_input.get("modulation")
+            state = self.hass.states.get(modulation) if modulation else None  # type: ignore[attr-defined]
+            if state is not None and state.attributes.get("unit_of_measurement") not in (None, "%"):
+                errors["modulation"] = "modulation_not_percent"  # e.g. a power sensor
+            else:
+                apply_signals(self.options, user_input)
+                return await self._goto(self._next_after("signals"))
+        return self._form(
             step_id="signals", data_schema=signals_schema(self.options), errors=errors
         )
 
@@ -858,7 +966,7 @@ class _Steps:
             else:
                 apply_boiler(self.options, user_input)
                 return await self._goto(self._next_after("boiler"))
-        return self.async_show_form(  # type: ignore[attr-defined]
+        return self._form(
             step_id="boiler", data_schema=boiler_schema(self.options), errors=errors
         )
 
@@ -873,6 +981,8 @@ class _Steps:
             circuit = circuit_from_input(user_input, current.get("id", f"circuit_{index + 1}"))
             if index == 0 and not current:
                 circuit["id"] = "main"
+            if not _advanced(self.options) and current.get("flow_entity"):
+                circuit["flow_entity"] = current["flow_entity"]  # not shown: kept
             if (
                 circuit["control"] == CircuitControl.PASSIVE_FIXED
                 and "fixed_temperature" not in circuit
@@ -882,10 +992,11 @@ class _Steps:
                 self._circuits_done.append(circuit)
                 if user_input.get("add_another"):
                     return await self.async_step_circuit()
-                self.options[CIRCUITS] = self._circuits_done
+                kept = [] if _advanced(self.options) else existing[len(self._circuits_done) :]
+                self.options[CIRCUITS] = [*self._circuits_done, *kept]
                 self._circuits_done = []
                 return await self._goto(self._next_after("circuit"))
-        return self.async_show_form(  # type: ignore[attr-defined]
+        return self._form(
             step_id="circuit",
             data_schema=circuit_schema(self.options, current),
             errors=errors,
@@ -897,7 +1008,7 @@ class _Steps:
             self._zone_queue = list(user_input.get("zones", []))
             self._zones_done = []
             return await self.async_step_zone()
-        return self.async_show_form(  # type: ignore[attr-defined]
+        return self._form(
             step_id="zones", data_schema=zones_schema(self.options)
         )
 
@@ -912,10 +1023,17 @@ class _Steps:
         if user_input is not None:
             zone: dict[str, Any] = {"entity_id": entity_id, "emitter": user_input["emitter"]}
             circuits = [c["id"] for c in self.options.get(CIRCUITS, [])] or ["main"]
-            zone["circuit"] = user_input.get("circuit", circuits[0])
+            zone["circuit"] = user_input.get("circuit", current.get("circuit", circuits[0]))
             for key in ("reference_output_w", "exponent"):
                 if user_input.get(key) not in (None, ""):
                     zone[key] = user_input[key]
+                elif not _advanced(self.options) and current.get(key) is not None:
+                    zone[key] = current[key]  # not shown: kept
+            thresholds = {
+                s["entity_id"]: s["threshold"]
+                for s in current.get("foreign_heat", [])
+                if s.get("threshold") is not None
+            }
             sources = []
             for source_id in user_input.get("foreign_heat", []):
                 state = self.hass.states.get(source_id)  # type: ignore[attr-defined]
@@ -928,6 +1046,8 @@ class _Steps:
                     break
                 source: dict[str, Any] = {"entity_id": source_id, "kind": kind.value}
                 threshold = user_input.get(f"{kind.value}_threshold")
+                if threshold in (None, "") and not _advanced(self.options):
+                    threshold = thresholds.get(source_id)  # not shown: kept
                 if threshold not in (None, ""):
                     source["threshold"] = threshold
                 elif kind is SourceKind.TEMPERATURE:
@@ -940,7 +1060,7 @@ class _Steps:
                 self._zone_queue.pop(0)
                 return await self.async_step_zone()
         name_state = self.hass.states.get(entity_id)  # type: ignore[attr-defined]
-        return self.async_show_form(  # type: ignore[attr-defined]
+        return self._form(
             step_id="zone",
             data_schema=zone_schema(self.options, current),
             errors=errors,
@@ -953,7 +1073,7 @@ class _Steps:
         if user_input is not None:
             apply_building(self.options, user_input)
             return await self._goto(self._next_after("building"))
-        return self.async_show_form(  # type: ignore[attr-defined]
+        return self._form(
             step_id="building", data_schema=building_schema(self.options)
         )
 
@@ -963,6 +1083,9 @@ class _Steps:
         errors: dict[str, str] = {}
         if user_input is not None:
             reference = {k: v for k, v in user_input.items() if v not in (None, "")}
+            margin = self.options.get(REFERENCE_ROOM, {}).get("switch_margin")
+            if not _advanced(self.options) and margin is not None:
+                reference["switch_margin"] = margin  # not shown: kept
             zones = [z["entity_id"] for z in self.options.get(ZONES, [])]
             if (
                 reference.get("strategy") == Strategy.CHOSEN_ZONE
@@ -974,7 +1097,7 @@ class _Steps:
                     reference.pop("zone", None)
                 self.options[REFERENCE_ROOM] = reference
                 return await self._goto(self._next_after("reference"))
-        return self.async_show_form(  # type: ignore[attr-defined]
+        return self._form(
             step_id="reference", data_schema=reference_schema(self.options), errors=errors
         )
 
@@ -984,7 +1107,7 @@ class _Steps:
         if user_input is not None:
             apply_monitor(self.options, user_input)
             return await self._goto(self._next_after("monitor"))
-        return self.async_show_form(  # type: ignore[attr-defined]
+        return self._form(
             step_id="monitor", data_schema=monitor_schema(self.options)
         )
 
@@ -1020,9 +1143,9 @@ class SmartBoilerConfigFlow(_Steps, ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="user", data_schema=user_schema({}))
 
     async def async_step_finish(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        problem = validate(self.options)
+        problem = validate_problem(self.options)
         if problem is not None:
-            return self.async_abort(reason=problem)
+            return await self._back_to_problem(*problem)
         return self.async_create_entry(title=self._title, data={}, options=self.options)
 
 
@@ -1095,14 +1218,14 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         if user_input is not None:
             apply_freshness(self.options, user_input)
             return await self.async_step_save()
-        return self.async_show_form(
+        return self._form(
             step_id="freshness", data_schema=freshness_schema(self.options)
         )
 
     async def async_step_save(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        problem = validate(self.options)
+        problem = validate_problem(self.options)
         if problem is not None:
-            return self.async_abort(reason=problem)
+            return await self._back_to_problem(*problem)
         return self.async_create_entry(data=self.options)
 
     # --- control: path and topology → path details → curve and limits → (advanced) behaviour
@@ -1114,12 +1237,13 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         if user_input is not None:
             path = user_input["write_path"]
             current = self.config_entry.options.get(CONTROL, {}).get("write_path")
-            if path not in (NO_CONTROL, current) and self._hand_back_owed():
+            errors = control_error(user_input)
+            if not errors and path not in (NO_CONTROL, current) and self._hand_back_owed():
                 # "No control" stays possible: a unit that only hands back keeps retrying.
-                return self.async_show_form(
-                    step_id="control",
-                    data_schema=control_schema(self.options),
-                    errors={"write_path": "hand_back_pending"},
+                errors = {"write_path": "hand_back_pending"}
+            if errors:
+                return self._form(
+                    step_id="control", data_schema=control_schema(self.options), errors=errors
                 )
             apply_control(self.options, user_input)
             if path == NO_CONTROL:
@@ -1130,7 +1254,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 WritePath.OTGW_MQTT: "control_mqtt",
             }[WritePath(path)]
             return await self._goto(step)
-        return self.async_show_form(step_id="control", data_schema=control_schema(self.options))
+        return self._form(step_id="control", data_schema=control_schema(self.options))
 
     async def async_step_control_entity(
         self, user_input: dict[str, Any] | None = None
@@ -1148,7 +1272,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             if not errors:
                 apply_control_details(self.options, user_input)
                 return await self.async_step_control_curve()
-        return self.async_show_form(
+        return self._form(
             step_id="control_entity",
             data_schema=control_entity_schema(self.options),
             errors=errors,
@@ -1158,18 +1282,20 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
-        if user_input is not None:
-            if self._hand_back_owed() and self._changes_hand_back(user_input):
-                errors = {"base": "hand_back_pending"}
-            else:
-                apply_control_details(self.options, user_input)
-                return await self.async_step_control_curve()
         gateways = sorted(
             str(entry.data["id"])
             for entry in self.hass.config_entries.async_entries("opentherm_gw")
             if entry.data.get("id")
         )
-        return self.async_show_form(
+        if user_input is not None:
+            if user_input["gateway_id"] not in gateways:
+                errors = {"gateway_id": "gateway_unknown"}  # every write would fail
+            elif self._hand_back_owed() and self._changes_hand_back(user_input):
+                errors = {"base": "hand_back_pending"}
+            else:
+                apply_control_details(self.options, user_input)
+                return await self.async_step_control_curve()
+        return self._form(
             step_id="control_gateway",
             data_schema=control_gateway_schema(self.options, gateways),
             errors=errors,
@@ -1180,12 +1306,17 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            if self._hand_back_owed() and self._changes_hand_back(user_input):
+            errors = {
+                key: "mqtt_topic_invalid"
+                for key in ("mqtt_top", "mqtt_node")
+                if not mqtt_topic_valid(user_input.get(key))
+            }
+            if not errors and self._hand_back_owed() and self._changes_hand_back(user_input):
                 errors = {"base": "hand_back_pending"}
-            else:
+            if not errors:
                 apply_control_details(self.options, user_input)
                 return await self.async_step_control_curve()
-        return self.async_show_form(
+        return self._form(
             step_id="control_mqtt", data_schema=control_mqtt_schema(self.options), errors=errors
         )
 
@@ -1208,7 +1339,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 if _advanced(self.options):
                     return await self.async_step_control_behaviour()
                 return await self.async_step_save()
-        return self.async_show_form(
+        return self._form(
             step_id="control_curve", data_schema=control_curve_schema(self.options), errors=errors
         )
 
@@ -1232,7 +1363,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             else:
                 apply_control_behaviour(self.options, user_input)
                 return await self.async_step_control_alarms()
-        return self.async_show_form(
+        return self._form(
             step_id="control_behaviour",
             data_schema=control_behaviour_schema(self.options),
             errors=errors,
@@ -1252,6 +1383,6 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         if user_input is not None:
             apply_control_alarms(self.options, user_input)
             return await self.async_step_save()
-        return self.async_show_form(
+        return self._form(
             step_id="control_alarms", data_schema=control_alarms_schema(self.options)
         )

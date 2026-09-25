@@ -205,22 +205,19 @@
       "fixed_temperature_missing": "A passive fixed circuit needs its fixed temperature.",
       "foreign_heat_unsupported": "Only switches, binary sensors and power or temperature sensors can be heat sources.",
       "temperature_threshold_missing": "A temperature source needs a temperature threshold (advanced level).",
-      "reference_zone_unknown": "Pick one of the configured zones."
-    },
-    "abort": {
+      "reference_zone_unknown": "Pick one of the configured zones.",
       "missing_signal": "A required signal is missing.",
       "unknown_signal": "Unknown signal in the configuration.",
       "unknown_parameter": "Unknown parameter in the configuration.",
       "implausible_parameter": "A parameter is outside its plausible range.",
       "unknown_circuit": "A zone refers to a circuit that does not exist.",
       "zone_without_circuit": "A zone has no circuit.",
-      "fixed_temperature_missing": "A passive fixed circuit needs its fixed temperature.",
-      "reference_zone_unknown": "The chosen reference zone is not one of the zones.",
       "duplicate_circuit": "Two circuits have the same name.",
       "duplicate_zone": "A zone is listed twice.",
       "no_circuit": "At least one circuit is needed.",
       "invalid_control": "The control settings cannot be used.",
-      "alarm_limits_out_of_order": "An alarm limit must lie beyond its warning limit."
+      "alarm_limits_out_of_order": "An alarm limit must lie beyond its warning limit.",
+      "modulation_not_percent": "Modulation is a percentage of the boiler's range: pick a sensor in %."
     }
   },
   "options": {
@@ -251,7 +248,7 @@
         },
         "data_description": {
           "level": "Simple shows the essentials; advanced shows every parameter.",
-          "restore_defaults": "When switching to simple: tick to reset every advanced setting. Left unticked, they stay active but hidden, and the options show that some differ from their defaults."
+          "restore_defaults": "When switching to simple: tick to reset the advanced tuning — control's curve shape, limits and behaviour, the alarm reactions, the monitor's thresholds, the reference room's margin — to its defaults. Facts about your installation stay whatever you choose: mapped signals, the boiler, circuits, emitter sizes and values you entered. Left unticked, the tuning stays active but hidden, and the options show that some advanced settings are active."
         }
       },
       "signals": {
@@ -632,22 +629,25 @@
       "count_threshold_above_zones": "More zones than are configured: heating would never be asked for.",
       "no_demand_criterion": "Set at least one criterion: a zone count of 0 needs a power or an opening threshold.",
       "off_setpoint_not_below_hard_min": "\"Off\" must be below the lowest flow setpoint, or it would heat.",
-      "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit (°C, °F or K): a value written would mean something else to it. Pick the boiler's flow setpoint entity."
-    },
-    "abort": {
+      "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit (°C, °F or K): a value written would mean something else to it. Pick the boiler's flow setpoint entity.",
       "missing_signal": "A required signal is missing.",
       "unknown_signal": "Unknown signal in the configuration.",
       "unknown_parameter": "Unknown parameter in the configuration.",
       "implausible_parameter": "A parameter is outside its plausible range.",
       "unknown_circuit": "A zone refers to a circuit that does not exist.",
       "zone_without_circuit": "A zone has no circuit.",
-      "fixed_temperature_missing": "A passive fixed circuit needs its fixed temperature.",
-      "reference_zone_unknown": "The chosen reference zone is not one of the zones.",
       "duplicate_circuit": "Two circuits have the same name.",
       "duplicate_zone": "A zone is listed twice.",
       "no_circuit": "At least one circuit is needed.",
       "invalid_control": "The control settings cannot be used.",
-      "alarm_limits_out_of_order": "An alarm limit must lie beyond its warning limit."
+      "alarm_limits_out_of_order": "An alarm limit must lie beyond its warning limit.",
+      "confirmed_entity_missing": "Pick the entity that reports the setpoint the boiler received: every write is checked against it.",
+      "topology_missing": "Declare how the gateway sits between thermostat and boiler: it decides what a hand-back does.",
+      "topology_no_control": "In monitor mode the gateway only listens: control is not possible.",
+      "topology_not_for_path": "This write path goes through a built-in OpenTherm Gateway: pick one of the gateway topologies.",
+      "gateway_unknown": "No OpenTherm Gateway set up in Home Assistant has this ID: every write would fail.",
+      "mqtt_topic_invalid": "Enter the topic level as the gateway's firmware uses it, without spaces or the wildcards + and #.",
+      "modulation_not_percent": "Modulation is a percentage of the boiler's range: pick a sensor in %."
     }
   },
   "selector": {

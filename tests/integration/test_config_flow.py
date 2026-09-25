@@ -300,10 +300,10 @@ async def test_switching_to_simple_can_restore_advanced_defaults(
     )
     await switch(restore=True)
     entry = hass.config_entries.async_get_entry(entry_id)
-    assert "shared_return" not in entry.options["boiler"]
-    assert "monitor" not in entry.options
+    assert entry.options["boiler"]["shared_return"] is True  # a fact: never "restored"
+    assert "monitor" not in entry.options  # tuning: back to its defaults
     menu = await hass.config_entries.options.async_init(entry_id)
-    assert "level" in menu["menu_options"]
+    assert "level_hidden" in menu["menu_options"]  # the fact is still active, and hidden
 
 
 def control_switch(hass: HomeAssistant, entry_id: str) -> str | None:
@@ -604,3 +604,230 @@ async def test_one_entry_per_home_assistant(
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "single_instance_allowed"
+
+
+async def test_a_problem_found_at_the_end_is_shown_on_its_step(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """P37: a problem the last check finds keeps the wizard's answers: its step is shown again
+    with the error, instead of an abort (or an unhandled error for an implausible building)."""
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    for data in (
+        {"name": "Boiler", "level": "advanced"},
+        {"flame": entities["flame"], "flow": entities["flow"]},
+        {"class": "read_only", "dhw": "none", "condensing": True,
+         "modulation_scale": "range", "shared_return": False},
+        {"control": "unmixed_shared", "add_another": False},
+        {"zones": []},
+        {"design_load_kw": 200.0, "design_outdoor": -15.0},  # 5.7 kW/K: implausible
+        {},
+        {},
+    ):  # fmt: skip
+        result = await step(hass, result, data)
+        if result["type"] is not FlowResultType.FORM or result.get("errors"):
+            break
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "building"
+    assert result["errors"] == {"base": "implausible_parameter"}
+    result = await step(hass, result, {"design_load_kw": 12.0, "design_outdoor": -15.0})
+    while result["type"] is FlowResultType.FORM:
+        result = await step(hass, result, {})  # the rest as it was
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+def _rich_options(entities: dict[str, str]) -> dict[str, Any]:
+    """An installation set up at the advanced level, now shown at the simple one."""
+    return {
+        "level": "simple",
+        "signals": {"flame": entities["flame"], "flow": entities["flow"]},
+        "boiler": {"class": "read_only", "dhw": "none", "condensing": True, "shared_return": True},
+        "circuits": [
+            {"id": "main", "control": "unmixed_shared", "flow_entity": entities["return"]},
+            {"id": "circuit_2", "control": "unmixed_shared"},
+        ],
+        "zones": [
+            {"entity_id": entities["living"], "emitter": "radiator", "circuit": "main",
+             "reference_output_w": 1500, "foreign_heat": []},
+            {"entity_id": entities["bedroom"], "emitter": "radiator", "circuit": "circuit_2",
+             "foreign_heat": [
+                 {"entity_id": "sensor.heater_power", "kind": "power", "threshold": 300}
+             ]},
+        ],
+        "reference_room": {"strategy": "largest_deficit", "switch_margin": 0.8},
+        "monitor": {"monitoring_days": 14.0, "near_room_k": 4.0},
+    }  # fmt: skip
+
+
+async def _entry(hass: HomeAssistant, options: dict[str, Any]) -> str:
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry.entry_id
+
+
+async def _section(hass: HomeAssistant, entry_id: str, section: str, *answers: dict):
+    result = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, result, {"next_step_id": section})
+    for answer in answers:
+        result = await options_step(hass, result, answer)
+    assert result["type"] is FlowResultType.CREATE_ENTRY, result
+    await hass.async_block_till_done()
+    return hass.config_entries.async_get_entry(entry_id).options
+
+
+async def test_the_simple_level_keeps_what_it_does_not_show(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """P38: at the simple level an edit changes only what its form shows — the second circuit,
+    a circuit's flow sensor, a zone's emitter size, a source's threshold and the reference
+    room's margin stay."""
+    entry_id = await _entry(hass, _rich_options(entities))
+    options = await _section(hass, entry_id, "circuit", {"control": "unmixed_shared"})
+    assert [c["id"] for c in options["circuits"]] == ["main", "circuit_2"]
+    assert options["circuits"][0]["flow_entity"] == entities["return"]
+    options = await _section(
+        hass,
+        entry_id,
+        "zones",
+        {"zones": [entities["living"], entities["bedroom"]]},
+        {"circuit": "main", "emitter": "radiator", "foreign_heat": []},
+        {"circuit": "circuit_2", "emitter": "radiator", "foreign_heat": ["sensor.heater_power"]},
+    )
+    living, bedroom = options["zones"]
+    assert living["reference_output_w"] == 1500
+    assert bedroom["foreign_heat"][0]["threshold"] == 300
+    options = await _section(hass, entry_id, "reference", {"strategy": "largest_deficit"})
+    assert options["reference_room"]["switch_margin"] == 0.8
+
+
+async def test_restoring_defaults_keeps_the_installation(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """P38: "restore defaults" resets tuning, never facts about the installation."""
+    options = _rich_options(entities) | {"level": "advanced"}
+    entry_id = await _entry(hass, options)
+    options = await _section(
+        hass, entry_id, "level", {"level": "simple", "restore_defaults": True}
+    )
+    assert options["boiler"]["shared_return"] is True
+    assert [c["id"] for c in options["circuits"]] == ["main", "circuit_2"]
+    assert options["circuits"][0]["flow_entity"] == entities["return"]
+    assert options["zones"][0]["reference_output_w"] == 1500
+    assert options["zones"][1]["foreign_heat"][0]["threshold"] == 300
+    assert "switch_margin" not in options["reference_room"]  # tuning
+    assert "monitor" not in options  # tuning
+
+
+async def test_hidden_settings_are_those_that_differ_from_defaults(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """P74: a stored value equal to its default is nothing hidden."""
+    options = _rich_options(entities)
+    options["circuits"] = [{"id": "main", "control": "unmixed_shared"}]
+    options["zones"] = [
+        {"entity_id": entities["living"], "emitter": "radiator", "circuit": "main"}
+    ]
+    options["boiler"]["shared_return"] = False
+    options["reference_room"] = {"strategy": "largest_deficit", "switch_margin": 0.3}
+    options["monitor"] = {"monitoring_days": 7.0, "near_room_k": 3.0}
+    entry_id = await _entry(hass, options)
+    menu = await hass.config_entries.options.async_init(entry_id)
+    assert "level" in menu["menu_options"]
+    assert "level_hidden" not in menu["menu_options"]
+
+
+async def test_control_needs_a_read_back_and_a_topology_that_suits_the_path(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """P74, P85: an incomplete control configuration is refused where it is entered."""
+    hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
+    entry_id = await create_entry(hass, entities, "simple")
+    read_back = {"confirmed_entity": "sensor.gw_control_setpoint"}
+    for answer, error in (
+        ({"write_path": "opentherm_gw", "topology": "gateway_with_thermostat"},
+         {"confirmed_entity": "confirmed_entity_missing"}),
+        ({"write_path": "opentherm_gw"} | read_back, {"topology": "topology_missing"}),
+        ({"write_path": "opentherm_gw", "topology": "virtual"} | read_back,
+         {"topology": "topology_not_for_path"}),
+        ({"write_path": "entity", "topology": "monitor_mode"} | read_back,
+         {"topology": "topology_no_control"}),
+    ):  # fmt: skip
+        result = await open_control(hass, entry_id)
+        result = await options_step(hass, result, answer)
+        assert result["step_id"] == "control"
+        assert result["errors"] == error, answer
+
+
+async def test_the_gateway_and_the_mqtt_topics_are_checked(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """P79: a gateway ID no OpenTherm Gateway has, or an MQTT topic with wildcards or spaces,
+    would make every write fail."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    MockConfigEntry(domain="opentherm_gw", data={"id": "living_room_gw"}).add_to_hass(hass)
+    hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
+    entry_id = await create_entry(hass, entities, "simple")
+    base = {"topology": "gateway_with_thermostat", "confirmed_entity": "sensor.gw_control_setpoint"}
+    result = await open_control(hass, entry_id)
+    result = await options_step(hass, result, {"write_path": "opentherm_gw"} | base)
+    result = await options_step(hass, result, {"gateway_id": "no_such_gateway"})
+    assert result["errors"] == {"gateway_id": "gateway_unknown"}
+    result = await open_control(hass, entry_id)
+    result = await options_step(hass, result, {"write_path": "otgw_mqtt"} | base)
+    for answer, error in (
+        ({"mqtt_top": "OTGW/#", "mqtt_node": "otgw-1"}, {"mqtt_top": "mqtt_topic_invalid"}),
+        ({"mqtt_top": "OTGW", "mqtt_node": "otgw 1"}, {"mqtt_node": "mqtt_topic_invalid"}),
+        ({"mqtt_top": "OTGW", "mqtt_node": " "}, {"mqtt_node": "mqtt_topic_invalid"}),
+    ):
+        result = await options_step(hass, result, answer)
+        assert result["errors"] == error, answer
+    result = await options_step(hass, result, {"mqtt_top": "OTGW", "mqtt_node": "otgw-1"})
+    assert result["step_id"] == "control_curve"
+
+
+def _filters(schema: Any, key: str) -> list[dict[str, Any]]:
+    for marker, field in schema.schema.items():
+        if str(marker) == key:
+            return field.config["filter"]
+    raise KeyError(key)
+
+
+def test_signal_fields_follow_the_d2_table() -> None:
+    """P99: a CH setpoint is a temperature; modulation is checked for its unit on submit."""
+    from custom_components.vtherm_smart_boiler.config_flow import signals_schema
+
+    schema = signals_schema({"level": "advanced"})
+    assert _filters(schema, "ch_setpoint") == [
+        {"domain": ["sensor", "number"], "device_class": ["temperature"]}
+    ]
+
+
+async def test_modulation_must_be_in_percent(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    hass.states.async_set("sensor.boiler_power", "12", {"unit_of_measurement": "kW"})
+    hass.states.async_set("sensor.boiler_modulation", "40", {"unit_of_measurement": "%"})
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await step(hass, result, {"name": "Boiler", "level": "simple"})
+    signals = {"flame": entities["flame"], "flow": entities["flow"]}
+    result = await step(hass, result, signals | {"modulation": "sensor.boiler_power"})
+    assert result["errors"] == {"modulation": "modulation_not_percent"}
+    result = await step(hass, result, signals | {"modulation": "sensor.boiler_modulation"})
+    assert result["step_id"] == "boiler"
+
+
+def test_a_temperature_sensor_as_foreign_heat_needs_the_advanced_level() -> None:
+    """Its threshold is entered at the advanced level only, and it cannot work without one: at
+    the simple level it is not offered."""
+    from custom_components.vtherm_smart_boiler.config_flow import zone_schema
+
+    temperature = {"domain": ["sensor"], "device_class": ["temperature"]}
+    simple = _filters(zone_schema({"level": "simple"}, {}), "foreign_heat")
+    advanced = _filters(zone_schema({"level": "advanced"}, {}), "foreign_heat")
+    assert temperature not in simple
+    assert temperature in advanced
+    assert {"domain": ["sensor"], "device_class": ["power"]} in simple

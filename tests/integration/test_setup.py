@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -260,6 +261,44 @@ async def test_the_recorder_backfill_runs_after_setup_and_goes_before_live_sampl
     assert [s.value for s in history] == [30.0, 40.0, 45.0]
     watched = list(entry.runtime_data.config.watched_entities)
     assert asked == [{"entity_ids": watched, "significant": False}]
+
+
+async def test_a_slow_analysis_does_not_set_the_quick_path_back(
+    hass: HomeAssistant, freezer, zones: FakeZones, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The analysis runs for a while in the executor; what it publishes is computed when it
+    ends, not when it began — else a flow gone stale meanwhile would read as fresh again."""
+    import threading
+
+    from custom_components.vtherm_smart_boiler import coordinator as coordinator_module
+
+    freezer.move_to(datetime(2026, 1, 10, 12, tzinfo=UTC))
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0})
+    living = zones.add("living", hvac_action="heating", valve_open_percent=50)
+    entry = entry_for(boiler, zones, freshness={"flow": 1800.0})
+    await setup(hass, entry)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    coordinator = entry.runtime_data
+    hot_id = entity_id(hass, entry, "binary_sensor", f"hot_water_{living}")
+    release = threading.Event()
+    real = coordinator_module.analyse
+
+    def slow(*args):
+        release.wait(10)
+        return real(*args)
+
+    monkeypatch.setattr(coordinator_module, "analyse", slow)
+    task = hass.async_create_task(coordinator.async_run_analysis())
+    await asyncio.sleep(0)
+    freezer.tick(timedelta(hours=1))
+    zones.set("living", hvac_action="heating", valve_open_percent=50)
+    await coordinator.async_refresh()
+    assert hass.states.get(hot_id).state == "off"  # the flow is stale now
+    release.set()
+    await task
+    await hass.async_block_till_done()
+    assert hass.states.get(hot_id).state == "off"
 
 
 async def test_invalid_options_fail_setup_with_a_reason(hass: HomeAssistant) -> None:
