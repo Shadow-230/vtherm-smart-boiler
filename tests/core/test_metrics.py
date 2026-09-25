@@ -171,3 +171,12 @@ def test_starts_per_hour_count_the_hours_with_heating() -> None:
     assert stats.active_s == HOUR
     assert stats.starts_per_hour == pytest.approx(4.0)
     assert cycle_stats([], observed_s=DAY).starts_per_hour is None
+
+
+def test_a_small_meter_drop_is_no_reset() -> None:
+    """P45: a meter that steps back a little (a correction, rounding) did not restart from zero:
+    adding its whole reading would count years of gas at once."""
+    meter = Series([(0, 1000.0), (10, 999.9), (20, 1001.0)])
+    assert meter_consumption(meter, 0, 30) == Consumption(pytest.approx(1.1), True)
+    reset = Series([(0, 1000.0), (10, 5.0), (20, 7.0)])
+    assert meter_consumption(reset, 0, 30) == Consumption(pytest.approx(7.0), True)

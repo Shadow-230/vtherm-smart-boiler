@@ -603,6 +603,21 @@ async def test_an_entered_loss_that_the_measurement_disagrees_with_is_shown(
     assert state.attributes["mismatch"] is True
 
 
+async def test_the_gas_unit_follows_the_meter(hass: HomeAssistant) -> None:
+    """P70: a meter whose unit is not known at setup does not leave "gas" in the unit."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.GAS_METER))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    meter = boiler.entity(Signal.GAS_METER)
+    hass.states.async_set(meter, "unavailable", {})
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    hass.states.async_set(meter, "1234.5", {"unit_of_measurement": "m³"})
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    sensor = hass.states.get(entity_id(hass, entry, "sensor", "gas_per_degree_day"))
+    assert sensor.attributes["unit_of_measurement"] == "m³/K·d"
+
+
 async def test_invalid_options_fail_setup_with_a_reason(hass: HomeAssistant) -> None:
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", options={"signals": {}})
     entry.add_to_hass(hass)

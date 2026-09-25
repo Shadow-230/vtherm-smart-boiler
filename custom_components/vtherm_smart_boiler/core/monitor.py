@@ -181,7 +181,12 @@ def summarize(
         else None
     )
     gas, source = _gas(history, parameters, start, end, opts.modulation_scale, burns)
-    gas_per_dd = per_degree_day(gas.amount, days) if gas is not None and days is not None else None
+    # Gas known for part of the window over degree-days for all of it would be too little.
+    gas_per_dd = (
+        per_degree_day(gas.amount, days)
+        if gas is not None and gas.complete and days is not None
+        else None
+    )
     model = LoadModel.from_parameters(parameters)
     min_power = parameters.value(ParameterKey.BOILER_MIN_POWER)
     load_below = (

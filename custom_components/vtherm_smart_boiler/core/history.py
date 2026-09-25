@@ -69,8 +69,19 @@ class History:
         return signal in self.signals
 
     def outdoor(self) -> Series[float]:
-        """The boiler's outdoor sensor when mapped, else the weather entity."""
-        return self.signals.get(Signal.OUTDOOR) or self.weather
+        """The boiler's outdoor sensor where it is known, the weather entity elsewhere: a mapped
+        sensor that is unavailable no longer blocks the weather (P46)."""
+        sensor = self.signals.get(Signal.OUTDOOR)
+        if sensor is None or not len(sensor):
+            return self.weather
+        if not len(self.weather):
+            return sensor
+        times = sorted({s.t for s in sensor} | {s.t for s in self.weather})
+        merged: Series[float] = Series()
+        for t in times:
+            value = sensor.value_at(t)
+            merged.append(t, value if value is not None else self.weather.value_at(t))
+        return merged
 
     def zone_demand(self, start: float, end: float) -> Series[bool] | None:
         """True while any zone wants heat; ``None`` without zone data.
@@ -131,9 +142,11 @@ def _zone_wants_heat(values: Sequence[object]) -> bool | None:
 
 
 def _any_known(values: Sequence[bool | None]) -> bool | None:
+    """True when any zone calls; False only when every zone is known not to (an unknown zone
+    may be calling)."""
     if any(v is True for v in values):
         return True
-    if all(v is None for v in values):
+    if any(v is None for v in values):
         return None
     return False
 

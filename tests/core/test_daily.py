@@ -114,3 +114,13 @@ def test_a_day_keeps_its_outdoor_mean_and_heat_for_the_building_fit() -> None:
     [point] = fit_points([day])
     assert (point.outdoor_mean, point.energy_kwh) == (day.outdoor_mean, day.heat_kwh)
     assert fit_points([DaySummary.empty(0, DAY)]) == []
+
+
+def test_a_day_of_twenty_three_hours_is_fitted_as_a_whole_day() -> None:
+    """P63: the day the clocks go forward has 23 hours; its heat counts as a day's."""
+    day = DaySummary(
+        0.0, 23 * HOUR, 23 * HOUR, 10, 10, 0, HOUR, 10 * HOUR,
+        0.0, 0.0, 0.0, 0.0, False, 7.0, None, outdoor_mean=5.0, heat_kwh=46.0,
+    )  # fmt: skip
+    [point] = fit_points([day])
+    assert point.energy_kwh == pytest.approx(48.0)

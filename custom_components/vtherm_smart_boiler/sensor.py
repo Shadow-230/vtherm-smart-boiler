@@ -369,8 +369,13 @@ class BoilerSensor(SmartBoilerEntity, SensorEntity):
     ) -> None:
         super().__init__(coordinator, description.key)
         self.entity_description = description
-        if description.key == "gas_per_degree_day":
-            self._attr_native_unit_of_measurement = f"{_gas_unit(coordinator)}/K·d"
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        if self.entity_description.key == "gas_per_degree_day":
+            # The gas meter's unit as it is now: it may be unknown while the meter starts (P70).
+            return f"{_gas_unit(self.coordinator)}/K·d"
+        return self.entity_description.native_unit_of_measurement
 
     @property
     def native_value(self) -> Value:

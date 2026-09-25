@@ -157,7 +157,8 @@ def _period(
     degree_days = summary.degree_days.estimated_total()
     if degree_days is None:
         return None
-    if summary.heat_output_kwh is not None and summary.dhw_output_kwh is not None:
+    heat, dhw_heat = summary.heat_output_kwh, summary.dhw_output_kwh
+    if heat is not None and dhw_heat is not None and heat.complete and dhw_heat.complete:
         heating, dhw, unit = (
             summary.heat_output_kwh.amount,
             summary.dhw_output_kwh.amount,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -111,11 +112,39 @@ def test_report_runs_the_core(recorder: Path) -> None:
 
 
 def test_local_days_are_whole_days_inside_the_window() -> None:
-    tz = ZoneInfo("Europe/Warsaw")
     start = 1_780_000_000.0
-    days = local_days(start, start + 3 * DAY, tz)
+    days = local_days(start, start + 3 * DAY, ZoneInfo("UTC"))
     assert len(days) == 2
-    assert all(end - begin in (23 * HOUR, DAY, 25 * HOUR) for begin, end in days)
+    assert all(end - begin == DAY for begin, end in days)
+
+
+def test_local_days_follow_the_clock_change() -> None:
+    """A day the clocks go forward has 23 hours; any zone with a clock change shows it."""
+    tz = ZoneInfo("America/New_York")  # clocks go forward on 2026-03-08
+    start = datetime(2026, 3, 7, tzinfo=tz).timestamp()
+    days = local_days(start, start + 3 * DAY, tz)
+    assert [round((end - begin) / HOUR) for begin, end in days] == [24, 23, 24]
+
+
+@pytest.mark.parametrize(
+    ("data", "message"),
+    [
+        ({"boiler": {"flame": "binary_sensor.f", "flow": "sensor.f"}, "zones": {"a": "nodot"}},
+         "zones"),
+        ({"boiler": {"flame": "binary_sensor.f", "flow": "sensor.f"},
+          "parameters": {"loss_coefficient": "much"}}, "loss_coefficient"),
+        ({"boiler": {"flame": "binary_sensor.f", "flow": "sensor.f"},
+          "parameters": {"loss_coefficient": 99}}, "loss_coefficient"),
+        ({"boiler": {"flame": "binary_sensor.f", "flow": "sensor.f"},
+          "options": {"modulation_scale": "sideways"}}, "modulation_scale"),
+        ({"boiler": {"flame": "binary_sensor.f", "flow": "sensor.f"}, "weather": "weather.x"},
+         "weather"),
+    ],
+)  # fmt: skip
+def test_a_broken_mapping_is_explained(data: dict, message: str) -> None:
+    """P103: every broken part of the mapping gives a message, not a traceback."""
+    with pytest.raises(MappingError, match=message):
+        parse_mapping(data)
 
 
 def test_cli(recorder: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

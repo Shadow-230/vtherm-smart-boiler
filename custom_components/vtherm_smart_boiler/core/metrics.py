@@ -167,8 +167,14 @@ class Consumption:
     complete: bool
 
 
+# A meter restarted from zero reads far below its last value; a small step back is a correction.
+METER_RESET_FRACTION = 0.1
+
+
 def meter_consumption(meter: Series[float], start: float, end: float) -> Consumption | None:
-    """Consumption from a cumulative meter in ``[start, end)``; a drop is a reset to zero.
+    """Consumption from a cumulative meter in ``[start, end)``. A drop to under a tenth of the
+    last reading is a reset to zero; a smaller step back counts nothing and the count goes on
+    from there (adding a whole reading would count years of gas at once).
 
     The meter keeps counting through a gap in the data, so known values on both sides of a gap
     still give the consumption in between. Complete when the meter is known at both ends of the
@@ -180,7 +186,10 @@ def meter_consumption(meter: Series[float], start: float, end: float) -> Consump
         return None
     amount = 0.0
     for before, after in pairwise(known):
-        amount += after - before if after >= before else after
+        if after >= before:
+            amount += after - before
+        elif after < METER_RESET_FRACTION * before:
+            amount += after  # counted from zero since the reset
     complete = segments[0].value is not None and segments[-1].value is not None
     return Consumption(amount, complete)
 

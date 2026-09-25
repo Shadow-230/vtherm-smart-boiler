@@ -53,7 +53,8 @@ def test_combine_and_zone_demand() -> None:
     history = History(zones={"a": a, "b": b})
     demand = history.zone_demand(0, 30)
     assert demand is not None
-    assert [(s.t, s.value) for s in demand] == [(0, False), (10, True), (20, False)]
+    # P63: an unknown zone may be calling — "no demand" only once every zone says so.
+    assert [(s.t, s.value) for s in demand] == [(0, None), (10, True), (20, False)]
     assert History().zone_demand(0, 30) is None
     unknown = combine([Series([(0, None)])], 0, 10, lambda values: values[0])
     assert unknown.value_at(5) is None
@@ -72,7 +73,8 @@ def test_zone_state_at_and_outdoor_fallback() -> None:
     weather = Series([(0, 3.0)])
     assert History(weather=weather).outdoor() is weather
     sensor = Series([(0, 4.0)])
-    assert History(signals={Signal.OUTDOOR: sensor}, weather=weather).outdoor() is sensor
+    outdoor = History(signals={Signal.OUTDOOR: sensor}, weather=weather).outdoor()
+    assert outdoor.value_at(5.0) == 4.0  # the sensor wins where it is known
 
 
 def cycling_history(days: int = 8, outdoor: float = 8.0) -> History:
@@ -206,3 +208,21 @@ def test_the_summary_counts_burns_of_unknown_kind_apart() -> None:
     assert summary.unknown.starts == 1
     no_dhw = summarize(history, ParameterSet(), 0, 3 * HOUR, MonitorOptions(has_dhw=False))
     assert no_dhw.heating.starts == 1
+
+
+def test_the_weather_stands_in_where_the_outdoor_sensor_is_unknown() -> None:
+    """P46: a mapped outdoor sensor that is unavailable no longer blocks the weather entity."""
+    sensor = Series([(0, 4.0), (10, None), (20, 6.0)])
+    history = History(signals={Signal.OUTDOOR: sensor}, weather=Series([(0, 9.0)]))
+    outdoor = history.outdoor()
+    assert [outdoor.value_at(t) for t in (5, 15, 25)] == [4.0, 9.0, 6.0]
+
+
+def test_gas_per_degree_day_needs_the_gas_of_the_whole_window() -> None:
+    """P46: gas known for half the window over degree-days for all of it would halve it."""
+    history = cycling_history(days=1)
+    history.signals[Signal.GAS_METER] = Series([(12 * HOUR, 100.0), (DAY, 106.0)])
+    summary = summarize(history, params(), 0, DAY + 1)
+    assert summary.gas is not None
+    assert not summary.gas.complete
+    assert summary.gas_per_degree_day is None

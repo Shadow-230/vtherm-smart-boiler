@@ -3,7 +3,7 @@
 Usage (every command through scripts/env.sh):
 
     scripts/env.sh python -m tools.import_history --db data/home-assistant_v2.db \\
-        --mapping data/mapping.toml [--start 2026-09-01] [--end 2026-10-01] [--tz Europe/Warsaw]
+        --mapping data/mapping.toml [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--tz <IANA zone>]
 
 The mapping (see tools/mapping.example.toml) says which entity provides each signal. The database
 is only read. The report shows signal coverage, burns, metrics and the verdict.
@@ -69,7 +69,7 @@ def load_mapping(path: Path) -> EntityMapping:
 
 
 def parse_mapping(data: Mapping[str, Any]) -> EntityMapping:
-    boiler = data.get("boiler", {})
+    boiler = _table(data, "boiler")
     signals: dict[Signal, str] = {}
     for key, entity in boiler.items():
         try:
@@ -82,27 +82,49 @@ def parse_mapping(data: Mapping[str, Any]) -> EntityMapping:
     missing = sorted(s.value for s in REQUIRED_SIGNALS if s not in signals)
     if missing:
         raise MappingError(f"[boiler] missing required signals: {', '.join(missing)}")
-    zones = {str(name): str(entity) for name, entity in data.get("zones", {}).items()}
+    zones: dict[str, str] = {}
+    for name, entity in _table(data, "zones").items():
+        if not isinstance(entity, str) or "." not in entity:
+            raise MappingError(f"[zones] {name}: expected an entity ID")
+        zones[str(name)] = entity
     parameters = ParameterSet()
-    for key, value in data.get("parameters", {}).items():
+    for key, value in _table(data, "parameters").items():
         try:
             parameter = ParameterKey(key)
         except ValueError as err:
             raise MappingError(f"[parameters] {key}: not a known parameter") from err
-        parameters = parameters.with_estimate(parameter, Estimate(float(value), Source.ENTERED))
-    options_data = data.get("options", {})
-    options = MonitorOptions(
-        condensing_return=float(options_data.get("condensing_return", 55.0)),
-        modulation_scale=ModulationScale(options_data.get("modulation_scale", "range")),
-    )
+        try:
+            estimate = Estimate(float(value), Source.ENTERED)
+            parameters = parameters.with_estimate(parameter, estimate)
+        except (TypeError, ValueError) as err:
+            raise MappingError(f"[parameters] {key}: {err}") from err
+    options_data = _table(data, "options")
+    try:
+        options = MonitorOptions(
+            condensing_return=float(options_data.get("condensing_return", 55.0)),
+            modulation_scale=ModulationScale(options_data.get("modulation_scale", "range")),
+        )
+    except (TypeError, ValueError) as err:
+        raise MappingError(f"[options] condensing_return or modulation_scale: {err}") from err
+    weather = _table(data, "weather").get("entity")
+    if weather is not None and (not isinstance(weather, str) or "." not in weather):
+        raise MappingError("[weather] entity: expected an entity ID")
     return EntityMapping(
         signals,
-        data.get("weather", {}).get("entity"),
+        weather,
         zones,
         parameters,
         options,
         str(options_data.get("temperature_unit", "°C")),
     )
+
+
+def _table(data: Mapping[str, Any], name: str) -> Mapping[str, Any]:
+    """A section of the mapping; anything but a table is explained, not a traceback."""
+    section = data.get(name, {})
+    if not isinstance(section, Mapping):
+        raise MappingError(f"[{name}]: expected a table (e.g. [{name}] with keys under it)")
+    return section
 
 
 def read_history(db: RecorderDatabase, mapping: EntityMapping, start: float, end: float) -> History:
