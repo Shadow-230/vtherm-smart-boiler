@@ -380,6 +380,11 @@ CONTROL_ADVANCED_KEYS = (
     "alarm_reactions",
 )
 CURVE_KEYS = ("design_outdoor", "design_flow", "room", "exponent", "offset")
+# What a hand-back goes through: fixed while one is owed.
+HAND_BACK_KEYS = (
+    "setpoint_entity", "ch_entity", "hand_back", "hand_back_value", "hand_back_value_effect",
+    "hand_back_entity", "gateway_id", "mqtt_top", "mqtt_node",
+)  # fmt: skip
 
 
 def control_schema(options: dict[str, Any]) -> vol.Schema:
@@ -1023,6 +1028,19 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
     def _next_after(self, step: str) -> str:
         return "save"
 
+    def _hand_back_owed(self) -> bool:
+        """A hand-back has not reached the boiler yet: what it goes through must not change."""
+        coordinator = getattr(self.config_entry, "runtime_data", None)
+        units = [getattr(coordinator, name, None) for name in ("control", "hand_back_unit")]
+        return any(unit is not None and unit.hand_back_owed for unit in units)
+
+    def _changes_hand_back(self, user_input: dict[str, Any]) -> bool:
+        current = self.config_entry.options.get(CONTROL, {})
+        return any(
+            key in user_input and user_input.get(key) != current.get(key)
+            for key in HAND_BACK_KEYS
+        )
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         menu = ["signals", "boiler", "circuit", "zones", "building", "reference", "control"]
         if _advanced(self.options):
@@ -1065,8 +1083,16 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         if user_input is not None:
-            apply_control(self.options, user_input)
             path = user_input["write_path"]
+            current = self.config_entry.options.get(CONTROL, {}).get("write_path")
+            if path not in (NO_CONTROL, current) and self._hand_back_owed():
+                # "No control" stays possible: a unit that only hands back keeps retrying.
+                return self.async_show_form(
+                    step_id="control",
+                    data_schema=control_schema(self.options),
+                    errors={"write_path": "hand_back_pending"},
+                )
+            apply_control(self.options, user_input)
             if path == NO_CONTROL:
                 return await self.async_step_save()
             step = {
@@ -1085,6 +1111,8 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             errors = control_details_error(
                 user_input, read_bounds(self.hass, user_input["setpoint_entity"])
             )
+            if not errors and self._hand_back_owed() and self._changes_hand_back(user_input):
+                errors = {"base": "hand_back_pending"}
             if not errors:
                 apply_control_details(self.options, user_input)
                 return await self.async_step_control_curve()
@@ -1097,26 +1125,36 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
     async def async_step_control_gateway(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            apply_control_details(self.options, user_input)
-            return await self.async_step_control_curve()
+            if self._hand_back_owed() and self._changes_hand_back(user_input):
+                errors = {"base": "hand_back_pending"}
+            else:
+                apply_control_details(self.options, user_input)
+                return await self.async_step_control_curve()
         gateways = sorted(
             str(entry.data["id"])
             for entry in self.hass.config_entries.async_entries("opentherm_gw")
             if entry.data.get("id")
         )
         return self.async_show_form(
-            step_id="control_gateway", data_schema=control_gateway_schema(self.options, gateways)
+            step_id="control_gateway",
+            data_schema=control_gateway_schema(self.options, gateways),
+            errors=errors,
         )
 
     async def async_step_control_mqtt(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            apply_control_details(self.options, user_input)
-            return await self.async_step_control_curve()
+            if self._hand_back_owed() and self._changes_hand_back(user_input):
+                errors = {"base": "hand_back_pending"}
+            else:
+                apply_control_details(self.options, user_input)
+                return await self.async_step_control_curve()
         return self.async_show_form(
-            step_id="control_mqtt", data_schema=control_mqtt_schema(self.options)
+            step_id="control_mqtt", data_schema=control_mqtt_schema(self.options), errors=errors
         )
 
     async def async_step_control_curve(

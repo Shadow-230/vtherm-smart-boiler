@@ -21,10 +21,11 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import CALLBACK_TYPE, Event, HassJob, HomeAssistant
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
-from .const import CONTROL_TICK_SECONDS
+from .const import CONTROL_TICK_SECONDS, DOMAIN
 from .control_config import (
     AlarmReaction,
     ControlOptions,
@@ -129,7 +130,13 @@ type WriterFactory = Callable[[HomeAssistant, ControlOptions], Writer]
 
 
 class ControlUnit:
-    """Control for one installation; writes nothing until configured, allowed and switched on."""
+    """Control for one installation; writes nothing until configured, allowed and switched on.
+
+    ``raw``: the control options as stored; kept with the state while the boiler may hold a value
+    of ours, so a later start can hand back through what took the boiler even if the options
+    changed. ``hand_back_only``: built from such stored options after control left the options;
+    it never controls, only makes the owed hand-back, shown as a repair issue.
+    """
 
     def __init__(
         self,
@@ -137,10 +144,14 @@ class ControlUnit:
         coordinator: SmartBoilerCoordinator,
         options: ControlOptions,
         writer_factory: WriterFactory = make_writer,
+        raw: Mapping[str, Any] | None = None,
+        hand_back_only: bool = False,
     ) -> None:
         self._hass = hass
         self._coordinator = coordinator
         self.options = options
+        self._raw = dict(raw or {})
+        self.hand_back_only = hand_back_only
         self._writer_factory = writer_factory
         self._writer: Writer | None = None
         self.enabled = False
@@ -168,6 +179,11 @@ class ControlUnit:
         self._stopped = False
 
     # --- status, listeners, storage -----------------------------------------------------
+
+    @property
+    def hand_back_owed(self) -> bool:
+        """A hand-back has not got through, or has not been confirmed, yet."""
+        return self._hand_back_pending
 
     @property
     def status(self) -> ControlStatus:
@@ -201,8 +217,10 @@ class ControlUnit:
         """What must survive a restart: whether the boiler may hold a value of ours, paused zones,
         latches and a hand-back still to be done."""
         session = self._session
+        owed = self._holding or self._hand_back_pending
         return {
             "controlling": self._holding,
+            "taken_with": dict(self._raw) if owed and self._raw else None,
             "paused": dict(session.learning.paused),
             "latched": session.loop.control.latched,
             "failed": session.failed,
@@ -234,6 +252,7 @@ class ControlUnit:
         """Start the control clock and hand back when Home Assistant stops."""
         if not self.options.configured:
             return
+        self._report_owed()
         self._started_at = dt_util.utcnow().timestamp()
         self._unsubs.append(
             async_track_time_interval(
@@ -402,6 +421,9 @@ class ControlUnit:
         session = self._session
         if self._hand_back_pending and not session.loop.control.controlling:
             await self._async_follow_hand_back(now)
+        if self.hand_back_only:
+            self._report_owed()
+            return
         if not self._restored and now - self._started_at < RESTORE_WAIT_S:
             return  # the switch has not restored the user's choice yet: decide nothing
         blockers = self.blockers(now)
@@ -597,6 +619,7 @@ class ControlUnit:
             self._hand_back_checks = ()
             self._hand_back_retry_at = now + HAND_BACK_RETRY_S
             self._coordinator.schedule_save()
+            self._report_owed()
             return False
         if checks and not self._checks_hold(checks):
             self._hand_back_pending = True
@@ -646,6 +669,24 @@ class ControlUnit:
         self._hand_back_checks = ()
         if changed:
             self._coordinator.schedule_save()
+        self._report_owed()
+
+    def _report_owed(self) -> None:
+        """Without the control entities, a repair issue shows a hand-back still owed."""
+        if not self.hand_back_only:
+            return
+        issue_id = f"hand_back_owed_{self._coordinator.config_entry.entry_id}"
+        if self._hand_back_pending:
+            ir.async_create_issue(
+                self._hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key="hand_back_owed",
+            )
+        else:
+            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
 
     async def _async_hand_back_now(self, now: float) -> None:
         """Hand back at once if control holds the boiler (unload, stop, error)."""

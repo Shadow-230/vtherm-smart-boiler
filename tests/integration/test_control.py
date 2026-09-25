@@ -856,3 +856,94 @@ async def test_a_write_reported_failed_is_still_handed_back(rig: Rig) -> None:
     rig.gateway.fail_after = False
     await rig.switch(False)
     assert rig.gateway.setpoints()[-1] == 0.0
+
+
+def issue(rig: Rig, key: str) -> ir.IssueEntry | None:
+    assert rig.entry is not None
+    return ir.async_get(rig.hass).async_get_issue(DOMAIN, f"{key}_{rig.entry.entry_id}")
+
+
+async def owe_a_hand_back(rig: Rig) -> FakeNumber:
+    """Control through a held entity has the boiler; then the entity goes away."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(rig, **held_entity(number))
+    await rig.switch(True)
+    assert number.writes == [EXPECTED]
+    number.set_available(False)
+    return number
+
+
+async def test_no_control_while_a_hand_back_is_owed_keeps_handing_back(rig: Rig) -> None:
+    """Control removed from the options while its hand-back cannot get through: a unit that only
+    hands back keeps retrying, with a repair issue, until the boiler has it."""
+    number = await owe_a_hand_back(rig)
+    assert rig.entry is not None
+    options = {k: v for k, v in rig.entry.options.items() if k != "control"}
+    rig.hass.config_entries.async_update_entry(rig.entry, options=options)
+    await rig.hass.async_block_till_done()
+    assert number.writes == [EXPECTED]  # the hand-back on unload did not get through
+    assert issue(rig, "hand_back_owed") is not None
+    number.set_available(True)
+    await rig.advance(70)
+    assert number.writes == [EXPECTED, 50.0]
+    await rig.advance(10)
+    assert issue(rig, "hand_back_owed") is None
+
+
+async def test_a_broken_control_section_keeps_monitoring_and_handing_back(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """Options that a newer check refuses do not stop the entry: the monitor runs, control is
+    left out with a repair issue, and a hand-back still owed goes out."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    taken_with = held_entity(number) | {"curve": {"design_outdoor": -15, "design_flow": 55}}
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=options(rig.zones, **taken_with) | {"control": {"write_path": "carrier_pigeon"}},
+    )
+    entry.add_to_hass(rig.hass)
+    hass_storage[f"{DOMAIN}.{entry.entry_id}"] = {
+        "version": 1,
+        "key": f"{DOMAIN}.{entry.entry_id}",
+        "data": {
+            "monitoring_since": 0.0,
+            "control": {"controlling": True, "taken_with": taken_with},
+        },
+    }
+    assert await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    rig.entry = entry
+    assert issue(rig, "control_options_invalid") is not None
+    await rig.advance(20)
+    assert number.writes == [50.0]  # handed back through what took the boiler
+    assert issue(rig, "hand_back_owed") is None
+
+
+async def test_changing_the_write_path_is_refused_while_a_hand_back_is_owed(rig: Rig) -> None:
+    await owe_a_hand_back(rig)
+    await rig.switch(False)
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+    assert rig.entry is not None
+    flow = await rig.hass.config_entries.options.async_init(rig.entry.entry_id)
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"], {"next_step_id": "control"}
+    )
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"],
+        {"write_path": "opentherm_gw", "topology": "virtual", "confirmed_entity": CONFIRMED},
+    )
+    assert flow["errors"] == {"write_path": "hand_back_pending"}
+
+
+async def test_removing_the_entry_with_a_hand_back_owed_raises_a_repair_issue(rig: Rig) -> None:
+    await owe_a_hand_back(rig)
+    assert rig.entry is not None
+    entry_id = rig.entry.entry_id
+    await rig.hass.config_entries.async_remove(entry_id)
+    await rig.hass.async_block_till_done()
+    issues = ir.async_get(rig.hass)
+    assert issues.async_get_issue(DOMAIN, f"hand_back_owed_after_removal_{entry_id}") is not None

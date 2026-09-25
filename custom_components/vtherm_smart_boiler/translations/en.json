@@ -616,7 +616,8 @@
       "off_setpoint_outside_entity_range": "The setpoint entity does not accept this value.",
       "write_type_not_supported": "The plugin never writes to the boiler's persistent memory: declare the setpoint entity expiring or held, or choose \"No control\".",
       "ch_write_type_not_supported": "Declare the heating switch expiring or held, or leave the switch empty: the plugin never writes to the boiler's persistent memory.",
-      "hand_back_value_effect_missing": "The value method needs its effect: what the device does with the hand-back value."
+      "hand_back_value_effect_missing": "The value method needs its effect: what the device does with the hand-back value.",
+      "hand_back_pending": "A hand-back has not reached the boiler yet: the write path and what control writes to cannot change until it does. Bring the target back, or choose \"No control\": the hand-back is still retried."
     },
     "abort": {
       "missing_signal": "A required signal is missing.",
@@ -957,6 +958,18 @@
     "auto_tpi_blocked": {
       "title": "Auto-TPI cannot learn in some zones",
       "description": "These zones run Auto-TPI and are marked in Versatile Thermostat as used by the central boiler, but VT's central boiler is not configured, so Auto-TPI skips learning in them: {zones}. Clear the option \"used by the central boiler\" in each zone's VT configuration."
+    },
+    "hand_back_owed": {
+      "title": "Control has not handed the boiler back yet",
+      "description": "Control no longer runs, but handing the boiler back has not got through yet; it is retried every minute. Until it does, the boiler may keep the last value the plugin wrote. Check that the setpoint entity or the gateway is available, or return the boiler to its own control by hand."
+    },
+    "control_options_invalid": {
+      "title": "The control options cannot be used",
+      "description": "The saved control options cannot be used ({problem}), so control is off; the monitor keeps running. Open the options and set control up again."
+    },
+    "hand_back_owed_after_removal": {
+      "title": "The boiler may still hold a value from VTherm Smart Boiler",
+      "description": "The integration was removed before its hand-back reached the boiler. Return the boiler to its own control by hand — reset the setpoint entity, or clear the gateway's overrides — and then ignore this issue."
     }
   }
 }

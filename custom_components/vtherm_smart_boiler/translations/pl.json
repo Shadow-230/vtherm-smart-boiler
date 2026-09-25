@@ -616,7 +616,8 @@
       "off_setpoint_outside_entity_range": "Encja nastawy nie przyjmuje tej wartości.",
       "write_type_not_supported": "Wtyczka nigdy nie zapisuje trwałej pamięci kotła: zadeklaruj encję nastawy jako wygasającą lub trzymaną albo wybierz „Bez sterowania”.",
       "ch_write_type_not_supported": "Zadeklaruj przełącznik grzania jako wygasający lub trzymany albo zostaw przełącznik pusty: wtyczka nigdy nie zapisuje trwałej pamięci kotła.",
-      "hand_back_value_effect_missing": "Metoda wartości wymaga skutku: co urządzenie robi z wartością oddania."
+      "hand_back_value_effect_missing": "Metoda wartości wymaga skutku: co urządzenie robi z wartością oddania.",
+      "hand_back_pending": "Oddanie sterowania jeszcze nie dotarło do kotła: ścieżka zapisu i to, do czego sterowanie pisze, nie mogą się zmienić, dopóki nie dotrze. Przywróć cel albo wybierz „Bez sterowania”: oddanie jest nadal ponawiane."
     },
     "abort": {
       "missing_signal": "Brakuje wymaganego sygnału.",
@@ -957,6 +958,18 @@
     "auto_tpi_blocked": {
       "title": "Auto-TPI nie może się uczyć w części stref",
       "description": "Te strefy używają Auto-TPI i są oznaczone w Versatile Thermostat jako używane przez kocioł centralny, ale kocioł centralny VT nie jest skonfigurowany, więc Auto-TPI pomija w nich naukę: {zones}. Wyłącz opcję „używany przez kocioł centralny” w konfiguracji VT każdej z tych stref."
+    },
+    "hand_back_owed": {
+      "title": "Sterowanie jeszcze nie oddało kotła",
+      "description": "Sterowanie już nie działa, ale oddanie kotła jeszcze nie dotarło; jest ponawiane co minutę. Do tego czasu kocioł może trzymać ostatnią wartość zapisaną przez wtyczkę. Sprawdź, czy encja nastawy lub bramka jest dostępna, albo przywróć kotłu własne sterowanie ręcznie."
+    },
+    "control_options_invalid": {
+      "title": "Opcji sterowania nie da się użyć",
+      "description": "Zapisanych opcji sterowania nie da się użyć ({problem}), więc sterowanie jest wyłączone; monitor działa dalej. Otwórz opcje i skonfiguruj sterowanie ponownie."
+    },
+    "hand_back_owed_after_removal": {
+      "title": "Kocioł może nadal trzymać wartość z VTherm Smart Boiler",
+      "description": "Integrację usunięto, zanim oddanie sterowania dotarło do kotła. Przywróć kotłu własne sterowanie ręcznie — ustaw na nowo encję nastawy albo wyczyść nadpisania bramki — a potem zignoruj to zgłoszenie."
     }
   }
 }

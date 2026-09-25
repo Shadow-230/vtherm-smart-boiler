@@ -164,6 +164,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._analysing = False
         self._save_pending = False
         self.control: ControlUnit | None = None
+        # Control left the options while a hand-back was still owed: this unit only hands back.
+        self.hand_back_unit: ControlUnit | None = None
         self.stored_control: dict[str, Any] = {}
 
     # --- lifecycle ------------------------------------------------------------------------
@@ -266,8 +268,14 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 if f.value is not None
             },
             "measured": measured,
-            "control": self.control.stored() if self.control is not None else self.stored_control,
+            "control": self._stored_control(),
         }
+
+    def _stored_control(self) -> dict[str, Any]:
+        for unit in (self.control, self.hand_back_unit):
+            if unit is not None:
+                return unit.stored()
+        return self.stored_control
 
     async def async_save_now(self) -> None:
         """Write the store at once: for what a crash must not lose (the controlling marker)."""

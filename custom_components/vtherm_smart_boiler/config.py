@@ -117,6 +117,7 @@ class EntryConfig:
     monitor: MonitorConfig
     freshness: dict[Signal, float | None]
     control: ControlOptions = field(default_factory=ControlOptions)
+    control_problem: str | None = None  # why control was left out (non-strict parsing only)
 
     @property
     def zone_entities(self) -> tuple[str, ...]:
@@ -136,7 +137,12 @@ class EntryConfig:
         return tuple(dict.fromkeys(entities))
 
     @classmethod
-    def from_options(cls, options: Mapping[str, Any]) -> EntryConfig:
+    def from_options(
+        cls, options: Mapping[str, Any], strict_control: bool = True
+    ) -> EntryConfig:
+        """The entry's configuration. ``strict_control=False`` (at setup): a control section that
+        cannot be used leaves control out with ``control_problem`` set instead of failing, so
+        the monitor keeps running and a hand-back still owed can go out."""
         signals = _signals(options.get(SIGNALS, {}))
         boiler_data = options.get(BOILER, {})
         boiler = Boiler(
@@ -153,6 +159,13 @@ class EntryConfig:
             raise ConfigError(errors[0].code.value, errors[0].subject)
         parameters = _parameters(options.get(PARAMETERS, {}), options.get(BUILDING, {}))
         reference = _reference(options.get(REFERENCE_ROOM, {}), [z.zone_id for z in zones])
+        control_problem: str | None = None
+        try:
+            control = _control(options.get(CONTROL), installation, parameters)
+        except ConfigError as err:
+            if strict_control:
+                raise
+            control, control_problem = ControlOptions(), str(err)
         return cls(
             level=str(options.get(LEVEL, LEVEL_SIMPLE)),
             signals=signals,
@@ -164,7 +177,8 @@ class EntryConfig:
             reference_room=reference,
             monitor=_monitor(options.get(MONITOR, {}), boiler_data),
             freshness=_freshness(options.get(FRESHNESS, {})),
-            control=_control(options.get(CONTROL), installation, parameters),
+            control=control,
+            control_problem=control_problem,
         )
 
 

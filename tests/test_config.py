@@ -196,3 +196,15 @@ def test_alarm_limits_must_be_in_order(monitor: dict) -> None:
     with pytest.raises(ConfigError) as err:
         EntryConfig.from_options(MINIMAL | {"monitor": monitor})
     assert err.value.code == "alarm_limits_out_of_order"
+
+
+def test_a_broken_control_section_keeps_the_monitor_at_setup() -> None:
+    """The flow refuses such options; at setup — options saved by an older version that a newer
+    check refuses — control is left out with its problem named, and the monitor keeps running."""
+    options = MINIMAL | {"control": {"write_path": "entity", "ch_write_type": "sometimes"}}
+    with pytest.raises(ConfigError):
+        EntryConfig.from_options(options)
+    config = EntryConfig.from_options(options, strict_control=False)
+    assert not config.control.configured
+    assert config.control_problem is not None
+    assert EntryConfig.from_options(MINIMAL, strict_control=False).control_problem is None
