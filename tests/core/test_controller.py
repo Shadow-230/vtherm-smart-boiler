@@ -332,3 +332,23 @@ def test_a_short_cycling_boiler_is_never_held_off() -> None:
     steps = [inputs(t * 10.0, flame=t % 4 < 2) for t in range(360)]  # an hour of 20 s burns
     _state, decisions = run(steps)
     assert all(d.command is not None and d.command.ch_enable for d in decisions)
+
+
+def test_frost_heating_that_does_not_warm_the_zone_is_reported_not_stopped() -> None:
+    cold = (zone(0.0, temperature=3.0),)
+    steps = [inputs(t * 600.0, zones=(zone(t * 600.0, temperature=3.0),)) for t in range(13)]
+    steps[0] = inputs(0.0, zones=cold)
+    _state, decisions = run(steps)
+    assert all(d.mode is ControlMode.FROST for d in decisions)
+    assert all(d.command is not None and d.command.ch_enable for d in decisions)
+    assert not decisions[11].frost_stuck  # under two hours
+    assert decisions[12].frost_stuck  # two hours on and the room no warmer
+
+
+def test_frost_heating_that_warms_the_zone_is_not_reported() -> None:
+    steps = [
+        inputs(t * 600.0, zones=(zone(t * 600.0, temperature=3.0 + 0.1 * t),)) for t in range(13)
+    ]
+    _state, decisions = run(steps)
+    assert decisions[12].mode is ControlMode.FROST
+    assert not decisions[12].frost_stuck

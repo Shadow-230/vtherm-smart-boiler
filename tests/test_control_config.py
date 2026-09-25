@@ -284,3 +284,12 @@ def test_the_count_threshold_must_fit_the_zones() -> None:
     options = parse_control(OTGW | {"count_threshold": 2}, RADIATORS, None)
     assert config_blockers(options, RADIATORS) == ["count_threshold_above_zones"]
     assert config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS) == []
+
+
+def test_frost_protection_watches_the_zone_picked_or_every_zone() -> None:
+    picked = parse_control(OTGW | {"frost_zone": "climate.a"}, RADIATORS, None)
+    assert picked.loop.control.frost.zone == "climate.a"
+    assert parse_control(OTGW, RADIATORS, None).loop.control.frost.zone is None
+    # A zone no longer configured must not leave frost protection watching nothing.
+    gone = parse_control(OTGW | {"frost_zone": "climate.gone"}, RADIATORS, None)
+    assert gone.loop.control.frost.zone is None

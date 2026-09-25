@@ -52,8 +52,8 @@ def test_invalid_limits(kwargs: dict) -> None:
         FlowLimits(**kwargs)
 
 
-def zone(temp: float | None, reported: float | None = 100.0) -> ZoneState:
-    return ZoneState("z", temperature=temp, reported_at=reported)
+def zone(temp: float | None, reported: float | None = 100.0, zid: str = "z") -> ZoneState:
+    return ZoneState(zid, temperature=temp, reported_at=reported)
 
 
 def test_frost_starts_below_the_limit_and_releases_with_hysteresis() -> None:
@@ -73,3 +73,18 @@ def test_frost_ignores_stale_and_unknown_zones() -> None:
 def test_frost_config_is_consistent() -> None:
     with pytest.raises(ValueError, match="release"):
         FrostConfig(room_limit=8.0, release=6.0)
+
+
+def test_frost_watches_every_zone_or_the_one_picked() -> None:
+    """Every zone by default, VT's switched-off ones included; or only the zone the user picks
+    (e.g. to leave an unheated room out)."""
+    zones = [zone(3.0, zid="garage"), zone(20.0, zid="living")]
+    assert frost_needed(zones, 100.0, 600.0, False, FrostConfig())
+    assert not frost_needed(zones, 100.0, 600.0, False, FrostConfig(zone="living"))
+    assert frost_needed(zones, 100.0, 600.0, False, FrostConfig(zone="garage"))
+
+
+def test_implausible_room_temperatures_are_rejected() -> None:
+    """A sensor reading -127 °C is broken, not a frozen room."""
+    assert not frost_needed([zone(-127.0), zone(20.0)], 100.0, 600.0, False, FrostConfig())
+    assert frost_needed([zone(-5.0)], 100.0, 600.0, False, FrostConfig())

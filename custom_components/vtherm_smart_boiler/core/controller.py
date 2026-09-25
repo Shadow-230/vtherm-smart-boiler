@@ -43,10 +43,13 @@ from .limits import (
     LimitCode,
     frost_needed,
     limit_flow,
+    watched_temperatures,
 )
 from .readings import ZoneState
 
 HOUR = 3600.0
+FROST_ALARM_S = 2 * HOUR  # frost heating this long without the room warming is reported
+FROST_WARMING_K = 0.5  # the watched room must have warmed by this much
 FALLBACK_OUTDOOR = 0.0  # the fallback setpoint defaults to the curve at this outdoor temperature
 
 
@@ -152,6 +155,8 @@ class ControlState:
     latched_by: tuple[str, ...] = ()  # the alarms that set the latch
     outdoor: OutdoorState = field(default_factory=OutdoorState)
     frost: bool = False
+    frost_since: float | None = None  # when frost heating began
+    frost_from: float | None = None  # the coldest watched room then
     command: BoilerCommand | None = None
     target: float | None = None
     reasons: tuple[Reason, ...] = ()
@@ -169,6 +174,7 @@ class ControlDecision:
     reasons: tuple[Reason, ...] = ()
     target: float | None = None  # setpoint before the ramp
     effective_outdoor: float | None = None
+    frost_stuck: bool = False  # frost heating for long without the room warming: tell the user
 
 
 def fallback_setpoint(config: ControlConfig) -> float:
@@ -245,6 +251,22 @@ def _heating_decision(
     """Heating on or off at every step; the water temperature every decision interval."""
     now = inputs.now
     outdoor = state.outdoor
+    coldest = min(
+        watched_temperatures(inputs.zones, now, config.zone_max_age_s, config.frost), default=None
+    )
+    if frost and not state.frost:
+        state = replace(state, frost_since=now, frost_from=coldest)
+    elif not frost:
+        state = replace(state, frost_since=None, frost_from=None)
+    # Frost heating is never stopped; heating that does not warm the room is reported.
+    frost_stuck = (
+        frost
+        and state.frost_since is not None
+        and now - state.frost_since >= FROST_ALARM_S
+        and coldest is not None
+        and state.frost_from is not None
+        and coldest < state.frost_from + FROST_WARMING_K
+    )
     want_heat, heat_reason = _want_heat(inputs, config, frost)
 
     due = (
@@ -299,7 +321,12 @@ def _heating_decision(
         correction=correction,
     )
     return new_state, ControlDecision(
-        mode, command, reasons=reasons, target=target, effective_outdoor=outdoor.effective
+        mode,
+        command,
+        reasons=reasons,
+        target=target,
+        effective_outdoor=outdoor.effective,
+        frost_stuck=frost_stuck,
     )
 
 

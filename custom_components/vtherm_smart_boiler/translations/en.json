@@ -513,7 +513,8 @@
           "ceiling_band": "Room for correction",
           "fallback_setpoint": "Fallback setpoint",
           "frost_limit": "Frost protection below",
-          "frost_release": "Frost protection until"
+          "frost_release": "Frost protection until",
+          "frost_zone": "Frost zone"
         },
         "data_description": {
           "design_outdoor": "The coldest outdoor temperature your heating is designed for, in °C. Default: the building's design outdoor temperature, or −15 °C.",
@@ -526,7 +527,8 @@
           "ceiling_band": "How far above the curve a comfort correction may go, in K. Default 10 K; 0 turns correction off in effect.",
           "fallback_setpoint": "The setpoint used while no outdoor temperature is known, in °C. Empty: the curve at 0 °C outside.",
           "frost_limit": "Any zone colder than this starts heating, whatever else applies, in °C. Default 5 °C.",
-          "frost_release": "Frost protection ends once every zone is above this, in °C. Default 7 °C."
+          "frost_release": "Frost protection ends once every zone is above this, in °C. Default 7 °C.",
+          "frost_zone": "Optional: watch only this zone for frost. Empty (default): every zone, those Versatile Thermostat has switched off included — an unheated room below the limit then keeps frost heating on. Frost heating that does not warm the room for two hours raises an alarm; it is never stopped."
         }
       },
       "control_behaviour": {
@@ -867,6 +869,9 @@
       },
       "alarm_zone_unknown": {
         "name": "Control: a zone's state is unknown"
+      },
+      "alarm_frost_not_warming": {
+        "name": "Control: frost heating does not warm the room"
       }
     },
     "switch": {

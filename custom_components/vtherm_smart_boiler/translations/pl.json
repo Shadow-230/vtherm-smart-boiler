@@ -513,7 +513,8 @@
           "ceiling_band": "Zakres korekty",
           "fallback_setpoint": "Nastawa awaryjna",
           "frost_limit": "Ochrona przed mrozem poniżej",
-          "frost_release": "Ochrona przed mrozem do"
+          "frost_release": "Ochrona przed mrozem do",
+          "frost_zone": "Strefa przeciwmrozowa"
         },
         "data_description": {
           "design_outdoor": "Najniższa temperatura zewnętrzna, na którą zaprojektowano ogrzewanie, w °C. Domyślnie: projektowa temperatura zewnętrzna budynku albo −15 °C.",
@@ -526,7 +527,8 @@
           "ceiling_band": "Jak wysoko ponad krzywą może sięgnąć korekta komfortu, w K. Domyślnie 10 K; 0 w praktyce wyłącza korektę.",
           "fallback_setpoint": "Nastawa używana, gdy temperatura zewnętrzna jest nieznana, w °C. Puste pole: krzywa przy 0 °C na zewnątrz.",
           "frost_limit": "Każda strefa chłodniejsza niż ta wartość uruchamia grzanie bez względu na inne warunki, w °C. Domyślnie 5 °C.",
-          "frost_release": "Ochrona przed mrozem kończy się, gdy każda strefa przekroczy tę wartość, w °C. Domyślnie 7 °C."
+          "frost_release": "Ochrona przed mrozem kończy się, gdy każda strefa przekroczy tę wartość, w °C. Domyślnie 7 °C.",
+          "frost_zone": "Opcjonalnie: pilnuj przed mrozem tylko tej strefy. Puste (domyślnie): wszystkich stref, także wyłączonych w Versatile Thermostat — nieogrzewane pomieszczenie poniżej progu podtrzymuje wtedy grzanie przeciwmrozowe. Grzanie przeciwmrozowe, które przez dwie godziny nie ogrzewa pomieszczenia, podnosi alarm; nigdy nie jest przerywane."
         }
       },
       "control_behaviour": {
@@ -867,6 +869,9 @@
       },
       "alarm_zone_unknown": {
         "name": "Sterowanie: stan strefy nieznany"
+      },
+      "alarm_frost_not_warming": {
+        "name": "Sterowanie: grzanie przeciwmrozowe nie ogrzewa pomieszczenia"
       }
     },
     "switch": {

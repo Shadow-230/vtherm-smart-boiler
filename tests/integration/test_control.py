@@ -1172,3 +1172,25 @@ async def test_a_zone_unknown_for_long_raises_an_alarm(rig: Rig) -> None:
     rig.zones.set("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
     await rig.advance(10)
     assert rig.state("binary_sensor", "alarm_zone_unknown").state == "off"
+
+
+async def test_frost_heating_that_does_not_warm_the_room_raises_an_alarm(rig: Rig) -> None:
+    """Frost protection is never stopped; heating that leaves the room as cold for two hours is
+    reported."""
+    async def cold_for(seconds: int) -> None:
+        for _ in range(seconds // 60):  # VT keeps reporting the room, as cold as it was
+            rig.zones.set("living", "off", current_temperature=3.0, hvac_action="off")
+            await rig.advance(60, step=60)
+
+    rig.zones.set("living", "off", current_temperature=3.0, hvac_action="off")
+    await start(rig)
+    await rig.switch(True)
+    await cold_for(3600)
+    assert rig.state("sensor", "control_state").state == "frost"
+    assert rig.state("binary_sensor", "alarm_frost_not_warming").state == "off"
+    await cold_for(3660)
+    assert rig.state("binary_sensor", "alarm_frost_not_warming").state == "on"
+    assert rig.gateway.calls[-1] != ("setpoint", 0.0)  # still heating
+    rig.zones.set("living", "off", current_temperature=8.0, hvac_action="off")
+    await rig.advance(60, step=60)
+    assert rig.state("binary_sensor", "alarm_frost_not_warming").state == "off"

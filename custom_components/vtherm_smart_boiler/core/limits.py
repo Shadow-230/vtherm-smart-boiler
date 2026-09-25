@@ -69,16 +69,37 @@ def limit_flow(
     return Limited(requested)
 
 
+PLAUSIBLE_ROOM = (-30.0, 45.0)  # °C: a room reading outside is a broken sensor, not a room
+
+
 @dataclass(frozen=True, slots=True)
 class FrostConfig:
-    """Frost protection: a safety net below VT's own frost presets (°C)."""
+    """Frost protection: a safety net below VT's own frost presets (°C). The one case where the
+    plugin heats without VT's call; it watches every zone, VT's switched-off ones included, or
+    only the zone the user picks."""
 
-    room_limit: float = 5.0  # any zone below this starts frost heating
-    release: float = 7.0  # frost heating ends once every zone is at or above this
+    room_limit: float = 5.0  # a watched zone below this starts frost heating
+    release: float = 7.0  # frost heating ends once every watched zone is at or above this
+    zone: str | None = None  # watch only this zone; None: every zone
 
     def __post_init__(self) -> None:
         if self.release < self.room_limit:
             raise ValueError("the release temperature must not be below the frost limit")
+
+
+def watched_temperatures(
+    zones: Sequence[ZoneState], now: float, max_age: float | None, config: FrostConfig
+) -> list[float]:
+    """Fresh, plausible room temperatures of the zones frost protection watches."""
+    low, high = PLAUSIBLE_ROOM
+    return [
+        z.temperature
+        for z in zones
+        if (config.zone is None or z.zone_id == config.zone)
+        and z.temperature is not None
+        and low <= z.temperature <= high
+        and z.is_fresh(now, max_age)
+    ]
 
 
 def frost_needed(
@@ -88,10 +109,8 @@ def frost_needed(
     active: bool,
     config: FrostConfig,
 ) -> bool:
-    """Whether a fresh zone is cold enough for frost heating, with hysteresis."""
-    temperatures = [
-        z.temperature for z in zones if z.temperature is not None and z.is_fresh(now, max_age)
-    ]
+    """Whether a watched zone is cold enough for frost heating, with hysteresis."""
+    temperatures = watched_temperatures(zones, now, max_age, config)
     if any(t < config.room_limit for t in temperatures):
         return True
     return active and any(t < config.release for t in temperatures)

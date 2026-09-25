@@ -364,6 +364,7 @@ CONTROL_ADVANCED_KEYS = (
     "fallback_setpoint",
     "frost_limit",
     "frost_release",
+    "frost_zone",
     "count_threshold",
     "power_threshold_kw",
     "opening_threshold",
@@ -481,8 +482,15 @@ def control_curve_schema(options: dict[str, Any]) -> vol.Schema:
             vol.Required("frost_release", default=control.get("frost_release", 7.0)): _number(
                 4, 12, 0.5, "°C"
             ),
+            _optional("frost_zone", control): selector.EntitySelector(
+                selector.EntitySelectorConfig(include_entities=_zone_entities(options))
+            ),
         }
     return vol.Schema(fields)
+
+
+def _zone_entities(options: dict[str, Any]) -> list[str]:
+    return [zone["entity_id"] for zone in options.get(ZONES, []) if zone.get("entity_id")]
 
 
 def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
@@ -562,7 +570,7 @@ def apply_control_curve(options: dict[str, Any], user_input: dict[str, Any]) -> 
     control["curve"] = curve
     keys = ["hard_min", "hard_max"]
     if _advanced(options):
-        keys += ["ceiling_band", "fallback_setpoint", "frost_limit", "frost_release"]
+        keys += ["ceiling_band", "fallback_setpoint", "frost_limit", "frost_release", "frost_zone"]
     _set_or_drop(control, user_input, tuple(keys))
     options[CONTROL] = control
 

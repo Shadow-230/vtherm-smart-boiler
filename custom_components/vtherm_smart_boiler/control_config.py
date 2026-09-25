@@ -182,6 +182,7 @@ def parse_control(
     if circuit is not None and circuit.control is CircuitControl.PASSIVE_FIXED:
         circuit_max = None  # the mixing valve protects the emitters itself
     ramp = _float(data, "ramp_k_per_min", 1.0)
+    frost_zone = data.get("frost_zone") or None
     control = ControlConfig(
         curve=curve,
         limits=FlowLimits(
@@ -194,6 +195,8 @@ def parse_control(
         frost=FrostConfig(
             room_limit=float(data.get("frost_limit", 5.0)),
             release=float(data.get("frost_release", 7.0)),
+            # A zone no longer configured must not leave frost protection watching nothing.
+            zone=frost_zone if frost_zone in {z.zone_id for z in installation.zones} else None,
         ),
         demand=DemandConfig(
             count_threshold=int(data.get("count_threshold", 1)),
