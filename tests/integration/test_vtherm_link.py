@@ -56,11 +56,36 @@ async def test_central_mode(hass: HomeAssistant) -> None:
 
 
 async def test_capabilities_without_vt(hass: HomeAssistant) -> None:
-    capabilities = VThermLink(hass, []).capabilities()
+    link = VThermLink(hass, [])
+    await link.async_detect()
+    capabilities = link.capabilities()
     assert capabilities.vt_loaded is False
     assert capabilities.vt_version is None
     assert capabilities.vtherm_api_version == "0.5.0"
     assert capabilities.smartpi_loaded is False
+
+
+async def test_the_api_version_is_read_once_off_the_event_loop(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P30: reading package metadata is disk I/O — once, in the executor, not every update."""
+    import threading
+
+    from custom_components.vtherm_smart_boiler import vtherm_link
+
+    threads: list[bool] = []
+    real = vtherm_link.version
+
+    def counted(name: str) -> str:
+        threads.append(threading.current_thread() is threading.main_thread())
+        return real(name)
+
+    monkeypatch.setattr(vtherm_link, "version", counted)
+    link = VThermLink(hass, [])
+    await link.async_detect()
+    for _ in range(5):
+        assert link.capabilities().vtherm_api_version == "0.5.0"
+    assert threads == [False]  # once, not in the loop's thread
 
 
 async def test_zone_algorithm_from_live_attributes(hass: HomeAssistant, zones: FakeZones) -> None:

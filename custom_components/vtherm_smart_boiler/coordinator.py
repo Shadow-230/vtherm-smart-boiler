@@ -11,6 +11,7 @@ holds only small things (monitoring start, held emitter factors, measured parame
 
 from __future__ import annotations
 
+import copy
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
@@ -139,6 +140,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             ),
         )
         self.config = config
+        # The options this instance runs with: another value of them is what needs a reload.
+        self.options: dict[str, Any] = copy.deepcopy(dict(entry.options))
         self.transport = EntityTransport(hass, config.signals)
         self.link = VThermLink(hass, config.zone_entities)
         self.history = History(
@@ -175,6 +178,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     async def async_start(self) -> None:
         """Load stored state, rebuild the history and start following the entities."""
         now = dt_util.utcnow().timestamp()
+        await self.link.async_detect()
         await self._async_load_store(now)
         await self._async_backfill(now)
         # Current states seed the history too: without the recorder they are all there is, and

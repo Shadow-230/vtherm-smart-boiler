@@ -138,6 +138,24 @@ async def test_unload_and_reload(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
 
 
+async def test_only_an_options_change_reloads_the_entry(hass: HomeAssistant) -> None:
+    """P73: a reload hands control back and starts a new session — a new title or preference
+    must not cause one."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    hass.config_entries.async_update_entry(entry, title="Boiler in the cellar")
+    await hass.async_block_till_done()
+    assert entry.runtime_data is coordinator
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, "weather": "weather.home"}
+    )
+    await hass.async_block_till_done()
+    assert entry.runtime_data is not coordinator
+
+
 async def test_invalid_options_fail_setup_with_a_reason(hass: HomeAssistant) -> None:
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", options={"signals": {}})
     entry.add_to_hass(hass)
@@ -178,6 +196,8 @@ async def test_a_steady_flow_is_stale_only_past_a_user_limit(
     freezer.tick(timedelta(hours=1))
     zones.set("living", hvac_action="heating", valve_open_percent=50)  # the zone stays fresh
     async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    await entry.runtime_data.async_refresh()  # whatever the timers did under load
     await hass.async_block_till_done()
     state = hass.states.get(hot_id)
     assert (state.state == "off") is stale

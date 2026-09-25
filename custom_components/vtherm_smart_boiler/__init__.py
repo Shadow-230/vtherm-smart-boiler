@@ -21,8 +21,17 @@ if TYPE_CHECKING:
 PLATFORMS = ("sensor", "binary_sensor", "switch")
 
 
+# Loaded through Home Assistant's import executor before first use: importing them in the event
+# loop would read them from disk there.
+_RUNTIME_MODULES = ("config", "coordinator", "control", "feature_manager")
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from homeassistant.exceptions import ConfigEntryError
+    from homeassistant.helpers.importlib import async_import_module
+
+    for module in _RUNTIME_MODULES:
+        await async_import_module(hass, f"{__package__}.{module}")
 
     from . import feature_manager
     from .config import ConfigError, EntryConfig
@@ -182,7 +191,10 @@ def _hand_back_unit(
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    await hass.config_entries.async_reload(entry.entry_id)
+    """Reload for a change of the options only: a reload hands control back and starts a new
+    session, which a new title or preference must not cause."""
+    if dict(entry.options) != entry.runtime_data.options:
+        await hass.config_entries.async_reload(entry.entry_id)
 
 
 def _remove_control_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:

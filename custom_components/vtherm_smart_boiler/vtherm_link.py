@@ -62,6 +62,12 @@ class VThermLink:
     def __init__(self, hass: HomeAssistant, zone_entities: Sequence[str]) -> None:
         self._hass = hass
         self._zones = tuple(zone_entities)
+        self._api_version: str | None = None
+
+    async def async_detect(self) -> None:
+        """Read what does not change while Home Assistant runs — the installed ``vtherm_api``
+        — once, in the executor: package metadata is read from disk."""
+        self._api_version = await self._hass.async_add_executor_job(_vtherm_api_version)
 
     @property
     def zone_entities(self) -> tuple[str, ...]:
@@ -163,9 +169,15 @@ class VThermLink:
             except Exception:  # any loader problem just means "unknown"
                 _LOGGER.debug("VT's version could not be read", exc_info=True)
                 vt_version = None
-        try:
-            import_module("vtherm_api")
-            api_version: str | None = version("vtherm_api")
-        except ImportError, PackageNotFoundError:
-            api_version = None
-        return VtCapabilities(vt_loaded, vt_version, api_version, SMARTPI_DOMAIN in components)
+        return VtCapabilities(
+            vt_loaded, vt_version, self._api_version, SMARTPI_DOMAIN in components
+        )
+
+
+def _vtherm_api_version() -> str | None:
+    """The installed ``vtherm_api`` version; ``None`` when it cannot be imported."""
+    try:
+        import_module("vtherm_api")
+        return version("vtherm_api")
+    except ImportError, PackageNotFoundError:
+        return None
