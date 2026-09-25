@@ -173,7 +173,8 @@ async def start(
     entry.add_to_hass(hass)
     if stored is not None:
         key = f"{DOMAIN}.{entry.entry_id}"
-        rig.storage[key] = {"version": 1, "key": key, "data": stored}
+        version = stored.pop("__version__", 1)  # another version: a store this one cannot read
+        rig.storage[key] = {"version": version, "key": key, "data": stored}
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     rig.entry = entry
@@ -521,6 +522,18 @@ async def test_a_restart_without_a_clean_stop_hands_back_first(rig: Rig) -> None
     count = len(rig.gateway())
     await rig.advance(180)
     assert len(rig.gateway()) == count
+
+
+async def test_a_store_that_cannot_be_read_hands_back_first(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Stored data this version cannot read (from a newer one, say) may hide a boiler still
+    held: it is given back in full first, as after a crash."""
+    await start(rig, stored={"__version__": 99, "control": {"controlling": False}})
+    await rig.advance(30)
+    assert "Could not read the stored data" in caplog.text
+    assert [(k, v) for _t, k, v in rig.gateway()][:2] == [("ch", True), ("setpoint", 0.0)]
+    assert rig.state("switch", "control").state == "off"
 
 
 # --- VT's zones as VT has them ------------------------------------------------------------

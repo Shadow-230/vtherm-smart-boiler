@@ -740,3 +740,44 @@ async def test_replayed_history_reaches_the_verdict(
     assert starts is not None
     assert float(starts.state) > 1.0
     assert forecasts.calls  # snapshots were taken
+
+
+async def test_everything_stored_survives_a_restart(
+    hass: HomeAssistant, hass_storage: dict[str, Any], zones: FakeZones
+) -> None:
+    """A restart loads what the last run stored and, stopped again, stores the same: the start
+    of monitoring, the zones' factors, the measured building values and the day summaries."""
+    from custom_components.vtherm_smart_boiler.core.daily import DaySummary
+    from custom_components.vtherm_smart_boiler.core.parameters import ParameterKey, Source
+
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    living = zones.add("living")
+    entry = entry_for(boiler, zones)
+    now = datetime.now(UTC).timestamp()
+    start = float(int(now - 3 * DAY))
+    day = DaySummary(
+        start, start + DAY, DAY, 12, 10, 1, 7200.0, 36000.0, 3600.0, 7200.0,
+        0.0, 0.0, False, 8.5, None, 4.0, 60.0,
+    )  # fmt: skip
+    stored = {
+        "monitoring_since": now - 10 * DAY,
+        "factors": {living: {"value": 0.8, "at": now - 600, "output_w": None}},
+        "measured": {"loss_coefficient": {"value": 0.25, "confidence": 0.6, "at": now - DAY}},
+        "daily": {str(int(start)): day.to_dict()},
+    }
+    key = f"{DOMAIN}.{entry.entry_id}"
+    hass_storage[key] = {"version": 1, "key": key, "data": stored}
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    assert coordinator.monitoring_since == stored["monitoring_since"]
+    assert coordinator.daily == {start: day}
+    loss = coordinator.parameters.get(ParameterKey.LOSS_COEFFICIENT).estimate(Source.MEASURED)
+    assert loss is not None
+    assert (loss.value, loss.confidence) == (0.25, 0.6)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    saved = hass_storage[key]["data"]
+    for field_name in ("monitoring_since", "measured", "daily"):
+        assert saved[field_name] == stored[field_name], field_name
+    assert saved["factors"][living]["value"] == 0.8
