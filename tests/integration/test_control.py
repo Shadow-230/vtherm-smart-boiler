@@ -7,6 +7,7 @@ the calls they receive.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import pairwise
@@ -51,6 +52,7 @@ class FakeGateway:
     forced: float | None = None
     override: float | None = None
     fail_after: bool = False  # the setpoint arrives, but the call reports a failure (a timeout)
+    block: asyncio.Event | None = None  # a heating setpoint's call waits for this (a slow gateway)
     calls: list[tuple[str, Any]] = field(default_factory=list)
     times: list[float] = field(default_factory=list)  # when each setpoint arrived
 
@@ -63,6 +65,8 @@ class FakeGateway:
             self.publish()
             if self.fail_after:
                 raise HomeAssistantError("timed out")
+            if self.block is not None and value != 0:
+                await self.block.wait()
 
         async def heating(call: ServiceCall) -> None:
             self.calls.append(("ch", call.data["ch_override"]))
@@ -957,3 +961,74 @@ async def test_an_otgw_hand_back_clears_the_heating_override(rig: Rig) -> None:
     assert ("ch", False) in rig.gateway.calls
     await rig.switch(False)
     assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]
+
+
+async def settle(task: asyncio.Future[Any] | None = None, rounds: int = 200) -> bool:
+    """Let the loop run a while without waiting on anything that may hang; whether ``task`` is
+    done by then."""
+    for _ in range(rounds):
+        if task is not None and task.done():
+            return True
+        await asyncio.sleep(0)
+    return task is not None and task.done()
+
+
+async def test_a_stop_during_a_slow_step_hands_back_at_once(rig: Rig) -> None:
+    """Home Assistant stops while a step waits on a slow gateway: the hand-back cancels the step
+    rather than waiting for it."""
+    await start(rig)
+    await rig.switch(True)
+    assert rig.entry is not None
+    control = rig.entry.runtime_data.control
+    rig.gateway.block = asyncio.Event()
+    rig.freezer.tick(30)
+    rig.live()
+    async_fire_time_changed(rig.hass)  # the keep-alive: its call hangs
+    await settle(rounds=50)
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+    stop = asyncio.ensure_future(control.async_stop())
+    done = await settle(stop)
+    rig.gateway.block.set()
+    await stop
+    assert done, "the hand-back waited for the slow step"
+    assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]
+
+
+async def test_a_slow_smartpi_call_does_not_hold_up_control(rig: Rig) -> None:
+    hass = rig.hass
+    learning: list[tuple[str, bool]] = []
+    slow = asyncio.Event()
+
+    async def set_learning(call: ServiceCall) -> None:
+        learning.append((call.data["entity_id"], call.data["learning_enabled"]))
+        if not call.data["learning_enabled"]:
+            await slow.wait()
+
+    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    rig.zones.set(
+        "living",
+        hvac_action="heating",
+        valve_open_percent=60,
+        on_percent=0.6,
+        configuration={"proportional_function": "smartpi"},
+        specific_states={"smartpi_learning_enabled": True},
+    )
+    await start(rig)
+    await rig.switch(True)
+    rig.dhw = True
+    rig.freezer.tick(10)
+    rig.live()
+    async_fire_time_changed(hass)  # the step pauses learning; SmartPI hangs
+    await settle(rounds=50)
+    assert learning == [(rig.zones.entities["living"], False)]
+    off = asyncio.ensure_future(
+        hass.services.async_call(
+            "switch", "turn_off", {"entity_id": rig.entity("switch", "control")}, blocking=True
+        )
+    )
+    done = await settle(off)
+    slow.set()
+    await off
+    await hass.async_block_till_done()
+    assert done, "switching control off waited for SmartPI"
+    assert ("setpoint", 0.0) in rig.gateway.calls

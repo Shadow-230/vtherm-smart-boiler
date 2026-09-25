@@ -24,6 +24,7 @@ from homeassistant.core import CALLBACK_TYPE, Event, HassJob, HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
+from homeassistant.util.async_ import create_eager_task
 
 from .const import CONTROL_TICK_SECONDS, DOMAIN
 from .control_config import (
@@ -177,6 +178,11 @@ class ControlUnit:
         self._unsubs: list[CALLBACK_TYPE] = []
         self._stop_unsub: CALLBACK_TYPE | None = None
         self._stopped = False
+        self._stopping = False
+        self._step_task: asyncio.Task[None] | None = None  # the step running now, if any
+        # SmartPI calls planned by a step or a hand-back; made after the lock is released, so a
+        # slow SmartPI never holds up control or a hand-back.
+        self._learning_calls: list[tuple[str, bool]] = []
 
     # --- status, listeners, storage -----------------------------------------------------
 
@@ -297,6 +303,10 @@ class ControlUnit:
             # this short, it is retried at the next start.
             self._hand_back_pending = True
             self._coordinator.schedule_save()
+        self._stopping = True
+        step = self._step_task
+        if step is not None and not step.done():
+            step.cancel()  # a slow step (a hanging service) must not hold up the hand-back
         async with self._lock:
             if self._stopped:
                 return
@@ -307,6 +317,7 @@ class ControlUnit:
             except Exception:
                 _LOGGER.exception("Handing control back on stop failed")
             self._writer = None
+        await self._async_learning_calls()
         self._coordinator.schedule_save()
 
     async def _async_timer(self, _now: datetime) -> None:
@@ -320,10 +331,27 @@ class ControlUnit:
                 self._tick_waiting = False  # running now: the next timer call may wait
                 if self._stopped:
                     return
-                await self._async_tick_locked(dt_util.utcnow().timestamp())
+                await self._async_run_step(dt_util.utcnow().timestamp())
         finally:
             self._tick_waiting = False
+        await self._async_learning_calls()
         self._notify()
+
+    async def _async_run_step(self, now: float) -> None:
+        """One step (lock held) as a task that a stop can cancel."""
+        # Started eagerly: a step that never waits runs to its end at once, as a plain call would.
+        task = create_eager_task(self._async_tick_locked(now), name="vtherm_smart_boiler step")
+        self._step_task = task
+        try:
+            await task
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                task.cancel()
+                raise
+            # Cancelled by a stop, which hands back next.
+        finally:
+            self._step_task = None
 
     # --- switching ------------------------------------------------------------------------
 
@@ -374,9 +402,10 @@ class ControlUnit:
                 return
             now = dt_util.utcnow().timestamp() if now is None else now
             self.enabled = enabled
-            await self._async_tick_locked(now)
+            await self._async_run_step(now)
             if not enabled:
                 self._end_session()
+        await self._async_learning_calls()
         self._notify()
 
     def _end_session(self) -> None:
@@ -393,7 +422,8 @@ class ControlUnit:
         async with self._lock:
             if self._stopped:
                 return
-            await self._async_tick_locked(dt_util.utcnow().timestamp() if now is None else now)
+            await self._async_run_step(dt_util.utcnow().timestamp() if now is None else now)
+        await self._async_learning_calls()
         self._notify()
 
     async def _async_tick_locked(self, now: float) -> None:
@@ -744,15 +774,11 @@ class ControlUnit:
             self.options.learning,
             heating,
         )
-        state = plan.state
-        for zone_id in plan.pause:
-            await self._async_set_learning(zone_id, False)
-        for zone_id in plan.resume:
-            if not await self._async_set_learning(zone_id, True):
-                state = replace(state, paused={**state.paused, zone_id: now})  # retried later
+        self._learning_calls += [(zone_id, False) for zone_id in plan.pause]
+        self._learning_calls += [(zone_id, True) for zone_id in plan.resume]
         if plan.pause or plan.resume:
             self._coordinator.schedule_save()
-        self._session.learning = state
+        self._session.learning = plan.state
 
     async def _async_release_learning(self, now: float, force: bool = False) -> None:
         """Resume every zone the plugin paused; failures are retried a minute later."""
@@ -761,15 +787,28 @@ class ControlUnit:
         if not force and now < self._learning_retry_at:
             return
         state, zones = release_all(self._session.learning, now)
-        failed = {}
-        for zone_id in zones:
-            if not await self._async_set_learning(zone_id, True):
-                failed[zone_id] = now
-        if failed:
-            state = replace(state, paused=failed)
-            self._learning_retry_at = now + LEARNING_RETRY_S
+        self._learning_calls += [(zone_id, True) for zone_id in zones]
         self._session.learning = state
         self._coordinator.schedule_save()
+
+    async def _async_learning_calls(self) -> None:
+        """Make the planned SmartPI calls, together and without the lock. A resume that fails
+        keeps its zone paused, retried a minute later; a failed pause leaves the zone learning."""
+        calls, self._learning_calls = self._learning_calls, []
+        if not calls:
+            return
+        results = await asyncio.gather(
+            *(self._async_set_learning(zone_id, enabled) for zone_id, enabled in calls)
+        )
+        failed = [zone_id for (zone_id, enabled), ok in zip(calls, results, strict=True)
+                  if enabled and not ok]  # fmt: skip
+        if failed:
+            now = dt_util.utcnow().timestamp()
+            state = self._session.learning
+            paused = {**state.paused, **dict.fromkeys(failed, now)}
+            self._session.learning = replace(state, paused=paused)
+            self._learning_retry_at = now + LEARNING_RETRY_S
+            self._coordinator.schedule_save()
 
     async def _async_set_learning(self, zone_id: str, enabled: bool) -> bool:
         try:
