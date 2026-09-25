@@ -400,7 +400,7 @@ def _time(t: float | None) -> str | None:
 
 
 class ControlStateSensor(ControlEntity, SensorEntity):
-    """What control does now and why: mode, reasons, blockers, anti-cycling hold, hand-back."""
+    """What control does now and why: mode, reasons, blockers, latch and hand-back."""
 
     _attr_device_class = SensorDeviceClass.ENUM
 
@@ -420,7 +420,6 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "blockers": list(status.blockers),
             "target": _round(status.target, 1),
             "heating_on": status.heating_on,
-            "hold_until": _time(status.hold_until),
             "hand_back_at": _time(status.hand_back_at),
             "latched_by": list(status.latched_by),
             "learning_paused": list(status.paused_zones),

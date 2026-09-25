@@ -533,14 +533,8 @@
       },
       "control_behaviour": {
         "title": "Zachowanie sterowania",
-        "description": "Ochrona przed taktowaniem, strażnicy zapisu i pauzy nauki. Każda wartość domyślna jest tą ostrożną.",
+        "description": "Rampa, interwał decyzji, nastawa „wyłącz”, progi zapotrzebowania i pauzy nauki. Grzanie włącza się i wyłącza razem ze strefami Versatile Thermostat, od razu: nic, co wtyczka liczy lub odmierza, go nie wstrzymuje. Każda wartość domyślna jest ostrożna.",
         "data": {
-          "min_burn_min": "Minimalne spalanie",
-          "min_pause_min": "Minimalna przerwa",
-          "max_starts_per_hour": "Zapłony na godzinę",
-          "min_on_min": "Minimalny czas włączenia",
-          "min_off_min": "Minimalny czas wyłączenia",
-          "max_switches_per_hour": "Przełączenia na godzinę",
           "ramp_k_per_min": "Rampa nastawy",
           "decision_interval_min": "Odstęp decyzji",
           "off_setpoint": "Nastawa „wyłączone”",
@@ -551,12 +545,6 @@
           "comfort_correction": "Korekta komfortu"
         },
         "data_description": {
-          "min_burn_min": "Po zapłonie palnik pracuje co najmniej tyle, w minutach. Domyślnie 5. Krócej pozwala kotłowi taktować.",
-          "min_pause_min": "Po zgaśnięciu palnik pozostaje wyłączony co najmniej tyle, w minutach. Domyślnie 5. Ochrona przed mrozem nie jest wstrzymywana.",
-          "max_starts_per_hour": "Największa liczba zapłonów, jaką sterowanie może wywołać w ciągu godziny. Domyślnie 6.",
-          "min_on_min": "Włączone grzanie pozostaje włączone co najmniej tyle, w minutach. Domyślnie 5.",
-          "min_off_min": "Wyłączone grzanie pozostaje wyłączone co najmniej tyle, w minutach. Domyślnie 5.",
-          "max_switches_per_hour": "Największa liczba włączeń i wyłączeń grzania w ciągu godziny. Domyślnie 6.",
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
           "decision_interval_min": "Jak często nastawa jest wyznaczana na nowo, w minutach. Domyślnie 5.",
           "off_setpoint": "Zapisywana jako „wyłączone”, gdy nie ma przełącznika grzania, w °C. Domyślnie 10 °C.",

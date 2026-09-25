@@ -17,8 +17,9 @@ The guards are fixed; their values are options. For a setpoint:
   another controller; nor is an expiring override that lapsed because the plugin itself went
   silent (stale data), which is simply sent again.
 
-For heating on/off: minimum on and off times and a cap on switchings per hour; a failed write is
-sent again, and an expiring override is repeated like a setpoint.
+For heating on/off: it follows what the controller asks at once — nothing counted or timed holds
+it against VT (``SCOPE.md`` principle 12); a failed write is sent again, and an expiring override
+is repeated like a setpoint.
 
 A hand-back write is not planned here: nothing holds it back.
 """
@@ -229,30 +230,15 @@ def _write(
     return GuardResult(new_state, WriteAction(value, kind), tuple(events))
 
 
-class SwitchHold(StrEnum):
-    MIN_ON = "min_on"
-    MIN_OFF = "min_off"
-    SWITCH_BUDGET = "switch_budget"
-
-
 @dataclass(frozen=True, slots=True)
 class SwitchGuardConfig:
-    min_on_s: float = 5 * MINUTE
-    min_off_s: float = 5 * MINUTE
-    max_switches_per_hour: int = 6
     keepalive_s: float | None = None  # repeat the same state this often, for expiring overrides
-
-    def __post_init__(self) -> None:
-        if self.min_on_s < 0 or self.min_off_s < 0 or self.max_switches_per_hour < 1:
-            raise ValueError("minimum times must not be negative and one switch an hour allowed")
 
 
 @dataclass(frozen=True, slots=True)
 class SwitchGuardState:
     written: bool | None = None
     written_at: float | None = None
-    changed_at: float | None = None
-    switches: tuple[float, ...] = ()
     retry: bool = False  # the last write failed: send it again
 
 
@@ -260,7 +246,6 @@ class SwitchGuardState:
 class SwitchResult:
     state: SwitchGuardState
     write: bool | None = None  # the state to write now, if any
-    hold: SwitchHold | None = None
 
 
 def switch_failed(state: SwitchGuardState) -> SwitchGuardState:
@@ -271,31 +256,15 @@ def switch_failed(state: SwitchGuardState) -> SwitchGuardState:
 def plan_switch(
     state: SwitchGuardState, desired: bool | None, now: float, config: SwitchGuardConfig
 ) -> SwitchResult:
-    """Whether to switch heating on or off now."""
-    switches = tuple(t for t in state.switches if now - t < HOUR)
-    state = replace(state, switches=switches)
+    """Heating on or off as asked, at once: nothing counted or timed holds it against VT. An
+    expiring override is repeated; a failed write is sent again."""
     if desired is None:
         return SwitchResult(state)
-    if state.written is None:
-        return SwitchResult(
-            replace(state, written=desired, written_at=now, changed_at=now, retry=False), desired
-        )
-    if desired == state.written:
-        due = (
-            config.keepalive_s is not None
-            and state.written_at is not None
-            and now - state.written_at >= config.keepalive_s
-        )
-        if state.retry or due:
-            return SwitchResult(replace(state, written_at=now, retry=False), desired)
-        return SwitchResult(state)
-    since = now - state.changed_at if state.changed_at is not None else None
-    if since is not None:
-        if state.written and since < config.min_on_s:
-            return SwitchResult(state, None, SwitchHold.MIN_ON)
-        if not state.written and since < config.min_off_s:
-            return SwitchResult(state, None, SwitchHold.MIN_OFF)
-    if len(switches) >= config.max_switches_per_hour:
-        return SwitchResult(state, None, SwitchHold.SWITCH_BUDGET)
-    new_state = SwitchGuardState(desired, now, now, (*switches, now))
-    return SwitchResult(new_state, desired)
+    due = (
+        config.keepalive_s is not None
+        and state.written_at is not None
+        and now - state.written_at >= config.keepalive_s
+    )
+    if desired != state.written or state.retry or due:
+        return SwitchResult(SwitchGuardState(desired, now), desired)
+    return SwitchResult(state)

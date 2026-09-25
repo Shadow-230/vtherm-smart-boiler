@@ -52,7 +52,6 @@ def test_otgw_defaults_are_cautious() -> None:
     assert control.curve.exponent == 1.3
     assert control.boiler_max == 65.0
     assert control.limits.hard_min == 25.0
-    assert control.anticycling.min_pause_s == 300.0
     assert options.learning_pauses
     assert options.reaction("outside_change") is AlarmReaction.HAND_BACK
     assert options.reaction("pressure_low") is AlarmReaction.INFO
@@ -270,3 +269,12 @@ def test_the_declared_effect_is_what_the_switch_shows(effect: str, shown: str) -
     result = hand_back_effect(options)
     assert result is not None
     assert result.value == shown
+
+
+def test_frequent_starts_are_information_only() -> None:
+    """Nothing the plugin counts may hold heating against VT: the starts alarm never hands
+    back, whatever an older configuration says."""
+    options = parse_control(
+        OTGW | {"alarm_reactions": {"frequent_starts": "hand_back"}}, RADIATORS, None
+    )
+    assert options.reaction("frequent_starts") is AlarmReaction.INFO

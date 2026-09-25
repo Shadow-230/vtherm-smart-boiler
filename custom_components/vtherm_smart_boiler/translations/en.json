@@ -533,14 +533,8 @@
       },
       "control_behaviour": {
         "title": "Control behaviour",
-        "description": "Anti-cycling, write guards and learning pauses. Every default is the cautious one.",
+        "description": "The ramp, the decision interval, the \"off\" setpoint, demand thresholds and learning pauses. Heating goes on and off with Versatile Thermostat's zones, at once: nothing counted or timed holds it. Every default is the cautious one.",
         "data": {
-          "min_burn_min": "Minimum burn",
-          "min_pause_min": "Minimum pause",
-          "max_starts_per_hour": "Starts per hour",
-          "min_on_min": "Minimum on time",
-          "min_off_min": "Minimum off time",
-          "max_switches_per_hour": "Switchings per hour",
           "ramp_k_per_min": "Setpoint ramp",
           "decision_interval_min": "Decision interval",
           "off_setpoint": "Off setpoint",
@@ -551,12 +545,6 @@
           "comfort_correction": "Comfort correction"
         },
         "data_description": {
-          "min_burn_min": "Once lit, the burner is kept on at least this long, in minutes. Default 5. Shorter lets the boiler cycle.",
-          "min_pause_min": "After it stops, the burner stays off at least this long, in minutes. Default 5. Frost protection is not held back.",
-          "max_starts_per_hour": "The most burner starts control may cause in an hour. Default 6.",
-          "min_on_min": "Heating, once switched on, stays on at least this long, in minutes. Default 5.",
-          "min_off_min": "Heating, once switched off, stays off at least this long, in minutes. Default 5.",
-          "max_switches_per_hour": "The most heating on/off switchings in an hour. Default 6.",
           "ramp_k_per_min": "The fastest setpoint change, in K per minute. Default 1. Faster changes stress the boiler and make zones overshoot.",
           "decision_interval_min": "How often the setpoint is decided anew, in minutes. Default 5.",
           "off_setpoint": "Written for \"off\" when there is no heating switch, in °C. Default 10 °C.",

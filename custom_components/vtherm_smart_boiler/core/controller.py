@@ -9,8 +9,9 @@ Order of precedence, checked on every tick:
 3. VT's central mode "Stopped" → hand back; control resumes when the mode changes.
 4. The boiler's signals are not fresh → no command (nothing is written without fresh data); if
    that lasts beyond the stale hand-back time, hand back once; control resumes with fresh data.
-5. Otherwise the heating decision, taken every decision interval (and at once after any of the
-   above ends): frost protection, VT's central mode, summer/winter, zone demand, anti-cycling,
+5. Otherwise heating on or off, decided at every step from frost protection, VT's central mode,
+   summer/winter and the zones' demand — nothing counted or timed holds it against VT; and the
+   water temperature, decided every decision interval (and at once after any of the above ends):
    the curve on the effective outdoor temperature, limits and ramp. Without an outdoor
    temperature the fallback setpoint applies; without fresh zone data heating is assumed to be
    needed — never zero heat on missing data.
@@ -27,13 +28,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
-from .anticycling import (
-    AntiCycleConfig,
-    AntiCycleState,
-    Hold,
-    apply_anticycling,
-    observe_flame,
-)
 from .curve import (
     DEFAULT_HOLD_S,
     DEFAULT_TIME_CONSTANT_S,
@@ -97,9 +91,6 @@ class Reason(StrEnum):
     ZONES_UNKNOWN = "zones_unknown"
     SUMMER = "summer"
     FROST = "frost"
-    MIN_BURN = "min_burn"
-    MIN_PAUSE = "min_pause"
-    START_BUDGET = "start_budget"
     RAMP = "ramp"
     LIMIT_HARD_MIN = "limit_hard_min"
     LIMIT_HARD_MAX = "limit_hard_max"
@@ -122,11 +113,6 @@ _LIMIT_REASON = {
     LimitCode.BOILER_MAX: Reason.LIMIT_BOILER_MAX,
     LimitCode.CEILING: Reason.LIMIT_CEILING,
 }
-_HOLD_REASON = {
-    Hold.MIN_BURN: Reason.MIN_BURN,
-    Hold.MIN_PAUSE: Reason.MIN_PAUSE,
-    Hold.START_BUDGET: Reason.START_BUDGET,
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,7 +124,6 @@ class ControlConfig:
     season: SeasonConfig = field(default_factory=SeasonConfig)
     frost: FrostConfig = field(default_factory=FrostConfig)
     demand: DemandConfig = field(default_factory=DemandConfig)
-    anticycling: AntiCycleConfig = field(default_factory=AntiCycleConfig)
     fallback_setpoint: float | None = None  # None: the curve at FALLBACK_OUTDOOR
     ramp_k_per_min: float | None = 1.0  # None: no ramp
     decision_interval_s: float = 300.0
@@ -187,12 +172,11 @@ class ControlState:
     outdoor: OutdoorState = field(default_factory=OutdoorState)
     season: Season = Season.WINTER
     frost: bool = False
-    anticycle: AntiCycleState = field(default_factory=AntiCycleState)
     command: BoilerCommand | None = None
     target: float | None = None
     reasons: tuple[Reason, ...] = ()
-    hold_until: float | None = None
-    decided_at: float | None = None
+    water_reasons: tuple[Reason, ...] = ()  # why the water temperature is what it is
+    decided_at: float | None = None  # when the water temperature was last decided
     correction: float = 0.0  # K added to the curve for a zone that cannot reach its setpoint
     waiting_since: float | None = None  # when the boiler's signals went stale
 
@@ -205,7 +189,6 @@ class ControlDecision:
     reasons: tuple[Reason, ...] = ()
     target: float | None = None  # setpoint before the ramp
     effective_outdoor: float | None = None
-    hold_until: float | None = None
 
 
 def fallback_setpoint(config: ControlConfig) -> float:
@@ -234,7 +217,6 @@ def decide(
 ) -> tuple[ControlState, ControlDecision]:
     """One tick of the controller."""
     now = inputs.now
-    anticycle = observe_flame(state.anticycle, inputs.flame, inputs.dhw, now)
     outdoor = update_outdoor(
         state.outdoor,
         inputs.outdoor_sensor,
@@ -243,7 +225,7 @@ def decide(
         config.outdoor_time_constant_s,
         config.outdoor_hold_s,
     )
-    state = replace(state, anticycle=anticycle, outdoor=outdoor)
+    state = replace(state, outdoor=outdoor)
 
     if not inputs.enabled:
         return _release(state, ControlMode.DISABLED, Reason.CONTROL_OFF)
@@ -276,65 +258,45 @@ def decide(
     state = replace(state, waiting_since=None)
 
     frost = frost_needed(inputs.zones, now, config.zone_max_age_s, state.frost, config.frost)
-    due = (
-        state.decided_at is None
-        or state.command is None
-        or now - state.decided_at >= config.decision_interval_s
-        or frost != state.frost
-    )
-    if not due:
-        return state, ControlDecision(
-            state.mode,
-            state.command,
-            reasons=state.reasons,
-            target=state.target,
-            effective_outdoor=outdoor.effective,
-            hold_until=state.hold_until,
-        )
     return _heating_decision(state, inputs, config, frost)
 
 
 def _heating_decision(
     state: ControlState, inputs: ControlInputs, config: ControlConfig, frost: bool
 ) -> tuple[ControlState, ControlDecision]:
+    """Heating on or off at every step; the water temperature every decision interval."""
     now = inputs.now
     outdoor = state.outdoor
-    reasons: list[Reason] = [_OUTDOOR_REASON[outdoor.source]]
     season = update_season(state.season, outdoor.effective, config.season)
+    want_heat, heat_reason = _want_heat(season, inputs, config, frost)
 
-    if frost:
-        want_heat = True
-        reasons.append(Reason.FROST)
-    elif inputs.central_mode is CentralMode.COOL_ONLY:
-        want_heat = False
-        reasons.append(Reason.CENTRAL_COOL_ONLY)
-    elif season is Season.SUMMER:
-        want_heat = False
-        reasons.append(Reason.SUMMER)
-    else:
-        demand = boiler_demand(inputs.zones, now, config.zone_max_age_s, config.demand)
-        if demand.wanted is None:
-            want_heat = True
-            reasons.append(Reason.ZONES_UNKNOWN)
+    due = (
+        state.decided_at is None
+        or state.command is None
+        or now - state.decided_at >= config.decision_interval_s
+        or frost != state.frost
+    )
+    if due:
+        water: list[Reason] = [_OUTDOOR_REASON[outdoor.source]]
+        correction = _correction(state, inputs, config)
+        if correction > 0:
+            water.append(Reason.COMFORT_CORRECTION)
+        if outdoor.effective is None:
+            curve_value = fallback_setpoint(config)
         else:
-            want_heat = demand.wanted
-            reasons.append(Reason.DEMAND if want_heat else Reason.NO_DEMAND)
-
-    anti = apply_anticycling(want_heat, state.anticycle, now, config.anticycling, urgent=frost)
-    if anti.hold is not None:
-        reasons.append(_HOLD_REASON[anti.hold])
-
-    correction = _correction(state, inputs, config)
-    if correction > 0:
-        reasons.append(Reason.COMFORT_CORRECTION)
-    if outdoor.effective is None:
-        curve_value = fallback_setpoint(config)
+            curve_value = config.curve.flow(outdoor.effective)
+        limited = limit_flow(
+            curve_value + correction, curve_value, config.limits, config.circuit_max,
+            config.boiler_max,
+        )  # fmt: skip
+        water.extend(_LIMIT_REASON[code] for code in limited.applied)
+        setpoint = _ramp(state, limited.value, curve_value, now, config, water)
+        target: float | None = limited.value
+        water_reasons, decided_at = tuple(water), now
     else:
-        curve_value = config.curve.flow(outdoor.effective)
-    target = curve_value + correction
-    limited = limit_flow(target, curve_value, config.limits, config.circuit_max, config.boiler_max)
-    reasons.extend(_LIMIT_REASON[code] for code in limited.applied)
-    setpoint = _ramp(state, limited.value, curve_value, now, config, reasons)
+        assert state.command is not None
+        setpoint, target, correction = state.command.setpoint, state.target, state.correction
+        water_reasons, decided_at = state.water_reasons, state.decided_at
 
     if frost:
         mode = ControlMode.FROST
@@ -342,12 +304,13 @@ def _heating_decision(
         mode = ControlMode.FALLBACK
     elif season is Season.SUMMER and not want_heat:
         mode = ControlMode.SUMMER
-    elif anti.ch_enable:
+    elif want_heat:
         mode = ControlMode.HEATING
     else:
         mode = ControlMode.IDLE
 
-    command = BoilerCommand(anti.ch_enable, setpoint)
+    reasons = (*water_reasons[:1], heat_reason, *water_reasons[1:])
+    command = BoilerCommand(want_heat, setpoint)
     new_state = replace(
         state,
         mode=mode,
@@ -355,20 +318,31 @@ def _heating_decision(
         season=season,
         frost=frost,
         command=command,
-        target=limited.value,
-        reasons=tuple(reasons),
-        hold_until=anti.until,
-        decided_at=now,
+        target=target,
+        reasons=reasons,
+        water_reasons=water_reasons,
+        decided_at=decided_at,
         correction=correction,
     )
     return new_state, ControlDecision(
-        mode,
-        command,
-        reasons=tuple(reasons),
-        target=limited.value,
-        effective_outdoor=outdoor.effective,
-        hold_until=anti.until,
+        mode, command, reasons=reasons, target=target, effective_outdoor=outdoor.effective
     )
+
+
+def _want_heat(
+    season: Season, inputs: ControlInputs, config: ControlConfig, frost: bool
+) -> tuple[bool, Reason]:
+    """Whether to heat now and why: frost protection, then VT's modes and the zones' demand."""
+    if frost:
+        return True, Reason.FROST
+    if inputs.central_mode is CentralMode.COOL_ONLY:
+        return False, Reason.CENTRAL_COOL_ONLY
+    if season is Season.SUMMER:
+        return False, Reason.SUMMER
+    demand = boiler_demand(inputs.zones, inputs.now, config.zone_max_age_s, config.demand)
+    if demand.wanted is None:
+        return True, Reason.ZONES_UNKNOWN
+    return demand.wanted, Reason.DEMAND if demand.wanted else Reason.NO_DEMAND
 
 
 SATURATED = 0.95  # a valve or duty cycle this open cannot give the room more

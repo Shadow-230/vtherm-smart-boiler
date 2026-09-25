@@ -6,7 +6,6 @@ from dataclasses import replace
 
 import pytest
 
-from custom_components.vtherm_smart_boiler.core.anticycling import AntiCycleConfig
 from custom_components.vtherm_smart_boiler.core.controller import (
     BoilerCommand,
     CentralMode,
@@ -187,17 +186,21 @@ def test_weather_entity_stands_in_for_the_sensor() -> None:
     assert decision.command == BoilerCommand(True, pytest.approx(CURVE.flow(0.0)))
 
 
-def test_decisions_wait_for_the_interval() -> None:
+def test_the_water_temperature_waits_for_the_interval_heating_does_not() -> None:
     _state, decisions = run(
         [
             inputs(0.0),
-            inputs(60.0, zones=(zone(60.0, valve_open=0.0),)),  # demand gone, but too early
-            inputs(300.0, zones=(zone(300.0, valve_open=0.0),)),
+            inputs(60.0, outdoor_sensor=-5.0, zones=(zone(60.0, valve_open=0.0),)),
+            inputs(300.0, outdoor_sensor=-5.0, zones=(zone(300.0, valve_open=0.0),)),
         ]
     )
-    assert decisions[1].command == decisions[0].command
-    assert decisions[2].command is not None
-    assert not decisions[2].command.ch_enable
+    first, early, due = (d.command for d in decisions)
+    assert first is not None
+    assert early is not None
+    assert due is not None
+    assert not early.ch_enable  # the zones are satisfied: heating off at once
+    assert early.setpoint == first.setpoint  # the colder curve waits for the next decision
+    assert due.setpoint > first.setpoint
 
 
 def test_frost_does_not_wait_for_the_interval() -> None:
@@ -237,24 +240,6 @@ def test_limits_apply_to_the_curve() -> None:
     _state, [mild] = run([inputs(0.0, outdoor_sensor=15.0)], config)
     assert mild.command.setpoint == 30.0
     assert Reason.LIMIT_HARD_MIN in mild.reasons
-
-
-def test_anti_cycling_pause_after_a_burn() -> None:
-    config = replace(
-        CONFIG, anticycling=AntiCycleConfig(min_pause_s=10 * MIN), decision_interval_s=60.0
-    )
-    _state, decisions = run(
-        [
-            inputs(0.0, flame=False),
-            inputs(60.0, flame=True),
-            inputs(300.0, flame=False),
-            inputs(360.0, flame=False),
-        ],
-        config,
-    )
-    assert decisions[-1].mode is ControlMode.IDLE
-    assert Reason.MIN_PAUSE in decisions[-1].reasons
-    assert decisions[-1].hold_until == pytest.approx(300.0 + 600.0)
 
 
 @pytest.mark.parametrize(
@@ -315,3 +300,34 @@ def test_long_data_loss_hands_back_once_and_resumes() -> None:
         [inputs(0.0), inputs(30.0, boiler_link=False), inputs(9999.0, boiler_link=False)], never
     )
     assert not any(d.hand_back for d in decisions)
+
+
+def test_heating_follows_the_zones_at_every_step_both_ways() -> None:
+    """VT decides whether to heat: off as soon as the zones are satisfied — even mid-burn — and
+    on again as soon as one calls, with no minimum burn, pause or budget, and no waiting for the
+    next water-temperature decision."""
+    def idle(t: float) -> tuple[ZoneState, ...]:
+        return (zone(t, valve_open=0.0),)
+
+    _state, decisions = run(
+        [
+            inputs(0.0, flame=False),
+            inputs(10.0, flame=True, zones=idle(10.0)),
+            inputs(20.0, flame=False),
+            inputs(30.0, flame=True, zones=idle(30.0)),
+            inputs(40.0, flame=False),
+        ],
+        replace(CONFIG, decision_interval_s=300.0),
+    )
+    assert [d.command.ch_enable for d in decisions] == [True, False, True, False, True]
+    assert [d.mode for d in decisions] == [ControlMode.HEATING, ControlMode.IDLE] * 2 + [
+        ControlMode.HEATING
+    ]
+
+
+def test_a_short_cycling_boiler_is_never_held_off() -> None:
+    """An old boiler with a high minimum output cycles a lot on its own: while the zones call,
+    heating stays on, whatever the starts per hour."""
+    steps = [inputs(t * 10.0, flame=t % 4 < 2) for t in range(360)]  # an hour of 20 s burns
+    _state, decisions = run(steps)
+    assert all(d.command is not None and d.command.ch_enable for d in decisions)

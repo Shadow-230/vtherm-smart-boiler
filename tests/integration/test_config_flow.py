@@ -461,7 +461,7 @@ async def test_control_at_the_advanced_level_and_back(
         },
     )
     assert result["step_id"] == "control_behaviour"
-    result = await options_step(hass, result, {"min_burn_min": 8, "off_setpoint": 12})
+    result = await options_step(hass, result, {"ramp_k_per_min": 0.5, "off_setpoint": 12})
     assert result["step_id"] == "control_alarms"
     assert result["data_schema"]({})["outside_change"] == "hand_back"  # the default
     result = await options_step(hass, result, {"pressure_low": "hand_back"})
@@ -476,12 +476,12 @@ async def test_control_at_the_advanced_level_and_back(
         "exponent": 1.25,
         "offset": 1,
     }
-    assert control["min_burn_min"] == 8
+    assert control["ramp_k_per_min"] == 0.5
     assert control["off_setpoint"] == 12
     assert "daily_cap" not in control  # nothing is written to the boiler's memory
     assert control["alarm_reactions"]["pressure_low"] == "hand_back"
     assert control["alarm_reactions"]["outside_change"] == "hand_back"
-    assert entry.runtime_data.config.control.loop.control.anticycling.min_burn_s == 480.0
+    assert entry.runtime_data.config.control.loop.control.ramp_k_per_min == 0.5
 
     # Back to simple with defaults restored: only the simple control fields remain.
     menu = await hass.config_entries.options.async_init(entry_id)

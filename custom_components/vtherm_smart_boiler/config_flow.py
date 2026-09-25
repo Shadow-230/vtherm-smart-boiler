@@ -40,6 +40,7 @@ from .const import (
 )
 from .control_config import (
     DEFAULT_REACTIONS,
+    INFO_ONLY_ALARMS,
     AlarmReaction,
     HandBack,
     Topology,
@@ -349,7 +350,7 @@ _READ_BACK_ENTITY = {"domain": ["sensor", "number", "input_number"]}
 # Alarms whose reaction the user may choose (a reached daily cap has its own field; an internal
 # error always hands back).
 REACTION_ALARMS = (
-    *(kind.value for kind in AlarmKind),
+    *(kind.value for kind in AlarmKind if kind.value not in INFO_ONLY_ALARMS),
     "write_failed",
     "write_ignored",
     "outside_change",
@@ -366,12 +367,6 @@ CONTROL_ADVANCED_KEYS = (
     "count_threshold",
     "power_threshold_kw",
     "opening_threshold",
-    "min_burn_min",
-    "min_pause_min",
-    "max_starts_per_hour",
-    "min_on_min",
-    "min_off_min",
-    "max_switches_per_hour",
     "ramp_k_per_min",
     "decision_interval_min",
     "off_setpoint",
@@ -501,12 +496,6 @@ def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
 
     return vol.Schema(
         {
-            **required("min_burn_min", 5.0, _number(0, 30, 1, "min")),
-            **required("min_pause_min", 5.0, _number(0, 60, 1, "min")),
-            **required("max_starts_per_hour", 6, _number(1, 20, 1)),
-            **required("min_on_min", 5.0, _number(0, 30, 1, "min")),
-            **required("min_off_min", 5.0, _number(0, 60, 1, "min")),
-            **required("max_switches_per_hour", 6, _number(1, 20, 1)),
             **required("ramp_k_per_min", 1.0, _number(0.1, 10, 0.1, "K/min")),
             **required("decision_interval_min", 5.0, _number(1, 30, 1, "min")),
             **required("off_setpoint", 10.0, _number(0, 30, 0.5, "°C")),

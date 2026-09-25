@@ -1,10 +1,9 @@
 """One control step: the controller's decision through the write guards to what is written now.
 
 The same step drives the simulator in tests and the real write path in Home Assistant. When the
-write path cannot switch heating on and off, "off" is written as a low setpoint; the switch guard
-still enforces the minimum on and off times on that logical switch. A hand-back is passed on as
-it is — the guards never hold it back — and resets the guards, so a later control session starts
-fresh.
+write path cannot switch heating on and off, "off" is written as a low setpoint. A hand-back is
+passed on as it is — the guards never hold it back — and resets the guards, so a later control
+session starts fresh.
 """
 
 from __future__ import annotations
@@ -18,7 +17,6 @@ from .guards import (
     SetpointGuardState,
     SwitchGuardConfig,
     SwitchGuardState,
-    SwitchHold,
     WriteAction,
     WriteKind,
     plan_setpoint,
@@ -51,7 +49,6 @@ class LoopOutput:
     ch_enable: bool | None = None  # heating on/off to write now
     hand_back: bool = False  # give control back now
     events: tuple[GuardEvent, ...] = ()
-    switch_hold: SwitchHold | None = None
     heating_on: bool | None = None  # the logical heating state now commanded
 
 
@@ -93,6 +90,5 @@ def loop_step(
         ch_write,
         False,
         planned.events,
-        switched.hold,
         heating_on,
     )

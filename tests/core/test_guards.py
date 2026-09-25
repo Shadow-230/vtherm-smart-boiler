@@ -10,7 +10,6 @@ from custom_components.vtherm_smart_boiler.core.guards import (
     SetpointGuardState,
     SwitchGuardConfig,
     SwitchGuardState,
-    SwitchHold,
     WriteAction,
     WriteKind,
     WriteType,
@@ -215,30 +214,16 @@ def test_invalid_setpoint_config(kwargs: dict) -> None:
         SetpointGuardConfig(**kwargs)
 
 
-SWITCH = SwitchGuardConfig(min_on_s=300.0, min_off_s=300.0, max_switches_per_hour=3)
-
-
-def test_switch_minimum_on_and_off_times() -> None:
-    result = plan_switch(SwitchGuardState(), True, 0.0, SWITCH)
-    assert result.write is True
-    held = plan_switch(result.state, False, 100.0, SWITCH)
-    assert held.write is None
-    assert held.hold is SwitchHold.MIN_ON
-    off = plan_switch(held.state, False, 300.0, SWITCH)
-    assert off.write is False
-    again = plan_switch(off.state, True, 400.0, SWITCH)
-    assert again.hold is SwitchHold.MIN_OFF
-
-
-def test_switch_budget_per_hour() -> None:
+def test_the_switch_follows_every_change_at_once() -> None:
+    """Nothing counted or timed holds heating on or off against VT."""
     state = SwitchGuardState()
-    writes = 0
-    for i in range(6):
-        result = plan_switch(state, i % 2 == 0, i * 400.0, SWITCH)
+    writes = []
+    for t, desired in enumerate([True, False, True, False, True]):
+        result = plan_switch(state, desired, t * 10.0, SwitchGuardConfig())
         state = result.state
-        writes += result.write is not None
-    assert writes == 4  # the first write and three switches
-    assert plan_switch(state, True, 2400.0, SWITCH).hold is SwitchHold.SWITCH_BUDGET
+        writes.append(result.write)
+    assert writes == [True, False, True, False, True]
+    assert plan_switch(state, True, 50.0, SwitchGuardConfig()).write is None  # unchanged
 
 
 def test_switch_keepalive_for_expiring_overrides() -> None:
@@ -250,13 +235,7 @@ def test_switch_keepalive_for_expiring_overrides() -> None:
 
 
 def test_a_failed_switch_is_sent_again() -> None:
-    first = plan_switch(SwitchGuardState(), True, 0.0, SWITCH)
-    retried = plan_switch(switch_failed(first.state), True, 10.0, SWITCH)
+    first = plan_switch(SwitchGuardState(), True, 0.0, SwitchGuardConfig())
+    retried = plan_switch(switch_failed(first.state), True, 10.0, SwitchGuardConfig())
     assert retried.write is True
-    assert retried.state.switches == first.state.switches  # not a new switching
-    assert plan_switch(retried.state, True, 20.0, SWITCH).write is None
-
-
-def test_invalid_switch_config() -> None:
-    with pytest.raises(ValueError, match="must"):
-        SwitchGuardConfig(max_switches_per_hour=0)
+    assert plan_switch(retried.state, True, 20.0, SwitchGuardConfig()).write is None

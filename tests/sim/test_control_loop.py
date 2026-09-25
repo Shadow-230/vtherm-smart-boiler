@@ -44,6 +44,7 @@ class LoopController:
     state: LoopState = field(default_factory=LoopState)
     setpoints: list[tuple[float, float]] = field(default_factory=list)
     hand_backs: list[float] = field(default_factory=list)
+    heating: list[tuple[float, bool | None, bool]] = field(default_factory=list)  # t, on, called
 
     def __call__(self, t: float, view: SimView) -> SimCommand | None:
         link = self.link(t)
@@ -68,6 +69,8 @@ class LoopController:
         )
         confirmed = view.confirmed_setpoint if link else None
         self.state, out = loop_step(self.state, inputs, confirmed, self.config)
+        called = any(z.opening > 0.05 for z in view.zones)
+        self.heating.append((t, out.heating_on, called))
         if out.hand_back:
             self.hand_backs.append(t)
             return SimCommand(hand_back=True)
@@ -124,14 +127,15 @@ def test_setpoints_stay_within_the_limits_even_in_deep_frost() -> None:
     assert min(v for _t, v in controller.setpoints) >= 25.0
 
 
-def test_starts_stay_within_the_budget() -> None:
+def test_a_cycling_boiler_is_never_held_off_while_the_zones_call() -> None:
+    """A large boiler in mild weather cycles on its own: heating follows the zones at every step,
+    whatever the starts per hour."""
     controller = LoopController(LOOP)
     result = simulate(scenario([12.0, 12.0], controller))
     flame = result.history.signal(Signal.FLAME)
     starts = [b.start for b in find_burns(flame, 0, 2 * DAY) if b.start_seen]
-    budget = LOOP.control.anticycling.max_starts_per_hour
-    for t in starts:
-        assert sum(1 for s in starts if t <= s < t + HOUR) <= budget
+    assert len(starts) > 2 * 24  # it does cycle a lot
+    assert all(on for _t, on, called in controller.heating if called)
 
 
 def test_lost_link_writes_nothing_and_the_override_lapses() -> None:

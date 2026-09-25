@@ -258,6 +258,27 @@ async def test_a_thermostat_heats_again_after_a_hand_back_that_followed_off(rig:
     assert rig.sim.last.demand  # the thermostat's call reaches the boiler
 
 
+async def test_heating_follows_the_zones_at_once_both_ways(rig: Rig) -> None:
+    """VT decides whether to heat: heating goes off within a step of the rooms being satisfied
+    and on within a step of a call, with no hold of any kind."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    plant = rig.sim.plant
+
+    def rooms(offset: float) -> None:
+        plant.room = [target + offset for target in plant.targets]
+        rig.sim.advance(rig.now())  # the valves follow the rooms at once
+        rig.mirror_zones()
+
+    rooms(2.0)
+    await rig.advance(10)
+    assert rig.gateway("ch")[-1][2] is False
+    rooms(-2.0)
+    await rig.advance(10)
+    assert rig.gateway("ch")[-1][2] is True
+
+
 async def test_keep_alive_loss_lets_the_gateway_fall_back(rig: Rig) -> None:
     await start(rig)
     await rig.switch(True)

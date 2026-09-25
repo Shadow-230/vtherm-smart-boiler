@@ -16,7 +16,6 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from .core.anticycling import AntiCycleConfig
 from .core.controller import ControlConfig
 from .core.curve import HeatingCurve
 from .core.demand import DemandConfig
@@ -92,6 +91,9 @@ WRITABLE_TYPES = frozenset({WriteType.EXPIRING, WriteType.HELD})
 CONTROLLABLE_TOPOLOGIES = frozenset(
     {Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT, Topology.VIRTUAL}
 )
+# Alarms that stay information: nothing the plugin counts may hold heating against VT, so many
+# starts never hand back (``SCOPE.md`` principle 12).
+INFO_ONLY_ALARMS = frozenset({"frequent_starts"})
 # Alarms whose default reaction hands control back: another controller is writing too.
 DEFAULT_REACTIONS: Mapping[str, AlarmReaction] = {"outside_change": AlarmReaction.HAND_BACK}
 EXPONENT_BY_EMITTER = {
@@ -128,6 +130,8 @@ class ControlOptions:
         return self.write_path is not None
 
     def reaction(self, alarm: str) -> AlarmReaction:
+        if alarm in INFO_ONLY_ALARMS:
+            return AlarmReaction.INFO
         return self.alarm_reactions.get(alarm, DEFAULT_REACTIONS.get(alarm, AlarmReaction.INFO))
 
     @property
@@ -200,11 +204,6 @@ def parse_control(
                 else opening / 100.0
             ),
         ),
-        anticycling=AntiCycleConfig(
-            min_burn_s=_minutes(data, "min_burn_min", 5.0),
-            min_pause_s=_minutes(data, "min_pause_min", 5.0),
-            max_starts_per_hour=int(data.get("max_starts_per_hour", 6)),
-        ),
         fallback_setpoint=_float(data, "fallback_setpoint", None),
         ramp_k_per_min=ramp,
         decision_interval_s=_minutes(data, "decision_interval_min", 5.0),
@@ -214,9 +213,6 @@ def parse_control(
         control=control,
         setpoint_guard=SetpointGuardConfig(write_type=write_type),
         switch_guard=SwitchGuardConfig(
-            min_on_s=_minutes(data, "min_on_min", 5.0),
-            min_off_s=_minutes(data, "min_off_min", 5.0),
-            max_switches_per_hour=int(data.get("max_switches_per_hour", 6)),
             # An expiring heating override is repeated with the setpoint's keep-alive.
             keepalive_s=KEEPALIVE_S if ch_write_type is WriteType.EXPIRING else None,
         ),

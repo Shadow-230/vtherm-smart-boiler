@@ -120,7 +120,6 @@ class ControlStatus:
     confirmed: float | None = None  # what the boiler reports back
     last_change_at: float | None = None  # last write of a new value (keep-alives aside)
     hand_back_at: float | None = None
-    hold_until: float | None = None  # anti-cycling holds the boiler until then
     alarms: frozenset[ControlAlarm] = frozenset()
     paused_zones: tuple[str, ...] = ()
     latched_by: tuple[str, ...] = ()  # the alarms that latched control, while it stays latched
@@ -525,7 +524,6 @@ class ControlUnit:
             confirmed=confirmed,
             last_change_at=self._last_change_at,
             hand_back_at=self._hand_back_at,
-            hold_until=out.decision.hold_until,
             alarms=frozenset(self._alarms()),
             paused_zones=tuple(sorted(session.learning.paused)),
             latched_by=session.loop.control.latched_by if session.loop.control.latched else (),
