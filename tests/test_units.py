@@ -106,3 +106,11 @@ def test_every_home_assistant_pressure_unit(value: float, unit: str) -> None:
 )
 def test_every_home_assistant_power_unit(value: float, unit: str) -> None:
     assert power_to_kw(value, unit) == pytest.approx(1.5, rel=1e-3)
+
+
+def test_a_pressure_of_zero_is_unknown() -> None:
+    """L3: an OpenTherm Gateway reports 0 bar after a reset until a real reading — with a
+    thermostat perhaps for good; no heating system runs at 0 bar."""
+    assert signal_value(Signal.PRESSURE, "0", "bar") is None
+    assert signal_value(Signal.PRESSURE, "0.0", "bar") is None
+    assert signal_value(Signal.PRESSURE, "1.2", "bar") == 1.2

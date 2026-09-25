@@ -46,6 +46,8 @@ class Alarm:
     level: Level | None = None
     value: float | None = None
     limit: float | None = None
+    reason: str | None = None  # why it cannot be judged, or why it does not apply
+    since: float | None = None  # when its condition began (a warning that waits)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,24 +71,30 @@ FLUE_GAS_CONDENSING_BAND = Band(warning=85.0, alarm=100.0, rising=True, hysteres
 
 
 def banded_alarm(kind: AlarmKind, value: float | None, band: Band, previous: Alarm | None) -> Alarm:
-    """Level of a value against a band; an unknown value keeps no alarm active."""
+    """Level of a value against a band. An unknown value keeps what was known, hysteresis
+    included; an active level clears only once the value is past its limit by the hysteresis —
+    from alarm to warning as from warning to none (P64)."""
     if value is None:
-        return Alarm(kind, False)
+        return previous if previous is not None else Alarm(kind, False)
 
     def beyond(limit: float | None) -> bool:
         if limit is None:
             return False
         return value > limit if band.rising else value < limit
 
+    def released(limit: float) -> float:
+        return limit - band.hysteresis if band.rising else limit + band.hysteresis
+
     if beyond(band.alarm):
+        return Alarm(kind, True, Level.ALARM, value, band.alarm)
+    was_alarm = previous is not None and previous.active and previous.level is Level.ALARM
+    if was_alarm and band.alarm is not None and beyond(released(band.alarm)):
         return Alarm(kind, True, Level.ALARM, value, band.alarm)
     if beyond(band.warning):
         return Alarm(kind, True, Level.WARNING, value, band.warning)
-    if previous is not None and previous.active and band.warning is not None:
-        release = band.warning - band.hysteresis if band.rising else band.warning + band.hysteresis
-        still = value > release if band.rising else value < release
-        if still:
-            return Alarm(kind, True, Level.WARNING, value, band.warning)
+    was_active = previous is not None and previous.active
+    if was_active and band.warning is not None and beyond(released(band.warning)):
+        return Alarm(kind, True, Level.WARNING, value, band.warning)
     return Alarm(kind, False, None, value)
 
 
@@ -244,24 +252,44 @@ def hysteresis_samples(
 
 
 
+# A pump runs on after the burner, and rooms close their valves as they warm: only a closed
+# circuit that lasts this long is a warning (S28; one boiler seen running on for 15 min, L3).
+LOW_FLOW_HOLD_S = 15 * 60.0
+
+
 def low_flow(
     zones: Sequence[ZoneState],
     pump_running: bool | None,
     now: float,
     max_age: float | None,
+    previous: Alarm | None = None,
+    dhw: bool | None = None,
+    bypass: bool = False,
 ) -> Alarm:
-    """Warning while the pump runs and every zone's valve is closed: no path for the water.
+    """Warning while the pump runs and every zone's valve has been closed for a while: no path
+    for the water.
 
     Only zones with a fresh, known valve opening count; a zone without one (e.g. a relay) could be
     the open path, so it keeps the warning off. ``pump_running`` comes from a pump-running or a
-    CH-active signal; without either the warning cannot be judged (``None``).
+    CH-active signal. Not applied during hot water (the pump may serve it) or with a bypass or a
+    low-loss header (the water always has a path); ``reason`` says why it is off when it cannot
+    be judged or does not apply.
     """
     kind = AlarmKind.LOW_FLOW
+    if bypass:
+        return Alarm(kind, False, reason="bypass")
     if pump_running is None:
-        return Alarm(kind, False)
+        return Alarm(kind, False, reason="no_pump_signal")
+    if dhw is True:
+        return Alarm(kind, False, reason="hot_water")
     fresh = [z for z in zones if z.is_fresh(now, max_age)]
-    if not fresh or any(z.valve_open is None for z in fresh):
-        return Alarm(kind, False)
+    if not fresh:
+        return Alarm(kind, False, reason="no_fresh_zone")
+    if any(z.valve_open is None for z in fresh):
+        return Alarm(kind, False, reason="zone_without_valve")
     widest = max(z.valve_open for z in fresh if z.valve_open is not None)
-    active = pump_running and widest <= ZONE_OPEN
-    return Alarm(kind, active, Level.WARNING if active else None, widest, ZONE_OPEN)
+    if not (pump_running and widest <= ZONE_OPEN):
+        return Alarm(kind, False, None, widest, ZONE_OPEN)
+    since = previous.since if previous is not None and previous.since is not None else now
+    active = now - since >= LOW_FLOW_HOLD_S
+    return Alarm(kind, active, Level.WARNING if active else None, widest, ZONE_OPEN, since=since)

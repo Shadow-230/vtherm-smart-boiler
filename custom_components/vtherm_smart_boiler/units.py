@@ -118,4 +118,7 @@ def signal_value(signal: Signal, state: object, unit: str | None) -> float | boo
         converted = number
     if converted is None or not spec.plausible(converted):
         return None
+    if signal is Signal.PRESSURE and converted == 0.0:
+        # An OpenTherm Gateway reports 0 until a real reading after each reset (L3).
+        return None
     return converted

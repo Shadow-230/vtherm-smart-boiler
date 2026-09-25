@@ -205,6 +205,9 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
                     "modulation_scale",
                     default=boiler.get("modulation_scale", ModulationScale.RANGE.value),
                 ): _select("modulation_scale", [m.value for m in ModulationScale]),
+                vol.Required("bypass", default=boiler.get("bypass", False)): (
+                    selector.BooleanSelector()
+                ),
             }
         )
     return vol.Schema(fields)
@@ -711,7 +714,7 @@ def _outside(value: Any, bounds: tuple[float | None, float | None]) -> bool:
 
 # --- applying user input ----------------------------------------------------------------------
 
-BOILER_KEYS = ("class", "dhw", "condensing", "modulation_scale")
+BOILER_KEYS = ("class", "dhw", "condensing", "modulation_scale", "bypass")
 BOILER_PARAMETER_KEYS = (
     "boiler_min_power",
     "boiler_max_power",
@@ -839,7 +842,7 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
         or _differ(
             options.get(BOILER, {}),
             _schema_defaults(boiler_schema(advanced)),
-            ("modulation_scale",),
+            ("modulation_scale", "bypass"),
         )
         or any(
             key in params

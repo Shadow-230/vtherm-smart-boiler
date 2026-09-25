@@ -434,8 +434,9 @@ Options, each with a cautious default and its risks described:
 - Comfort correction on (default) or off; its bounds are fixed (principle 13).
 - Learning pauses on (default) or off.
 - The reaction to each alarm: information, or hand control back.
-- Low-flow warning when all valves are closed while the pump runs — needs a pump-running or
-  CH-active signal.
+- Low-flow warning when all valves have been closed for 15 minutes while the pump runs (the pump
+  runs on after the burner) — needs a pump-running or CH-active signal; off during hot water and
+  when a bypass or low-loss header is declared.
 
 Defaults of the safety options and why (the user reviews them at K4):
 

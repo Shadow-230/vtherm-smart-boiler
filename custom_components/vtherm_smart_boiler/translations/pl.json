@@ -63,7 +63,8 @@
           "max_ch_setpoint": "Maksymalna nastawa c.o.",
           "gas_at_min_power": "Gaz przy mocy minimalnej",
           "gas_at_max_power": "Gaz przy mocy maksymalnej",
-          "modulation_scale": "Znaczenie modulacji"
+          "modulation_scale": "Znaczenie modulacji",
+          "bypass": "Bypass lub sprzęgło hydrauliczne"
         },
         "data_description": {
           "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Sterowanie (eksperymentalne) wymaga klasy „Nastawa zasilania”; przy pozostałych wtyczka tylko monitoruje.",
@@ -74,7 +75,8 @@
           "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie CWU; za niska sprawia, że c.o. liczy się jako ciepła woda.",
           "gas_at_min_power": "Zużycie gazu na godzinę przy mocy minimalnej, w jednostce licznika gazu. Z modulacją szacuje zużycie gazu, gdy nie ma licznika; zła wartość wypacza gaz na stopniodzień.",
           "gas_at_max_power": "Zużycie gazu na godzinę przy mocy maksymalnej, w tej samej jednostce; zła wartość wypacza szacunki gazu.",
-          "modulation_scale": "Czy 0 % to moc minimalna (definicja OpenTherm), czy wartość to procent mocy maksymalnej. Zły wybór zniekształca szacunki ciepła i gazu."
+          "modulation_scale": "Czy 0 % to moc minimalna (definicja OpenTherm), czy wartość to procent mocy maksymalnej. Zły wybór zniekształca szacunki ciepła i gazu.",
+          "bypass": "Zaznacz, gdy woda grzewcza ma zawsze drogę przepływu — automatyczny zawór obejściowy albo sprzęgło hydrauliczne: ostrzeżenie o małym przepływie jest wtedy wyłączone, bo zamknięte zawory nie zatrzymają przepływu. Niezaznaczone przy takim układzie daje fałszywe ostrzeżenia; zaznaczone bez niego pomija prawdziwe zamknięcie obiegu."
         }
       },
       "circuit": {
@@ -321,7 +323,8 @@
           "max_ch_setpoint": "Maksymalna nastawa c.o.",
           "gas_at_min_power": "Gaz przy mocy minimalnej",
           "gas_at_max_power": "Gaz przy mocy maksymalnej",
-          "modulation_scale": "Znaczenie modulacji"
+          "modulation_scale": "Znaczenie modulacji",
+          "bypass": "Bypass lub sprzęgło hydrauliczne"
         },
         "data_description": {
           "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Sterowanie (eksperymentalne) wymaga klasy „Nastawa zasilania”; przy pozostałych wtyczka tylko monitoruje.",
@@ -332,7 +335,8 @@
           "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie CWU; za niska sprawia, że c.o. liczy się jako ciepła woda.",
           "gas_at_min_power": "Zużycie gazu na godzinę przy mocy minimalnej, w jednostce licznika gazu. Z modulacją szacuje zużycie gazu, gdy nie ma licznika; zła wartość wypacza gaz na stopniodzień.",
           "gas_at_max_power": "Zużycie gazu na godzinę przy mocy maksymalnej, w tej samej jednostce; zła wartość wypacza szacunki gazu.",
-          "modulation_scale": "Czy 0 % to moc minimalna (definicja OpenTherm), czy wartość to procent mocy maksymalnej. Zły wybór zniekształca szacunki ciepła i gazu."
+          "modulation_scale": "Czy 0 % to moc minimalna (definicja OpenTherm), czy wartość to procent mocy maksymalnej. Zły wybór zniekształca szacunki ciepła i gazu.",
+          "bypass": "Zaznacz, gdy woda grzewcza ma zawsze drogę przepływu — automatyczny zawór obejściowy albo sprzęgło hydrauliczne: ostrzeżenie o małym przepływie jest wtedy wyłączone, bo zamknięte zawory nie zatrzymają przepływu. Niezaznaczone przy takim układzie daje fałszywe ostrzeżenia; zaznaczone bez niego pomija prawdziwe zamknięcie obiegu."
         }
       },
       "circuit": {
@@ -1075,6 +1079,16 @@
             "state": {
               "warning": "Ostrzeżenie",
               "alarm": "Alarm"
+            }
+          },
+          "reason": {
+            "name": "Dlaczego nie oceniono",
+            "state": {
+              "no_pump_signal": "Brak sygnału pompy lub c.o.",
+              "zone_without_valve": "Strefa bez otwarcia zaworu",
+              "no_fresh_zone": "Żadna strefa nie raportuje",
+              "hot_water": "Grzeje się ciepła woda",
+              "bypass": "Bypass utrzymuje przepływ"
             }
           }
         }

@@ -167,6 +167,7 @@ class AlarmSensor(SmartBoilerEntity, BinarySensorEntity):
             "level": None if alarm.level is None else alarm.level.value,
             "value": alarm.value,
             "limit": alarm.limit,
+            "reason": alarm.reason,
         }
 
 

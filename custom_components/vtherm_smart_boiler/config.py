@@ -150,6 +150,7 @@ class EntryConfig:
             BoilerClass(boiler_data.get("class", BoilerClass.READ_ONLY)),
             DhwType(boiler_data.get("dhw", DhwType.NONE)),
             bool(boiler_data.get("condensing", True)),
+            bool(boiler_data.get("bypass", False)),
         )
         circuits, flow_entities = _circuits(options.get(CIRCUITS, []))
         zones, zone_configs = _zones(options.get(ZONES, []), {c.circuit_id for c in circuits})

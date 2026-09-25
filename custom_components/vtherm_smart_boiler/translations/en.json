@@ -63,7 +63,8 @@
           "max_ch_setpoint": "Maximum heating setpoint",
           "gas_at_min_power": "Gas at minimum power",
           "gas_at_max_power": "Gas at maximum power",
-          "modulation_scale": "Modulation means"
+          "modulation_scale": "Modulation means",
+          "bypass": "Bypass or low-loss header"
         },
         "data_description": {
           "class": "Flow setpoint, curve parameters only, on/off or read-only. Control (experimental) needs \"Flow setpoint\"; with the other classes the plugin only monitors.",
@@ -74,7 +75,8 @@
           "max_ch_setpoint": "Highest flow temperature in heating, in °C. Flow above it points to a DHW run; set too low, heating counts as hot water.",
           "gas_at_min_power": "Gas per hour at minimum power, in your gas meter's unit. With the modulation it estimates gas use when there is no meter; a wrong value skews gas per degree-day.",
           "gas_at_max_power": "Gas per hour at maximum power, in the same unit; a wrong value skews the gas estimates.",
-          "modulation_scale": "Whether 0 % is the minimum power (the OpenTherm definition) or the value is a percentage of maximum power. The wrong choice skews heat and gas estimates."
+          "modulation_scale": "Whether 0 % is the minimum power (the OpenTherm definition) or the value is a percentage of maximum power. The wrong choice skews heat and gas estimates.",
+          "bypass": "Tick when the heating water always has a path — an automatic bypass valve or a low-loss header: the low-flow warning is then off, as closed valves cannot stop the flow. Left unticked on such a system, the warning is false; ticked without one, a real dead-end goes unwarned."
         }
       },
       "circuit": {
@@ -321,7 +323,8 @@
           "max_ch_setpoint": "Maximum heating setpoint",
           "gas_at_min_power": "Gas at minimum power",
           "gas_at_max_power": "Gas at maximum power",
-          "modulation_scale": "Modulation means"
+          "modulation_scale": "Modulation means",
+          "bypass": "Bypass or low-loss header"
         },
         "data_description": {
           "class": "Flow setpoint, curve parameters only, on/off or read-only. Control (experimental) needs \"Flow setpoint\"; with the other classes the plugin only monitors.",
@@ -332,7 +335,8 @@
           "max_ch_setpoint": "Highest flow temperature in heating, in °C. Flow above it points to a DHW run; set too low, heating counts as hot water.",
           "gas_at_min_power": "Gas per hour at minimum power, in your gas meter's unit. With the modulation it estimates gas use when there is no meter; a wrong value skews gas per degree-day.",
           "gas_at_max_power": "Gas per hour at maximum power, in the same unit; a wrong value skews the gas estimates.",
-          "modulation_scale": "Whether 0 % is the minimum power (the OpenTherm definition) or the value is a percentage of maximum power. The wrong choice skews heat and gas estimates."
+          "modulation_scale": "Whether 0 % is the minimum power (the OpenTherm definition) or the value is a percentage of maximum power. The wrong choice skews heat and gas estimates.",
+          "bypass": "Tick when the heating water always has a path — an automatic bypass valve or a low-loss header: the low-flow warning is then off, as closed valves cannot stop the flow. Left unticked on such a system, the warning is false; ticked without one, a real dead-end goes unwarned."
         }
       },
       "circuit": {
@@ -1075,6 +1079,16 @@
             "state": {
               "warning": "Warning",
               "alarm": "Alarm"
+            }
+          },
+          "reason": {
+            "name": "Why not judged",
+            "state": {
+              "no_pump_signal": "No pump or heating signal",
+              "zone_without_valve": "A zone without a valve opening",
+              "no_fresh_zone": "No zone reports",
+              "hot_water": "Hot water is heated",
+              "bypass": "A bypass keeps water flowing"
             }
           }
         }

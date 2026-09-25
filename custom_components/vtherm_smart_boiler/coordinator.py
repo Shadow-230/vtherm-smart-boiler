@@ -677,7 +677,15 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             pump = snapshot.flag(Signal.PUMP_RUNNING)
             if pump is None:
                 pump = snapshot.flag(Signal.CH_ACTIVE)
-            alarms[AlarmKind.LOW_FLOW] = low_flow(zones, pump, now, ZONE_MAX_AGE_S)
+            alarms[AlarmKind.LOW_FLOW] = low_flow(
+                zones,
+                pump,
+                now,
+                ZONE_MAX_AGE_S,
+                self._alarms.get(AlarmKind.LOW_FLOW),
+                self.dhw_now(snapshot),
+                self.config.installation.boiler.bypass,
+            )
         return alarms
 
     # --- analysis -------------------------------------------------------------------------

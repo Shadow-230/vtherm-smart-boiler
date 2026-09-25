@@ -291,7 +291,7 @@ boiler did.
 | W3 ✅ | building model: consistent windows, a clamped result, a reachable confidence; the declared-versus-measured mismatch shown (P44, P77) |
 | W4 ✅ | metrics: gas meter resets only on a large drop; the switch to the weather entity with an unavailable outdoor sensor; gas per degree-day with incomplete data; the report's `complete` flag; days of 23 and 25 hours; unknown zones; the gas unit followed; the importer's mapping, command line and DST tested, its usage text and test without the author's time zone (P45, P46, P63, P70, P103) |
 | W5 ✅ | zones: no emitter factor during hot water or from the boiler's return on mixed circuits; the critical zone as its docstring says; EN 442 continuous near room temperature; the reference room's average from one set of zones; hot water available unknown while the flow is unknown or stale (the user) (P48, P61, P62, S29, review question 10) |
-| W6 | alarms: hysteresis kept with unknown values and between levels; the low-flow warning with exclusions (pump overrun, hot water, bypass) and its unavailability reason; a water pressure of 0 after a gateway reset counted as unknown, if L3 confirms it (P64, P65, S28) |
+| W6 ✅ | alarms: hysteresis kept with unknown values and between levels; the low-flow warning with exclusions (pump overrun, hot water, bypass) and its unavailability reason; a water pressure of 0 after a gateway reset counted as unknown, if L3 confirms it (P64, P65, S28) |
 
 ## Phase R — release validation, tools, test environment, review
 

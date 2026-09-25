@@ -42,6 +42,7 @@ class Boiler:
     boiler_class: BoilerClass
     dhw: DhwType = DhwType.NONE
     condensing: bool = True
+    bypass: bool = False  # the heating water always has a path: a bypass valve or low-loss header
 
 
 @dataclass(frozen=True, slots=True)

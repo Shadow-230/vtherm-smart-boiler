@@ -58,6 +58,11 @@ def test_rising_bands() -> None:
 
 def test_unknown_value_and_switched_off_levels() -> None:
     assert banded_alarm(LOW, None, PRESSURE_LOW_BAND, None) == Alarm(LOW, False)
+    # P64: an unknown reading keeps what was known, hysteresis included.
+    active = banded_alarm(LOW, 0.9, PRESSURE_LOW_BAND, None)
+    held = banded_alarm(LOW, None, PRESSURE_LOW_BAND, active)
+    assert held == active
+    assert banded_alarm(LOW, 1.05, PRESSURE_LOW_BAND, held).active  # still within hysteresis
     off = Band(warning=None, alarm=None, rising=True, hysteresis=1.0)
     assert not banded_alarm(AlarmKind.FLUE_GAS_HIGH, 500.0, off, None).active
 
@@ -125,17 +130,35 @@ def test_hysteresis_samples() -> None:
     assert hysteresis_samples(flow, burns, setpoint=moving) == []
 
 
+def test_an_alarm_steps_down_to_a_warning_with_hysteresis() -> None:
+    """P64: between levels too — an alarm stays an alarm until the value is past its limit by
+    the hysteresis."""
+    alarm = banded_alarm(LOW, 0.5, PRESSURE_LOW_BAND, None)
+    assert alarm.level is Level.ALARM
+    assert banded_alarm(LOW, 0.75, PRESSURE_LOW_BAND, alarm).level is Level.ALARM
+    assert banded_alarm(LOW, 0.85, PRESSURE_LOW_BAND, alarm).level is Level.WARNING
+
+
 def test_low_flow_warning() -> None:
-    from custom_components.vtherm_smart_boiler.core.alarms import low_flow
+    from custom_components.vtherm_smart_boiler.core.alarms import LOW_FLOW_HOLD_S, low_flow
     from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 
     def z(opening: float | None, t: float = 100.0) -> ZoneState:
         return ZoneState("z", valve_open=opening, reported_at=t)
 
     closed = [z(0.0), z(0.02)]
-    assert low_flow(closed, True, 100.0, 600.0).active
+    later = 100.0 + LOW_FLOW_HOLD_S
+    first = low_flow(closed, True, 100.0, 600.0)
+    assert not first.active  # the pump may be running on after the burner (S28)
+    assert low_flow([z(0.0, later)], True, later, 600.0, first).active
     assert not low_flow(closed, False, 100.0, 600.0).active
-    assert low_flow(closed, None, 100.0, 600.0) == Alarm(AlarmKind.LOW_FLOW, False)
     assert not low_flow([z(0.0), z(0.3)], True, 100.0, 600.0).active
-    assert not low_flow([z(0.0), z(None)], True, 100.0, 600.0).active  # a relay zone may flow
-    assert not low_flow([z(0.0, t=-5000.0)], True, 100.0, 600.0).active  # stale
+    for zones, pump, extra, reason in (
+        (closed, None, {}, "no_pump_signal"),
+        ([z(0.0), z(None)], True, {}, "zone_without_valve"),  # a relay zone may flow
+        ([z(0.0, t=-5000.0)], True, {}, "no_fresh_zone"),
+        (closed, True, {"dhw": True}, "hot_water"),
+        (closed, True, {"bypass": True}, "bypass"),
+    ):
+        result = low_flow(zones, pump, 100.0, 600.0, **extra)
+        assert (result.active, result.reason) == (False, reason)
