@@ -156,6 +156,57 @@ async def test_only_an_options_change_reloads_the_entry(hass: HomeAssistant) -> 
     assert entry.runtime_data is not coordinator
 
 
+def test_changing_attributes_stay_out_of_the_recorder() -> None:
+    """P33: attributes that change with every update would fill the database."""
+    from custom_components.vtherm_smart_boiler.binary_sensor import (
+        AlarmSensor,
+        HotWaterSensor,
+        OutdoorSensorProblem,
+    )
+    from custom_components.vtherm_smart_boiler.sensor import (
+        BoilerSensor,
+        ControlSetpointSensor,
+        ControlStateSensor,
+        CriticalZoneSensor,
+        EmitterFactorSensor,
+    )
+
+    for cls, changing in (
+        (ControlStateSensor, {"reasons", "target", "heating_on", "unknown_zones"}),
+        (ControlSetpointSensor, {"requested", "read_back", "last_change"}),
+        (EmitterFactorSensor, {"computed_at", "output_w"}),
+        (CriticalZoneSensor, {"demand", "deficit"}),
+        (BoilerSensor, {"reasons", "temperature", "deficit", "contributions"}),
+        (HotWaterSensor, {"excess"}),
+        (AlarmSensor, {"value"}),
+        (OutdoorSensorProblem, {"mean_difference"}),
+    ):
+        assert changing <= cls._unrecorded_attributes, cls.__name__
+
+
+async def test_a_new_emitter_factor_is_saved_slowly_a_latch_soon(hass: HomeAssistant) -> None:
+    """P33: a factor recomputed at every update while a zone heats must not rewrite the store
+    every two minutes; what control needs kept is not held back by it."""
+    from custom_components.vtherm_smart_boiler.coordinator import (
+        FACTOR_SAVE_DELAY_S,
+        SAVE_DELAY_S,
+    )
+
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    delays: list[float] = []
+    coordinator._store.async_delay_save = lambda _data, delay: delays.append(delay)
+    coordinator._save_due = None
+    coordinator.schedule_save(FACTOR_SAVE_DELAY_S)
+    coordinator.schedule_save(FACTOR_SAVE_DELAY_S)  # one pending already
+    coordinator.schedule_save()  # sooner: brought forward
+    coordinator.schedule_save(FACTOR_SAVE_DELAY_S)  # later than the pending one: nothing
+    assert delays == [FACTOR_SAVE_DELAY_S, SAVE_DELAY_S]
+
+
 async def test_invalid_options_fail_setup_with_a_reason(hass: HomeAssistant) -> None:
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", options={"signals": {}})
     entry.add_to_hass(hass)

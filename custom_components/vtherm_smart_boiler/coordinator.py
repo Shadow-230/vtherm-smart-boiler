@@ -92,6 +92,9 @@ STORAGE_VERSION = 1
 DAY = 86400.0
 ZONE_MAX_AGE_S = 2 * 3600.0
 SAVE_DELAY_S = 120
+# An emitter factor is recomputed at every update while its zone heats: saved at this pace, so
+# the store is not rewritten every two minutes all winter.
+FACTOR_SAVE_DELAY_S = 15 * 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,7 +171,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._analysing = False
         # A lasting failure of a periodic job is logged once, with its trace, and its end once.
         self._failing: set[str] = set()
-        self._save_pending = False
+        self._save_due: float | None = None  # when the pending delayed save runs
         self.control: ControlUnit | None = None
         # Control left the options while a hand-back was still owed: this unit only hands back.
         self.hand_back_unit: ControlUnit | None = None
@@ -258,7 +261,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 _LOGGER.warning("Ignoring an unreadable stored value for %s", key)
 
     def _stored_data(self) -> dict[str, Any]:
-        self._save_pending = False
+        self._save_due = None
         measured = {}
         for key in (ParameterKey.LOSS_COEFFICIENT, ParameterKey.HEATING_THRESHOLD):
             estimate = self.parameters.get(key).estimate(Source.MEASURED)
@@ -289,12 +292,14 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         """Write the store at once: for what a crash must not lose (the controlling marker)."""
         await self._store.async_save(self._stored_data())
 
-    def schedule_save(self) -> None:
-        # Each delayed save restarts the store's timer: schedule only when none is pending, or
-        # frequent updates would postpone the write forever.
-        if not self._save_pending:
-            self._save_pending = True
-            self._store.async_delay_save(self._stored_data, SAVE_DELAY_S)
+    def schedule_save(self, delay: float = SAVE_DELAY_S) -> None:
+        """Save within ``delay``. Each delayed save restarts the store's timer, so one is
+        scheduled only when it comes sooner than the one pending: frequent updates would
+        otherwise postpone the write for ever."""
+        due = dt_util.utcnow().timestamp() + delay
+        if self._save_due is None or due < self._save_due:
+            self._save_due = due
+            self._store.async_delay_save(self._stored_data, delay)
 
     # --- history --------------------------------------------------------------------------
 
@@ -410,7 +415,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 self._factors.get(zone.zone_id), zone, state, supply, return_temp, now
             )
             if factor.status is FactorStatus.COMPUTED:
-                self.schedule_save()
+                self.schedule_save(FACTOR_SAVE_DELAY_S)
             if factor.value is not None:
                 self._factors[zone.zone_id] = factor
             foreign = None

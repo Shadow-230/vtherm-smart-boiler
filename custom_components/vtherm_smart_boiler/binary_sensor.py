@@ -89,6 +89,8 @@ class ConnectionSensor(SmartBoilerEntity, BinarySensorEntity):
 
 
 class HotWaterSensor(SmartBoilerEntity, BinarySensorEntity):
+    _unrecorded_attributes = frozenset({"excess"})
+
     """Heat is reaching the zone's emitters; unknown when it cannot be told."""
 
     _attr_device_class = BinarySensorDeviceClass.HEAT
@@ -110,6 +112,8 @@ class HotWaterSensor(SmartBoilerEntity, BinarySensorEntity):
 
 
 class ForeignHeatSensor(SmartBoilerEntity, BinarySensorEntity):
+    _unrecorded_attributes = frozenset({"unknown", "holding"})
+
     _attr_device_class = BinarySensorDeviceClass.HEAT
 
     def __init__(self, coordinator: SmartBoilerCoordinator, zone: str) -> None:
@@ -133,6 +137,8 @@ class ForeignHeatSensor(SmartBoilerEntity, BinarySensorEntity):
 
 
 class AlarmSensor(SmartBoilerEntity, BinarySensorEntity):
+    _unrecorded_attributes = frozenset({"value"})
+
     """An alarm or early warning: on while active. Information only in the monitor."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
@@ -161,6 +167,8 @@ class AlarmSensor(SmartBoilerEntity, BinarySensorEntity):
 
 
 class OutdoorSensorProblem(SmartBoilerEntity, BinarySensorEntity):
+    _unrecorded_attributes = frozenset({"mean_difference"})
+
     """On when the boiler's outdoor sensor disagrees with the weather entity or is stuck."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
@@ -191,8 +199,8 @@ class OutdoorSensorProblem(SmartBoilerEntity, BinarySensorEntity):
 
 
 class ControlAlarmSensor(ControlEntity, BinarySensorEntity):
-    """A control alarm: a write failed or was ignored, another controller changed the setpoint,
-    the daily cap on wearing writes was reached, or control stopped on an internal error."""
+    """A control alarm: a write failed or was ignored, another controller changed a value,
+    a hand-back failed, the boiler link was lost, or control stopped on an internal error."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 

@@ -320,6 +320,23 @@ async def async_setup_entry(
 
 class BoilerSensor(SmartBoilerEntity, SensorEntity):
     entity_description: BoilerSensorDescription
+    # Values and explanations that change with every analysis or update: kept out of the
+    # recorder, which keeps the state itself.
+    _unrecorded_attributes = frozenset(
+        {
+            "reasons",
+            "signals",
+            "features",
+            "temperature",
+            "setpoint",
+            "deficit",
+            "previous",
+            "current",
+            "contributions",
+            "not_judged",
+            "confidence",
+        }
+    )
 
     def __init__(
         self, coordinator: SmartBoilerCoordinator, description: BoilerSensorDescription
@@ -347,6 +364,8 @@ def _gas_unit(coordinator: SmartBoilerCoordinator) -> str:
 
 
 class CriticalZoneSensor(SmartBoilerEntity, SensorEntity):
+    _unrecorded_attributes = frozenset({"demand", "deficit", "saturated"})
+
     def __init__(self, coordinator: SmartBoilerCoordinator, circuit: str) -> None:
         super().__init__(coordinator, "critical_zone", circuit=circuit)
 
@@ -371,6 +390,8 @@ class CriticalZoneSensor(SmartBoilerEntity, SensorEntity):
 
 
 class EmitterFactorSensor(SmartBoilerEntity, SensorEntity):
+    _unrecorded_attributes = frozenset({"status", "reason", "computed_at", "output_w", "held"})
+
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -402,6 +423,17 @@ def _time(t: float | None) -> str | None:
 class ControlStateSensor(ControlEntity, SensorEntity):
     """What control does now and why: mode, reasons, blockers, latch and hand-back."""
 
+    _unrecorded_attributes = frozenset(
+        {
+            "reasons",
+            "target",
+            "heating_on",
+            "heating_confirmation",
+            "unknown_zones",
+            "learning_paused",
+        }
+    )
+
     _attr_device_class = SensorDeviceClass.ENUM
 
     def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
@@ -432,6 +464,8 @@ class ControlStateSensor(ControlEntity, SensorEntity):
 class ControlSetpointSensor(ControlEntity, SensorEntity):
     """The flow setpoint as the device confirms it — unknown otherwise, never the requested one —
     with the value written and what the device reports back."""
+
+    _unrecorded_attributes = frozenset({"requested", "read_back", "confirmation", "last_change"})
 
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
