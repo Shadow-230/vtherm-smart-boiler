@@ -465,9 +465,6 @@ def control_curve_schema(options: dict[str, Any]) -> vol.Schema:
         vol.Required("hard_max", default=control.get("hard_max", 70.0)): _number(
             30, 90, 0.5, "°C"
         ),
-        vol.Required(
-            "summer_threshold", default=control.get("summer_threshold", 20.0)
-        ): _number(10, 25, 0.5, "°C"),
     }
     if _advanced(options):
         fields |= {
@@ -563,7 +560,7 @@ def apply_control_curve(options: dict[str, Any], user_input: dict[str, Any]) -> 
         else:
             curve[key] = value
     control["curve"] = curve
-    keys = ["hard_min", "hard_max", "summer_threshold"]
+    keys = ["hard_min", "hard_max"]
     if _advanced(options):
         keys += ["ceiling_band", "fallback_setpoint", "frost_limit", "frost_release"]
     _set_or_drop(control, user_input, tuple(keys))

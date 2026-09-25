@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_loaded_integration
@@ -114,8 +115,10 @@ class VThermLink:
             used_by_central_boiler=used if isinstance(used, bool) else None,
         )
 
-    def vt_central_boiler_configured(self) -> bool:
-        """Whether VT's own central boiler feature is set up (then it must not run alongside)."""
+    def vt_central_boiler_configured(self) -> bool | None:
+        """Whether VT's own central boiler feature is set up (then it must not run alongside);
+        ``None`` while VT's entity for it is registered but away (a reload of VT's central entry,
+        a late start) — it cannot be ruled out then."""
         registry = er.async_get(self._hass)
         entity_id = registry.async_get_entity_id(
             "binary_sensor", VT_DOMAIN, CENTRAL_BOILER_UNIQUE_ID
@@ -123,7 +126,10 @@ class VThermLink:
         if entity_id is None:
             return False
         state = self._hass.states.get(entity_id)
-        return state is not None and state.attributes.get("is_central_boiler_configured") is True
+        configured = None if state is None else state.attributes.get("is_central_boiler_configured")
+        if state is None or state.state in ("unavailable", "unknown") or configured is None:
+            return None
+        return configured is True
 
     def central_mode(self) -> CentralMode | None:
         """VT's central mode, or ``None`` when VT has no central configuration."""
@@ -136,7 +142,11 @@ class VThermLink:
 
     def capabilities(self) -> VtCapabilities:
         components = self._hass.config.components
-        vt_loaded = VT_DOMAIN in components
+        # Loaded only with an entry that is: VT set up with every entry failed runs no zones.
+        vt_loaded = VT_DOMAIN in components and any(
+            entry.state is ConfigEntryState.LOADED
+            for entry in self._hass.config_entries.async_entries(VT_DOMAIN)
+        )
         vt_version: str | None = None
         if vt_loaded:
             try:

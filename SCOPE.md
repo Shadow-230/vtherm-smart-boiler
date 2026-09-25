@@ -303,8 +303,8 @@ How control decides (principle 12):
   control goes on, and with every zone stopped there is no demand, so heating stays off, while
   frost protection still watches (the user's decision, 2026-09-25).
 - Summer and winter come from VT: the plugin has no summer switch of its own. With VT's zones
-  off it does not heat; with a zone calling it heats. The summer threshold stays in the monitor
-  only, as information.
+  off it does not heat; with a zone calling it heats. The monitor keeps the building's heating
+  threshold, for its degree-days.
 - Frost protection is the one case where the plugin heats without VT's call: when a watched zone
   — every zone (default), or one zone the user picks — falls below the frost limit, heating runs
   on the curve until the zone is back above the release temperature. Implausible temperatures

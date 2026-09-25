@@ -507,7 +507,6 @@
           "design_flow": "Design flow temperature",
           "hard_min": "Lowest flow setpoint",
           "hard_max": "Highest flow setpoint",
-          "summer_threshold": "Summer threshold",
           "room": "Room temperature of the curve",
           "exponent": "Curve exponent",
           "offset": "Curve offset",
@@ -521,7 +520,6 @@
           "design_flow": "The flow temperature the heating needs at the design outdoor temperature, in °C, e.g. the value on your boiler's own curve. Required; there is no default. Too high wastes gas and makes the burner cycle; too low leaves rooms cold in hard frost.",
           "hard_min": "No setpoint below this, in °C. Default 25 °C.",
           "hard_max": "No setpoint above this, whatever the curve or a correction asks, in °C. Default 70 °C. Underfloor heating also needs its circuit's maximum flow.",
-          "summer_threshold": "Above this effective outdoor temperature control does not heat, in °C. Default 20 °C.",
           "room": "The room temperature the curve is built for, in °C. Default 20 °C.",
           "exponent": "How the curve bends. Empty picks it from the emitters: radiators 1.3, convectors 1.4, underfloor 1.1.",
           "offset": "Shifts the whole curve up or down, in K. Default 0.",
@@ -799,7 +797,6 @@
           "waiting_data": "Waiting for data",
           "heating": "Heating",
           "idle": "Idle",
-          "summer": "Summer",
           "frost": "Frost protection",
           "fallback": "Fallback setpoint"
         }
@@ -934,6 +931,9 @@
     },
     "blocked_vt_central_boiler_active": {
       "message": "Versatile Thermostat's own central boiler is configured. Remove it first, so that only one controller drives the boiler. Other reasons: {others}."
+    },
+    "blocked_vt_central_boiler_unknown": {
+      "message": "Versatile Thermostat's central boiler cannot be ruled out yet: its entity is away (VT is starting or reloading). Control waits for it. Other reasons: {others}."
     },
     "blocked_control_error": {
       "message": "Control stopped after an internal error. Check the log, then switch control off and on again. Other reasons: {others}."

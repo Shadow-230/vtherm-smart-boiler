@@ -108,3 +108,22 @@ async def test_vt_central_boiler_detection(hass: HomeAssistant) -> None:
     assert not link.vt_central_boiler_configured()
     hass.states.async_set(entry.entity_id, "on", {"is_central_boiler_configured": True})
     assert link.vt_central_boiler_configured()
+    # VT's own central boiler cannot be ruled out while its entity is away (a reload of VT's
+    # central entry, a late start): unknown, which keeps control waiting — never "not there".
+    for state in ("unavailable", "unknown"):
+        hass.states.async_set(entry.entity_id, state)
+        assert link.vt_central_boiler_configured() is None
+    hass.states.async_remove(entry.entity_id)
+    assert link.vt_central_boiler_configured() is None
+
+
+async def test_vt_is_loaded_only_with_a_loaded_entry(hass: HomeAssistant) -> None:
+    from homeassistant.config_entries import ConfigEntryState
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    hass.config.components.add("versatile_thermostat")
+    entry = MockConfigEntry(domain="versatile_thermostat", state=ConfigEntryState.SETUP_ERROR)
+    entry.add_to_hass(hass)
+    assert not VThermLink(hass, []).capabilities().vt_loaded  # set up, but its entries failed
+    entry.mock_state(hass, ConfigEntryState.LOADED)
+    assert VThermLink(hass, []).capabilities().vt_loaded

@@ -8,7 +8,6 @@ import pytest
 
 from custom_components.vtherm_smart_boiler.core.controller import (
     BoilerCommand,
-    CentralMode,
     ControlConfig,
     ControlInputs,
     ControlMode,
@@ -107,18 +106,28 @@ def test_alarm_hand_back_is_latched_until_a_new_session() -> None:
     assert decisions[0].mode is ControlMode.HEATING
 
 
-def test_central_stopped_hands_back_and_resumes_at_once() -> None:
+def test_vt_modes_act_through_the_zones() -> None:
+    """VT applies its central mode to the zones; the plugin sees only their demand. With every
+    zone stopped there is no demand: heating off and no hand-back — control goes on, and frost
+    protection still watches."""
+
+    def stopped(t: float, **kw: float) -> tuple[ZoneState, ...]:
+        return (zone(t, heating_enabled=False, **kw),)
+
     _state, decisions = run(
         [
             inputs(0.0),
-            inputs(30.0, central_mode=CentralMode.STOPPED),
-            inputs(60.0, central_mode=CentralMode.AUTO),
+            inputs(10.0, zones=stopped(10.0)),
+            inputs(20.0, zones=stopped(20.0, temperature=4.0)),
         ]
     )
-    assert decisions[1].hand_back
-    assert decisions[1].mode is ControlMode.HANDED_BACK
-    assert decisions[2].mode is ControlMode.HEATING
+    assert [d.hand_back for d in decisions] == [False, False, False]
+    assert decisions[1].mode is ControlMode.IDLE
+    assert decisions[1].command is not None
+    assert not decisions[1].command.ch_enable
+    assert decisions[2].mode is ControlMode.FROST
     assert decisions[2].command is not None
+    assert decisions[2].command.ch_enable
 
 
 def test_stale_boiler_link_writes_nothing_and_keeps_control() -> None:
@@ -147,23 +156,16 @@ def test_unknown_zones_mean_heat() -> None:
     assert Reason.ZONES_UNKNOWN in none.reasons
 
 
-def test_summer_blocks_heating_but_frost_does_not() -> None:
-    _state, [summer] = run([inputs(0.0, outdoor_sensor=25.0)])
-    assert summer.mode is ControlMode.SUMMER
-    assert summer.command is not None
-    assert not summer.command.ch_enable
-    cold_room = (zone(0.0, temperature=4.0),)
-    _state, [frost] = run([inputs(0.0, outdoor_sensor=25.0, zones=cold_room)])
-    assert frost.mode is ControlMode.FROST
-    assert frost.command is not None
-    assert frost.command.ch_enable
-
-
-def test_cool_only_blocks_heating() -> None:
-    _state, [decision] = run([inputs(0.0, central_mode=CentralMode.COOL_ONLY)])
-    assert decision.command is not None
-    assert not decision.command.ch_enable
-    assert Reason.CENTRAL_COOL_ONLY in decision.reasons
+def test_summer_and_winter_come_from_vt() -> None:
+    """No summer switch of the plugin's own: a warm day with a zone calling heats; with VT's
+    zones off it does not."""
+    _state, [calling] = run([inputs(0.0, outdoor_sensor=25.0)])
+    assert calling.command is not None
+    assert calling.command.ch_enable
+    off = (zone(0.0, heating_enabled=False),)
+    _state, [idle] = run([inputs(0.0, outdoor_sensor=25.0, zones=off)])
+    assert idle.command is not None
+    assert not idle.command.ch_enable
 
 
 def test_missing_outdoor_temperature_uses_the_fallback_setpoint() -> None:
@@ -242,9 +244,7 @@ def test_limits_apply_to_the_curve() -> None:
     assert Reason.LIMIT_HARD_MIN in mild.reasons
 
 
-@pytest.mark.parametrize(
-    "kwargs", [{"decision_interval_s": 0.0}, {"ramp_k_per_min": 0.0}]
-)
+@pytest.mark.parametrize("kwargs", [{"decision_interval_s": 0.0}, {"ramp_k_per_min": 0.0}])
 def test_invalid_config(kwargs: dict) -> None:
     with pytest.raises(ValueError, match="must"):
         replace(CONFIG, **kwargs)
@@ -306,6 +306,7 @@ def test_heating_follows_the_zones_at_every_step_both_ways() -> None:
     """VT decides whether to heat: off as soon as the zones are satisfied — even mid-burn — and
     on again as soon as one calls, with no minimum burn, pause or budget, and no waiting for the
     next water-temperature decision."""
+
     def idle(t: float) -> tuple[ZoneState, ...]:
         return (zone(t, valve_open=0.0),)
 

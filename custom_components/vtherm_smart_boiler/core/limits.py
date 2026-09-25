@@ -1,4 +1,4 @@
-"""Limits on the flow setpoint, frost protection and the summer/winter switch.
+"""Limits on the flow setpoint and frost protection.
 
 Every setpoint the plugin writes passes ``limit_flow``. Caps that protect the installation — the
 hard maximum, a circuit's maximum (underfloor on an unmixed loop), the boiler's own maximum and
@@ -95,30 +95,3 @@ def frost_needed(
     if any(t < config.room_limit for t in temperatures):
         return True
     return active and any(t < config.release for t in temperatures)
-
-
-class Season(StrEnum):
-    WINTER = "winter"
-    SUMMER = "summer"
-
-
-@dataclass(frozen=True, slots=True)
-class SeasonConfig:
-    threshold: float = 20.0  # effective outdoor temperature, °C
-    hysteresis: float = 1.0  # K on either side
-
-
-def update_season(
-    previous: Season, effective_outdoor: float | None, config: SeasonConfig
-) -> Season:
-    """Summer above the threshold plus hysteresis, winter below it minus hysteresis.
-
-    Unknown outdoor temperature means winter: heating is never blocked on missing data.
-    """
-    if effective_outdoor is None:
-        return Season.WINTER
-    if previous is Season.WINTER and effective_outdoor >= config.threshold + config.hysteresis:
-        return Season.SUMMER
-    if previous is Season.SUMMER and effective_outdoor <= config.threshold - config.hysteresis:
-        return Season.WINTER
-    return previous

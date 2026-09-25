@@ -350,7 +350,6 @@ async def test_control_through_the_gateway_at_the_simple_level(
             "design_flow": 52,
             "hard_min": 25,
             "hard_max": 65,
-            "summer_threshold": 18,
         },
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -364,7 +363,6 @@ async def test_control_through_the_gateway_at_the_simple_level(
         "curve": {"design_outdoor": -18, "design_flow": 52},
         "hard_min": 25,
         "hard_max": 65,
-        "summer_threshold": 18,
     }
     switch = control_switch(hass, entry_id)
     assert switch is not None
@@ -413,7 +411,7 @@ async def test_control_with_an_entity_checks_the_hand_back(
         | {"hand_back": "value", "hand_back_value": 0, "hand_back_value_effect": "own_control"},
     )
     assert result["step_id"] == "control_curve"
-    curve = {"design_outdoor": -15, "design_flow": 50, "summer_threshold": 20}
+    curve = {"design_outdoor": -15, "design_flow": 50}
     result = await options_step(hass, result, curve | {"hard_min": 50, "hard_max": 40})
     assert result["errors"] == {"hard_max": "hard_limits_out_of_order"}
     result = await options_step(hass, result, curve | {"hard_min": 25, "hard_max": 60})
@@ -451,7 +449,6 @@ async def test_control_at_the_advanced_level_and_back(
             "design_flow": 55,
             "hard_min": 25,
             "hard_max": 70,
-            "summer_threshold": 20,
             "room": 21,
             "exponent": 1.25,
             "offset": 1,
@@ -527,7 +524,6 @@ async def test_control_limits_must_suit_the_setpoint_entity(
     curve = {
         "design_outdoor": -15,
         "design_flow": 50,
-        "summer_threshold": 20,
         "room": 20,
         "offset": 0,
         "ceiling_band": 10,

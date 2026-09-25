@@ -27,7 +27,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import CALLBACK_TYPE, Event, HassJob, HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, CoreState, Event, HassJob, HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
@@ -41,7 +41,6 @@ from .control_config import (
     WritePath,
     config_blockers,
 )
-from .core.controller import CentralMode as ControlCentralMode
 from .core.controller import ControlInputs, ControlMode, ControlState, Reason
 from .core.guards import (
     GuardEvent,
@@ -57,7 +56,6 @@ from .core.readings import BoilerSnapshot, ZoneState
 from .core.signals import SIGNAL_SPECS, Signal
 from .transport.entities import read_bounds, read_temperature, read_weather_temperature
 from .transport.writers import HandBackCheck, WriteError, Writer, make_writer, writer_services
-from .vtherm_attributes import CentralMode
 
 if TYPE_CHECKING:
     from .coordinator import SmartBoilerCoordinator
@@ -75,18 +73,10 @@ RUNTIME_BLOCKERS = (
     "ha_starting",
     "monitoring_period",
     "vt_central_boiler_active",
+    "vt_central_boiler_unknown",
     "setpoint_outside_entity_range",
     "control_error",
 )
-
-_CENTRAL = {
-    CentralMode.AUTO: ControlCentralMode.AUTO,
-    CentralMode.STOPPED: ControlCentralMode.STOPPED,
-    CentralMode.HEAT_ONLY: ControlCentralMode.HEAT_ONLY,
-    CentralMode.COOL_ONLY: ControlCentralMode.COOL_ONLY,
-    CentralMode.FROST_PROTECTION: ControlCentralMode.FROST_PROTECTION,
-}
-
 
 class ControlAlarm(StrEnum):
     WRITE_FAILED = "write_failed"
@@ -378,11 +368,16 @@ class ControlUnit:
         """Why control may not run now (translation keys); empty when it may."""
         config = self._coordinator.config
         found = config_blockers(self.options, config.installation)
-        if not self._hass.is_running:
+        if self._hass.state is not CoreState.running:
+            # VT starts its thermostats only once Home Assistant has started; `is_running` is
+            # already true while it starts.
             found.append("ha_starting")
         if now - self._coordinator.monitoring_since < config.monitor.monitoring_days * DAY:
             found.append("monitoring_period")
-        if self._coordinator.link.vt_central_boiler_configured():
+        vt_boiler = self._coordinator.link.vt_central_boiler_configured()
+        if vt_boiler is None:
+            found.append("vt_central_boiler_unknown")  # cannot be ruled out: wait
+        elif vt_boiler:
             found.append("vt_central_boiler_active")
         if self._outside_entity_range():
             found.append("setpoint_outside_entity_range")
@@ -566,13 +561,11 @@ class ControlUnit:
             reading = read_weather_temperature(self._hass, config.weather)
             if reading.is_fresh(now, SIGNAL_SPECS[Signal.OUTDOOR].max_age_s):
                 weather = float(reading.value) if reading.value is not None else None
-        central = coordinator.link.central_mode()
         return ControlInputs(
             now=now,
             enabled=self.enabled,
             blockers=blockers,
             hand_back_alarms=self._hand_back_alarms(),
-            central_mode=_CENTRAL.get(central) if central is not None else None,
             boiler_link=self._boiler_link(snapshot, now),
             flame=snapshot.flag(Signal.FLAME),
             dhw=coordinator.dhw_now(snapshot),

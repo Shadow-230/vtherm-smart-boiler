@@ -6,11 +6,11 @@ Order of precedence, checked on every tick:
    controlling. Neither clears a latch.
 2. An alarm set to hand back → hand back, latched — with the alarms that caused it — until a new
    session: the user switching control off and on again (the control unit starts it).
-3. VT's central mode "Stopped" → hand back; control resumes when the mode changes.
-4. The boiler's signals are not fresh → no command (nothing is written without fresh data); if
+3. The boiler's signals are not fresh → no command (nothing is written without fresh data); if
    that lasts beyond the stale hand-back time, hand back once; control resumes with fresh data.
-5. Otherwise heating on or off, decided at every step from frost protection, VT's central mode,
-   summer/winter and the zones' demand — nothing counted or timed holds it against VT; and the
+4. Otherwise heating on or off, decided at every step from frost protection and the zones'
+   demand — VT's central mode and summer or winter reach the plugin through the zones, and
+   nothing counted or timed holds heating against VT; and the
    water temperature, decided every decision interval (and at once after any of the above ends):
    the curve on the effective outdoor temperature, limits and ramp. Without an outdoor
    temperature the fallback setpoint applies; without fresh zone data heating is assumed to be
@@ -41,26 +41,13 @@ from .limits import (
     FlowLimits,
     FrostConfig,
     LimitCode,
-    Season,
-    SeasonConfig,
     frost_needed,
     limit_flow,
-    update_season,
 )
 from .readings import ZoneState
 
 HOUR = 3600.0
 FALLBACK_OUTDOOR = 0.0  # the fallback setpoint defaults to the curve at this outdoor temperature
-
-
-class CentralMode(StrEnum):
-    """VT's central mode as the controller sees it."""
-
-    AUTO = "auto"
-    STOPPED = "stopped"
-    HEAT_ONLY = "heat_only"
-    COOL_ONLY = "cool_only"
-    FROST_PROTECTION = "frost_protection"
 
 
 class ControlMode(StrEnum):
@@ -70,7 +57,6 @@ class ControlMode(StrEnum):
     WAITING_DATA = "waiting_data"
     HEATING = "heating"
     IDLE = "idle"
-    SUMMER = "summer"
     FROST = "frost"
     FALLBACK = "fallback"
 
@@ -79,8 +65,6 @@ class Reason(StrEnum):
     CONTROL_OFF = "control_off"
     PRECONDITION = "precondition"
     ALARM_HAND_BACK = "alarm_hand_back"
-    CENTRAL_STOPPED = "central_stopped"
-    CENTRAL_COOL_ONLY = "central_cool_only"
     BOILER_LINK_STALE = "boiler_link_stale"
     OUTDOOR_SENSOR = "outdoor_sensor"
     OUTDOOR_WEATHER = "outdoor_weather"
@@ -89,7 +73,6 @@ class Reason(StrEnum):
     DEMAND = "demand"
     NO_DEMAND = "no_demand"
     ZONES_UNKNOWN = "zones_unknown"
-    SUMMER = "summer"
     FROST = "frost"
     RAMP = "ramp"
     LIMIT_HARD_MIN = "limit_hard_min"
@@ -121,7 +104,6 @@ class ControlConfig:
     limits: FlowLimits = field(default_factory=FlowLimits)
     circuit_max: float | None = None
     boiler_max: float | None = None
-    season: SeasonConfig = field(default_factory=SeasonConfig)
     frost: FrostConfig = field(default_factory=FrostConfig)
     demand: DemandConfig = field(default_factory=DemandConfig)
     fallback_setpoint: float | None = None  # None: the curve at FALLBACK_OUTDOOR
@@ -148,7 +130,6 @@ class ControlInputs:
     enabled: bool
     blockers: tuple[str, ...] = ()  # preconditions not met
     hand_back_alarms: tuple[str, ...] = ()  # active alarms whose reaction is hand-back
-    central_mode: CentralMode | None = None
     boiler_link: bool = True  # the boiler's own signals are fresh
     flame: bool | None = None
     dhw: bool | None = None
@@ -170,7 +151,6 @@ class ControlState:
     latched: bool = False  # an alarm handed back; stays for the session
     latched_by: tuple[str, ...] = ()  # the alarms that set the latch
     outdoor: OutdoorState = field(default_factory=OutdoorState)
-    season: Season = Season.WINTER
     frost: bool = False
     command: BoilerCommand | None = None
     target: float | None = None
@@ -235,8 +215,6 @@ def decide(
         latched_by = state.latched_by if state.latched else tuple(inputs.hand_back_alarms)
         state = replace(state, latched=True, latched_by=latched_by)
         return _release(state, ControlMode.HANDED_BACK, Reason.ALARM_HAND_BACK)
-    if inputs.central_mode is CentralMode.STOPPED:
-        return _release(state, ControlMode.HANDED_BACK, Reason.CENTRAL_STOPPED)
     if not inputs.boiler_link:
         since = state.waiting_since if state.waiting_since is not None else now
         state = replace(state, waiting_since=since)
@@ -267,8 +245,7 @@ def _heating_decision(
     """Heating on or off at every step; the water temperature every decision interval."""
     now = inputs.now
     outdoor = state.outdoor
-    season = update_season(state.season, outdoor.effective, config.season)
-    want_heat, heat_reason = _want_heat(season, inputs, config, frost)
+    want_heat, heat_reason = _want_heat(inputs, config, frost)
 
     due = (
         state.decided_at is None
@@ -302,8 +279,6 @@ def _heating_decision(
         mode = ControlMode.FROST
     elif outdoor.effective is None:
         mode = ControlMode.FALLBACK
-    elif season is Season.SUMMER and not want_heat:
-        mode = ControlMode.SUMMER
     elif want_heat:
         mode = ControlMode.HEATING
     else:
@@ -315,7 +290,6 @@ def _heating_decision(
         state,
         mode=mode,
         controlling=True,
-        season=season,
         frost=frost,
         command=command,
         target=target,
@@ -330,15 +304,12 @@ def _heating_decision(
 
 
 def _want_heat(
-    season: Season, inputs: ControlInputs, config: ControlConfig, frost: bool
+    inputs: ControlInputs, config: ControlConfig, frost: bool
 ) -> tuple[bool, Reason]:
-    """Whether to heat now and why: frost protection, then VT's modes and the zones' demand."""
+    """Whether to heat now and why: frost protection, else the zones' demand — VT's central mode
+    and summer or winter act on the zones themselves."""
     if frost:
         return True, Reason.FROST
-    if inputs.central_mode is CentralMode.COOL_ONLY:
-        return False, Reason.CENTRAL_COOL_ONLY
-    if season is Season.SUMMER:
-        return False, Reason.SUMMER
     demand = boiler_demand(inputs.zones, inputs.now, config.zone_max_age_s, config.demand)
     if demand.wanted is None:
         return True, Reason.ZONES_UNKNOWN

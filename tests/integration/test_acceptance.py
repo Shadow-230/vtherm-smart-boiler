@@ -59,6 +59,7 @@ class Rig:
     zones: FakeZones
     hub: SimHub | None = None
     entry: MockConfigEntry | None = None
+    vt_mode: str = "heat"  # the HVAC mode VT gives its thermostats (VT's own modes act on it)
     calls: list[tuple[float, str, str, dict[str, Any]]] = field(default_factory=list)
 
     @property
@@ -76,6 +77,7 @@ class Rig:
             index = [z.zone_id for z in self.sim.zones].index(zone.zone_id)
             self.zones.set(
                 zone.zone_id,
+                self.vt_mode,
                 current_temperature=round(self.sim.room(zone.zone_id), 1),
                 temperature=self.sim.plant.targets[index],
                 hvac_action="heating" if opening > 0.05 else "idle",
@@ -329,7 +331,9 @@ async def test_an_ignored_command_is_detected(rig: Rig) -> None:
     assert rig.state("binary_sensor", "alarm_write_ignored").state == "on"
 
 
-async def test_central_mode_stopped_hands_back(rig: Rig) -> None:
+async def test_vt_stopped_means_no_demand_not_a_hand_back(rig: Rig) -> None:
+    """VT's central mode "Stopped" turns its zones off: the plugin sees no demand — heating off,
+    no hand-back, control goes on — and frost protection still watches."""
     hass = rig.hass
     select = er.async_get(hass).async_get_or_create("select", VT_PLATFORM, "central_mode")
     hass.states.async_set(select.entity_id, "Auto")
@@ -337,18 +341,32 @@ async def test_central_mode_stopped_hands_back(rig: Rig) -> None:
     await rig.switch(True)
     await rig.advance(60)
     hass.states.async_set(select.entity_id, "Stopped")
+    rig.vt_mode = "off"  # VT applies it to the thermostats that follow the central mode
+    rig.mirror_zones()
     await rig.advance(10)
-    assert rig.setpoints()[-1] == 0.0
-    assert not rig.sim.plant.override_active(rig.now())
+    assert rig.gateway("ch")[-1][2] is False
+    assert 0.0 not in rig.setpoints()  # not handed back
+    assert rig.sim.plant.override_active(rig.now())
+    rig.sim.plant.room[0] = 4.0  # a room left to freeze
+    rig.sim.advance(rig.now())
+    rig.mirror_zones()
+    await rig.advance(10)
+    assert rig.state("sensor", "control_state").state == "frost"
+    assert rig.gateway("ch")[-1][2] is True
 
 
-async def test_frost_protection_heats_in_summer(rig: Rig) -> None:
+async def test_frost_protection_heats_while_vt_is_off(rig: Rig) -> None:
+    """Summer and winter come from VT: with its zones off nothing heats, but a room close to
+    freezing still gets heat."""
     await start(rig)
     await rig.hass.services.async_call(SIM, "set_outdoor", {"temperature": 24}, blocking=True)
+    rig.vt_mode = "off"
     await rig.switch(True)
     await rig.advance(600)
-    assert rig.state("sensor", "control_state").state == "summer"
-    rig.sim.plant.room[0] = 4.0  # a room left to freeze
+    assert rig.state("sensor", "control_state").state == "idle"
+    assert rig.gateway("ch")[-1][2] is False
+    rig.sim.plant.room[0] = 4.0
+    rig.sim.advance(rig.now())
     rig.mirror_zones()
     await rig.advance(20)
     assert rig.state("sensor", "control_state").state == "frost"

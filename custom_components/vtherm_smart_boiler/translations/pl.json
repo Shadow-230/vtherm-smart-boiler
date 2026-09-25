@@ -507,7 +507,6 @@
           "design_flow": "Projektowa temperatura zasilania",
           "hard_min": "Najniższa nastawa zasilania",
           "hard_max": "Najwyższa nastawa zasilania",
-          "summer_threshold": "Próg lata",
           "room": "Temperatura pokojowa krzywej",
           "exponent": "Wykładnik krzywej",
           "offset": "Przesunięcie krzywej",
@@ -521,7 +520,6 @@
           "design_flow": "Temperatura zasilania potrzebna przy projektowej temperaturze zewnętrznej, w °C, np. wartość z krzywej ustawionej w kotle. Wymagana; nie ma wartości domyślnej. Za wysoka marnuje gaz i powoduje taktowanie palnika; za niska zostawia chłodne pokoje w silny mróz.",
           "hard_min": "Żadna nastawa poniżej tej wartości, w °C. Domyślnie 25 °C.",
           "hard_max": "Żadna nastawa powyżej tej wartości, cokolwiek wyliczy krzywa lub korekta, w °C. Domyślnie 70 °C. Ogrzewanie podłogowe wymaga też maksymalnego zasilania swojego obiegu.",
-          "summer_threshold": "Powyżej tej efektywnej temperatury zewnętrznej sterowanie nie grzeje, w °C. Domyślnie 20 °C.",
           "room": "Temperatura pokojowa, dla której zbudowana jest krzywa, w °C. Domyślnie 20 °C.",
           "exponent": "Jak wygina się krzywa. Puste pole dobiera go według grzejników: grzejniki 1,3, konwektory 1,4, podłogówka 1,1.",
           "offset": "Przesuwa całą krzywą w górę lub w dół, w K. Domyślnie 0.",
@@ -799,7 +797,6 @@
           "waiting_data": "Czeka na dane",
           "heating": "Grzanie",
           "idle": "Postój",
-          "summer": "Lato",
           "frost": "Ochrona przed mrozem",
           "fallback": "Nastawa awaryjna"
         }
@@ -934,6 +931,9 @@
     },
     "blocked_vt_central_boiler_active": {
       "message": "Skonfigurowany jest kocioł centralny Versatile Thermostat. Najpierw go usuń, żeby kotłem sterował tylko jeden sterownik. Inne powody: {others}."
+    },
+    "blocked_vt_central_boiler_unknown": {
+      "message": "Nie da się jeszcze wykluczyć centralnego kotła Versatile Thermostat: jego encja jest niedostępna (VT startuje albo przeładowuje się). Sterowanie na nią czeka. Inne powody: {others}."
     },
     "blocked_control_error": {
       "message": "Sterowanie zatrzymało się po błędzie wewnętrznym. Sprawdź log, potem wyłącz i włącz sterowanie. Inne powody: {others}."

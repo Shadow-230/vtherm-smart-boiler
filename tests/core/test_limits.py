@@ -1,4 +1,4 @@
-"""Flow limits, frost protection and the summer/winter switch."""
+"""Flow limits and frost protection."""
 
 from __future__ import annotations
 
@@ -9,11 +9,8 @@ from custom_components.vtherm_smart_boiler.core.limits import (
     FrostConfig,
     LimitCode,
     Limited,
-    Season,
-    SeasonConfig,
     frost_needed,
     limit_flow,
-    update_season,
 )
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 
@@ -76,15 +73,3 @@ def test_frost_ignores_stale_and_unknown_zones() -> None:
 def test_frost_config_is_consistent() -> None:
     with pytest.raises(ValueError, match="release"):
         FrostConfig(room_limit=8.0, release=6.0)
-
-
-def test_season_switch_with_hysteresis() -> None:
-    config = SeasonConfig(threshold=18.0, hysteresis=1.0)
-    assert update_season(Season.WINTER, 18.5, config) is Season.WINTER
-    assert update_season(Season.WINTER, 19.0, config) is Season.SUMMER
-    assert update_season(Season.SUMMER, 17.5, config) is Season.SUMMER
-    assert update_season(Season.SUMMER, 17.0, config) is Season.WINTER
-
-
-def test_unknown_outdoor_means_winter() -> None:
-    assert update_season(Season.SUMMER, None, SeasonConfig()) is Season.WINTER

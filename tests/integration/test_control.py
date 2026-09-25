@@ -295,22 +295,23 @@ async def test_stale_data_stops_writes_and_hands_back_after_five_minutes(rig: Ri
     assert ("setpoint", EXPECTED) in rig.gateway.calls[resumed:]  # control resumes with data
 
 
-async def test_vt_central_mode_stopped_hands_back_and_auto_resumes(rig: Rig) -> None:
+async def test_vt_stopped_acts_through_the_zones(rig: Rig) -> None:
+    """VT applies "Stopped" to its zones; the plugin only sees them stop calling: heating off,
+    no hand-back; back to Auto, heating follows the zones again."""
     hass = rig.hass
     select = er.async_get(hass).async_get_or_create("select", VT_PLATFORM, "central_mode")
     hass.states.async_set(select.entity_id, "Auto")
     await start(rig)
     await rig.switch(True)
     hass.states.async_set(select.entity_id, "Stopped")
+    rig.zones.set("living", "off", hvac_action="off", valve_open_percent=0, on_percent=0.0)
     await rig.advance(10)
-    assert rig.gateway.calls[-1] == ("setpoint", 0.0)
-    assert "central_stopped" in rig.state("sensor", "control_state").attributes["reasons"]
-    count = len(rig.gateway.calls)
-    await rig.advance(60)
-    assert len(rig.gateway.calls) == count
+    assert rig.gateway.calls[-1] == ("ch", False)
+    assert 0.0 not in rig.gateway.setpoints()
     hass.states.async_set(select.entity_id, "Auto")
+    rig.zones.set("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
     await rig.advance(10)
-    assert ("setpoint", EXPECTED) in rig.gateway.calls[count:]
+    assert ("ch", True) in rig.gateway.calls[-2:]
 
 
 async def test_unload_and_reload_hand_back_and_leave_no_loop(rig: Rig) -> None:
@@ -745,12 +746,9 @@ async def test_a_setpoint_entity_that_rejects_a_limit_blocks_control(rig: Rig) -
 
 async def test_nothing_is_handed_back_twice_without_a_write_in_between(rig: Rig) -> None:
     hass = rig.hass
-    select = er.async_get(hass).async_get_or_create("select", VT_PLATFORM, "central_mode")
-    hass.states.async_set(select.entity_id, "Auto")
     await start(rig)
     await rig.switch(True)
-    hass.states.async_set(select.entity_id, "Stopped")
-    await rig.advance(10)
+    await rig.switch(False)
     assert rig.gateway.setpoints().count(0.0) == 1
     assert rig.entry is not None
     assert await hass.config_entries.async_unload(rig.entry.entry_id)
@@ -1141,3 +1139,19 @@ async def test_a_failed_outdoor_sensor_is_not_a_lost_link(rig: Rig) -> None:
     assert state.state in ("heating", "fallback")  # the curve holds the last value, then falls back
     assert "outdoor_held" in state.attributes["reasons"]
     assert rig.gateway.setpoints()[-1] >= 25.0  # still heating
+
+
+async def test_control_waits_while_home_assistant_is_starting(rig: Rig) -> None:
+    """VT starts its thermostats only once Home Assistant has started, while `is_running` is
+    already true during the start: control waits for the start to end."""
+    from homeassistant.core import CoreState
+
+    rig.hass.set_state(CoreState.starting)
+    await start(rig)
+    await rig.switch(True)  # not refused: the blocker passes on its own
+    await rig.advance(20)
+    assert rig.gateway.calls == []
+    assert "ha_starting" in rig.state("sensor", "control_state").attributes["blockers"]
+    rig.hass.set_state(CoreState.running)
+    await rig.advance(10)
+    assert rig.gateway.setpoints() == [EXPECTED]

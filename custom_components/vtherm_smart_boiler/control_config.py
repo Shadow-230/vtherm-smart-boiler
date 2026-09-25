@@ -22,7 +22,7 @@ from .core.demand import DemandConfig
 from .core.guards import SetpointGuardConfig, SwitchGuardConfig, WriteType
 from .core.installation import BoilerClass, CircuitControl, EmitterType, Installation
 from .core.learning import LearningConfig
-from .core.limits import FlowLimits, FrostConfig, SeasonConfig
+from .core.limits import FlowLimits, FrostConfig
 from .core.loop import DEFAULT_OFF_SETPOINT, LoopConfig
 
 MINUTE = 60.0
@@ -190,7 +190,6 @@ def parse_control(
         ),
         circuit_max=circuit_max,
         boiler_max=boiler_max,
-        season=SeasonConfig(threshold=float(data.get("summer_threshold", 20.0))),
         frost=FrostConfig(
             room_limit=float(data.get("frost_limit", 5.0)),
             release=float(data.get("frost_release", 7.0)),
