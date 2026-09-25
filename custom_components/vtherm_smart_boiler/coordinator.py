@@ -269,6 +269,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             "control": self.control.stored() if self.control is not None else self.stored_control,
         }
 
+    async def async_save_now(self) -> None:
+        """Write the store at once: for what a crash must not lose (the controlling marker)."""
+        await self._store.async_save(self._stored_data())
+
     def schedule_save(self) -> None:
         # Each delayed save restarts the store's timer: schedule only when none is pending, or
         # frequent updates would postpone the write forever.

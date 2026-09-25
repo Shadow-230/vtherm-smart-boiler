@@ -50,6 +50,7 @@ class FakeGateway:
     echo: bool = True
     forced: float | None = None
     override: float | None = None
+    fail_after: bool = False  # the setpoint arrives, but the call reports a failure (a timeout)
     calls: list[tuple[str, Any]] = field(default_factory=list)
     times: list[float] = field(default_factory=list)  # when each setpoint arrived
 
@@ -60,9 +61,13 @@ class FakeGateway:
             self.times.append(datetime.now(UTC).timestamp())
             self.override = None if value == 0 else value
             self.publish()
+            if self.fail_after:
+                raise HomeAssistantError("timed out")
 
         async def heating(call: ServiceCall) -> None:
             self.calls.append(("ch", call.data["ch_override"]))
+            if self.fail_after:
+                raise HomeAssistantError("timed out")
 
         self.hass.services.async_register("opentherm_gw", "set_control_setpoint", setpoint)
         self.hass.services.async_register("opentherm_gw", "set_central_heating_ovrd", heating)
@@ -796,3 +801,58 @@ async def test_a_value_hand_back_the_device_does_not_take_stays_owed(rig: Rig) -
     assert number.value == 10.0
     assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
     assert not rig.entry.runtime_data.control.stored()["hand_back_pending"]
+
+
+def stored_control(hass_storage: dict[str, Any], rig: Rig) -> dict[str, Any]:
+    assert rig.entry is not None
+    return hass_storage[f"{DOMAIN}.{rig.entry.entry_id}"]["data"]["control"]
+
+
+async def test_the_controlling_marker_is_stored_at_once(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """Were Home Assistant to crash now, the next start must know the boiler was held — not only
+    after the store's two-minute delay."""
+    await start(rig)
+    await rig.switch(True)
+    assert rig.gateway.setpoints() == [EXPECTED]
+    assert stored_control(hass_storage, rig)["controlling"] is True
+
+
+async def test_an_unclean_restart_hands_back_when_control_does_not_resume(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """The last run held the boiler and ended without a hand-back (a crash, a power cut): control
+    stays off now, so the boiler is handed back in full."""
+    hass_storage[f"{DOMAIN}.previous"] = {}  # nothing else in the store matters
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.add_to_hass(rig.hass)
+    hass_storage[f"{DOMAIN}.{entry.entry_id}"] = {
+        "version": 1,
+        "key": f"{DOMAIN}.{entry.entry_id}",
+        "data": {"monitoring_since": 0.0, "control": {"controlling": True}},
+    }
+    assert await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    rig.entry = entry
+    await rig.advance(20)
+    assert rig.state("switch", "control").state == "off"
+    assert rig.gateway.setpoints() == [0.0]  # handed back, though control is off
+    await rig.advance(20)
+    assert rig.gateway.setpoints() == [0.0]  # once
+    assert entry.runtime_data.control.stored()["controlling"] is False
+
+
+async def test_a_write_reported_failed_is_still_handed_back(rig: Rig) -> None:
+    """A write that timed out may still have reached the boiler: the next hand-back is not
+    skipped as if nothing had been written."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.switch(False)
+    assert rig.gateway.setpoints() == [EXPECTED, 0.0]
+    rig.gateway.fail_after = True
+    await rig.switch(True)  # setpoint and heating arrive; both calls report a failure
+    assert rig.gateway.setpoints() == [EXPECTED, 0.0, EXPECTED]
+    rig.gateway.fail_after = False
+    await rig.switch(False)
+    assert rig.gateway.setpoints()[-1] == 0.0

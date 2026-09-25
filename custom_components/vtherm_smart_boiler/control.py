@@ -153,8 +153,9 @@ class ControlUnit:
         self._hand_back_pending = False
         self._hand_back_failed = False  # shown as an alarm: an attempt failed or went unconfirmed
         self._hand_back_checks: tuple[HandBackCheck, ...] = ()
-        # Something was written since the last hand-back (unknown after a start: assumed so).
-        self._wrote_since_hand_back = True
+        # The boiler may hold a value of ours: set before every write attempt and stored at once,
+        # cleared only by a confirmed hand-back. After a crash it makes the next start hand back.
+        self._holding = False
         self._hand_back_retry_at = 0.0
         self._learning_retry_at = 0.0
         self._restored = False
@@ -197,9 +198,11 @@ class ControlUnit:
             update()
 
     def stored(self) -> dict[str, Any]:
-        """What must survive a restart: paused zones, latches and a hand-back still to be done."""
+        """What must survive a restart: whether the boiler may hold a value of ours, paused zones,
+        latches and a hand-back still to be done."""
         session = self._session
         return {
+            "controlling": self._holding,
             "paused": dict(session.learning.paused),
             "latched": session.loop.control.latched,
             "failed": session.failed,
@@ -220,7 +223,10 @@ class ControlUnit:
             alarms=alarms,
             failed=bool(data.get("failed", False)),
         )
-        self._hand_back_pending = bool(data.get("hand_back_pending", False))
+        self._holding = bool(data.get("controlling", False))
+        # The last run held the boiler and never confirmed a hand-back (a crash, a power cut):
+        # handed back in full at the first step; control may take the boiler again afterwards.
+        self._hand_back_pending = bool(data.get("hand_back_pending", False)) or self._holding
 
     # --- lifecycle ------------------------------------------------------------------------
 
@@ -544,6 +550,10 @@ class ControlUnit:
         self, kind: str, call: Any, now: float, action: WriteAction | None
     ) -> bool:
         session = self._session
+        if not self._holding:
+            # Before the attempt: a write reported as failed may still reach the boiler.
+            self._holding = True
+            await self._coordinator.async_save_now()
         try:
             await call
         except WriteError as err:
@@ -554,7 +564,6 @@ class ControlUnit:
         session.failing.discard(kind)
         if not session.failing:  # each kind of write clears only its own failure
             session.alarms.discard(ControlAlarm.WRITE_FAILED)
-        self._wrote_since_hand_back = True
         if self._hand_back_pending:
             # Control has the boiler again: the earlier hand-back no longer matters.
             self._hand_back_done()
@@ -565,9 +574,9 @@ class ControlUnit:
     # --- hand-back ------------------------------------------------------------------------
 
     async def _async_hand_back_writes(self, now: float) -> None:
-        """The hand-back write, which no guard holds back, and the release of learning. Without
-        a write since the last hand-back there is nothing to give back."""
-        if self._wrote_since_hand_back or self._hand_back_pending:
+        """The hand-back write, which no guard holds back, and the release of learning. When the
+        boiler holds nothing of ours there is nothing to give back."""
+        if self._holding or self._hand_back_pending:
             await self._async_try_hand_back(now)
         self._hand_back_at = now
         self._last_change_at = now
@@ -589,13 +598,13 @@ class ControlUnit:
             self._hand_back_retry_at = now + HAND_BACK_RETRY_S
             self._coordinator.schedule_save()
             return False
-        self._wrote_since_hand_back = False
         if checks and not self._checks_hold(checks):
             self._hand_back_pending = True
             self._hand_back_checks = checks
             self._hand_back_retry_at = now + HAND_BACK_RETRY_S
             self._coordinator.schedule_save()
             return True
+        self._holding = False
         self._hand_back_done()
         return True
 
@@ -603,6 +612,7 @@ class ControlUnit:
         """An owed hand-back: done once its targets show it; otherwise sent again every minute,
         and shown as failed once a sent one has gone unconfirmed that long."""
         if self._hand_back_checks and self._checks_hold(self._hand_back_checks):
+            self._holding = False
             self._hand_back_done()
             return
         if now < self._hand_back_retry_at:
@@ -629,6 +639,7 @@ class ControlUnit:
         return True
 
     def _hand_back_done(self) -> None:
+        """No hand-back is owed any more: it was confirmed, or control has the boiler again."""
         changed = self._hand_back_pending or self._hand_back_failed
         self._hand_back_pending = False
         self._hand_back_failed = False
