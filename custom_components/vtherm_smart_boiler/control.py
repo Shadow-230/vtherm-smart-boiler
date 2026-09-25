@@ -55,7 +55,13 @@ from .core.guards import (
     confirmation,
     write_failed,
 )
-from .core.learning import LearningState, ZoneLearning, plan_learning, release_all
+from .core.learning import (
+    LearningState,
+    ZoneLearning,
+    follow_resumes,
+    plan_learning,
+    release_all,
+)
 from .core.loop import ON, LoopOutput, LoopState, loop_step
 from .core.readings import BoilerSnapshot, ZoneState
 from .core.signal_check import OutdoorStatus
@@ -75,7 +81,6 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 DAY = 86400.0
 LEARNING_TIMEOUT_S = 5.0
-LEARNING_RETRY_S = 60.0
 HAND_BACK_RETRY_S = 60.0
 ZONE_UNKNOWN_ALARM_S = 30 * 60.0  # a zone unknown this long is reported
 RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control counts as off
@@ -214,7 +219,6 @@ class ControlUnit:
         self._holding = False
         self._unknown_since: dict[str, float] = {}
         self._hand_back_retry_at = 0.0
-        self._learning_retry_at = 0.0
         self._restored = False
         self._started_at = dt_util.utcnow().timestamp()
         self._lock = asyncio.Lock()
@@ -276,6 +280,7 @@ class ControlUnit:
             "controlling": self._holding,
             "taken_with": dict(self._raw) if owed and self._raw else None,
             "paused": dict(session.learning.paused),
+            "resuming": dict(session.learning.resuming),
             "latched": session.loop.control.latched,
             "latched_by": list(session.loop.control.latched_by),
             # The one rewrite after an outside change: within a day of it, no more are made.
@@ -289,6 +294,7 @@ class ControlUnit:
     def restore(self, data: Mapping[str, Any]) -> None:
         try:
             paused = {str(z): float(t) for z, t in dict(data.get("paused", {})).items()}
+            resuming = {str(z): float(t) for z, t in dict(data.get("resuming") or {}).items()}
             alarms = {ControlAlarm(a) for a in data.get("alarms", [])} & _KEPT_ALARMS
             latched_by = tuple(str(a) for a in data.get("latched_by") or ())
             rewritten_at = _moment(data.get("rewritten_at"))
@@ -303,7 +309,7 @@ class ControlUnit:
                 setpoint=GuardState(rewritten_at=rewritten_at),
                 switch=GuardState(rewritten_at=heating_rewritten_at),
             ),
-            learning=LearningState(paused=paused, last_toggle=dict(paused)),
+            learning=LearningState(paused=paused, last_toggle=dict(paused), resuming=resuming),
             alarms=alarms,
             failed=bool(data.get("failed", False)),
         )
@@ -793,7 +799,7 @@ class ControlUnit:
         self._hand_back_at = now
         self._last_change_at = now
         self._coordinator.schedule_save()  # a latch set with it must survive a restart
-        await self._async_release_learning(now, force=True)
+        await self._async_release_learning(now)
 
     async def _async_try_hand_back(self, now: float, full: bool = False) -> bool:
         """One hand-back attempt; a failure is kept, shown and retried until it goes through.
@@ -900,7 +906,7 @@ class ControlUnit:
         else:
             if self._hand_back_pending:
                 await self._async_try_hand_back(now, full=True)
-            await self._async_release_learning(now, force=True)
+            await self._async_release_learning(now)
 
     # --- learning pauses ------------------------------------------------------------------
 
@@ -953,35 +959,32 @@ class ControlUnit:
             self._coordinator.schedule_save()
         self._session.learning = plan.state
 
-    async def _async_release_learning(self, now: float, force: bool = False) -> None:
-        """Resume every zone the plugin paused; failures are retried a minute later."""
-        if not self._session.learning.paused:
-            return
-        if not force and now < self._learning_retry_at:
-            return
-        state, zones = release_all(self._session.learning, now)
-        self._learning_calls += [(zone_id, True) for zone_id in zones]
-        self._session.learning = state
-        self._coordinator.schedule_save()
+    async def _async_release_learning(self, now: float) -> None:
+        """Resume every zone the plugin paused, and follow the resumes until SmartPI's flag
+        reads on: one that did not take is sent again every minute."""
+        learning = self._session.learning
+        if learning.paused:
+            learning, zones = release_all(learning, now)
+            self._learning_calls += [(zone_id, True) for zone_id in zones]
+            self._coordinator.schedule_save()
+        if learning.resuming:
+            link = self._coordinator.link
+            flags = {z: link.zone_algorithm(z).smartpi_learning for z in learning.resuming}
+            followed, again = follow_resumes(learning, flags, now, self.options.learning)
+            self._learning_calls += [(zone_id, True) for zone_id in again]
+            if followed.resuming != learning.resuming:
+                self._coordinator.schedule_save()
+            learning = followed
+        self._session.learning = learning
 
     async def _async_learning_calls(self) -> None:
-        """Make the planned SmartPI calls, together and without the lock. A resume that fails
-        keeps its zone paused, retried a minute later; a failed pause leaves the zone learning."""
+        """Make the planned SmartPI calls, together and without the lock. Whether each took is
+        read back from SmartPI's flag at the next steps, whatever the call reported."""
         calls, self._learning_calls = self._learning_calls, []
-        if not calls:
-            return
-        results = await asyncio.gather(
-            *(self._async_set_learning(zone_id, enabled) for zone_id, enabled in calls)
-        )
-        failed = [zone_id for (zone_id, enabled), ok in zip(calls, results, strict=True)
-                  if enabled and not ok]  # fmt: skip
-        if failed:
-            now = dt_util.utcnow().timestamp()
-            state = self._session.learning
-            paused = {**state.paused, **dict.fromkeys(failed, now)}
-            self._session.learning = replace(state, paused=paused)
-            self._learning_retry_at = now + LEARNING_RETRY_S
-            self._coordinator.schedule_save()
+        if calls:
+            await asyncio.gather(
+                *(self._async_set_learning(zone_id, enabled) for zone_id, enabled in calls)
+            )
 
     async def _async_set_learning(self, zone_id: str, enabled: bool) -> bool:
         try:

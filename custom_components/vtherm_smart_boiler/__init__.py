@@ -98,7 +98,12 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     from .coordinator import STORAGE_VERSION
 
-    for key in ("hand_back_owed", "control_options_invalid", "auto_tpi_blocked"):
+    for key in (
+        "hand_back_owed",
+        "control_options_invalid",
+        "auto_tpi_blocked",
+        "learning_not_paused",
+    ):
         ir.async_delete_issue(hass, DOMAIN, f"{key}_{entry.entry_id}")
     store = Store[dict[str, Any]](hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}")
     data = await store.async_load() or {}

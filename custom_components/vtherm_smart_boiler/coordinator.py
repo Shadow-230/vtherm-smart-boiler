@@ -204,7 +204,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
 
     def async_start_background(self) -> None:
         """First analysis and first forecast snapshot, without holding up setup."""
-        self.check_auto_tpi()
+        self.check_learning()
         self.config_entry.async_create_background_task(
             self.hass, self.async_run_analysis(), f"{DOMAIN} analysis"
         )
@@ -217,7 +217,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         """Stop every listener and timer and write what is pending."""
         while self._unsubs:
             self._unsubs.pop()()
-        ir.async_delete_issue(self.hass, DOMAIN, f"auto_tpi_blocked_{self.config_entry.entry_id}")
+        for key in ("auto_tpi_blocked", "learning_not_paused"):
+            ir.async_delete_issue(self.hass, DOMAIN, f"{key}_{self.config_entry.entry_id}")
         await self.async_shutdown()
         await self._store.async_save(self._stored_data())
         if self.forecasts is not None:
@@ -518,28 +519,43 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     # --- analysis -------------------------------------------------------------------------
 
     async def _async_analysis_tick(self, _now: datetime) -> None:
-        self.check_auto_tpi()
+        self.check_learning()
         await self.async_run_analysis()
 
-    def check_auto_tpi(self) -> None:
-        """Warn about zones whose Auto-TPI cannot learn: flagged as used by VT's central boiler
-        while that feature is off, which is how the plugin replaces it (research F2)."""
-        issue_id = f"auto_tpi_blocked_{self.config_entry.entry_id}"
+    def check_learning(self) -> None:
+        """Warn about zone learning the plugin affects but cannot protect, each warning with
+        what its advice costs: Auto-TPI that cannot learn — flagged as used by VT's central
+        boiler while that feature is off, which is how the plugin replaces it (research F2) —
+        and, while control runs with learning pauses, learning it cannot pause: Auto-TPI (only a
+        reset would pause it) and SmartPI without its learning flag."""
+        central_off = not self.link.vt_central_boiler_configured()
+        control = self.config.control
+        pauses = control.configured and control.learning_pauses
         blocked: list[str] = []
-        if not self.link.vt_central_boiler_configured():
-            for zone_id in self.config.zone_entities:
-                algorithm = self.link.zone_algorithm(zone_id)
-                if algorithm.auto_tpi and algorithm.used_by_central_boiler:
-                    blocked.append(self.link.zone_name(zone_id))
-        if blocked:
+        unpaused: list[str] = []
+        for zone_id in self.config.zone_entities:
+            algorithm = self.link.zone_algorithm(zone_id)
+            flagless_smartpi = (
+                algorithm.proportional_function == "smartpi" and algorithm.smartpi_learning is None
+            )
+            if algorithm.auto_tpi and algorithm.used_by_central_boiler and central_off:
+                blocked.append(self.link.zone_name(zone_id))
+            elif pauses and (algorithm.auto_tpi or flagless_smartpi):
+                unpaused.append(self.link.zone_name(zone_id))
+        self._issue("auto_tpi_blocked", blocked)
+        self._issue("learning_not_paused", unpaused)
+
+    def _issue(self, key: str, zones: list[str]) -> None:
+        issue_id = f"{key}_{self.config_entry.entry_id}"
+        if zones:
             ir.async_create_issue(
                 self.hass,
                 DOMAIN,
                 issue_id,
                 is_fixable=False,
                 severity=ir.IssueSeverity.WARNING,
-                translation_key="auto_tpi_blocked",
-                translation_placeholders={"zones": ", ".join(blocked)},
+                translation_key=key,
+                translation_placeholders={"zones": ", ".join(zones)},
             )
         else:
             ir.async_delete_issue(self.hass, DOMAIN, issue_id)

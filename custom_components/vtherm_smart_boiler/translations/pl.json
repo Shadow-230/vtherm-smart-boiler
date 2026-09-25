@@ -574,7 +574,7 @@
           "count_threshold": "Grzanie jest potrzebne, gdy co najmniej tyle stref wzywa ciepła. Domyślnie 1; najwyżej liczba stref. 0 wyłącza liczenie stref, zostawiając sam próg mocy albo otwarcia, jak w Versatile Thermostat.",
           "power_threshold_kw": "Opcjonalnie: grzanie jest potrzebne, gdy moc wołających stref sumuje się do tej wartości, w kW.",
           "opening_threshold": "Opcjonalnie: grzanie jest potrzebne, gdy otwarcia zaworów stref sumują się do tej wartości, w %.",
-          "learning_pauses": "Wstrzymuj naukę SmartPI podczas grzania ciepłej wody, gdy strefę grzeje obce źródło i przy dużych wahaniach temperatury wody, żeby nie uczyła się tego, co zrobił kocioł. Domyślnie włączone.",
+          "learning_pauses": "Wstrzymuj naukę SmartPI podczas grzania ciepłej wody, gdy strefę grzeje obce źródło i przy dużych wahaniach temperatury wody, żeby nie uczyła się tego, co zrobił kocioł; każde wstrzymanie i wznowienie jest sprawdzane w SmartPI. Domyślnie włączone. Auto-TPI nie da się wstrzymać bez skasowania tego, czego się nauczyło, więc strefy z nim są tylko zgłaszane. Wyłączone: SmartPI uczy się także w tych chwilach, co może zafałszować jego model.",
           "comfort_correction": "Włączona (domyślnie): gdy zawór strefy jest całkiem otwarty, a pomieszczenie nadal nie dochodzi do nastawy, woda rośnie do 3 K ponad krzywą — 1 K na 30 minut, tylko gdy płynie ciepło — i spada dwa razy szybciej; nie rośnie, gdy inna strefa jest o ponad 1 K za ciepła, zeruje się przy oddaniu sterowania, a po trzech godzinach na 3 K informuje, że krzywa jest pewnie za niska. Działa szeregowo z regulatorami PI stref (SmartPI, TPI): jej wolne tempo pozwala im najpierw się ustalić. Człon zewnętrzny algorytmu strefy (współczynnik zewnętrzny TPI) liczy pogodę drugi raz: trzymaj go mały, gdy wtyczka ustala wodę. Wyłączona: sama krzywa."
         }
       },
@@ -998,7 +998,7 @@
   "issues": {
     "auto_tpi_blocked": {
       "title": "Auto-TPI nie może się uczyć w części stref",
-      "description": "Te strefy używają Auto-TPI i są oznaczone w Versatile Thermostat jako używane przez kocioł centralny, ale kocioł centralny VT nie jest skonfigurowany, więc Auto-TPI pomija w nich naukę: {zones}. Wyłącz opcję „używany przez kocioł centralny” w konfiguracji VT każdej z tych stref."
+      "description": "Te strefy używają Auto-TPI i są oznaczone w Versatile Thermostat jako używane przez kocioł centralny, ale kocioł centralny VT nie jest skonfigurowany — zastępuje go wtyczka — więc Auto-TPI pomija w nich naukę: {zones}. Żeby mogło się uczyć, wyłącz opcję „używany przez kocioł centralny” w konfiguracji VT każdej z tych stref. Koszt: wtyczka nie może wstrzymać Auto-TPI bez skasowania tego, czego się nauczyło, więc będzie się ono uczyć także podczas grzania ciepłej wody i zmian temperatury wody, co może zafałszować jego współczynniki. Pozostawienie opcji utrzymuje naukę Auto-TPI w tych strefach wyłączoną."
     },
     "hand_back_owed": {
       "title": "Sterowanie jeszcze nie oddało kotła",
@@ -1011,6 +1011,10 @@
     "hand_back_owed_after_removal": {
       "title": "Kocioł może nadal trzymać wartość z VTherm Smart Boiler",
       "description": "Integrację usunięto, zanim oddanie sterowania dotarło do kotła. Przywróć kotłu własne sterowanie ręcznie — ustaw na nowo encję nastawy albo wyczyść nadpisania bramki — a potem zignoruj to zgłoszenie."
+    },
+    "learning_not_paused": {
+      "title": "Wtyczka nie może wstrzymać nauki w części stref",
+      "description": "Sterowanie wstrzymuje naukę stref podczas grzania ciepłej wody, gdy strefę grzeje obce źródło i przy wahaniach temperatury wody, ale tych stref wstrzymać nie może: {zones}. Auto-TPI dałoby się wstrzymać tylko przez skasowanie tego, czego się nauczyło, więc wtyczka go nie rusza; SmartPI, które nie publikuje flagi nauki, też nie może być wstrzymane. Uczą się one także w tych chwilach, co może zafałszować to, czego się uczą. Żeby tego uniknąć, zatrzymaj naukę Auto-TPI w VT, gdy już się nauczyło, albo zaktualizuj SmartPI — do tego czasu strefa zostaje bez ochrony wtyczki."
     }
   }
 }

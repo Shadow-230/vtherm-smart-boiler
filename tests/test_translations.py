@@ -140,6 +140,7 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
     }
     assert "name" in SOURCE["entity"]["sensor"]["control_setpoint"]
     assert "name" in SOURCE["entity"]["switch"]["control"]
-    issue = SOURCE["issues"]["auto_tpi_blocked"]
-    assert "{zones}" in issue["description"]
-    assert issue["title"]
+    for key in ("auto_tpi_blocked", "learning_not_paused"):
+        issue = SOURCE["issues"][key]
+        assert "{zones}" in issue["description"]
+        assert issue["title"]

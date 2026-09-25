@@ -252,7 +252,7 @@ confirmed; units are converted; the guard never fights another controller.
 | O3 ✅ | read-back and state: heating on/off confirmed where an echo exists, under the one-rewrite rule (P22, S12); the setpoint entity shows the confirmed value or unknown, heating on/off marked unverified without an echo (P23); a read-back entity equal to the write entity refused or marked unverified (P75, S23); an OTGW read-back called "confirmed by the gateway" (S24); keep-alives do not move "last change" (P88) |
 | O4 ✅ | units: °C and °F converted on write and in the range checks, or a blocker (P11); the setpoint rounded to the entity's step (P87); pressure and power units (P67) |
 | O5 ✅ | clocks and logs: the decision interval applies to the water temperature only (S14); a failure logged once and its recovery once; exceptions logged with their trace, no blind `except` (P42, P106) |
-| O6 | learning pauses: SmartPI's flag read back after a pause or resume (P41); learning the user switched off never resumed; a resume tolerance and a longest pause (S20); the Auto-TPI warning states its cost (S19) |
+| O6 ✅ | learning pauses: SmartPI's flag read back after a pause or resume (P41); learning the user switched off never resumed; a resume tolerance and a longest pause (S20); the Auto-TPI warning states its cost (S19) |
 
 ## Phase U — Home Assistant integration
 

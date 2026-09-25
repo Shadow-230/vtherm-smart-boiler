@@ -574,7 +574,7 @@
           "count_threshold": "Heating is needed when at least this many zones call for heat. Default 1; at most the number of zones. 0 turns the count off, leaving the power or opening threshold alone, as in Versatile Thermostat.",
           "power_threshold_kw": "Optional: heating is needed when the calling zones' power adds up to this, in kW.",
           "opening_threshold": "Optional: heating is needed when the zones' valve openings add up to this, in %.",
-          "learning_pauses": "Pause SmartPI learning while hot water runs, while foreign heat warms a zone and while the water temperature swings, so it does not learn what the boiler did. Default on.",
+          "learning_pauses": "Pause SmartPI learning while hot water runs, while foreign heat warms a zone and while the water temperature swings, so it does not learn what the boiler did; each pause and resume is read back from SmartPI. Default on. Auto-TPI cannot be paused without resetting what it learned, so zones running it are reported instead. Off: SmartPI learns through those moments too, which can skew its model.",
           "comfort_correction": "On (default): while a zone's valve is fully open and its room stays short of its setpoint, the water goes up to 3 K above the curve — 1 K per 30 minutes, only while heat flows — and falls twice as fast; it never rises while another zone is more than 1 K too warm, resets at hand-back, and after three hours at 3 K tells you the curve is probably too low. It acts in series with the zones' own PI (SmartPI, TPI): its slow rate lets them settle first. A zone algorithm's outdoor term (TPI's external coefficient) counts the weather a second time: keep it small while the plugin sets the water. Off: the curve alone."
         }
       },
@@ -998,7 +998,7 @@
   "issues": {
     "auto_tpi_blocked": {
       "title": "Auto-TPI cannot learn in some zones",
-      "description": "These zones run Auto-TPI and are marked in Versatile Thermostat as used by the central boiler, but VT's central boiler is not configured, so Auto-TPI skips learning in them: {zones}. Clear the option \"used by the central boiler\" in each zone's VT configuration."
+      "description": "These zones run Auto-TPI and are marked in Versatile Thermostat as used by the central boiler, but VT's central boiler is not configured — the plugin replaces it — so Auto-TPI skips learning in them: {zones}. To let it learn, clear \"used by the central boiler\" in each zone's VT configuration. What that costs: the plugin cannot pause Auto-TPI without wiping what it has learned, so it will then also learn while hot water charges and while the water temperature changes, which can skew its coefficients. Leaving the option set keeps Auto-TPI's learning off in these zones."
     },
     "hand_back_owed": {
       "title": "Control has not handed the boiler back yet",
@@ -1011,6 +1011,10 @@
     "hand_back_owed_after_removal": {
       "title": "The boiler may still hold a value from VTherm Smart Boiler",
       "description": "The integration was removed before its hand-back reached the boiler. Return the boiler to its own control by hand — reset the setpoint entity, or clear the gateway's overrides — and then ignore this issue."
+    },
+    "learning_not_paused": {
+      "title": "The plugin cannot pause learning in some zones",
+      "description": "Control pauses zone learning while hot water charges, while foreign heat warms a zone and while the water temperature swings, but it cannot pause these zones: {zones}. Auto-TPI could only be paused by resetting what it learned, so the plugin leaves it alone; a SmartPI that does not publish its learning flag cannot be paused either. They keep learning through those moments, which can skew what they learn. To avoid it, stop Auto-TPI's learning in VT once it has learned, or update SmartPI — either leaves the zone without the plugin's protection until then."
     }
   }
 }

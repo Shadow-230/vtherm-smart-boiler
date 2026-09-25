@@ -223,8 +223,11 @@ emitter type; the burner is shared.
   missing. Zone algorithms do not read these values today (§9).
 - DHW charging pauses learning only in zones calling for heat (valve open); zones with a closed
   valve keep learning how the room cools. Learning resumes when the flow is back within a
-  tolerance of its setpoint, and at the latest after a longest pause; a pause is read back, and
-  learning the user switched off is never resumed.
+  tolerance of its setpoint (3 K either way), and at the latest after a longest pause (1 h); a
+  pause and a resume are read back from the algorithm's flag — a pause that did not take is not
+  the plugin's, a resume is sent again every minute until the flag reads on — and learning the
+  user switched off before a pause is never resumed. A switch-off during the plugin's own pause
+  cannot be told from the pause: the flag reads off either way.
 - By default the water temperature changes slowly (ramp, §7), so zone algorithms can follow it.
 
 ### Reference room

@@ -606,6 +606,34 @@ async def test_auto_tpi_zones_that_cannot_learn_raise_a_repair_issue(rig: Rig) -
     )
     assert issue is not None
     assert issue.translation_key == "auto_tpi_blocked"
+    # Blocked from learning: not also reported as learning without pauses.
+    assert ir.async_get(rig.hass).async_get_issue(
+        DOMAIN, f"learning_not_paused_{rig.entry.entry_id}"
+    ) is None
+
+
+@pytest.mark.parametrize(
+    ("configuration", "specific_states"),
+    [
+        ({"proportional_function": "tpi"}, {"auto_tpi_state": "on"}),  # Auto-TPI learning
+        ({"proportional_function": "smartpi"}, {}),  # SmartPI without its learning flag
+    ],
+)
+async def test_learning_the_plugin_cannot_pause_raises_a_repair_issue(
+    rig: Rig, configuration: dict[str, Any], specific_states: dict[str, Any]
+) -> None:
+    """S19: a learning algorithm without a pause service gets an explicit warning."""
+    rig.zones.set("living", configuration=configuration, specific_states=specific_states)
+    await start(rig)
+    assert rig.entry is not None
+    issue = ir.async_get(rig.hass).async_get_issue(
+        DOMAIN, f"learning_not_paused_{rig.entry.entry_id}"
+    )
+    assert issue is not None
+    await start(rig, learning_pauses=False)  # a second entry, without pauses: nothing promised
+    assert ir.async_get(rig.hass).async_get_issue(
+        DOMAIN, f"learning_not_paused_{rig.entry.entry_id}"
+    ) is None
 
 
 @dataclass
@@ -1474,24 +1502,75 @@ async def test_a_lasting_learning_failure_is_logged_once_per_zone(
     hass = rig.hass
     attempts: list[bool] = []
 
+    def smartpi(learning: bool) -> None:
+        rig.zones.set(
+            "living",
+            hvac_action="heating",
+            valve_open_percent=60,
+            on_percent=0.6,
+            configuration={"proportional_function": "smartpi"},
+            specific_states={"smartpi_learning_enabled": learning},
+        )
+
     async def set_learning(call: ServiceCall) -> None:
         attempts.append(call.data["learning_enabled"])
-        raise HomeAssistantError("SmartPI is not ready")
+        if call.data["learning_enabled"]:
+            raise HomeAssistantError("SmartPI is not ready")
+        smartpi(False)  # the pause goes through
 
     hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
-    rig.zones.set(
-        "living",
-        hvac_action="heating",
-        valve_open_percent=60,
-        on_percent=0.6,
-        configuration={"proportional_function": "smartpi"},
-        specific_states={"smartpi_learning_enabled": True},
-    )
+    smartpi(True)
     await start(rig)
     await rig.switch(True)
     rig.dhw = True
-    await rig.advance(10)  # a pause, which fails
-    await rig.switch(False)  # its release is tried, and fails, every minute
-    await rig.advance(300)
+    await rig.advance(10)  # paused
+    await rig.switch(False)  # its release fails, and is sent again every minute
+    for _ in range(5):
+        await rig.advance(60)
+        smartpi(False)  # the zone reports again, still paused
     assert attempts.count(True) >= 3
     assert _logged(caplog, logging.WARNING, "SmartPI learning") == 1
+
+
+async def test_a_resume_smartpi_skipped_is_sent_again_until_it_reads_on(rig: Rig) -> None:
+    """P41: SmartPI skips a thermostat it cannot find without an error, and keeps its flag for
+    good: a resume counts only once the flag reads on, and is sent again every minute."""
+    hass = rig.hass
+    calls: list[bool] = []
+    skipping = True
+
+    def smartpi(learning: bool) -> None:
+        rig.zones.set(
+            "living",
+            hvac_action="heating",
+            valve_open_percent=60,
+            on_percent=0.6,
+            configuration={"proportional_function": "smartpi"},
+            specific_states={"smartpi_learning_enabled": learning},
+        )
+
+    async def set_learning(call: ServiceCall) -> None:
+        enabled = call.data["learning_enabled"]
+        calls.append(enabled)
+        if not enabled or not skipping:
+            smartpi(enabled)
+
+    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    smartpi(True)
+    await start(rig)
+    await rig.switch(True)
+    rig.dhw = True
+    await rig.advance(10)
+    assert calls == [False]
+    await rig.switch(False)  # released: the resume is skipped without an error
+    assert calls == [False, True]
+    await rig.advance(130)
+    assert calls.count(True) >= 3  # sent again every minute while the flag reads off
+    skipping = False
+    await rig.advance(60)
+    count = len(calls)
+    await rig.advance(180)
+    assert len(calls) == count  # read back on: done
+    assert rig.hass.states.get(rig.zones.entities["living"]).attributes["specific_states"][
+        "smartpi_learning_enabled"
+    ] is True
