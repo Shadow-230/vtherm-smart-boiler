@@ -39,7 +39,15 @@ def test_over_climate_zone_has_no_on_percent() -> None:
 
 @pytest.mark.parametrize(
     ("state", "enabled"),
-    [("heat", True), ("off", False), ("cool", False), ("unavailable", None), ("unknown", None)],
+    [
+        ("heat", True),
+        ("auto", True),
+        ("heat_cool", True),
+        ("off", False),
+        ("cool", False),
+        ("unavailable", None),
+        ("unknown", None),
+    ],
 )
 def test_heating_enabled(state: str, enabled: bool | None) -> None:
     assert zone_values(state, {}).heating_enabled is enabled
@@ -74,3 +82,33 @@ def test_central_mode() -> None:
     assert central_mode("Stopped") is CentralMode.STOPPED
     assert central_mode("Frost protection") is CentralMode.FROST_PROTECTION
     assert central_mode("unavailable") is None
+
+
+@pytest.mark.parametrize("mode", ["auto", "heat_cool"])
+def test_auto_zones_heat_by_their_action(mode: str) -> None:
+    """An over_climate zone in "auto" or heat_cool may heat: its action says whether it does."""
+    values = zone_values(mode, {"hvac_action": "heating"})
+    assert values.heating_enabled is True
+    assert values.auto_mode is True
+    assert values.calling is True
+    assert zone_values("heat", {}).auto_mode is False
+
+
+def test_vt_readiness_device_activity_and_temperature_age() -> None:
+    """VT 10.4.0: `is_ready`, and in `specific_states` whether a device is active (what VT's
+    own central boiler counts) and when the room temperature was last measured."""
+    values = zone_values(
+        "heat",
+        {
+            "is_ready": False,
+            "specific_states": {
+                "is_device_active": True,
+                "last_temperature_datetime": "2026-01-12T09:00:00+01:00",
+            },
+        },
+    )
+    assert values.ready is False
+    assert values.device_active is True
+    assert values.temperature_at == pytest.approx(1768204800.0)
+    bare = zone_values("heat", {"specific_states": {"last_temperature_datetime": "bogus"}})
+    assert (bare.ready, bare.device_active, bare.temperature_at) == (None, None, None)

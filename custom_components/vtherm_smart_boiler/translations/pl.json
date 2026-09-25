@@ -546,7 +546,7 @@
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
           "decision_interval_min": "Jak często nastawa jest wyznaczana na nowo, w minutach. Domyślnie 5.",
           "off_setpoint": "Zapisywana jako „wyłączone”, gdy nie ma przełącznika grzania, w °C. Domyślnie 10 °C.",
-          "count_threshold": "Grzanie jest potrzebne, gdy o ciepło woła co najmniej tyle stref. Domyślnie 1.",
+          "count_threshold": "Grzanie jest potrzebne, gdy co najmniej tyle stref wzywa ciepła. Domyślnie 1; najwyżej liczba stref. 0 wyłącza liczenie stref, zostawiając sam próg mocy albo otwarcia, jak w Versatile Thermostat.",
           "power_threshold_kw": "Opcjonalnie: grzanie jest potrzebne, gdy moc wołających stref sumuje się do tej wartości, w kW.",
           "opening_threshold": "Opcjonalnie: grzanie jest potrzebne, gdy otwarcia zaworów stref sumują się do tej wartości, w %.",
           "learning_pauses": "Wstrzymuj naukę SmartPI podczas grzania ciepłej wody, gdy strefę grzeje obce źródło i przy dużych wahaniach temperatury wody, żeby nie uczyła się tego, co zrobił kocioł. Domyślnie włączone.",
@@ -603,7 +603,9 @@
       "write_type_not_supported": "Wtyczka nigdy nie zapisuje trwałej pamięci kotła: zadeklaruj encję nastawy jako wygasającą lub trzymaną albo wybierz „Bez sterowania”.",
       "ch_write_type_not_supported": "Zadeklaruj przełącznik grzania jako wygasający lub trzymany albo zostaw przełącznik pusty: wtyczka nigdy nie zapisuje trwałej pamięci kotła.",
       "hand_back_value_effect_missing": "Metoda wartości wymaga skutku: co urządzenie robi z wartością oddania.",
-      "hand_back_pending": "Oddanie sterowania jeszcze nie dotarło do kotła: ścieżka zapisu i to, do czego sterowanie pisze, nie mogą się zmienić, dopóki nie dotrze. Przywróć cel albo wybierz „Bez sterowania”: oddanie jest nadal ponawiane."
+      "hand_back_pending": "Oddanie sterowania jeszcze nie dotarło do kotła: ścieżka zapisu i to, do czego sterowanie pisze, nie mogą się zmienić, dopóki nie dotrze. Przywróć cel albo wybierz „Bez sterowania”: oddanie jest nadal ponawiane.",
+      "count_threshold_above_zones": "Więcej stref, niż jest skonfigurowanych: grzanie nigdy nie zostałoby wezwane.",
+      "no_demand_criterion": "Ustaw co najmniej jedno kryterium: liczba stref 0 wymaga progu mocy albo otwarcia."
     },
     "abort": {
       "missing_signal": "Brakuje wymaganego sygnału.",
@@ -862,6 +864,9 @@
       },
       "alarm_boiler_link_lost": {
         "name": "Sterowanie: utracono dane kotła"
+      },
+      "alarm_zone_unknown": {
+        "name": "Sterowanie: stan strefy nieznany"
       }
     },
     "switch": {
@@ -922,6 +927,9 @@
     },
     "blocked_underfloor_without_max_flow": {
       "message": "Ogrzewanie podłogowe na obiegu bez mieszania wymaga maksymalnej temperatury zasilania tego obiegu. Inne powody: {others}."
+    },
+    "blocked_count_threshold_above_zones": {
+      "message": "Próg zapotrzebowania wymaga więcej stref, niż jest skonfigurowanych, więc grzanie nigdy nie zostałoby wezwane: obniż go w opcjach. Inne powody: {others}."
     },
     "blocked_ha_starting": {
       "message": "Home Assistant jeszcze się uruchamia. Inne powody: {others}."

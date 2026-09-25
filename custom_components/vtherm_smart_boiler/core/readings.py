@@ -86,9 +86,14 @@ class BoilerSnapshot:
 class ZoneState:
     """One VT thermostat as the plugin sees it.
 
-    ``heating_enabled``: the zone is in a heating mode (not off). ``calling``: its heater or valve
-    is active now. ``on_percent`` and ``valve_open`` are fractions from 0 to 1. ``power`` is the
-    device power as configured in VT, in VT's units.
+    ``heating_enabled``: the zone is in a mode that may heat (``None``: its mode is not known,
+    e.g. the entity is unavailable); ``auto_mode``: "auto" or heat_cool, where its action says
+    whether it heats. ``calling``: its heater or valve is active now (VT's action).
+    ``device_active``: VT's own view of its devices (what its central boiler counts).
+    ``on_percent`` and ``valve_open`` are fractions from 0 to 1. ``power`` is the device power
+    as configured in VT, in VT's units. ``ready``: VT has finished starting the thermostat.
+    ``temperature_at``: when the room temperature was last measured; the zone is fresh by it,
+    else by the entity's report.
     """
 
     zone_id: str
@@ -100,6 +105,10 @@ class ZoneState:
     valve_open: float | None = None
     power: float | None = None
     reported_at: float | None = None
+    auto_mode: bool = False
+    device_active: bool | None = None
+    ready: bool | None = None
+    temperature_at: float | None = None
 
     @property
     def deficit(self) -> float | None:
@@ -116,9 +125,18 @@ class ZoneState:
         return self.on_percent
 
     def is_fresh(self, now: float, max_age: float | None) -> bool:
-        if self.reported_at is None:
+        at = self.temperature_at if self.temperature_at is not None else self.reported_at
+        if at is None:
             return False
-        return max_age is None or now - self.reported_at <= max_age
+        return max_age is None or now - at <= max_age
+
+    def is_known(self, now: float, max_age: float | None) -> bool:
+        """Its mode is known, VT has started it, and its data is fresh."""
+        return (
+            self.heating_enabled is not None
+            and self.ready is not False
+            and self.is_fresh(now, max_age)
+        )
 
 
 @dataclass(frozen=True, slots=True)

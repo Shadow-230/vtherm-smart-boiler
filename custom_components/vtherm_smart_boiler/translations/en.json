@@ -546,7 +546,7 @@
           "ramp_k_per_min": "The fastest setpoint change, in K per minute. Default 1. Faster changes stress the boiler and make zones overshoot.",
           "decision_interval_min": "How often the setpoint is decided anew, in minutes. Default 5.",
           "off_setpoint": "Written for \"off\" when there is no heating switch, in °C. Default 10 °C.",
-          "count_threshold": "Heating is needed when at least this many zones call for heat. Default 1.",
+          "count_threshold": "Heating is needed when at least this many zones call for heat. Default 1; at most the number of zones. 0 turns the count off, leaving the power or opening threshold alone, as in Versatile Thermostat.",
           "power_threshold_kw": "Optional: heating is needed when the calling zones' power adds up to this, in kW.",
           "opening_threshold": "Optional: heating is needed when the zones' valve openings add up to this, in %.",
           "learning_pauses": "Pause SmartPI learning while hot water runs, while foreign heat warms a zone and while the water temperature swings, so it does not learn what the boiler did. Default on.",
@@ -603,7 +603,9 @@
       "write_type_not_supported": "The plugin never writes to the boiler's persistent memory: declare the setpoint entity expiring or held, or choose \"No control\".",
       "ch_write_type_not_supported": "Declare the heating switch expiring or held, or leave the switch empty: the plugin never writes to the boiler's persistent memory.",
       "hand_back_value_effect_missing": "The value method needs its effect: what the device does with the hand-back value.",
-      "hand_back_pending": "A hand-back has not reached the boiler yet: the write path and what control writes to cannot change until it does. Bring the target back, or choose \"No control\": the hand-back is still retried."
+      "hand_back_pending": "A hand-back has not reached the boiler yet: the write path and what control writes to cannot change until it does. Bring the target back, or choose \"No control\": the hand-back is still retried.",
+      "count_threshold_above_zones": "More zones than are configured: heating would never be asked for.",
+      "no_demand_criterion": "Set at least one criterion: a zone count of 0 needs a power or an opening threshold."
     },
     "abort": {
       "missing_signal": "A required signal is missing.",
@@ -862,6 +864,9 @@
       },
       "alarm_boiler_link_lost": {
         "name": "Control: boiler link lost"
+      },
+      "alarm_zone_unknown": {
+        "name": "Control: a zone's state is unknown"
       }
     },
     "switch": {
@@ -922,6 +927,9 @@
     },
     "blocked_underfloor_without_max_flow": {
       "message": "Underfloor heating on an unmixed circuit needs a maximum flow temperature for that circuit. Other reasons: {others}."
+    },
+    "blocked_count_threshold_above_zones": {
+      "message": "The demand threshold asks for more zones than are configured, so heating would never be asked for: lower it in the options. Other reasons: {others}."
     },
     "blocked_ha_starting": {
       "message": "Home Assistant is still starting. Other reasons: {others}."

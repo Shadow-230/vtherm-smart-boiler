@@ -217,7 +217,9 @@ async def test_advanced_flow_with_two_circuits(
     await hass.async_block_till_done()
 
 
-async def create_entry(hass: HomeAssistant, entities: dict[str, str], level: str) -> str:
+async def create_entry(
+    hass: HomeAssistant, entities: dict[str, str], level: str, zones: tuple[str, ...] = ()
+) -> str:
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
     for data in (
         {"name": "Boiler", "level": level},
@@ -225,7 +227,8 @@ async def create_entry(hass: HomeAssistant, entities: dict[str, str], level: str
         {"class": "read_only", "dhw": "none", "condensing": True}
         | ({"modulation_scale": "range", "shared_return": True} if level == "advanced" else {}),
         {"control": "unmixed_shared"} | ({"add_another": False} if level == "advanced" else {}),
-        {"zones": []},
+        {"zones": [entities[zone] for zone in zones]},
+        *({} for _zone in zones),
         {},
         {"strategy": "average"},
     ):
@@ -427,7 +430,7 @@ async def test_control_with_an_entity_checks_the_hand_back(
 async def test_control_at_the_advanced_level_and_back(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    entry_id = await create_entry(hass, entities, "advanced")
+    entry_id = await create_entry(hass, entities, "advanced", ("living",))
     result = await open_control(hass, entry_id)
     result = await options_step(
         hass,
@@ -458,6 +461,10 @@ async def test_control_at_the_advanced_level_and_back(
         },
     )
     assert result["step_id"] == "control_behaviour"
+    result = await options_step(hass, result, {"count_threshold": 9})
+    assert result["errors"] == {"count_threshold": "count_threshold_above_zones"}
+    result = await options_step(hass, result, {"count_threshold": 0})
+    assert result["errors"] == {"count_threshold": "no_demand_criterion"}
     result = await options_step(hass, result, {"ramp_k_per_min": 0.5, "off_setpoint": 12})
     assert result["step_id"] == "control_alarms"
     assert result["data_schema"]({})["outside_change"] == "hand_back"  # the default
@@ -505,7 +512,7 @@ async def test_control_limits_must_suit_the_setpoint_entity(
     hass.states.async_set(
         "number.boiler_flow", "45", {"unit_of_measurement": "°C", "min": 20, "max": 60}
     )
-    entry_id = await create_entry(hass, entities, "advanced")
+    entry_id = await create_entry(hass, entities, "advanced", ("living",))
     result = await open_control(hass, entry_id)
     result = await options_step(
         hass,

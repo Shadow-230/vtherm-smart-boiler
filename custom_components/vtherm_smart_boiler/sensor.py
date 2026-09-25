@@ -422,6 +422,7 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "heating_on": status.heating_on,
             "hand_back_at": _time(status.hand_back_at),
             "latched_by": list(status.latched_by),
+            "unknown_zones": list(status.unknown_zones),
             "learning_paused": list(status.paused_zones),
         }
 

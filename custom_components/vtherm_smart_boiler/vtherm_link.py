@@ -83,6 +83,10 @@ class VThermLink:
             valve_open=values.valve_open,
             power=values.power,
             reported_at=reported_at(state),
+            auto_mode=values.auto_mode,
+            device_active=values.device_active,
+            ready=values.ready,
+            temperature_at=values.temperature_at,
         )
 
     def zones(self) -> list[ZoneState]:

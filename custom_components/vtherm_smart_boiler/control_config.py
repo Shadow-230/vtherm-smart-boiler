@@ -84,6 +84,7 @@ CONFIG_BLOCKERS = (
     "curve_not_entered",
     "one_direct_circuit_only",
     "underfloor_without_max_flow",
+    "count_threshold_above_zones",
 )
 OTGW_PATHS = frozenset({WritePath.OPENTHERM_GW, WritePath.OTGW_MQTT})
 # Write types control may use: nothing the boiler stores in its memory.
@@ -316,4 +317,6 @@ def config_blockers(control: ControlOptions, installation: Installation) -> list
             and circuit.max_flow is None
         ):
             found.append("underfloor_without_max_flow")
+    if control.loop.control.demand.count_threshold > len(installation.zones):
+        found.append("count_threshold_above_zones")  # heating would never be asked for
     return found

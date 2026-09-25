@@ -1155,3 +1155,20 @@ async def test_control_waits_while_home_assistant_is_starting(rig: Rig) -> None:
     rig.hass.set_state(CoreState.running)
     await rig.advance(10)
     assert rig.gateway.setpoints() == [EXPECTED]
+
+
+async def test_a_zone_unknown_for_long_raises_an_alarm(rig: Rig) -> None:
+    """The known zones decide meanwhile; frost protection cannot see the unknown one, so after a
+    while the user is told."""
+    await start(rig)
+    await rig.switch(True)
+    rig.zones.set("living", "unavailable")
+    await rig.advance(20 * 60)
+    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "off"
+    await rig.advance(11 * 60)
+    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "on"
+    state = rig.state("sensor", "control_state")
+    assert state.attributes["unknown_zones"] == [rig.zones.entities["living"]]
+    rig.zones.set("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+    await rig.advance(10)
+    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "off"

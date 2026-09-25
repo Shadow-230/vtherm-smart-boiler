@@ -15,12 +15,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
 from .units import parse_number, power_to_kw, temperature_to_celsius
 
 HEATING_MODES = frozenset({"heat"})
+AUTO_MODES = frozenset({"auto", "heat_cool"})  # may heat: the action says whether it does
 NOT_HEATING_MODES = frozenset({"off", "cool", "dry", "fan_only"})
 ACTIVE_ACTIONS = frozenset({"heating", "preheating"})
 INACTIVE_ACTIONS = frozenset({"idle", "off", "cooling", "drying", "fan"})
@@ -35,12 +37,20 @@ class ZoneValues:
     on_percent: float | None = None  # 0 to 1
     valve_open: float | None = None  # 0 to 1
     power: float | None = None  # kW, live only
+    auto_mode: bool = False
+    device_active: bool | None = None  # live only
+    ready: bool | None = None
+    temperature_at: float | None = None  # epoch seconds, live only
 
 
 def zone_values(
     state: str, attributes: Mapping[str, Any], temperature_unit: str | None = "°C"
 ) -> ZoneValues:
     """Zone values from a VT climate entity; anything missing or implausible is ``None``."""
+    specific = attributes.get("specific_states")
+    specific = specific if isinstance(specific, Mapping) else {}
+    active = specific.get("is_device_active")
+    ready = attributes.get("is_ready")
     return ZoneValues(
         temperature=_temperature(attributes.get("current_temperature"), temperature_unit),
         target=_temperature(attributes.get("temperature"), temperature_unit),
@@ -49,6 +59,10 @@ def zone_values(
         on_percent=_fraction(attributes.get("on_percent"), 1.0),
         valve_open=_fraction(attributes.get("valve_open_percent"), 100.0),
         power=_device_power(attributes.get("power_manager")),
+        auto_mode=state in AUTO_MODES,
+        device_active=active if isinstance(active, bool) else None,
+        ready=ready if isinstance(ready, bool) else None,
+        temperature_at=_moment(specific.get("last_temperature_datetime")),
     )
 
 
@@ -58,7 +72,7 @@ def _temperature(raw: object, unit: str | None) -> float | None:
 
 
 def _heating_enabled(state: str) -> bool | None:
-    if state in HEATING_MODES:
+    if state in HEATING_MODES or state in AUTO_MODES:
         return True
     if state in NOT_HEATING_MODES:
         return False
@@ -71,6 +85,16 @@ def _calling(action: object) -> bool | None:
     if action in INACTIVE_ACTIONS:
         return False
     return None
+
+
+def _moment(raw: object) -> float | None:
+    if not isinstance(raw, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return moment.timestamp() if moment.tzinfo is not None else None
 
 
 def _fraction(raw: object, full_scale: float) -> float | None:

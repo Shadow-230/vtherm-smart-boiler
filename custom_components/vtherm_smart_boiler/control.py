@@ -65,6 +65,7 @@ DAY = 86400.0
 LEARNING_TIMEOUT_S = 5.0
 LEARNING_RETRY_S = 60.0
 HAND_BACK_RETRY_S = 60.0
+ZONE_UNKNOWN_ALARM_S = 30 * 60.0  # a zone unknown this long is reported
 RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control counts as off
 SMARTPI_DOMAIN = "vtherm_smartpi"
 SMARTPI_SERVICE = "set_smartpi_learning"
@@ -85,6 +86,7 @@ class ControlAlarm(StrEnum):
     HAND_BACK_FAILED = "hand_back_failed"
     CONTROL_ERROR = "control_error"
     BOILER_LINK_LOST = "boiler_link_lost"  # handed back without the boiler's data
+    ZONE_UNKNOWN = "zone_unknown"  # a zone unknown for long: frost protection cannot see it
 
 
 _EVENT_ALARM = {
@@ -113,6 +115,7 @@ class ControlStatus:
     alarms: frozenset[ControlAlarm] = frozenset()
     paused_zones: tuple[str, ...] = ()
     latched_by: tuple[str, ...] = ()  # the alarms that latched control, while it stays latched
+    unknown_zones: tuple[str, ...] = ()  # zones whose state is not known now
 
 
 @dataclass
@@ -167,6 +170,7 @@ class ControlUnit:
         # The boiler may hold a value of ours: set before every write attempt and stored at once,
         # cleared only by a confirmed hand-back. After a crash it makes the next start hand back.
         self._holding = False
+        self._unknown_since: dict[str, float] = {}
         self._hand_back_retry_at = 0.0
         self._learning_retry_at = 0.0
         self._restored = False
@@ -493,6 +497,7 @@ class ControlUnit:
             session.alarms.add(ControlAlarm.BOILER_LINK_LOST)
         elif inputs.boiler_link:
             session.alarms.discard(ControlAlarm.BOILER_LINK_LOST)
+        unknown = self._follow_unknown_zones(now, zones)
         for event in out.events:
             session.alarms.add(_EVENT_ALARM[event])
         if out.events:
@@ -522,7 +527,21 @@ class ControlUnit:
             alarms=frozenset(self._alarms()),
             paused_zones=tuple(sorted(session.learning.paused)),
             latched_by=session.loop.control.latched_by if session.loop.control.latched else (),
+            unknown_zones=unknown,
         )
+
+    def _follow_unknown_zones(self, now: float, zones: Sequence[ZoneState]) -> tuple[str, ...]:
+        """Zones whose state is not known: the known ones decide meanwhile; one unknown for long
+        raises an alarm, as frost protection cannot see it."""
+        max_age = self.options.loop.control.zone_max_age_s
+        unknown = tuple(z.zone_id for z in zones if not z.is_known(now, max_age))
+        self._unknown_since = {z: self._unknown_since.get(z, now) for z in unknown}
+        long_unknown = any(now - t >= ZONE_UNKNOWN_ALARM_S for t in self._unknown_since.values())
+        if self.enabled and long_unknown:
+            self._session.alarms.add(ControlAlarm.ZONE_UNKNOWN)
+        else:
+            self._session.alarms.discard(ControlAlarm.ZONE_UNKNOWN)
+        return unknown
 
     def _alarms(self) -> set[ControlAlarm]:
         alarms = set(self._session.alarms)
@@ -589,6 +608,7 @@ class ControlUnit:
                 ControlAlarm.CONTROL_ERROR,
                 ControlAlarm.HAND_BACK_FAILED,
                 ControlAlarm.BOILER_LINK_LOST,
+                ControlAlarm.ZONE_UNKNOWN,
             ):
                 continue  # a blocker, a retry of its own, and a hand-back already made
             if self.options.reaction(alarm.value) is AlarmReaction.HAND_BACK:

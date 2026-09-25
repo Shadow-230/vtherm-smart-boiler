@@ -178,7 +178,7 @@ def test_every_blocker_is_listed() -> None:
         (Circuit("main"),),
         (Zone("climate.a", "main", EmitterType.UNDERFLOOR),),
     )
-    cases += [(OTGW, two), (OTGW, floor)]
+    cases += [(OTGW, two), (OTGW, floor), (OTGW | {"count_threshold": 5}, RADIATORS)]
     for data, installation in cases:
         found |= set(config_blockers(parse_control(data, RADIATORS, None), installation))
     assert found == set(CONFIG_BLOCKERS)
@@ -278,3 +278,9 @@ def test_frequent_starts_are_information_only() -> None:
         OTGW | {"alarm_reactions": {"frequent_starts": "hand_back"}}, RADIATORS, None
     )
     assert options.reaction("frequent_starts") is AlarmReaction.INFO
+
+
+def test_the_count_threshold_must_fit_the_zones() -> None:
+    options = parse_control(OTGW | {"count_threshold": 2}, RADIATORS, None)
+    assert config_blockers(options, RADIATORS) == ["count_threshold_above_zones"]
+    assert config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS) == []

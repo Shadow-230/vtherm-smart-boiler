@@ -496,7 +496,7 @@ def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
             **required("ramp_k_per_min", 1.0, _number(0.1, 10, 0.1, "K/min")),
             **required("decision_interval_min", 5.0, _number(1, 30, 1, "min")),
             **required("off_setpoint", 10.0, _number(0, 30, 0.5, "°C")),
-            **required("count_threshold", 1, _number(1, 20, 1)),
+            **required("count_threshold", 1, _number(0, 20, 1)),
             _optional("power_threshold_kw", control): _number(0, 100, 0.1, "kW"),
             _optional("opening_threshold", control): _number(0, 100, 1, "%"),
             **required("learning_pauses", True, selector.BooleanSelector()),
@@ -1171,8 +1171,15 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
+            count = int(user_input.get("count_threshold", 1))
             if _outside(user_input.get("off_setpoint"), self._setpoint_bounds()):
                 errors["off_setpoint"] = "off_setpoint_outside_entity_range"
+            elif count > len(self.options.get(ZONES, [])):
+                errors["count_threshold"] = "count_threshold_above_zones"
+            elif count == 0 and not (
+                user_input.get("power_threshold_kw") or user_input.get("opening_threshold")
+            ):
+                errors["count_threshold"] = "no_demand_criterion"
             else:
                 apply_control_behaviour(self.options, user_input)
                 return await self.async_step_control_alarms()
