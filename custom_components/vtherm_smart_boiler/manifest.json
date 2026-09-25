@@ -1,13 +1,20 @@
 {
   "domain": "vtherm_smart_boiler",
   "name": "VTherm Smart Boiler",
-  "after_dependencies": ["recorder", "versatile_thermostat", "weather"],
+  "after_dependencies": [
+    "mqtt",
+    "opentherm_gw",
+    "recorder",
+    "versatile_thermostat",
+    "vtherm_smartpi",
+    "weather"
+  ],
   "codeowners": [],
   "config_flow": true,
   "dependencies": [],
   "integration_type": "service",
   "iot_class": "calculated",
-  "requirements": ["vtherm_api>=0.4.0"],
+  "requirements": ["vtherm_api>=0.5.0"],
   "single_config_entry": true,
-  "version": "0.1.0"
+  "version": "0.2.1"
 }

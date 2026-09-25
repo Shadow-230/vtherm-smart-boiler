@@ -303,7 +303,7 @@ and across restarts.
 
 | Step | Work |
 |---|---|
-| R1 | release validation: translation texts without `<…>`; manifest `after_dependencies`, `vtherm_api>=0.5.0`, version 0.2.1 — `documentation`, `issue_tracker` and `codeowners` follow at K5, as the repository does not exist yet (the user); `hacs.json` with `homeassistant: 2026.9.0`, the version tested (the user); the brands check no longer ignored; a pytest check of the hassfest rules (P18, P54, P90, P93, P94, P98) |
+| R1 ✅ | release validation: translation texts without `<…>`; manifest `after_dependencies`, `vtherm_api>=0.5.0`, version 0.2.1 — `documentation`, `issue_tracker` and `codeowners` follow at K5, as the repository does not exist yet (the user); `hacs.json` with `homeassistant: 2026.9.0`, the version tested (the user); the brands check no longer ignored; a pytest check of the hassfest rules (P18, P54, P90, P93, P94, P98). Until K5 and R2, hassfest still misses `documentation` and the HACS action the brand and the repository; `tests/test_release.py` expects the K5 keys to be missing and fails once they are there, so its mark is removed then |
 | R2 🔒 | the icon for the integration's `brand/` folder: the user provides or approves it (P93) |
 | R3 | tools: `ruff format`; mypy from PyPI into `.venv`, strict where practical; CI with coverage, formatting, mypy and Home Assistant's constraints, on the declared minimum version; `.gitignore` for coverage and mypy caches (P80, P95, P97, P105) |
 | R4 | test environment: the simulator carries its physics inside the component (Home Assistant keeps `/config` on the import path only while it loads `custom_components`); the deploy copies files, not symlinks; its dry run connects nowhere — before J2 (P55) |

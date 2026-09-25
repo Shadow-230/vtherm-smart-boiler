@@ -143,6 +143,18 @@ def user_schema(current: dict[str, Any]) -> vol.Schema:
     )
 
 
+def level_schema(options: dict[str, Any]) -> vol.Schema:
+    """The level of detail; switching to simple may restore the advanced defaults."""
+    return vol.Schema(
+        {
+            vol.Required(LEVEL, default=options.get(LEVEL, LEVEL_SIMPLE)): _select(
+                "level", [LEVEL_SIMPLE, LEVEL_ADVANCED]
+            ),
+            vol.Required("restore_defaults", default=False): selector.BooleanSelector(),
+        }
+    )
+
+
 def signals_schema(options: dict[str, Any]) -> vol.Schema:
     current = {**options.get(SIGNALS, {}), WEATHER: options.get(WEATHER)}
     fields: dict[Any, Any] = {}
@@ -1212,15 +1224,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 restore_advanced_defaults(self.options)
             self.options[LEVEL] = user_input[LEVEL]
             return await self.async_step_save()
-        schema = vol.Schema(
-            {
-                vol.Required(LEVEL, default=self.options.get(LEVEL, LEVEL_SIMPLE)): _select(
-                    "level", [LEVEL_SIMPLE, LEVEL_ADVANCED]
-                ),
-                vol.Required("restore_defaults", default=False): selector.BooleanSelector(),
-            }
-        )
-        return self.async_show_form(step_id="level", data_schema=schema)
+        return self.async_show_form(step_id="level", data_schema=level_schema(self.options))
 
     async def async_step_freshness(
         self, user_input: dict[str, Any] | None = None

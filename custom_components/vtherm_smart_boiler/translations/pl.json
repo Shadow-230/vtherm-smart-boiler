@@ -513,7 +513,7 @@
       },
       "control_mqtt": {
         "title": "Firmware OTGW przez MQTT",
-        "description": "Polecenia są publikowane w <prefiks>/set/<węzeł>/<polecenie>.",
+        "description": "Polecenia są publikowane w temacie prefiks/set/węzeł/polecenie, z prefiksem i nazwą węzła podanymi niżej.",
         "data": {
           "mqtt_top": "Prefiks tematu",
           "mqtt_node": "Nazwa węzła"

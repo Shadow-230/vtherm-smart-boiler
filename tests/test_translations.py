@@ -59,6 +59,10 @@ def test_every_entity_key_has_a_name() -> None:
         assert "name" in binary[key]
 
 
+# Forms whose one description covers every field alike.
+ONE_DESCRIPTION = {"freshness"}
+
+
 def test_every_form_field_and_select_option_is_translated() -> None:
     from custom_components.vtherm_smart_boiler import config_flow as flow
 
@@ -79,6 +83,10 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "monitor": flow.monitor_schema(options),
     }
     options_only = {
+        "level": flow.level_schema(options),
+        "freshness": flow.freshness_schema(
+            options | {"signals": dict.fromkeys(flow.SIGNAL_FIELDS, "sensor.x")}
+        ),
         "control": flow.control_schema(options),
         "control_entity": flow.control_entity_schema(options),
         "control_gateway": flow.control_gateway_schema(options, ["gw"]),
@@ -93,9 +101,11 @@ def test_every_form_field_and_select_option_is_translated() -> None:
             if section == "options" and step == "user":
                 continue
             texts = SOURCE[section]["step"][step]
+            assert schema.schema, (section, step)
             for marker, validator in schema.schema.items():
                 assert str(marker) in texts["data"], (section, step, marker)
-                assert str(marker) in texts["data_description"], (section, step, marker)
+                if step not in ONE_DESCRIPTION:
+                    assert str(marker) in texts["data_description"], (section, step, marker)
                 config = getattr(validator, "config", {})
                 key = config.get("translation_key")
                 if key:

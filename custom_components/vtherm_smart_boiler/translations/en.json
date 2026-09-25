@@ -513,7 +513,7 @@
       },
       "control_mqtt": {
         "title": "OTGW firmware over MQTT",
-        "description": "Commands are published on <prefix>/set/<node>/<command>.",
+        "description": "Commands are published on the topic prefix/set/node/command, with the prefix and node name given below.",
         "data": {
           "mqtt_top": "Topic prefix",
           "mqtt_node": "Node name"
