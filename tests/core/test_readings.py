@@ -15,7 +15,6 @@ from custom_components.vtherm_smart_boiler.core.signals import (
     REQUIRED_SIGNALS,
     SIGNAL_SPECS,
     Signal,
-    SignalKind,
 )
 
 
@@ -56,12 +55,6 @@ def test_plausible_reading(signal: Signal, raw: float | bool | None, expected: o
     reading = plausible_reading(signal, raw, reported_at=5.0)
     assert reading.value == expected
     assert reading.reported_at == 5.0
-
-
-def test_binary_specs_have_no_age_limit() -> None:
-    binary = [s for s, spec in SIGNAL_SPECS.items() if spec.kind is SignalKind.BINARY]
-    assert binary
-    assert all(SIGNAL_SPECS[s].max_age_s is None for s in binary)
 
 
 def test_snapshot_typed_access_and_freshness() -> None:

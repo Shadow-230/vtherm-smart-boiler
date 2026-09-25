@@ -31,10 +31,10 @@ class SignalHealth:
 def check_signals(
     snapshot: BoilerSnapshot, max_ages: Mapping[Signal, float | None] | None = None
 ) -> dict[Signal, SignalHealth]:
-    """Health of every signal; ``max_ages`` overrides the default freshness limits."""
+    """Health of every signal; ``max_ages``: the age limits the user set (none: availability)."""
     result: dict[Signal, SignalHealth] = {}
     for signal, spec in SIGNAL_SPECS.items():
-        max_age = (max_ages or {}).get(signal, spec.max_age_s)
+        max_age = (max_ages or {}).get(signal)
         if not snapshot.is_mapped(signal):
             result[signal] = SignalHealth(SignalStatus.NOT_MAPPED, spec.required)
             continue

@@ -42,14 +42,14 @@ class Signal(StrEnum):
 class SignalSpec:
     """Static facts about a signal.
 
-    ``max_age_s`` is the default freshness limit: a value not reported for longer is stale.
-    ``None`` means only availability counts — a flame that stays off for hours is normal.
-    ``low`` and ``high`` bound a plausible value; anything outside is treated as unknown.
+    ``low`` and ``high`` bound a plausible value; anything outside is treated as unknown. There is
+    no age limit here: one freshness rule serves the monitor and control — a value is fresh while
+    its entity is available and, if the user set an age limit for it, reported within it. A
+    steady reading is not a stale one; many sources report only on change.
     """
 
     kind: SignalKind
     required: bool = False
-    max_age_s: float | None = None
     low: float | None = None
     high: float | None = None
 
@@ -63,24 +63,24 @@ class SignalSpec:
 SIGNAL_SPECS: dict[Signal, SignalSpec] = {
     Signal.FLAME: SignalSpec(SignalKind.BINARY, required=True),
     Signal.FLOW: SignalSpec(
-        SignalKind.TEMPERATURE, required=True, max_age_s=30 * MINUTE, low=-20.0, high=110.0
+        SignalKind.TEMPERATURE, required=True, low=-20.0, high=110.0
     ),
-    Signal.RETURN: SignalSpec(SignalKind.TEMPERATURE, max_age_s=30 * MINUTE, low=-20.0, high=110.0),
-    Signal.MODULATION: SignalSpec(SignalKind.PERCENT, max_age_s=30 * MINUTE, low=0.0, high=100.0),
+    Signal.RETURN: SignalSpec(SignalKind.TEMPERATURE, low=-20.0, high=110.0),
+    Signal.MODULATION: SignalSpec(SignalKind.PERCENT, low=0.0, high=100.0),
     Signal.CH_SETPOINT: SignalSpec(
-        SignalKind.TEMPERATURE, max_age_s=30 * MINUTE, low=0.0, high=100.0
+        SignalKind.TEMPERATURE, low=0.0, high=100.0
     ),
     Signal.DHW_ACTIVE: SignalSpec(SignalKind.BINARY),
-    Signal.PRESSURE: SignalSpec(SignalKind.PRESSURE, max_age_s=6 * HOUR, low=0.0, high=6.0),
+    Signal.PRESSURE: SignalSpec(SignalKind.PRESSURE, low=0.0, high=6.0),
     Signal.FLUE_GAS: SignalSpec(
-        SignalKind.TEMPERATURE, max_age_s=30 * MINUTE, low=-20.0, high=300.0
+        SignalKind.TEMPERATURE, low=-20.0, high=300.0
     ),
-    Signal.OUTDOOR: SignalSpec(SignalKind.TEMPERATURE, max_age_s=2 * HOUR, low=-60.0, high=60.0),
+    Signal.OUTDOOR: SignalSpec(SignalKind.TEMPERATURE, low=-60.0, high=60.0),
     Signal.ROOM_SETPOINT: SignalSpec(
-        SignalKind.TEMPERATURE, max_age_s=2 * HOUR, low=0.0, high=40.0
+        SignalKind.TEMPERATURE, low=0.0, high=40.0
     ),
     Signal.ROOM_TEMPERATURE: SignalSpec(
-        SignalKind.TEMPERATURE, max_age_s=2 * HOUR, low=-10.0, high=50.0
+        SignalKind.TEMPERATURE, low=-10.0, high=50.0
     ),
     Signal.CH_ACTIVE: SignalSpec(SignalKind.BINARY),
     Signal.PUMP_RUNNING: SignalSpec(SignalKind.BINARY),

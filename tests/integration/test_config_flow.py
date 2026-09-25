@@ -547,3 +547,21 @@ async def test_control_limits_must_suit_the_setpoint_entity(
     assert result["errors"] == {"off_setpoint": "off_setpoint_outside_entity_range"}
     result = await options_step(hass, result, {"off_setpoint": 20})
     assert result["step_id"] == "control_alarms"
+
+
+async def test_freshness_limits_are_set_per_signal(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """The one way to catch a source that freezes without going unavailable (an MQTT entity
+    without availability): an age limit the user sets."""
+    entry_id = await create_entry(hass, entities, "simple")
+    menu = await hass.config_entries.options.async_init(entry_id)
+    assert "freshness" in menu["menu_options"]
+    result = await options_step(hass, menu, {"next_step_id": "freshness"})
+    assert result["step_id"] == "freshness"
+    assert set(result["data_schema"].schema) == {"flame", "flow"}  # the mapped signals
+    result = await options_step(hass, result, {"flow": 15})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry.options["freshness"] == {"flow": 900.0}

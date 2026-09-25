@@ -247,7 +247,7 @@ confirmed; units are converted; the guard never fights another controller.
 
 | Step | Work |
 |---|---|
-| O1 | one freshness rule for the monitor and control: availability, plus an age limit per signal the user may set in the options flow, with its risk described (P10, P26, P43, S11) |
+| O1 ✅ | one freshness rule for the monitor and control: availability, plus an age limit per signal the user may set in the options flow, with its risk described (P10, P26, P43, S11) |
 | O2 | write guards: the rewrite timeout independent of an earlier "ignored" (P07); an outside change stops every write, heating on/off included, whatever the reaction (P53); `plan_setpoint` split, its retry-plus-change branch tested, failed attempts rate-limited (P82); a value never confirmed while the read-back shows another steady value from the start counts as an outside change (the user); a boiler's DATA-INVALID answer, which clears the OTGW's CS override, told apart from an outside change (L3) |
 | O3 | read-back and state: heating on/off confirmed where an echo exists, under the one-rewrite rule (P22, S12); the setpoint entity shows the confirmed value or unknown, heating on/off marked unverified without an echo (P23); a read-back entity equal to the write entity refused or marked unverified (P75, S23); an OTGW read-back called "confirmed by the gateway" (S24); keep-alives do not move "last change" (P88) |
 | O4 | units: °C and °F converted on write and in the range checks, or a blocker (P11); the setpoint rounded to the entity's step (P87); pressure and power units (P67) |

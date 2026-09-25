@@ -230,6 +230,7 @@
         "description": "Change one section; every other setting stays as it is.",
         "menu_options": {
           "signals": "Boiler signals",
+          "freshness": "Freshness limits",
           "boiler": "Boiler",
           "circuit": "Heating circuits",
           "zones": "VT zones",
@@ -289,6 +290,26 @@
           "room_setpoint": "The room setpoint a wired thermostat sends to the boiler, if there is one. Recorded for the assessment.",
           "room_temperature": "The room temperature a wired thermostat sends to the boiler, if there is one. Recorded for the assessment.",
           "weather": "Its forecasts are recorded for later forecast features and its temperature stands in for a missing outdoor sensor. No data leaves your Home Assistant."
+        }
+      },
+      "freshness": {
+        "title": "Freshness limits",
+        "description": "An age limit per signal, in minutes: a value not reported for longer counts as stale, for the monitor and for control alike — without a fresh flame and flow, control writes nothing and hands back after five minutes. Empty (default): only whether the entity is available counts, since many sources (MQTT among them) report only on change and a steady value is not a stale one. Risk: without a limit, a source that freezes without going unavailable is not caught; a limit shorter than a source's reporting interval stops control in steady weather.",
+        "data": {
+          "flame": "Flame",
+          "flow": "Flow temperature",
+          "return": "Return temperature",
+          "modulation": "Modulation",
+          "dhw_active": "Hot water (DHW) active",
+          "pressure": "Water pressure",
+          "outdoor": "Outdoor temperature (boiler sensor)",
+          "ch_setpoint": "Heating setpoint",
+          "ch_active": "Heating active",
+          "pump_running": "Pump running",
+          "flue_gas": "Flue gas temperature",
+          "gas_meter": "Gas meter",
+          "room_setpoint": "Wired thermostat setpoint",
+          "room_temperature": "Wired thermostat room temperature"
         }
       },
       "boiler": {

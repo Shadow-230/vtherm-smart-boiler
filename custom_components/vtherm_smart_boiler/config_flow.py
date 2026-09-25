@@ -27,6 +27,7 @@ from .const import (
     CIRCUITS,
     CONTROL,
     DOMAIN,
+    FRESHNESS,
     LEVEL,
     LEVEL_ADVANCED,
     LEVEL_SIMPLE,
@@ -152,6 +153,22 @@ def signals_schema(options: dict[str, Any]) -> vol.Schema:
         fields[marker] = _entity(filter_)
     fields[_optional(WEATHER, current)] = _entity({"domain": "weather"})
     return vol.Schema(fields)
+
+
+def freshness_schema(options: dict[str, Any]) -> vol.Schema:
+    """An optional age limit, in minutes, for each mapped signal."""
+    limits = {k: v / 60.0 for k, v in options.get(FRESHNESS, {}).items() if v is not None}
+    return vol.Schema(
+        {_optional(key, limits): _number(1, 1440, 1, "min") for key in options.get(SIGNALS, {})}
+    )
+
+
+def apply_freshness(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    options[FRESHNESS] = {
+        key: float(value) * 60.0
+        for key, value in user_input.items()
+        if key in options.get(SIGNALS, {}) and value not in (None, "")
+    }
 
 
 def boiler_schema(options: dict[str, Any]) -> vol.Schema:
@@ -1037,7 +1054,10 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         )
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        menu = ["signals", "boiler", "circuit", "zones", "building", "reference", "control"]
+        menu = [
+            "signals", "freshness", "boiler", "circuit", "zones", "building", "reference",
+            "control",
+        ]  # fmt: skip
         if _advanced(self.options):
             menu.append("monitor")
         # At the simple level, say when hidden advanced settings are still active.
@@ -1064,6 +1084,16 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             }
         )
         return self.async_show_form(step_id="level", data_schema=schema)
+
+    async def async_step_freshness(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            apply_freshness(self.options, user_input)
+            return await self.async_step_save()
+        return self.async_show_form(
+            step_id="freshness", data_schema=freshness_schema(self.options)
+        )
 
     async def async_step_save(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         problem = validate(self.options)

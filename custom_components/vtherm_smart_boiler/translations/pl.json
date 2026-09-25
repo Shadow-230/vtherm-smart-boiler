@@ -230,6 +230,7 @@
         "description": "Zmień jedną sekcję; wszystkie inne ustawienia zostają bez zmian.",
         "menu_options": {
           "signals": "Sygnały kotła",
+          "freshness": "Limity świeżości",
           "boiler": "Kocioł",
           "circuit": "Obiegi grzewcze",
           "zones": "Strefy VT",
@@ -289,6 +290,26 @@
           "room_setpoint": "Nastawa pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
           "room_temperature": "Temperatura pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
           "weather": "Jej prognozy są zapisywane dla przyszłych funkcji prognozy, a jej temperatura zastępuje brakujący czujnik zewnętrzny. Żadne dane nie opuszczają Twojego Home Assistanta."
+        }
+      },
+      "freshness": {
+        "title": "Limity świeżości",
+        "description": "Limit wieku dla każdego sygnału, w minutach: wartość niezgłoszona dłużej liczy się jako nieświeża, dla monitora i dla sterowania tak samo — bez świeżego płomienia i zasilania sterowanie nic nie zapisuje i po pięciu minutach oddaje kocioł. Puste (domyślnie): liczy się tylko dostępność encji, bo wiele źródeł (m.in. MQTT) zgłasza tylko zmiany, a stała wartość nie jest nieświeża. Ryzyko: bez limitu źródło, które zamarza, nie stając się niedostępne, nie zostanie wykryte; limit krótszy niż odstęp zgłoszeń źródła zatrzyma sterowanie przy stałej pogodzie.",
+        "data": {
+          "flame": "Płomień",
+          "flow": "Temperatura zasilania",
+          "return": "Temperatura powrotu",
+          "modulation": "Modulacja",
+          "dhw_active": "Ciepła woda użytkowa (c.w.u.) aktywna",
+          "pressure": "Ciśnienie wody",
+          "outdoor": "Temperatura zewnętrzna (czujnik kotła)",
+          "ch_setpoint": "Nastawa c.o.",
+          "ch_active": "C.o. aktywne",
+          "pump_running": "Pompa pracuje",
+          "flue_gas": "Temperatura spalin",
+          "gas_meter": "Licznik gazu",
+          "room_setpoint": "Nastawa termostatu przewodowego",
+          "room_temperature": "Temperatura z termostatu przewodowego"
         }
       },
       "boiler": {

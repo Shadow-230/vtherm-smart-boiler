@@ -160,14 +160,18 @@ async def test_missing_entities_show_as_signal_problems(hass: HomeAssistant) -> 
     assert problems.state == "2"
 
 
-async def test_stale_flow_turns_hot_water_off(
-    hass: HomeAssistant, freezer, zones: FakeZones
+@pytest.mark.parametrize(("limit", "stale"), [(None, False), (1800.0, True)])
+async def test_a_steady_flow_is_stale_only_past_a_user_limit(
+    hass: HomeAssistant, freezer, zones: FakeZones, limit: float | None, stale: bool
 ) -> None:
+    """One freshness rule: many sources report only on change, so a flow steady for an hour is
+    still fresh — unless the user set a shorter age limit for it."""
     freezer.move_to(datetime(2026, 1, 10, 12, tzinfo=UTC))
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0})
     living = zones.add("living", hvac_action="heating", valve_open_percent=50)
-    entry = entry_for(boiler, zones)
+    extra = {} if limit is None else {"freshness": {"flow": limit}}
+    entry = entry_for(boiler, zones, **extra)
     await setup(hass, entry)
     hot_id = entity_id(hass, entry, "binary_sensor", f"hot_water_{living}")
     assert hass.states.get(hot_id).state == "on"
@@ -176,8 +180,9 @@ async def test_stale_flow_turns_hot_water_off(
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
     state = hass.states.get(hot_id)
-    assert state.state == "off"
-    assert state.attributes["reason"] == "flow_stale"
+    assert (state.state == "off") is stale
+    if stale:
+        assert state.attributes["reason"] == "flow_stale"
 
 
 async def test_replayed_history_reaches_the_verdict(

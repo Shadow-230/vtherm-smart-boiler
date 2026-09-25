@@ -24,23 +24,28 @@ NOW = 100 * HOUR
 
 
 def test_signal_health() -> None:
+    """One freshness rule for the monitor and control: a steady reading is not a stale one —
+    many sources report only on change — so without a limit the user set, age never counts."""
     snapshot = BoilerSnapshot(
         NOW,
         {
-            Signal.FLAME: Reading(False, NOW - 20 * HOUR),  # binary: no age limit
-            Signal.FLOW: Reading(40.0, NOW - 2 * HOUR),  # older than 30 min
+            Signal.FLAME: Reading(False, NOW - 20 * HOUR),
+            Signal.FLOW: Reading(40.0, NOW - 2 * HOUR),  # steady for two hours
             Signal.RETURN: Reading(None, NOW),
             Signal.PRESSURE: Reading(1.5, NOW - HOUR),
         },
     )
     health = check_signals(snapshot)
     assert health[Signal.FLAME] == SignalHealth(SignalStatus.OK, True, 20 * HOUR)
-    assert health[Signal.FLOW] == SignalHealth(SignalStatus.STALE, True, 2 * HOUR)
+    assert health[Signal.FLOW] == SignalHealth(SignalStatus.OK, True, 2 * HOUR)
     assert health[Signal.RETURN].status is SignalStatus.UNAVAILABLE
     assert health[Signal.PRESSURE].status is SignalStatus.OK
     assert health[Signal.GAS_METER] == SignalHealth(SignalStatus.NOT_MAPPED, False)
     assert set(health) == set(Signal)
-    assert required_problems(health) == [Signal.FLOW]
+    assert required_problems(health) == []
+    limited = check_signals(snapshot, {Signal.FLOW: HOUR})
+    assert limited[Signal.FLOW] == SignalHealth(SignalStatus.STALE, True, 2 * HOUR)
+    assert required_problems(limited) == [Signal.FLOW]
 
 
 def test_freshness_limits_can_be_overridden() -> None:

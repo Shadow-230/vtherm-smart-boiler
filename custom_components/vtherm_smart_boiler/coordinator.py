@@ -69,7 +69,7 @@ from .core.signal_check import (
     features,
     required_problems,
 )
-from .core.signals import SIGNAL_SPECS, Signal
+from .core.signals import Signal
 from .core.supply import circuit_supply
 from .forecasts import ForecastRecorder
 from .transport.entities import (
@@ -359,7 +359,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         return self._compute(dt_util.utcnow().timestamp())
 
     def _max_age(self, signal: Signal) -> float | None:
-        return self.config.freshness.get(signal, SIGNAL_SPECS[signal].max_age_s)
+        return self.config.freshness.get(signal)  # one rule: only a limit the user set
 
     def _compute(self, now: float) -> MonitorData:
         config = self.config

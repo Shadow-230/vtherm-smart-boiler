@@ -1258,3 +1258,21 @@ async def test_a_stuck_outdoor_sensor_leaves_the_curve(
     coordinator.analysis = real
     await rig.advance(10)
     assert rig.state("binary_sensor", "alarm_outdoor_sensor_suspect").state == "off"
+
+
+async def test_a_user_freshness_limit_stops_writes_on_a_frozen_source(rig: Rig) -> None:
+    """The flow stops reporting while its entity stays available (MQTT without availability):
+    with a limit of ten minutes set, nothing is written after it, and control hands back."""
+    entry_options = options(rig.zones) | {"freshness": {"flow": 600.0}}
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=entry_options)
+    entry.add_to_hass(rig.hass)
+    assert await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    rig.entry = entry
+    await rig.switch(True)
+    rig.flow_reported = False
+    await rig.advance(660)
+    count = len(rig.gateway.calls)
+    assert rig.state("sensor", "control_state").state == "waiting_data"
+    await rig.advance(300)
+    assert rig.gateway.calls[count:] == [("ch", True), ("setpoint", 0.0)]
