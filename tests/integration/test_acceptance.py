@@ -63,6 +63,7 @@ class Rig:
     entry: MockConfigEntry | None = None
     vt_mode: str = "heat"  # the HVAC mode VT gives its thermostats (VT's own modes act on it)
     over_climate: set[str] = field(default_factory=set)  # zones of VT's over_climate type
+    modes: dict[str, str] = field(default_factory=dict)  # a zone's own mode, over ``vt_mode``
     calls: list[tuple[float, str, str, dict[str, Any]]] = field(default_factory=list)
 
     @property
@@ -79,14 +80,15 @@ class Rig:
             opening = self.sim.opening(zone.zone_id)
             index = [z.zone_id for z in self.sim.zones].index(zone.zone_id)
             entity_id = self.zones.entities[zone.zone_id]
-            if self.vt_mode == "unavailable":
+            mode = self.modes.get(zone.zone_id, self.vt_mode)
+            if mode == "unavailable":
                 self.hass.states.async_set(entity_id, "unavailable", {})
                 continue
             if zone.zone_id in self.over_climate:
                 # It drives a device with its own regulation: no opening, only whether it heats.
                 self.hass.states.async_set(
                     entity_id,
-                    self.vt_mode,
+                    mode,
                     {
                         "current_temperature": round(self.sim.room(zone.zone_id), 1),
                         "temperature": self.sim.plant.targets[index],
@@ -96,7 +98,7 @@ class Rig:
                 continue
             self.zones.set(
                 zone.zone_id,
-                self.vt_mode,
+                mode,
                 current_temperature=round(self.sim.room(zone.zone_id), 1),
                 temperature=self.sim.plant.targets[index],
                 hvac_action="heating" if opening > 0.05 else "idle",
@@ -384,6 +386,28 @@ async def test_vt_stopped_means_no_demand_not_a_hand_back(rig: Rig) -> None:
     assert rig.gateway("ch")[-1][2] is True
 
 
+async def test_vt_stopped_leaves_a_zone_outside_the_central_mode_heating(rig: Rig) -> None:
+    """VT applies "Stopped" only to the thermostats that follow the central mode: one that does
+    not keeps asking for heat, and the plugin heats for it."""
+    hass = rig.hass
+    select = er.async_get(hass).async_get_or_create("select", VT_PLATFORM, "central_mode")
+    hass.states.async_set(select.entity_id, "Auto")
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(60)
+    hass.states.async_set(select.entity_id, "Stopped")
+    rig.vt_mode = "off"
+    rig.modes[rig.sim.zones[0].zone_id] = "heat"  # not controlled by the central mode
+    plant = rig.sim.plant
+    plant.room[0] = plant.targets[0] - 2.0
+    rig.sim.advance(rig.now())
+    rig.mirror_zones()
+    await rig.advance(20)
+    assert rig.gateway("ch")[-1][2] is True
+    assert "demand" in rig.state("sensor", "control_state").attributes["reasons"]
+    assert 0.0 not in rig.setpoints()
+
+
 async def test_frost_protection_heats_while_vt_is_off(rig: Rig) -> None:
     """Summer and winter come from VT: with its zones off nothing heats, but a room close to
     freezing still gets heat."""
@@ -534,6 +558,57 @@ async def test_a_store_that_cannot_be_read_hands_back_first(
     assert "Could not read the stored data" in caplog.text
     assert [(k, v) for _t, k, v in rig.gateway()][:2] == [("ch", True), ("setpoint", 0.0)]
     assert rig.state("switch", "control").state == "off"
+
+
+async def test_a_stored_latch_and_an_owed_hand_back_both_hold(rig: Rig) -> None:
+    """The last run was latched by an alarm and still owed the hand-back: it is made in full
+    first, and the latch keeps control off until the user switches it off and on."""
+    await start(
+        rig,
+        stored={
+            "control": {
+                "controlling": True,
+                "latched": True,
+                "latched_by": ["outside_change"],
+                "hand_back_pending": True,
+            }
+        },
+    )
+    await rig.advance(30)
+    assert [(k, v) for _t, k, v in rig.gateway()][:2] == [("ch", True), ("setpoint", 0.0)]
+    count = len(rig.gateway())
+    await rig.switch(True)
+    await rig.advance(120)
+    assert len(rig.gateway()) == count  # latched: nothing written
+    control_state = rig.state("sensor", "control_state")
+    assert control_state.state == "handed_back"
+    assert control_state.attributes["latched_by"] == ["outside_change"]
+    await rig.switch(False)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.sim.plant.override_active(rig.now())  # the user's off and on cleared it
+
+
+async def test_reloads_leave_exactly_one_control_loop(rig: Rig) -> None:
+    """A reload that left an old loop running would drive the boiler from two loops at once (a
+    VT user's report): after three reloads the gateway gets what one loop sends."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(600)
+    before = len(rig.gateway())
+    await rig.advance(300)
+    one_loop = len(rig.gateway()) - before
+    assert rig.entry is not None
+    for _ in range(3):
+        assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
+        await rig.hass.async_block_till_done()
+        await rig.advance(20)
+    await rig.advance(300)  # the ramp after a reload settles
+    after = len(rig.gateway())
+    await rig.advance(300)
+    assert one_loop > 0
+    assert len(rig.gateway()) - after <= one_loop + 2
+    assert rig.sim.plant.override_active(rig.now())  # control resumed
 
 
 # --- VT's zones as VT has them ------------------------------------------------------------

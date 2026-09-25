@@ -954,6 +954,21 @@ async def test_an_unclean_restart_hands_back_when_control_does_not_resume(
     assert entry.runtime_data.control.stored()["controlling"] is False
 
 
+async def test_an_unclean_restart_with_control_on_hands_back_first_then_resumes(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """The last run held the boiler and ended without a hand-back, and control is to stay on:
+    what that run left is given back in full first, then control takes the boiler afresh."""
+    mock_restore_cache(rig.hass, [State("switch.boiler_boiler_control_experimental", "on")])
+    await start_with_stored(rig, hass_storage, {"controlling": True})
+    await rig.advance(20)
+    calls = rig.gateway.calls
+    back = calls.index(("setpoint", 0.0))
+    assert calls[back - 1] == ("ch", True)  # CH=1, then CS=0
+    assert rig.gateway.setpoints()[-1] == EXPECTED  # then control again
+    assert rig.state("switch", "control").state == "on"
+
+
 async def test_a_write_reported_failed_is_still_handed_back(rig: Rig) -> None:
     """A write that timed out may still have reached the boiler: the next hand-back is not
     skipped as if nothing had been written."""
@@ -1215,6 +1230,34 @@ async def test_the_one_rewrite_is_remembered_across_a_restart(
     await rig.advance(20)
     assert rig.gateway.setpoints().count(EXPECTED) == 1  # not written again
     assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
+
+
+async def test_a_day_after_the_one_rewrite_another_outside_change_is_rewritten(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """The one rewrite is per day: more than a day after it, an outside change is rewritten
+    once again before it counts as another controller."""
+    now = START.timestamp()
+    mock_restore_cache(rig.hass, [State("switch.boiler_boiler_control_experimental", "on")])
+    await start_with_stored(rig, hass_storage, {"rewritten_at": now - 25 * 3600.0})
+    await rig.advance(20)
+    rig.gateway.forced = 60.0
+    await rig.advance(20)
+    assert rig.gateway.setpoints().count(EXPECTED) == 2  # rewritten once more
+
+
+async def test_a_latch_holds_through_a_day_and_a_night(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """Nothing lets a latch lapse with time: a day later, still nothing is written."""
+    await start_with_stored(rig, hass_storage, {"latched": True, "latched_by": ["pressure_low"]})
+    await rig.advance(120)
+    await rig.switch(True)
+    await rig.advance(25 * 3600, step=60.0)
+    assert rig.gateway.calls == []
+    control_state = rig.state("sensor", "control_state")
+    assert control_state.state == "handed_back"
+    assert control_state.attributes["latched_by"] == ["pressure_low"]
 
 
 @pytest.mark.parametrize("topology", ["gateway_standalone", "gateway_with_thermostat"])

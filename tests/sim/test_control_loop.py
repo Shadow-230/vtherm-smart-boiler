@@ -36,15 +36,26 @@ LOOP = LoopConfig(
 
 @dataclass
 class LoopController:
-    """The plugin's control step wired to the simulator, as the integration will wire it."""
+    """The plugin's control step wired to the simulator, as the integration will wire it.
+
+    Every command ``loop_step`` returns is recorded before anything decides whether it reaches
+    the boiler, so the tests judge the plugin's commands, not what the wiring let through.
+    """
 
     config: LoopConfig
     enabled: Callable[[float], bool] = lambda _t: True
     link: Callable[[float], bool] = lambda _t: True
     state: LoopState = field(default_factory=LoopState)
-    setpoints: list[tuple[float, float]] = field(default_factory=list)
+    setpoints: list[tuple[float, float]] = field(default_factory=list)  # setpoint writes
+    switches: list[tuple[float, bool]] = field(default_factory=list)  # heating on/off writes
     hand_backs: list[float] = field(default_factory=list)
     heating: list[tuple[float, bool | None, bool]] = field(default_factory=list)  # t, on, called
+
+    def writes(self, start: float, end: float) -> list[tuple[float, object]]:
+        """Every setpoint and heating write ``loop_step`` asked for in ``[start, end)``."""
+        return sorted(
+            (t, value) for t, value in [*self.setpoints, *self.switches] if start <= t < end
+        )
 
     def __call__(self, t: float, view: SimView) -> SimCommand | None:
         link = self.link(t)
@@ -71,15 +82,17 @@ class LoopController:
         self.state, out = loop_step(self.state, inputs, confirmed, self.config)
         called = any(z.opening > 0.05 for z in view.zones)
         self.heating.append((t, out.heating_on, called))
+        if out.setpoint is not None:
+            self.setpoints.append((t, out.setpoint.value))
+        if out.ch_enable is not None:
+            self.switches.append((t, out.ch_enable))
         if out.hand_back:
             self.hand_backs.append(t)
             return SimCommand(hand_back=True)
         if not link:
-            return None  # nothing reaches a gateway the plugin cannot hear
+            return None  # the gateway the plugin cannot hear gets nothing either
         if out.setpoint is None and out.ch_enable is None:
             return None
-        if out.setpoint is not None:
-            self.setpoints.append((t, out.setpoint.value))
         return SimCommand(
             ch_enable=out.ch_enable,
             setpoint=out.setpoint.value if out.setpoint is not None else None,
@@ -136,13 +149,24 @@ def test_a_cycling_boiler_is_never_held_off_while_the_zones_call() -> None:
     starts = [b.start for b in find_burns(flame, 0, 2 * DAY) if b.start_seen]
     assert len(starts) > 2 * 24  # it does cycle a lot
     assert all(on for _t, on, called in controller.heating if called)
+    # The heating writes themselves: never "off" while a zone called at that step.
+    called_at = {t: called for t, _on, called in controller.heating}
+    assert controller.switches
+    assert not [t for t, on in controller.switches if not on and called_at[t]]
 
 
 def test_lost_link_writes_nothing_and_the_override_lapses() -> None:
+    """Twenty minutes without the boiler's data: ``loop_step`` asks for no write at all, only
+    for one hand-back once the data has been missing for five minutes."""
     outage = (10 * HOUR, 10 * HOUR + 20 * 60)
     controller = LoopController(LOOP, link=lambda t: not outage[0] <= t < outage[1])
     result = simulate(scenario([0.0], controller))
-    assert not any(outage[0] <= t < outage[1] for t, _v in controller.setpoints)
+    assert controller.writes(0.0, outage[0])  # it was writing before
+    assert controller.writes(*outage) == []
+    during = [t for t in controller.hand_backs if outage[0] <= t < outage[1]]
+    assert len(during) == 1
+    assert during[0] >= outage[0] + 5 * 60 - 60.0
+    assert controller.writes(outage[1], outage[1] + HOUR)  # and again once it is back
     flame = result.history.signal(Signal.FLAME)
     # Without a thermostat the boiler stops once the override lapses (about a minute) ...
     assert flame.value_at(outage[0] + 5 * 60) is False
@@ -157,7 +181,7 @@ def test_hand_back_returns_the_boiler_to_its_own_control() -> None:
     result = simulate(scenario([2.0], controller, without_override=WithoutOverride.OWN_CURVE))
     assert len(controller.hand_backs) == 1
     assert switch_off <= controller.hand_backs[0] < switch_off + 60.0
-    assert not any(t > controller.hand_backs[0] for t, _v in controller.setpoints)
+    assert controller.writes(controller.hand_backs[0], 2 * DAY) == []  # nothing after it
     setpoint = result.history.signal(Signal.CH_SETPOINT)
     own = BOILERS["condensing_large"]
     later = setpoint.value_at(switch_off + HOUR)
