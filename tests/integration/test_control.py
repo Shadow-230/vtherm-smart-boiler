@@ -1194,3 +1194,17 @@ async def test_frost_heating_that_does_not_warm_the_room_raises_an_alarm(rig: Ri
     rig.zones.set("living", "off", current_temperature=8.0, hvac_action="off")
     await rig.advance(60, step=60)
     assert rig.state("binary_sensor", "alarm_frost_not_warming").state == "off"
+
+
+async def test_the_switch_says_how_off_is_sent(rig: Rig) -> None:
+    """Through the heating switch (on an OpenTherm Gateway, CH=0) where there is one; else as a
+    low setpoint, which may leave the CH pump running."""
+    await start(rig)
+    assert rig.state("switch", "control").attributes["off_by"] == "heating_switch"
+
+
+async def test_without_a_heating_switch_off_is_a_low_setpoint(rig: Rig) -> None:
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(rig, **held_entity(number))
+    assert rig.state("switch", "control").attributes["off_by"] == "low_setpoint"

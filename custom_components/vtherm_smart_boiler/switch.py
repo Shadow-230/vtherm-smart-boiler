@@ -57,6 +57,9 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
             "experimental": True,
             "blockers": list(status.blockers),
             "hand_back_effect": None if effect is None else effect.value,
+            # How "off" reaches the boiler: a heating switch really switches heating off; a low
+            # setpoint may leave the boiler's CH pump running.
+            "off_by": "heating_switch" if self.control.options.loop.ch_writes else "low_setpoint",
             "allowed_services": sorted(f"{d}.{s}" for d, s in self.control.allowed_services),
         }
 

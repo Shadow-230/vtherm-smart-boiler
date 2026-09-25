@@ -547,7 +547,7 @@
         "data_description": {
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
           "decision_interval_min": "Jak często nastawa jest wyznaczana na nowo, w minutach. Domyślnie 5.",
-          "off_setpoint": "Zapisywana jako „wyłączone”, gdy nie ma przełącznika grzania, w °C. Domyślnie 10 °C.",
+          "off_setpoint": "Nastawa zapisywana jako „wyłącz”, gdy nie ma przełącznika grzania, w °C. Domyślnie 10: dużo poniżej każdej wartości grzania i poniżej najniższej nastawy zasilania. Ryzyko: niska nastawa nie wyłącza grzania w kotle — mastery ESPHome i DIYLess zostawiają CH włączone, a kotły według zgłoszeń dalej pracują pompą CH; przełącznik grzania albo CH=0 bramki OpenTherm naprawdę wyłącza grzanie.",
           "count_threshold": "Grzanie jest potrzebne, gdy co najmniej tyle stref wzywa ciepła. Domyślnie 1; najwyżej liczba stref. 0 wyłącza liczenie stref, zostawiając sam próg mocy albo otwarcia, jak w Versatile Thermostat.",
           "power_threshold_kw": "Opcjonalnie: grzanie jest potrzebne, gdy moc wołających stref sumuje się do tej wartości, w kW.",
           "opening_threshold": "Opcjonalnie: grzanie jest potrzebne, gdy otwarcia zaworów stref sumują się do tej wartości, w %.",
