@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 import pytest
+from custom_components.boiler_sim.profiles import BOILERS, HOUSES, radiator_zones
 
 from custom_components.vtherm_smart_boiler.core.controller import ControlConfig, ControlInputs
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
@@ -15,7 +16,6 @@ from custom_components.vtherm_smart_boiler.core.limits import FlowLimits
 from custom_components.vtherm_smart_boiler.core.loop import LoopConfig, LoopState, loop_step
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 from custom_components.vtherm_smart_boiler.core.signals import Signal
-from sim.profiles import BOILERS, HOUSES, radiator_zones
 from sim.simulator import (
     DAY,
     HOUR,

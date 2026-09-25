@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from custom_components.boiler_sim.profiles import BOILERS, HOUSES, radiator_zones
 
 from custom_components.vtherm_smart_boiler.core.alarms import AlarmKind
 from custom_components.vtherm_smart_boiler.core.analysis import ReportUnit, analyse
@@ -12,7 +13,6 @@ from custom_components.vtherm_smart_boiler.core.report import Cause
 from custom_components.vtherm_smart_boiler.core.signal_check import OutdoorStatus
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 from custom_components.vtherm_smart_boiler.core.verdict import Verdict
-from sim.profiles import BOILERS, HOUSES, radiator_zones
 from sim.simulator import DAY, DhwSchedule, Scenario, daily_cycle, entered_parameters, simulate
 
 

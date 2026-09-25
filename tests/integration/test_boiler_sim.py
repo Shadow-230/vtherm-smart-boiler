@@ -3,7 +3,10 @@ the scenario services the acceptance scenarios use."""
 
 from __future__ import annotations
 
+import ast
+import sys
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from homeassistant.core import HomeAssistant
@@ -12,6 +15,29 @@ from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 START = datetime(2026, 1, 12, 8, tzinfo=UTC)
+
+
+def test_the_component_imports_only_what_home_assistant_can() -> None:
+    """P55: Home Assistant keeps ``/config`` on the import path only while it imports
+    ``custom_components``, so the simulator carries its physics: it imports itself, the
+    plugin's core, Home Assistant, voluptuous and the standard library — nothing from ``sim/``."""
+    component = Path(__file__).resolve().parents[2] / "sim/custom_components/boiler_sim"
+    allowed = {"homeassistant", "voluptuous", *sys.stdlib_module_names}
+    imported: list[tuple[str, str]] = []
+    for path in component.rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                imported.append((path.name, node.module))
+            elif isinstance(node, ast.Import):
+                imported.extend((path.name, alias.name) for alias in node.names)
+    assert imported, "the walk found no imports"
+    outside = [
+        (name, module)
+        for name, module in imported
+        if module.split(".")[0] not in allowed
+        and not module.startswith("custom_components.vtherm_smart_boiler.core")
+    ]
+    assert outside == []
 
 
 async def setup_sim(hass: HomeAssistant, freezer, **conf) -> None:

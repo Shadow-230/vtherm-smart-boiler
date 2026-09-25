@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
+from custom_components.boiler_sim.profiles import BOILERS, HOUSES, radiator_zones
 
 from custom_components.vtherm_smart_boiler.core.building import fit_daily_load
 from custom_components.vtherm_smart_boiler.core.cycles import BurnKind
@@ -12,7 +13,6 @@ from custom_components.vtherm_smart_boiler.core.monitor import daily_points, sum
 from custom_components.vtherm_smart_boiler.core.parameters import Estimate, ParameterKey, Source
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 from custom_components.vtherm_smart_boiler.core.verdict import ReasonCode, Verdict
-from sim.profiles import BOILERS, HOUSES, radiator_zones
 from sim.simulator import (
     DAY,
     DEFAULT_SIGNALS,

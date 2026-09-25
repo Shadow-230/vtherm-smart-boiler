@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from sim.plant import Plant, WithoutOverride
-from sim.profiles import BOILERS, HOUSES, radiator_zones
+from custom_components.boiler_sim.plant import Plant, WithoutOverride
+from custom_components.boiler_sim.profiles import BOILERS, HOUSES, radiator_zones
 
 
 def plant(**kwargs) -> Plant:

@@ -39,9 +39,12 @@ Claude connects to this instance only after you say to start, only at the addres
 
 ## 3. Deploy
 
-- `scripts/deploy_test.sh --dry-run` lists what would be copied.
-- `scripts/deploy_test.sh` copies the plugin, the vendored VT and SmartPI, the simulator and
-  `configuration.yaml`, then starts or restarts the container.
+- `scripts/deploy_test.sh --dry-run` lists what would be copied; it needs no key and connects
+  nowhere.
+- `scripts/deploy_test.sh` copies the plugin, the vendored VT and SmartPI, the simulator (which
+  carries its physics) and `configuration.yaml` as files — links into `vendor/` followed — in one
+  tar stream over SSH, so only `tar` and `ssh` are needed on either side; each integration
+  replaces its old copy whole. Then it starts or restarts the container.
 - First start: open the URL, create the owner account, set the location and metric units.
 
 `configuration.yaml` has no `default_config`, so nothing scans the local network. Only

@@ -1,4 +1,4 @@
-"""Whole scenarios on the simulated plant (``sim.plant``), producing the core's ``History``.
+"""Whole scenarios on the simulated plant (``boiler_sim.plant``), producing the core's ``History``.
 
 A scenario sets the plant, the weather, hot water runs and optionally an external controller
 called every control period with what it would see; the result holds the recorded signals and
@@ -11,6 +11,17 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
+from custom_components.boiler_sim.plant import (
+    DEMAND_OPENING,
+    HOUR,
+    WATER_KWH_PER_L_K,
+    Plant,
+    WithoutOverride,
+    boiler_setpoint,
+)
+from custom_components.boiler_sim.plant import reference_outputs as _reference_outputs
+from custom_components.boiler_sim.profiles import BoilerProfile, HouseProfile, ZoneProfile
+
 from custom_components.vtherm_smart_boiler.core.history import History, ZoneSeries
 from custom_components.vtherm_smart_boiler.core.parameters import (
     Estimate,
@@ -20,17 +31,6 @@ from custom_components.vtherm_smart_boiler.core.parameters import (
 )
 from custom_components.vtherm_smart_boiler.core.series import Series
 from custom_components.vtherm_smart_boiler.core.signals import Signal
-
-from .plant import (
-    DEMAND_OPENING,
-    HOUR,
-    WATER_KWH_PER_L_K,
-    Plant,
-    WithoutOverride,
-    boiler_setpoint,
-)
-from .plant import reference_outputs as _reference_outputs
-from .profiles import BoilerProfile, HouseProfile, ZoneProfile
 
 __all__ = [
     "DAY",

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from custom_components.boiler_sim.profiles import BOILERS, HOUSES, radiator_zones
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
@@ -12,7 +13,6 @@ from pytest_homeassistant_custom_component.common import async_fire_time_changed
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 from custom_components.vtherm_smart_boiler.units import signal_value
 from custom_components.vtherm_smart_boiler.vtherm_attributes import zone_values
-from sim.profiles import BOILERS, HOUSES, radiator_zones
 from sim.simulator import Scenario, daily_cycle, simulate
 
 from .harness import (

@@ -1,6 +1,6 @@
 # The test Home Assistant, run in the dedicated test LXC only (docs/plan-0.2.md, J1).
-# scripts/deploy_test.sh syncs this directory's neighbours to the LXC and starts it; nothing
-# here is ever pointed at another Home Assistant.
+# scripts/deploy_test.sh copies this file, config/configuration.yaml and the integrations next to
+# it on the LXC and starts it; nothing here is ever pointed at another Home Assistant.
 services:
   homeassistant:
     image: ghcr.io/home-assistant/home-assistant:2026.9.3  # the version the plugin is built on
@@ -12,10 +12,10 @@ services:
       - "8123:8123"
     volumes:
       - ./config:/config
-      # Everything under test is mounted read-only: the plugin, VT and SmartPI as vendored,
-      # and the test-only simulator with the physics it imports (``sim``).
-      - ./plugin/custom_components/vtherm_smart_boiler:/config/custom_components/vtherm_smart_boiler:ro
-      - ./plugin/vendor/custom_components/versatile_thermostat:/config/custom_components/versatile_thermostat:ro
-      - ./plugin/vendor/custom_components/vtherm_smartpi:/config/custom_components/vtherm_smartpi:ro
-      - ./plugin/sim/custom_components/boiler_sim:/config/custom_components/boiler_sim:ro
-      - ./plugin/sim:/config/sim:ro
+      # Everything under test is mounted read-only: the plugin, VT and SmartPI as vendored, and
+      # the test-only simulator, which carries its physics (Home Assistant keeps /config on the
+      # import path only while it imports custom_components).
+      - ./custom_components/vtherm_smart_boiler:/config/custom_components/vtherm_smart_boiler:ro
+      - ./custom_components/versatile_thermostat:/config/custom_components/versatile_thermostat:ro
+      - ./custom_components/vtherm_smartpi:/config/custom_components/vtherm_smartpi:ro
+      - ./custom_components/boiler_sim:/config/custom_components/boiler_sim:ro

@@ -1,6 +1,6 @@
 """Boiler simulator for the test Home Assistant only — never part of a release.
 
-A simulated boiler, water loop, house and zones (``sim.plant``) behind entities like a real
+A simulated boiler, water loop, house and zones (``plant``) behind entities like a real
 installation's: boiler signals, room temperatures, zone valve switches for VT's thermostats, a
 weather entity, a writable flow setpoint with an external-control switch, and an OpenTherm
 Gateway-like command path — the ``opentherm_gw`` services, registered only while the real

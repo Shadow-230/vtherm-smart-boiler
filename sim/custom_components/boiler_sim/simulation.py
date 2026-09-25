@@ -1,6 +1,6 @@
 """The simulated installation behind the test component; no Home Assistant imports.
 
-It wraps the plant (``sim.plant``) with what a real installation adds around it: how writes
+It wraps the plant (``plant``) with what a real installation adds around it: how writes
 reach the boiler (an OpenTherm-Gateway-like command path or a writable setpoint of a given write
 type, an external-control switch), zone valves driven by zone thermostats or thermostatic heads,
 hot water runs, and faults for scenarios — a failed signal, another controller writing, a boiler
@@ -13,8 +13,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from sim.plant import Plant, PlantOutput, WithoutOverride
-from sim.profiles import (
+from .plant import Plant, PlantOutput, WithoutOverride
+from .profiles import (
     BOILERS,
     HOUSES,
     ZoneProfile,

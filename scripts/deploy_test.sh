@@ -4,6 +4,10 @@
 #
 # Usage: scripts/deploy_test.sh [--dry-run]
 #
+# Everything is packed here into one tar stream — links followed, so the host receives files,
+# never links into vendor/ — and unpacked there over SSH: only tar and ssh are needed on either
+# side. --dry-run packs the same stream and lists it; it reads no key and connects nowhere.
+#
 # It connects only to TEST_HA_HOST from devenv/local.env, with the key and known hosts kept in
 # devenv/ssh/ (both git-ignored), so nothing in the home directory changes. It never touches
 # any other Home Assistant.
@@ -13,20 +17,16 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$ROOT/devenv/local.env"
 SSH_DIR="$ROOT/devenv/ssh"
 
-if [ ! -f "$ENV_FILE" ]; then
-    echo "devenv/local.env is missing: copy devenv/local.env.example and fill it in." >&2
-    exit 1
-fi
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-: "${TEST_HA_HOST:?TEST_HA_HOST is empty in devenv/local.env}"
-: "${TEST_HA_SSH_USER:?TEST_HA_SSH_USER is empty in devenv/local.env}"
-: "${TEST_HA_DIR:?TEST_HA_DIR is empty in devenv/local.env}"
-KEY="$SSH_DIR/id_ed25519"
-if [ ! -f "$KEY" ]; then
-    echo "devenv/ssh/id_ed25519 is missing (see devenv/README.md)." >&2
-    exit 1
-fi
+DRY_RUN=false
+case "${1:-}" in
+    "") ;;
+    --dry-run) DRY_RUN=true ;;
+    *)
+        echo "usage: scripts/deploy_test.sh [--dry-run]" >&2
+        exit 2
+        ;;
+esac
+
 for needed in "$ROOT/vendor/custom_components/versatile_thermostat" \
               "$ROOT/vendor/custom_components/vtherm_smartpi"; do
     if [ ! -d "$needed" ]; then
@@ -35,27 +35,72 @@ for needed in "$ROOT/vendor/custom_components/versatile_thermostat" \
     fi
 done
 
-DRY=()
-if [ "${1:-}" = "--dry-run" ]; then
-    DRY=(--dry-run)
+# The directory on the host mirrors the stream: compose.yaml, config/configuration.yaml (the
+# rest of config/ belongs to the running instance) and the four integrations, which compose.yaml
+# mounts read-only.
+COMPONENTS=(vtherm_smart_boiler versatile_thermostat vtherm_smartpi boiler_sim)
+pack() {
+    tar -c -f - --dereference --exclude __pycache__ --exclude '*.pyc' \
+        -C "$ROOT/devenv" compose.yaml config/configuration.yaml \
+        -C "$ROOT" custom_components/vtherm_smart_boiler \
+        -C "$ROOT/vendor" custom_components/versatile_thermostat custom_components/vtherm_smartpi \
+        -C "$ROOT/sim" custom_components/boiler_sim
+}
+
+if [ -f "$ENV_FILE" ]; then
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+fi
+
+if [ "$DRY_RUN" = true ]; then
+    echo "Would deploy to ${TEST_HA_HOST:-<TEST_HA_HOST, not set>}:${TEST_HA_DIR:-<TEST_HA_DIR, not set>}:"
+    pack | tar -t -v -f -
+    exit 0
+fi
+
+if [ ! -f "$ENV_FILE" ]; then
+    echo "devenv/local.env is missing: copy devenv/local.env.example and fill it in." >&2
+    exit 1
+fi
+: "${TEST_HA_HOST:?TEST_HA_HOST is empty in devenv/local.env}"
+: "${TEST_HA_SSH_USER:?TEST_HA_SSH_USER is empty in devenv/local.env}"
+: "${TEST_HA_DIR:?TEST_HA_DIR is empty in devenv/local.env}"
+# The deploy replaces directories under TEST_HA_DIR: never a top-level directory or a relative one.
+case "$TEST_HA_DIR" in
+    /*/*) ;;
+    *)
+        echo "TEST_HA_DIR must be an absolute path below a top-level directory." >&2
+        exit 1
+        ;;
+esac
+case "$TEST_HA_DIR${TZ:-}" in
+    *"'"*)
+        echo "TEST_HA_DIR and TZ must not contain a quote." >&2
+        exit 1
+        ;;
+esac
+KEY="$SSH_DIR/id_ed25519"
+if [ ! -f "$KEY" ]; then
+    echo "devenv/ssh/id_ed25519 is missing (see devenv/README.md)." >&2
+    exit 1
 fi
 
 SSH=(ssh -i "$KEY" -o IdentitiesOnly=yes -o "UserKnownHostsFile=$SSH_DIR/known_hosts"
-     -o StrictHostKeyChecking=accept-new)
-TARGET="$TEST_HA_SSH_USER@$TEST_HA_HOST"
-RSYNC=(rsync -a --delete --exclude __pycache__ --exclude '*.pyc' "${DRY[@]}" -e "${SSH[*]}")
+     -o StrictHostKeyChecking=accept-new "$TEST_HA_SSH_USER@$TEST_HA_HOST")
 
-"${SSH[@]}" "$TARGET" "mkdir -p '$TEST_HA_DIR/config' '$TEST_HA_DIR/plugin/vendor/custom_components' '$TEST_HA_DIR/plugin/custom_components'"
-"${RSYNC[@]}" "$ROOT/devenv/compose.yaml" "$TARGET:$TEST_HA_DIR/compose.yaml"
-# configuration.yaml only: the rest of config/ belongs to the running instance.
-"${RSYNC[@]}" "$ROOT/devenv/config/configuration.yaml" "$TARGET:$TEST_HA_DIR/config/configuration.yaml"
-"${RSYNC[@]}" "$ROOT/custom_components/vtherm_smart_boiler" "$TARGET:$TEST_HA_DIR/plugin/custom_components/"
-"${RSYNC[@]}" "$ROOT/vendor/custom_components/versatile_thermostat" \
-              "$ROOT/vendor/custom_components/vtherm_smartpi" \
-              "$TARGET:$TEST_HA_DIR/plugin/vendor/custom_components/"
-"${RSYNC[@]}" --exclude custom_components/boiler_sim/__pycache__ "$ROOT/sim" "$TARGET:$TEST_HA_DIR/plugin/"
-
-if [ "${#DRY[@]}" -eq 0 ]; then
-    "${SSH[@]}" "$TARGET" "cd '$TEST_HA_DIR' && TZ='${TZ:-UTC}' docker compose up -d && docker compose restart homeassistant"
-    echo "Deployed to $TEST_HA_HOST; Home Assistant is restarting."
-fi
+# Unpacked into a fresh directory first; each integration then replaces its old copy whole, so
+# nothing removed here stays behind there.
+pack | "${SSH[@]}" "set -eu
+cd '$TEST_HA_DIR' 2>/dev/null || { mkdir -p '$TEST_HA_DIR' && cd '$TEST_HA_DIR'; }
+rm -rf .incoming && mkdir .incoming && tar -x -f - -C .incoming
+mkdir -p config custom_components
+mv .incoming/compose.yaml compose.yaml
+mv .incoming/config/configuration.yaml config/configuration.yaml
+for component in ${COMPONENTS[*]}; do
+    rm -rf \"custom_components/\$component\"
+    mv \".incoming/custom_components/\$component\" \"custom_components/\$component\"
+done
+rm -rf .incoming
+TZ='${TZ:-UTC}' docker compose up -d
+docker compose restart homeassistant"
+echo "Deployed to $TEST_HA_HOST; Home Assistant is restarting."

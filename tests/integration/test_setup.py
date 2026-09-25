@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from custom_components.boiler_sim.profiles import BOILERS, HOUSES, radiator_zones
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -14,7 +15,6 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, async_
 
 from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.core.signals import Signal
-from sim.profiles import BOILERS, HOUSES, radiator_zones
 from sim.simulator import DAY, Scenario, daily_cycle, simulate
 
 from .harness import (
