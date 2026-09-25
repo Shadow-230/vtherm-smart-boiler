@@ -354,6 +354,8 @@ room values:
   written on change). A setpoint target declared persistent, or of unknown write type, keeps
   control off, with the reason shown; a heating switch declared so is not used, and "off" goes as
   a low setpoint instead (the user's decision, 2026-09-25).
+- A value goes to an entity in the entity's own unit (°C, °F or K), rounded to its step, and its
+  range is checked in the same unit; an entity in any other unit keeps control off.
 - A write-rate guard against a runaway loop: a write repeated within one control step waits for
   the next one.
 - Every write is read back; a command the boiler ignores is reported, never assumed applied. The

@@ -568,3 +568,28 @@ async def test_freshness_limits_are_set_per_signal(
     await hass.async_block_till_done()
     entry = hass.config_entries.async_get_entry(entry_id)
     assert entry.options["freshness"] == {"flow": 900.0}
+
+
+async def test_a_setpoint_entity_must_be_in_a_temperature_unit(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    hass.states.async_set("number.boiler_flow", "40", {"unit_of_measurement": "%"})
+    entry_id = await create_entry(hass, entities, "simple")
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.boiler_flow"},
+    )
+    assert result["step_id"] == "control_entity"
+    result = await options_step(
+        hass,
+        result,
+        {
+            "setpoint_entity": "number.boiler_flow",
+            "write_type": "held",
+            "ch_write_type": "unknown",
+            "hand_back": "timeout",
+        },
+    )
+    assert result["errors"] == {"setpoint_entity": "setpoint_unit_not_supported"}

@@ -621,6 +621,8 @@ class FakeNumber:
     available: bool = True
     lowest: float | None = None
     value: float = 50.0
+    unit: str = "°C"
+    attributes: dict[str, Any] = field(default_factory=dict)  # min, max, step
 
     def register(self) -> None:
         async def set_value(call: ServiceCall) -> None:
@@ -637,7 +639,8 @@ class FakeNumber:
 
     def publish(self, value: float) -> None:
         state = str(value) if self.available else "unavailable"
-        self.hass.states.async_set(self.entity_id, state, {"unit_of_measurement": "°C"})
+        attributes = {"unit_of_measurement": self.unit, **self.attributes}
+        self.hass.states.async_set(self.entity_id, state, attributes)
 
     def set_available(self, available: bool) -> None:
         self.available = available
@@ -1399,3 +1402,29 @@ async def test_a_read_back_from_the_written_entity_confirms_nothing(rig: Rig) ->
     assert setpoint.attributes["confirmation"] == "unverified"
     assert setpoint.state == "unknown"
     assert setpoint.attributes["requested"] == EXPECTED
+
+
+async def test_a_fahrenheit_setpoint_entity_gets_fahrenheit(rig: Rig) -> None:
+    """P11: the entity's own unit on write and in the range check — 45 °C is not 45 °F."""
+    number = FakeNumber(
+        rig.hass, unit="°F", value=122.0, attributes={"min": 50, "max": 190, "step": 1}
+    )
+    number.register()
+    await start(rig, **held_entity(number))
+    await rig.switch(True)
+    assert rig.state("switch", "control").attributes["blockers"] == []
+    assert number.writes == [round(EXPECTED * 9 / 5 + 32)]  # on its 1 °F step
+    await rig.advance(130)
+    setpoint = rig.state("sensor", "control_setpoint")
+    assert setpoint.attributes["read_back"] == pytest.approx(EXPECTED, abs=0.3)  # in °C
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"
+
+
+async def test_a_setpoint_entity_in_another_unit_blocks_control(rig: Rig) -> None:
+    number = FakeNumber(rig.hass, unit="%")
+    number.register()
+    await start(rig, **held_entity(number))
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)
+    assert err.value.translation_key == "blocked_setpoint_unit_not_supported"
+    assert number.writes == []

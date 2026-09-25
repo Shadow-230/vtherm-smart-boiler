@@ -6,6 +6,7 @@ import pytest
 
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 from custom_components.vtherm_smart_boiler.units import (
+    celsius_to,
     parse_binary,
     parse_number,
     power_to_kw,
@@ -68,3 +69,40 @@ def test_parse_binary(state: object, expected: bool | None) -> None:
 )
 def test_signal_value(signal: Signal, state: str, unit: str | None, expected: object) -> None:
     assert signal_value(signal, state, unit) == expected
+
+
+@pytest.mark.parametrize(
+    ("unit", "expected"), [("°C", 45.0), ("°F", 113.0), ("K", 318.15), (None, 45.0)]
+)
+def test_a_setpoint_in_the_entitys_unit(unit: str | None, expected: float) -> None:
+    """P11: a number takes its value in its own unit: 45 °C goes to a °F entity as 113."""
+    assert celsius_to(45.0, unit) == pytest.approx(expected)
+    assert celsius_to(45.0, "furlong") is None
+
+
+@pytest.mark.parametrize(
+    ("value", "unit"),
+    [
+        (150_000_000.0, "mPa"),
+        (150_000.0, "Pa"),
+        (1_500.0, "hPa"),
+        (150.0, "kPa"),
+        (1.5, "bar"),
+        (150.0, "cbar"),
+        (1_500.0, "mbar"),
+        (1_125.09, "mmHg"),
+        (44.2945, "inHg"),
+        (602.2, "inH₂O"),
+        (21.7557, "psi"),
+    ],
+)
+def test_every_home_assistant_pressure_unit(value: float, unit: str) -> None:
+    """P67: a pressure sensor in any unit Home Assistant knows is read, not left unavailable."""
+    assert pressure_to_bar(value, unit) == pytest.approx(1.5, rel=1e-3)
+
+
+@pytest.mark.parametrize(
+    ("value", "unit"), [(1_500_000.0, "mW"), (0.0015, "MW"), (5_118.2, "BTU/h")]
+)
+def test_every_home_assistant_power_unit(value: float, unit: str) -> None:
+    assert power_to_kw(value, unit) == pytest.approx(1.5, rel=1e-3)

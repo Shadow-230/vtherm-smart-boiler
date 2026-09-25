@@ -26,9 +26,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ..control_config import ControlOptions, HandBack, WritePath
+from ..units import celsius_to, parse_number
 
 if TYPE_CHECKING:
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import HomeAssistant, State
 
 OTGW_MIN_SETPOINT = 8.0  # below this (and above 0) an OTGW override never lapses
 MAX_SETPOINT = 90.0
@@ -71,17 +72,34 @@ def _checked(value: float, low: float) -> float:
     return round(value, 1)
 
 
+def _as_entity_takes_it(state: State, value: float) -> float:
+    """A °C value as a number entity takes it: in its own unit (a °F entity gets °F), on its
+    step — else the device rounds it and the read-back looks like an ignored write. Steps up
+    to 1 K keep that rounding within the read-back tolerance."""
+    unit = state.attributes.get("unit_of_measurement")
+    converted = celsius_to(value, unit if isinstance(unit, str) else None)
+    if converted is None:
+        raise WriteError(f"{state.entity_id}: unit {unit!r} is not a temperature unit")
+    step = parse_number(state.attributes.get("step"))
+    if step is not None and step > 0:
+        low = parse_number(state.attributes.get("min"))
+        base = 0.0 if low is None else low
+        converted = base + round((converted - base) / step) * step
+    return round(converted, 3)
+
+
 class _ServiceWriter:
     def __init__(self, hass: HomeAssistant) -> None:
         self._hass = hass
 
-    def _check_target(self, entity_id: str) -> None:
+    def _check_target(self, entity_id: str) -> State:
         """Home Assistant would skip a missing or unavailable entity without an error."""
         state = self._hass.states.get(entity_id)
         if state is None:
             raise WriteError(f"{entity_id} is missing")
         if state.state in ("unavailable", "unknown"):
             raise WriteError(f"{entity_id} is {state.state}")
+        return state
 
     async def _call_entity(self, service: str, entity_id: str, **data: object) -> None:
         self._check_target(entity_id)
@@ -151,8 +169,7 @@ class EntityWriter(_ServiceWriter):
         self._taken = True
 
     async def write_setpoint(self, value: float) -> None:
-        checked = _checked(value, 0.0)
-        self._check_target(self._setpoint)
+        checked = _as_entity_takes_it(self._check_target(self._setpoint), _checked(value, 0.0))
         await self._take()
         await self._call_entity("set_value", self._setpoint, value=checked)
 
@@ -180,7 +197,11 @@ class EntityWriter(_ServiceWriter):
             if self._hand_back is HandBack.VALUE:
                 if self._hand_back_value is None:
                     raise WriteError("no hand-back value")
-                await self._call_entity("set_value", self._setpoint, value=self._hand_back_value)
+                value = _as_entity_takes_it(
+                    self._check_target(self._setpoint), float(self._hand_back_value)
+                )
+                await self._call_entity("set_value", self._setpoint, value=value)
+                # Read back in °C, like every setpoint read-back.
                 checks.append(HandBackCheck(self._setpoint, float(self._hand_back_value)))
             elif self._external:
                 await self._call_entity("turn_off", self._external)

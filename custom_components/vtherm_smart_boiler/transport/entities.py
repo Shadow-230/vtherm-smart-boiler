@@ -14,6 +14,7 @@ from ..units import (
     power_to_kw,
     signal_value,
     temperature_to_celsius,
+    temperature_unit_known,
 )
 
 if TYPE_CHECKING:
@@ -126,11 +127,29 @@ def weather_from_state(state: State | None) -> Reading:
 
 
 def read_bounds(hass: HomeAssistant, entity_id: str) -> tuple[float | None, float | None]:
-    """The ``min`` and ``max`` a number or input_number entity accepts; ``None`` where unknown."""
+    """The ``min`` and ``max`` a number or input_number entity accepts, in °C; ``None`` where
+    unknown — also in a unit that is not a temperature."""
     return bounds_from_state(hass.states.get(entity_id))
 
 
 def bounds_from_state(state: State | None) -> tuple[float | None, float | None]:
     if state is None:
         return None, None
-    return parse_number(state.attributes.get("min")), parse_number(state.attributes.get("max"))
+    unit = state.attributes.get("unit_of_measurement")
+    unit = unit if isinstance(unit, str) else None
+
+    def celsius(key: str) -> float | None:
+        number = parse_number(state.attributes.get(key))
+        return None if number is None else temperature_to_celsius(number, unit)
+
+    return celsius("min"), celsius("max")
+
+
+def temperature_unit_of(hass: HomeAssistant, entity_id: str) -> bool | None:
+    """Whether an entity's unit is a temperature unit (none counts as °C); ``None`` when the
+    entity is missing."""
+    state = hass.states.get(entity_id)
+    if state is None:
+        return None
+    unit = state.attributes.get("unit_of_measurement")
+    return temperature_unit_known(unit if isinstance(unit, str) else None)

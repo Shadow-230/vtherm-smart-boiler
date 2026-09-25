@@ -78,6 +78,14 @@ def test_kilowatt_power_unit() -> None:
     assert values.power == pytest.approx(1.2)
 
 
+@pytest.mark.parametrize(("device_power", "kw"), [(1.5, 1.5), (100.0, 100.0), (1500.0, 1.5)])
+def test_a_power_without_its_unit_is_read_as_vt_did(device_power: float, kw: float) -> None:
+    """P67: VT before its power unit option took a device power above 100 as W, else kW — the
+    rule its own migration keeps; reading such a power as W made it 1000 times too small."""
+    values = zone_values("heat", {"power_manager": {"device_power": device_power}})
+    assert values.power == pytest.approx(kw)
+
+
 def test_central_mode() -> None:
     assert central_mode("Stopped") is CentralMode.STOPPED
     assert central_mode("Frost protection") is CentralMode.FROST_PROTECTION

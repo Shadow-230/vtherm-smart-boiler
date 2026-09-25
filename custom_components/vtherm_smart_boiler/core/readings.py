@@ -91,7 +91,7 @@ class ZoneState:
     whether it heats. ``calling``: its heater or valve is active now (VT's action).
     ``device_active``: VT's own view of its devices (what its central boiler counts).
     ``on_percent`` and ``valve_open`` are fractions from 0 to 1. ``power`` is the device power
-    as configured in VT, in VT's units. ``ready``: VT has finished starting the thermostat.
+    as configured in VT, in kW. ``ready``: VT has finished starting the thermostat.
     ``temperature_at``: when the room temperature was last measured; the zone is fresh by it,
     else by the entity's report.
     """

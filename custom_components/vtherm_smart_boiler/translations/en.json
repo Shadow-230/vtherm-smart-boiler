@@ -631,7 +631,8 @@
       "hand_back_pending": "A hand-back has not reached the boiler yet: the write path and what control writes to cannot change until it does. Bring the target back, or choose \"No control\": the hand-back is still retried.",
       "count_threshold_above_zones": "More zones than are configured: heating would never be asked for.",
       "no_demand_criterion": "Set at least one criterion: a zone count of 0 needs a power or an opening threshold.",
-      "off_setpoint_not_below_hard_min": "\"Off\" must be below the lowest flow setpoint, or it would heat."
+      "off_setpoint_not_below_hard_min": "\"Off\" must be below the lowest flow setpoint, or it would heat.",
+      "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit (°C, °F or K): a value written would mean something else to it. Pick the boiler's flow setpoint entity."
     },
     "abort": {
       "missing_signal": "A required signal is missing.",
@@ -989,6 +990,9 @@
     },
     "blocked_off_setpoint_not_below_hard_min": {
       "message": "The \"off\" setpoint is not below the lowest flow setpoint, so \"off\" would heat: lower it in the options. Other reasons: {others}."
+    },
+    "blocked_setpoint_unit_not_supported": {
+      "message": "The setpoint entity's unit is not a temperature unit (°C, °F or K), so a value written would mean something else to it: pick the boiler's flow setpoint entity in the options. Other reasons: {others}."
     }
   },
   "issues": {

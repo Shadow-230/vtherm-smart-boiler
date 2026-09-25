@@ -62,7 +62,7 @@ from .core.guards import WriteType
 from .core.installation import BoilerClass, CircuitControl, DhwType, EmitterType
 from .core.metrics import ModulationScale
 from .core.reference_room import Strategy
-from .transport.entities import read_bounds
+from .transport.entities import read_bounds, temperature_unit_of
 
 # --- field definitions ----------------------------------------------------------------------
 
@@ -1137,9 +1137,12 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            errors = control_details_error(
-                user_input, read_bounds(self.hass, user_input["setpoint_entity"])
-            )
+            if temperature_unit_of(self.hass, user_input["setpoint_entity"]) is False:
+                errors = {"setpoint_entity": "setpoint_unit_not_supported"}
+            else:
+                errors = control_details_error(
+                    user_input, read_bounds(self.hass, user_input["setpoint_entity"])
+                )
             if not errors and self._hand_back_owed() and self._changes_hand_back(user_input):
                 errors = {"base": "hand_back_pending"}
             if not errors:

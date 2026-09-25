@@ -14,21 +14,54 @@ _TEMPERATURE: dict[str, Callable[[float], float]] = {
     "F": lambda v: (v - 32.0) * 5.0 / 9.0,
     "K": lambda v: v - 273.15,
 }
+_FROM_CELSIUS: dict[str, Callable[[float], float]] = {
+    "°C": lambda v: v,
+    "C": lambda v: v,
+    "°F": lambda v: v * 9.0 / 5.0 + 32.0,
+    "F": lambda v: v * 9.0 / 5.0 + 32.0,
+    "K": lambda v: v + 273.15,
+}
+# Every pressure unit Home Assistant knows (2026.9), in bar.
 _PRESSURE: dict[str, float] = {
     "bar": 1.0,
+    "cbar": 0.01,
     "mbar": 0.001,
     "hPa": 0.001,
     "kPa": 0.01,
     "Pa": 0.00001,
-    "psi": 0.0689476,
+    "mPa": 0.00000001,
+    "mmHg": 0.00133322387415,
+    "inHg": 0.0338638866667,
+    "inH₂O": 0.00249088908333,
+    "psi": 0.0689475729317,
 }
-_POWER: dict[str, float] = {"W": 0.001, "kW": 1.0, "MW": 1000.0}
+# Every power unit Home Assistant knows (2026.9), in kW.
+_POWER: dict[str, float] = {
+    "mW": 0.000001,
+    "W": 0.001,
+    "kW": 1.0,
+    "MW": 1000.0,
+    "GW": 1_000_000.0,
+    "TW": 1_000_000_000.0,
+    "BTU/h": 0.000293071070172,
+}
 
 
 def temperature_to_celsius(value: float, unit: str | None) -> float | None:
     """``None`` for an unknown unit; no unit is taken as °C."""
     convert = _TEMPERATURE.get(unit or "°C")
     return None if convert is None else convert(value)
+
+
+def celsius_to(value: float, unit: str | None) -> float | None:
+    """A °C value in an entity's unit, for writing; ``None`` for an unknown unit; no unit is
+    taken as °C, as on reading."""
+    convert = _FROM_CELSIUS.get(unit or "°C")
+    return None if convert is None else convert(value)
+
+
+def temperature_unit_known(unit: str | None) -> bool:
+    return (unit or "°C") in _FROM_CELSIUS
 
 
 def pressure_to_bar(value: float, unit: str | None) -> float | None:

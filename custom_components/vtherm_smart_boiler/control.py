@@ -63,6 +63,7 @@ from .transport.entities import (
     read_on_off,
     read_temperature,
     read_weather_temperature,
+    temperature_unit_of,
 )
 from .transport.writers import HandBackCheck, WriteError, Writer, make_writer, writer_services
 
@@ -85,6 +86,7 @@ RUNTIME_BLOCKERS = (
     "vt_central_boiler_active",
     "vt_central_boiler_unknown",
     "setpoint_outside_entity_range",
+    "setpoint_unit_not_supported",
     "control_error",
 )
 CONFIRMED_BY_GATEWAY = "confirmed_by_gateway"
@@ -423,11 +425,21 @@ class ControlUnit:
             found.append("vt_central_boiler_unknown")  # cannot be ruled out: wait
         elif vt_boiler:
             found.append("vt_central_boiler_active")
-        if self._outside_entity_range():
+        if self._unit_not_supported():
+            found.append("setpoint_unit_not_supported")  # its range cannot be checked either
+        elif self._outside_entity_range():
             found.append("setpoint_outside_entity_range")
         if self._session.failed:
             found.append("control_error")
         return tuple(found)
+
+    def _unit_not_supported(self) -> bool:
+        """A setpoint entity in a unit that is not a temperature: a value written would mean
+        something else to it."""
+        options = self.options
+        if options.write_path is not WritePath.ENTITY or not options.setpoint_entity:
+            return False
+        return temperature_unit_of(self._hass, options.setpoint_entity) is False
 
     def _outside_entity_range(self) -> bool:
         """A setpoint entity that would reject a value control may write (a limit, the low "off"

@@ -306,3 +306,72 @@ async def test_an_otgw_hand_back_tries_both_steps(hass: HomeAssistant) -> None:
     assert calls == [
         ("opentherm_gw", "set_control_setpoint", {"gateway_id": "gw1", "temperature": 0})
     ]
+
+
+@pytest.mark.parametrize(
+    ("attributes", "written"),
+    [
+        ({"unit_of_measurement": "°F", "step": 1, "min": 50, "max": 190}, 113.0),
+        ({"unit_of_measurement": "°C", "step": 1, "min": 20, "max": 80}, 46.0),
+        ({"unit_of_measurement": "°C", "step": 0.5, "min": 20, "max": 80}, 45.5),
+        ({"unit_of_measurement": "°C"}, 45.6),
+    ],
+)
+async def test_the_setpoint_goes_in_the_entitys_unit_and_step(
+    hass: HomeAssistant, attributes: dict[str, Any], written: float
+) -> None:
+    """P11, P87: a number takes its value in its own unit, rounded to its step — else 45 °C
+    would reach a °F boiler as 7 °C, and an unrounded value would read back as ignored."""
+    calls = record(hass, ("number", "set_value"))
+    hass.states.async_set("number.flow", "40", attributes)
+    writer = make_writer(
+        hass,
+        options(
+            write_path="entity",
+            setpoint_entity="number.flow",
+            write_type="held",
+            hand_back="value",
+            hand_back_value=0,
+            hand_back_value_effect="own_control",
+        ),
+    )
+    await writer.write_setpoint(45.6 if written != 113.0 else 45.0)
+    assert calls[-1][2]["value"] == pytest.approx(written)
+
+
+async def test_a_setpoint_entity_in_an_unknown_unit_is_not_written(hass: HomeAssistant) -> None:
+    calls = record(hass, ("number", "set_value"))
+    hass.states.async_set("number.flow", "40", {"unit_of_measurement": "furlong"})
+    writer = make_writer(
+        hass,
+        options(
+            write_path="entity",
+            setpoint_entity="number.flow",
+            write_type="held",
+            hand_back="value",
+            hand_back_value=0,
+            hand_back_value_effect="own_control",
+        ),
+    )
+    with pytest.raises(WriteError, match="unit"):
+        await writer.write_setpoint(45.0)
+    assert calls == []
+
+
+async def test_the_hand_back_value_goes_in_the_entitys_unit(hass: HomeAssistant) -> None:
+    calls = record(hass, ("number", "set_value"))
+    hass.states.async_set("number.flow", "104", {"unit_of_measurement": "°F", "step": 1})
+    writer = make_writer(
+        hass,
+        options(
+            write_path="entity",
+            setpoint_entity="number.flow",
+            write_type="held",
+            hand_back="value",
+            hand_back_value=40,
+            hand_back_value_effect="own_control",
+        ),
+    )
+    checks = await writer.hand_back()
+    assert calls[-1][2]["value"] == pytest.approx(104.0)
+    assert checks == (HandBackCheck("number.flow", 40.0),)  # read back in °C

@@ -118,14 +118,23 @@ def _fraction(raw: object, full_scale: float) -> float | None:
     return number / full_scale
 
 
+# VT before its power unit option read a device power above this as W, else as kW; its config
+# migration keeps that rule (VT 10.4.0 const.py, THRESHOLD_POWER_WATT_KILO).
+_VT_LEGACY_KILOWATT_MAX = 100.0
+
+
 def _device_power(manager: object) -> float | None:
+    """The zone's device power in kW. VT 10.4.0 publishes its unit ("W" or "kW"); older versions
+    publish none, and the power means what VT's legacy rule made of it."""
     if not isinstance(manager, Mapping):
         return None
     number = parse_number(manager.get("device_power"))
     if number is None or number < 0:
         return None
     unit = manager.get("power_unit")
-    return power_to_kw(number, unit if isinstance(unit, str) else None)
+    if not isinstance(unit, str):
+        unit = "W" if number > _VT_LEGACY_KILOWATT_MAX else "kW"
+    return power_to_kw(number, unit)
 
 
 class CentralMode(StrEnum):
