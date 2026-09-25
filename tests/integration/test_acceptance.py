@@ -21,6 +21,7 @@ from homeassistant.core import Event, HomeAssistant, State
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
+from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.vtherm_smart_boiler.const import DOMAIN
@@ -64,6 +65,7 @@ class Rig:
     vt_mode: str = "heat"  # the HVAC mode VT gives its thermostats (VT's own modes act on it)
     over_climate: set[str] = field(default_factory=set)  # zones of VT's over_climate type
     modes: dict[str, str] = field(default_factory=dict)  # a zone's own mode, over ``vt_mode``
+    fahrenheit: bool = False  # Home Assistant in US customary units: VT reports in °F
     calls: list[tuple[float, str, str, dict[str, Any]]] = field(default_factory=list)
 
     @property
@@ -73,6 +75,10 @@ class Rig:
 
     def now(self) -> float:
         return datetime.now(UTC).timestamp()
+
+    def degrees(self, celsius: float) -> float:
+        """A temperature as VT reports it, in Home Assistant's unit."""
+        return round(celsius * 9.0 / 5.0 + 32.0, 1) if self.fahrenheit else round(celsius, 1)
 
     def mirror_zones(self) -> None:
         """VT's thermostats as the plugin reads them, from the simulated rooms."""
@@ -90,8 +96,8 @@ class Rig:
                     entity_id,
                     mode,
                     {
-                        "current_temperature": round(self.sim.room(zone.zone_id), 1),
-                        "temperature": self.sim.plant.targets[index],
+                        "current_temperature": self.degrees(self.sim.room(zone.zone_id)),
+                        "temperature": self.degrees(self.sim.plant.targets[index]),
                         "hvac_action": "heating" if opening > 0.05 else "idle",
                     },
                 )
@@ -99,8 +105,8 @@ class Rig:
             self.zones.set(
                 zone.zone_id,
                 mode,
-                current_temperature=round(self.sim.room(zone.zone_id), 1),
-                temperature=self.sim.plant.targets[index],
+                current_temperature=self.degrees(self.sim.room(zone.zone_id)),
+                temperature=self.degrees(self.sim.plant.targets[index]),
                 hvac_action="heating" if opening > 0.05 else "idle",
                 valve_open_percent=round(opening * 100),
                 on_percent=round(opening, 2),
@@ -741,3 +747,66 @@ async def test_without_any_outdoor_reading_the_fallback_setpoint_heats(rig: Rig)
     assert rig.setpoints()[-1] >= 25.0
     assert rig.gateway("ch")[-1][2] is True
     assert rig.sim.plant.override_active(rig.now())
+
+
+# --- Home Assistant in US customary units -------------------------------------------------
+
+ENTITY_CONTROL = {
+    "write_path": "entity",
+    "setpoint_entity": "number.boiler_sim_flow_setpoint",
+    "write_type": "held",
+    "hand_back": "value",
+    "hand_back_value": 0,
+    "hand_back_value_effect": "own_control",
+    "topology": "virtual",
+}
+
+
+@pytest.mark.parametrize("write_path", ["opentherm_gw", "entity"])
+async def test_a_home_assistant_in_fahrenheit(rig: Rig, write_path: str) -> None:
+    """Home Assistant in US customary units: the sensors, VT's zones, the weather and the
+    setpoint entity are all in °F; the boiler still gets what the plugin means in °C, the
+    rooms are not taken for freezing, the read-back confirms, and the hand-back arrives."""
+    rig.hass.config.units = US_CUSTOMARY_SYSTEM
+    rig.fahrenheit = True
+    entity = write_path == "entity"
+    await start(
+        rig, sim={"write_type": "held"} if entity else None, **(ENTITY_CONTROL if entity else {})
+    )
+    assert rig.hass.states.get(SIGNALS["flow"]).attributes["unit_of_measurement"] == "°F"
+    await rig.switch(True)
+    await rig.advance(1800, step=30.0)
+    values = entity_setpoints(rig) if entity else rig.setpoints()
+    assert values
+    assert all(25.0 <= v <= 70.0 for v in values), values  # °C at the boiler
+    assert rig.state("sensor", "control_state").state in ("heating", "idle")
+    for alarm in ("alarm_write_ignored", "alarm_outside_change", "alarm_write_failed"):
+        assert rig.state("binary_sensor", alarm).state == "off", alarm
+    assert rig.sim.plant.override_active(rig.now())
+    await rig.switch(False)
+    assert not rig.sim.plant.override_active(rig.now())
+
+
+async def test_an_entity_hand_back_waits_for_its_target_and_is_stored(rig: Rig) -> None:
+    """The setpoint entity goes unavailable while control holds the boiler: the hand-back is
+    shown as failed, stored for a restart and sent again; once the entity is back, it arrives."""
+    await start(rig, sim={"write_type": "held"}, **ENTITY_CONTROL)
+    await rig.switch(True)
+    await rig.advance(60)
+    assert rig.sim.plant.override_active(rig.now())
+    rig.sim.failed.add("flow_setpoint")
+    rig.hub.refresh()
+    await rig.hass.async_block_till_done()
+    assert rig.hass.states.get(ENTITY_CONTROL["setpoint_entity"]).state == "unavailable"
+    await rig.switch(False)
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+    await rig.advance(600)  # past the delayed save
+    key = f"{DOMAIN}.{rig.entry.entry_id}"
+    assert rig.storage[key]["data"]["control"]["hand_back_pending"] is True
+    assert 0.0 not in entity_setpoints(rig)
+    rig.sim.failed.discard("flow_setpoint")
+    rig.hub.refresh()
+    await rig.advance(70)
+    assert entity_setpoints(rig)[-1] == 0.0
+    assert not rig.sim.plant.override_active(rig.now())
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"

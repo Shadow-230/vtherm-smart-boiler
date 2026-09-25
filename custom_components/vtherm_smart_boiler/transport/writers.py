@@ -93,12 +93,14 @@ class _ServiceWriter:
         self._hass = hass
 
     def _check_target(self, entity_id: str) -> State:
-        """Home Assistant would skip a missing or unavailable entity without an error."""
+        """Home Assistant would skip a missing or unavailable entity without an error. One whose
+        state is unknown is available, only without a value yet, and it is called: so is it
+        here — a hand-back above all — and the read-back tells whether it took the value."""
         state = self._hass.states.get(entity_id)
         if state is None:
             raise WriteError(f"{entity_id} is missing")
-        if state.state in ("unavailable", "unknown"):
-            raise WriteError(f"{entity_id} is {state.state}")
+        if state.state == "unavailable":
+            raise WriteError(f"{entity_id} is unavailable")
         return state
 
     async def _call_entity(self, service: str, entity_id: str, **data: object) -> None:

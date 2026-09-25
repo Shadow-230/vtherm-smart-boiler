@@ -263,7 +263,7 @@ async def test_each_hand_back_step_is_tried_whatever_the_others_do(hass: HomeAss
     assert calls == [("number", "set_value", {"entity_id": "number.flow", "value": 0.0})]
 
 
-@pytest.mark.parametrize("state", [None, "unavailable", "unknown"])
+@pytest.mark.parametrize("state", [None, "unavailable"])
 async def test_a_missing_or_unavailable_target_is_a_failure(
     hass: HomeAssistant, state: str | None
 ) -> None:
@@ -295,6 +295,34 @@ async def test_a_missing_or_unavailable_target_is_a_failure(
     hass.states.async_set("switch.ch", "unavailable")
     with pytest.raises(WriteError, match=r"switch\.ch"):
         await writer.write_heating(False)
+
+
+async def test_a_target_without_a_value_yet_is_written(hass: HomeAssistant) -> None:
+    """An entity whose state is unknown is available, only without a value (never written, or
+    its device not heard yet): Home Assistant calls it, so the writer does too — and a
+    hand-back is never held back for it. Whether it took the value is the read-back's job."""
+    calls = record(hass, ("number", "set_value"), ("switch", "turn_on"), ("switch", "turn_off"))
+    hass.states.async_set("number.flow", "unknown", {"unit_of_measurement": "°C", "step": 0.5})
+    hass.states.async_set("switch.ch", "unknown")
+    writer = make_writer(
+        hass,
+        options(
+            write_path="entity",
+            setpoint_entity="number.flow",
+            ch_entity="switch.ch",
+            write_type="held",
+            ch_write_type="held",
+            hand_back="value",
+            hand_back_value=0,
+            hand_back_value_effect="own_control",
+        ),
+    )
+    await writer.write_setpoint(41.0)
+    await writer.write_heating(True)
+    await writer.hand_back()
+    assert ("number", "set_value", {"entity_id": "number.flow", "value": 41.0}) in calls
+    assert ("switch", "turn_on", {"entity_id": "switch.ch"}) in calls
+    assert ("number", "set_value", {"entity_id": "number.flow", "value": 0.0}) in calls
 
 
 async def test_an_otgw_hand_back_tries_both_steps(hass: HomeAssistant) -> None:
