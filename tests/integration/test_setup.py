@@ -224,7 +224,9 @@ async def test_replayed_history_reaches_the_verdict(
         freezer.move_to(datetime.fromtimestamp(t, UTC))
         apply_event(boiler, zones, changes)
     freezer.move_to(datetime.fromtimestamp(start + 8 * DAY, UTC))
-    await hass.async_block_till_done()
+    # The first analysis starts in the background at setup; while it runs, another returns at
+    # once — so wait for it before running one over the whole history.
+    await hass.async_block_till_done(wait_background_tasks=True)
     coordinator = entry.runtime_data
     await coordinator.async_run_analysis()
     await hass.async_block_till_done()

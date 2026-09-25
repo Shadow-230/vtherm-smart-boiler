@@ -162,6 +162,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._critical: dict[str, CriticalZone] = {}
         self._alarms: dict[AlarmKind, Alarm] = {}
         self._analysing = False
+        # A lasting failure of a periodic job is logged once, with its trace, and its end once.
+        self._failing: set[str] = set()
         self._save_pending = False
         self.control: ControlUnit | None = None
         # Control left the options while a hand-back was still owed: this unit only hands back.
@@ -566,8 +568,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     )
                 self.schedule_save()
             self.async_set_updated_data(self._compute(now))
-        except Exception:
-            _LOGGER.exception("The periodic analysis failed")
+        except Exception:  # the monitor keeps its last results; the next run tries again
+            self._job_failed("The periodic analysis")
+        else:
+            self._job_works("The periodic analysis")
         finally:
             self._analysing = False
 
@@ -576,8 +580,22 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             return
         try:
             await self.forecasts.async_take(dt_util.utcnow().timestamp())
-        except Exception:
-            _LOGGER.exception("Taking a forecast snapshot failed")
+        except Exception:  # a missed snapshot only thins the forecast record
+            self._job_failed("Taking a forecast snapshot")
+        else:
+            self._job_works("Taking a forecast snapshot")
+
+    def _job_failed(self, job: str) -> None:
+        if job in self._failing:
+            _LOGGER.debug("%s failed again", job, exc_info=True)
+        else:
+            _LOGGER.exception("%s failed; tried again at its next run", job)
+            self._failing.add(job)
+
+    def _job_works(self, job: str) -> None:
+        if job in self._failing:
+            _LOGGER.info("%s works again", job)
+            self._failing.discard(job)
 
 
 def _append(series: Series, t: float, value: object) -> None:

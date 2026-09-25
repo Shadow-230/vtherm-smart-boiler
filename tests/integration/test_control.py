@@ -8,6 +8,7 @@ the calls they receive.
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import pairwise
@@ -1320,6 +1321,7 @@ async def test_a_stuck_outdoor_sensor_leaves_the_curve(
     from dataclasses import replace as replaced
 
     coordinator = rig.entry.runtime_data
+    await rig.hass.async_block_till_done(wait_background_tasks=True)  # the first analysis
     await coordinator.async_run_analysis()
     real = coordinator.analysis
     assert real is not None
@@ -1428,3 +1430,68 @@ async def test_a_setpoint_entity_in_another_unit_blocks_control(rig: Rig) -> Non
         await rig.switch(True)
     assert err.value.translation_key == "blocked_setpoint_unit_not_supported"
     assert number.writes == []
+
+
+def _logged(caplog: pytest.LogCaptureFixture, level: int, text: str) -> int:
+    return sum(1 for r in caplog.records if r.levelno == level and text in r.getMessage())
+
+
+async def test_a_lasting_write_failure_is_logged_once_and_its_recovery_once(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """P42: a write failing at every step for minutes is one warning, with its trace, not one
+    every ten seconds; its recovery is one line too."""
+    await start(rig)
+    await rig.switch(True)
+    rig.hass.services.async_remove("opentherm_gw", "set_control_setpoint")
+    await rig.advance(120)
+    assert _logged(caplog, logging.WARNING, "boiler write failed") == 1
+    failure = next(r for r in caplog.records if "boiler write failed" in r.getMessage())
+    assert failure.exc_info is not None  # with the trace
+    rig.gateway.register()
+    await rig.advance(30)
+    assert _logged(caplog, logging.INFO, "works again") == 1
+    assert _logged(caplog, logging.WARNING, "boiler write failed") == 1
+
+
+async def test_a_lasting_hand_back_failure_is_logged_once(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    await start(rig)
+    await rig.switch(True)
+    rig.hass.services.async_remove("opentherm_gw", "set_control_setpoint")
+    await rig.switch(False)  # the hand-back fails, and is retried every minute
+    await rig.advance(300)
+    assert _logged(caplog, logging.ERROR, "Handing control back failed") == 1
+    rig.gateway.register()
+    await rig.advance(70)
+    assert _logged(caplog, logging.INFO, "hand-back went through") == 1
+
+
+async def test_a_lasting_learning_failure_is_logged_once_per_zone(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    hass = rig.hass
+    attempts: list[bool] = []
+
+    async def set_learning(call: ServiceCall) -> None:
+        attempts.append(call.data["learning_enabled"])
+        raise HomeAssistantError("SmartPI is not ready")
+
+    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    rig.zones.set(
+        "living",
+        hvac_action="heating",
+        valve_open_percent=60,
+        on_percent=0.6,
+        configuration={"proportional_function": "smartpi"},
+        specific_states={"smartpi_learning_enabled": True},
+    )
+    await start(rig)
+    await rig.switch(True)
+    rig.dhw = True
+    await rig.advance(10)  # a pause, which fails
+    await rig.switch(False)  # its release is tried, and fails, every minute
+    await rig.advance(300)
+    assert attempts.count(True) >= 3
+    assert _logged(caplog, logging.WARNING, "SmartPI learning") == 1

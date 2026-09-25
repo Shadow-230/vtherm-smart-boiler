@@ -569,7 +569,7 @@
         },
         "data_description": {
           "ramp_k_per_min": "The fastest setpoint change, in K per minute. Default 1. Faster changes stress the boiler and make zones overshoot.",
-          "decision_interval_min": "How often the setpoint is decided anew, in minutes. Default 5.",
+          "decision_interval_min": "How often the water temperature is decided anew, in minutes; default 5, VT's default cycle. Heating on and off follows the zones at every 10 s step, whatever this is; the plugin does not read the zones' own cycles. Shorter: the water follows the weather and the rooms sooner, but the zones' algorithms see it move more often; longer: steadier water that follows more slowly.",
           "off_setpoint": "The setpoint written for \"off\" when there is no heating switch, in °C. Default 10: far below any heating value, and below the lowest flow setpoint. Risk: a low setpoint does not switch the boiler's heating off — ESPHome and DIYLess masters keep CH enabled, and boilers are reported to keep their CH pump running; a heating switch, or an OpenTherm Gateway's CH=0, really turns heating off.",
           "count_threshold": "Heating is needed when at least this many zones call for heat. Default 1; at most the number of zones. 0 turns the count off, leaving the power or opening threshold alone, as in Versatile Thermostat.",
           "power_threshold_kw": "Optional: heating is needed when the calling zones' power adds up to this, in kW.",

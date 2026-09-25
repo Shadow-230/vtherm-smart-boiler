@@ -26,8 +26,10 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+import voluptuous as vol
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import CALLBACK_TYPE, CoreState, Event, HassJob, HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
@@ -226,6 +228,9 @@ class ControlUnit:
         # SmartPI calls planned by a step or a hand-back; made after the lock is released, so a
         # slow SmartPI never holds up control or a hand-back.
         self._learning_calls: list[tuple[str, bool]] = []
+        # Failures already logged: a lasting one is logged once, and its recovery once.
+        self._learning_failing: set[str] = set()
+        self._hand_back_logged = False
 
     # --- status, listeners, storage -----------------------------------------------------
 
@@ -755,10 +760,19 @@ class ControlUnit:
         try:
             await call
         except WriteError as err:
-            _LOGGER.warning("A boiler write failed; sent again at the next step: %s", err)
+            if kind in session.failing:
+                _LOGGER.debug("The boiler %s write failed again: %s", kind, err)
+            else:
+                _LOGGER.warning(
+                    "A boiler write failed; sent again at every step until it works: %s",
+                    err,
+                    exc_info=err,
+                )
             session.failing.add(kind)
             session.alarms.add(ControlAlarm.WRITE_FAILED)
             return False
+        if kind in session.failing:
+            _LOGGER.info("The boiler %s write works again", kind)
         session.failing.discard(kind)
         if not session.failing:  # each kind of write clears only its own failure
             session.alarms.discard(ControlAlarm.WRITE_FAILED)
@@ -789,7 +803,13 @@ class ControlUnit:
             writer = self._writer or self._writer_factory(self._hass, self.options)
             checks = await writer.hand_back(full=full)
         except (WriteError, ValueError) as err:
-            _LOGGER.error("Handing control back failed; retrying every minute: %s", err)
+            if self._hand_back_logged:
+                _LOGGER.debug("Handing control back failed again: %s", err)
+            else:
+                _LOGGER.error(
+                    "Handing control back failed; retrying every minute: %s", err, exc_info=err
+                )
+                self._hand_back_logged = True
             self._hand_back_pending = True
             self._hand_back_failed = True
             self._hand_back_checks = ()
@@ -817,10 +837,12 @@ class ControlUnit:
         if now < self._hand_back_retry_at:
             return
         if self._hand_back_checks:
-            _LOGGER.error(
-                "The hand-back was not confirmed by %s; sending it again",
-                ", ".join(check.entity_id for check in self._hand_back_checks),
-            )
+            if not self._hand_back_logged:
+                _LOGGER.error(
+                    "The hand-back was not confirmed by %s; sending it again every minute",
+                    ", ".join(check.entity_id for check in self._hand_back_checks),
+                )
+                self._hand_back_logged = True
             self._hand_back_failed = True
         await self._async_try_hand_back(now, full=True)
 
@@ -840,6 +862,9 @@ class ControlUnit:
     def _hand_back_done(self) -> None:
         """No hand-back is owed any more: it was confirmed, or control has the boiler again."""
         changed = self._hand_back_pending or self._hand_back_failed
+        if self._hand_back_logged:
+            _LOGGER.info("The hand-back went through")
+            self._hand_back_logged = False
         self._hand_back_pending = False
         self._hand_back_failed = False
         self._hand_back_checks = ()
@@ -967,9 +992,24 @@ class ControlUnit:
                     {"entity_id": zone_id, "learning_enabled": enabled},
                     blocking=True,
                 )
-        except Exception as err:  # a learning pause must never break control
-            action = "resume" if enabled else "pause"
-            _LOGGER.warning("Could not %s SmartPI learning of %s: %r", action, zone_id, err)
+        except (HomeAssistantError, TimeoutError, vol.Invalid) as err:
+            if zone_id not in self._learning_failing:
+                action = "resume" if enabled else "pause"
+                _LOGGER.warning(
+                    "Could not %s SmartPI learning of %s; tried again every minute: %s",
+                    action,
+                    zone_id,
+                    err,
+                )
+            self._learning_failing.add(zone_id)
             return False
+        except Exception:  # a learning pause must never break control; any other error is a bug
+            if zone_id not in self._learning_failing:
+                _LOGGER.exception("Setting SmartPI learning of %s failed unexpectedly", zone_id)
+            self._learning_failing.add(zone_id)
+            return False
+        if zone_id in self._learning_failing:
+            _LOGGER.info("SmartPI learning of %s can be set again", zone_id)
+            self._learning_failing.discard(zone_id)
         return True
 

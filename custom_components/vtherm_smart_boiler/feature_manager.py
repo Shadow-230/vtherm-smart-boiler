@@ -55,6 +55,7 @@ class SmartBoilerFeatureManager:
         self._hass = hass
         self._thermostat = thermostat
         self._lookup = lookup
+        self._failing = False  # a lasting failure is logged once, with its trace
 
     def post_init(self, entry_infos: Any) -> None:
         return None
@@ -99,7 +100,13 @@ class SmartBoilerFeatureManager:
             else:
                 attributes[ATTRIBUTE] = values
         except Exception:  # VT's attribute update must never fail because of the plugin
-            _LOGGER.debug("Could not add the plugin's zone values", exc_info=True)
+            if self._failing:
+                _LOGGER.debug("Could not add the plugin's zone values", exc_info=True)
+            else:
+                _LOGGER.exception("Could not add the plugin's zone values to a VT thermostat")
+                self._failing = True
+        else:
+            self._failing = False
 
 
 class SmartBoilerFeatureFactory:

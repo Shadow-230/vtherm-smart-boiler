@@ -7,6 +7,7 @@ VT's central mode select. It detects what is installed instead of assuming it: V
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib import import_module
@@ -21,6 +22,8 @@ from .const import VT_DOMAIN
 from .core.readings import ZoneState
 from .transport.entities import reported_at
 from .vtherm_attributes import CentralMode, central_mode, zone_values
+
+_LOGGER = logging.getLogger(__name__)
 
 SMARTPI_DOMAIN = "vtherm_smartpi"
 CENTRAL_MODE_UNIQUE_ID = "central_mode"
@@ -158,6 +161,7 @@ class VThermLink:
                 integration = async_get_loaded_integration(self._hass, VT_DOMAIN)
                 vt_version = None if integration.version is None else str(integration.version)
             except Exception:  # any loader problem just means "unknown"
+                _LOGGER.debug("VT's version could not be read", exc_info=True)
                 vt_version = None
         try:
             import_module("vtherm_api")
