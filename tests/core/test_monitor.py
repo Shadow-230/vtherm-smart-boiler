@@ -180,3 +180,20 @@ def test_copy_window_is_independent() -> None:
     assert [(s.t, s.value) for s in copy.signal(Signal.FLOW)] == [(10, 40.0), (50, 45.0)]
     assert copy.zones["a"].temperature.value_at(60) == 21.0
     assert copy.zones["a"].target.value_at(60) is None
+
+
+def test_gas_per_degree_day_leaves_hot_water_out() -> None:
+    """Where a burn is known as hot water, its gas is not heating gas."""
+    history = cycling_history(days=1)
+    history.signals[Signal.DHW_ACTIVE] = Series([(0, False), (5 * MIN, True), (15 * MIN, False)])
+    parameters = params(gas_at_min_power=0.4, gas_at_max_power=2.4)
+    summary = summarize(history, parameters, 0, DAY)
+    assert summary.gas is not None
+    assert summary.gas.amount == pytest.approx(8 * 1.4 - 1.4 / 6)  # the first burn left out
+    history.signals[Signal.GAS_METER] = Series(
+        [(0, 100.0), (5 * MIN, 100.0), (15 * MIN, 100.5), (DAY, 110.0)]
+    )
+    metered = summarize(history, parameters, 0, DAY + 1)
+    assert metered.gas_source is GasSource.METER
+    assert metered.gas is not None
+    assert metered.gas.amount == pytest.approx(9.5)  # 10 on the meter, 0.5 of it hot water

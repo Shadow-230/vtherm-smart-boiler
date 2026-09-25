@@ -41,6 +41,7 @@ class MonitorOptions:
     bin_width: float = 5.0
     setpoint_margin: float = 5.0
     verdict: VerdictOptions = field(default_factory=VerdictOptions)
+    verdict_window_days: int | None = None  # the latest days with data; None: every day kept
 
 
 class GasSource(StrEnum):
@@ -117,23 +118,33 @@ def _gas(
     start: float,
     end: float,
     scale: ModulationScale,
+    burns: Sequence[ClassifiedBurn],
 ) -> tuple[Consumption | None, GasSource | None]:
+    """Heating gas: the gas of the burns known as hot water is left out."""
+    hot_water = [b.burn for b in burns if b.kind in DHW_KINDS]
     if history.is_mapped(Signal.GAS_METER):
-        return meter_consumption(history.signal(Signal.GAS_METER), start, end), GasSource.METER
+        meter = history.signal(Signal.GAS_METER)
+        total = meter_consumption(meter, start, end)
+        if total is None:
+            return None, GasSource.METER
+        # A meter registers a burn's gas when it reports, at the burn's end at best: the hot
+        # water's share is what the meter gained from the burn's start to its end.
+        dhw = 0.0
+        for burn in hot_water:
+            before, after = meter.value_at(burn.start), meter.value_at(burn.end)
+            if before is not None and after is not None and after >= before:
+                dhw += after - before
+        return Consumption(max(0.0, total.amount - dhw), total.complete), GasSource.METER
     low = parameters.value(ParameterKey.GAS_AT_MIN_POWER)
     high = parameters.value(ParameterKey.GAS_AT_MAX_POWER)
     if low is None or high is None or not history.is_mapped(Signal.MODULATION):
         return None, None
-    gas = integrate_rate(
-        history.signal(Signal.FLAME),
-        history.signal(Signal.MODULATION),
-        low,
-        high,
-        scale,
-        start,
-        end,
-    )
-    return gas, GasSource.MODULATION
+    flame, modulation = history.signal(Signal.FLAME), history.signal(Signal.MODULATION)
+    gas = integrate_rate(flame, modulation, low, high, scale, start, end)
+    for burn in hot_water:
+        part = integrate_rate(flame, modulation, low, high, scale, burn.start, burn.end)
+        gas = Consumption(gas.amount - part.amount, gas.complete and part.complete)
+    return Consumption(max(0.0, gas.amount), gas.complete), GasSource.MODULATION
 
 
 def summarize(
@@ -164,7 +175,7 @@ def summarize(
         if history.is_mapped(Signal.RETURN)
         else None
     )
-    gas, source = _gas(history, parameters, start, end, opts.modulation_scale)
+    gas, source = _gas(history, parameters, start, end, opts.modulation_scale, burns)
     gas_per_dd = per_degree_day(gas.amount, days) if gas is not None and days is not None else None
     model = LoadModel.from_parameters(parameters)
     min_power = parameters.value(ParameterKey.BOILER_MIN_POWER)
@@ -178,8 +189,8 @@ def summarize(
         end=end,
         burns=burns,
         observed_s=observed,
-        heating=cycle_stats(burns, observed, CH_KINDS, opts.short_burn_s),
-        dhw=cycle_stats(burns, observed, DHW_KINDS, opts.short_burn_s),
+        heating=cycle_stats(burns, observed, CH_KINDS, opts.short_burn_s, (start, end)),
+        dhw=cycle_stats(burns, observed, DHW_KINDS, opts.short_burn_s, (start, end)),
         condensing=condensing,
         degree_days=days,
         gas=gas,

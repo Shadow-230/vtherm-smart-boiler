@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import copy
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
@@ -55,6 +55,7 @@ from .core.alarms import (
 from .core.analysis import Analysis, analyse
 from .core.critical_zone import CriticalZone, critical_zone
 from .core.cycles import BurnKind, ClassifiedBurn, find_burns
+from .core.daily import KEEP_DAYS, DaySummary, summarize_day
 from .core.emitters import FactorResult, FactorStatus, update_factor
 from .core.foreign_heat import ForeignHeatState, update_foreign_heat
 from .core.history import History, ZoneSeries
@@ -169,6 +170,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # A lasting failure of a periodic job is logged once, with its trace, and its end once.
         self._failing: set[str] = set()
         self._save_due: float | None = None  # when the pending delayed save runs
+        # Day summaries for the verdict, kept for up to a year (SCOPE.md §10).
+        self.daily: dict[float, DaySummary] = {}
         self._stopped = False
         # The entities the platforms create now (disabled ones too): the rest are stale.
         self.expected_unique_ids: set[str] = set()
@@ -274,6 +277,15 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     )
             except TypeError, ValueError:
                 _LOGGER.warning("Ignoring an unreadable stored emitter factor for %s", zone_id)
+        daily = stored.get("daily")
+        for data in daily.values() if isinstance(daily, dict) else ():
+            try:
+                day = DaySummary.from_dict(data)
+            except KeyError, TypeError, ValueError:
+                _LOGGER.warning("Ignoring an unreadable stored day summary")
+                continue
+            if day.start >= now - KEEP_DAYS * DAY:
+                self.daily[day.start] = day
         measured = stored.get("measured")
         for key, data in (measured.items() if isinstance(measured, dict) else ()):
             try:
@@ -306,6 +318,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 if f.value is not None
             },
             "measured": measured,
+            "daily": {str(int(start)): day.to_dict() for start, day in sorted(self.daily.items())},
             "control": self._stored_control(),
         }
 
@@ -321,6 +334,18 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     async def async_save_now(self) -> None:
         """Write the store at once: for what a crash must not lose (the controlling marker)."""
         await self._store.async_save(self._stored_data())
+
+    def _keep_days(self, days: Sequence[DaySummary], now: float) -> None:
+        """Keep newly summarised days; drop those older than a year."""
+        added = [day for day in days if day.start not in self.daily]
+        for day in added:
+            self.daily[day.start] = day
+        cutoff = now - KEEP_DAYS * DAY
+        dropped = [start for start in self.daily if start < cutoff]
+        for start in dropped:
+            del self.daily[start]
+        if added or dropped:
+            self.schedule_save(FACTOR_SAVE_DELAY_S)
 
     def expect_entities(self, entities: list[Any]) -> None:
         self.expected_unique_ids.update(e.unique_id for e in entities if e.unique_id)
@@ -340,8 +365,66 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     # --- history --------------------------------------------------------------------------
 
     async def _async_backfill_then_analyse(self) -> None:
-        await self._async_backfill(dt_util.utcnow().timestamp())
+        now = dt_util.utcnow().timestamp()
+        await self._async_backfill(now)
+        await self._async_fill_days(now)
         await self.async_run_analysis()
+
+    async def _async_fill_days(self, now: float) -> None:
+        """Day summaries from the recorder for the days before the rolling history, as far back
+        as the recorder reaches — a week at a time, and at most a year: the verdict does not
+        then depend on how long the recorder keeps its data."""
+        if "recorder" not in self.hass.config.components:
+            return
+        try:
+            recorder, significant_states = _recorder(self.hass), _significant_states()
+        except ImportError:
+            return
+        # Whole local days only, up to the rolling history's first whole day, a week at a time
+        # from the newest back.
+        rolling = local_days(now - HISTORY_DAYS * DAY, now)
+        fill_end = rolling[0][0] if rolling else now - HISTORY_DAYS * DAY
+        windows = local_days(now - KEEP_DAYS * DAY, fill_end)
+        entity_ids = list(self.config.watched_entities)
+        flame = self.config.signals.get(Signal.FLAME)
+        while windows and flame is not None and not self._stopped:
+            chunk, windows = windows[-7:], windows[:-7]
+            missing = [window for window in chunk if window[0] not in self.daily]
+            if not missing:
+                continue
+            start, end = chunk[0][0], chunk[-1][1]
+
+            def read(start: float = start, end: float = end, days: Any = missing) -> Any:
+                states = significant_states(
+                    self.hass,
+                    dt_util.utc_from_timestamp(start),
+                    end_time=dt_util.utc_from_timestamp(end),
+                    entity_ids=entity_ids,
+                    include_start_time_state=True,
+                    significant_changes_only=False,
+                    minimal_response=False,
+                    no_attributes=False,
+                )
+                if not states.get(flame):
+                    return None  # the recorder reaches no further back
+                history = self._empty_history()
+                for entity_id, rows in states.items():
+                    for state in rows:
+                        if isinstance(state, State):
+                            self._record(entity_id, state, state.last_updated.timestamp(), history)
+                return [
+                    summarize_day(history, self.parameters, a, b, self.config.monitor.monitor)
+                    for a, b in days
+                ]
+
+            try:
+                summaries = await recorder.async_add_executor_job(read)
+            except Exception:  # the history is a convenience; never fail over it
+                _LOGGER.warning("Could not read older days from the recorder", exc_info=True)
+                return
+            if summaries is None:
+                return
+            self._keep_days([day for day in summaries if day.has_data], now)
 
     async def _async_backfill(self, now: float) -> None:
         """Rebuild the rolling history from the recorder, when it is loaded: read and turned
@@ -637,11 +720,18 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             copy = self.history.copy_window(now - HISTORY_DAYS * DAY, now)
             days = local_days(now - HISTORY_DAYS * DAY, now)
             analysis = await self.hass.async_add_executor_job(
-                analyse, copy, self.parameters, self.config.monitor.monitor, now, days
+                analyse,
+                copy,
+                self.parameters,
+                self.config.monitor.monitor,
+                now,
+                days,
+                tuple(self.daily.values()),
             )
             if self._stopped:
                 return  # a reload came meanwhile: the new installation analyses for itself
             self.analysis = analysis
+            self._keep_days(analysis.new_days, now)
             fit = self.analysis.fit
             if fit is not None:
                 self.parameters = self.parameters.with_estimate(

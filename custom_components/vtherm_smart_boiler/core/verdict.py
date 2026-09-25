@@ -16,6 +16,9 @@ from .metrics import CycleStats, Share
 from .series import Series
 
 DAY = 86400.0
+# Share of the monitoring days that must hold known data: a restart's seconds of unknown state
+# must not keep the verdict away for ever.
+MIN_COVERAGE = 0.9
 
 
 class Verdict(StrEnum):
@@ -105,7 +108,7 @@ def assess(
     """
     opts = options or VerdictOptions()
     days = monitored_s / DAY
-    if days < opts.min_days or heating.complete_burns < opts.min_heating_burns:
+    if days < opts.min_days * MIN_COVERAGE or heating.complete_burns < opts.min_heating_burns:
         return VerdictResult(
             Verdict.NOT_ENOUGH_DATA,
             (

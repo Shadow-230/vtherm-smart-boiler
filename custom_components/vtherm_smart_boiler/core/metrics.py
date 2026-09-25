@@ -32,7 +32,8 @@ def _percentile(sorted_values: Sequence[float], fraction: float) -> float:
 
 @dataclass(frozen=True, slots=True)
 class CycleStats:
-    """Starts and burn times over ``observed_s`` seconds of known flame state."""
+    """Starts and burn times over ``observed_s`` seconds of known flame state; ``active_s`` is
+    the time in the clock hours with a burn of these kinds."""
 
     observed_s: float
     starts: int
@@ -42,10 +43,13 @@ class CycleStats:
     p10_burn_s: float | None
     p90_burn_s: float | None
     short_burns: int
+    active_s: float | None = None
 
     @property
     def starts_per_hour(self) -> float | None:
-        return self.starts / (self.observed_s / HOUR) if self.observed_s > 0 else None
+        """Starts per hour of heating: idle hours would dilute short-cycling into calm."""
+        basis = self.observed_s if self.active_s is None else self.active_s
+        return self.starts / (basis / HOUR) if basis > 0 else None
 
     @property
     def short_burn_share(self) -> float | None:
@@ -57,6 +61,7 @@ def cycle_stats(
     observed_s: float,
     kinds: frozenset[BurnKind] = CH_KINDS,
     short_burn_s: float = DEFAULT_SHORT_BURN_S,
+    window: tuple[float, float] | None = None,
 ) -> CycleStats:
     """Starts and burn-time distribution of the burns of ``kinds``.
 
@@ -74,6 +79,20 @@ def cycle_stats(
         p10_burn_s=_percentile(durations, 0.1) if durations else None,
         p90_burn_s=_percentile(durations, 0.9) if durations else None,
         short_burns=sum(1 for d in durations if d < short_burn_s),
+        active_s=hours_with(selected, window),
+    )
+
+
+def hours_with(burns: Iterable[Burn], window: tuple[float, float] | None = None) -> float:
+    """The time in the clock hours that hold any of these burns — within ``window``, when an
+    hour is cut by it."""
+    hours: set[int] = set()
+    for burn in burns:
+        if burn.end > burn.start:
+            hours.update(range(math.floor(burn.start / HOUR), math.ceil(burn.end / HOUR)))
+    low, high = window if window is not None else (-math.inf, math.inf)
+    return sum(
+        max(0.0, min((hour + 1) * HOUR, high) - max(hour * HOUR, low)) for hour in hours
     )
 
 

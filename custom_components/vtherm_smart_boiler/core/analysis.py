@@ -23,8 +23,9 @@ from .alarms import (
     trend_warning,
 )
 from .building import LoadFit, fit_daily_load
+from .daily import DaySummary, summarize_day, verdict_over_days
 from .history import History
-from .monitor import MonitorOptions, MonitorSummary, daily_points, summarize, verdict
+from .monitor import MonitorOptions, MonitorSummary, daily_points, summarize
 from .parameters import ParameterKey, ParameterSet
 from .report import ChangeReport, PeriodSummary, explain_change
 from .series import duration_where, time_weighted_mean
@@ -52,6 +53,7 @@ class Analysis:
     report_unit: ReportUnit | None
     outdoor: OutdoorCheck | None
     fit: LoadFit | None
+    new_days: tuple[DaySummary, ...] = ()  # complete days summarised now, to keep
 
 
 def analyse(
@@ -60,8 +62,19 @@ def analyse(
     options: MonitorOptions,
     now: float,
     days: Sequence[tuple[float, float]] = (),
+    kept: Sequence[DaySummary] = (),
 ) -> Analysis:
+    """``days``: the complete local days of the history; ``kept``: the day summaries kept from
+    earlier. The verdict covers the kept days, the history's days not kept yet and today."""
     full = summarize(history, parameters, now - HISTORY_DAYS * DAY, now, options)
+    known = {day.start for day in kept}
+    new_days = tuple(
+        summarize_day(history, parameters, start, end, options)
+        for start, end in days
+        if start not in known
+    )
+    today_start = max((end for _start, end in days), default=now - DAY)
+    today = summarize_day(history, parameters, today_start, now, options)
     week = summarize(history, parameters, now - 7 * DAY, now, options)
     day = summarize(history, parameters, now - DAY, now, options)
     threshold = parameters.value(ParameterKey.HEATING_THRESHOLD)
@@ -73,12 +86,15 @@ def analyse(
         at=now,
         day=day,
         week=week,
-        verdict=verdict(week, options),
+        verdict=verdict_over_days(
+            [*kept, *new_days, today], options.verdict, options.verdict_window_days
+        ),
         trends=_trends(history, full, now),
         report=report,
         report_unit=unit,
         outdoor=_outdoor(history, now),
         fit=fit,
+        new_days=tuple(day for day in new_days if day.has_data),
     )
 
 

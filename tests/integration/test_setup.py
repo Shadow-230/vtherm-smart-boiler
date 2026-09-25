@@ -275,7 +275,10 @@ async def test_the_recorder_backfill_runs_after_setup_and_goes_before_live_sampl
     await hass.async_block_till_done(wait_background_tasks=True)
     assert [s.value for s in history] == [30.0, 40.0, 45.0]
     watched = list(entry.runtime_data.config.watched_entities)
-    assert asked == [{"entity_ids": watched, "significant": False}]
+    # The rolling history first; then older days, as far as the recorder reaches (no flame
+    # there: it stops at once).
+    assert asked[0] == {"entity_ids": watched, "significant": False}
+    assert len(asked) == 2
 
 
 async def test_a_slow_analysis_does_not_set_the_quick_path_back(
@@ -455,6 +458,95 @@ async def test_an_entry_from_before_drops_the_options_that_are_gone(
     await setup(hass, entry)
     assert entry.minor_version == 2
     assert entry.options["control"] == {"write_path": "entity"}
+
+
+def _stored_days(start: float, count: int) -> dict[str, dict[str, Any]]:
+    """Days of a boiler cycling twice an hour, as the plugin stores them."""
+    from custom_components.vtherm_smart_boiler.core.daily import DaySummary
+
+    days = {}
+    for d in range(count):
+        begin = start + d * DAY
+        day = DaySummary(
+            begin, begin + DAY, DAY, 48, 48, 48, 8 * 3600.0, DAY,
+            8 * 3600.0, 8 * 3600.0, DAY, DAY, True, 7.0, None,
+        )  # fmt: skip
+        days[str(int(begin))] = day.to_dict()
+    return days
+
+
+async def test_the_verdict_comes_from_the_days_kept_across_a_restart(
+    hass: HomeAssistant, hass_storage: dict[str, Any], freezer
+) -> None:
+    """W1: day summaries outlive the rolling history; after a restart the verdict does not wait
+    for new data."""
+    freezer.move_to(datetime(2026, 2, 1, tzinfo=UTC))
+    now = datetime(2026, 2, 1, tzinfo=UTC).timestamp()
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.RETURN))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0, Signal.RETURN: 28.0})
+    entry = entry_for(boiler)
+    hass_storage[f"{DOMAIN}.{entry.entry_id}"] = {
+        "version": 1,
+        "key": f"{DOMAIN}.{entry.entry_id}",
+        "data": {"monitoring_since": now - 30 * DAY, "daily": _stored_days(now - 20 * DAY, 20)},
+    }
+    await setup(hass, entry)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    coordinator = entry.runtime_data
+    assert len(coordinator.daily) == 20
+    assert coordinator.analysis is not None
+    assert coordinator.analysis.verdict.verdict.value == "worth_it"  # all short burns
+    stored = hass_storage[f"{DOMAIN}.{entry.entry_id}"]["data"]
+    assert len(stored["daily"]) >= 20
+
+
+async def test_days_before_the_history_are_filled_as_far_as_the_recorder_reaches(
+    hass: HomeAssistant, freezer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W1: the recorder keeps ten days by default, or whatever it was set to: every day it
+    still has is summarised, and the search stops where it has no more."""
+    from homeassistant.core import State
+
+    from custom_components.vtherm_smart_boiler import coordinator as coordinator_module
+
+    freezer.move_to(datetime(2026, 2, 1, tzinfo=UTC))
+    now = datetime(2026, 2, 1, tzinfo=UTC).timestamp()
+    reach = now - 30 * DAY
+    asked: list[float] = []
+
+    def significant_states(hass, start_time, *, end_time=None, entity_ids=None, **_kwargs):
+        asked.append(start_time.timestamp())
+        end = now if end_time is None else end_time.timestamp()
+        begin = max(start_time.timestamp(), reach)
+        if begin >= end:
+            return {}
+        flame = boiler.entity(Signal.FLAME)
+        rows = []
+        t = begin
+        while t < end:  # a ten-minute burn every half hour
+            moment = datetime.fromtimestamp(t, UTC)
+            rows.append(State(flame, "off", {}, last_updated=moment))
+            rows.append(State(flame, "on", {}, last_updated=moment + timedelta(minutes=5)))
+            rows.append(State(flame, "off", {}, last_updated=moment + timedelta(minutes=15)))
+            t += 1800.0
+        return {flame: rows}
+
+    class Recorder:
+        async def async_add_executor_job(self, target, *args):
+            return await hass.async_add_executor_job(target, *args)
+
+    monkeypatch.setattr(coordinator_module, "_recorder", lambda hass: Recorder())
+    monkeypatch.setattr(coordinator_module, "_significant_states", lambda: significant_states)
+    hass.config.components.add("recorder")
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    days = sorted(entry.runtime_data.daily)
+    assert days[0] == pytest.approx(reach, abs=DAY)  # as far as the recorder reaches
+    assert len(days) >= 29
+    assert min(asked) > now - 60 * DAY  # it stopped where the recorder had no more
 
 
 async def test_invalid_options_fail_setup_with_a_reason(hass: HomeAssistant) -> None:

@@ -208,3 +208,13 @@ def test_a_broken_control_section_keeps_the_monitor_at_setup() -> None:
     assert not config.control.configured
     assert config.control_problem is not None
     assert EntryConfig.from_options(MINIMAL, strict_control=False).control_problem is None
+
+
+def test_the_verdict_window_is_never_shorter_than_the_monitoring_period() -> None:
+    options = {
+        "signals": {"flame": "binary_sensor.flame", "flow": "sensor.flow"},
+        "monitor": {"monitoring_days": 14, "verdict_window_days": 7},
+    }
+    assert EntryConfig.from_options(options).monitor.monitor.verdict_window_days == 14
+    options["monitor"] = {"monitoring_days": 7}
+    assert EntryConfig.from_options(options).monitor.monitor.verdict_window_days is None

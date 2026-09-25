@@ -181,7 +181,8 @@
           "flue_gas_warning": "Ostrzeżenie: spaliny",
           "flue_gas_alarm": "Alarm: spaliny",
           "starts_per_hour_limit": "Częste starty",
-          "unstable_burns_limit": "Niestabilny zapłon"
+          "unstable_burns_limit": "Niestabilny zapłon",
+          "verdict_window_days": "Okno werdyktu"
         },
         "data_description": {
           "condensing_return": "Powrót poniżej tej wartości liczy się jako kondensacja, w °C. Domyślnie 55 °C. Za wysoka zawyża udział kondensacji.",
@@ -196,7 +197,8 @@
           "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
           "starts_per_hour_limit": "Więcej startów palnika w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12. Za wysoka ukrywa taktowanie.",
-          "unstable_burns_limit": "Więcej paleń krótszych niż minuta w ciągu doby niż ta wartość daje ostrzeżenie. Domyślnie 10. Za wysoka ukrywa problem z zapłonem."
+          "unstable_burns_limit": "Więcej paleń krótszych niż minuta w ciągu doby niż ta wartość daje ostrzeżenie. Domyślnie 10. Za wysoka ukrywa problem z zapłonem.",
+          "verdict_window_days": "Werdykt obejmuje tyle ostatnich dni z danymi. Puste (domyślnie): każdy zachowany dzień, do roku, uzupełniony przy starcie z rejestratora tak daleko wstecz, jak sięga. Krótsze szybciej nadąża za zmianą w domu; dłuższe jest stabilniejsze. Nigdy nie jest krótsze niż okres monitorowania."
         }
       }
     },
@@ -439,7 +441,8 @@
           "flue_gas_warning": "Ostrzeżenie: spaliny",
           "flue_gas_alarm": "Alarm: spaliny",
           "starts_per_hour_limit": "Częste starty",
-          "unstable_burns_limit": "Niestabilny zapłon"
+          "unstable_burns_limit": "Niestabilny zapłon",
+          "verdict_window_days": "Okno werdyktu"
         },
         "data_description": {
           "condensing_return": "Powrót poniżej tej wartości liczy się jako kondensacja, w °C. Domyślnie 55 °C. Za wysoka zawyża udział kondensacji.",
@@ -454,7 +457,8 @@
           "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
           "starts_per_hour_limit": "Więcej startów palnika w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12. Za wysoka ukrywa taktowanie.",
-          "unstable_burns_limit": "Więcej paleń krótszych niż minuta w ciągu doby niż ta wartość daje ostrzeżenie. Domyślnie 10. Za wysoka ukrywa problem z zapłonem."
+          "unstable_burns_limit": "Więcej paleń krótszych niż minuta w ciągu doby niż ta wartość daje ostrzeżenie. Domyślnie 10. Za wysoka ukrywa problem z zapłonem.",
+          "verdict_window_days": "Werdykt obejmuje tyle ostatnich dni z danymi. Puste (domyślnie): każdy zachowany dzień, do roku, uzupełniony przy starcie z rejestratora tak daleko wstecz, jak sięga. Krótsze szybciej nadąża za zmianą w domu; dłuższe jest stabilniejsze. Nigdy nie jest krótsze niż okres monitorowania."
         }
       },
       "control": {

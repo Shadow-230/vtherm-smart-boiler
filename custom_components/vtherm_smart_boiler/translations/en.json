@@ -181,7 +181,8 @@
           "flue_gas_warning": "Flue gas warning",
           "flue_gas_alarm": "Flue gas alarm",
           "starts_per_hour_limit": "Frequent starts",
-          "unstable_burns_limit": "Unstable ignition"
+          "unstable_burns_limit": "Unstable ignition",
+          "verdict_window_days": "Verdict window"
         },
         "data_description": {
           "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C. Too high overstates the condensing share.",
@@ -196,7 +197,8 @@
           "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C. Too high warns too late.",
           "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
           "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12. Too high hides short-cycling.",
-          "unstable_burns_limit": "More than this many burns under a minute in a day raise a warning. Default 10. Too high hides an ignition problem."
+          "unstable_burns_limit": "More than this many burns under a minute in a day raise a warning. Default 10. Too high hides an ignition problem.",
+          "verdict_window_days": "The verdict covers this many most recent days with data. Empty (default): every day kept, up to a year, filled at start from the recorder as far back as it reaches. Shorter follows a change in the house sooner; longer is steadier. It is never shorter than the monitoring period."
         }
       }
     },
@@ -439,7 +441,8 @@
           "flue_gas_warning": "Flue gas warning",
           "flue_gas_alarm": "Flue gas alarm",
           "starts_per_hour_limit": "Frequent starts",
-          "unstable_burns_limit": "Unstable ignition"
+          "unstable_burns_limit": "Unstable ignition",
+          "verdict_window_days": "Verdict window"
         },
         "data_description": {
           "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C. Too high overstates the condensing share.",
@@ -454,7 +457,8 @@
           "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C. Too high warns too late.",
           "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
           "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12. Too high hides short-cycling.",
-          "unstable_burns_limit": "More than this many burns under a minute in a day raise a warning. Default 10. Too high hides an ignition problem."
+          "unstable_burns_limit": "More than this many burns under a minute in a day raise a warning. Default 10. Too high hides an ignition problem.",
+          "verdict_window_days": "The verdict covers this many most recent days with data. Empty (default): every day kept, up to a year, filled at start from the recorder as far back as it reaches. Shorter follows a change in the house sooner; longer is steadier. It is never shorter than the monitoring period."
         }
       },
       "control": {

@@ -158,3 +158,13 @@ def test_binned_cycle_stats_attribute_burns_by_start() -> None:
     assert stats[5.0].observed_s == known_duration(flame, 0, HOUR)
     assert stats[-5.0].starts == 1
     assert stats[-5.0].median_burn_s == 30 * MIN
+
+
+def test_starts_per_hour_count_the_hours_with_heating() -> None:
+    """P49: four starts within one hour of an otherwise quiet day are four an hour, not a
+    sixth of one."""
+    burns = [ch(600 + 15 * k, 600 + 15 * k + 5) for k in range(4)]
+    stats = cycle_stats(burns, observed_s=DAY)
+    assert stats.active_s == HOUR
+    assert stats.starts_per_hour == pytest.approx(4.0)
+    assert cycle_stats([], observed_s=DAY).starts_per_hour is None

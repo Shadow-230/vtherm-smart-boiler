@@ -339,6 +339,7 @@ def monitor_schema(options: dict[str, Any]) -> vol.Schema:
             vol.Required("monitoring_days", default=monitor.get("monitoring_days", 7.0)): _number(
                 7, 60, 1, "d"
             ),
+            _optional("verdict_window_days", monitor): _number(7, 365, 1, "d"),
             vol.Required("near_room_k", default=monitor.get("near_room_k", 3.0)): _number(
                 1, 10, 0.5, "K"
             ),

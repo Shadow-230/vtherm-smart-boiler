@@ -286,7 +286,7 @@ boiler did.
 
 | Step | Work |
 |---|---|
-| W1 | verdict: reachable despite short data gaps; its window an option, by default every day with data, from daily summaries the plugin keeps (up to a year) and fills at start from the recorder as far back as it reaches — the recorder keeps 10 days by default; starts per hour counted over hours of heating; degree-days as the code has them, hot-water gas left out where hot water is known (the user) (P17, P49, S17, review questions 4 and 5) |
+| W1 ✅ | verdict: reachable despite short data gaps; its window an option, by default every day with data, from daily summaries the plugin keeps (up to a year) and fills at start from the recorder as far back as it reaches — the recorder keeps 10 days by default; starts per hour counted over hours of heating; degree-days as the code has them, hot-water gas left out where hot water is known (the user) (P17, P49, S17, review questions 4 and 5) |
 | W2 | burns: a heating overshoot not taken for hot water; the declared DHW type used; ignition alarms exclude hot water; a burn of unknown kind counted apart; flame flicker merged if L3 finds it; the `shared_return` flag used or removed (the monitor part of P21, P47, review questions 2 and 3) |
 | W3 | building model: consistent windows, a clamped result, a reachable confidence; the declared-versus-measured mismatch shown (P44, P77) |
 | W4 | metrics: gas meter resets only on a large drop; the switch to the weather entity with an unavailable outdoor sensor; gas per degree-day with incomplete data; the report's `complete` flag; days of 23 and 25 hours; unknown zones; the gas unit followed; the importer's mapping, command line and DST tested, its usage text and test without the author's time zone (P45, P46, P63, P70, P103) |

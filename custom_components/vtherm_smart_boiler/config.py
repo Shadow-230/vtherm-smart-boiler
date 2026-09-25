@@ -7,6 +7,7 @@ cautious default.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -308,6 +309,12 @@ def _monitor(data: Mapping[str, Any], boiler: Mapping[str, Any]) -> MonitorConfi
             short_burn_s=float(data.get("short_burn_min", 10.0)) * 60.0,
             modulation_scale=ModulationScale(boiler.get("modulation_scale", ModulationScale.RANGE)),
             verdict=VerdictOptions(min_days=monitoring_days),
+            # Never shorter than the monitoring period: the verdict could not be reached.
+            verdict_window_days=(
+                None
+                if data.get("verdict_window_days") in (None, "")
+                else max(int(data["verdict_window_days"]), math.ceil(monitoring_days))
+            ),
         ),
         monitoring_days=monitoring_days,
         near_room_k=float(data.get("near_room_k", DEFAULT_NEAR_ROOM_K)),
