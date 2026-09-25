@@ -668,7 +668,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         ]
         alarms[AlarmKind.FREQUENT_STARTS] = frequent_starts(burns, now, limits.starts_per_hour)
         alarms[AlarmKind.UNSTABLE_IGNITION] = unstable_ignition(
-            burns, now, limit=limits.unstable_burns_per_day
+            burns, now, limit=limits.unstable_burns_per_day, demand=inputs.zone_demand
         )
         if snapshot.is_mapped(Signal.PUMP_RUNNING) or snapshot.is_mapped(Signal.CH_ACTIVE):
             pump = snapshot.flag(Signal.PUMP_RUNNING)

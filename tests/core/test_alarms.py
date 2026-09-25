@@ -162,3 +162,23 @@ def test_low_flow_warning() -> None:
     ):
         result = low_flow(zones, pump, 100.0, 600.0, **extra)
         assert (result.active, result.reason) == (False, reason)
+
+
+def test_a_short_burn_ended_by_the_demand_is_no_ignition_problem() -> None:
+    """A2: a short heating pulse — a TPI zone's on-time, followed at once — ends because the
+    zones stop asking, not because the flame was lost; only a burn that goes out while heat is
+    still asked for, or with nothing known of the demand, counts."""
+    burns = [burn(i * 10, 0.5) for i in range(12)]
+    pulses = Series(
+        [
+            (t, on)
+            for i in range(12)
+            for t, on in (((i * 10) * MIN, True), ((i * 10 + 0.5) * MIN, False))
+        ]
+    )
+    assert not unstable_ignition(burns, now=24 * HOUR, demand=pulses).active
+    asking = Series([(0.0, True)])  # the zones kept asking: the flame was lost
+    alarm = unstable_ignition(burns, now=24 * HOUR, demand=asking)
+    assert alarm.active
+    assert alarm.value == 12
+    assert unstable_ignition(burns, now=24 * HOUR, demand=None).value == 12

@@ -124,13 +124,19 @@ def unstable_ignition(
     now: float,
     shortest_s: float = DEFAULT_UNSTABLE_BURN_S,
     limit: int = DEFAULT_UNSTABLE_BURNS_PER_DAY,
+    demand: Series[bool] | None = None,
 ) -> Alarm:
     """Complete burns shorter than ``shortest_s`` in the last day — flame lost soon after
-    ignition — above ``limit``."""
+    ignition — above ``limit``. A burn that ended with the zones' demand (a TPI zone's short
+    on-time, followed at once) lost no flame: with ``demand`` known at its end, only one that
+    went out while heat was still asked for counts."""
     count = sum(
         1
         for b in burns
-        if b.burn.complete and b.burn.duration < shortest_s and now - 86400.0 <= b.burn.start < now
+        if b.burn.complete
+        and b.burn.duration < shortest_s
+        and now - 86400.0 <= b.burn.start < now
+        and (demand is None or demand.value_at(b.burn.end) is not False)
     )
     return Alarm(
         AlarmKind.UNSTABLE_IGNITION,
