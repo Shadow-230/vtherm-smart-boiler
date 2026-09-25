@@ -549,6 +549,32 @@ async def test_days_before_the_history_are_filled_as_far_as_the_recorder_reaches
     assert min(asked) > now - 60 * DAY  # it stopped where the recorder had no more
 
 
+@pytest.mark.parametrize(("hot_water", "alarm"), [(True, "off"), (False, "on")])
+async def test_short_hot_water_draws_are_no_ignition_problem(
+    hass: HomeAssistant, freezer, hot_water: bool, alarm: str
+) -> None:
+    """P47: a combi boiler's short draws are hot water, not flames lost after ignition; the
+    same short burns for heating are."""
+    freezer.move_to(datetime(2026, 1, 10, 6, tzinfo=UTC))
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.DHW_ACTIVE))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0, Signal.DHW_ACTIVE: False})
+    entry = entry_for(boiler)
+    options = {**entry.options, "boiler": {"class": "read_only", "dhw": "combi"}}
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
+    await setup(hass, entry)
+    for _ in range(12):  # twelve 40-second burns
+        freezer.tick(timedelta(minutes=30))
+        boiler.set_many({Signal.DHW_ACTIVE: hot_water, Signal.FLAME: True})
+        await hass.async_block_till_done()
+        freezer.tick(timedelta(seconds=40))
+        boiler.set_many({Signal.FLAME: False, Signal.DHW_ACTIVE: False})
+        await hass.async_block_till_done()
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    ignition = hass.states.get(entity_id(hass, entry, "binary_sensor", "alarm_unstable_ignition"))
+    assert ignition.state == alarm
+
+
 async def test_invalid_options_fail_setup_with_a_reason(hass: HomeAssistant) -> None:
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", options={"signals": {}})
     entry.add_to_hass(hass)

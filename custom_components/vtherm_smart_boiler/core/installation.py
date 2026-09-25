@@ -42,7 +42,6 @@ class Boiler:
     boiler_class: BoilerClass
     dhw: DhwType = DhwType.NONE
     condensing: bool = True
-    shared_return: bool = False  # CH and DHW share the return sensor
 
 
 @dataclass(frozen=True, slots=True)

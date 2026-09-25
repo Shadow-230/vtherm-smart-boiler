@@ -52,6 +52,15 @@ def _starts(data: MonitorData) -> Value:
     return None if day is None else _round(day.heating.starts_per_hour, 2)
 
 
+def _starts_attributes(data: MonitorData) -> dict[str, Any]:
+    """Heating starts in the last 24 h, and apart from them those of burns that may have been
+    hot water."""
+    day = _day(data)
+    if day is None:
+        return {}
+    return {"starts": day.heating.starts, "unknown_kind_starts": day.unknown.starts}
+
+
 def _median_burn(data: MonitorData) -> Value:
     day = _day(data)
     if day is None or day.heating.median_burn_s is None:
@@ -193,6 +202,7 @@ BOILER_SENSORS: tuple[BoilerSensorDescription, ...] = (
         native_unit_of_measurement="/h",
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=_starts,
+        attributes_fn=_starts_attributes,
     ),
     BoilerSensorDescription(
         key="median_burn",

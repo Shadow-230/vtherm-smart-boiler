@@ -63,20 +63,18 @@
           "max_ch_setpoint": "Maksymalna nastawa c.o.",
           "gas_at_min_power": "Gaz przy mocy minimalnej",
           "gas_at_max_power": "Gaz przy mocy maksymalnej",
-          "modulation_scale": "Znaczenie modulacji",
-          "shared_return": "C.o. i c.w.u. mają wspólny czujnik powrotu"
+          "modulation_scale": "Znaczenie modulacji"
         },
         "data_description": {
           "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Sterowanie (eksperymentalne) wymaga klasy „Nastawa zasilania”; przy pozostałych wtyczka tylko monitoruje.",
-          "dhw": "Brak, zasobnik albo kocioł dwufunkcyjny. Służy do interpretacji grzania CWU; zły typ liczy ciepłą wodę jako c.o. albo odwrotnie.",
+          "dhw": "Brak, zasobnik albo kocioł dwufunkcyjny; wymagane. Służy do interpretacji paleń: przy „brak” każde palenie liczy się jako c.o. — zadeklarowane w kotle, który grzeje ciepłą wodę, jej pobory liczyłyby się jako starty c.o.; zły typ liczy ciepłą wodę jako c.o. albo odwrotnie.",
           "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych; dla innych kotłów bezwzględny alarm spalin jest wyłączony. Zły wybór ostrzega za późno albo bez powodu.",
           "boiler_min_power": "Najmniejsza moc grzania z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować. Zła wartość wypacza tę ocenę w werdykcie.",
           "boiler_max_power": "Największa moc grzania w kW. Z minimum i modulacją szacuje moc cieplną; zła wartość wypacza szacunki ciepła i gazu.",
           "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie CWU; za niska sprawia, że c.o. liczy się jako ciepła woda.",
           "gas_at_min_power": "Zużycie gazu na godzinę przy mocy minimalnej, w jednostce licznika gazu. Z modulacją szacuje zużycie gazu, gdy nie ma licznika; zła wartość wypacza gaz na stopniodzień.",
           "gas_at_max_power": "Zużycie gazu na godzinę przy mocy maksymalnej, w tej samej jednostce; zła wartość wypacza szacunki gazu.",
-          "modulation_scale": "Czy 0 % to moc minimalna (definicja OpenTherm), czy wartość to procent mocy maksymalnej. Zły wybór zniekształca szacunki ciepła i gazu.",
-          "shared_return": "Zaznacz, gdy jeden czujnik powrotu obsługuje oba. Grzanie c.w.u. jest wtedy wyłączane z metryk c.o."
+          "modulation_scale": "Czy 0 % to moc minimalna (definicja OpenTherm), czy wartość to procent mocy maksymalnej. Zły wybór zniekształca szacunki ciepła i gazu."
         }
       },
       "circuit": {
@@ -323,20 +321,18 @@
           "max_ch_setpoint": "Maksymalna nastawa c.o.",
           "gas_at_min_power": "Gaz przy mocy minimalnej",
           "gas_at_max_power": "Gaz przy mocy maksymalnej",
-          "modulation_scale": "Znaczenie modulacji",
-          "shared_return": "C.o. i c.w.u. mają wspólny czujnik powrotu"
+          "modulation_scale": "Znaczenie modulacji"
         },
         "data_description": {
           "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Sterowanie (eksperymentalne) wymaga klasy „Nastawa zasilania”; przy pozostałych wtyczka tylko monitoruje.",
-          "dhw": "Brak, zasobnik albo kocioł dwufunkcyjny. Służy do interpretacji grzania CWU; zły typ liczy ciepłą wodę jako c.o. albo odwrotnie.",
+          "dhw": "Brak, zasobnik albo kocioł dwufunkcyjny; wymagane. Służy do interpretacji paleń: przy „brak” każde palenie liczy się jako c.o. — zadeklarowane w kotle, który grzeje ciepłą wodę, jej pobory liczyłyby się jako starty c.o.; zły typ liczy ciepłą wodę jako c.o. albo odwrotnie.",
           "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych; dla innych kotłów bezwzględny alarm spalin jest wyłączony. Zły wybór ostrzega za późno albo bez powodu.",
           "boiler_min_power": "Najmniejsza moc grzania z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować. Zła wartość wypacza tę ocenę w werdykcie.",
           "boiler_max_power": "Największa moc grzania w kW. Z minimum i modulacją szacuje moc cieplną; zła wartość wypacza szacunki ciepła i gazu.",
           "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie CWU; za niska sprawia, że c.o. liczy się jako ciepła woda.",
           "gas_at_min_power": "Zużycie gazu na godzinę przy mocy minimalnej, w jednostce licznika gazu. Z modulacją szacuje zużycie gazu, gdy nie ma licznika; zła wartość wypacza gaz na stopniodzień.",
           "gas_at_max_power": "Zużycie gazu na godzinę przy mocy maksymalnej, w tej samej jednostce; zła wartość wypacza szacunki gazu.",
-          "modulation_scale": "Czy 0 % to moc minimalna (definicja OpenTherm), czy wartość to procent mocy maksymalnej. Zły wybór zniekształca szacunki ciepła i gazu.",
-          "shared_return": "Zaznacz, gdy jeden czujnik powrotu obsługuje oba. Grzanie c.w.u. jest wtedy wyłączane z metryk c.o."
+          "modulation_scale": "Czy 0 % to moc minimalna (definicja OpenTherm), czy wartość to procent mocy maksymalnej. Zły wybór zniekształca szacunki ciepła i gazu."
         }
       },
       "circuit": {
@@ -766,7 +762,15 @@
   "entity": {
     "sensor": {
       "starts_per_hour": {
-        "name": "Starty c.o. na godzinę"
+        "name": "Starty c.o. na godzinę",
+        "state_attributes": {
+          "starts": {
+            "name": "Starty c.o. (24 h)"
+          },
+          "unknown_kind_starts": {
+            "name": "Starty nieznanego rodzaju (24 h)"
+          }
+        }
       },
       "median_burn": {
         "name": "Mediana palenia c.o."

@@ -86,6 +86,9 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False  # from a newer version: nothing here can read it
     if entry.minor_version < 2:
         options = dict(entry.options)
+        boiler = options.get("boiler")
+        if isinstance(boiler, dict) and "shared_return" in boiler:
+            options["boiler"] = {k: v for k, v in boiler.items() if k != "shared_return"}
         control = options.get(CONTROL)
         if isinstance(control, dict):
             options[CONTROL] = {

@@ -87,6 +87,7 @@ class DhwInputs:
     max_ch_setpoint: float | None = None
     zone_demand: Series[bool] | None = None
     setpoint_margin: float = 5.0  # K the flow must exceed a setpoint by
+    has_dhw: bool = True  # False: the boiler heats no hot water (the declared type)
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +106,8 @@ def classify_burn(burn: Burn, inputs: DhwInputs) -> ClassifiedBurn:
     """Decide whether a burn heated DHW or CH."""
     if burn.duration <= 0:
         return ClassifiedBurn(burn, BurnKind.UNKNOWN, 0.0)
+    if not inputs.has_dhw:
+        return ClassifiedBurn(burn, BurnKind.CH, 1.0)
     for signal, evidence, dhw_when, weight in (
         (inputs.dhw_active, Evidence.DHW_SIGNAL, True, 1.0),
         (inputs.ch_active, Evidence.CH_SIGNAL, False, CH_SIGNAL_CONFIDENCE),
@@ -130,8 +133,11 @@ def _infer(burn: Burn, inputs: DhwInputs) -> ClassifiedBurn:
     found: list[Evidence] = []
     flow = inputs.flow
     if flow is not None and inputs.max_ch_setpoint is not None:
+        # Most of the burn above anything heating asks for: a moment above it is an overshoot.
         ceiling = inputs.max_ch_setpoint + inputs.setpoint_margin
-        if duration_where(flow, burn.start, burn.end, lambda v: v > ceiling) > 0:
+        known = known_duration(flow, burn.start, burn.end)
+        above = duration_where(flow, burn.start, burn.end, lambda v: v > ceiling)
+        if known >= SIGNAL_COVERAGE * burn.duration and above >= 0.5 * known:
             found.append(Evidence.FLOW_ABOVE_MAX_CH)
     if flow is not None and inputs.ch_setpoint is not None:
         above = _share_over_time(burn, flow, inputs.ch_setpoint, inputs.setpoint_margin)

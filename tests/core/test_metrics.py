@@ -14,6 +14,7 @@ from custom_components.vtherm_smart_boiler.core.cycles import (
 )
 from custom_components.vtherm_smart_boiler.core.metrics import (
     DHW_KINDS,
+    UNKNOWN_KINDS,
     Consumption,
     DegreeDays,
     ModulationScale,
@@ -65,9 +66,11 @@ def test_cycle_stats_for_dhw_and_empty() -> None:
     assert empty.short_burn_share is None
 
 
-def test_unknown_burns_count_as_heating() -> None:
+def test_burns_of_unknown_kind_are_counted_apart() -> None:
+    """W2: a burn that may have heated hot water does not count as a heating start."""
     unknown = ClassifiedBurn(Burn(0, 20 * MIN, True, True), BurnKind.UNKNOWN, 0.0)
-    assert cycle_stats([unknown], HOUR).starts == 1
+    assert cycle_stats([unknown], HOUR).starts == 0
+    assert cycle_stats([unknown], HOUR, UNKNOWN_KINDS).starts == 1
 
 
 def test_condensing_share_uses_known_return_during_heating_burns() -> None:

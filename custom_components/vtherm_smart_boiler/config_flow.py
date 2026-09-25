@@ -185,7 +185,8 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
         vol.Required("class", default=boiler.get("class", BoilerClass.READ_ONLY.value)): _select(
             "boiler_class", [c.value for c in BoilerClass]
         ),
-        vol.Required("dhw", default=boiler.get("dhw", DhwType.NONE.value)): _select(
+        # No default: "none" makes every burn heating, a wrong guess on a combi boiler.
+        vol.Required("dhw", default=boiler.get("dhw", vol.UNDEFINED)): _select(
             "dhw_type", [d.value for d in DhwType]
         ),
         vol.Required(
@@ -204,9 +205,6 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
                     "modulation_scale",
                     default=boiler.get("modulation_scale", ModulationScale.RANGE.value),
                 ): _select("modulation_scale", [m.value for m in ModulationScale]),
-                vol.Required(
-                    "shared_return", default=boiler.get("shared_return", False)
-                ): selector.BooleanSelector(),
             }
         )
     return vol.Schema(fields)
@@ -713,7 +711,7 @@ def _outside(value: Any, bounds: tuple[float | None, float | None]) -> bool:
 
 # --- applying user input ----------------------------------------------------------------------
 
-BOILER_KEYS = ("class", "dhw", "condensing", "modulation_scale", "shared_return")
+BOILER_KEYS = ("class", "dhw", "condensing", "modulation_scale")
 BOILER_PARAMETER_KEYS = (
     "boiler_min_power",
     "boiler_max_power",
@@ -841,7 +839,7 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
         or _differ(
             options.get(BOILER, {}),
             _schema_defaults(boiler_schema(advanced)),
-            ("modulation_scale", "shared_return"),
+            ("modulation_scale",),
         )
         or any(
             key in params

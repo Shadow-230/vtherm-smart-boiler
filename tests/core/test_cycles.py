@@ -135,3 +135,21 @@ def test_zero_length_burn_is_unknown_and_batch_classification() -> None:
     zero = Burn(5.0, 5.0, True, True)
     results = classify_burns([zero, BURN], DhwInputs(dhw_active=Series([(0, False)])))
     assert [r.kind for r in results] == [BurnKind.UNKNOWN, BurnKind.CH]
+
+
+def test_a_heating_overshoot_is_not_hot_water() -> None:
+    """P47: the flow passing the maximum heating setpoint for a moment — an overshoot at low
+    load — is no sign of hot water; most of the burn above it is."""
+    inputs = DhwInputs(
+        flow=Series([(0, 50.0), (8 * MIN, 72.0), (9 * MIN, 50.0)]),
+        max_ch_setpoint=65.0,
+        zone_demand=Series([(0, True)]),
+    )
+    assert classify_burn(BURN, inputs).kind is BurnKind.CH
+
+
+def test_a_boiler_without_hot_water_burns_for_heating() -> None:
+    """The declared hot-water type is used: without hot water every burn heats."""
+    inputs = DhwInputs(zone_demand=Series([(0, False)]), has_dhw=False)
+    result = classify_burn(BURN, inputs)
+    assert (result.kind, result.confidence) == (BurnKind.CH, 1.0)

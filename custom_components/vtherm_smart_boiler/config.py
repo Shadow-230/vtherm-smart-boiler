@@ -150,7 +150,6 @@ class EntryConfig:
             BoilerClass(boiler_data.get("class", BoilerClass.READ_ONLY)),
             DhwType(boiler_data.get("dhw", DhwType.NONE)),
             bool(boiler_data.get("condensing", True)),
-            bool(boiler_data.get("shared_return", False)),
         )
         circuits, flow_entities = _circuits(options.get(CIRCUITS, []))
         zones, zone_configs = _zones(options.get(ZONES, []), {c.circuit_id for c in circuits})
@@ -308,6 +307,8 @@ def _monitor(data: Mapping[str, Any], boiler: Mapping[str, Any]) -> MonitorConfi
             condensing_return=float(data.get("condensing_return", DEFAULT_CONDENSING_RETURN)),
             short_burn_s=float(data.get("short_burn_min", 10.0)) * 60.0,
             modulation_scale=ModulationScale(boiler.get("modulation_scale", ModulationScale.RANGE)),
+            # Declared without hot water: every burn heats. Never declared: burns are told apart.
+            has_dhw=boiler.get("dhw") != DhwType.NONE,
             verdict=VerdictOptions(min_days=monitoring_days),
             # Never shorter than the monitoring period: the verdict could not be reached.
             verdict_window_days=(

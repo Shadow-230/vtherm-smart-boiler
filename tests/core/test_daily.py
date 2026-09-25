@@ -37,7 +37,11 @@ def cycling(days: int, every_min: float = 30.0, gaps: bool = False) -> History:
         flame.append(t + 5 * MIN, True)
         flame.append(t + 15 * MIN, False)
     return History(
-        signals={Signal.FLAME: flame, Signal.RETURN: Series([(0, 45.0)])},
+        signals={
+            Signal.FLAME: flame,
+            Signal.RETURN: Series([(0, 45.0)]),
+            Signal.DHW_ACTIVE: Series([(0, False)]),  # every burn heats
+        },
         weather=Series([(0, 8.0)]),
     )
 

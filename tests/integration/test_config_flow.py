@@ -133,7 +133,6 @@ async def test_advanced_flow_with_two_circuits(
             "dhw": "combi",
             "condensing": True,
             "modulation_scale": "capacity",
-            "shared_return": False,
             "boiler_min_power": 30.0,
             "boiler_max_power": 20.0,
         },
@@ -147,7 +146,6 @@ async def test_advanced_flow_with_two_circuits(
             "dhw": "combi",
             "condensing": True,
             "modulation_scale": "capacity",
-            "shared_return": False,
         },
     )
     assert result["step_id"] == "circuit"
@@ -225,7 +223,7 @@ async def create_entry(
         {"name": "Boiler", "level": level},
         {"flame": entities["flame"], "flow": entities["flow"]},
         {"class": "read_only", "dhw": "none", "condensing": True}
-        | ({"modulation_scale": "range", "shared_return": True} if level == "advanced" else {}),
+        | ({"modulation_scale": "capacity"} if level == "advanced" else {}),
         {"control": "unmixed_shared"} | ({"add_another": False} if level == "advanced" else {}),
         {"zones": [entities[zone] for zone in zones]},
         *({"emitter": "radiator"} for _zone in zones),
@@ -275,7 +273,7 @@ async def test_switching_to_simple_can_restore_advanced_defaults(
 ) -> None:
     entry_id = await create_entry(hass, entities, "advanced")
     entry = hass.config_entries.async_get_entry(entry_id)
-    assert entry.options["boiler"]["shared_return"] is True
+    assert entry.options["boiler"]["modulation_scale"] == "capacity"
 
     async def switch(restore: bool) -> None:
         result = await hass.config_entries.options.async_init(entry_id)
@@ -292,7 +290,7 @@ async def test_switching_to_simple_can_restore_advanced_defaults(
     await switch(restore=False)
     entry = hass.config_entries.async_get_entry(entry_id)
     assert entry.options["level"] == "simple"
-    assert entry.options["boiler"]["shared_return"] is True  # kept, still active
+    assert entry.options["boiler"]["modulation_scale"] == "capacity"  # kept, still active
     menu = await hass.config_entries.options.async_init(entry_id)
     assert "level_hidden" in menu["menu_options"]
     await hass.config_entries.options.async_configure(
@@ -300,7 +298,7 @@ async def test_switching_to_simple_can_restore_advanced_defaults(
     )
     await switch(restore=True)
     entry = hass.config_entries.async_get_entry(entry_id)
-    assert entry.options["boiler"]["shared_return"] is True  # a fact: never "restored"
+    assert entry.options["boiler"]["modulation_scale"] == "capacity"  # a fact: kept
     assert "monitor" not in entry.options  # tuning: back to its defaults
     menu = await hass.config_entries.options.async_init(entry_id)
     assert "level_hidden" in menu["menu_options"]  # the fact is still active, and hidden
@@ -616,7 +614,7 @@ async def test_a_problem_found_at_the_end_is_shown_on_its_step(
         {"name": "Boiler", "level": "advanced"},
         {"flame": entities["flame"], "flow": entities["flow"]},
         {"class": "read_only", "dhw": "none", "condensing": True,
-         "modulation_scale": "range", "shared_return": False},
+         "modulation_scale": "range"},
         {"control": "unmixed_shared", "add_another": False},
         {"zones": []},
         {"design_load_kw": 200.0, "design_outdoor": -15.0},  # 5.7 kW/K: implausible
@@ -640,7 +638,9 @@ def _rich_options(entities: dict[str, str]) -> dict[str, Any]:
     return {
         "level": "simple",
         "signals": {"flame": entities["flame"], "flow": entities["flow"]},
-        "boiler": {"class": "read_only", "dhw": "none", "condensing": True, "shared_return": True},
+        "boiler": {
+            "class": "read_only", "dhw": "none", "condensing": True, "modulation_scale": "capacity"
+        },
         "circuits": [
             {"id": "main", "control": "unmixed_shared", "flow_entity": entities["return"]},
             {"id": "circuit_2", "control": "unmixed_shared"},
@@ -712,7 +712,7 @@ async def test_restoring_defaults_keeps_the_installation(
     options = await _section(
         hass, entry_id, "level", {"level": "simple", "restore_defaults": True}
     )
-    assert options["boiler"]["shared_return"] is True
+    assert options["boiler"]["modulation_scale"] == "capacity"
     assert [c["id"] for c in options["circuits"]] == ["main", "circuit_2"]
     assert options["circuits"][0]["flow_entity"] == entities["return"]
     assert options["zones"][0]["reference_output_w"] == 1500
@@ -730,7 +730,7 @@ async def test_hidden_settings_are_those_that_differ_from_defaults(
     options["zones"] = [
         {"entity_id": entities["living"], "emitter": "radiator", "circuit": "main"}
     ]
-    options["boiler"]["shared_return"] = False
+    options["boiler"]["modulation_scale"] = "range"
     options["reference_room"] = {"strategy": "largest_deficit", "switch_margin": 0.3}
     options["monitor"] = {"monitoring_days": 7.0, "near_room_k": 3.0}
     entry_id = await _entry(hass, options)

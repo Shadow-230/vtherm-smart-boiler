@@ -17,8 +17,10 @@ from .series import Series, known_duration
 HOUR = 3600.0
 DAY = 86400.0
 
-CH_KINDS = frozenset({BurnKind.CH, BurnKind.UNKNOWN})  # unknown burns count as heating
+CH_KINDS = frozenset({BurnKind.CH})  # burns known to heat the rooms
 DHW_KINDS = frozenset({BurnKind.DHW})
+UNKNOWN_KINDS = frozenset({BurnKind.UNKNOWN})  # counted apart: it may have been hot water
+NOT_DHW_KINDS = CH_KINDS | UNKNOWN_KINDS  # energy and gas not known to be hot water
 DEFAULT_SHORT_BURN_S = 10 * 60.0
 DEFAULT_CONDENSING_RETURN = 55.0
 MIN_DEGREE_DAYS = 0.5  # below this, gas per degree-day means nothing

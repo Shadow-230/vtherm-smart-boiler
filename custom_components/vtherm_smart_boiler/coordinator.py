@@ -54,12 +54,14 @@ from .core.alarms import (
 )
 from .core.analysis import Analysis, analyse
 from .core.critical_zone import CriticalZone, critical_zone
-from .core.cycles import BurnKind, ClassifiedBurn, find_burns
+from .core.cycles import classify_burns, find_burns
 from .core.daily import KEEP_DAYS, DaySummary, summarize_day
 from .core.emitters import FactorResult, FactorStatus, update_factor
 from .core.foreign_heat import ForeignHeatState, update_foreign_heat
 from .core.history import History, ZoneSeries
 from .core.hot_water import HotWater, hot_water_available
+from .core.metrics import CH_KINDS
+from .core.monitor import dhw_inputs
 from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
 from .core.readings import BoilerSnapshot, ZoneState
 from .core.reference_room import ReferenceRoom, select_reference
@@ -625,6 +627,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     def dhw_now(self, snapshot: BoilerSnapshot) -> bool | None:
         """DHW running now: its own signal, else flame on without heating demand from the CH
         signal; otherwise unknown."""
+        if not self.config.monitor.monitor.has_dhw:
+            return False  # declared: the boiler heats no hot water
         dhw = snapshot.flag(Signal.DHW_ACTIVE)
         if dhw is not None:
             return dhw
@@ -649,10 +653,15 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             flue = snapshot.number(Signal.FLUE_GAS, self._max_age(Signal.FLUE_GAS))
             kind = AlarmKind.FLUE_GAS_HIGH
             alarms[kind] = banded_alarm(kind, flue, limits.flue_gas, self._alarms.get(kind))
+        # Heating burns only: a combi's short hot-water draws are no ignition problem, and a
+        # burn of unknown kind is counted apart (P47).
+        options = self.config.monitor.monitor
+        inputs = dhw_inputs(self.history, self.parameters, now - DAY, now, options)
         flame = self.history.signal(Signal.FLAME)
         burns = [
-            ClassifiedBurn(burn, BurnKind.UNKNOWN, 0.0)
-            for burn in find_burns(flame, now - DAY, now)
+            burn
+            for burn in classify_burns(find_burns(flame, now - DAY, now), inputs)
+            if burn.kind in CH_KINDS
         ]
         alarms[AlarmKind.FREQUENT_STARTS] = frequent_starts(burns, now, limits.starts_per_hour)
         alarms[AlarmKind.UNSTABLE_IGNITION] = unstable_ignition(

@@ -131,7 +131,7 @@ def test_summary_of_a_cycling_boiler() -> None:
 def test_summary_with_minimal_mapping() -> None:
     history = History(signals={Signal.FLAME: Series([(0, False), (HOUR, True), (2 * HOUR, False)])})
     summary = summarize(history, ParameterSet(), 0, 3 * HOUR)
-    assert summary.heating.starts == 1
+    assert summary.unknown.starts == 1  # nothing tells heating from hot water
     assert summary.condensing is None
     assert summary.degree_days is None
     assert summary.gas is None
@@ -197,3 +197,12 @@ def test_gas_per_degree_day_leaves_hot_water_out() -> None:
     assert metered.gas_source is GasSource.METER
     assert metered.gas is not None
     assert metered.gas.amount == pytest.approx(9.5)  # 10 on the meter, 0.5 of it hot water
+
+
+def test_the_summary_counts_burns_of_unknown_kind_apart() -> None:
+    history = History(signals={Signal.FLAME: Series([(0, False), (HOUR, True), (2 * HOUR, False)])})
+    summary = summarize(history, ParameterSet(), 0, 3 * HOUR)
+    assert summary.heating.starts == 0
+    assert summary.unknown.starts == 1
+    no_dhw = summarize(history, ParameterSet(), 0, 3 * HOUR, MonitorOptions(has_dhw=False))
+    assert no_dhw.heating.starts == 1

@@ -14,6 +14,8 @@ from .metrics import (
     DEFAULT_CONDENSING_RETURN,
     DEFAULT_SHORT_BURN_S,
     DHW_KINDS,
+    NOT_DHW_KINDS,
+    UNKNOWN_KINDS,
     Consumption,
     CycleStats,
     DegreeDays,
@@ -40,6 +42,7 @@ class MonitorOptions:
     modulation_scale: ModulationScale = ModulationScale.RANGE
     bin_width: float = 5.0
     setpoint_margin: float = 5.0
+    has_dhw: bool = True  # False: the boiler heats no hot water, so every burn heats
     verdict: VerdictOptions = field(default_factory=VerdictOptions)
     verdict_window_days: int | None = None  # the latest days with data; None: every day kept
 
@@ -55,8 +58,9 @@ class MonitorSummary:
     end: float
     burns: tuple[ClassifiedBurn, ...]
     observed_s: float  # time with the flame state known
-    heating: CycleStats
+    heating: CycleStats  # burns known to heat
     dhw: CycleStats
+    unknown: CycleStats  # burns of unknown kind, counted apart
     condensing: Share | None  # None when the return is not mapped
     degree_days: DegreeDays | None  # None without any outdoor temperature
     gas: Consumption | None
@@ -84,6 +88,7 @@ def dhw_inputs(
         max_ch_setpoint=parameters.value(ParameterKey.MAX_CH_SETPOINT),
         zone_demand=history.zone_demand(start, end),
         setpoint_margin=options.setpoint_margin,
+        has_dhw=options.has_dhw,
     )
 
 
@@ -92,7 +97,7 @@ def _heat_output(
     parameters: ParameterSet,
     burns: Sequence[ClassifiedBurn],
     scale: ModulationScale,
-    kinds: frozenset[BurnKind] = CH_KINDS,
+    kinds: frozenset[BurnKind] = NOT_DHW_KINDS,
 ) -> Consumption | None:
     low = parameters.value(ParameterKey.BOILER_MIN_POWER)
     high = parameters.value(ParameterKey.BOILER_MAX_POWER)
@@ -191,6 +196,7 @@ def summarize(
         observed_s=observed,
         heating=cycle_stats(burns, observed, CH_KINDS, opts.short_burn_s, (start, end)),
         dhw=cycle_stats(burns, observed, DHW_KINDS, opts.short_burn_s, (start, end)),
+        unknown=cycle_stats(burns, observed, UNKNOWN_KINDS, opts.short_burn_s, (start, end)),
         condensing=condensing,
         degree_days=days,
         gas=gas,
