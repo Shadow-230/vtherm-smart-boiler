@@ -49,6 +49,13 @@ class HandBack(StrEnum):
     SWITCH = "switch"  # turn off an entity that enables external control
 
 
+class ValueEffect(StrEnum):
+    """What the hand-back value does on the device, as the user declares it."""
+
+    OWN_CONTROL = "own_control"  # the device's own control resumes
+    HEATING_STOPS = "heating_stops"
+
+
 class HandBackEffect(StrEnum):
     """What handing control back leads to, shown to the user."""
 
@@ -102,7 +109,8 @@ class ControlOptions:
     write_type: WriteType = WriteType.UNKNOWN
     ch_write_type: WriteType = WriteType.UNKNOWN
     hand_back: HandBack | None = None
-    hand_back_value: float = 0.0
+    hand_back_value: float | None = None  # never assumed: 0 means different things on devices
+    hand_back_value_effect: ValueEffect | None = None
     hand_back_entity: str | None = None
     gateway_id: str | None = None
     mqtt_top: str | None = None
@@ -228,7 +236,12 @@ def parse_control(
         write_type=write_type,
         ch_write_type=ch_write_type,
         hand_back=HandBack(data["hand_back"]) if data.get("hand_back") else None,
-        hand_back_value=float(data.get("hand_back_value", 0.0)),
+        hand_back_value=_float(data, "hand_back_value", None),
+        hand_back_value_effect=(
+            ValueEffect(data["hand_back_value_effect"])
+            if data.get("hand_back_value_effect")
+            else None
+        ),
         hand_back_entity=data.get("hand_back_entity") or None,
         gateway_id=data.get("gateway_id") or None,
         mqtt_top=data.get("mqtt_top") or None,
@@ -244,7 +257,12 @@ def parse_control(
 
 
 def hand_back_effect(control: ControlOptions) -> HandBackEffect | None:
-    """The effect of a hand-back for the declared topology; ``None`` where control cannot run."""
+    """The effect of a hand-back: for a hand-back value, what the user declared it does; else
+    what the declared topology leads to. ``None`` where control cannot run."""
+    if control.hand_back is HandBack.VALUE and control.hand_back_value_effect is not None:
+        if control.hand_back_value_effect is ValueEffect.HEATING_STOPS:
+            return HandBackEffect.HEATING_STOPS
+        return HandBackEffect.DEVICE_DECIDES
     return {
         Topology.GATEWAY_WITH_THERMOSTAT: HandBackEffect.THERMOSTAT_TAKES_OVER,
         Topology.GATEWAY_STANDALONE: HandBackEffect.HEATING_STOPS,
@@ -265,8 +283,13 @@ def config_blockers(control: ControlOptions, installation: Installation) -> list
             found.append("no_setpoint_entity")
         if control.write_type not in WRITABLE_TYPES:
             found.append("write_type_not_supported")
-        if control.hand_back is None or (
-            control.hand_back is HandBack.SWITCH and not control.hand_back_entity
+        if (
+            control.hand_back is None
+            or (control.hand_back is HandBack.SWITCH and not control.hand_back_entity)
+            or (
+                control.hand_back is HandBack.VALUE
+                and (control.hand_back_value is None or control.hand_back_value_effect is None)
+            )
         ):
             found.append("no_hand_back")
         elif control.hand_back is HandBack.TIMEOUT and control.write_type is not WriteType.EXPIRING:

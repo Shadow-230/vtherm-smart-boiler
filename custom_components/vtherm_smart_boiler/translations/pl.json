@@ -463,6 +463,7 @@
           "ch_write_type": "Typ zapisu przełącznika grzania",
           "hand_back": "Sposób oddania sterowania",
           "hand_back_value": "Wartość oddania",
+          "hand_back_value_effect": "Co robi wartość oddania",
           "hand_back_entity": "Przełącznik sterowania zewnętrznego"
         },
         "data_description": {
@@ -471,7 +472,8 @@
           "ch_entity": "Opcjonalny: przełącznik, który włącza i wyłącza grzanie, włączany z powrotem przy oddaniu sterowania; poniżej trzeba podać jego typ zapisu. Bez przełącznika „wyłącz” jest zapisywane jako niska nastawa. Nigdy nie wybieraj przełącznika zapisywanego w pamięci kotła (np. parametru kotła „grzanie aktywne”): każde przełączenie by ją zużywało.",
           "ch_write_type": "Potrzebny przy przełączniku grzania: co urządzenie robi z jego stanem. Wygasający: porzucany, jeśli nie jest powtarzany; powtarzany co 30 s. Trzymany: urządzenie go zachowuje. Wtyczka nigdy nie zapisuje trwałej pamięci kotła, więc przełącznik zadeklarowany jako trwały lub nieznany jest odrzucany.",
           "hand_back": "Jak sterowanie wraca do kotła przy każdym wyjściu: zapis wartości oddania; zaprzestanie zapisów, po którym przejmuje własny limit czasu urządzenia (tylko dla zapisów wygasających); albo wyłączenie przełącznika, który włącza sterowanie zewnętrzne. Wymagany; bez niego sterowania nie da się włączyć.",
-          "hand_back_value": "Nastawa zapisywana przy oddaniu sterowania, dla sposobu „wartość”: ta, której kocioł używa sam, albo 0, jeśli to oddaje mu sterowanie. Wymagana dla sposobu „wartość”.",
+          "hand_back_value": "Nastawa zapisywana przy oddaniu, dla metody wartości: wartość, która przywraca kotłowi własne sterowanie, albo ta, którą ma zachować. 0 na jednych urządzeniach znaczy „własne sterowanie”, na innych „bez grzania”. Wymagana przy metodzie wartości; oddanie liczy się jako wykonane dopiero, gdy encja pokaże tę wartość.",
+          "hand_back_value_effect": "Wymagane przy metodzie wartości: co urządzenie robi z wartością oddania — wraca jego własne sterowanie albo grzanie ustaje. Przełącznik sterowania pokazuje to jako skutek oddania.",
           "hand_back_entity": "Dla sposobu „przełącznik”: przełącznik, który włącza sterowanie zewnętrzne. Jest włączany na początku sterowania i wyłączany przy oddaniu."
         }
       },
@@ -613,7 +615,8 @@
       "limits_outside_entity_range": "Encja nastawy nie przyjmuje tego limitu; utrzymaj limity w jej zakresie.",
       "off_setpoint_outside_entity_range": "Encja nastawy nie przyjmuje tej wartości.",
       "write_type_not_supported": "Wtyczka nigdy nie zapisuje trwałej pamięci kotła: zadeklaruj encję nastawy jako wygasającą lub trzymaną albo wybierz „Bez sterowania”.",
-      "ch_write_type_not_supported": "Zadeklaruj przełącznik grzania jako wygasający lub trzymany albo zostaw przełącznik pusty: wtyczka nigdy nie zapisuje trwałej pamięci kotła."
+      "ch_write_type_not_supported": "Zadeklaruj przełącznik grzania jako wygasający lub trzymany albo zostaw przełącznik pusty: wtyczka nigdy nie zapisuje trwałej pamięci kotła.",
+      "hand_back_value_effect_missing": "Metoda wartości wymaga skutku: co urządzenie robi z wartością oddania."
     },
     "abort": {
       "missing_signal": "Brakuje wymaganego sygnału.",
@@ -731,6 +734,12 @@
       "options": {
         "info": "Tylko informacja",
         "hand_back": "Oddaj sterowanie"
+      }
+    },
+    "hand_back_value_effect": {
+      "options": {
+        "own_control": "Wraca jego własne sterowanie",
+        "heating_stops": "Grzanie ustaje"
       }
     }
   },

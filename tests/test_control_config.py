@@ -65,6 +65,7 @@ ENTITY = {
     "write_type": "held",
     "hand_back": "value",
     "hand_back_value": 0,
+    "hand_back_value_effect": "own_control",
     "confirmed_entity": "sensor.boiler_flow_setpoint",
     "topology": "virtual",
     "curve": CURVE,
@@ -248,3 +249,24 @@ def test_an_expiring_heating_override_is_repeated_with_the_setpoint() -> None:
         ENTITY | {"ch_entity": "switch.ch", "ch_write_type": "expiring"}, RADIATORS, None
     )
     assert expiring.loop.switch_guard.keepalive_s == 30.0
+
+
+@pytest.mark.parametrize("missing", ["hand_back_value", "hand_back_value_effect"])
+def test_a_value_hand_back_is_declared_with_its_effect(missing: str) -> None:
+    """0 means "no heat" on one device and "own control" on another: neither the value nor what
+    it does is ever assumed."""
+    options = parse_control({k: v for k, v in ENTITY.items() if k != missing}, RADIATORS, None)
+    assert "no_hand_back" in config_blockers(options, RADIATORS)
+
+
+@pytest.mark.parametrize(
+    ("effect", "shown"), [("own_control", "device_decides"), ("heating_stops", "heating_stops")]
+)
+def test_the_declared_effect_is_what_the_switch_shows(effect: str, shown: str) -> None:
+    from custom_components.vtherm_smart_boiler.control_config import hand_back_effect
+
+    options = parse_control(ENTITY | {"hand_back_value_effect": effect}, RADIATORS, None)
+    assert options.hand_back_value == 0.0
+    result = hand_back_effect(options)
+    assert result is not None
+    assert result.value == shown

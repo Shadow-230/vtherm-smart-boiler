@@ -521,40 +521,59 @@ async def test_auto_tpi_zones_that_cannot_learn_raise_a_repair_issue(rig: Rig) -
 
 @dataclass
 class FakeNumber:
-    """A writable setpoint entity (like a boiler's EMS or ESPHome number) that records writes."""
+    """A writable setpoint entity (like a boiler's EMS or ESPHome number) that records writes.
+
+    Like Home Assistant, it drops a call while the entity is unavailable; ``lowest`` plays a device
+    that ignores values below it and keeps its own.
+    """
 
     hass: HomeAssistant
     entity_id: str = "input_number.fake_boiler_flow"
     writes: list[float] = field(default_factory=list)
+    available: bool = True
+    lowest: float | None = None
+    value: float = 50.0
 
     def register(self) -> None:
         async def set_value(call: ServiceCall) -> None:
+            if not self.available:
+                return  # Home Assistant skips an unavailable entity without an error
             value = float(call.data["value"])
             self.writes.append(value)
-            self.publish(value)
+            if self.lowest is None or value >= self.lowest:
+                self.value = value
+            self.publish(self.value)
 
         self.hass.services.async_register("input_number", "set_value", set_value)
-        self.publish(50.0)
+        self.publish(self.value)
 
     def publish(self, value: float) -> None:
-        self.hass.states.async_set(self.entity_id, str(value), {"unit_of_measurement": "°C"})
+        state = str(value) if self.available else "unavailable"
+        self.hass.states.async_set(self.entity_id, state, {"unit_of_measurement": "°C"})
+
+    def set_available(self, available: bool) -> None:
+        self.available = available
+        self.publish(self.value)
+
+
+def held_entity(number: FakeNumber, **extra: Any) -> dict[str, Any]:
+    """Control through a held setpoint entity with a value hand-back."""
+    return {
+        "write_path": "entity",
+        "setpoint_entity": number.entity_id,
+        "write_type": "held",
+        "hand_back": "value",
+        "hand_back_value": 50,
+        "hand_back_value_effect": "own_control",
+        "confirmed_entity": number.entity_id,
+        "topology": "virtual",
+    } | extra
 
 
 async def test_a_held_setpoint_is_written_on_change_only(rig: Rig) -> None:
     number = FakeNumber(rig.hass)
     number.register()
-    await start(
-        rig,
-        write_path="entity",
-        setpoint_entity=number.entity_id,
-        write_type="held",
-        hand_back="value",
-        hand_back_value=50,
-        confirmed_entity=number.entity_id,
-        topology="virtual",
-        decision_interval_min=1,
-        ramp_k_per_min=10,
-    )
+    await start(rig, **held_entity(number, decision_interval_min=1, ramp_k_per_min=10))
     await rig.switch(True)
     assert number.writes == [EXPECTED]
     await rig.advance(120)
@@ -705,6 +724,7 @@ async def test_a_setpoint_entity_that_rejects_a_limit_blocks_control(rig: Rig) -
         write_type="expiring",
         hand_back="value",
         hand_back_value=30,
+        hand_back_value_effect="own_control",
         confirmed_entity=number.entity_id,
         topology="virtual",
     )
@@ -727,3 +747,52 @@ async def test_nothing_is_handed_back_twice_without_a_write_in_between(rig: Rig)
     assert await hass.config_entries.async_unload(rig.entry.entry_id)
     await hass.async_block_till_done()
     assert rig.gateway.setpoints().count(0.0) == 1  # already handed back, nothing written since
+
+
+async def test_an_entity_hand_back_to_an_unavailable_target_is_retried_until_confirmed(
+    rig: Rig,
+) -> None:
+    """Home Assistant would drop the call without an error: the hand-back is not taken for done,
+    is shown, and goes out again once the entity is back — done only when the entity shows it."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(rig, **held_entity(number))
+    await rig.switch(True)
+    assert number.writes == [EXPECTED]
+    number.set_available(False)
+    await rig.switch(False)
+    assert number.writes == [EXPECTED]  # nothing reached the device
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+    assert rig.entry is not None
+    control = rig.entry.runtime_data.control
+    assert control.stored()["hand_back_pending"]
+    await rig.advance(60)
+    assert number.writes == [EXPECTED]  # still away: still owed
+    number.set_available(True)
+    await rig.advance(60)
+    assert number.writes == [EXPECTED, 50.0]
+    await rig.advance(10)
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
+    assert not control.stored()["hand_back_pending"]
+
+
+async def test_a_value_hand_back_the_device_does_not_take_stays_owed(rig: Rig) -> None:
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(rig, **held_entity(number, hand_back_value=10))
+    await rig.switch(True)
+    number.lowest = 20.0  # the device keeps its value: the hand-back does not reach the boiler
+    await rig.switch(False)
+    assert number.writes == [EXPECTED, 10.0]
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"  # not yet due
+    await rig.advance(60)
+    assert number.writes == [EXPECTED, 10.0, 10.0]  # sent again
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+    assert rig.entry is not None
+    assert rig.entry.runtime_data.control.stored()["hand_back_pending"]
+    number.lowest = None
+    await rig.advance(70)
+    assert number.writes[-1] == 10.0
+    assert number.value == 10.0
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
+    assert not rig.entry.runtime_data.control.stored()["hand_back_pending"]

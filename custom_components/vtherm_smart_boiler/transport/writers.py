@@ -1,7 +1,10 @@
 """Writers: the only code that changes the boiler. They exist only while control is enabled.
 
 Each writer knows the services it may call — the list a test checks. A write that fails raises
-``WriteError``; the caller reports it and never assumes it applied.
+``WriteError``; the caller reports it and never assumes it applied. Home Assistant skips an
+unavailable entity without an error (and a missing one with a log line only), so a write to an
+entity first checks that it is there and available; an entity hand-back also says what each
+target must show once it has taken the hand-back, and it is done only when they do.
 
 OpenTherm Gateway facts (OTGW firmware documentation, research/2026-09-24-otgw-topologies-f3-f7.md):
 a control-setpoint override of 8 °C or more lapses unless repeated within a minute; one between
@@ -14,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from ..control_config import ControlOptions, HandBack, WritePath
@@ -34,6 +38,14 @@ class WriteError(Exception):
     """A write did not go through."""
 
 
+@dataclass(frozen=True, slots=True)
+class HandBackCheck:
+    """What a target must show once a hand-back has reached it: a value, or a switch state."""
+
+    entity_id: str
+    expected: float | str
+
+
 class Writer(Protocol):
     @property
     def services(self) -> frozenset[tuple[str, str]]: ...
@@ -42,8 +54,9 @@ class Writer(Protocol):
 
     async def write_heating(self, on: bool) -> None: ...
 
-    async def hand_back(self, full: bool = False) -> None:
-        """Give control back; ``full`` also clears what an earlier session may have left."""
+    async def hand_back(self, full: bool = False) -> tuple[HandBackCheck, ...]:
+        """Give control back; ``full`` also clears what an earlier session may have left. Returns
+        what the targets must show for the hand-back to count as done."""
         ...
 
 
@@ -56,6 +69,18 @@ def _checked(value: float, low: float) -> float:
 class _ServiceWriter:
     def __init__(self, hass: HomeAssistant) -> None:
         self._hass = hass
+
+    def _check_target(self, entity_id: str) -> None:
+        """Home Assistant would skip a missing or unavailable entity without an error."""
+        state = self._hass.states.get(entity_id)
+        if state is None:
+            raise WriteError(f"{entity_id} is missing")
+        if state.state in ("unavailable", "unknown"):
+            raise WriteError(f"{entity_id} is {state.state}")
+
+    async def _call_entity(self, service: str, entity_id: str, **data: object) -> None:
+        self._check_target(entity_id)
+        await self._call(_domain(entity_id), service, {"entity_id": entity_id, **data})
 
     async def _call(self, domain: str, service: str, data: dict[str, object]) -> None:
         try:
@@ -117,51 +142,50 @@ class EntityWriter(_ServiceWriter):
 
     async def _take(self) -> None:
         if self._external and not self._taken:
-            await self._call(_domain(self._external), "turn_on", {"entity_id": self._external})
+            await self._call_entity("turn_on", self._external)
         self._taken = True
 
     async def write_setpoint(self, value: float) -> None:
         checked = _checked(value, 0.0)
+        self._check_target(self._setpoint)
         await self._take()
-        await self._call(
-            _domain(self._setpoint), "set_value", {"entity_id": self._setpoint, "value": checked}
-        )
+        await self._call_entity("set_value", self._setpoint, value=checked)
 
     async def write_heating(self, on: bool) -> None:
         if not self._switch:
             raise WriteError("no heating switch")
+        self._check_target(self._switch)
         await self._take()
         self._switched = True
-        await self._call(
-            _domain(self._switch), "turn_on" if on else "turn_off", {"entity_id": self._switch}
-        )
+        await self._call_entity("turn_on" if on else "turn_off", self._switch)
 
-    async def hand_back(self, full: bool = False) -> None:
+    async def hand_back(self, full: bool = False) -> tuple[HandBackCheck, ...]:
         """Each step is tried whatever the others do; any failure is raised at the end."""
         self._taken = False
         errors: list[WriteError] = []
+        checks: list[HandBackCheck] = []
         if self._switch and (self._switched or full):
             try:
-                await self._call(_domain(self._switch), "turn_on", {"entity_id": self._switch})
+                await self._call_entity("turn_on", self._switch)
                 self._switched = False
+                checks.append(HandBackCheck(self._switch, "on"))
             except WriteError as err:
                 errors.append(err)
         try:
             if self._hand_back is HandBack.VALUE:
-                await self._call(
-                    _domain(self._setpoint),
-                    "set_value",
-                    {"entity_id": self._setpoint, "value": self._hand_back_value},
-                )
+                if self._hand_back_value is None:
+                    raise WriteError("no hand-back value")
+                await self._call_entity("set_value", self._setpoint, value=self._hand_back_value)
+                checks.append(HandBackCheck(self._setpoint, float(self._hand_back_value)))
             elif self._external:
-                await self._call(
-                    _domain(self._external), "turn_off", {"entity_id": self._external}
-                )
+                await self._call_entity("turn_off", self._external)
+                checks.append(HandBackCheck(self._external, "off"))
             # HandBack.TIMEOUT: stop writing; the device's own timeout hands back.
         except WriteError as err:
             errors.append(err)
         if errors:
             raise WriteError("; ".join(str(err) for err in errors))
+        return tuple(checks)
 
 
 class OpenthermGwWriter(_ServiceWriter):
@@ -193,11 +217,12 @@ class OpenthermGwWriter(_ServiceWriter):
             {"gateway_id": self._gateway, "ch_override": on},
         )
 
-    async def hand_back(self, full: bool = False) -> None:
+    async def hand_back(self, full: bool = False) -> tuple[HandBackCheck, ...]:
         # 0 cancels the setpoint override; the CH override applies only alongside it.
         await self._call(
             self.DOMAIN, "set_control_setpoint", {"gateway_id": self._gateway, "temperature": 0}
         )
+        return ()
 
 
 class OtgwMqttWriter(_ServiceWriter):
@@ -224,8 +249,9 @@ class OtgwMqttWriter(_ServiceWriter):
     async def write_heating(self, on: bool) -> None:
         await self._publish("chenable", "1" if on else "0")
 
-    async def hand_back(self, full: bool = False) -> None:
+    async def hand_back(self, full: bool = False) -> tuple[HandBackCheck, ...]:
         await self._publish("ctrlsetpt", "0")
+        return ()
 
 
 def make_writer(hass: HomeAssistant, options: ControlOptions) -> Writer:

@@ -463,6 +463,7 @@
           "ch_write_type": "Heating switch write type",
           "hand_back": "Hand-back method",
           "hand_back_value": "Hand-back value",
+          "hand_back_value_effect": "What the hand-back value does",
           "hand_back_entity": "External control switch"
         },
         "data_description": {
@@ -471,7 +472,8 @@
           "ch_entity": "Optional: a switch that turns heating on and off, turned back on at hand-back; its write type is needed below. Without a switch, \"off\" is written as a low setpoint. Never pick a switch that is stored in the boiler's memory (e.g. a boiler's \"heating activated\" parameter): every switching would wear it.",
           "ch_write_type": "Needed with a heating switch: what the device does with its state. Expiring: dropped unless repeated; repeated every 30 s. Held: the device keeps it. The plugin never writes to the boiler's persistent memory, so a switch declared persistent or unknown is refused.",
           "hand_back": "How control returns to the boiler on every exit: write a hand-back value; stop writing and let the device's own timeout take over, for expiring writes only; or turn off a switch that enables external control. Required; control cannot be switched on without it.",
-          "hand_back_value": "The setpoint written on hand-back, for the value method: what the boiler uses on its own, or 0 if that returns control to it. Required for the value method.",
+          "hand_back_value": "The setpoint written on hand-back, for the value method: the value that returns the boiler to its own control, or the one it should keep. 0 means \"own control\" on some devices and \"no heat\" on others. Required for the value method; the hand-back counts as done only once the entity shows this value.",
+          "hand_back_value_effect": "Required with the value method: what the device does with the hand-back value — its own control resumes, or heating stops. The control switch shows it as what hand-back leads to.",
           "hand_back_entity": "For the switch method: the switch that enables external control. It is turned on when control starts and off on hand-back."
         }
       },
@@ -613,7 +615,8 @@
       "limits_outside_entity_range": "The setpoint entity does not accept this limit; keep the limits within its range.",
       "off_setpoint_outside_entity_range": "The setpoint entity does not accept this value.",
       "write_type_not_supported": "The plugin never writes to the boiler's persistent memory: declare the setpoint entity expiring or held, or choose \"No control\".",
-      "ch_write_type_not_supported": "Declare the heating switch expiring or held, or leave the switch empty: the plugin never writes to the boiler's persistent memory."
+      "ch_write_type_not_supported": "Declare the heating switch expiring or held, or leave the switch empty: the plugin never writes to the boiler's persistent memory.",
+      "hand_back_value_effect_missing": "The value method needs its effect: what the device does with the hand-back value."
     },
     "abort": {
       "missing_signal": "A required signal is missing.",
@@ -731,6 +734,12 @@
       "options": {
         "info": "Information only",
         "hand_back": "Hand back"
+      }
+    },
+    "hand_back_value_effect": {
+      "options": {
+        "own_control": "Its own control resumes",
+        "heating_stops": "Heating stops"
       }
     }
   },

@@ -43,6 +43,7 @@ from .control_config import (
     AlarmReaction,
     HandBack,
     Topology,
+    ValueEffect,
     WritePath,
 )
 from .core.alarms import (
@@ -413,6 +414,9 @@ def control_entity_schema(options: dict[str, Any]) -> vol.Schema:
                 "hand_back", [h.value for h in HandBack]
             ),
             _optional("hand_back_value", control): _number(0, 90, 0.5, "°C"),
+            _optional("hand_back_value_effect", control): _select(
+                "hand_back_value_effect", [e.value for e in ValueEffect]
+            ),
             _optional("hand_back_entity", control): _entity(_ON_OFF_ENTITY),
         }
     )
@@ -535,7 +539,8 @@ def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     if control.get("write_path") != user_input["write_path"]:
         for key in (
             "setpoint_entity", "write_type", "ch_entity", "ch_write_type", "hand_back",
-            "hand_back_value", "hand_back_entity", "gateway_id", "mqtt_top", "mqtt_node",
+            "hand_back_value", "hand_back_value_effect", "hand_back_entity", "gateway_id",
+            "mqtt_top", "mqtt_node",
         ):  # fmt: skip
             control.pop(key, None)
     _set_or_drop(control, user_input, ("write_path", "topology", "confirmed_entity"))
@@ -546,7 +551,8 @@ def apply_control_details(options: dict[str, Any], user_input: dict[str, Any]) -
     control = dict(options.get(CONTROL, {}))
     keys = (
         "setpoint_entity", "write_type", "ch_entity", "ch_write_type", "hand_back",
-        "hand_back_value", "hand_back_entity", "gateway_id", "mqtt_top", "mqtt_node",
+        "hand_back_value", "hand_back_value_effect", "hand_back_entity", "gateway_id",
+        "mqtt_top", "mqtt_node",
     )  # fmt: skip
     _set_or_drop(control, user_input, tuple(k for k in keys if k in user_input or k in control))
     options[CONTROL] = control
@@ -610,6 +616,9 @@ def control_details_error(
         low, high = bounds
         if (low is not None and value < low) or (high is not None and value > high):
             return {"hand_back_value": "hand_back_value_out_of_range"}
+        if not user_input.get("hand_back_value_effect"):
+            # 0 means "no heat" on one device and "own control" on another: never assumed.
+            return {"hand_back_value_effect": "hand_back_value_effect_missing"}
     if method == HandBack.SWITCH and not user_input.get("hand_back_entity"):
         return {"hand_back_entity": "hand_back_entity_missing"}
     if method == HandBack.TIMEOUT and user_input.get("write_type") != WriteType.EXPIRING:

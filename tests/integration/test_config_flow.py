@@ -400,10 +400,17 @@ async def test_control_with_an_entity_checks_the_hand_back(
     assert result["errors"] == {"ch_write_type": "ch_write_type_not_supported"}
     result = await options_step(hass, result, details | {"hand_back": "value"})
     assert result["errors"] == {"hand_back_value": "hand_back_value_missing"}
+    result = await options_step(
+        hass, result, details | {"hand_back": "value", "hand_back_value": 0}
+    )  # 0 means different things on different devices: its effect is declared
+    assert result["errors"] == {"hand_back_value_effect": "hand_back_value_effect_missing"}
     result = await options_step(hass, result, details | {"hand_back": "switch"})
     assert result["errors"] == {"hand_back_entity": "hand_back_entity_missing"}
     result = await options_step(
-        hass, result, details | {"hand_back": "value", "hand_back_value": 0}
+        hass,
+        result,
+        details
+        | {"hand_back": "value", "hand_back_value": 0, "hand_back_value_effect": "own_control"},
     )
     assert result["step_id"] == "control_curve"
     curve = {"design_outdoor": -15, "design_flow": 50, "summer_threshold": 20}
@@ -415,6 +422,7 @@ async def test_control_with_an_entity_checks_the_hand_back(
     control = hass.config_entries.async_get_entry(entry_id).options["control"]
     assert control["hand_back"] == "value"
     assert control["hand_back_value"] == 0
+    assert control["hand_back_value_effect"] == "own_control"
     assert control["write_type"] == "held"
 
 
@@ -511,6 +519,7 @@ async def test_control_limits_must_suit_the_setpoint_entity(
         "setpoint_entity": "number.boiler_flow",
         "write_type": "expiring",
         "hand_back": "value",
+        "hand_back_value_effect": "own_control",
     }
     result = await options_step(hass, result, details | {"hand_back_value": 5})
     assert result["errors"] == {"hand_back_value": "hand_back_value_out_of_range"}

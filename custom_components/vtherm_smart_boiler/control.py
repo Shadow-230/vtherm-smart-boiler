@@ -5,7 +5,8 @@ The step itself is pure (``core.loop``); this module only gathers its inputs, ca
 writes through the writer, and turns guard events and failures into alarms. The writer exists
 only while control is switched on. An internal error hands back and blocks control until the user
 switches it off and on again; unloading the entry and stopping Home Assistant hand back too. A
-hand-back that fails is retried until it goes through, and says so; latches survive a restart.
+hand-back is retried until it is confirmed — an entity hand-back counts only once each target
+shows what it was given — and a failed one says so; latches survive a restart.
 """
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ from .core.loop import LoopOutput, LoopState, loop_step
 from .core.readings import BoilerSnapshot, ZoneState
 from .core.signals import SIGNAL_SPECS, Signal
 from .transport.entities import read_bounds, read_temperature, read_weather_temperature
-from .transport.writers import WriteError, Writer, make_writer, writer_services
+from .transport.writers import HandBackCheck, WriteError, Writer, make_writer, writer_services
 from .vtherm_attributes import CentralMode
 
 if TYPE_CHECKING:
@@ -148,7 +149,10 @@ class ControlUnit:
         self._published: ControlStatus | None = None
         self._last_change_at: float | None = None
         self._hand_back_at: float | None = None
-        self._hand_back_pending = False  # a hand-back failed and is retried until it goes through
+        # A hand-back is owed: it failed, or it has not been confirmed yet. Retried until it is.
+        self._hand_back_pending = False
+        self._hand_back_failed = False  # shown as an alarm: an attempt failed or went unconfirmed
+        self._hand_back_checks: tuple[HandBackCheck, ...] = ()
         # Something was written since the last hand-back (unknown after a start: assumed so).
         self._wrote_since_hand_back = True
         self._hand_back_retry_at = 0.0
@@ -330,7 +334,7 @@ class ControlUnit:
         values = [control.limits.hard_min, highest]
         if not options.loop.ch_writes:
             values.append(options.loop.off_setpoint)
-        if options.hand_back is HandBack.VALUE:
+        if options.hand_back is HandBack.VALUE and options.hand_back_value is not None:
             values.append(options.hand_back_value)
         return any(
             (low is not None and value < low) or (high is not None and value > high)
@@ -390,12 +394,8 @@ class ControlUnit:
 
     async def _async_step(self, now: float) -> None:
         session = self._session
-        if (
-            self._hand_back_pending
-            and not session.loop.control.controlling
-            and now >= self._hand_back_retry_at
-        ):
-            await self._async_try_hand_back(now, full=True)
+        if self._hand_back_pending and not session.loop.control.controlling:
+            await self._async_follow_hand_back(now)
         if not self._restored and now - self._started_at < RESTORE_WAIT_S:
             return  # the switch has not restored the user's choice yet: decide nothing
         blockers = self.blockers(now)
@@ -443,7 +443,7 @@ class ControlUnit:
 
     def _alarms(self) -> set[ControlAlarm]:
         alarms = set(self._session.alarms)
-        if self._hand_back_pending:
+        if self._hand_back_failed:
             alarms.add(ControlAlarm.HAND_BACK_FAILED)
         return alarms
 
@@ -557,8 +557,7 @@ class ControlUnit:
         self._wrote_since_hand_back = True
         if self._hand_back_pending:
             # Control has the boiler again: the earlier hand-back no longer matters.
-            self._hand_back_pending = False
-            self._coordinator.schedule_save()
+            self._hand_back_done()
         if action is None or action.kind is not WriteKind.KEEPALIVE:
             self._last_change_at = now
         return True
@@ -577,21 +576,65 @@ class ControlUnit:
 
     async def _async_try_hand_back(self, now: float, full: bool = False) -> bool:
         """One hand-back attempt; a failure is kept, shown and retried until it goes through.
-        ``full``: also clear what an earlier session may have set (a retry after a restart)."""
+        ``full``: also clear what an earlier session may have set (a retry after a restart). An
+        attempt whose targets do not show the hand-back yet stays owed until they do."""
         try:
             writer = self._writer or self._writer_factory(self._hass, self.options)
-            await writer.hand_back(full=full)
+            checks = await writer.hand_back(full=full)
         except (WriteError, ValueError) as err:
             _LOGGER.error("Handing control back failed; retrying every minute: %s", err)
             self._hand_back_pending = True
+            self._hand_back_failed = True
+            self._hand_back_checks = ()
             self._hand_back_retry_at = now + HAND_BACK_RETRY_S
             self._coordinator.schedule_save()
             return False
-        if self._hand_back_pending:
-            self._hand_back_pending = False
-            self._coordinator.schedule_save()
         self._wrote_since_hand_back = False
+        if checks and not self._checks_hold(checks):
+            self._hand_back_pending = True
+            self._hand_back_checks = checks
+            self._hand_back_retry_at = now + HAND_BACK_RETRY_S
+            self._coordinator.schedule_save()
+            return True
+        self._hand_back_done()
         return True
+
+    async def _async_follow_hand_back(self, now: float) -> None:
+        """An owed hand-back: done once its targets show it; otherwise sent again every minute,
+        and shown as failed once a sent one has gone unconfirmed that long."""
+        if self._hand_back_checks and self._checks_hold(self._hand_back_checks):
+            self._hand_back_done()
+            return
+        if now < self._hand_back_retry_at:
+            return
+        if self._hand_back_checks:
+            _LOGGER.error(
+                "The hand-back was not confirmed by %s; sending it again",
+                ", ".join(check.entity_id for check in self._hand_back_checks),
+            )
+            self._hand_back_failed = True
+        await self._async_try_hand_back(now, full=True)
+
+    def _checks_hold(self, checks: Sequence[HandBackCheck]) -> bool:
+        """Every target shows what the hand-back gave it (a value within half a kelvin)."""
+        for check in checks:
+            if isinstance(check.expected, str):
+                state = self._hass.states.get(check.entity_id)
+                if state is None or state.state != check.expected:
+                    return False
+                continue
+            reading = read_temperature(self._hass, check.entity_id)
+            if reading.value is None or abs(float(reading.value) - check.expected) > 0.5:
+                return False
+        return True
+
+    def _hand_back_done(self) -> None:
+        changed = self._hand_back_pending or self._hand_back_failed
+        self._hand_back_pending = False
+        self._hand_back_failed = False
+        self._hand_back_checks = ()
+        if changed:
+            self._coordinator.schedule_save()
 
     async def _async_hand_back_now(self, now: float) -> None:
         """Hand back at once if control holds the boiler (unload, stop, error)."""

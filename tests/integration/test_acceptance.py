@@ -385,6 +385,7 @@ async def test_nothing_is_written_to_the_boilers_persistent_memory(
         write_type=write_type,
         hand_back="value",
         hand_back_value=0,
+        hand_back_value_effect="own_control",
         topology="virtual",
     )
     with pytest.raises(ServiceValidationError) as err:

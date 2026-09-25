@@ -18,6 +18,7 @@ from custom_components.vtherm_smart_boiler.core.installation import (
 from custom_components.vtherm_smart_boiler.transport import writers
 from custom_components.vtherm_smart_boiler.transport.writers import (
     EntityWriter,
+    HandBackCheck,
     OpenthermGwWriter,
     OtgwMqttWriter,
     WriteError,
@@ -43,6 +44,13 @@ def record(
 
 def options(**data: Any):
     return parse_control(data, INSTALLATION, None)
+
+
+def present(hass: HomeAssistant, *entities: str) -> None:
+    """The targets exist and are available, as a device's entities are while it is online."""
+    for entity in entities:
+        on_off = entity.split(".", 1)[0] in ("switch", "input_boolean")
+        hass.states.async_set(entity, "on" if on_off else "40")
 
 
 async def test_opentherm_gw_writer(hass: HomeAssistant) -> None:
@@ -95,6 +103,7 @@ async def test_mqtt_writer(hass: HomeAssistant) -> None:
 
 async def test_entity_writer_with_value_hand_back(hass: HomeAssistant) -> None:
     calls = record(hass, ("number", "set_value"), ("switch", "turn_on"), ("switch", "turn_off"))
+    present(hass, "number.flow", "switch.ch")
     writer = make_writer(
         hass,
         options(
@@ -105,12 +114,15 @@ async def test_entity_writer_with_value_hand_back(hass: HomeAssistant) -> None:
             ch_write_type="expiring",
             hand_back="value",
             hand_back_value=0,
+            hand_back_value_effect="own_control",
         ),
     )
     assert isinstance(writer, EntityWriter)
     await writer.write_setpoint(41.0)
     await writer.write_heating(False)
-    await writer.hand_back()
+    checks = await writer.hand_back()
+    # Done only once each target shows it: the switch on, the setpoint at the hand-back value.
+    assert checks == (HandBackCheck("switch.ch", "on"), HandBackCheck("number.flow", 0.0))
     ch = {"entity_id": "switch.ch"}
     assert calls == [
         ("number", "set_value", {"entity_id": "number.flow", "value": 41.0}),
@@ -152,6 +164,7 @@ async def test_entity_writer_switch_and_timeout_hand_back(hass: HomeAssistant) -
         ("input_boolean", "turn_off"),
         ("input_boolean", "turn_on"),
     )
+    present(hass, "input_number.flow", "input_boolean.external_control")
     switch = make_writer(
         hass,
         options(
@@ -164,7 +177,7 @@ async def test_entity_writer_switch_and_timeout_hand_back(hass: HomeAssistant) -
     external = {"entity_id": "input_boolean.external_control"}
     await switch.write_setpoint(40.0)
     await switch.write_setpoint(41.0)
-    await switch.hand_back()
+    assert await switch.hand_back() == (HandBackCheck("input_boolean.external_control", "off"),)
     await switch.write_setpoint(42.0)
     assert calls == [
         ("input_boolean", "turn_on", external),  # control is taken once per session
@@ -185,7 +198,7 @@ async def test_entity_writer_switch_and_timeout_hand_back(hass: HomeAssistant) -
     timeout = make_writer(
         hass, options(write_path="entity", setpoint_entity="input_number.flow", hand_back="timeout")
     )
-    await timeout.hand_back()
+    assert await timeout.hand_back() == ()
     assert calls == []  # nothing written: the device's timeout hands back
     assert timeout.services == {("input_number", "set_value")}
 
@@ -229,6 +242,7 @@ async def test_unconfigured_control_has_no_writer(hass: HomeAssistant) -> None:
 
 async def test_each_hand_back_step_is_tried_whatever_the_others_do(hass: HomeAssistant) -> None:
     calls = record(hass, ("number", "set_value"))  # the heating switch's service is missing
+    present(hass, "number.flow", "switch.ch")
     writer = make_writer(
         hass,
         options(
@@ -244,3 +258,37 @@ async def test_each_hand_back_step_is_tried_whatever_the_others_do(hass: HomeAss
     with pytest.raises(WriteError, match=r"switch\.turn_on"):
         await writer.hand_back(full=True)
     assert calls == [("number", "set_value", {"entity_id": "number.flow", "value": 0.0})]
+
+
+@pytest.mark.parametrize("state", [None, "unavailable", "unknown"])
+async def test_a_missing_or_unavailable_target_is_a_failure(
+    hass: HomeAssistant, state: str | None
+) -> None:
+    """Home Assistant skips an unavailable entity without an error, and a missing one with a log
+    line only: the writer must not take such a call for a write that went through."""
+    calls = record(hass, ("number", "set_value"), ("switch", "turn_on"), ("switch", "turn_off"))
+    present(hass, "switch.ch")
+    if state is not None:
+        hass.states.async_set("number.flow", state)
+    writer = make_writer(
+        hass,
+        options(
+            write_path="entity",
+            setpoint_entity="number.flow",
+            ch_entity="switch.ch",
+            write_type="held",
+            ch_write_type="held",
+            hand_back="value",
+            hand_back_value=0,
+            hand_back_value_effect="own_control",
+        ),
+    )
+    with pytest.raises(WriteError, match=r"number\.flow"):
+        await writer.write_setpoint(41.0)
+    await writer.write_heating(True)  # the switch is there
+    with pytest.raises(WriteError, match=r"number\.flow"):
+        await writer.hand_back()
+    assert ("number", "set_value") not in {(d, s) for d, s, _ in calls}
+    hass.states.async_set("switch.ch", "unavailable")
+    with pytest.raises(WriteError, match=r"switch\.ch"):
+        await writer.write_heating(False)
