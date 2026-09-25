@@ -6,7 +6,14 @@ writes through the writer, and turns guard events and failures into alarms. The 
 only while control is switched on. An internal error hands back and blocks control until the user
 switches it off and on again; unloading the entry and stopping Home Assistant hand back too. A
 hand-back is retried until it is confirmed — an entity hand-back counts only once each target
-shows what it was given — and a failed one says so; latches survive a restart.
+shows what it was given — and a failed one says so.
+
+How control resumes after it stopped (``SCOPE.md`` §7):
+- an alarm set to hand back, an outside change included: a latch, shown with its cause, until
+  the user switches control off and on; it survives a restart and never expires on its own;
+- an internal error: at any change of the control switch;
+- a lost boiler link: on its own, once the data is fresh again;
+- a blocker: on its own, once it is gone.
 """
 
 from __future__ import annotations
@@ -38,6 +45,7 @@ from .core.controller import CentralMode as ControlCentralMode
 from .core.controller import ControlInputs, ControlMode, ControlState
 from .core.guards import (
     GuardEvent,
+    SetpointGuardState,
     WriteAction,
     WriteKind,
     setpoint_failed,
@@ -114,6 +122,7 @@ class ControlStatus:
     hold_until: float | None = None  # anti-cycling holds the boiler until then
     alarms: frozenset[ControlAlarm] = frozenset()
     paused_zones: tuple[str, ...] = ()
+    latched_by: tuple[str, ...] = ()  # the alarms that latched control, while it stays latched
 
 
 @dataclass
@@ -229,6 +238,9 @@ class ControlUnit:
             "taken_with": dict(self._raw) if owed and self._raw else None,
             "paused": dict(session.learning.paused),
             "latched": session.loop.control.latched,
+            "latched_by": list(session.loop.control.latched_by),
+            # The one rewrite after an outside change: within a day of it, no more are made.
+            "rewritten_at": session.loop.setpoint.rewritten_at,
             "failed": session.failed,
             "alarms": sorted(alarm.value for alarm in session.alarms & _KEPT_ALARMS),
             "hand_back_pending": self._hand_back_pending,
@@ -238,11 +250,18 @@ class ControlUnit:
         try:
             paused = {str(z): float(t) for z, t in dict(data.get("paused", {})).items()}
             alarms = {ControlAlarm(a) for a in data.get("alarms", [])} & _KEPT_ALARMS
+            latched_by = tuple(str(a) for a in data.get("latched_by") or ())
+            rewritten = data.get("rewritten_at")
+            rewritten_at = None if rewritten is None else float(rewritten)
         except TypeError, ValueError:
             _LOGGER.warning("Ignoring unreadable stored control data")
             return
+        latched = bool(data.get("latched", False))
         self._session = _Session(
-            loop=LoopState(control=ControlState(latched=bool(data.get("latched", False)))),
+            loop=LoopState(
+                control=ControlState(latched=latched, latched_by=latched_by if latched else ()),
+                setpoint=SetpointGuardState(rewritten_at=rewritten_at),
+            ),
             learning=LearningState(paused=paused, last_toggle=dict(paused)),
             alarms=alarms,
             failed=bool(data.get("failed", False)),
@@ -402,6 +421,9 @@ class ControlUnit:
                 return
             now = dt_util.utcnow().timestamp() if now is None else now
             self.enabled = enabled
+            # Any change of the switch clears an internal error (a latch needs off, then on).
+            self._session.failed = False
+            self._session.alarms.discard(ControlAlarm.CONTROL_ERROR)
             await self._async_run_step(now)
             if not enabled:
                 self._end_session()
@@ -442,7 +464,7 @@ class ControlUnit:
             self._coordinator.schedule_save()
             self._status = replace(
                 self._status,
-                blockers=(*self._status.blockers, "control_error"),
+                blockers=tuple(dict.fromkeys((*self._status.blockers, "control_error"))),
                 mode=ControlMode.NOT_ALLOWED,
                 alarms=frozenset(self._alarms()),
             )
@@ -497,6 +519,7 @@ class ControlUnit:
             hold_until=out.decision.hold_until,
             alarms=frozenset(self._alarms()),
             paused_zones=tuple(sorted(session.learning.paused)),
+            latched_by=session.loop.control.latched_by if session.loop.control.latched else (),
         )
 
     def _alarms(self) -> set[ControlAlarm]:

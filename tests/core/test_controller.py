@@ -81,7 +81,7 @@ def test_missing_precondition_hands_back() -> None:
     assert decisions[1].hand_back
 
 
-def test_alarm_hand_back_is_latched_until_control_is_switched_off() -> None:
+def test_alarm_hand_back_is_latched_until_a_new_session() -> None:
     state, decisions = run(
         [
             inputs(0.0),
@@ -98,8 +98,14 @@ def test_alarm_hand_back_is_latched_until_control_is_switched_off() -> None:
         ControlMode.NOT_ALLOWED,
         ControlMode.HANDED_BACK,
     ]
+    assert state.latched_by == ("pressure_low",)  # the cause stays with the latch
+    # Control being off does not clear it (e.g. a switch not restored after a restart): only the
+    # user switching control off and on again, which starts a new session.
     state, decisions = run([inputs(150.0, enabled=False), inputs(180.0)], state=state)
-    assert decisions[1].mode is ControlMode.HEATING
+    assert decisions[1].mode is ControlMode.HANDED_BACK
+    assert state.latched_by == ("pressure_low",)
+    _state, decisions = run([inputs(210.0)], state=ControlState())
+    assert decisions[0].mode is ControlMode.HEATING
 
 
 def test_central_stopped_hands_back_and_resumes_at_once() -> None:

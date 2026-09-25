@@ -20,6 +20,8 @@ from .entity import ControlEntity
 
 # Blockers that pass on their own; control switched on waits for them instead of refusing.
 TRANSIENT_BLOCKERS = frozenset({"ha_starting"})
+# Blockers the switch change itself clears.
+CLEARED_BY_SWITCHING = frozenset({"control_error"})
 
 
 async def async_setup_entry(
@@ -69,7 +71,7 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
         blockers = [
             b
             for b in self.control.blockers(dt_util.utcnow().timestamp())
-            if b not in TRANSIENT_BLOCKERS
+            if b not in TRANSIENT_BLOCKERS | CLEARED_BY_SWITCHING
         ]
         if blockers:
             raise ServiceValidationError(

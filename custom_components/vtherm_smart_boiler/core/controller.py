@@ -3,8 +3,9 @@
 Order of precedence, checked on every tick:
 
 1. Control switched off or a precondition missing → no command; hand back once if we were
-   controlling.
-2. An alarm set to hand back → hand back, latched until control is switched off and on again.
+   controlling. Neither clears a latch.
+2. An alarm set to hand back → hand back, latched — with the alarms that caused it — until a new
+   session: the user switching control off and on again (the control unit starts it).
 3. VT's central mode "Stopped" → hand back; control resumes when the mode changes.
 4. The boiler's signals are not fresh → no command (nothing is written without fresh data); if
    that lasts beyond the stale hand-back time, hand back once; control resumes with fresh data.
@@ -181,7 +182,8 @@ class BoilerCommand:
 class ControlState:
     mode: ControlMode = ControlMode.DISABLED
     controlling: bool = False  # commands were given and control has not been handed back
-    latched: bool = False  # an alarm handed back; stays until control is switched off
+    latched: bool = False  # an alarm handed back; stays for the session
+    latched_by: tuple[str, ...] = ()  # the alarms that set the latch
     outdoor: OutdoorState = field(default_factory=OutdoorState)
     season: Season = Season.WINTER
     frost: bool = False
@@ -213,14 +215,13 @@ def fallback_setpoint(config: ControlConfig) -> float:
 
 
 def _release(
-    state: ControlState, mode: ControlMode, reason: Reason, latched: bool = False
+    state: ControlState, mode: ControlMode, reason: Reason
 ) -> tuple[ControlState, ControlDecision]:
-    """No command; hand back once if we were controlling."""
+    """No command; hand back once if we were controlling. A latch stays as it is."""
     new_state = replace(
         state,
         mode=mode,
         controlling=False,
-        latched=latched,
         command=None,
         reasons=(reason,),
         decided_at=None,
@@ -247,9 +248,11 @@ def decide(
     if not inputs.enabled:
         return _release(state, ControlMode.DISABLED, Reason.CONTROL_OFF)
     if inputs.blockers:
-        return _release(state, ControlMode.NOT_ALLOWED, Reason.PRECONDITION, latched=state.latched)
+        return _release(state, ControlMode.NOT_ALLOWED, Reason.PRECONDITION)
     if state.latched or inputs.hand_back_alarms:
-        return _release(state, ControlMode.HANDED_BACK, Reason.ALARM_HAND_BACK, latched=True)
+        latched_by = state.latched_by if state.latched else tuple(inputs.hand_back_alarms)
+        state = replace(state, latched=True, latched_by=latched_by)
+        return _release(state, ControlMode.HANDED_BACK, Reason.ALARM_HAND_BACK)
     if inputs.central_mode is CentralMode.STOPPED:
         return _release(state, ControlMode.HANDED_BACK, Reason.CENTRAL_STOPPED)
     if not inputs.boiler_link:

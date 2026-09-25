@@ -1032,3 +1032,77 @@ async def test_a_slow_smartpi_call_does_not_hold_up_control(rig: Rig) -> None:
     await hass.async_block_till_done()
     assert done, "switching control off waited for SmartPI"
     assert ("setpoint", 0.0) in rig.gateway.calls
+
+
+async def start_with_stored(
+    rig: Rig, hass_storage: dict[str, Any], control: dict[str, Any], **extra: Any
+) -> MockConfigEntry:
+    """Set up the entry over a store left by an earlier run."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones, **extra)
+    )
+    entry.add_to_hass(rig.hass)
+    hass_storage[f"{DOMAIN}.{entry.entry_id}"] = {
+        "version": 1,
+        "key": f"{DOMAIN}.{entry.entry_id}",
+        "data": {"monitoring_since": 0.0, "control": control},
+    }
+    assert await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    rig.entry = entry
+    return entry
+
+
+async def test_a_restored_latch_shows_its_cause_and_never_expires(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    await start_with_stored(rig, hass_storage, {"latched": True, "latched_by": ["pressure_low"]})
+    await rig.advance(120)  # past the wait for the switch to restore its state
+    state = rig.state("sensor", "control_state")
+    assert state.attributes["latched_by"] == ["pressure_low"]
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.gateway.calls == []  # still latched: nothing written
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    await rig.switch(False)
+    await rig.switch(True)  # the user's off and on clears it
+    assert rig.gateway.setpoints() == [EXPECTED]
+
+
+async def test_an_internal_error_is_cleared_by_any_switch_change(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await start(rig)
+    assert rig.entry is not None
+    unit = rig.entry.runtime_data.control
+    original = type(unit)._async_step
+
+    async def broken(self: Any, now: float) -> None:
+        raise RuntimeError("a bug")
+
+    monkeypatch.setattr(type(unit), "_async_step", broken)
+    await rig.advance(40)  # the error repeats at every step while control is off
+    blockers = rig.state("sensor", "control_state").attributes["blockers"]
+    assert blockers.count("control_error") == 1
+    monkeypatch.setattr(type(unit), "_async_step", original)
+    await rig.switch(True)  # not refused: switching clears the error
+    assert rig.gateway.setpoints() == [EXPECTED]
+    assert "control_error" not in rig.state("sensor", "control_state").attributes["blockers"]
+
+
+async def test_the_one_rewrite_is_remembered_across_a_restart(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """An outside change was rewritten an hour before the restart: within the day another one is
+    not fought, even in the new run."""
+    now = START.timestamp()
+    mock_restore_cache(
+        rig.hass, [State("switch.boiler_boiler_control_experimental", "on")]
+    )
+    await start_with_stored(rig, hass_storage, {"rewritten_at": now - 3600.0})
+    await rig.advance(20)
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+    rig.gateway.forced = 60.0  # another controller writes its own value
+    await rig.advance(20)
+    assert rig.gateway.setpoints().count(EXPECTED) == 1  # not written again
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
