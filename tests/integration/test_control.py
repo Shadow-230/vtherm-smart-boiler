@@ -57,6 +57,9 @@ class FakeGateway:
     ch: bool = True  # heating on/off as the boiler receives it
     forced_ch: bool | None = None  # another controller switches heating
     fail_after: bool = False  # the setpoint arrives, but the call reports a failure (a timeout)
+    connected: bool = True  # False: as opentherm_gw without its gateway — every service returns
+    # without an error, nothing arrives, and the gateway's entities are unavailable
+    lost: list[tuple[str, Any]] = field(default_factory=list)  # calls that went nowhere
     block: asyncio.Event | None = None  # a heating setpoint's call waits for this (a slow gateway)
     calls: list[tuple[str, Any]] = field(default_factory=list)
     times: list[float] = field(default_factory=list)  # when each setpoint arrived
@@ -64,6 +67,9 @@ class FakeGateway:
     def register(self) -> None:
         async def setpoint(call: ServiceCall) -> None:
             value = float(call.data["temperature"])
+            if not self.connected:
+                self.lost.append(("setpoint", value))
+                return
             self.calls.append(("setpoint", value))
             self.times.append(datetime.now(UTC).timestamp())
             self.override = None if value == 0 else value
@@ -74,6 +80,9 @@ class FakeGateway:
                 await self.block.wait()
 
         async def heating(call: ServiceCall) -> None:
+            if not self.connected:
+                self.lost.append(("ch", call.data["ch_override"]))
+                return
             self.calls.append(("ch", call.data["ch_override"]))
             self.ch = bool(call.data["ch_override"])
             self.publish()
@@ -85,6 +94,10 @@ class FakeGateway:
         self.publish()
 
     def publish(self) -> None:
+        if not self.connected:
+            self.hass.states.async_set(CH_ECHO, "unavailable")
+            self.hass.states.async_set(CONFIRMED, "unavailable")
+            return
         ch = self.ch if self.forced_ch is None else self.forced_ch
         self.hass.states.async_set(CH_ECHO, "on" if ch else "off")
         if not self.readable:
@@ -119,15 +132,17 @@ class Rig:
     services: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
 
     def live(self) -> None:
-        """The gateway's periodic reports: fresh boiler signals and setpoint echo."""
+        """The gateway's periodic reports: fresh boiler signals and setpoint echo; without its
+        connection, the gateway's entities are unavailable."""
+        connected = self.gateway.connected
         values: dict[Signal, float | bool | None] = {
-            Signal.FLAME: False,
-            Signal.DHW_ACTIVE: self.dhw,
+            Signal.FLAME: False if connected else None,
+            Signal.DHW_ACTIVE: self.dhw if connected else None,
         }
         if self.outdoor_reported:
-            values[Signal.OUTDOOR] = self.outdoor
+            values[Signal.OUTDOOR] = self.outdoor if connected else None
         if self.flow_reported:
-            values[Signal.FLOW] = self.flow
+            values[Signal.FLOW] = self.flow if connected else None
         self.boiler.set_many(values)
         self.gateway.publish()
 
@@ -1175,6 +1190,29 @@ async def test_removing_the_entry_with_a_hand_back_owed_raises_a_repair_issue(ri
     await rig.hass.async_block_till_done()
     issues = ir.async_get(rig.hass)
     assert issues.async_get_issue(DOMAIN, f"hand_back_owed_after_removal_{entry_id}") is not None
+
+
+async def test_an_otgw_hand_back_waits_for_the_gateway_to_be_back(rig: Rig) -> None:
+    """C1: without its gateway, opentherm_gw's services return without an error and nothing
+    arrives (pyotgw drops the command). A hand-back made then is not done: it is shown as
+    failed, kept, and sent again once the gateway is back — a CH=0 left in the gateway would
+    otherwise mask the thermostat for good."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.gateway.override == EXPECTED
+    rig.gateway.connected = False
+    rig.live()
+    await rig.switch(False)  # the user switches control off during the outage
+    assert ("setpoint", 0.0) in rig.gateway.lost  # tried, and lost
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+    await rig.advance(180)
+    assert rig.gateway.override == EXPECTED  # nothing has reached the gateway
+    rig.gateway.connected = True
+    await rig.advance(70)
+    assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]
+    assert rig.gateway.override is None
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
 
 
 async def test_an_otgw_hand_back_clears_the_heating_override(rig: Rig) -> None:

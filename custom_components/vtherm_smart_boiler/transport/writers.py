@@ -214,13 +214,33 @@ class EntityWriter(_ServiceWriter):
         return tuple(checks)
 
 
-class OpenthermGwWriter(_ServiceWriter):
+class _GatewayWriter(_ServiceWriter):
+    """A built-in OTGW: its commands can go nowhere without an error — opentherm_gw's services
+    return while the gateway is not connected (the command is dropped), and an MQTT publish
+    succeeds once the broker has it, the firmware offline or not. Where the gateway's own
+    read-back shows it unavailable, a write, and above all a hand-back, is taken as failed:
+    kept, shown and sent again once the gateway is back."""
+
+    def __init__(self, hass: HomeAssistant, options: ControlOptions) -> None:
+        super().__init__(hass)
+        self._reachable_by = options.confirmed_entity
+
+    def _require_connected(self) -> None:
+        entity = self._reachable_by
+        if not entity:
+            return
+        state = self._hass.states.get(entity)
+        if state is None or state.state == "unavailable":
+            raise WriteError(f"the gateway is not connected: {entity} is unavailable")
+
+
+class OpenthermGwWriter(_GatewayWriter):
     """Built-in OTGW through Home Assistant's opentherm_gw services."""
 
     DOMAIN = OPENTHERM_GW
 
     def __init__(self, hass: HomeAssistant, options: ControlOptions) -> None:
-        super().__init__(hass)
+        super().__init__(hass, options)
         if not options.gateway_id:
             raise ValueError("no gateway id")
         self._gateway = options.gateway_id
@@ -235,6 +255,7 @@ class OpenthermGwWriter(_ServiceWriter):
             "set_control_setpoint",
             {"gateway_id": self._gateway, "temperature": _checked(value, OTGW_MIN_SETPOINT)},
         )
+        self._require_connected()
 
     async def write_heating(self, on: bool) -> None:
         await self._call(
@@ -242,9 +263,11 @@ class OpenthermGwWriter(_ServiceWriter):
             "set_central_heating_ovrd",
             {"gateway_id": self._gateway, "ch_override": on},
         )
+        self._require_connected()
 
     async def hand_back(self, full: bool = False) -> tuple[HandBackCheck, ...]:
-        """``CH=1``, then ``CS=0``; each is tried whatever the other does."""
+        """``CH=1``, then ``CS=0``; each is tried whatever the other does, and the hand-back
+        counts only with the gateway connected."""
         await _all_of(
             self._call(
                 self.DOMAIN,
@@ -257,14 +280,15 @@ class OpenthermGwWriter(_ServiceWriter):
                 {"gateway_id": self._gateway, "temperature": 0},
             ),
         )
+        self._require_connected()
         return ()
 
 
-class OtgwMqttWriter(_ServiceWriter):
+class OtgwMqttWriter(_GatewayWriter):
     """Built-in OTGW through its firmware's MQTT commands (``<top>/set/<node>/<command>``)."""
 
     def __init__(self, hass: HomeAssistant, options: ControlOptions) -> None:
-        super().__init__(hass)
+        super().__init__(hass, options)
         if not (options.mqtt_top and options.mqtt_node):
             raise ValueError("no MQTT topic")
         self._base = f"{options.mqtt_top.strip('/')}/set/{options.mqtt_node.strip('/')}"
@@ -280,13 +304,17 @@ class OtgwMqttWriter(_ServiceWriter):
 
     async def write_setpoint(self, value: float) -> None:
         await self._publish("ctrlsetpt", f"{_checked(value, OTGW_MIN_SETPOINT):.1f}")
+        self._require_connected()
 
     async def write_heating(self, on: bool) -> None:
         await self._publish("chenable", "1" if on else "0")
+        self._require_connected()
 
     async def hand_back(self, full: bool = False) -> tuple[HandBackCheck, ...]:
-        """``CH=1``, then ``CS=0``; each is tried whatever the other does."""
+        """``CH=1``, then ``CS=0``; each is tried whatever the other does, and the hand-back
+        counts only with the gateway connected."""
         await _all_of(self._publish("chenable", "1"), self._publish("ctrlsetpt", "0"))
+        self._require_connected()
         return ()
 
 
