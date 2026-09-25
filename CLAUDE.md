@@ -117,7 +117,12 @@ Each topic lives only in its file; do not copy it here.
   protection); VT applies it only to thermostats that follow the central mode
   (`is_controlled_by_central_mode`, VT 10.4.0 `base_thermostat.py`), so the plugin sees it
   through the zones' demand. Central boiler: binary sensor on device count or total power
-  thresholds, calls on/off actions — the plugin replaces it.
+  thresholds, calls on/off actions — the plugin replaces it. VT starts its thermostats at
+  `EVENT_HOMEASSISTANT_STARTED` (at the end of an entry's setup once Home Assistant runs), while
+  `hass.is_running` is already true during start-up; each VT climate has `is_ready`. Reloading the
+  central entry makes the central-boiler binary sensor unavailable, then `off` until VT's boiler
+  state next changes; `select.central_mode` restores its last value (L3,
+  `research/2026-09-25-l3-device-facts.md`).
 - **VT** uses current outdoor temperature only; forecast is on its "future improvements" list.
   Auto-TPI learns in sessions (≥ 50 cycles). `set_auto_tpi_mode` is not a pure pause: the
   `reinitialise` default is true (wipes the learning), the allow-flags are overwritten on every
@@ -160,7 +165,22 @@ Each topic lives only in its file; do not copy it here.
   regular polling (e.g. ID 48 bounds) read 0 after a gateway reset.
   `research/2026-09-24-otgw-write-paths.md`. Firmware MQTT: commands resent after 5 s, up to 5
   times; `TSet` echoes what the gateway sends, not the boiler's acceptance; `CS`, `MM` and `CH`
-  are lost at a PIC reset (`research/2026-09-24-write-paths-f1-f6.md`).
+  are lost at a PIC reset (`research/2026-09-24-write-paths-f1-f6.md`). PIC 6.6 source (L3,
+  `research/2026-09-24-otgw-topologies-f3-f7.md`): `CH=0` sets a flag kept through `CS=0` and the
+  override's lapse until `CH=1` or a reset — it masks CH enable under any later `CS` and an
+  on/off thermostat's demand, while an OpenTherm thermostat's own CH bit passes again after
+  `CS=0`; `TSet` carries `CS` whatever `CH`; a Data-Invalid or Unknown-DataID reply to ID 1
+  clears the `CS` override without a message; stand-alone the PIC polls ID 18 itself, and a reset
+  zeroes its stored values, so `opentherm_gw` shows water pressure 0.0 until a real reading.
+- **DIY masters** (L3, `research/2026-09-25-l3-device-facts.md`): ESPHome `opentherm` sends CH
+  enable only with `t_set` > 0 and its `ch_enable` switch on — a low setpoint leaves CH enabled,
+  and its docs require the switch to turn heating off; the ESP resends its values itself (held)
+  and by default reboots after 15 min without a Home Assistant API client, coming back with
+  `t_set` at its initial value. DIYLess stock firmware idles at 10 °C with CH enabled; users
+  report the pump running. EMS-ESP `selflowtemp` and `selburnpow` expire within about a minute
+  and EMS-ESP never resends them; it holds `heatingoff` itself; `heatingactivated`, `heatingtemp`
+  and the other parameter telegrams stay in the boiler — whether in EEPROM is not documented. No
+  report found of a boiler showing CH off with the flame on, or of flame flicker.
 - **User needs** (VT and SAT issues, 2026-09-24, details in `research/`): short-cycling is the
   top complaint in both; boilers silently ignore some commands; a gateway acting as master lost
   the DHW-enable bit (Immergas); a reload left old loops toggling the boiler; a failed outdoor
