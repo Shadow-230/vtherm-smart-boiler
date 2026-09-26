@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "VTherm Smart Boiler",
-        "description": "Monitors your boiler read-only: it never writes to the boiler or to VT. Pick a name and the level of detail.",
+        "description": "Monitors your boiler; it writes nothing to the boiler until you enable control in the options. Pick a name and the level of detail.",
         "data": {
           "name": "Name",
           "level": "Level of detail"
@@ -72,7 +72,7 @@
           "condensing": "Condensing boilers get flue gas limits for condensing appliances and are judged on how often they condense; for other boilers the absolute flue gas alarm is off and condensing plays no part in the verdict. The wrong choice warns too late or for nothing, and misjudges the verdict.",
           "boiler_min_power": "Lowest heating power from the manual, in kW. Compared with the building load: a load often below it means the boiler must cycle. A wrong value skews that judgement in the verdict.",
           "boiler_max_power": "Highest heating power in kW. With the minimum and the modulation it estimates heat output; a wrong value skews heat and gas estimates.",
-          "max_ch_setpoint": "Highest flow temperature in heating, in °C. Flow above it points to a DHW run; set too low, heating counts as hot water.",
+          "max_ch_setpoint": "Highest flow temperature in heating, in °C. Flow above it points to a DHW run; set too low, heating counts as hot water. Control never writes a setpoint above it either: set too low, rooms stay cold in hard frost.",
           "gas_at_min_power": "Gas per hour at minimum power, in your gas meter's unit. With the modulation it estimates gas use when there is no meter; a wrong value skews gas per degree-day.",
           "gas_at_max_power": "Gas per hour at maximum power, in the same unit; a wrong value skews the gas estimates.",
           "modulation_scale": "Whether 0 % is the minimum power (the OpenTherm definition) or the value is a percentage of maximum power. The wrong choice skews heat and gas estimates.",
@@ -332,7 +332,7 @@
           "condensing": "Condensing boilers get flue gas limits for condensing appliances and are judged on how often they condense; for other boilers the absolute flue gas alarm is off and condensing plays no part in the verdict. The wrong choice warns too late or for nothing, and misjudges the verdict.",
           "boiler_min_power": "Lowest heating power from the manual, in kW. Compared with the building load: a load often below it means the boiler must cycle. A wrong value skews that judgement in the verdict.",
           "boiler_max_power": "Highest heating power in kW. With the minimum and the modulation it estimates heat output; a wrong value skews heat and gas estimates.",
-          "max_ch_setpoint": "Highest flow temperature in heating, in °C. Flow above it points to a DHW run; set too low, heating counts as hot water.",
+          "max_ch_setpoint": "Highest flow temperature in heating, in °C. Flow above it points to a DHW run; set too low, heating counts as hot water. Control never writes a setpoint above it either: set too low, rooms stay cold in hard frost.",
           "gas_at_min_power": "Gas per hour at minimum power, in your gas meter's unit. With the modulation it estimates gas use when there is no meter; a wrong value skews gas per degree-day.",
           "gas_at_max_power": "Gas per hour at maximum power, in the same unit; a wrong value skews the gas estimates.",
           "modulation_scale": "Whether 0 % is the minimum power (the OpenTherm definition) or the value is a percentage of maximum power. The wrong choice skews heat and gas estimates.",
@@ -493,12 +493,12 @@
         "data_description": {
           "setpoint_entity": "A number or input_number that sets the boiler's flow temperature.",
           "write_type": "Expiring: the device drops the value unless it is repeated; it is repeated every 30 s. Held: the device keeps the value and sends it on itself; written on change only. Persistent or unknown (default): stored in the boiler's memory, or it may be — the plugin never writes to the boiler's persistent memory, so control is not available with such an entity. Risk: a stored parameter declared expiring would be written every 30 s, about 2,900 times a day, and wear the boiler's memory out.",
-          "ch_entity": "Optional: a switch that turns heating on and off, turned back on at hand-back; its write type is needed below. Without a switch, \"off\" is written as a low setpoint. Never pick a switch that is stored in the boiler's memory (e.g. a boiler's \"heating activated\" parameter): every switching would wear it.",
+          "ch_entity": "Optional: a switch that turns heating on and off, turned back on at hand-back; its write type is needed below. Without a switch, \"off\" is written as a low setpoint. Never pick a switch that is stored in the boiler's memory (e.g. a boiler's \"heating activated\" parameter): every switching would wear it. On must allow heating: a flag that stops heating while on (such as EMS-ESP's \"heating off\") turns every command round and must not be used here.",
           "ch_write_type": "Needed with a heating switch: what the device does with its state. Expiring: dropped unless repeated; repeated every 30 s. Held: the device keeps it. The plugin never writes to the boiler's persistent memory, so a switch declared persistent or unknown is refused.",
           "hand_back": "How control returns to the boiler on every exit: write a hand-back value; stop writing and let the device's own timeout take over, for expiring writes only; or turn off a switch that enables external control. Required; control cannot be switched on without it.",
-          "hand_back_value": "The setpoint written on hand-back, for the value method: the value that returns the boiler to its own control, or the one it should keep. 0 means \"own control\" on some devices and \"no heat\" on others. Required for the value method; the hand-back counts as done only once the entity shows this value.",
+          "hand_back_value": "The setpoint written on hand-back, in °C, for the value method: the value that returns the boiler to its own control, or the one it should keep. 0 means \"own control\" on some devices and \"no heat\" on others. Required for the value method; the hand-back counts as done only once the entity shows this value.",
           "hand_back_value_effect": "Required with the value method: what the device does with the hand-back value — its own control resumes, or heating stops. The control switch shows it as what hand-back leads to.",
-          "hand_back_entity": "For the switch method: the switch that enables external control. It is turned on when control starts and off on hand-back."
+          "hand_back_entity": "For the switch method: the switch that enables external control. It is turned on when control starts and off on hand-back — so never a setting the device stores in its memory."
         }
       },
       "control_gateway": {
@@ -608,7 +608,7 @@
           "low_flow": "Default: information only.",
           "write_failed": "Default: information only.",
           "write_ignored": "Default: information only.",
-          "outside_change": "Default: hand back — another controller writes to the boiler too, and the plugin does not fight it."
+          "outside_change": "Default: hand back — another controller writes to the boiler too, and the plugin does not fight it. With \"information\", control stops writing but its last commands stay in force: a heating off it sent keeps the boiler off while zones call."
         }
       }
     },
@@ -1240,7 +1240,7 @@
     },
     "control_options_invalid": {
       "title": "The control options cannot be used",
-      "description": "The saved control options cannot be used ({problem}), so control is off; the monitor keeps running. Open the options and set control up again."
+      "description": "The saved control options cannot be used, so control is off; the monitor keeps running. The log names the option; open the options and set control up again."
     },
     "hand_back_owed_after_removal": {
       "title": "The boiler may still hold a value from VTherm Smart Boiler",

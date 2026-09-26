@@ -160,12 +160,18 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 def _report_control_problem(hass: HomeAssistant, entry: ConfigEntry, config: EntryConfig) -> None:
+    import logging
+
     from homeassistant.helpers import issue_registry as ir
 
     issue_id = f"control_options_invalid_{entry.entry_id}"
     if config.control_problem is None:
         ir.async_delete_issue(hass, DOMAIN, issue_id)
         return
+    # The raw reason goes to the log, not into a translated text (U9).
+    logging.getLogger(__name__).warning(
+        "The control options cannot be used, so control is off: %s", config.control_problem
+    )
     ir.async_create_issue(
         hass,
         DOMAIN,
@@ -173,7 +179,6 @@ def _report_control_problem(hass: HomeAssistant, entry: ConfigEntry, config: Ent
         is_fixable=False,
         severity=ir.IssueSeverity.ERROR,
         translation_key="control_options_invalid",
-        translation_placeholders={"problem": config.control_problem},
     )
 
 

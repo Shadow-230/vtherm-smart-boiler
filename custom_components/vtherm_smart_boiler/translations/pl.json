@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "VTherm Smart Boiler",
-        "description": "Monitoruje kocioł tylko do odczytu: nigdy nie zapisuje niczego do kotła ani do VT. Wybierz nazwę i poziom szczegółowości.",
+        "description": "Monitoruje kocioł; nie zapisuje niczego do kotła, dopóki nie włączysz sterowania w opcjach. Wybierz nazwę i poziom szczegółowości.",
         "data": {
           "name": "Nazwa",
           "level": "Poziom szczegółowości"
@@ -72,7 +72,7 @@
           "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych i są oceniane po tym, jak często kondensują; dla innych kotłów bezwzględny alarm spalin jest wyłączony, a kondensacja nie wpływa na werdykt. Zły wybór ostrzega za późno albo bez powodu i myli werdykt.",
           "boiler_min_power": "Najmniejsza moc grzania z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować. Zła wartość wypacza tę ocenę w werdykcie.",
           "boiler_max_power": "Największa moc grzania w kW. Z minimum i modulacją szacuje moc cieplną; zła wartość wypacza szacunki ciepła i gazu.",
-          "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie CWU; za niska sprawia, że c.o. liczy się jako ciepła woda.",
+          "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie CWU; za niska sprawia, że c.o. liczy się jako ciepła woda. Sterowanie też nigdy nie zapisze nastawy powyżej niej: za niska zostawia pokoje zimne w silny mróz.",
           "gas_at_min_power": "Zużycie gazu na godzinę przy mocy minimalnej, w jednostce licznika gazu. Z modulacją szacuje zużycie gazu, gdy nie ma licznika; zła wartość wypacza gaz na stopniodzień.",
           "gas_at_max_power": "Zużycie gazu na godzinę przy mocy maksymalnej, w tej samej jednostce; zła wartość wypacza szacunki gazu.",
           "modulation_scale": "Czy 0 % to moc minimalna (definicja OpenTherm), czy wartość to procent mocy maksymalnej. Zły wybór zniekształca szacunki ciepła i gazu.",
@@ -332,7 +332,7 @@
           "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych i są oceniane po tym, jak często kondensują; dla innych kotłów bezwzględny alarm spalin jest wyłączony, a kondensacja nie wpływa na werdykt. Zły wybór ostrzega za późno albo bez powodu i myli werdykt.",
           "boiler_min_power": "Najmniejsza moc grzania z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować. Zła wartość wypacza tę ocenę w werdykcie.",
           "boiler_max_power": "Największa moc grzania w kW. Z minimum i modulacją szacuje moc cieplną; zła wartość wypacza szacunki ciepła i gazu.",
-          "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie CWU; za niska sprawia, że c.o. liczy się jako ciepła woda.",
+          "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie CWU; za niska sprawia, że c.o. liczy się jako ciepła woda. Sterowanie też nigdy nie zapisze nastawy powyżej niej: za niska zostawia pokoje zimne w silny mróz.",
           "gas_at_min_power": "Zużycie gazu na godzinę przy mocy minimalnej, w jednostce licznika gazu. Z modulacją szacuje zużycie gazu, gdy nie ma licznika; zła wartość wypacza gaz na stopniodzień.",
           "gas_at_max_power": "Zużycie gazu na godzinę przy mocy maksymalnej, w tej samej jednostce; zła wartość wypacza szacunki gazu.",
           "modulation_scale": "Czy 0 % to moc minimalna (definicja OpenTherm), czy wartość to procent mocy maksymalnej. Zły wybór zniekształca szacunki ciepła i gazu.",
@@ -493,12 +493,12 @@
         "data_description": {
           "setpoint_entity": "Liczba (number albo input_number), która ustawia temperaturę zasilania kotła.",
           "write_type": "Wygasający: urządzenie porzuca wartość, jeśli nie jest powtarzana; jest powtarzana co 30 s. Trzymany: urządzenie zachowuje wartość i samo ją przekazuje; zapis tylko przy zmianie. Trwały lub nieznany (domyślnie): zapisywany w pamięci kotła albo może być — wtyczka nigdy nie zapisuje trwałej pamięci kotła, więc sterowanie z taką encją jest niedostępne. Ryzyko: parametr zapisywany w pamięci, zadeklarowany jako wygasający, byłby zapisywany co 30 s, około 2900 razy na dobę, i zużyłby pamięć kotła.",
-          "ch_entity": "Opcjonalny: przełącznik, który włącza i wyłącza grzanie, włączany z powrotem przy oddaniu sterowania; poniżej trzeba podać jego typ zapisu. Bez przełącznika „wyłącz” jest zapisywane jako niska nastawa. Nigdy nie wybieraj przełącznika zapisywanego w pamięci kotła (np. parametru kotła „grzanie aktywne”): każde przełączenie by ją zużywało.",
+          "ch_entity": "Opcjonalny: przełącznik, który włącza i wyłącza grzanie, włączany z powrotem przy oddaniu sterowania; poniżej trzeba podać jego typ zapisu. Bez przełącznika „wyłącz” jest zapisywane jako niska nastawa. Nigdy nie wybieraj przełącznika zapisywanego w pamięci kotła (np. parametru kotła „grzanie aktywne”): każde przełączenie by ją zużywało. Włączony ma pozwalać grzać: flaga, która włączona zatrzymuje grzanie (jak „heating off” w EMS-ESP), odwraca każde polecenie i nie może być tu użyta.",
           "ch_write_type": "Potrzebny przy przełączniku grzania: co urządzenie robi z jego stanem. Wygasający: porzucany, jeśli nie jest powtarzany; powtarzany co 30 s. Trzymany: urządzenie go zachowuje. Wtyczka nigdy nie zapisuje trwałej pamięci kotła, więc przełącznik zadeklarowany jako trwały lub nieznany jest odrzucany.",
           "hand_back": "Jak sterowanie wraca do kotła przy każdym wyjściu: zapis wartości oddania; zaprzestanie zapisów, po którym przejmuje własny limit czasu urządzenia (tylko dla zapisów wygasających); albo wyłączenie przełącznika, który włącza sterowanie zewnętrzne. Wymagany; bez niego sterowania nie da się włączyć.",
-          "hand_back_value": "Nastawa zapisywana przy oddaniu, dla metody wartości: wartość, która przywraca kotłowi własne sterowanie, albo ta, którą ma zachować. 0 na jednych urządzeniach znaczy „własne sterowanie”, na innych „bez grzania”. Wymagana przy metodzie wartości; oddanie liczy się jako wykonane dopiero, gdy encja pokaże tę wartość.",
+          "hand_back_value": "Nastawa zapisywana przy oddaniu, w °C, dla metody wartości: wartość, która przywraca kotłowi własne sterowanie, albo ta, którą ma zachować. 0 na jednych urządzeniach znaczy „własne sterowanie”, na innych „bez grzania”. Wymagana przy metodzie wartości; oddanie liczy się jako wykonane dopiero, gdy encja pokaże tę wartość.",
           "hand_back_value_effect": "Wymagane przy metodzie wartości: co urządzenie robi z wartością oddania — wraca jego własne sterowanie albo grzanie ustaje. Przełącznik sterowania pokazuje to jako skutek oddania.",
-          "hand_back_entity": "Dla sposobu „przełącznik”: przełącznik, który włącza sterowanie zewnętrzne. Jest włączany na początku sterowania i wyłączany przy oddaniu."
+          "hand_back_entity": "Dla sposobu „przełącznik”: przełącznik, który włącza sterowanie zewnętrzne. Jest włączany na początku sterowania i wyłączany przy oddaniu — więc nigdy ustawienie, które urządzenie zapisuje w pamięci."
         }
       },
       "control_gateway": {
@@ -608,7 +608,7 @@
           "low_flow": "Domyślnie: tylko informacja.",
           "write_failed": "Domyślnie: tylko informacja.",
           "write_ignored": "Domyślnie: tylko informacja.",
-          "outside_change": "Domyślnie: oddaj — do kotła zapisuje też inny sterownik, a wtyczka z nim nie walczy."
+          "outside_change": "Domyślnie: oddaj — do kotła zapisuje też inny sterownik, a wtyczka z nim nie walczy. Przy „informacji” sterowanie przestaje zapisywać, ale jego ostatnie polecenia zostają w mocy: wysłane wyłączenie grzania trzyma kocioł wyłączony, choć strefy wołają."
         }
       }
     },
@@ -1240,7 +1240,7 @@
     },
     "control_options_invalid": {
       "title": "Opcji sterowania nie da się użyć",
-      "description": "Zapisanych opcji sterowania nie da się użyć ({problem}), więc sterowanie jest wyłączone; monitor działa dalej. Otwórz opcje i skonfiguruj sterowanie ponownie."
+      "description": "Zapisanych opcji sterowania nie da się użyć, więc sterowanie jest wyłączone; monitor działa dalej. Dziennik podaje, której opcji; otwórz opcje i skonfiguruj sterowanie ponownie."
     },
     "hand_back_owed_after_removal": {
       "title": "Kocioł może nadal trzymać wartość z VTherm Smart Boiler",
