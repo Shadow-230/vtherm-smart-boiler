@@ -1185,8 +1185,8 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         boiler yet, or control holds the boiler — its hand-back must go through the device
         that has it, which the user gets by switching control off first."""
         coordinator = getattr(self.config_entry, "runtime_data", None)
-        units = [getattr(coordinator, name, None) for name in ("control", "hand_back_unit")]
-        units = [unit for unit in units if unit is not None]
+        found = (getattr(coordinator, name, None) for name in ("control", "hand_back_unit"))
+        units = [unit for unit in found if unit is not None]
         if any(unit.hand_back_owed for unit in units):
             return "hand_back_pending"
         if any(unit.holding for unit in units):
