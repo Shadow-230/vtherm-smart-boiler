@@ -130,6 +130,20 @@ def _shown(check: Confirmation | None, gateway: bool, self_echo: bool) -> str | 
     return None if check is None else check.value
 
 
+def report_owed_hand_back(hass: HomeAssistant, entry_id: str, persistent: bool = False) -> None:
+    """The repair issue of a hand-back still owed; fixable by saying the boiler was returned."""
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        f"{OWED_ISSUE}_{entry_id}",
+        is_fixable=True,
+        is_persistent=persistent,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key=OWED_ISSUE,
+        data={"entry_id": entry_id},
+    )
+
+
 class ControlAlarm(StrEnum):
     WRITE_FAILED = "write_failed"
     WRITE_IGNORED = "write_ignored"
@@ -424,6 +438,11 @@ class ControlUnit:
             except Exception:
                 _LOGGER.exception("Handing control back on stop failed")
             self._writer = None
+            if self._hand_back_pending:
+                # The entry unloads — disabled, reloaded, Home Assistant stopping — with the
+                # hand-back still owed: the issue outlives it, until a later run gets it through
+                # or the user settles it by hand.
+                self._report_owed(persistent=True)
         await self._async_learning_calls()
         self._coordinator.schedule_save()
 
@@ -922,24 +941,18 @@ class ControlUnit:
             self._coordinator.schedule_save()
         self._report_owed()
 
-    def _report_owed(self) -> None:
+    def _report_owed(self, persistent: bool = False) -> None:
         """A repair issue shows a hand-back still owed — without the control entities at once,
-        with them once it has failed — and lets the user say they returned the boiler by hand
-        (its target gone for good, say), which nothing else could settle."""
+        with them once it has failed, and for good when the entry unloads with it — and lets the
+        user say they returned the boiler by hand (its target gone for good, say), which nothing
+        else could settle."""
         entry_id = self._coordinator.config_entry.entry_id
-        issue_id = f"{OWED_ISSUE}_{entry_id}"
-        if self._hand_back_pending and (self.hand_back_only or self._hand_back_failed):
-            ir.async_create_issue(
-                self._hass,
-                DOMAIN,
-                issue_id,
-                is_fixable=True,
-                severity=ir.IssueSeverity.ERROR,
-                translation_key=OWED_ISSUE,
-                data={"entry_id": entry_id},
-            )
+        if self._hand_back_pending and (
+            persistent or self.hand_back_only or self._hand_back_failed
+        ):
+            report_owed_hand_back(self._hass, entry_id, persistent=persistent)
         else:
-            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+            ir.async_delete_issue(self._hass, DOMAIN, f"{OWED_ISSUE}_{entry_id}")
 
     def release_owed_hand_back(self) -> None:
         """The user returned the boiler to its own control by hand: nothing is owed any more, and

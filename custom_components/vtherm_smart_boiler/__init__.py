@@ -43,11 +43,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # A control section that cannot be used leaves control out, not the whole entry: the
         # monitor keeps running, and a hand-back still owed goes out.
         config = EntryConfig.from_options(entry.options, strict_control=False)
-    except ConfigError as err:
+    except (ConfigError, KeyError, TypeError, ValueError) as err:
+        # Options this version cannot read — an option a later check refuses, a hand edit —
+        # stop the entry with a reason, and a boiler the last run held is not forgotten.
+        await _async_report_owed_from_store(hass, entry)
+        if isinstance(err, ConfigError):
+            code, subject = err.code, err.subject or "-"
+        else:
+            import logging
+
+            logging.getLogger(__name__).error("The options cannot be read: %s", err)
+            code, subject = "unreadable_options", "-"
         raise ConfigEntryError(
             translation_domain=DOMAIN,
             translation_key="invalid_options",
-            translation_placeholders={"code": err.code, "subject": err.subject or "-"},
+            translation_placeholders={"code": code, "subject": subject},
         ) from err
     coordinator = SmartBoilerCoordinator(hass, entry, config)
     try:
@@ -180,6 +190,27 @@ def _report_control_problem(hass: HomeAssistant, entry: ConfigEntry, config: Ent
         severity=ir.IssueSeverity.ERROR,
         translation_key="control_options_invalid",
     )
+
+
+async def _async_report_owed_from_store(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """The options cannot be read, so no unit can hand back: if the last run left the boiler
+    held, the user is told, for good, and can settle it by hand."""
+    from homeassistant.helpers.storage import Store
+
+    from .control import report_owed_hand_back
+    from .coordinator import STORAGE_VERSION
+
+    try:
+        data = await Store[dict[str, Any]](
+            hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}"
+        ).async_load()
+    except Exception:  # an unreadable store: nothing more to tell
+        return
+    control = data.get("control") if isinstance(data, dict) else None
+    if isinstance(control, dict) and (
+        control.get("hand_back_pending") or control.get("controlling")
+    ):
+        report_owed_hand_back(hass, entry.entry_id, persistent=True)
 
 
 def _hand_back_unit(

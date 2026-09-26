@@ -1345,6 +1345,60 @@ async def test_what_control_writes_to_cannot_change_while_it_holds_the_boiler(ri
     assert result["step_id"] == "control_curve"
 
 
+async def test_disabling_the_entry_with_a_hand_back_owed_keeps_the_issue(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """H4: the entry disabled while its hand-back cannot get through: the alarm goes with the
+    entities and nothing retries, so the repair issue outlives it — and its fix settles the
+    stored hand-back."""
+    from homeassistant.components.repairs import DOMAIN as REPAIRS
+    from homeassistant.config_entries import ConfigEntryDisabler
+    from homeassistant.setup import async_setup_component
+
+    await owe_a_hand_back(rig)
+    assert rig.entry is not None
+    await rig.hass.config_entries.async_set_disabled_by(
+        rig.entry.entry_id, ConfigEntryDisabler.USER
+    )
+    await rig.hass.async_block_till_done()
+    found = issue(rig, "hand_back_owed")
+    assert found is not None
+    assert found.is_persistent
+    assert found.is_fixable
+    assert stored_control(hass_storage, rig)["hand_back_pending"] is True
+    assert await async_setup_component(rig.hass, REPAIRS, {})
+    manager = rig.hass.data[REPAIRS]["flow_manager"]
+    flow = await manager.async_init(DOMAIN, data={"issue_id": found.issue_id})
+    flow = await manager.async_configure(flow["flow_id"], {})
+    assert flow["type"] == "create_entry"
+    await rig.hass.async_block_till_done()
+    stored = stored_control(hass_storage, rig)
+    assert (stored["hand_back_pending"], stored["controlling"]) == (False, False)
+
+
+async def test_options_that_cannot_be_read_still_tell_of_a_held_boiler(
+    hass: HomeAssistant, hass_storage: dict[str, Any], zones: FakeZones
+) -> None:
+    """H5: the last run held the boiler, and the options no longer parse (a check a later
+    version tightened, a hand edit): no unit can hand back, so the user is told, for good."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=options(zones) | {"boiler": {"class": "no such class"}},
+    )
+    entry.add_to_hass(hass)
+    hass_storage[f"{DOMAIN}.{entry.entry_id}"] = {
+        "version": 1,
+        "key": f"{DOMAIN}.{entry.entry_id}",
+        "data": {"monitoring_since": 0.0, "control": {"controlling": True}},
+    }
+    assert not await hass.config_entries.async_setup(entry.entry_id)
+    found = ir.async_get(hass).async_get_issue(DOMAIN, f"hand_back_owed_{entry.entry_id}")
+    assert found is not None
+    assert found.is_persistent
+
+
 async def test_removing_the_entry_with_a_hand_back_owed_raises_a_repair_issue(rig: Rig) -> None:
     await owe_a_hand_back(rig)
     assert rig.entry is not None

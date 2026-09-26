@@ -11,6 +11,8 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 
+from .const import DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -35,7 +37,10 @@ class ReturnedByHandFlow(RepairsFlow):
 async def async_release(hass: HomeAssistant, entry_id: str) -> None:
     """Forget an owed hand-back: in the running unit, or in the store the last run left."""
     entry = hass.config_entries.async_get_entry(entry_id)
-    if entry is None or entry.state is not ConfigEntryState.LOADED:
+    if entry is None:
+        return
+    if entry.state is not ConfigEntryState.LOADED:
+        await _async_release_stored(hass, entry_id)  # disabled, or its options unreadable
         return
     coordinator = entry.runtime_data
     unit = coordinator.control or coordinator.hand_back_unit
@@ -50,6 +55,20 @@ async def async_release(hass: HomeAssistant, entry_id: str) -> None:
         "hand_back_pending": False,
     }
     await coordinator.async_save_now()
+
+
+async def _async_release_stored(hass: HomeAssistant, entry_id: str) -> None:
+    from homeassistant.helpers.storage import Store
+
+    from .coordinator import STORAGE_VERSION
+
+    store = Store[dict[str, Any]](hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}")
+    data = await store.async_load()
+    if not isinstance(data, dict) or not isinstance(data.get("control"), dict):
+        return
+    _LOGGER.warning("The owed hand-back is settled by hand, as the user confirmed")
+    control = {**data["control"], "controlling": False, "hand_back_pending": False}
+    await store.async_save({**data, "control": control})
 
 
 async def async_create_fix_flow(
