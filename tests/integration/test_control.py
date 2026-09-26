@@ -457,6 +457,25 @@ async def test_an_outside_change_is_rewritten_once_then_handed_back(rig: Rig) ->
     assert len(rig.gateway.calls) == count  # latched: no fight
 
 
+async def test_the_one_rewrite_and_the_latch_are_stored_at_once(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """C11: a crash within the store's two-minute delay would forget the one rewrite — the next
+    run would fight the other controller again — and the latch."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(30)
+    rig.gateway.forced = 60.0
+    await rig.advance(10)
+    assert rig.gateway.setpoints()[-1] == EXPECTED  # the one rewrite
+    assert stored_control(hass_storage, rig)["rewritten_at"] is not None
+    await rig.advance(140)  # not confirmed in time: an outside change, handed back, latched
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    stored = stored_control(hass_storage, rig)
+    assert stored["latched"] is True
+    assert stored["latched_by"] == ["outside_change"]
+
+
 async def test_an_unconfirmed_write_is_reported_and_writing_goes_on(rig: Rig) -> None:
     rig.gateway.readable = False  # nothing says whether the value arrived
     await start(rig)

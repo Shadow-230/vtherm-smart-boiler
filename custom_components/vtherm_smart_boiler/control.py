@@ -607,7 +607,7 @@ class ControlUnit:
         for event in out.events:
             session.alarms.add(_EVENT_ALARM[event])
         if out.events:
-            self._coordinator.schedule_save()
+            await self._coordinator.async_save_now()  # the alarm behind a latch
         setpoint = session.loop.setpoint
         if setpoint.confirmed_at is not None and not setpoint.ignored_reported:
             session.alarms.discard(ControlAlarm.WRITE_IGNORED)  # the value holds
@@ -797,8 +797,9 @@ class ControlUnit:
 
     async def _async_write(self, kind: str, call: Any, now: float, action: WriteAction) -> bool:
         session = self._session
-        if not self._holding:
-            # Before the attempt: a write reported as failed may still reach the boiler.
+        if not self._holding or action.kind is WriteKind.REWRITE:
+            # Before the attempt: a write reported as failed may still reach the boiler, and
+            # the one rewrite a day must be remembered even if Home Assistant crashes now.
             self._holding = True
             await self._coordinator.async_save_now()
         try:
@@ -838,7 +839,7 @@ class ControlUnit:
             await self._async_try_hand_back(now)
         self._hand_back_at = now
         self._last_change_at = now
-        self._coordinator.schedule_save()  # a latch set with it must survive a restart
+        await self._coordinator.async_save_now()  # a latch set with it must survive a crash
         await self._async_release_learning(now)
 
     async def _async_try_hand_back(self, now: float, full: bool = False) -> bool:
