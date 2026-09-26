@@ -6,6 +6,7 @@ imported and tested on its own.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from .const import CONTROL, DOMAIN
@@ -220,8 +221,14 @@ def _hand_back_unit(
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload for a change of the options only: a reload hands control back and starts a new
-    session, which a new title or preference must not cause."""
-    if dict(entry.options) != entry.runtime_data.options:
+    session, which a new title or preference — the options' level of detail too, which changes
+    only what they show — must not cause."""
+    from .const import LEVEL
+
+    def meaningful(options: Mapping[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in options.items() if key != LEVEL}
+
+    if meaningful(entry.options) != meaningful(entry.runtime_data.options):
         await hass.config_entries.async_reload(entry.entry_id)
 
 

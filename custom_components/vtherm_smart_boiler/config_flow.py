@@ -226,7 +226,10 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
     return vol.Schema(fields)
 
 
-def circuit_schema(options: dict[str, Any], current: dict[str, Any]) -> vol.Schema:
+def circuit_schema(
+    options: dict[str, Any], current: dict[str, Any], more: bool = False
+) -> vol.Schema:
+    """``more``: another circuit follows this one — offered next, so none is dropped by default."""
     fields: dict[Any, Any] = {
         vol.Required(
             "control", default=current.get("control", CircuitControl.UNMIXED_SHARED.value)
@@ -236,7 +239,7 @@ def circuit_schema(options: dict[str, Any], current: dict[str, Any]) -> vol.Sche
     }
     if _advanced(options):
         fields[_optional("flow_entity", current)] = _entity(_TEMPERATURE)
-        fields[vol.Required("add_another", default=False)] = selector.BooleanSelector()
+        fields[vol.Required("add_another", default=more)] = selector.BooleanSelector()
     return vol.Schema(fields)
 
 
@@ -1017,7 +1020,7 @@ class _Steps:
                 return await self._goto(self._next_after("circuit"))
         return self._form(
             step_id="circuit",
-            data_schema=circuit_schema(self.options, current),
+            data_schema=circuit_schema(self.options, current, more=index + 1 < len(existing)),
             errors=errors,
             description_placeholders={"number": str(index + 1)},
         )
@@ -1338,6 +1341,13 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 if not mqtt_topic_valid(user_input.get(key))
             }
             blocker = self._hand_back_blocker()
+            # Spaces around a valid topic level are dropped, not published to.
+            user_input = {
+                key: value.strip()
+                if key in ("mqtt_top", "mqtt_node") and isinstance(value, str)
+                else value
+                for key, value in user_input.items()
+            }
             if (
                 not errors
                 and blocker

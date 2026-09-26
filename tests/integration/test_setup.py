@@ -165,6 +165,10 @@ async def test_only_an_options_change_reloads_the_entry(hass: HomeAssistant) -> 
     hass.config_entries.async_update_entry(entry, title="Boiler in the cellar")
     await hass.async_block_till_done()
     assert entry.runtime_data is coordinator
+    # H7: the level of detail changes only what the options show.
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "level": "advanced"})
+    await hass.async_block_till_done()
+    assert entry.runtime_data is coordinator
     hass.config_entries.async_update_entry(
         entry, options={**entry.options, "weather": "weather.home"}
     )

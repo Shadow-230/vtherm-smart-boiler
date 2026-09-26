@@ -779,8 +779,28 @@ async def test_the_gateway_and_the_mqtt_topics_are_checked(
     ):
         result = await options_step(hass, result, answer)
         assert result["errors"] == error, answer
-    result = await options_step(hass, result, {"mqtt_top": "OTGW", "mqtt_node": "otgw-1"})
+    # H10: spaces around a valid topic are dropped, not published to.
+    result = await options_step(hass, result, {"mqtt_top": " OTGW ", "mqtt_node": "otgw-1 "})
     assert result["step_id"] == "control_curve"
+    result = await options_step(hass, result, {"design_outdoor": -15, "design_flow": 55})
+    while result["type"] == "form":
+        result = await options_step(hass, result, {})
+    await hass.async_block_till_done(wait_background_tasks=True)  # the reload it causes
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert (control["mqtt_top"], control["mqtt_node"]) == ("OTGW", "otgw-1")
+
+
+def test_editing_a_circuit_offers_the_next_one() -> None:
+    """H11: at the advanced level, editing the first of two circuits offers the second next;
+    left as offered, no circuit is dropped."""
+    from custom_components.vtherm_smart_boiler import config_flow as flow
+
+    options = {"level": "advanced", "circuits": [{"id": "main"}, {"id": "second"}]}
+    offered = flow.circuit_schema(options, options["circuits"][0], more=True)
+    marker = next(m for m in offered.schema if str(m) == "add_another")
+    assert marker.default() is True
+    last = flow.circuit_schema(options, options["circuits"][1])
+    assert next(m for m in last.schema if str(m) == "add_another").default() is False
 
 
 def _filters(schema: Any, key: str) -> list[dict[str, Any]]:
