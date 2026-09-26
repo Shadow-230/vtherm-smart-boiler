@@ -283,6 +283,39 @@ async def test_the_recorder_backfill_runs_after_setup_and_goes_before_live_sampl
     assert len(asked) == 2
 
 
+async def test_no_day_is_kept_before_the_history_is_back(
+    hass: HomeAssistant, freezer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """H8: an analysis that runs while a slow recorder is still being read sees only the hours
+    since setup; a day it summarised then would be kept, a few hours of it, for a year."""
+    import asyncio
+
+    from custom_components.vtherm_smart_boiler import coordinator as coordinator_module
+
+    freezer.move_to(datetime(2026, 1, 10, 12, tzinfo=UTC))
+    release = asyncio.Event()
+
+    async def slow_backfill(self: Any, now: float) -> None:
+        await release.wait()
+
+    monkeypatch.setattr(coordinator_module.SmartBoilerCoordinator, "_async_backfill", slow_backfill)
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    freezer.tick(timedelta(days=1))  # a whole day since setup: a day to summarise
+    boiler.set(Signal.FLAME, True)
+    await hass.async_block_till_done()
+    await coordinator.async_run_analysis()
+    assert coordinator.analysis is not None
+    assert coordinator.daily == {}  # nothing kept while the history is not back
+    release.set()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await coordinator.async_run_analysis()
+    assert coordinator.daily  # kept once it is
+
+
 async def test_a_slow_analysis_does_not_set_the_quick_path_back(
     hass: HomeAssistant, freezer, zones: FakeZones, monkeypatch: pytest.MonkeyPatch
 ) -> None:

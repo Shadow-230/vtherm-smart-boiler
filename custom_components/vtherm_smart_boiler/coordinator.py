@@ -176,6 +176,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._save_due: float | None = None  # when the pending delayed save runs
         # Day summaries for the verdict, kept for up to a year (SCOPE.md §10).
         self.daily: dict[float, DaySummary] = {}
+        self._history_back = False  # the recorder's history has been read (or cannot be)
         self._stopped = False
         # The entities the platforms create now (disabled ones too): the rest are stale.
         self.expected_unique_ids: set[str] = set()
@@ -372,7 +373,12 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
 
     async def _async_backfill_then_analyse(self) -> None:
         now = dt_util.utcnow().timestamp()
-        await self._async_backfill(now)
+        try:
+            await self._async_backfill(now)
+        finally:
+            # From now on the rolling history holds whatever the recorder could give: days
+            # summarised from it are worth keeping; before, a few hours would pass for a day.
+            self._history_back = True
         await self._async_fill_days(now)
         await self.async_run_analysis()
 
@@ -770,7 +776,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             if self._stopped:
                 return  # a reload came meanwhile: the new installation analyses for itself
             self.analysis = analysis
-            self._keep_days(analysis.new_days, now)
+            if self._history_back:
+                self._keep_days(analysis.new_days, now)
             fit = self.analysis.fit
             if fit is not None:
                 fitted = [(ParameterKey.LOSS_COEFFICIENT, fit.loss)]
