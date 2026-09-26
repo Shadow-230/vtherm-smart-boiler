@@ -60,3 +60,19 @@ def test_an_unknown_argument_is_refused() -> None:
     )
     assert result.returncode == 2
     assert "usage" in result.stderr
+
+
+def test_ssh_reads_no_configuration_but_its_own() -> None:
+    """T7: ~/.ssh/config or /etc/ssh/ssh_config could send the deploy elsewhere (a Host alias, a
+    ProxyJump) or reuse a connection; only devenv/local.env says where it goes."""
+    script = SCRIPT.read_text(encoding="utf-8")
+    for option in (
+        "-F /dev/null",
+        "IdentitiesOnly=yes",
+        "BatchMode=yes",
+        "ControlMaster=no",
+        "ControlPath=none",
+        "GlobalKnownHostsFile=/dev/null",
+    ):
+        assert option in script, option
+    assert "unset TEST_HA_HOST" in script  # nothing from the calling environment

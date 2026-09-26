@@ -47,6 +47,8 @@ pack() {
         -C "$ROOT/sim" custom_components/boiler_sim
 }
 
+# Only devenv/local.env says where to go: nothing from the calling environment.
+unset TEST_HA_HOST TEST_HA_SSH_USER TEST_HA_DIR TEST_HA_URL TEST_HA_TOKEN TZ
 if [ -f "$ENV_FILE" ]; then
     # shellcheck disable=SC1090
     source "$ENV_FILE"
@@ -85,7 +87,11 @@ if [ ! -f "$KEY" ]; then
     exit 1
 fi
 
-SSH=(ssh -i "$KEY" -o IdentitiesOnly=yes -o "UserKnownHostsFile=$SSH_DIR/known_hosts"
+# No ssh configuration but these options: ~/.ssh/config and /etc/ssh/ssh_config could change
+# where and how it connects (a Host alias, ProxyJump, another identity, a shared connection).
+SSH=(ssh -F /dev/null -i "$KEY" -o IdentitiesOnly=yes -o BatchMode=yes
+     -o ControlMaster=no -o ControlPath=none
+     -o "UserKnownHostsFile=$SSH_DIR/known_hosts" -o GlobalKnownHostsFile=/dev/null
      -o StrictHostKeyChecking=accept-new "$TEST_HA_SSH_USER@$TEST_HA_HOST")
 
 # Unpacked into a fresh directory first; each integration then replaces its old copy whole, so
