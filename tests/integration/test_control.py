@@ -61,6 +61,7 @@ class FakeGateway:
     # without an error, nothing arrives, and the gateway's entities are unavailable
     lost: list[tuple[str, Any]] = field(default_factory=list)  # calls that went nowhere
     block: asyncio.Event | None = None  # a heating setpoint's call waits for this (a slow gateway)
+    block_hand_back: asyncio.Event | None = None  # the next hand-back's first call waits for it
     calls: list[tuple[str, Any]] = field(default_factory=list)
     times: list[float] = field(default_factory=list)  # when each setpoint arrived
 
@@ -84,6 +85,9 @@ class FakeGateway:
                 self.lost.append(("ch", call.data["ch_override"]))
                 return
             self.calls.append(("ch", call.data["ch_override"]))
+            if self.block_hand_back is not None and call.data["ch_override"] is True:
+                event, self.block_hand_back = self.block_hand_back, None
+                await event.wait()  # a hand-back starts with CH=1: it hangs, once
             self.ch = bool(call.data["ch_override"])
             self.publish()
             if self.fail_after:
@@ -1254,6 +1258,50 @@ async def test_a_stop_during_a_slow_step_hands_back_at_once(rig: Rig) -> None:
     await stop
     assert done, "the hand-back waited for the slow step"
     assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]
+
+
+async def test_a_stop_that_cancels_a_hand_back_makes_its_own(rig: Rig) -> None:
+    """C3: control is switched off and its hand-back hangs on a slow gateway when Home Assistant
+    stops. The stop cancels that step; it must hand back itself, not take it for done."""
+    await start(rig)
+    await rig.switch(True)
+    assert rig.entry is not None
+    control = rig.entry.runtime_data.control
+    rig.gateway.block_hand_back = asyncio.Event()
+    off = asyncio.ensure_future(control.async_set_enabled(False))
+    await settle(rounds=50)
+    assert rig.gateway.calls[-1] == ("ch", True)  # the hand-back's first call hangs
+    stop = asyncio.ensure_future(control.async_stop())
+    assert await settle(stop), "the stop waited for the slow hand-back"
+    await off
+    assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]
+
+
+async def test_a_step_waiting_behind_a_slow_one_does_not_run_before_the_stop(rig: Rig) -> None:
+    """C4: a tick queued behind a slow step would run a whole step — with its writes — before
+    the stop's hand-back; once the stop has begun, it does nothing."""
+    await start(rig)
+    await rig.switch(True)
+    assert rig.entry is not None
+    control = rig.entry.runtime_data.control
+    rig.gateway.block = asyncio.Event()
+    rig.freezer.tick(30)
+    rig.live()
+    async_fire_time_changed(rig.hass)  # the keep-alive: its call hangs
+    await settle(rounds=50)
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    rig.freezer.tick(10)
+    # The next tick — heating off to write — waits behind it.
+    queued = asyncio.ensure_future(control._async_timer(datetime.now(UTC)))
+    await settle(rounds=20)
+    assert control._tick_waiting
+    before = len(rig.gateway.calls)
+    stop = asyncio.ensure_future(control.async_stop())
+    assert await settle(stop), "the stop waited for the queued step"
+    rig.gateway.block.set()
+    await queued
+    await rig.hass.async_block_till_done()
+    assert rig.gateway.calls[before:] == [("ch", True), ("setpoint", 0.0)]  # the hand-back only
 
 
 async def test_a_slow_smartpi_call_does_not_hold_up_control(rig: Rig) -> None:

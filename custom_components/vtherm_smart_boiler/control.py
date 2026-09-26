@@ -395,9 +395,10 @@ class ControlUnit:
         if self._stop_unsub is not None:
             self._stop_unsub()
             self._stop_unsub = None
-        if self._session.loop.control.controlling and not self._stopped:
+        if (self._holding or self._session.loop.control.controlling) and not self._stopped:
             # Kept (and stored) until the hand-back has gone through: if Home Assistant cuts
-            # this short, it is retried at the next start.
+            # this short, it is retried at the next start. The boiler may hold a value of ours
+            # while a step's own hand-back is on its way, which this stop may cancel.
             self._hand_back_pending = True
             self._coordinator.schedule_save()
         self._stopping = True
@@ -426,8 +427,8 @@ class ControlUnit:
         try:
             async with self._lock:
                 self._tick_waiting = False  # running now: the next timer call may wait
-                if self._stopped:
-                    return
+                if self._stopped or self._stopping:
+                    return  # a step queued behind a slow one does not go before the stop
                 await self._async_run_step(dt_util.utcnow().timestamp())
         finally:
             self._tick_waiting = False
@@ -510,7 +511,7 @@ class ControlUnit:
         """Switch control on or off; switching off hands back at once."""
         async with self._lock:
             self._restored = True
-            if self._stopped or enabled == self.enabled:
+            if self._stopped or self._stopping or enabled == self.enabled:
                 return
             now = dt_util.utcnow().timestamp() if now is None else now
             self.enabled = enabled

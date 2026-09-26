@@ -319,13 +319,20 @@ class OtgwMqttWriter(_GatewayWriter):
 
 
 async def _all_of(*steps: Coroutine[Any, Any, None]) -> None:
-    """Run every step in order, each whatever the others do; raise their failures at the end."""
+    """Run every step in order, each whatever the others do; raise their failures at the end.
+    Cancelled midway (a stop), the steps not started are closed, not left behind."""
     errors: list[WriteError] = []
-    for step in steps:
-        try:
-            await step
-        except WriteError as err:
-            errors.append(err)
+    waiting = list(steps)
+    try:
+        while waiting:
+            step = waiting.pop(0)
+            try:
+                await step
+            except WriteError as err:
+                errors.append(err)
+    finally:
+        for step in waiting:
+            step.close()
     if errors:
         raise WriteError("; ".join(str(err) for err in errors))
 
