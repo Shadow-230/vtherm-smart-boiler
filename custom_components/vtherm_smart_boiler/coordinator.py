@@ -773,14 +773,15 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             self._keep_days(analysis.new_days, now)
             fit = self.analysis.fit
             if fit is not None:
-                self.parameters = self.parameters.with_estimate(
-                    ParameterKey.LOSS_COEFFICIENT, fit.loss
-                )
+                fitted = [(ParameterKey.LOSS_COEFFICIENT, fit.loss)]
                 if fit.threshold is not None:
-                    self.parameters = self.parameters.with_estimate(
-                        ParameterKey.HEATING_THRESHOLD, fit.threshold
-                    )
-                self.schedule_save()
+                    fitted.append((ParameterKey.HEATING_THRESHOLD, fit.threshold))
+                moved = False
+                for key, estimate in fitted:
+                    moved |= _moved(self.parameters.get(key).estimate(Source.MEASURED), estimate)
+                    self.parameters = self.parameters.with_estimate(key, estimate)
+                if moved:  # a fit that has not moved is not written again every five minutes
+                    self.schedule_save()
             # Published as of now, not as of the analysis' start: the quick path may have
             # moved on meanwhile (a reading gone stale), and must not be set back.
             self.async_set_updated_data(self._compute(dt_util.utcnow().timestamp()))
@@ -825,6 +826,20 @@ def _mapping(value: object) -> dict[str, Any]:
 def _append(series: Series[Any], t: float, value: object) -> None:
     last = series.last
     series.append(max(t, last.t) if last is not None else t, value)
+
+
+FIT_MOVED = 0.01  # a relative change in a fitted value worth saving
+FIT_CONFIDENCE_MOVED = 0.02
+
+
+def _moved(before: Estimate | None, after: Estimate) -> bool:
+    """Whether a measured value moved enough to be saved again."""
+    if before is None:
+        return True
+    return (
+        abs(after.value - before.value) > FIT_MOVED * max(abs(before.value), 1e-9)
+        or abs(after.confidence - before.confidence) > FIT_CONFIDENCE_MOVED
+    )
 
 
 def summary_settings(config: EntryConfig) -> dict[str, Any]:

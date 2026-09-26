@@ -533,6 +533,47 @@ async def test_the_verdict_comes_from_the_days_kept_across_a_restart(
     assert len(stored["daily"]) >= 20
 
 
+async def test_an_unchanged_building_fit_is_not_saved_again(
+    hass: HomeAssistant, hass_storage: dict[str, Any], freezer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A14: the analysis runs every five minutes and fits the building each time; saving the
+    whole store after every run, a year of days in it, wore SD cards for nothing. A fit that
+    has not moved is not saved again."""
+    from custom_components.vtherm_smart_boiler.core.daily import DaySummary
+
+    freezer.move_to(datetime(2026, 2, 1, tzinfo=UTC))
+    now = datetime(2026, 2, 1, tzinfo=UTC).timestamp()
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler, parameters={"heating_threshold": 16.0})
+    key = _settings_of(entry)
+    days = {}
+    for d in range(12):
+        begin = now - (20 - d) * DAY
+        outdoor = -4.0 + d
+        day = DaySummary(
+            begin, begin + DAY, DAY, 10, 10, 0, 6 * 3600.0, DAY, 0.0, 0.0, 0.0, 0.0, False,
+            None, None, outdoor_mean=outdoor, heat_kwh=0.2 * 24 * (16.0 - outdoor), settings=key,
+        )  # fmt: skip
+        days[str(int(begin))] = day.to_dict()
+    hass_storage[f"{DOMAIN}.{entry.entry_id}"] = {
+        "version": 1,
+        "key": f"{DOMAIN}.{entry.entry_id}",
+        "data": {"monitoring_since": now - 30 * DAY, "daily": days},
+    }
+    await setup(hass, entry)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    coordinator = entry.runtime_data
+    assert coordinator.analysis is not None
+    assert coordinator.analysis.fit is not None
+    saves: list[float] = []
+    monkeypatch.setattr(coordinator, "schedule_save", lambda delay=0.0: saves.append(delay))
+    freezer.tick(300)
+    await coordinator.async_run_analysis()
+    assert coordinator.analysis.fit is not None
+    assert saves == []  # the same fit: nothing to write
+
+
 async def test_days_kept_with_other_settings_no_longer_count(
     hass: HomeAssistant, hass_storage: dict[str, Any], freezer
 ) -> None:
