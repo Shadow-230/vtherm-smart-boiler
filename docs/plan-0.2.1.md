@@ -159,8 +159,9 @@ notes in `research/2026-09-24-code-review/findings.md`):
 
 - An outdoor sensor deviating from the weather entity (R6, A3): the curve takes the colder of
   the two, so a sensor right in a cold-air pool, or a weather entity for somewhere else, cannot
-  leave the house cold; a stuck sensor is replaced as before. Was: a deviating sensor always
-  gave way to the weather entity (N7).
+  leave the house cold; without a weather reading, the sensor only where the check saw it read
+  colder, else the fallback; a stuck sensor is replaced as before. Was: a deviating sensor
+  always gave way to the weather entity (N7).
 
 - How "off" is sent (N6): through the heating switch where one is configured and declared
   expiring or held (built-in OTGW: `CH=0` with `CS` of at least 8 °C); without one, as a low
@@ -313,7 +314,41 @@ and across restarts.
 | R3 ✅ | tools: `ruff format`; mypy from PyPI into `.venv`, strict where practical; CI with coverage, formatting, mypy and Home Assistant's constraints, on the declared minimum version; `.gitignore` for coverage and mypy caches (P80, P95, P97, P105). mypy 2.3.1 (Home Assistant's pin) is strict on the whole component; coverage 97 %, with a floor of 95 %; the tests and mypy also pass on Home Assistant 2026.9.0, tried in `.venv` and put back to 2026.9.3 |
 | R4 ✅ | test environment: the simulator carries its physics inside the component (Home Assistant keeps `/config` on the import path only while it loads `custom_components`); the deploy copies files, not symlinks; its dry run connects nowhere — before J2 (P55). `plant.py` and `profiles.py` moved into `boiler_sim`; the deploy packs one tar stream with links followed and unpacks it over SSH, without rsync; tests check the component's imports and a dry run that must not call `ssh` |
 | R5 ✅ | tests: the high-priority tests of review §6; a restart with stored state; the passage of time (the cap freeing up after 24 h, latches kept); real VT thermostats from `vendor/` in-process; the closed-loop harness asserting on `loop_step`'s commands; vacuous tests fixed (P56, P57, P58, P59, P102, P103). The §6 list checked test by test: the start and switch budgets, the minimum pause, the daily cap and its reaction went with M0 and N1, so the cap freeing up after 24 h is moot — a day and more of control steps instead (the one rewrite a day, a latch that never lapses). Added: in-process acceptance scenarios for every J4 case, restarts with stored state, VT 10.4.0 thermostats in-process, Home Assistant's own recorder, Home Assistant in °F. Fixed on the way: a write target whose state is unknown is written (M1 took it for one Home Assistant skips; only an unavailable one is); the feature manager registers with an API VT recreated before the rebuilt thermostat starts; the healthy-boiler analysis passed its pressure trend without judging it |
-| R6 | an independent read-only review of 0.2.1, as on 2026-09-24 |
+| R6 ✅ | an independent read-only review of 0.2.1, as on 2026-09-24. Done 2026-09-25 by four reviewers — control and hand-back, the Home Assistant integration, the monitor, tests and release — rather than the full multi-agent review of 2026-09-24, which needs the user's go-ahead. Found 1 critical, 7 high (T1 repeats C1), 22 medium, 22 low. Fixed, each with a test: every critical and high one (H1, H2, C1/T1, T2, A1, A2, A3 — provisional, A4) and C2, C3, C4, C7/H3, C9, C11, H4, H5, H7, H8, H10, H11, A5–A10, A14, T4, T6–T10, T12 and the texts (C5, C8, C12, C13, H12). An independent check of the fixes (2026-09-26) confirmed them but one high — A2's fix read the duty cycle, which a TPI or SmartPI switch zone keeps through its cycle — and found three new medium problems: the gateway's read-back could be re-picked with a hand-back owed, and no guard held while the entry was not running; A3 took a warm deviating sensor with the weather entity unavailable; T2 dropped the alarm for a dead room sensor. Fixed, each with a test, with three lows: a repair confirmed late cleared a controlling session's hold (C7); an opentherm_gw read-back left without a value by pyotgw's reset now means no connection for a hand-back (C1); removing VT's central boiler asks for a restart (H1). What is left: "Open after R6" |
+
+## Open after R6 (the user decides, at K4 at the latest)
+
+1. The drop rule (a2, C6): a value that keeps falling back to the one before the session is sent
+   again for good; behind an OpenTherm thermostat a rejected `CS` falls back to the thermostat's
+   modulating value and can read as another controller — a false outside change and a latched
+   hand-back. Escalating repeated drops, or comparing with the thermostat's setpoint, changes a
+   decided rule.
+2. The simulator before J4 (T3, T5): its OTGW read-back shows the boiler's working setpoint, where
+   `opentherm_gw` shows the gateway's acknowledgement at once, so a boiler refusing ID 1 reads
+   "confirmed, then dropped" in a real installation; its heating switch shares the setpoint's
+   write type and renews the setpoint's override, which EMS-ESP never does.
+3. An edit outside control that blocks it (H6) — the boiler class, a second circuit, fewer zones
+   than the count threshold, underfloor without a maximum flow — is saved and hands back at once;
+   with a stand-alone gateway heating then stops. A confirmation step or a warning in those forms.
+4. A non-condensing boiler: control's hard minimum is 25 °C for every boiler, and a low return
+   makes a non-condensing boiler condense in its flue; a higher minimum for such a boiler needs
+   the user's value.
+5. The pressure trend is judged on cold water only, which cold days lack: a slow leak in winter
+   shows at the absolute low-pressure alarm only.
+6. Smaller ones: options saved while the entry is in setup error do not reload it (H9); Home
+   Assistant's downtime counts as known data (A11); the verdict mixes days under control with
+   the baseline (A12); the importer grows quadratically with the days (A13); an internal-error
+   block does not survive a restart (C10); an owed hand-back waits for the monitor's first
+   refresh at setup (C14); a SmartPI resume that did not take is left behind when control
+   leaves the options (C15); tests set up two entries of a single-entry integration (T11).
+7. The provisional decision on a deviating outdoor sensor (A3), above.
+8. From the check of the fixes, low: an unload with a target that echoes later (ESPHome, MQTT)
+   stores the hand-back as owed and raises the persistent issue, which stays while the entry is
+   disabled — a short wait for the echo at stop would settle it; a pyotgw command that times
+   out while the gateway is connected lets a hand-back count; over MQTT a gateway that drops
+   without warning shows unavailable only after the broker's keep-alive, and a broken link
+   between the ESP and the PIC never does; the owed hand-back's retry, the stale-link hand-back
+   and the decision interval still sit out a wall clock set back (C9).
 
 ## After 0.2.1
 
