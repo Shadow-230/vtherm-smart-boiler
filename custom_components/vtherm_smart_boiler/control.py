@@ -703,8 +703,9 @@ class ControlUnit:
         config = coordinator.config
         # One freshness rule: a steady reading is not a stale one, so its age counts only with a
         # limit the user set. A sensor the monitor found stuck leaves the curve to the weather
-        # entity, then the held value and the fallback; one far from the weather gives way only
-        # where the weather reads colder (more heat, which the valves throttle).
+        # entity, then the held value and the fallback; one far from the weather gives way where
+        # the weather reads colder (more heat, which the valves throttle), and without a weather
+        # reading where the check saw it read warmer.
         outdoor_age = config.freshness.get(Signal.OUTDOOR)
         weather = None
         if config.weather:
@@ -712,11 +713,7 @@ class ControlUnit:
             if reading.is_fresh(now, outdoor_age):
                 weather = float(reading.value) if reading.value is not None else None
         check = getattr(self._coordinator.analysis, "outdoor", None)
-        sensor = curve_sensor(
-            check.status if check is not None else None,
-            snapshot.number(Signal.OUTDOOR, outdoor_age),
-            weather,
-        )
+        sensor = curve_sensor(check, snapshot.number(Signal.OUTDOOR, outdoor_age), weather)
         return ControlInputs(
             now=now,
             enabled=self.enabled,

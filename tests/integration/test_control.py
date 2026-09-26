@@ -1889,12 +1889,27 @@ async def test_a_stuck_outdoor_sensor_leaves_the_curve(
     assert rig.state("binary_sensor", "alarm_outdoor_sensor_suspect").state == "off"
 
 
-@pytest.mark.parametrize(("weather", "used"), [(12.0, "outdoor_sensor"), (-2.0, "outdoor_weather")])
+@pytest.mark.parametrize(
+    ("weather", "difference", "used"),
+    [
+        (12.0, -7.0, "outdoor_sensor"),
+        (-2.0, 7.0, "outdoor_weather"),
+        # R6, A3: the weather entity is unavailable — the sensor that has been the colder one
+        # carries on, the warmer one gives way to the value held from before.
+        (None, -7.0, "outdoor_sensor"),
+        (None, 7.0, "outdoor_held"),
+    ],
+)
 async def test_a_deviating_outdoor_sensor_gives_way_only_to_colder_weather(
-    rig: Rig, monkeypatch: pytest.MonkeyPatch, weather: float, used: str
+    rig: Rig,
+    monkeypatch: pytest.MonkeyPatch,
+    weather: float | None,
+    difference: float,
+    used: str,
 ) -> None:
     """A3: the monitor found the sensor (5 °C) far from the weather entity. The curve takes
-    the colder of the two: the sensor against a weather at 12 °C, the weather at -2 °C."""
+    the colder of the two: the sensor against a weather at 12 °C, the weather at -2 °C; without
+    a weather reading, the sensor only where the check saw it read colder."""
     from dataclasses import replace as replaced
 
     from custom_components.vtherm_smart_boiler.core.signal_check import (
@@ -1903,7 +1918,7 @@ async def test_a_deviating_outdoor_sensor_gives_way_only_to_colder_weather(
     )
 
     rig.hass.states.async_set(
-        "weather.fake_home", "cloudy", {"temperature": weather, "temperature_unit": "°C"}
+        "weather.fake_home", "cloudy", {"temperature": 0.0, "temperature_unit": "°C"}
     )
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -1926,8 +1941,14 @@ async def test_a_deviating_outdoor_sensor_gives_way_only_to_colder_weather(
 
     monkeypatch.setattr(coordinator, "async_run_analysis", no_analysis)
     coordinator.analysis = replaced(
-        real, outdoor=OutdoorCheck(OutdoorStatus.DEVIATES, 5.0 - weather, 86400.0)
+        real, outdoor=OutdoorCheck(OutdoorStatus.DEVIATES, difference, 86400.0)
     )
+    if weather is None:
+        rig.hass.states.async_set("weather.fake_home", "unavailable", {})
+    else:
+        rig.hass.states.async_set(
+            "weather.fake_home", "cloudy", {"temperature": weather, "temperature_unit": "°C"}
+        )
     await rig.advance(300)  # the next water decision
     assert used in rig.state("sensor", "control_state").attributes["reasons"]
     assert rig.state("binary_sensor", "alarm_outdoor_sensor_suspect").state == "on"

@@ -9,6 +9,7 @@ from custom_components.vtherm_smart_boiler.core.series import Series
 from custom_components.vtherm_smart_boiler.core.signal_check import (
     Feature,
     FeatureStatus,
+    OutdoorCheck,
     OutdoorStatus,
     SignalHealth,
     SignalStatus,
@@ -128,22 +129,32 @@ def test_outdoor_unknown_without_overlap() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "sensor", "weather", "used"),
+    ("status", "difference", "sensor", "weather", "used"),
     [
-        (OutdoorStatus.OK, -5.0, 0.0, -5.0),
-        (None, -5.0, None, -5.0),  # not judged yet
-        (OutdoorStatus.STUCK, -5.0, 0.0, None),  # never a frozen value
-        (OutdoorStatus.STUCK, 5.0, 0.0, None),
+        (OutdoorStatus.OK, 0.0, -5.0, 0.0, -5.0),
+        (None, None, -5.0, None, -5.0),  # not judged yet
+        (OutdoorStatus.STUCK, 0.0, -5.0, 0.0, None),  # never a frozen value
+        (OutdoorStatus.STUCK, 0.0, 5.0, 0.0, None),
         # Deviating: the colder of the two — more heat, which the valves throttle; the warmer
         # could leave the house cold (a sensor in a cold-air pool, a weather entity elsewhere).
-        (OutdoorStatus.DEVIATES, -9.0, -2.0, -9.0),
-        (OutdoorStatus.DEVIATES, 4.0, -2.0, None),  # the weather entity's colder value then
-        (OutdoorStatus.DEVIATES, -9.0, None, -9.0),  # nothing colder to fall back on
-        (OutdoorStatus.OK, None, 0.0, None),
+        (OutdoorStatus.DEVIATES, -7.0, -9.0, -2.0, -9.0),
+        (OutdoorStatus.DEVIATES, 7.0, 4.0, -2.0, None),  # the weather entity's colder value then
+        (OutdoorStatus.DEVIATES, 7.0, -9.0, -2.0, -9.0),  # colder now, whatever it was
+        # Without a weather reading, what the check saw over the day tells which is colder: the
+        # sensor that has been the colder one is used, the warmer one gives way to the held
+        # value and the fallback — which ask for more heat, not less (R6, A3).
+        (OutdoorStatus.DEVIATES, -7.0, -9.0, None, -9.0),
+        (OutdoorStatus.DEVIATES, 7.0, 4.0, None, None),
+        (OutdoorStatus.OK, 0.0, None, 0.0, None),
     ],
 )
 def test_what_the_curve_takes_from_the_outdoor_sensor(
-    status: OutdoorStatus | None, sensor: float | None, weather: float | None, used: float | None
+    status: OutdoorStatus | None,
+    difference: float | None,
+    sensor: float | None,
+    weather: float | None,
+    used: float | None,
 ) -> None:
-    """A3: a deviating sensor is dropped only where the weather entity reads colder."""
-    assert curve_sensor(status, sensor, weather) == used
+    """A3: a deviating sensor is used only while it reads colder than the weather entity."""
+    check = None if status is None else OutdoorCheck(status, difference, 86400.0)
+    assert curve_sensor(check, sensor, weather) == used

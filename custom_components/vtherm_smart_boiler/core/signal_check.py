@@ -188,14 +188,21 @@ def check_outdoor(
 
 
 def curve_sensor(
-    status: OutdoorStatus | None, sensor: float | None, weather: float | None
+    check: OutdoorCheck | None, sensor: float | None, weather: float | None
 ) -> float | None:
     """The boiler's outdoor sensor as the curve may take it. A stuck sensor is never used. One
     that deviates from the weather entity is used only while it reads colder: the colder value
     asks for more heat, which the valves throttle, where the warmer one could leave the house
-    cold — a sensor in a cold-air pool is right, a weather entity for somewhere else is not."""
-    if sensor is None or status is OutdoorStatus.STUCK:
+    cold — a sensor in a cold-air pool is right, a weather entity for somewhere else is not.
+    Without a weather reading, the check's day tells which of the two is the colder one; the
+    warmer sensor gives way to the held value and the fallback, which ask for more heat."""
+    if sensor is None or check is None:
+        return sensor
+    if check.status is OutdoorStatus.STUCK:
         return None
-    if status is OutdoorStatus.DEVIATES and weather is not None and sensor > weather:
-        return None
+    if check.status is OutdoorStatus.DEVIATES:
+        if weather is not None:
+            return sensor if sensor <= weather else None
+        colder = check.mean_difference is not None and check.mean_difference < 0.0
+        return sensor if colder else None
     return sensor

@@ -320,10 +320,10 @@ How control decides (principle 12):
 - The outdoor temperature comes from the outdoor sensor, else from the weather entity; a sensor
   found stuck is replaced in the same way, with an alarm, and one found deviating from the
   weather entity gives way to it only while the weather entity reads colder — the colder value
-  asks for more heat, which the valves throttle (provisional, `docs/plan-0.2.1.md`). Without
-  either, the fallback setpoint applies: the curve at the last effective outdoor temperature
-  for a limited time, then at the design outdoor temperature; a fixed fallback value the user
-  sets replaces both.
+  asks for more heat, which the valves throttle — and, without a weather reading, where the
+  check saw it read warmer (provisional, `docs/plan-0.2.1.md`). Without either, the fallback
+  setpoint applies: the curve at the last effective outdoor temperature for a limited time,
+  then at the design outdoor temperature; a fixed fallback value the user sets replaces both.
 - Comfort correction (principle 13): while a zone's valve is fully open and its room is still
   short of its setpoint, the water rises above the curve — at most +3 K, by 1 K per 30 min and
   only while heat flows; it falls twice as fast, and a zone without opening data does not block
