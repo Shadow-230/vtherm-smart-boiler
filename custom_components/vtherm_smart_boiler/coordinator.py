@@ -55,7 +55,7 @@ from .core.alarms import (
 from .core.analysis import Analysis, analyse
 from .core.critical_zone import CriticalZone, critical_zone
 from .core.cycles import classify_burns, find_burns
-from .core.daily import KEEP_DAYS, DaySummary, summarize_day
+from .core.daily import KEEP_DAYS, DaySummary, settings_key, summarize_day
 from .core.emitters import FactorResult, FactorStatus, update_factor
 from .core.foreign_heat import ForeignHeatState, update_foreign_heat
 from .core.history import History, ZoneSeries
@@ -153,6 +153,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self.link = VThermLink(hass, config.zone_entities)
         self.history = self._empty_history()
         self.parameters = config.parameters
+        # Days summarised with other settings no longer count (A4): the key of the current ones.
+        self.settings_key = settings_key(summary_settings(config))
         self.monitoring_since = dt_util.utcnow().timestamp()
         self.forecasts = (
             ForecastRecorder(hass, entry.entry_id, config.weather) if config.weather else None
@@ -335,8 +337,13 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         await self._store.async_save(self._stored_data())
 
     def _keep_days(self, days: Sequence[DaySummary], now: float) -> None:
-        """Keep newly summarised days; drop those older than a year."""
-        added = [day for day in days if day.start not in self.daily]
+        """Keep newly summarised days, over one summarised with other settings; drop those
+        older than a year."""
+        added = [
+            day
+            for day in days
+            if (kept := self.daily.get(day.start)) is None or kept.settings != day.settings
+        ]
         for day in added:
             self.daily[day.start] = day
         cutoff = now - KEEP_DAYS * DAY
@@ -388,7 +395,11 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         flame = self.config.signals.get(Signal.FLAME)
         while windows and flame is not None and not self._stopped:
             chunk, windows = windows[-7:], windows[:-7]
-            missing = [window for window in chunk if window[0] not in self.daily]
+            missing = [
+                window
+                for window in chunk
+                if (kept := self.daily.get(window[0])) is None or kept.settings != self.settings_key
+            ]
             if not missing:
                 continue
             start, end = chunk[0][0], chunk[-1][1]
@@ -412,7 +423,14 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                         if isinstance(state, State):
                             self._record(entity_id, state, state.last_updated.timestamp(), history)
                 return [
-                    summarize_day(history, self.parameters, a, b, self.config.monitor.monitor)
+                    summarize_day(
+                        history,
+                        self.parameters,
+                        a,
+                        b,
+                        self.config.monitor.monitor,
+                        self.settings_key,
+                    )
                     for a, b in days
                 ]
 
@@ -747,6 +765,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 now,
                 days,
                 tuple(self.daily.values()),
+                self.settings_key,
             )
             if self._stopped:
                 return  # a reload came meanwhile: the new installation analyses for itself
@@ -806,6 +825,25 @@ def _mapping(value: object) -> dict[str, Any]:
 def _append(series: Series[Any], t: float, value: object) -> None:
     last = series.last
     series.append(max(t, last.t) if last is not None else t, value)
+
+
+def summary_settings(config: EntryConfig) -> dict[str, Any]:
+    """What shapes a day's summary: the monitor's options, the parameters as the user entered
+    them, the entities feeding the signals, the weather entity and the zones."""
+    options = config.monitor.monitor
+    return {
+        "options": {
+            "condensing_return": options.condensing_return,
+            "short_burn_s": options.short_burn_s,
+            "modulation_scale": options.modulation_scale.value,
+            "has_dhw": options.has_dhw,
+            "setpoint_margin": options.setpoint_margin,
+        },
+        "parameters": {key.value: config.parameters.value(key) for key in ParameterKey},
+        "signals": {signal.value: entity for signal, entity in config.signals.items()},
+        "weather": config.weather,
+        "zones": sorted(config.zone_entities),
+    }
 
 
 def local_days(start: float, end: float) -> list[tuple[float, float]]:

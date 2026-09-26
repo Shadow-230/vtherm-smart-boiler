@@ -8,6 +8,8 @@ for a few days only; the summaries outlive it (``SCOPE.md`` §10).
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -44,6 +46,7 @@ class DaySummary:
     gas: float | None  # heating gas, hot water left out where known
     outdoor_mean: float | None = None  # over the day, when known for most of it
     heat_kwh: float | None = None  # heating output, when known for every burn
+    settings: str = ""  # the key of the settings it was summarised with ("": not known)
 
     @classmethod
     def empty(cls, start: float, end: float) -> DaySummary:
@@ -96,7 +99,16 @@ class DaySummary:
             gas=optional("gas"),
             outdoor_mean=optional("outdoor_mean"),
             heat_kwh=optional("heat_kwh"),
+            settings=str(data.get("settings") or ""),
         )
+
+
+def settings_key(settings: Mapping[str, Any]) -> str:
+    """A short key for the settings that shape a day's summary — the monitor's options, the
+    parameters the user entered, which entity feeds each signal: a day summarised with others
+    no longer counts."""
+    text = json.dumps(settings, sort_keys=True, default=str)
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
 def summarize_day(
@@ -105,8 +117,9 @@ def summarize_day(
     start: float,
     end: float,
     options: MonitorOptions | None = None,
+    settings: str = "",
 ) -> DaySummary:
-    """One day of history, reduced to what adds up."""
+    """One day of history, reduced to what adds up; ``settings``: the key of the settings."""
     summary = summarize(history, parameters, start, end, options)
     heating = summary.heating
     outdoor = time_weighted_mean(history.outdoor(), start, end)
@@ -131,6 +144,7 @@ def summarize_day(
         gas=None if summary.gas is None else summary.gas.amount,
         outdoor_mean=(outdoor.value if outdoor.known_s >= FIT_COVERAGE * (end - start) else None),
         heat_kwh=heat.amount if heat is not None and heat.complete else None,
+        settings=settings,
     )
 
 

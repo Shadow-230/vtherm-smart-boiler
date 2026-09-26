@@ -64,18 +64,22 @@ def analyse(
     now: float,
     days: Sequence[tuple[float, float]] = (),
     kept: Sequence[DaySummary] = (),
+    settings: str = "",
 ) -> Analysis:
     """``days``: the complete local days of the history; ``kept``: the day summaries kept from
-    earlier. The verdict covers the kept days, the history's days not kept yet and today."""
+    earlier. The verdict covers the kept days, the history's days not kept yet and today. Only
+    days summarised with ``settings`` count (the key of the current settings); the history's
+    days summarised with others are summarised again."""
     full = summarize(history, parameters, now - HISTORY_DAYS * DAY, now, options)
+    kept = [day for day in kept if day.settings == settings]
     known = {day.start for day in kept}
     new_days = tuple(
-        summarize_day(history, parameters, start, end, options)
+        summarize_day(history, parameters, start, end, options, settings)
         for start, end in days
         if start not in known
     )
     today_start = max((end for _start, end in days), default=now - DAY)
-    today = summarize_day(history, parameters, today_start, now, options)
+    today = summarize_day(history, parameters, today_start, now, options, settings)
     week = summarize(history, parameters, now - 7 * DAY, now, options)
     day = summarize(history, parameters, now - DAY, now, options)
     threshold = parameters.value(ParameterKey.HEATING_THRESHOLD)

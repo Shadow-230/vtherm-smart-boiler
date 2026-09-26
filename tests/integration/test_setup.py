@@ -481,7 +481,7 @@ async def test_an_entry_from_before_drops_the_options_that_are_gone(
     assert entry.options["control"] == {"write_path": "entity"}
 
 
-def _stored_days(start: float, count: int) -> dict[str, dict[str, Any]]:
+def _stored_days(start: float, count: int, settings: str) -> dict[str, dict[str, Any]]:
     """Days of a boiler cycling twice an hour, as the plugin stores them."""
     from custom_components.vtherm_smart_boiler.core.daily import DaySummary
 
@@ -490,10 +490,19 @@ def _stored_days(start: float, count: int) -> dict[str, dict[str, Any]]:
         begin = start + d * DAY
         day = DaySummary(
             begin, begin + DAY, DAY, 48, 48, 48, 8 * 3600.0, DAY,
-            8 * 3600.0, 8 * 3600.0, DAY, DAY, True, 7.0, None,
+            8 * 3600.0, 8 * 3600.0, DAY, DAY, True, 7.0, None, settings=settings,
         )  # fmt: skip
         days[str(int(begin))] = day.to_dict()
     return days
+
+
+def _settings_of(entry: MockConfigEntry) -> str:
+    """The key of the settings an entry's days are summarised with."""
+    from custom_components.vtherm_smart_boiler.config import EntryConfig
+    from custom_components.vtherm_smart_boiler.coordinator import summary_settings
+    from custom_components.vtherm_smart_boiler.core.daily import settings_key
+
+    return settings_key(summary_settings(EntryConfig.from_options(entry.options)))
 
 
 async def test_the_verdict_comes_from_the_days_kept_across_a_restart(
@@ -509,7 +518,10 @@ async def test_the_verdict_comes_from_the_days_kept_across_a_restart(
     hass_storage[f"{DOMAIN}.{entry.entry_id}"] = {
         "version": 1,
         "key": f"{DOMAIN}.{entry.entry_id}",
-        "data": {"monitoring_since": now - 30 * DAY, "daily": _stored_days(now - 20 * DAY, 20)},
+        "data": {
+            "monitoring_since": now - 30 * DAY,
+            "daily": _stored_days(now - 20 * DAY, 20, _settings_of(entry)),
+        },
     }
     await setup(hass, entry)
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -519,6 +531,32 @@ async def test_the_verdict_comes_from_the_days_kept_across_a_restart(
     assert coordinator.analysis.verdict.verdict.value == "worth_it"  # all short burns
     stored = hass_storage[f"{DOMAIN}.{entry.entry_id}"]["data"]
     assert len(stored["daily"]) >= 20
+
+
+async def test_days_kept_with_other_settings_no_longer_count(
+    hass: HomeAssistant, hass_storage: dict[str, Any], freezer
+) -> None:
+    """A4: days summarised before the user corrected a setting keep the old judgement: they are
+    kept, should the setting come back, but no longer count."""
+    freezer.move_to(datetime(2026, 2, 1, tzinfo=UTC))
+    now = datetime(2026, 2, 1, tzinfo=UTC).timestamp()
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.RETURN))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0, Signal.RETURN: 28.0})
+    entry = entry_for(boiler)
+    hass_storage[f"{DOMAIN}.{entry.entry_id}"] = {
+        "version": 1,
+        "key": f"{DOMAIN}.{entry.entry_id}",
+        "data": {
+            "monitoring_since": now - 30 * DAY,
+            "daily": _stored_days(now - 20 * DAY, 20, "settings before the correction"),
+        },
+    }
+    await setup(hass, entry)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    coordinator = entry.runtime_data
+    assert coordinator.analysis is not None
+    assert coordinator.analysis.verdict.verdict.value == "not_enough_data"
+    assert len(coordinator.daily) == 20  # kept all the same
 
 
 async def test_days_before_the_history_are_filled_as_far_as_the_recorder_reaches(

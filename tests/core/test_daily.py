@@ -7,6 +7,7 @@ import pytest
 from custom_components.vtherm_smart_boiler.core.daily import (
     DaySummary,
     fit_points,
+    settings_key,
     summarize_day,
     verdict_over_days,
 )
@@ -124,3 +125,40 @@ def test_a_day_of_twenty_three_hours_is_fitted_as_a_whole_day() -> None:
     )  # fmt: skip
     [point] = fit_points([day])
     assert point.energy_kwh == pytest.approx(48.0)
+
+
+def test_a_day_remembers_the_settings_it_was_summarised_with() -> None:
+    """A4: a day carries the key of the settings behind it, through the store too."""
+    [day] = [summarize_day(cycling(1), PARAMETERS, 0.0, DAY, settings="abc")]
+    assert day.settings == "abc"
+    assert DaySummary.from_dict(day.to_dict()) == day
+    legacy = {k: v for k, v in day.to_dict().items() if k != "settings"}
+    assert DaySummary.from_dict(legacy).settings == ""  # stored before it had one
+
+
+def test_the_settings_key_changes_with_every_setting_that_shapes_a_day() -> None:
+    base = {"has_dhw": True, "condensing_return": 55.0, "signals": {"flame": "binary_sensor.f"}}
+    assert settings_key(base) == settings_key(dict(reversed(list(base.items()))))
+    for changed in (
+        base | {"has_dhw": False},
+        base | {"condensing_return": 50.0},
+        base | {"signals": {"flame": "binary_sensor.g"}},
+    ):
+        assert settings_key(changed) != settings_key(base)
+
+
+def test_days_summarised_with_other_settings_are_left_out_and_redone() -> None:
+    """A4: the user corrects a setting (the hot-water type, say). Days summarised with the old
+    one no longer count; those the history still holds are summarised again."""
+    from custom_components.vtherm_smart_boiler.core.analysis import analyse
+    from custom_components.vtherm_smart_boiler.core.monitor import MonitorOptions
+
+    history = cycling(9)
+    days = [(d * DAY, (d + 1) * DAY) for d in range(1, 9)]
+    old = [summarize_day(history, PARAMETERS, a, b, settings="old") for a, b in days]
+    result = analyse(history, PARAMETERS, MonitorOptions(), 9 * DAY, days, old, settings="new")
+    assert {day.start for day in result.new_days} == {a for a, _b in days}  # all done again
+    assert {day.settings for day in result.new_days} == {"new"}
+    kept = [summarize_day(history, PARAMETERS, a, b, settings="new") for a, b in days]
+    again = analyse(history, PARAMETERS, MonitorOptions(), 9 * DAY, days, kept, settings="new")
+    assert again.new_days == ()  # nothing to redo
