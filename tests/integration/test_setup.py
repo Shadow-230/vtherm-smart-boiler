@@ -712,6 +712,42 @@ async def test_short_hot_water_draws_are_no_ignition_problem(
     assert ignition.state == alarm
 
 
+@pytest.mark.parametrize(("lost", "alarm"), [(False, "off"), (True, "on")])
+async def test_a_tpi_zones_short_pulses_are_no_ignition_problem(
+    hass: HomeAssistant, freezer, zones: FakeZones, lost: bool, alarm: str
+) -> None:
+    """R6, A2: a TPI zone at 10 % keeps its duty cycle through the cycle while its relay pulses.
+    Burns that follow the relay — lit after it closes, out after it opens — lost no flame; the
+    same short burns going out while the relay is still closed are flames lost."""
+    freezer.move_to(datetime(2026, 1, 10, 6, tzinfo=UTC))
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    zones.add("living", on_percent=0.1)
+    await setup(hass, entry_for(boiler, zones))
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    for _ in range(12):  # twelve five-minute cycles, 30 s on each
+        zones.set("living", hvac_action="heating", on_percent=0.1)
+        freezer.tick(timedelta(seconds=10))
+        boiler.set(Signal.FLAME, True)
+        await hass.async_block_till_done()
+        if lost:
+            freezer.tick(timedelta(seconds=15))
+            boiler.set(Signal.FLAME, False)  # out while the relay is still closed
+            freezer.tick(timedelta(seconds=5))
+            zones.set("living", hvac_action="idle", on_percent=0.1)
+        else:
+            freezer.tick(timedelta(seconds=20))
+            zones.set("living", hvac_action="idle", on_percent=0.1)
+            freezer.tick(timedelta(seconds=2))
+            boiler.set(Signal.FLAME, False)  # out once the relay has opened
+        await hass.async_block_till_done()
+        freezer.tick(timedelta(seconds=268))
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    ignition = hass.states.get(entity_id(hass, entry, "binary_sensor", "alarm_unstable_ignition"))
+    assert ignition.state == alarm
+
+
 async def test_an_entered_loss_that_the_measurement_disagrees_with_is_shown(
     hass: HomeAssistant,
 ) -> None:

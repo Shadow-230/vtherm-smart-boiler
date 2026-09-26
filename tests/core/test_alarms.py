@@ -182,3 +182,24 @@ def test_a_short_burn_ended_by_the_demand_is_no_ignition_problem() -> None:
     assert alarm.active
     assert alarm.value == 12
     assert unstable_ignition(burns, now=24 * HOUR, demand=None).value == 12
+
+
+def test_a_burn_counts_only_when_heat_was_asked_for_all_through_it() -> None:
+    """R6, A2: one zone's pulse ends and another's begins just before the flame goes out — the
+    boiler was told to stop in between, so no flame was lost; a moment known without demand
+    anywhere in the burn takes it out of the count, not only one at its end."""
+    burns = [burn(i * 10, 0.5) for i in range(12)]
+    handover = Series(
+        [
+            (t, on)
+            for i in range(12)
+            for t, on in (
+                ((i * 10) * MIN - 5.0, True),
+                ((i * 10) * MIN + 20.0, False),  # the first zone's pulse ends
+                ((i * 10) * MIN + 25.0, True),  # the next one's begins
+            )
+        ]
+    )
+    assert unstable_ignition(burns, now=24 * HOUR, demand=handover).value == 0
+    unknown = Series([(-5.0, None)])  # nothing known of the demand: counted, as without it
+    assert unstable_ignition(burns, now=24 * HOUR, demand=unknown).value == 12

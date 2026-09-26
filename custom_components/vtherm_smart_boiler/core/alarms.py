@@ -17,7 +17,7 @@ from itertools import pairwise
 from .cycles import ClassifiedBurn
 from .metrics import CH_KINDS
 from .readings import ZONE_OPEN, ZoneState
-from .series import Series
+from .series import Series, duration_where
 
 MIN = 60.0
 
@@ -128,15 +128,16 @@ def unstable_ignition(
 ) -> Alarm:
     """Complete burns shorter than ``shortest_s`` in the last day — flame lost soon after
     ignition — above ``limit``. A burn that ended with the zones' demand (a TPI zone's short
-    on-time, followed at once) lost no flame: with ``demand`` known at its end, only one that
-    went out while heat was still asked for counts."""
+    on-time, followed at once) lost no flame: with ``demand`` — whether the zones ask for heat
+    at each moment — only one during which, its end included, no moment is known without
+    demand counts; the boiler was told to stop at such a moment."""
     count = sum(
         1
         for b in burns
         if b.burn.complete
         and b.burn.duration < shortest_s
         and now - 86400.0 <= b.burn.start < now
-        and (demand is None or demand.value_at(b.burn.end) is not False)
+        and _asked_throughout(demand, b.burn.start, b.burn.end)
     )
     return Alarm(
         AlarmKind.UNSTABLE_IGNITION,
@@ -145,6 +146,15 @@ def unstable_ignition(
         float(count),
         float(limit),
     )
+
+
+def _asked_throughout(demand: Series[bool] | None, start: float, end: float) -> bool:
+    """No moment of ``[start, end]`` known without demand (an unknown one may be asking)."""
+    if demand is None:
+        return True
+    if demand.value_at(end) is False:
+        return False
+    return duration_where(demand, start, end, lambda asked: not asked) == 0.0
 
 
 # --- early warnings ---------------------------------------------------------------------------

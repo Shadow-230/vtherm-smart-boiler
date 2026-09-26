@@ -99,6 +99,22 @@ class History:
             return None
         return combine(per_zone, start, end, _any_known)
 
+    def zone_calling(self, start: float, end: float) -> Series[bool] | None:
+        """True while any zone asks for heat at that moment; ``None`` without zone data.
+
+        A zone's "calling" flag decides — its heater or valve active now, VT's action — and its
+        opening only where the flag is not known: a TPI zone's duty cycle stays the same through
+        its cycle while its relay pulses, and the burns follow the relay (R6, A2).
+        """
+        per_zone = [
+            combine([z.calling, z.valve_open, z.on_percent], start, end, _zone_calls)
+            for z in self.zones.values()
+            if len(z.valve_open) or len(z.on_percent) or len(z.calling)
+        ]
+        if not per_zone:
+            return None
+        return combine(per_zone, start, end, _any_known)
+
     def copy_window(self, start: float, end: float) -> History:
         """An independent copy of ``[start, end)``, safe to analyse in another thread."""
         return History(
@@ -138,6 +154,13 @@ def _zone_wants_heat(values: Sequence[object]) -> bool | None:
         if isinstance(opening, int | float) and not isinstance(opening, bool):
             return opening > ZONE_OPEN
     return calling if isinstance(calling, bool) else None
+
+
+def _zone_calls(values: Sequence[object]) -> bool | None:
+    calling, valve, on_percent = values
+    if isinstance(calling, bool):
+        return calling
+    return _zone_wants_heat((valve, on_percent, None))
 
 
 def _any_known(values: Sequence[bool | None]) -> bool | None:

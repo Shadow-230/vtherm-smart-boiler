@@ -47,6 +47,26 @@ def test_zone_demand_prefers_openings_over_the_calling_flag() -> None:
     assert [(s.t, s.value) for s in demand] == [(0, True), (30, False)]
 
 
+def test_zone_calling_prefers_the_calling_flag_over_openings() -> None:
+    """R6, A2: a TPI zone's duty cycle stays the same through its cycle while its relay pulses;
+    whether it asks for heat at a given moment is its calling flag, the opening only where the
+    flag is not known."""
+    relay = ZoneSeries(
+        "relay",
+        on_percent=Series([(0, 0.4), (30, 0.0)]),
+        calling=Series([(0, True), (5, False), (10, True), (20, None)]),
+    )
+    valve = ZoneSeries("valve", valve_open=Series([(0, 0.0), (25, 0.5)]))
+    calling = History(zones={"relay": relay}).zone_calling(0, 40)
+    assert calling is not None
+    assert [(s.t, s.value) for s in calling] == [(0, True), (5, False), (10, True), (30, False)]
+    both = History(zones={"relay": relay, "valve": valve}).zone_calling(0, 40)
+    assert both is not None
+    assert [(s.t, s.value) for s in both] == [(0, True), (5, False), (10, True)]
+    assert both.value_at(35) is True  # the relay is off by then, the valve open
+    assert History().zone_calling(0, 40) is None
+
+
 def test_combine_and_zone_demand() -> None:
     a = ZoneSeries("a", calling=Series([(0, False), (10, True), (20, False)]))
     b = ZoneSeries("b", calling=Series([(0, None), (15, False)]))
