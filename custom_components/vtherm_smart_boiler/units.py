@@ -121,4 +121,8 @@ def signal_value(signal: Signal, state: object, unit: str | None) -> float | boo
     if signal is Signal.PRESSURE and converted == 0.0:
         # An OpenTherm Gateway reports 0 until a real reading after each reset (L3).
         return None
+    if signal is Signal.GAS_METER and converted == 0.0:
+        # A cumulative meter at 0 for a moment (its value not known yet after a restart) would
+        # count its whole reading again when it comes back.
+        return None
     return converted

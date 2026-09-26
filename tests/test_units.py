@@ -114,3 +114,12 @@ def test_a_pressure_of_zero_is_unknown() -> None:
     assert signal_value(Signal.PRESSURE, "0", "bar") is None
     assert signal_value(Signal.PRESSURE, "0.0", "bar") is None
     assert signal_value(Signal.PRESSURE, "1.2", "bar") == 1.2
+
+
+def test_a_gas_meter_at_zero_is_unknown() -> None:
+    """A7: a cumulative meter reading 0 for a moment — before its value is known after a
+    restart — would count its whole reading again when it comes back: the gas of years at once."""
+    assert signal_value(Signal.GAS_METER, "0", "m³") is None
+    assert signal_value(Signal.GAS_METER, "0.0", "m³") is None
+    assert signal_value(Signal.GAS_METER, "0.1", "m³") == 0.1  # a new meter counting up
+    assert signal_value(Signal.GAS_METER, "5000.4", "m³") == 5000.4

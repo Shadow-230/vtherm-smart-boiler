@@ -226,3 +226,24 @@ def test_gas_per_degree_day_needs_the_gas_of_the_whole_window() -> None:
     assert summary.gas is not None
     assert not summary.gas.complete
     assert summary.gas_per_degree_day is None
+
+
+def test_a_coarse_meter_leaves_hot_water_out_by_burner_time() -> None:
+    """A7: a meter that reports once an hour shows no rise within a short hot-water draw, so
+    reading it at the burn's start and end left nothing out. Each rise is split by the burner
+    time between its two readings — hot water's share left out."""
+    flame = Series(
+        [(0.0, False), (1.0, True), (50 * MIN, False), (50 * MIN + 30, True), (HOUR, False)]
+    )
+    history = History(
+        signals={
+            Signal.FLAME: flame,
+            Signal.DHW_ACTIVE: Series([(0.0, False), (50 * MIN, True), (HOUR + 1, False)]),
+            Signal.GAS_METER: Series([(0.0, 100.0), (HOUR, 101.0)]),  # one reading an hour
+        }
+    )
+    summary = summarize(history, ParameterSet(), 0.0, HOUR + 1)
+    assert summary.gas is not None
+    heating_s = 50 * MIN - 1.0
+    dhw_s = 10 * MIN - 30
+    assert summary.gas.amount == pytest.approx(1.0 * heating_s / (heating_s + dhw_s))

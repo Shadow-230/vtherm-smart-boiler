@@ -5,16 +5,18 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from itertools import pairwise
 from typing import Any
 
 from .building import DayPoint, LoadModel
-from .cycles import BurnKind, ClassifiedBurn, DhwInputs, classify_burns, find_burns
+from .cycles import Burn, BurnKind, ClassifiedBurn, DhwInputs, classify_burns, find_burns
 from .history import History
 from .metrics import (
     CH_KINDS,
     DEFAULT_CONDENSING_RETURN,
     DEFAULT_SHORT_BURN_S,
     DHW_KINDS,
+    METER_RESET_FRACTION,
     NOT_DHW_KINDS,
     UNKNOWN_KINDS,
     Consumption,
@@ -133,13 +135,7 @@ def _gas(
         total = meter_consumption(meter, start, end)
         if total is None:
             return None, GasSource.METER
-        # A meter registers a burn's gas when it reports, at the burn's end at best: the hot
-        # water's share is what the meter gained from the burn's start to its end.
-        dhw = 0.0
-        for burn in hot_water:
-            before, after = meter.value_at(burn.start), meter.value_at(burn.end)
-            if before is not None and after is not None and after >= before:
-                dhw += after - before
+        dhw = _metered_hot_water(meter, burns, start, end)
         return Consumption(max(0.0, total.amount - dhw), total.complete), GasSource.METER
     low = parameters.value(ParameterKey.GAS_AT_MIN_POWER)
     high = parameters.value(ParameterKey.GAS_AT_MAX_POWER)
@@ -151,6 +147,34 @@ def _gas(
         part = integrate_rate(flame, modulation, low, high, scale, burn.start, burn.end)
         gas = Consumption(gas.amount - part.amount, gas.complete and part.complete)
     return Consumption(max(0.0, gas.amount), gas.complete), GasSource.MODULATION
+
+
+def _metered_hot_water(
+    meter: Series[float], burns: Sequence[ClassifiedBurn], start: float, end: float
+) -> float:
+    """The hot water's part of a meter's gas. A meter shows a burn's gas when it next reports —
+    during the burn, or minutes or an hour later — so each rise is split by the burner time
+    between its two readings: the hot water's share of that time is left out. Exact for a
+    meter that reports within each burn, fair for one that reports every hour."""
+    readings = [(s.start, s.value) for s in meter.segments(start, end) if s.value is not None]
+    dhw = 0.0
+    for (since, before), (at, after) in pairwise(readings):
+        if after >= before:
+            rise = after - before
+        elif after < METER_RESET_FRACTION * before:
+            rise = after  # counted from zero since a reset
+        else:
+            continue
+        burning = [(b, _overlap(b.burn, since, at)) for b in burns]
+        total = sum(seconds for _b, seconds in burning)
+        if rise <= 0 or total <= 0:
+            continue
+        dhw += rise * sum(s for b, s in burning if b.kind in DHW_KINDS) / total
+    return dhw
+
+
+def _overlap(burn: Burn, start: float, end: float) -> float:
+    return max(0.0, min(burn.end, end) - max(burn.start, start))
 
 
 def summarize(
