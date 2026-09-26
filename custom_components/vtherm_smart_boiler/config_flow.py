@@ -1180,11 +1180,18 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
     def _next_after(self, step: str) -> str:
         return "save"
 
-    def _hand_back_owed(self) -> bool:
-        """A hand-back has not reached the boiler yet: what it goes through must not change."""
+    def _hand_back_blocker(self) -> str | None:
+        """Why what the hand-back goes through must not change now: it has not reached the
+        boiler yet, or control holds the boiler — its hand-back must go through the device
+        that has it, which the user gets by switching control off first."""
         coordinator = getattr(self.config_entry, "runtime_data", None)
         units = [getattr(coordinator, name, None) for name in ("control", "hand_back_unit")]
-        return any(unit is not None and unit.hand_back_owed for unit in units)
+        units = [unit for unit in units if unit is not None]
+        if any(unit.hand_back_owed for unit in units):
+            return "hand_back_pending"
+        if any(unit.holding for unit in units):
+            return "control_holds_boiler"
+        return None
 
     def _changes_hand_back(self, user_input: dict[str, Any], schema: vol.Schema) -> bool:
         """Whether the answer changes how the boiler is given back. A field the form shows but
@@ -1248,9 +1255,11 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             path = user_input["write_path"]
             current = self.config_entry.options.get(CONTROL, {}).get("write_path")
             errors = control_error(user_input)
-            if not errors and path not in (NO_CONTROL, current) and self._hand_back_owed():
-                # "No control" stays possible: a unit that only hands back keeps retrying.
-                errors = {"write_path": "hand_back_pending"}
+            blocker = self._hand_back_blocker()
+            if not errors and path not in (NO_CONTROL, current) and blocker:
+                # "No control" stays possible: the hand-back goes through the old path, retried
+                # by a unit that only hands back.
+                errors = {"write_path": blocker}
             if errors:
                 return self._form(
                     step_id="control", data_schema=control_schema(self.options), errors=errors
@@ -1277,12 +1286,13 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 errors = control_details_error(
                     user_input, read_bounds(self.hass, user_input["setpoint_entity"])
                 )
+            blocker = self._hand_back_blocker()
             if (
                 not errors
-                and self._hand_back_owed()
+                and blocker
                 and self._changes_hand_back(user_input, control_entity_schema(self.options))
             ):
-                errors = {"base": "hand_back_pending"}
+                errors = {"base": blocker}
             if not errors:
                 apply_control_details(self.options, user_input)
                 return await self.async_step_control_curve()
@@ -1304,10 +1314,10 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         if user_input is not None:
             if user_input["gateway_id"] not in gateways:
                 errors = {"gateway_id": "gateway_unknown"}  # every write would fail
-            elif self._hand_back_owed() and self._changes_hand_back(
+            elif (blocker := self._hand_back_blocker()) and self._changes_hand_back(
                 user_input, control_gateway_schema(self.options, gateways)
             ):
-                errors = {"base": "hand_back_pending"}
+                errors = {"base": blocker}
             else:
                 apply_control_details(self.options, user_input)
                 return await self.async_step_control_curve()
@@ -1327,12 +1337,13 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 for key in ("mqtt_top", "mqtt_node")
                 if not mqtt_topic_valid(user_input.get(key))
             }
+            blocker = self._hand_back_blocker()
             if (
                 not errors
-                and self._hand_back_owed()
+                and blocker
                 and self._changes_hand_back(user_input, control_mqtt_schema(self.options))
             ):
-                errors = {"base": "hand_back_pending"}
+                errors = {"base": blocker}
             if not errors:
                 apply_control_details(self.options, user_input)
                 return await self.async_step_control_curve()

@@ -630,6 +630,7 @@
       "ch_write_type_not_supported": "Zadeklaruj przełącznik grzania jako wygasający lub trzymany albo zostaw przełącznik pusty: wtyczka nigdy nie zapisuje trwałej pamięci kotła.",
       "hand_back_value_effect_missing": "Metoda wartości wymaga skutku: co urządzenie robi z wartością oddania.",
       "hand_back_pending": "Oddanie sterowania jeszcze nie dotarło do kotła: ścieżka zapisu i to, do czego sterowanie pisze, nie mogą się zmienić, dopóki nie dotrze. Przywróć cel albo wybierz „Bez sterowania”: oddanie jest nadal ponawiane.",
+      "control_holds_boiler": "Sterowanie ma kocioł: najpierw wyłącz sterowanie, żeby kocioł został oddany przez urządzenie, które go trzyma; potem zmień, do czego sterowanie pisze.",
       "count_threshold_above_zones": "Więcej stref, niż jest skonfigurowanych: grzanie nigdy nie zostałoby wezwane.",
       "no_demand_criterion": "Ustaw co najmniej jedno kryterium: liczba stref 0 wymaga progu mocy albo otwarcia.",
       "off_setpoint_not_below_hard_min": "„Wyłącz” musi być poniżej najniższej nastawy zasilania, inaczej by grzało.",

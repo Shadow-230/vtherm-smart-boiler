@@ -234,6 +234,9 @@ class ControlUnit:
         self._holding = False
         self._unknown_since: dict[str, float] = {}
         self._hand_back_retry_at = 0.0
+        # A session took the boiler while a hand-back was owed: what the earlier one set (a
+        # held heating switch left off, say) is this session's to give back too.
+        self._full_hand_back_due = False
         self._restored = False
         self._started_at = dt_util.utcnow().timestamp()
         self._lock = asyncio.Lock()
@@ -257,6 +260,11 @@ class ControlUnit:
     def hand_back_owed(self) -> bool:
         """A hand-back has not got through, or has not been confirmed, yet."""
         return self._hand_back_pending
+
+    @property
+    def holding(self) -> bool:
+        """The boiler may hold a value control wrote: its hand-back is still to come."""
+        return self._holding
 
     @property
     def status(self) -> ControlStatus:
@@ -813,7 +821,9 @@ class ControlUnit:
         if not session.failing:  # each kind of write clears only its own failure
             session.alarms.discard(ControlAlarm.WRITE_FAILED)
         if self._hand_back_pending:
-            # Control has the boiler again: the earlier hand-back no longer matters.
+            # Control has the boiler again: the earlier hand-back is folded into this session's,
+            # which gives back in full whatever the earlier one left.
+            self._full_hand_back_due = True
             self._hand_back_done()
         if action.kind is not WriteKind.KEEPALIVE:  # a repeat changes nothing
             self._last_change_at = now
@@ -835,6 +845,7 @@ class ControlUnit:
         """One hand-back attempt; a failure is kept, shown and retried until it goes through.
         ``full``: also clear what an earlier session may have set (a retry after a restart). An
         attempt whose targets do not show the hand-back yet stays owed until they do."""
+        full = full or self._full_hand_back_due
         try:
             writer = self._writer or self._writer_factory(self._hass, self.options)
             checks = await writer.hand_back(full=full)
@@ -860,6 +871,7 @@ class ControlUnit:
             self._coordinator.schedule_save()
             return True
         self._holding = False
+        self._full_hand_back_due = False
         self._hand_back_done()
         return True
 
@@ -868,6 +880,7 @@ class ControlUnit:
         and shown as failed once a sent one has gone unconfirmed that long."""
         if self._hand_back_checks and self._checks_hold(self._hand_back_checks):
             self._holding = False
+            self._full_hand_back_due = False
             self._hand_back_done()
             return
         if now < self._hand_back_retry_at:
@@ -934,6 +947,7 @@ class ControlUnit:
             return
         _LOGGER.warning("The owed hand-back is settled by hand, as the user confirmed")
         self._holding = False
+        self._full_hand_back_due = False
         self._hand_back_done()
         self._coordinator.schedule_save(0)
 

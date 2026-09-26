@@ -722,6 +722,44 @@ class FakeNumber:
         self.publish(self.value)
 
 
+@dataclass
+class FakeSwitch:
+    """A held heating switch (an ESPHome or EMS-ESP CH enable) that records its writes; like
+    Home Assistant, it drops a call while unavailable."""
+
+    hass: HomeAssistant
+    entity_id: str = "input_boolean.fake_ch"
+    writes: list[bool] = field(default_factory=list)
+    available: bool = True
+    on: bool = True
+
+    def register(self) -> None:
+        async def turn(call: ServiceCall, on: bool) -> None:
+            if not self.available:
+                return
+            self.writes.append(on)
+            self.on = on
+            self.publish()
+
+        async def turn_on(call: ServiceCall) -> None:
+            await turn(call, True)
+
+        async def turn_off(call: ServiceCall) -> None:
+            await turn(call, False)
+
+        self.hass.services.async_register("input_boolean", "turn_on", turn_on)
+        self.hass.services.async_register("input_boolean", "turn_off", turn_off)
+        self.publish()
+
+    def publish(self) -> None:
+        state = ("on" if self.on else "off") if self.available else "unavailable"
+        self.hass.states.async_set(self.entity_id, state)
+
+    def set_available(self, available: bool) -> None:
+        self.available = available
+        self.publish()
+
+
 def held_entity(number: FakeNumber, **extra: Any) -> dict[str, Any]:
     """Control through a held setpoint entity with a value hand-back."""
     return {
@@ -1225,6 +1263,67 @@ async def test_an_owed_hand_back_can_be_settled_by_hand(rig: Rig) -> None:
         },
     )
     assert flow["step_id"] == "control_gateway"  # another device, accepted
+
+
+async def test_a_session_that_retakes_the_boiler_still_owes_the_switch_it_left_off(
+    rig: Rig,
+) -> None:
+    """C2: session one turned the held heating switch off (no demand), and its hand-back could
+    not reach it. Session two takes the boiler with a setpoint, which settles the owed
+    hand-back, but cannot write the switch. Its own hand-back must still turn the switch on —
+    the boiler cannot heat while it is off."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    switch = FakeSwitch(rig.hass)
+    switch.register()
+    await start(rig, **held_entity(number, ch_entity=switch.entity_id, ch_write_type="held"))
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert switch.on is False  # no demand: heating off
+    switch.set_available(False)
+    await rig.switch(False)  # the hand-back cannot turn the switch back on
+    assert rig.entry is not None
+    assert rig.entry.runtime_data.control.hand_back_owed
+    await rig.switch(True)  # session two: the setpoint goes through, the switch does not
+    await rig.advance(20)
+    switch.set_available(True)  # back — and still off
+    await rig.switch(False)
+    await rig.advance(10)
+    assert switch.on is True
+
+
+async def test_what_control_writes_to_cannot_change_while_it_holds_the_boiler(rig: Rig) -> None:
+    """C2: the hand-back must go through the device that has the boiler. Changed while control
+    holds it, a failed hand-back to the old device would be retried through the new one — and
+    the old one never given back. Switched off first, the old device gets it."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(rig, **held_entity(number))
+    await rig.switch(True)
+    assert rig.entry is not None
+    flow = await rig.hass.config_entries.options.async_init(rig.entry.entry_id)
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"], {"next_step_id": "control"}
+    )
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"],
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": number.entity_id},
+    )
+    other = {
+        "setpoint_entity": "input_number.another_boiler_flow",
+        "write_type": "held",
+        "ch_write_type": "held",
+        "hand_back": "value",
+        "hand_back_value": 50,
+        "hand_back_value_effect": "own_control",
+    }
+    rig.hass.states.async_set(other["setpoint_entity"], "50", {"unit_of_measurement": "°C"})
+    result = await rig.hass.config_entries.options.async_configure(flow["flow_id"], other)
+    assert result["errors"] == {"base": "control_holds_boiler"}
+    await rig.switch(False)  # given back through the device that has it
+    result = await rig.hass.config_entries.options.async_configure(flow["flow_id"], other)
+    assert result["step_id"] == "control_curve"
 
 
 async def test_removing_the_entry_with_a_hand_back_owed_raises_a_repair_issue(rig: Rig) -> None:
