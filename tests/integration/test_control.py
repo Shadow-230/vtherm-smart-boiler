@@ -713,6 +713,7 @@ class FakeNumber:
     entity_id: str = "input_number.fake_boiler_flow"
     writes: list[float] = field(default_factory=list)
     available: bool = True
+    echo_later: bool = False  # as ESPHome or MQTT entities: the new value shows on a later tick
     lowest: float | None = None
     value: float = 50.0
     unit: str = "°C"
@@ -726,7 +727,8 @@ class FakeNumber:
             self.writes.append(value)
             if self.lowest is None or value >= self.lowest:
                 self.value = value
-            self.publish(self.value)
+            if not self.echo_later:
+                self.publish(self.value)
 
         self.hass.services.async_register("input_number", "set_value", set_value)
         self.publish(self.value)
@@ -751,13 +753,14 @@ class FakeSwitch:
     writes: list[bool] = field(default_factory=list)
     available: bool = True
     on: bool = True
+    stuck_on: bool = False  # it takes "on" but will not go off
 
     def register(self) -> None:
         async def turn(call: ServiceCall, on: bool) -> None:
             if not self.available:
                 return
             self.writes.append(on)
-            self.on = on
+            self.on = on or self.stuck_on
             self.publish()
 
         async def turn_on(call: ServiceCall) -> None:
@@ -1397,6 +1400,84 @@ async def test_options_that_cannot_be_read_still_tell_of_a_held_boiler(
     found = ir.async_get(hass).async_get_issue(DOMAIN, f"hand_back_owed_{entry.entry_id}")
     assert found is not None
     assert found.is_persistent
+
+
+async def test_a_value_hand_back_echoed_on_a_later_tick_is_done_then(rig: Rig) -> None:
+    """T6: ESPHome and MQTT entities show a new value when the device next reports. The value
+    hand-back is owed until the entity shows it, and done at the tick it does — without the
+    alarm, and without writing it again."""
+    number = FakeNumber(rig.hass, echo_later=True)
+    number.register()
+    await start(rig, **held_entity(number))
+    await rig.switch(True)
+    number.publish(number.value)
+    await rig.switch(False)
+    assert number.writes[-1] == 50.0  # the hand-back value, not shown yet
+    assert rig.entry is not None
+    assert rig.entry.runtime_data.control.hand_back_owed
+    number.publish(number.value)  # the device reports
+    await rig.advance(10)
+    assert not rig.entry.runtime_data.control.hand_back_owed
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
+    assert number.writes.count(50.0) == 1
+
+
+async def test_a_switch_that_stays_on_is_no_hand_back(rig: Rig) -> None:
+    """T6: the switch hand-back counts once the switch shows "off"; one that stays on is sent
+    again every minute and shown as failed."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    switch = FakeSwitch(rig.hass, entity_id="input_boolean.fake_external", stuck_on=True)
+    switch.register()
+    control = {k: v for k, v in held_entity(number).items() if not k.startswith("hand_back")} | {
+        "hand_back": "switch",
+        "hand_back_entity": switch.entity_id,
+    }
+    await start(rig, **control)
+    await rig.switch(True)
+    await rig.switch(False)
+    assert switch.writes[-1] is False  # sent...
+    assert switch.on  # ...and not taken
+    await rig.advance(70)
+    assert switch.writes.count(False) >= 2  # sent again
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+
+
+async def test_while_vt_reloads_its_central_entry_control_waits(rig: Rig) -> None:
+    """T6: VT's central boiler switched off, its sensor a stand-in. While VT sets its central
+    entry up again, its own central boiler cannot be ruled out: control gives the boiler back
+    and says why, then takes it again once VT is back without it."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    from .harness import VT_PLATFORM
+
+    central = MockConfigEntry(
+        domain="versatile_thermostat",
+        data={"use_central_boiler_feature": False},
+        state=ConfigEntryState.LOADED,
+    )
+    central.add_to_hass(rig.hass)
+    registry = er.async_get(rig.hass)
+    sensor = registry.async_get_or_create(
+        "binary_sensor", VT_PLATFORM, "central_boiler_state", config_entry=central
+    )
+    registry.async_get(sensor.entity_id).write_unavailable_state(rig.hass)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+    central.mock_state(rig.hass, ConfigEntryState.SETUP_IN_PROGRESS)
+    await rig.advance(20)
+    attributes = rig.state("sensor", "control_state").attributes
+    assert "vt_central_boiler_unknown" in attributes["blockers"]
+    assert rig.gateway.setpoints()[-1] == 0.0
+    central.mock_state(rig.hass, ConfigEntryState.LOADED)
+    await rig.advance(20)
+    assert (
+        "vt_central_boiler_unknown"
+        not in rig.state("sensor", "control_state").attributes["blockers"]
+    )
+    assert rig.gateway.setpoints()[-1] == EXPECTED
 
 
 async def test_removing_the_entry_with_a_hand_back_owed_raises_a_repair_issue(rig: Rig) -> None:

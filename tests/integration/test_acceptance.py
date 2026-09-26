@@ -110,6 +110,10 @@ class Rig:
                 hvac_action="heating" if opening > 0.05 else "idle",
                 valve_open_percent=round(opening * 100),
                 on_percent=round(opening, 2),
+                # What real VT publishes for every thermostat, and what demand follows first
+                # (T4): whether its device heats now, and that it has started.
+                specific_states={"is_device_active": opening > 0.05},
+                is_ready=True,
             )
 
     async def advance(self, seconds: float, step: float = 10.0) -> None:
