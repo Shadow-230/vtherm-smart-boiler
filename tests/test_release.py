@@ -295,9 +295,15 @@ class _Checker:
             if "message" in exception:
                 self.text(f"exceptions.{key}.message", exception["message"])
         for key, issue in strings.get("issues", {}).items():
-            issue = self.keys(f"issues.{key}", issue, {"title", "description"})
-            self.text(f"issues.{key}.title", issue.get("title"))
-            self.text(f"issues.{key}.description", issue.get("description"))
+            where = f"issues.{key}"
+            issue = self.keys(where, issue, {"title", "description", "fix_flow"})
+            self.text(f"{where}.title", issue.get("title"))
+            if ("description" in issue) == ("fix_flow" in issue):
+                self.problems.append(f"{where}: a description or a fix flow, one of the two")
+            if "description" in issue:
+                self.text(f"{where}.description", issue["description"])
+            if "fix_flow" in issue:
+                self.flow(f"{where}.fix_flow", issue["fix_flow"])
         return self.problems
 
 

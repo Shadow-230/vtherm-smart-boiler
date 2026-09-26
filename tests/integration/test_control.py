@@ -1186,6 +1186,47 @@ async def test_clearing_the_heating_switch_is_refused_while_a_hand_back_is_owed(
     assert rig.entry.options["control"]["ch_entity"] == "input_boolean.fake_ch"
 
 
+async def test_an_owed_hand_back_can_be_settled_by_hand(rig: Rig) -> None:
+    """C7: the device a hand-back is owed to is gone for good. A fixable repair issue lets the
+    user say they returned the boiler to its own control by hand: retrying stops, and the
+    options accept another device — deleting the entry, and a year of summaries, is no longer
+    the only way out."""
+    from homeassistant.components.repairs import DOMAIN as REPAIRS
+    from homeassistant.setup import async_setup_component
+
+    number = await owe_a_hand_back(rig)
+    await rig.switch(False)  # the hand-back fails: the setpoint entity is unavailable
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+    found = issue(rig, "hand_back_owed")
+    assert found is not None
+    assert found.is_fixable
+    assert await async_setup_component(rig.hass, REPAIRS, {})
+    manager = rig.hass.data[REPAIRS]["flow_manager"]
+    flow = await manager.async_init(DOMAIN, data={"issue_id": found.issue_id})
+    assert flow["step_id"] == "confirm"
+    flow = await manager.async_configure(flow["flow_id"], {})
+    assert flow["type"] == "create_entry"
+    await rig.advance(70)
+    assert issue(rig, "hand_back_owed") is None
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
+    assert number.writes == [EXPECTED]  # no more retries
+    assert rig.entry is not None
+    assert not rig.entry.runtime_data.control.hand_back_owed
+    flow = await rig.hass.config_entries.options.async_init(rig.entry.entry_id)
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"], {"next_step_id": "control"}
+    )
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"],
+        {
+            "write_path": "opentherm_gw",
+            "topology": "gateway_with_thermostat",
+            "confirmed_entity": CONFIRMED,
+        },
+    )
+    assert flow["step_id"] == "control_gateway"  # another device, accepted
+
+
 async def test_removing_the_entry_with_a_hand_back_owed_raises_a_repair_issue(rig: Rig) -> None:
     await owe_a_hand_back(rig)
     assert rig.entry is not None

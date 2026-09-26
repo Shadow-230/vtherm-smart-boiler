@@ -82,6 +82,7 @@ _LOGGER = logging.getLogger(__name__)
 DAY = 86400.0
 LEARNING_TIMEOUT_S = 5.0
 HAND_BACK_RETRY_S = 60.0
+OWED_ISSUE = "hand_back_owed"  # a repair issue, fixable by saying the boiler was returned
 ZONE_UNKNOWN_ALARM_S = 30 * 60.0  # a zone unknown this long is reported
 RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control counts as off
 SMARTPI_DOMAIN = "vtherm_smartpi"
@@ -908,21 +909,33 @@ class ControlUnit:
         self._report_owed()
 
     def _report_owed(self) -> None:
-        """Without the control entities, a repair issue shows a hand-back still owed."""
-        if not self.hand_back_only:
-            return
-        issue_id = f"hand_back_owed_{self._coordinator.config_entry.entry_id}"
-        if self._hand_back_pending:
+        """A repair issue shows a hand-back still owed — without the control entities at once,
+        with them once it has failed — and lets the user say they returned the boiler by hand
+        (its target gone for good, say), which nothing else could settle."""
+        entry_id = self._coordinator.config_entry.entry_id
+        issue_id = f"{OWED_ISSUE}_{entry_id}"
+        if self._hand_back_pending and (self.hand_back_only or self._hand_back_failed):
             ir.async_create_issue(
                 self._hass,
                 DOMAIN,
                 issue_id,
-                is_fixable=False,
+                is_fixable=True,
                 severity=ir.IssueSeverity.ERROR,
-                translation_key="hand_back_owed",
+                translation_key=OWED_ISSUE,
+                data={"entry_id": entry_id},
             )
         else:
             ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+
+    def release_owed_hand_back(self) -> None:
+        """The user returned the boiler to its own control by hand: nothing is owed any more, and
+        retrying stops. Control, if on, takes the boiler afresh at its next step."""
+        if not (self._hand_back_pending or self._holding):
+            return
+        _LOGGER.warning("The owed hand-back is settled by hand, as the user confirmed")
+        self._holding = False
+        self._hand_back_done()
+        self._coordinator.schedule_save(0)
 
     async def _async_hand_back_now(self, now: float) -> None:
         """Hand back at once if control holds the boiler (unload, stop, error)."""

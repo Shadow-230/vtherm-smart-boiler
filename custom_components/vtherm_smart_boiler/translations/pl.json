@@ -1227,8 +1227,15 @@
       "description": "Te strefy używają Auto-TPI i są oznaczone w Versatile Thermostat jako używane przez kocioł centralny, ale kocioł centralny VT nie jest skonfigurowany — zastępuje go wtyczka — więc Auto-TPI pomija w nich naukę: {zones}. Żeby mogło się uczyć, wyłącz opcję „używany przez kocioł centralny” w konfiguracji VT każdej z tych stref. Koszt: wtyczka nie może wstrzymać Auto-TPI bez skasowania tego, czego się nauczyło, więc będzie się ono uczyć także podczas grzania ciepłej wody i zmian temperatury wody, co może zafałszować jego współczynniki. Pozostawienie opcji utrzymuje naukę Auto-TPI w tych strefach wyłączoną."
     },
     "hand_back_owed": {
-      "title": "Sterowanie jeszcze nie oddało kotła",
-      "description": "Sterowanie już nie działa, ale oddanie kotła jeszcze nie dotarło; jest ponawiane co minutę. Do tego czasu kocioł może trzymać ostatnią wartość zapisaną przez wtyczkę. Sprawdź, czy encja nastawy lub bramka jest dostępna, albo przywróć kotłu własne sterowanie ręcznie."
+      "title": "Oddanie kotła nie dotarło",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Oddanie kotła nie dotarło",
+            "description": "Wtyczka nie może oddać kotła: encja nastawy, przełącznik grzania albo bramka tego nie przyjmuje. Ponawia co minutę; dopóki oddanie nie dotrze, kocioł może trzymać ostatnią wartość zapisaną przez wtyczkę. Sprawdź, czy urządzenie jest dostępne.\n\nJeśli przywróciłeś kotłu własne sterowanie ręcznie — albo urządzenia nie ma już na dobre — potwierdź tutaj: wtyczka przestanie ponawiać i zapomni, co była winna, a opcje przyjmą inne urządzenie. Potwierdź dopiero, gdy kocioł naprawdę działa sam."
+          }
+        }
+      }
     },
     "control_options_invalid": {
       "title": "Opcji sterowania nie da się użyć",

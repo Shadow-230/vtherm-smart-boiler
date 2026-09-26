@@ -1227,8 +1227,15 @@
       "description": "These zones run Auto-TPI and are marked in Versatile Thermostat as used by the central boiler, but VT's central boiler is not configured — the plugin replaces it — so Auto-TPI skips learning in them: {zones}. To let it learn, clear \"used by the central boiler\" in each zone's VT configuration. What that costs: the plugin cannot pause Auto-TPI without wiping what it has learned, so it will then also learn while hot water charges and while the water temperature changes, which can skew its coefficients. Leaving the option set keeps Auto-TPI's learning off in these zones."
     },
     "hand_back_owed": {
-      "title": "Control has not handed the boiler back yet",
-      "description": "Control no longer runs, but handing the boiler back has not got through yet; it is retried every minute. Until it does, the boiler may keep the last value the plugin wrote. Check that the setpoint entity or the gateway is available, or return the boiler to its own control by hand."
+      "title": "Handing the boiler back has not got through",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Handing the boiler back has not got through",
+            "description": "The plugin cannot hand the boiler back: its setpoint entity, heating switch or gateway does not take it. It retries every minute; until it gets through, the boiler may keep the last value the plugin wrote. Check that the device is available.\n\nIf you have returned the boiler to its own control by hand — or the device is gone for good — confirm here: the plugin stops retrying and forgets what it owed, and the options accept another device. Confirm only once the boiler really runs on its own."
+          }
+        }
+      }
     },
     "control_options_invalid": {
       "title": "The control options cannot be used",

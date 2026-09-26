@@ -5,6 +5,7 @@
     "mqtt",
     "opentherm_gw",
     "recorder",
+    "repairs",
     "versatile_thermostat",
     "vtherm_smartpi",
     "weather"

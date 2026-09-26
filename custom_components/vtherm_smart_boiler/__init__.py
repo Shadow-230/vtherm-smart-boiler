@@ -202,13 +202,15 @@ def _hand_back_unit(
             "A hand-back is owed, but the options that took the boiler are gone: return the "
             "boiler to its own control by hand"
         )
+        entry_id = coordinator.config_entry.entry_id
         ir.async_create_issue(
             hass,
             DOMAIN,
-            f"hand_back_owed_{coordinator.config_entry.entry_id}",
-            is_fixable=False,
+            f"hand_back_owed_{entry_id}",
+            is_fixable=True,
             severity=ir.IssueSeverity.ERROR,
             translation_key="hand_back_owed",
+            data={"entry_id": entry_id},
         )
         return None
     unit = ControlUnit(hass, coordinator, options, raw=taken_with, hand_back_only=True)
