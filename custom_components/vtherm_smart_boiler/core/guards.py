@@ -160,6 +160,11 @@ def plan_write(
     """What to write to one target now, given what the device confirms (``None``: unknown)."""
     if not config.writable or state.blocked is not None:
         return GuardResult(state)
+    if state.written_at is not None and now < state.written_at:
+        # The wall clock went back: the keep-alive is due now, not once the clock catches up
+        # (the gateway gives the boiler back after a minute without it).
+        earlier = now - config.keepalive_s
+        state = replace(state, written_at=earlier, sent_at=min(state.sent_at or earlier, earlier))
     if not config.read_back:
         confirmed = None  # nothing to judge: never ignored, never another controller
     state, verdict = _follow_read_back(state, confirmed, now, config)

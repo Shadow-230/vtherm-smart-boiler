@@ -477,3 +477,13 @@ def test_frost_protection_sees_a_steady_cold_room() -> None:
     assert decision.mode is ControlMode.FROST
     assert decision.command is not None
     assert decision.command.ch_enable is True
+
+
+def test_a_clock_jumping_forward_does_not_raise_the_correction_at_once() -> None:
+    """C9: an hour's jump of the wall clock counted as an hour of heat flow — +2 K of comfort
+    correction in one step, past the ramp. A step counts for a minute at most."""
+    cold = zone(0.0, valve_open=1.0, temperature=19.0, target=21.0)  # short, fully open
+    state, _ = run([inputs(0.0, zones=(cold,)), inputs(10.0, zones=(cold,))])
+    jumped = zone(3610.0, valve_open=1.0, temperature=19.0, target=21.0)
+    state, _ = run([inputs(3610.0, zones=(jumped,))], state=state)
+    assert state.correction <= 0.1  # 70 s of heat flow, not an hour

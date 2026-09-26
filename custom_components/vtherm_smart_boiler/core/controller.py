@@ -54,6 +54,7 @@ HOUR = 3600.0
 CORRECTION_MAX_K = 3.0  # the firm band of the comfort correction
 CORRECTION_RISE_S = 30 * 60.0  # seconds of heat flow per kelvin of rise; the fall is twice as fast
 CORRECTION_LIMIT_S = 3 * HOUR  # at the band's edge this long: tell the user
+MAX_STEP_S = 60.0  # the most heat flow a single step counts (a clock jumping forward)
 OVERHEAT_K = 1.0  # a zone this far over its setpoint stops the rise
 FROST_ALARM_S = 2 * HOUR  # frost heating this long without the room warming is reported
 FROST_WARMING_K = 0.5  # the watched room must have warmed by this much
@@ -284,7 +285,9 @@ def _heating_decision(
         state = replace(state, frost_since=None, frost_from=None)
     step_s = 0.0 if state.last_step_at is None else max(0.0, now - state.last_step_at)
     if want_heat_now(inputs, config, frost) and not inputs.dhw:
-        state = replace(state, heat_s=state.heat_s + step_s)
+        # Heat flow counts a minute a step at most: a wall clock jumping forward must not count
+        # an hour of it, which would raise the comfort correction past its rate at once.
+        state = replace(state, heat_s=state.heat_s + min(MAX_STEP_S, step_s))
     state = replace(state, last_step_at=now)
     # Frost heating is never stopped; heating that does not warm the room is reported.
     frost_stuck = (

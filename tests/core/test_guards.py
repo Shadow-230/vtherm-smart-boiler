@@ -403,3 +403,14 @@ def test_a_drop_once_is_not_reported() -> None:
     assert action == WriteAction(45.0, WriteKind.RESEND)
     assert events == ()
     assert state.dropped_at == 400.0
+
+
+def test_a_clock_set_back_does_not_stop_the_keep_alive() -> None:
+    """C9: the wall clock set back an hour (a correction, a wrong time server): the keep-alive
+    — due every 30 s, or the gateway gives the boiler back — must not wait for an hour."""
+    config = GuardConfig(write_type=WriteType.EXPIRING)
+    first = plan_write(GuardState(), 50.0, None, 10_000.0, config)
+    assert first.action is not None
+    back = plan_write(first.state, 50.0, 50.0, 10_000.0 - 3600.0, config)
+    assert back.action is not None
+    assert back.action.kind is WriteKind.KEEPALIVE
