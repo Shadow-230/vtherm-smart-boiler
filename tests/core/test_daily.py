@@ -162,3 +162,14 @@ def test_days_summarised_with_other_settings_are_left_out_and_redone() -> None:
     kept = [summarize_day(history, PARAMETERS, a, b, settings="new") for a, b in days]
     again = analyse(history, PARAMETERS, MonitorOptions(), 9 * DAY, days, kept, settings="new")
     assert again.new_days == ()  # nothing to redo
+
+
+def test_today_does_not_take_a_place_in_the_verdict_window() -> None:
+    """A5: with a window as long as the monitoring period, today's first hours took one of its
+    days: "not enough data" every night until morning, weeks of data kept."""
+    history = cycling(31)
+    days = days_of(history, 30)
+    today = summarize_day(history, PARAMETERS, 30 * DAY, 30 * DAY + HOUR)  # one hour in
+    options = VerdictOptions(min_days=7.0)
+    result = verdict_over_days(days, options, window_days=7, current=today)
+    assert result.verdict is not Verdict.NOT_ENOUGH_DATA

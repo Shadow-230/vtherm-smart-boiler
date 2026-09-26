@@ -163,10 +163,15 @@ def verdict_over_days(
     days: Sequence[DaySummary],
     options: VerdictOptions | None = None,
     window_days: int | None = None,
+    current: DaySummary | None = None,
 ) -> VerdictResult:
-    """The verdict over the latest ``window_days`` days with data (all of them by default)."""
+    """The verdict over the latest ``window_days`` complete days with data (all of them by
+    default), and ``current``, the day under way, on top: its first hours must not take one of
+    the window's days, which left the verdict short every night."""
     with_data = sorted((d for d in days if d.has_data), key=lambda d: d.start)
     chosen = with_data if window_days is None else with_data[-window_days:]
+    if current is not None and current.has_data:
+        chosen = [*chosen, current]
     observed = sum(d.observed_s for d in chosen)
     heating = CycleStats(
         observed_s=observed,

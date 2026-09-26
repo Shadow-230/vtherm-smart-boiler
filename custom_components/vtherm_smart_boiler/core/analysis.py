@@ -93,7 +93,7 @@ def analyse(
         day=day,
         week=week,
         verdict=verdict_over_days(
-            [*kept, *new_days, today], options.verdict, options.verdict_window_days
+            [*kept, *new_days], options.verdict, options.verdict_window_days, today
         ),
         trends=_trends(history, full, now),
         report=report,
