@@ -247,3 +247,23 @@ def test_a_coarse_meter_leaves_hot_water_out_by_burner_time() -> None:
     heating_s = 50 * MIN - 1.0
     dhw_s = 10 * MIN - 30
     assert summary.gas.amount == pytest.approx(1.0 * heating_s / (heating_s + dhw_s))
+
+
+def test_gas_from_modulation_survives_a_moment_without_the_flame() -> None:
+    """A8: every Home Assistant restart leaves seconds without a flame reading; the gas from
+    modulation became incomplete for the whole week, and gas per degree-day vanished. It is
+    counted burn by burn, and complete while the flame is known nearly all the time."""
+    history = cycling_history(days=7)
+    flame = history.signals[Signal.FLAME]
+    gap = Series([(s.t, s.value) for s in flame if s.t < 3 * DAY])
+    gap.append(3 * DAY, None)  # a restart: five seconds unknown
+    gap.append(3 * DAY + 5, False)
+    for sample in flame:
+        if sample.t > 3 * DAY + 5:
+            gap.append(sample.t, sample.value)
+    history.signals[Signal.FLAME] = gap
+    parameters = params(gas_at_min_power=0.4, gas_at_max_power=2.4, heating_threshold=18.0)
+    summary = summarize(history, parameters, 0, 7 * DAY)
+    assert summary.gas is not None
+    assert summary.gas.complete
+    assert summary.gas_per_degree_day is not None

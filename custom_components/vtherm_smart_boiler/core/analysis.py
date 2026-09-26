@@ -95,7 +95,7 @@ def analyse(
         verdict=verdict_over_days(
             [*kept, *new_days], options.verdict, options.verdict_window_days, today
         ),
-        trends=_trends(history, full, now),
+        trends=_trends(history, full, now, options.verdict.condensing_boiler),
         report=report,
         report_unit=unit,
         outdoor=_outdoor(history, now),
@@ -104,7 +104,12 @@ def analyse(
     )
 
 
-def _trends(history: History, full: MonitorSummary, now: float) -> dict[AlarmKind, Alarm]:
+def _trends(
+    history: History, full: MonitorSummary, now: float, condensing: bool = True
+) -> dict[AlarmKind, Alarm]:
+    """Slow drifts: falling pressure, a flue gas rising over the return, the burner's
+    hysteresis. A non-condensing boiler's flue temperature follows the return, and so the
+    weather: its trend, like its absolute flue gas alarm, is left out."""
     baseline = (now - HISTORY_DAYS * DAY, now - 4 * DAY)
     recent = (now - DAY, now)
     trends: dict[AlarmKind, Alarm] = {}
@@ -125,7 +130,7 @@ def _trends(history: History, full: MonitorSummary, now: float) -> dict[AlarmKin
     def burns_in(window: tuple[float, float]) -> list[ClassifiedBurn]:
         return [b for b in full.burns if window[0] <= b.burn.start < window[1]]
 
-    if history.is_mapped(Signal.FLUE_GAS) and history.is_mapped(Signal.RETURN):
+    if condensing and history.is_mapped(Signal.FLUE_GAS) and history.is_mapped(Signal.RETURN):
         flue, back = history.signal(Signal.FLUE_GAS), history.signal(Signal.RETURN)
         trend = compare_windows(
             flue_excess_samples(flue, back, burns_in(baseline)),

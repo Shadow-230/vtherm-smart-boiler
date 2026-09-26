@@ -50,6 +50,9 @@ class MonitorOptions:
     verdict_window_days: int | None = None  # the latest days with data; None: every day kept
 
 
+GAS_COVERAGE = 0.99  # the flame known this much of the window: the gas from modulation counts
+
+
 class GasSource(StrEnum):
     METER = "meter"
     MODULATION = "modulation"
@@ -129,7 +132,6 @@ def _gas(
     burns: Sequence[ClassifiedBurn],
 ) -> tuple[Consumption | None, GasSource | None]:
     """Heating gas: the gas of the burns known as hot water is left out."""
-    hot_water = [b.burn for b in burns if b.kind in DHW_KINDS]
     if history.is_mapped(Signal.GAS_METER):
         meter = history.signal(Signal.GAS_METER)
         total = meter_consumption(meter, start, end)
@@ -141,12 +143,19 @@ def _gas(
     high = parameters.value(ParameterKey.GAS_AT_MAX_POWER)
     if low is None or high is None or not history.is_mapped(Signal.MODULATION):
         return None, None
+    # Burn by burn, hot water left out; complete while the flame is known nearly all the time
+    # (a restart's seconds without it must not void a week) and the modulation in every burn.
     flame, modulation = history.signal(Signal.FLAME), history.signal(Signal.MODULATION)
-    gas = integrate_rate(flame, modulation, low, high, scale, start, end)
-    for burn in hot_water:
+    amount = 0.0
+    complete = known_duration(flame, start, end) >= GAS_COVERAGE * (end - start)
+    for classified in burns:
+        if classified.kind in DHW_KINDS:
+            continue
+        burn = classified.burn
         part = integrate_rate(flame, modulation, low, high, scale, burn.start, burn.end)
-        gas = Consumption(gas.amount - part.amount, gas.complete and part.complete)
-    return Consumption(max(0.0, gas.amount), gas.complete), GasSource.MODULATION
+        amount += part.amount
+        complete = complete and part.complete
+    return Consumption(amount, complete), GasSource.MODULATION
 
 
 def _metered_hot_water(

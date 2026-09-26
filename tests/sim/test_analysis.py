@@ -119,3 +119,18 @@ def test_analysis_with_minimal_signals() -> None:
     assert AlarmKind.PRESSURE_FALLING not in result.trends
     assert result.outdoor is None
     assert result.fit is None
+
+
+def test_a_non_condensing_boiler_gets_no_flue_gas_trend() -> None:
+    """A10: a non-condensing boiler's flue temperature follows the return, and so the weather:
+    a mild day after a frosty week read as fouling. As for the absolute flue gas alarm, the
+    trend is left to condensing boilers."""
+    from dataclasses import replace
+
+    from custom_components.vtherm_smart_boiler.core.verdict import VerdictOptions
+
+    history, params, now, days = simulated_week(MILD)
+    options = MonitorOptions(verdict=replace(VerdictOptions(), condensing_boiler=False))
+    result = analyse(history, params, options, now, days)
+    assert AlarmKind.FLUE_GAS_RISING not in result.trends
+    assert AlarmKind.PRESSURE_FALLING in result.trends

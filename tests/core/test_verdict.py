@@ -110,3 +110,14 @@ def test_a_non_condensing_boiler_is_not_judged_on_condensing() -> None:
         ReasonCode.GOOD_CONDENSING,
         ReasonCode.CONDENSING_UNKNOWN,
     } & (codes(hot_return) | codes(condensing))
+
+
+def test_shares_on_minutes_of_data_decide_nothing() -> None:
+    """A6: the burn statistics need twenty complete burns; the condensing and load shares
+    decided from any basis at all — five minutes of a known return made a verdict."""
+    minutes = assess(10 * DAY, stats(1.0, 0.1), Share(0.0, 300.0), Share(0.9, 600.0))
+    assert ReasonCode.CONDENSING_UNKNOWN in codes(minutes)
+    assert ReasonCode.LOAD_UNKNOWN in codes(minutes)
+    assert minutes.verdict is Verdict.NOT_WORTH_IT
+    hours = assess(10 * DAY, stats(1.0, 0.1), Share(0.0, 20 * HOUR), Share(0.05, 3 * DAY))
+    assert ReasonCode.LOW_CONDENSING in codes(hours)

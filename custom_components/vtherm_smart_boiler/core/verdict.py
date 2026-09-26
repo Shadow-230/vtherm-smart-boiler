@@ -19,6 +19,9 @@ DAY = 86400.0
 # Share of the monitoring days that must hold known data: a restart's seconds of unknown state
 # must not keep the verdict away for ever.
 MIN_COVERAGE = 0.9
+# The least a share must rest on to decide anything, as the burn statistics need 20 burns.
+MIN_CONDENSING_BASIS_S = 10 * 3600.0  # heating burn time with the return known
+MIN_LOAD_BASIS_S = 86400.0  # heating-season time with the load known
 
 
 class Verdict(StrEnum):
@@ -123,6 +126,11 @@ def assess(
                 ),
             ),
         )
+
+    if condensing is not None and condensing.basis_s < MIN_CONDENSING_BASIS_S:
+        condensing = None  # minutes of a known return decide nothing
+    if load_below_min is not None and load_below_min.basis_s < MIN_LOAD_BASIS_S:
+        load_below_min = None
 
     reasons: list[Reason] = []
     starts = heating.starts_per_hour
