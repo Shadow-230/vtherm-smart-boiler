@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from .const import CONTROL, DOMAIN
+from .const import CONTROL, DOMAIN, STORAGE_VERSION, owes_hand_back
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -136,7 +136,6 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     from homeassistant.helpers import issue_registry as ir
     from homeassistant.helpers.storage import Store
 
-    from .coordinator import STORAGE_VERSION
     from .forecasts import remove_partition_files
 
     for key in (
@@ -148,11 +147,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         ir.async_delete_issue(hass, DOMAIN, f"{key}_{entry.entry_id}")
     store = Store[dict[str, Any]](hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}")
     data = await store.async_load() or {}
-    control = data.get("control")
-    owed = isinstance(control, dict) and (
-        control.get("hand_back_pending") or control.get("controlling")
-    )
-    if owed:
+    if owes_hand_back(data.get("control")):
         ir.async_create_issue(
             hass,
             DOMAIN,
@@ -198,7 +193,6 @@ async def _async_report_owed_from_store(hass: HomeAssistant, entry: ConfigEntry)
     from homeassistant.helpers.storage import Store
 
     from .control import report_owed_hand_back
-    from .coordinator import STORAGE_VERSION
 
     try:
         data = await Store[dict[str, Any]](
@@ -206,10 +200,7 @@ async def _async_report_owed_from_store(hass: HomeAssistant, entry: ConfigEntry)
         ).async_load()
     except Exception:  # an unreadable store: nothing more to tell
         return
-    control = data.get("control") if isinstance(data, dict) else None
-    if isinstance(control, dict) and (
-        control.get("hand_back_pending") or control.get("controlling")
-    ):
+    if owes_hand_back(data.get("control") if isinstance(data, dict) else None):
         report_owed_hand_back(hass, entry.entry_id, persistent=True)
 
 
@@ -226,8 +217,7 @@ def _hand_back_unit(
     from .control_config import parse_control
 
     stored = coordinator.stored_control
-    owed = stored.get("hand_back_pending") or stored.get("controlling")
-    if not owed:
+    if not owes_hand_back(stored):
         return None
     taken_with = stored.get("taken_with")
     try:

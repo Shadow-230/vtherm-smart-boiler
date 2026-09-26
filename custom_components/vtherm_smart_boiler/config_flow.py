@@ -36,15 +36,18 @@ from .const import (
     PARAMETERS,
     REFERENCE_ROOM,
     SIGNALS,
+    STORAGE_VERSION,
     VT_DOMAIN,
     WEATHER,
     ZONES,
+    owes_hand_back,
 )
 from .control_config import (
     CONTROL_DEFAULTS,
     CURVE_DEFAULTS,
     DEFAULT_REACTIONS,
     INFO_ONLY_ALARMS,
+    OTGW_PATHS,
     AlarmReaction,
     HandBack,
     Topology,
@@ -1183,11 +1186,15 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
     def _next_after(self, step: str) -> str:
         return "save"
 
-    def _hand_back_blocker(self) -> str | None:
+    async def _async_hand_back_blocker(self) -> str | None:
         """Why what the hand-back goes through must not change now: it has not reached the
         boiler yet, or control holds the boiler — its hand-back must go through the device
-        that has it, which the user gets by switching control off first."""
+        that has it, which the user gets by switching control off first. With the entry not
+        running — its setup failed, say — its store tells: the next start makes what the last
+        run left owed through what the options say then."""
         coordinator = getattr(self.config_entry, "runtime_data", None)
+        if coordinator is None:
+            return "hand_back_pending" if await self._async_owed_in_store() else None
         found = (getattr(coordinator, name, None) for name in ("control", "hand_back_unit"))
         units = [unit for unit in found if unit is not None]
         if any(unit.hand_back_owed for unit in units):
@@ -1195,6 +1202,28 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         if any(unit.holding for unit in units):
             return "control_holds_boiler"
         return None
+
+    async def _async_owed_in_store(self) -> bool:
+        """What the entry's store says; one that cannot be read tells nothing, as at setup."""
+        from homeassistant.helpers.storage import Store
+
+        key = f"{DOMAIN}.{self.config_entry.entry_id}"
+        try:
+            data = await Store[dict[str, Any]](self.hass, STORAGE_VERSION, key).async_load()
+        except Exception:  # unreadable: the setup ignores it too
+            return False
+        return owes_hand_back(data.get("control") if isinstance(data, dict) else None)
+
+    def _changes_gateway_read_back(self, user_input: dict[str, Any]) -> bool:
+        """Whether the answer re-picks a built-in gateway's read-back, which tells whether a
+        hand-back through the gateway got there (R6, H2 with C1)."""
+        current = self.config_entry.options.get(CONTROL, {})
+        path = current.get("write_path")
+        if path not in OTGW_PATHS or user_input.get("write_path") != path:
+            return False
+        return (user_input.get("confirmed_entity") or None) != (
+            current.get("confirmed_entity") or None
+        )
 
     def _changes_hand_back(self, user_input: dict[str, Any], schema: vol.Schema) -> bool:
         """Whether the answer changes how the boiler is given back. A field the form shows but
@@ -1258,11 +1287,13 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             path = user_input["write_path"]
             current = self.config_entry.options.get(CONTROL, {}).get("write_path")
             errors = control_error(user_input)
-            blocker = self._hand_back_blocker()
+            blocker = await self._async_hand_back_blocker()
             if not errors and path not in (NO_CONTROL, current) and blocker:
                 # "No control" stays possible: the hand-back goes through the old path, retried
                 # by a unit that only hands back.
                 errors = {"write_path": blocker}
+            elif not errors and blocker and self._changes_gateway_read_back(user_input):
+                errors = {"confirmed_entity": blocker}
             if errors:
                 return self._form(
                     step_id="control", data_schema=control_schema(self.options), errors=errors
@@ -1289,7 +1320,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 errors = control_details_error(
                     user_input, read_bounds(self.hass, user_input["setpoint_entity"])
                 )
-            blocker = self._hand_back_blocker()
+            blocker = await self._async_hand_back_blocker()
             if (
                 not errors
                 and blocker
@@ -1317,7 +1348,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         if user_input is not None:
             if user_input["gateway_id"] not in gateways:
                 errors = {"gateway_id": "gateway_unknown"}  # every write would fail
-            elif (blocker := self._hand_back_blocker()) and self._changes_hand_back(
+            elif (blocker := await self._async_hand_back_blocker()) and self._changes_hand_back(
                 user_input, control_gateway_schema(self.options, gateways)
             ):
                 errors = {"base": blocker}
@@ -1340,7 +1371,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 for key in ("mqtt_top", "mqtt_node")
                 if not mqtt_topic_valid(user_input.get(key))
             }
-            blocker = self._hand_back_blocker()
+            blocker = await self._async_hand_back_blocker()
             # Spaces around a valid topic level are dropped, not published to.
             user_input = {
                 key: value.strip()

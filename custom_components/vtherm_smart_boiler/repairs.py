@@ -60,7 +60,7 @@ async def async_release(hass: HomeAssistant, entry_id: str) -> None:
 async def _async_release_stored(hass: HomeAssistant, entry_id: str) -> None:
     from homeassistant.helpers.storage import Store
 
-    from .coordinator import STORAGE_VERSION
+    from .const import STORAGE_VERSION
 
     store = Store[dict[str, Any]](hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}")
     data = await store.async_load()

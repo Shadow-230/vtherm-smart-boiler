@@ -953,12 +953,16 @@ class ControlUnit:
 
     def release_owed_hand_back(self) -> None:
         """The user returned the boiler to its own control by hand: nothing is owed any more, and
-        retrying stops. Control, if on, takes the boiler afresh at its next step."""
-        if not (self._hand_back_pending or self._holding):
+        retrying stops. Control, if on, takes the boiler afresh at its next step. A session
+        that has taken the boiler again since keeps what it holds — a confirmation given late
+        must not make a crash forget it — and makes its own hand-back at the end (R6, C7)."""
+        controlling = self._session.loop.control.controlling
+        if not (self._hand_back_pending or (self._holding and not controlling)):
             return
         _LOGGER.warning("The owed hand-back is settled by hand, as the user confirmed")
-        self._holding = False
-        self._full_hand_back_due = False
+        if not controlling:
+            self._holding = False
+            self._full_hand_back_due = False
         self._hand_back_done()
         self._coordinator.schedule_save(0)
 

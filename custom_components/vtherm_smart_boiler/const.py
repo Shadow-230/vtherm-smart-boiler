@@ -4,6 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "vtherm_smart_boiler"
 VT_DOMAIN = "versatile_thermostat"
+STORAGE_VERSION = 1  # the entry's store, ``<DOMAIN>.<entry_id>``
 
 # Control options removed in 0.2.1: VT decides whether to heat (anti-cycling and the summer
 # switch went), and nothing is written to the boiler's memory (the daily cap went).
@@ -45,3 +46,11 @@ SUMMARY_SECONDS = 300
 FORECAST_SECONDS = 30 * 60
 HISTORY_DAYS = 8
 REFRESH_COOLDOWN_SECONDS = 10
+
+
+def owes_hand_back(stored_control: object) -> bool:
+    """Whether the control part of an entry's store says the boiler may hold a value of ours or
+    a hand-back is still owed."""
+    return isinstance(stored_control, dict) and bool(
+        stored_control.get("hand_back_pending") or stored_control.get("controlling")
+    )

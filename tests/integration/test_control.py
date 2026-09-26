@@ -1179,6 +1179,101 @@ async def test_changing_the_write_path_is_refused_while_a_hand_back_is_owed(rig:
     assert flow["errors"] == {"write_path": "hand_back_pending"}
 
 
+async def _first_control_step(rig: Rig, answer: dict[str, Any]) -> Any:
+    assert rig.entry is not None
+    flow = await rig.hass.config_entries.options.async_init(rig.entry.entry_id)
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"], {"next_step_id": "control"}
+    )
+    return await rig.hass.config_entries.options.async_configure(flow["flow_id"], answer)
+
+
+GATEWAY_ANSWER = {"write_path": "opentherm_gw", "topology": "gateway_with_thermostat"}
+
+
+async def test_the_gateways_read_back_cannot_change_while_a_hand_back_is_owed(rig: Rig) -> None:
+    """R6, H2 with C1: the gateway's read-back tells whether a hand-back through it got there.
+    Re-picked while one is owed — the gateway away, its entity unavailable — the next hand-back
+    would count as made with nothing arriving, and a CH=0 left in the gateway would mask the
+    thermostat for good."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    rig.gateway.connected = False
+    rig.live()
+    await rig.switch(False)
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+    other = "sensor.somewhere_else_temperature"
+    rig.hass.states.async_set(other, "20.0", {"unit_of_measurement": "°C"})
+    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": other})
+    assert flow["errors"] == {"confirmed_entity": "hand_back_pending"}
+    assert rig.entry is not None
+    assert rig.entry.options["control"]["confirmed_entity"] == CONFIRMED
+    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": CONFIRMED})
+    assert flow["step_id"] == "control_gateway"  # the same read-back goes on
+
+
+async def test_the_gateways_read_back_cannot_change_while_control_holds_the_boiler(
+    rig: Rig,
+) -> None:
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    other = "sensor.somewhere_else_temperature"
+    rig.hass.states.async_set(other, "20.0", {"unit_of_measurement": "°C"})
+    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": other})
+    assert flow["errors"] == {"confirmed_entity": "control_holds_boiler"}
+
+
+async def test_an_entry_that_is_not_running_is_guarded_by_its_store(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """R6, H2 with C1: with the entry not running — its setup failed, say — the options are
+    still open, and the next start makes the hand-back the last run left owed through what they
+    say then. The store tells the guard what is owed; "no control" stays possible."""
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.add_to_hass(rig.hass)  # never set up
+    rig.entry = entry
+    hass_storage[f"{DOMAIN}.{entry.entry_id}"] = {
+        "version": 1,
+        "key": f"{DOMAIN}.{entry.entry_id}",
+        "data": {
+            "monitoring_since": 0.0,
+            "control": {"hand_back_pending": True, "taken_with": dict(entry.options["control"])},
+        },
+    }
+    number = FakeNumber(rig.hass)
+    number.register()
+    flow = await _first_control_step(
+        rig,
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": number.entity_id},
+    )
+    assert flow["errors"] == {"write_path": "hand_back_pending"}
+    other = "sensor.somewhere_else_temperature"
+    rig.hass.states.async_set(other, "20.0", {"unit_of_measurement": "°C"})
+    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": other})
+    assert flow["errors"] == {"confirmed_entity": "hand_back_pending"}
+    flow = await _first_control_step(rig, {"write_path": "none"})
+    assert flow["type"] == "create_entry"
+
+
+async def test_a_late_confirmation_leaves_a_session_that_has_the_boiler_alone(rig: Rig) -> None:
+    """R6, C7: the user confirmed an owed hand-back by hand after control had taken the boiler
+    again. The session's hold stays known — a crash must not forget that the boiler has a
+    value of ours — and its own hand-back is still made at the end."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.entry is not None
+    control = rig.entry.runtime_data.control
+    assert control.holding
+    control.release_owed_hand_back()
+    assert control.holding  # at once, not only after the next write sets it again
+    assert control.stored()["controlling"] is True
+    await rig.switch(False)
+    assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]
+
+
 async def test_choosing_no_control_while_a_hand_back_is_owed_keeps_handing_back(
     rig: Rig,
 ) -> None:

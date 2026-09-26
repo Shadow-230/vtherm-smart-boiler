@@ -41,6 +41,7 @@ from .const import (
     FORECAST_SECONDS,
     HISTORY_DAYS,
     REFRESH_COOLDOWN_SECONDS,
+    STORAGE_VERSION,
     SUMMARY_SECONDS,
     TICK_SECONDS,
 )
@@ -91,7 +92,6 @@ if TYPE_CHECKING:
     from .control import ControlUnit
 
 _LOGGER = logging.getLogger(__name__)
-STORAGE_VERSION = 1
 DAY = 86400.0
 ZONE_MAX_AGE_S: float | None = None  # one freshness rule: a steady room is not a stale one
 SAVE_DELAY_S = 120
