@@ -162,4 +162,4 @@ def combine[R](
 
 
 def _times_within(inputs: Iterable[Series[Any]], start: float, end: float) -> set[float]:
-    return {sample.t for series in inputs for sample in series if start < sample.t < end}
+    return {t for series in inputs for t in series.times_between(start, end)}

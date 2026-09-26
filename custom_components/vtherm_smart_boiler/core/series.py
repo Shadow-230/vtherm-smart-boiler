@@ -7,7 +7,7 @@ unavailable. Exported history, the simulator and live Home Assistant all feed th
 
 from __future__ import annotations
 
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 
@@ -117,8 +117,26 @@ class Series[T]:
         yield Segment(cursor, end, value)
 
     def window(self, start: float, end: float) -> Series[T]:
-        """A copy covering ``[start, end)``: the value at ``start`` plus the later changes."""
-        return Series((segment.start, segment.value) for segment in self.segments(start, end))
+        """A copy covering ``[start, end)``: the value at ``start`` plus the later changes —
+        cut out of the sample lists, as it runs on Home Assistant's event loop over days of
+        samples."""
+        copy: Series[T] = Series()
+        if end <= start:
+            return copy
+        first = bisect_right(self._times, start) - 1  # the sample holding at ``start``
+        last = bisect_left(self._times, end)
+        value = self._values[first] if first >= 0 else None
+        times = self._times[first + 1 : last]
+        values = self._values[first + 1 : last]
+        if values and values[0] == value:  # an unknown start followed by an unknown sample
+            times, values = times[1:], values[1:]
+        copy._times = [start, *times]
+        copy._values = [value, *values]
+        return copy
+
+    def times_between(self, start: float, end: float) -> list[float]:
+        """The sample times strictly inside ``(start, end)``."""
+        return self._times[bisect_right(self._times, start) : bisect_left(self._times, end)]
 
     def drop_before(self, t: float) -> None:
         """Forget samples no longer needed at ``t``; the value holding at ``t`` is kept."""

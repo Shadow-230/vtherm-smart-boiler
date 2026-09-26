@@ -101,3 +101,31 @@ def test_older_samples_go_before_the_first_one() -> None:
     empty: Series[float] = Series()
     empty.prepend(Series([(0.0, 1.0)]))
     assert [(s.t, s.value) for s in empty] == [(0.0, 1.0)]
+
+
+def _window_by_segments(series: Series[float], start: float, end: float) -> list:
+    """The window as the segments define it: the reference the fast copy must match."""
+    reference: Series[float] = Series(
+        (segment.start, segment.value) for segment in series.segments(start, end)
+    )
+    return [(s.t, s.value) for s in reference]
+
+
+def test_the_window_matches_its_segments_on_random_series() -> None:
+    """A9: the window is cut out of the sample lists (bisect), not rebuilt sample by sample; it
+    must hold exactly what the segments say."""
+    import random
+
+    rng = random.Random(7)
+    for _ in range(300):
+        t, samples = 0.0, []
+        for _k in range(rng.randrange(0, 12)):
+            t += rng.choice([1.0, 2.0, 5.0])
+            samples.append((t, rng.choice([None, 1.0, 2.0, 3.0])))
+        series = Series(samples)
+        start = rng.uniform(-3.0, t + 3.0)
+        end = start + rng.uniform(0.0, 20.0)
+        got = [(s.t, s.value) for s in series.window(start, end)]
+        assert got == _window_by_segments(series, start, end), (samples, start, end)
+        between = series.times_between(start, end)
+        assert between == [s for s, _v in samples if start < s < end and s in series._times]
