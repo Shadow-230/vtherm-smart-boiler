@@ -1201,7 +1201,7 @@
       "message": "Sterowanie będzie dostępne po okresie monitorowania. Inne powody: {others}."
     },
     "blocked_vt_central_boiler_active": {
-      "message": "Skonfigurowany jest kocioł centralny Versatile Thermostat. Najpierw go usuń, żeby kotłem sterował tylko jeden sterownik. Inne powody: {others}."
+      "message": "Skonfigurowany jest kocioł centralny Versatile Thermostat. Najpierw go usuń, żeby kotłem sterował tylko jeden sterownik, a potem uruchom ponownie Home Assistant: dopiero wtedy VT przestaje ponawiać polecenia podtrzymania kotła centralnego. Inne powody: {others}."
     },
     "blocked_vt_central_boiler_unknown": {
       "message": "Nie da się jeszcze wykluczyć centralnego kotła Versatile Thermostat: centralna konfiguracja VT nie jest załadowana (startuje, przeładowuje się albo nie udało się jej załadować — zobacz Ustawienia → Urządzenia i usługi). Sterowanie na nią czeka. Inne powody: {others}."

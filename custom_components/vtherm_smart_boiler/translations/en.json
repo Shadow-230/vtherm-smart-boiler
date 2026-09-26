@@ -1201,7 +1201,7 @@
       "message": "Control becomes available once the monitoring period has passed. Other reasons: {others}."
     },
     "blocked_vt_central_boiler_active": {
-      "message": "Versatile Thermostat's own central boiler is configured. Remove it first, so that only one controller drives the boiler. Other reasons: {others}."
+      "message": "Versatile Thermostat's own central boiler is configured. Remove it first, so that only one controller drives the boiler, then restart Home Assistant: VT stops its central boiler's keep-alive commands only then. Other reasons: {others}."
     },
     "blocked_vt_central_boiler_unknown": {
       "message": "Versatile Thermostat's central boiler cannot be ruled out yet: VT's central configuration is not loaded (starting, reloading, or failed to load — see Settings → Devices & services). Control waits for it. Other reasons: {others}."
