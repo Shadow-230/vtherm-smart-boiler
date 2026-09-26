@@ -25,6 +25,7 @@ testpaths = ["tests"]
 # vendor/ holds VT 10.4.0 and SmartPI 0.4.0; vendor/custom_components links their integrations.
 pythonpath = [".", "vendor", "sim"]
 addopts = "--basetemp=.tmp/pytest"
+timeout = 300  # a test that hangs fails instead of holding up the run (pytest-timeout)
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

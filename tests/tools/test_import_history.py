@@ -233,9 +233,11 @@ def test_the_cli_with_a_time_zone_and_dates(
     recorder: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Days start at the time zone's midnight; the report covers the days asked for."""
-    args = ["--tz", "Europe/Warsaw", "--start", "2026-05-29", "--end", "2026-05-30"]
+    args = ["--tz", "America/New_York", "--start", "2026-05-29", "--end", "2026-05-30"]
     assert main(["--db", str(recorder), "--mapping", str(_mapping_file(tmp_path)), *args]) == 0
-    assert "Verdict:" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Window: 2026-05-29 00:00 – 2026-05-30 00:00 (1.0 days)" in out
+    assert "Verdict:" in out
 
 
 def test_local_days_follow_the_autumn_clock_change() -> None:

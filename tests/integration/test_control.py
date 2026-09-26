@@ -2082,7 +2082,9 @@ async def test_unreadable_control_data_still_restores_what_matters(
     assert rig.entry is not None
     unit = rig.entry.runtime_data.control
     assert unit.hand_back_owed
-    assert unit.status.latched_by == ("outside_change",) or unit._session.loop.control.latched
+    stored = unit.stored()  # what a restart keeps, the cause included (T9)
+    assert stored["latched"] is True
+    assert stored["latched_by"] == ["outside_change"]
 
 
 async def test_control_data_that_cannot_be_read_hands_back(

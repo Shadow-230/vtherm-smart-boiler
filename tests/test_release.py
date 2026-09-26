@@ -72,10 +72,26 @@ def test_manifest_holds_what_a_custom_integration_needs() -> None:
         assert MANIFEST[key] == sorted(set(MANIFEST[key])), key
 
 
+# What Home Assistant's loader accepts for a custom integration's version (a pre-release such
+# as 0.2.1b1 is PEP 440).
+VERSION_STRATEGIES = [
+    AwesomeVersionStrategy.CALVER,
+    AwesomeVersionStrategy.SEMVER,
+    AwesomeVersionStrategy.SIMPLEVER,
+    AwesomeVersionStrategy.BUILDVER,
+    AwesomeVersionStrategy.PEP440,
+]
+
+
 def test_manifest_version_is_this_release() -> None:
     """P94: Home Assistant refuses a custom integration without a valid version."""
     assert MANIFEST["version"] == RELEASE
-    AwesomeVersion(MANIFEST["version"], ensure_strategy=[AwesomeVersionStrategy.SEMVER])
+    AwesomeVersion(MANIFEST["version"], ensure_strategy=VERSION_STRATEGIES)
+
+
+def test_a_pre_release_version_is_one_home_assistant_accepts() -> None:
+    """T12: the planned pre-release, 0.2.1b1, is PEP 440, not SemVer."""
+    AwesomeVersion("0.2.1b1", ensure_strategy=VERSION_STRATEGIES)
 
 
 def test_requires_the_vtherm_api_its_contract_was_checked_on() -> None:

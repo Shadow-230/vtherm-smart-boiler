@@ -235,7 +235,9 @@ async def test_the_monitor_works_on_the_simulated_boiler(rig: Rig) -> None:
     await start(rig)
     await rig.advance(3 * 3600, step=30.0)
     assert rig.state("binary_sensor", "connection").state == "on"
-    assert rig.state("sensor", "starts_per_hour").state not in ("unavailable",)
+    # T10: numbers the monitor worked out from the simulated burns, not merely "available".
+    assert float(rig.state("sensor", "starts_per_hour").state) >= 0.0
+    assert float(rig.state("sensor", "burner_hours").state) > 0.0
     assert rig.gateway() == []  # control is off: nothing written
 
 
