@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import ATTR_RESTORED
+from homeassistant.const import ATTR_RESTORED, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_loaded_integration
@@ -30,6 +30,7 @@ SMARTPI_DOMAIN = "vtherm_smartpi"
 CENTRAL_MODE_UNIQUE_ID = "central_mode"
 CENTRAL_BOILER_UNIQUE_ID = "central_boiler_state"
 CENTRAL_BOILER_FEATURE = "use_central_boiler_feature"  # in VT's central entry (VT 10.4.0)
+ROOM_SENSOR = "temperature_sensor_entity_id"  # in a thermostat's entry data (VT 10.4.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +47,17 @@ class VtCapabilities:
     vt_version: str | None
     vtherm_api_version: str | None
     smartpi_loaded: bool
+
+
+def room_sensor(hass: HomeAssistant, entity_id: str) -> str | None:
+    """The room temperature sensor VT reads for a zone, from the thermostat's entry (VT 10.4.0
+    keeps it in the entry's data); ``None`` where it is not found."""
+    registered = er.async_get(hass).async_get(entity_id)
+    if registered is None or registered.config_entry_id is None:
+        return None
+    entry = hass.config_entries.async_get_entry(registered.config_entry_id)
+    sensor = entry.data.get(ROOM_SENSOR) if entry is not None else None
+    return sensor if isinstance(sensor, str) and sensor else None
 
 
 def zone_name(hass: HomeAssistant, entity_id: str) -> str:
@@ -84,7 +96,18 @@ class VThermLink:
         return self._zones
 
     def zone(self, entity_id: str) -> ZoneState:
-        return self.zone_from_state(entity_id, self._hass.states.get(entity_id))
+        zone = self.zone_from_state(entity_id, self._hass.states.get(entity_id))
+        return replace(zone, room_sensor_lost=self._room_sensor_lost(entity_id))
+
+    def _room_sensor_lost(self, entity_id: str) -> bool:
+        """The room sensor VT reads is gone, unavailable or unknown: VT keeps its last
+        temperature, and its own safety check sleeps while the zone is off (R6, T2). A steady
+        sensor is fine, however long ago it changed."""
+        sensor = room_sensor(self._hass, entity_id)
+        if sensor is None:
+            return False
+        state = self._hass.states.get(sensor)
+        return state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN)
 
     def zone_from_state(self, entity_id: str, state: State | None) -> ZoneState:
         """A zone from a given state of its climate entity (current or recorded)."""

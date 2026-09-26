@@ -97,7 +97,8 @@ class ZoneState:
     ``on_percent`` and ``valve_open`` are fractions from 0 to 1. ``power`` is the device power
     as configured in VT, in kW. ``ready``: VT has finished starting the thermostat.
     ``temperature_at``: when the room temperature was last measured; the zone is fresh by it,
-    else by the entity's report.
+    else by the entity's report. ``room_sensor_lost``: the room sensor VT reads is gone,
+    unavailable or unknown now — VT keeps the last temperature it had (live only).
     """
 
     zone_id: str
@@ -114,6 +115,7 @@ class ZoneState:
     ready: bool | None = None
     temperature_at: float | None = None
     max_on_percent: float | None = None  # VT's cap on the duty cycle, 0 to 1
+    room_sensor_lost: bool = False
 
     @property
     def deficit(self) -> float | None:

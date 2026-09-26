@@ -186,6 +186,7 @@ class ControlStatus:
     paused_zones: tuple[str, ...] = ()
     latched_by: tuple[str, ...] = ()  # the alarms that latched control, while it stays latched
     unknown_zones: tuple[str, ...] = ()  # zones whose state is not known now
+    room_sensor_lost_zones: tuple[str, ...] = ()  # VT keeps their last temperature
     writes_stopped: bool = False  # another controller has the boiler: nothing is written
 
     @property
@@ -658,15 +659,19 @@ class ControlUnit:
             paused_zones=tuple(sorted(session.learning.paused)),
             latched_by=session.loop.control.latched_by if session.loop.control.latched else (),
             unknown_zones=unknown,
+            room_sensor_lost_zones=tuple(z.zone_id for z in zones if z.room_sensor_lost),
             writes_stopped=out.blocked,
         )
 
     def _follow_unknown_zones(self, now: float, zones: Sequence[ZoneState]) -> tuple[str, ...]:
         """Zones whose state is not known: the known ones decide meanwhile; one unknown for long
-        raises an alarm, as frost protection cannot see it."""
+        raises an alarm, as frost protection cannot see it. So does one whose room sensor is
+        lost for long (R6, T2): VT keeps the last temperature and still runs the zone, so its
+        demand counts."""
         max_age = self.options.loop.control.zone_max_age_s
         unknown = tuple(z.zone_id for z in zones if not z.is_known(now, max_age))
-        self._unknown_since = {z: self._unknown_since.get(z, now) for z in unknown}
+        blind = {*unknown, *(z.zone_id for z in zones if z.room_sensor_lost)}
+        self._unknown_since = {z: self._unknown_since.get(z, now) for z in sorted(blind)}
         long_unknown = any(now - t >= ZONE_UNKNOWN_ALARM_S for t in self._unknown_since.values())
         if self.enabled and long_unknown:
             self._session.alarms.add(ControlAlarm.ZONE_UNKNOWN)

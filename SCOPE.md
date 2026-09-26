@@ -300,7 +300,9 @@ How control decides (principle 12):
   VT's minimum activation time. A zone counts only while its state is known: a VT climate that
   is `unavailable`, or whose mode is unknown, is unknown — never "no demand". With no zone known,
   heating runs on the curve; with some zones unknown, the decision rests on the known ones, and
-  a zone unknown for longer than a limit raises an alarm, as frost protection cannot see it. A
+  a zone unknown for longer than a limit raises an alarm, as frost protection cannot see it. So
+  does a zone whose room sensor, as VT's entry names it, is gone, unavailable or unknown for as
+  long: VT keeps the last temperature, and its demand still counts, as VT runs the zone. A
   zone in "auto" or heat_cool heats by its heating action and duty cycle.
 - VT's central mode (Auto, Stopped, Heat only, Cool only, Frost protection) acts through the
   zones: VT applies it only to thermostats that follow it, the plugin sees the result in each

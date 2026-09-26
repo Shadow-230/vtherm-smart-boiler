@@ -2049,6 +2049,38 @@ async def test_a_deviating_outdoor_sensor_gives_way_only_to_colder_weather(
     assert rig.state("binary_sensor", "alarm_outdoor_sensor_suspect").state == "on"
 
 
+async def test_a_zone_whose_room_sensor_is_lost_raises_the_alarm(rig: Rig) -> None:
+    """R6, T2: the room sensor VT reads goes away. VT keeps the last temperature — with the
+    zone off its safety check sleeps — so frost protection cannot see the room: after the
+    limit the user is told, as for a zone whose state is unknown. The zone's demand still
+    counts, VT runs it; the sensor back, the alarm clears."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    living = rig.zones.entities["living"]
+    vt = MockConfigEntry(
+        domain="versatile_thermostat", data={"temperature_sensor_entity_id": "sensor.room"}
+    )
+    vt.add_to_hass(rig.hass)
+    er.async_get(rig.hass).async_update_entity(living, config_entry_id=vt.entry_id)
+    rig.hass.states.async_set("sensor.room", "20.0")
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(60)
+    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "off"
+    rig.hass.states.async_set("sensor.room", "unavailable")
+    await rig.advance(20 * 60)
+    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "off"  # not yet
+    state = rig.state("sensor", "control_state")
+    assert state.attributes["room_sensor_lost_zones"] == [living]
+    assert state.attributes["unknown_zones"] == []  # its demand still counts
+    await rig.advance(11 * 60)
+    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "on"
+    rig.hass.states.async_set("sensor.room", "19.5")
+    await rig.advance(20)
+    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "off"
+    assert rig.state("sensor", "control_state").attributes["room_sensor_lost_zones"] == []
+
+
 async def test_a_user_freshness_limit_stops_writes_on_a_frozen_source(rig: Rig) -> None:
     """The flow stops reporting while its entity stays available (MQTT without availability):
     with a limit of ten minutes set, nothing is written after it, and control hands back."""

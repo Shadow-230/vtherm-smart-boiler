@@ -204,3 +204,36 @@ async def test_vt_is_loaded_only_with_a_loaded_entry(hass: HomeAssistant) -> Non
     assert not VThermLink(hass, []).capabilities().vt_loaded  # set up, but its entries failed
     entry.mock_state(hass, ConfigEntryState.LOADED)
     assert VThermLink(hass, []).capabilities().vt_loaded
+
+
+async def test_a_zone_whose_room_sensor_is_lost_says_so(hass: HomeAssistant) -> None:
+    """R6, T2: VT keeps the last temperature of a room sensor that went away, and its own
+    safety check sleeps while the zone is off. The sensor VT reads — in VT's entry — tells: gone,
+    unavailable or unknown, the zone's temperature is no measurement now. A steady sensor
+    stays fine, however long ago it last changed; history is VT's own view."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    vt = MockConfigEntry(
+        domain="versatile_thermostat", data={"temperature_sensor_entity_id": "sensor.room"}
+    )
+    vt.add_to_hass(hass)
+    climate = er.async_get(hass).async_get_or_create(
+        "climate", VT_PLATFORM, "room", suggested_object_id="room", config_entry=vt
+    )
+    hass.states.async_set(
+        climate.entity_id, "heat", {"current_temperature": 20.0, "hvac_action": "idle"}
+    )
+    link = VThermLink(hass, [climate.entity_id])
+    hass.states.async_set("sensor.room", "20.0")
+    assert link.zone(climate.entity_id).room_sensor_lost is False
+    for state in ("unavailable", "unknown"):
+        hass.states.async_set("sensor.room", state)
+        zone = link.zone(climate.entity_id)
+        assert zone.room_sensor_lost is True
+        assert zone.temperature == 20.0  # VT's view is kept: VT still runs the zone on it
+    hass.states.async_remove("sensor.room")
+    assert link.zone(climate.entity_id).room_sensor_lost is True
+    recorded = link.zone_from_state(climate.entity_id, hass.states.get(climate.entity_id))
+    assert recorded.room_sensor_lost is False  # a past state: its sensor then is not known
+    hass.config_entries.async_update_entry(vt, data={})  # a VT that keeps it elsewhere
+    assert link.zone(climate.entity_id).room_sensor_lost is False
