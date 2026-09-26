@@ -225,13 +225,17 @@ class _GatewayWriter(_ServiceWriter):
         super().__init__(hass)
         self._reachable_by = options.confirmed_entity
 
-    def _require_connected(self) -> None:
+    def _require_connected(self, reported: bool = False) -> None:
+        """``reported``: the read-back must also hold a value — opentherm_gw's entities can stay
+        available with none after pyotgw resets its status on a lost connection."""
         entity = self._reachable_by
         if not entity:
             return
         state = self._hass.states.get(entity)
         if state is None or state.state == "unavailable":
             raise WriteError(f"the gateway is not connected: {entity} is unavailable")
+        if reported and state.state == "unknown":
+            raise WriteError(f"the gateway has reported nothing since: {entity} is unknown")
 
 
 class OpenthermGwWriter(_GatewayWriter):
@@ -280,7 +284,9 @@ class OpenthermGwWriter(_GatewayWriter):
                 {"gateway_id": self._gateway, "temperature": 0},
             ),
         )
-        self._require_connected()
+        # The gateway's full status comes with every (re)connection, so a read-back without a
+        # value means nothing has come from the gateway since the connection was lost.
+        self._require_connected(reported=True)
         return ()
 
 

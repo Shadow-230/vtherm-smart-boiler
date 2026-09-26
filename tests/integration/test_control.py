@@ -59,6 +59,8 @@ class FakeGateway:
     fail_after: bool = False  # the setpoint arrives, but the call reports a failure (a timeout)
     connected: bool = True  # False: as opentherm_gw without its gateway — every service returns
     # without an error, nothing arrives, and the gateway's entities are unavailable
+    reset_shown: bool = False  # while not connected, the entities show pyotgw's reset report
+    # instead: written while the connection still counted, available with no value
     lost: list[tuple[str, Any]] = field(default_factory=list)  # calls that went nowhere
     block: asyncio.Event | None = None  # a heating setpoint's call waits for this (a slow gateway)
     block_hand_back: asyncio.Event | None = None  # the next hand-back's first call waits for it
@@ -99,8 +101,9 @@ class FakeGateway:
 
     def publish(self) -> None:
         if not self.connected:
-            self.hass.states.async_set(CH_ECHO, "unavailable")
-            self.hass.states.async_set(CONFIRMED, "unavailable")
+            shown = "unknown" if self.reset_shown else "unavailable"
+            self.hass.states.async_set(CH_ECHO, shown)
+            self.hass.states.async_set(CONFIRMED, shown)
             return
         ch = self.ch if self.forced_ch is None else self.forced_ch
         self.hass.states.async_set(CH_ECHO, "on" if ch else "off")
@@ -1601,6 +1604,29 @@ async def test_an_otgw_hand_back_waits_for_the_gateway_to_be_back(rig: Rig) -> N
     assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
     await rig.advance(180)
     assert rig.gateway.override == EXPECTED  # nothing has reached the gateway
+    rig.gateway.connected = True
+    await rig.advance(70)
+    assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]
+    assert rig.gateway.override is None
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
+
+
+async def test_an_otgw_hand_back_does_not_count_on_a_gateway_that_reported_nothing(
+    rig: Rig,
+) -> None:
+    """R6, C1: on a lost connection pyotgw resets its status and reports it. Written while the
+    connection still counted, the gateway's entities stay available with no value — then a
+    hand-back must not count either: kept, shown, and sent again once the gateway reports."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    rig.gateway.connected = False
+    rig.gateway.reset_shown = True
+    rig.live()
+    assert rig.hass.states.get(CONFIRMED).state == "unknown"
+    await rig.switch(False)
+    assert ("setpoint", 0.0) in rig.gateway.lost
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
     rig.gateway.connected = True
     await rig.advance(70)
     assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]
