@@ -279,10 +279,11 @@ that the user's answer changes one place in the code.
 10. **The circuit maximum and the boiler's overshoot** (S-14). The maximum limits the setpoint; the
     boiler may overshoot it. *Decided (2026-09-27):* the option text says what the maximum limits,
     and an alarm, information only, rises when the measured flow stays above an alarm temperature —
-    a temperature value, not a margin. It has a default (proposed: the circuit's maximum + 5 K),
-    which the user can change at the advanced level; the time the flow must stay above it is fixed
-    (proposed: 10 minutes) and listed with its reason (S-37). The alarm needs a flow reading;
-    without one it is shown as inactive.
+    a temperature value, not a margin — for the time the user sets. Both have defaults (proposed:
+    the circuit's maximum + 5 K, and 10 minutes), which the user can change at the advanced level.
+    The circuit's maximum itself stays the user's own setting (already required for underfloor
+    heating on an unmixed loop). The alarm needs a flow reading; without one it is shown as
+    inactive.
 11. **"Off" as a low setpoint** (L4 of `docs/plan-0.2.1.md`, S-39). *Decided (2026-09-27):* control
     without a heating switch is blocked — such installations get the monitor — until Q3 shows that
     a low setpoint stops both the boiler and its pump; the same holds for decision 1's alternative
