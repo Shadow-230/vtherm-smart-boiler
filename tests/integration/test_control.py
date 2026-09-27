@@ -53,6 +53,7 @@ CONFIRMED = "sensor.fake_gateway_control_setpoint"
 CH_ECHO = "binary_sensor.fake_gateway_central_heating"
 OUTDOOR = 5.0
 EXPECTED = round(HeatingCurve().flow(OUTDOOR), 1)  # the curve's setpoint at 5 °C outside
+LOWEST = 25.0  # the lowest water temperature set: the hard minimum's default
 START = datetime(2026, 1, 12, 8, tzinfo=UTC)
 # Home Assistant's own store loader, taken before the test storage mock replaces it: a test that
 # needs a real file on disk (under its tmp_path) puts it back for its own body only (with
@@ -71,6 +72,9 @@ class FakeGateway:
     thermostat: float = 40.0
     echo: bool = True
     readable: bool = True  # False: the control setpoint entity reports nothing known
+    # The control setpoint entity shows this instead of a value ("unknown", "unavailable"), or
+    # is not there ("missing"), while the boiler's own signals report on.
+    read_back_shown: str | None = None
     forced: float | None = None
     override: float | None = None
     ch: bool = True  # heating on/off as the boiler receives it
@@ -81,7 +85,9 @@ class FakeGateway:
     reset_shown: bool = False  # while not connected, the entities show pyotgw's reset report
     # instead: written while the connection still counted, available with no value
     lost: list[tuple[str, Any]] = field(default_factory=list)  # calls that went nowhere
-    block: asyncio.Event | None = None  # a heating setpoint's call waits for this (a slow gateway)
+    # A control setpoint's call — not the hand-back's lowest or its CS=0 — waits for this (a slow
+    # gateway).
+    block: asyncio.Event | None = None
     block_hand_back: asyncio.Event | None = None  # the next hand-back's first call waits for it
     hang: asyncio.Event | None = None  # every call waits for this (a gateway that hangs)
     # CS=0 arrives, and its call raises this (a bug, a task cancelled inside the integration)
@@ -89,6 +95,9 @@ class FakeGateway:
     # CS=0 arrives and the call returns, but the gateway keeps the override and nothing new is
     # reported: pyotgw after its own timeout, or a command the PIC did not take
     ignore_release: bool = False
+    # Every call returns, but the gateway takes none of it and reports nothing new: pyotgw
+    # after its own timeouts.
+    deaf: bool = False
     watch: Callable[[str, Any], None] | None = None  # told of every call as it arrives
     calls: list[tuple[str, Any]] = field(default_factory=list)
     times: list[float] = field(default_factory=list)  # when each setpoint arrived
@@ -105,6 +114,8 @@ class FakeGateway:
                 return
             self.calls.append(("setpoint", value))
             self.times.append(datetime.now(UTC).timestamp())
+            if self.deaf:
+                return
             if value == 0 and self.release_error is not None:
                 raise self.release_error()
             if value == 0 and self.ignore_release:
@@ -118,7 +129,7 @@ class FakeGateway:
                 self.publish()
             if self.fail_after:
                 raise HomeAssistantError("timed out")
-            if self.block is not None and value != 0:
+            if self.block is not None and value not in (0.0, LOWEST):
                 await self.block.wait()
 
         async def heating(call: ServiceCall) -> None:
@@ -130,6 +141,8 @@ class FakeGateway:
                 self.lost.append(("ch", call.data["ch_override"]))
                 return
             self.calls.append(("ch", call.data["ch_override"]))
+            if self.deaf:
+                return
             if self.block_hand_back is not None and call.data["ch_override"] is True:
                 event, self.block_hand_back = self.block_hand_back, None
                 await event.wait()  # a hand-back starts with CH=1: it hangs, once
@@ -150,6 +163,12 @@ class FakeGateway:
             return
         ch = self.ch if self.forced_ch is None else self.forced_ch
         self.hass.states.async_set(CH_ECHO, "on" if ch else "off")
+        if self.read_back_shown == "missing":
+            self.hass.states.async_remove(CONFIRMED)
+            return
+        if self.read_back_shown is not None:
+            self.hass.states.async_set(CONFIRMED, self.read_back_shown)
+            return
         if not self.readable:
             self.hass.states.async_set(CONFIRMED, "unknown", {"unit_of_measurement": "°C"})
             return
@@ -320,7 +339,7 @@ async def test_a_setup_that_fails_late_leaves_nothing_running(
     await rig.hass.async_block_till_done()
     assert entry.state is ConfigEntryState.SETUP_ERROR
     assert feature_manager.registration(rig.hass) is None
-    assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]
+    assert rig.gateway.calls[-3:] == HAND_BACK
     count = len(rig.gateway.calls)
     await rig.advance(300)
     assert len(rig.gateway.calls) == count  # no control clock left running
@@ -420,7 +439,7 @@ async def test_stale_data_stops_writes_and_hands_back_after_five_minutes(rig: Ri
     assert len(rig.gateway.calls) == count  # no keep-alive: the gateway's override lapses
     assert rig.state("sensor", "control_state").state == "waiting_data"
     await rig.advance(70)
-    assert rig.gateway.calls[count:] == [("ch", True), ("setpoint", 0.0)]
+    assert rig.gateway.calls[count:] == HAND_BACK
     assert rig.state("sensor", "control_state").state == "handed_back"
     resumed = len(rig.gateway.calls)
     rig.flow = 35.0
@@ -770,7 +789,9 @@ class FakeNumber:
     """A writable setpoint entity (like a boiler's EMS or ESPHome number) that records writes.
 
     Like Home Assistant, it drops a call while the entity is unavailable; ``lowest`` plays a device
-    that ignores values below it and keeps its own.
+    that ignores values below it and keeps its own; ``refuse``, a value its service rejects with
+    an error; ``forced``, another controller holding its value over every write; ``assumed``, an
+    optimistic entity (``assumed_state``) that shows whatever it was given.
     """
 
     hass: HomeAssistant
@@ -779,6 +800,9 @@ class FakeNumber:
     available: bool = True
     echo_later: bool = False  # as ESPHome or MQTT entities: the new value shows on a later tick
     lowest: float | None = None
+    refuse: float | None = None
+    forced: float | None = None
+    assumed: bool = False
     value: float = 50.0
     unit: str = "°C"
     attributes: dict[str, Any] = field(default_factory=dict)  # min, max, step
@@ -788,9 +812,13 @@ class FakeNumber:
             if not self.available:
                 return  # Home Assistant skips an unavailable entity without an error
             value = float(call.data["value"])
+            if value == self.refuse:
+                raise HomeAssistantError("the device refused the value")
             self.writes.append(value)
             if self.lowest is None or value >= self.lowest:
                 self.value = value
+            if self.forced is not None:
+                self.value = self.forced  # the other controller writes its value again
             if not self.echo_later:
                 self.publish(self.value)
 
@@ -800,6 +828,8 @@ class FakeNumber:
     def publish(self, value: float) -> None:
         state = str(value) if self.available else "unavailable"
         attributes = {"unit_of_measurement": self.unit, **self.attributes}
+        if self.assumed:
+            attributes["assumed_state"] = True
         self.hass.states.async_set(self.entity_id, state, attributes)
 
     def set_available(self, available: bool) -> None:
@@ -809,8 +839,9 @@ class FakeNumber:
 
 @dataclass
 class FakeSwitch:
-    """A held heating switch (an ESPHome or EMS-ESP CH enable) that records its writes; like
-    Home Assistant, it drops a call while unavailable."""
+    """A held heating switch (an ESPHome or EMS-ESP CH enable), or an external-control switch,
+    that records its writes; like Home Assistant, it drops a call while unavailable. Several
+    fakes share the ``input_boolean`` services, each answering for its own entity."""
 
     hass: HomeAssistant
     entity_id: str = "input_boolean.fake_ch"
@@ -818,14 +849,19 @@ class FakeSwitch:
     available: bool = True
     on: bool = True
     stuck_on: bool = False  # it takes "on" but will not go off
+    stuck_off: bool = False  # it takes "off" but will not go on
 
     def register(self) -> None:
+        fakes: dict[str, FakeSwitch] = self.hass.data.setdefault("fake_switches", {})
+        fakes[self.entity_id] = self
+
         async def turn(call: ServiceCall, on: bool) -> None:
-            if not self.available:
+            fake = fakes.get(call.data["entity_id"])
+            if fake is None or not fake.available:
                 return
-            self.writes.append(on)
-            self.on = on or self.stuck_on
-            self.publish()
+            fake.writes.append(on)
+            fake.on = (on or fake.stuck_on) and not fake.stuck_off
+            fake.publish()
 
         async def turn_on(call: ServiceCall) -> None:
             await turn(call, True)
@@ -1060,32 +1096,10 @@ async def test_an_entity_hand_back_to_an_unavailable_target_is_retried_until_con
     assert number.writes == [EXPECTED]  # still away: still owed
     number.set_available(True)
     await rig.advance(60)
-    assert number.writes == [EXPECTED, 50.0]
+    assert number.writes == [EXPECTED, LOWEST, 50.0]  # the lowest, then the hand-back value
     await rig.advance(10)
     assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
     assert not control.stored()["hand_back_pending"]
-
-
-async def test_a_value_hand_back_the_device_does_not_take_stays_owed(rig: Rig) -> None:
-    number = FakeNumber(rig.hass)
-    number.register()
-    await start(rig, **held_entity(number, hand_back_value=10))
-    await rig.switch(True)
-    number.lowest = 20.0  # the device keeps its value: the hand-back does not reach the boiler
-    await rig.switch(False)
-    assert number.writes == [EXPECTED, 10.0]
-    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"  # not yet due
-    await rig.advance(60)
-    assert number.writes == [EXPECTED, 10.0, 10.0]  # sent again
-    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
-    assert rig.entry is not None
-    assert rig.entry.runtime_data.control.stored()["hand_back_pending"]
-    number.lowest = None
-    await rig.advance(70)
-    assert number.writes[-1] == 10.0
-    assert number.value == 10.0
-    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
-    assert not rig.entry.runtime_data.control.stored()["hand_back_pending"]
 
 
 def stored_control(hass_storage: dict[str, Any], rig: Rig) -> dict[str, Any]:
@@ -1128,9 +1142,9 @@ async def test_an_unclean_restart_hands_back_when_control_does_not_resume(
     rig.entry = entry
     await rig.advance(20)
     assert rig.state("switch", "control").state == "off"
-    assert rig.gateway.setpoints() == [0.0]  # handed back, though control is off
+    assert rig.gateway.setpoints() == [LOWEST, 0.0]  # handed back, though control is off
     await rig.advance(20)
-    assert rig.gateway.setpoints() == [0.0]  # once
+    assert rig.gateway.setpoints() == [LOWEST, 0.0]  # once
     assert entry.runtime_data.control.stored()["controlling"] is False
 
 
@@ -1156,10 +1170,10 @@ async def test_a_write_reported_failed_is_still_handed_back(rig: Rig) -> None:
     await start(rig)
     await rig.switch(True)
     await rig.switch(False)
-    assert rig.gateway.setpoints() == [EXPECTED, 0.0]
+    assert rig.gateway.setpoints() == [EXPECTED, LOWEST, 0.0]
     rig.gateway.fail_after = True
     await rig.switch(True)  # setpoint and heating arrive; both calls report a failure
-    assert rig.gateway.setpoints() == [EXPECTED, 0.0, EXPECTED]
+    assert rig.gateway.setpoints() == [EXPECTED, LOWEST, 0.0, EXPECTED]
     rig.gateway.fail_after = False
     await rig.switch(False)
     assert rig.gateway.setpoints()[-1] == 0.0
@@ -1193,7 +1207,7 @@ async def test_no_control_while_a_hand_back_is_owed_keeps_handing_back(rig: Rig)
     assert issue(rig, "hand_back_owed") is not None
     number.set_available(True)
     await rig.advance(70)
-    assert number.writes == [EXPECTED, 50.0]
+    assert number.writes == [EXPECTED, LOWEST, 50.0]
     await rig.advance(10)
     assert issue(rig, "hand_back_owed") is None
 
@@ -1226,7 +1240,7 @@ async def test_a_broken_control_section_keeps_monitoring_and_handing_back(
     rig.entry = entry
     assert issue(rig, "control_options_invalid") is not None
     await rig.advance(20)
-    assert number.writes == [50.0]  # handed back through what took the boiler
+    assert number.writes == [LOWEST, 50.0]  # handed back through what took the boiler
     assert issue(rig, "hand_back_owed") is None
 
 
@@ -1342,7 +1356,7 @@ async def test_a_late_confirmation_leaves_a_session_that_has_the_boiler_alone(ri
     assert control.holding  # at once, not only after the next write sets it again
     assert control.stored()["controlling"] is True
     await rig.switch(False)
-    assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]
+    assert rig.gateway.calls[-3:] == HAND_BACK
 
 
 async def test_choosing_no_control_while_a_hand_back_is_owed_keeps_handing_back(
@@ -1598,6 +1612,7 @@ async def test_a_switch_that_stays_on_is_no_hand_back(rig: Rig) -> None:
     control = {k: v for k, v in held_entity(number).items() if not k.startswith("hand_back")} | {
         "hand_back": "switch",
         "hand_back_entity": switch.entity_id,
+        "hand_back_entity_write_type": "held",
     }
     await start(rig, **control)
     await rig.switch(True)
@@ -1674,7 +1689,7 @@ async def test_an_otgw_hand_back_waits_for_the_gateway_to_be_back(rig: Rig) -> N
     assert rig.gateway.override == EXPECTED  # nothing has reached the gateway
     rig.gateway.connected = True
     await rig.advance(70)
-    assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]
+    assert rig.gateway.calls[-3:] == HAND_BACK
     assert rig.gateway.override is None
     assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
 
@@ -1697,7 +1712,7 @@ async def test_an_otgw_hand_back_does_not_count_on_a_gateway_that_reported_nothi
     assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
     rig.gateway.connected = True
     await rig.advance(70)
-    assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]
+    assert rig.gateway.calls[-3:] == HAND_BACK
     assert rig.gateway.override is None
     assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
 
@@ -1709,7 +1724,7 @@ async def test_an_otgw_hand_back_clears_the_heating_override(rig: Rig) -> None:
     await rig.advance(310)  # the next decision: no demand, heating off
     assert ("ch", False) in rig.gateway.calls
     await rig.switch(False)
-    assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]
+    assert rig.gateway.calls[-3:] == HAND_BACK
 
 
 async def settle(task: asyncio.Future[Any] | None = None, rounds: int = 200) -> bool:
@@ -1740,7 +1755,7 @@ async def test_a_stop_during_a_slow_step_hands_back_at_once(rig: Rig) -> None:
     rig.gateway.block.set()
     await stop
     assert done, "the hand-back waited for the slow step"
-    assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]
+    assert rig.gateway.calls[-3:] == HAND_BACK
 
 
 async def test_a_stop_that_cancels_a_hand_back_makes_its_own(rig: Rig) -> None:
@@ -1757,7 +1772,7 @@ async def test_a_stop_that_cancels_a_hand_back_makes_its_own(rig: Rig) -> None:
     stop = asyncio.ensure_future(control.async_stop())
     assert await settle(stop), "the stop waited for the slow hand-back"
     await off
-    assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]
+    assert rig.gateway.calls[-3:] == HAND_BACK
 
 
 async def test_a_step_waiting_behind_a_slow_one_does_not_run_before_the_stop(rig: Rig) -> None:
@@ -1784,7 +1799,7 @@ async def test_a_step_waiting_behind_a_slow_one_does_not_run_before_the_stop(rig
     rig.gateway.block.set()
     await queued
     await rig.hass.async_block_till_done()
-    assert rig.gateway.calls[before:] == [("ch", True), ("setpoint", 0.0)]  # the hand-back only
+    assert rig.gateway.calls[before:] == HAND_BACK  # the hand-back only
 
 
 async def test_a_slow_smartpi_call_does_not_hold_up_control(rig: Rig) -> None:
@@ -1965,7 +1980,7 @@ async def test_a_lost_boiler_link_raises_an_alarm_and_hands_back(rig: Rig, topol
     rig.live()
     count = len(rig.gateway.calls)
     await rig.advance(310)
-    assert rig.gateway.calls[count:] == [("ch", True), ("setpoint", 0.0)]
+    assert rig.gateway.calls[count:] == HAND_BACK
     assert rig.state("binary_sensor", "alarm_boiler_link_lost").state == "on"
     rig.flow = 35.0
     await rig.advance(20)
@@ -2208,7 +2223,7 @@ async def test_a_user_freshness_limit_stops_writes_on_a_frozen_source(rig: Rig) 
     count = len(rig.gateway.calls)
     assert rig.state("sensor", "control_state").state == "waiting_data"
     await rig.advance(300)
-    assert rig.gateway.calls[count:] == [("ch", True), ("setpoint", 0.0)]
+    assert rig.gateway.calls[count:] == HAND_BACK
 
 
 async def test_heating_switched_from_outside_is_written_once_then_handed_back(rig: Rig) -> None:
@@ -2231,7 +2246,7 @@ async def test_heating_switched_from_outside_is_written_once_then_handed_back(ri
     assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
     await rig.advance(10)
     assert rig.state("sensor", "control_state").state == "handed_back"
-    assert rig.gateway.calls[-2:] == [("ch", True), ("setpoint", 0.0)]  # the hand-back
+    assert rig.gateway.calls[-3:] == HAND_BACK  # the hand-back
 
 
 async def test_keep_alives_do_not_move_the_last_change(rig: Rig) -> None:
@@ -2424,7 +2439,7 @@ async def test_unreadable_control_data_still_restores_what_matters(
     )
     assert rig.entry is not None
     unit = rig.entry.runtime_data.control
-    assert rig.gateway.calls[:2] == HAND_BACK  # the owed hand-back was kept (made at setup)
+    assert rig.gateway.calls[:3] == HAND_BACK  # the owed hand-back was kept (made at setup)
     stored = unit.stored()  # what a restart keeps, the cause included (T9)
     assert stored["latched"] is True
     assert stored["latched_by"] == ["outside_change"]
@@ -2469,7 +2484,8 @@ async def set_up(rig: Rig, entry: MockConfigEntry) -> None:
     rig.entry = entry
 
 
-HAND_BACK = [("ch", True), ("setpoint", 0.0)]  # CH=1, then CS=0 (the order changes in V5)
+# The safe hand-back on a gateway: the lowest water temperature, CH=1, then CS=0.
+HAND_BACK = [("setpoint", LOWEST), ("ch", True), ("setpoint", 0.0)]
 
 
 async def test_a_corrupt_store_file_hands_back_first(
@@ -2528,7 +2544,7 @@ async def _corrupt_store_file_hands_back_first(rig: Rig, storage: Path) -> None:
         and issue_id.startswith(f"storage_corruption_{control_key(entry)}")
         for domain, issue_id in registry.issues
     )
-    assert rig.gateway.calls[:2] == HAND_BACK  # the first step hands back in full
+    assert rig.gateway.calls[:3] == HAND_BACK  # the first step hands back in full
     assert rig.gateway.setpoints()[-1] == EXPECTED  # then control takes the boiler afresh
     assert issue(rig, "control_state_unreadable") is not None
     assert entry.runtime_data.monitoring_since == entry.created_at.timestamp()
@@ -2567,7 +2583,7 @@ async def test_a_lost_control_store_without_control_hands_back_what_the_copy_owe
     seed_main(hass_storage, entry, control={"hand_back_pending": True, "taken_with": taken_with})
     await set_up(rig, entry)
     await rig.advance(20)
-    assert number.writes == [50.0]
+    assert number.writes == [LOWEST, 50.0]
     assert issue(rig, "control_state_unreadable") is not None
 
 
@@ -2596,13 +2612,16 @@ async def test_a_0_2_1_store_moves_to_the_control_store(
     and the entry store gets the marker, both at once."""
     control = unit_state(latched=True, latched_by=["pressure_low"], rewritten_at=1000.0)
     entry = await start_with_stored(rig, hass_storage, control)
-    # With what 0.2.2 adds: the wish, off without a restored switch, stored at once (V3), and
-    # the setpoint a gateway's release must leave, none while nothing is owed (V4).
+    # With what 0.2.2 adds: the wish, off without a restored switch, stored at once (V3); the
+    # setpoint a gateway's release must leave, none while nothing is owed (V4); the value a
+    # timeout hand-back releases back to, and the targets another controller holds (V5).
     moved = control | {
         "enabled": False,
         "last_command": None,
         "resume_since": {},
         "release_from": None,
+        "release_baseline": None,
+        "taken_by_other": [],
     }
     assert hass_storage[control_key(entry)]["data"] == moved
     main = hass_storage[main_key(entry)]["data"]
@@ -2688,7 +2707,7 @@ async def test_setup_failing_before_the_store_is_read_leaves_it_intact(
         assert entry.state is ConfigEntryState.SETUP_ERROR
         await rig.advance(150)  # past the delayed save
     sent = rig.gateway.calls if confirmed else rig.gateway.lost
-    assert sent[:2] == HAND_BACK  # sent before the failure
+    assert sent[:3] == HAND_BACK  # sent before the failure
     main = hass_storage[main_key(entry)]["data"]
     assert main["daily"] == before["daily"]
     assert main["monitoring_since"] == before["monitoring_since"]
@@ -3200,7 +3219,7 @@ async def test_a_failure_after_the_platforms_still_stops_everything(
     await rig.hass.async_block_till_done()
     assert entry.state is ConfigEntryState.SETUP_ERROR
     assert rig.gateway.setpoints()[0] == EXPECTED  # control had taken the boiler
-    assert rig.gateway.calls[-2:] == HAND_BACK
+    assert rig.gateway.calls[-3:] == HAND_BACK
     (coordinator,) = started
     unit = coordinator.control
     assert unit is not None
@@ -3270,10 +3289,10 @@ async def test_an_unexpected_failure_of_the_first_hand_back_does_not_fail_setup(
     original = OpenthermGwWriter.hand_back
     failures = [RuntimeError("an unexpected failure")]
 
-    async def hand_back(self: OpenthermGwWriter, full: bool = False, **kwargs: Any) -> Any:
+    async def hand_back(self: OpenthermGwWriter, **kwargs: Any) -> Any:
         if failures:
             raise failures.pop()
-        return await original(self, full, **kwargs)
+        return await original(self, **kwargs)
 
     monkeypatch.setattr(OpenthermGwWriter, "hand_back", hand_back)
     entry = owed_entry(rig, hass_storage)
@@ -3283,7 +3302,7 @@ async def test_an_unexpected_failure_of_the_first_hand_back_does_not_fail_setup(
     assert issue(rig, "hand_back_owed") is not None
     assert rig.gateway.calls == []
     await rig.advance(70)  # the clock's retry, a minute later
-    assert rig.gateway.calls[:2] == HAND_BACK
+    assert rig.gateway.calls[:3] == HAND_BACK
     assert not entry.runtime_data.control.hand_back_owed
     assert issue(rig, "hand_back_owed") is None
 
@@ -3409,7 +3428,7 @@ async def test_control_waits_for_the_switch_to_restore_then_counts_as_off(
         )
     seed_stores(hass_storage, entry, {"controlling": True, "enabled": True}, "0.2.2")
     await set_up(rig, entry)
-    assert rig.gateway.calls[:2] == HAND_BACK  # the owed hand-back, at once
+    assert rig.gateway.calls[:3] == HAND_BACK  # the owed hand-back, at once
     unit = entry.runtime_data.control
     if not disabled:
         assert unit.enabled
@@ -3831,7 +3850,7 @@ async def test_a_real_cancel_of_a_hand_back_keeps_it_owed_and_stored(
     assert unit.hand_back_owed
     assert alarm(rig) == "off"  # no failed attempt
     await rig.advance(70)
-    assert rig.gateway.calls[-2:] == HAND_BACK  # the next attempt
+    assert rig.gateway.calls[-3:] == HAND_BACK  # the next attempt
     assert not unit.hand_back_owed
 
 
@@ -3848,17 +3867,17 @@ async def test_stop_never_raises_when_the_hand_back_raises_unexpectedly(
 
     hass = rig.hass
     original = OpenthermGwWriter.hand_back
-    fulls: list[bool] = []
+    skipped: list[set[str]] = []
     # The attempts that fail: the stop's, and after a failed step the step's too.
     failures = 2 if ending == "step_error" else 1
 
-    async def hand_back(self: OpenthermGwWriter, full: bool = False, **kwargs: Any) -> Any:
+    async def hand_back(self: OpenthermGwWriter, **kwargs: Any) -> Any:
         nonlocal failures
-        fulls.append(full)
+        skipped.append(set(kwargs["skip"]))
         if failures:
             failures -= 1
             raise RuntimeError("a bug in the writer")
-        return await original(self, full, **kwargs)
+        return await original(self, **kwargs)
 
     monkeypatch.setattr(OpenthermGwWriter, "hand_back", hand_back)
     await start(rig)
@@ -3895,9 +3914,9 @@ async def test_stop_never_raises_when_the_hand_back_raises_unexpectedly(
         assert stored_control(hass_storage, rig)["hand_back_pending"] is True
         count = len(rig.gateway.calls)
         await set_up(rig, entry)  # the next start
-        assert rig.gateway.calls[count:][:2] == HAND_BACK
-    # The session's own hand-back is not full; every later one is, a debt existing (P-49).
-    assert fulls == [False] + [True] * (2 if ending == "step_error" else 1)
+        assert rig.gateway.calls[count:][:3] == HAND_BACK
+    # Every attempt is the whole safe hand-back: nothing is left out (P-49, V5).
+    assert skipped == [set()] * (3 if ending == "step_error" else 2)
     assert not unit_of(rig).hand_back_owed
     assert issue(rig, "hand_back_owed") is None
 
@@ -3906,11 +3925,12 @@ async def test_stop_never_raises_when_the_hand_back_raises_unexpectedly(
 async def test_an_end_of_session_hand_back_is_full_while_an_older_debt_exists(
     rig: Rig, hass_storage: dict[str, Any], older_debt: bool
 ) -> None:
-    """P-49 (R2): the last run left a hand-back owed, with its held heating switch left off, and
-    this session's writes all fail (both targets away). Switched off, the session's hand-back is
-    full: the heating switch goes back on, though this session never switched it — its success
-    would clear the older debt too. Negative: without an older debt it is not full, and a switch
-    this session never touched is left as it is (V5 decides that anew)."""
+    """P-49 (R2), as V5 decides it: the last run left a hand-back owed, with its held heating
+    switch left off, and this session's writes all fail (both targets away). Switched off, the
+    session's hand-back is the whole safe hand-back: the heating switch goes back on, though
+    this session never switched it — its success clears the older debt too. Without an older
+    debt the same: the heating part follows the hand-back's effect (S-27), not what the session
+    touched."""
     number = FakeNumber(rig.hass)
     number.register()
     switch = FakeSwitch(rig.hass, on=False)
@@ -3934,7 +3954,7 @@ async def test_an_end_of_session_hand_back_is_full_while_an_older_debt_exists(
     assert unit.hand_back_owed is older_debt
     switch.set_available(True)  # back, and still off
     await rig.switch(False)
-    assert switch.on is older_debt
+    assert switch.on  # "own control": the boiler heats under its own control again
 
 
 async def test_a_release_by_hand_waits_for_a_running_attempt(
@@ -4223,7 +4243,7 @@ async def test_the_first_hand_back_after_start_raises_no_alarm_within_the_grace(
     assert errors_logged(caplog) == []
     rig.gateway.connected = True
     await rig.advance(10)
-    assert rig.gateway.calls[:2] == HAND_BACK
+    assert rig.gateway.calls[:3] == HAND_BACK
     assert not unit.hand_back_owed
     assert alarm(rig) == "off"
     assert issue(rig, "hand_back_owed") is None
@@ -4245,7 +4265,7 @@ async def test_an_otgw_hand_back_the_gateway_did_not_take_stays_owed(
     unit = unit_of(rig)
     rig.gateway.ignore_release = True
     await rig.switch(False)
-    assert rig.gateway.calls[-2:] == HAND_BACK  # sent, and the service returned
+    assert rig.gateway.calls[-3:] == HAND_BACK  # sent, and the service returned
     assert unit.hand_back_owed
     assert alarm(rig) == "off"  # not yet a minute
     if read_back == "unknown":
@@ -4280,7 +4300,7 @@ async def test_an_otgw_hand_back_without_a_known_value_needs_a_report_after_it(
     if not reported:
         rig.gateway.ignore_release = True
     await set_up(rig, entry)
-    assert rig.gateway.calls[:2] == HAND_BACK
+    assert rig.gateway.calls[:3] == HAND_BACK
     assert unit_of(rig).hand_back_owed is not reported
 
 
@@ -4310,7 +4330,7 @@ async def test_the_value_a_release_must_leave_outlives_a_restart(
         kept["release_from"] = "garbage"
     rig.gateway.connected = True
     rig.gateway.override = None  # it lapsed while Home Assistant was down
-    rig.gateway.ignore_release = True  # the release adds no report: only the value tells
+    rig.gateway.deaf = True  # the hand-back adds no report: only the value tells
     rig.live()
     caplog.clear()
     await set_up(rig, entry)
@@ -4392,7 +4412,7 @@ async def test_a_store_that_cannot_be_written_does_not_hold_up_a_hand_back(
 
     monkeypatch.setattr(rig.entry.runtime_data, "async_save_control_now", fail)
     await unit.async_stop()
-    assert rig.gateway.calls[-2:] == HAND_BACK
+    assert rig.gateway.calls[-3:] == HAND_BACK
     assert not unit.hand_back_owed
     assert _logged(caplog, logging.ERROR, "Could not store the owed hand-back") == 1
 
@@ -4404,9 +4424,10 @@ async def test_the_stop_hand_back_fits_home_assistants_budget(
     rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, case: str
 ) -> None:
     """R6 (Q3.3): Home Assistant gives all shutdown jobs together 20 s, then cancels them. At a
-    stop each hand-back write is capped at 3 s, and the whole — writes, the wait for a late
-    report and SmartPI's calls — ends within 15 s: a gateway that hangs leaves the hand-back
-    owed, with the persistent issue, before Home Assistant cuts it."""
+    stop each hand-back write is capped at 3 s — the safe hand-back's three writes take 9 s at
+    most, the wait for a late report 5 s more — and the whole, SmartPI's calls included, ends
+    within 15 s: a gateway that hangs leaves the hand-back owed, with the persistent issue,
+    before Home Assistant cuts it."""
     hass = rig.hass
     learning: list[bool] = []
     smartpi_hangs = asyncio.Event()
@@ -4443,14 +4464,17 @@ async def test_the_stop_hand_back_fits_home_assistants_budget(
         rig.freezer.tick(1.2)  # 3.1 s: the first write gave up, the second hangs
         await settle(rounds=50)
         assert not stop.done()
-        rig.freezer.tick(3.1)  # 6.2 s: the second gave up too
+        rig.freezer.tick(3.1)  # 6.2 s: the second gave up too, the third hangs
+        await settle(rounds=50)
+        assert not stop.done()
+        rig.freezer.tick(3.1)  # 9.3 s: the third gave up: 9 s of writes, within the 15 s
     else:
         rig.freezer.tick(2.2)  # 4.1 s: past the budget (2 s or 4 s)
     assert await settle(stop, rounds=100), "the stop outlasted its budget"
     await stop
     if case == "smartpi_in_budget":
         assert learning == [False, True]  # the resume was tried, and given up at the budget
-        assert rig.gateway.calls[-2:] == HAND_BACK
+        assert rig.gateway.calls[-3:] == HAND_BACK
         assert not unit.hand_back_owed
         return
     if case == "no_time_for_smartpi":
@@ -4476,12 +4500,12 @@ async def test_a_cancel_raised_by_the_writer_itself_is_a_failed_attempt(
     original = OpenthermGwWriter.hand_back
     failures = 1
 
-    async def hand_back(self: OpenthermGwWriter, full: bool = False, **kwargs: Any) -> Any:
+    async def hand_back(self: OpenthermGwWriter, **kwargs: Any) -> Any:
         nonlocal failures
         if failures:
             failures -= 1
             raise asyncio.CancelledError
-        return await original(self, full, **kwargs)
+        return await original(self, **kwargs)
 
     monkeypatch.setattr(OpenthermGwWriter, "hand_back", hand_back)
     await start(rig)
@@ -4493,7 +4517,7 @@ async def test_a_cancel_raised_by_the_writer_itself_is_a_failed_attempt(
     assert stored_control(hass_storage, rig)["hand_back_pending"] is True
     assert alarm(rig) == "on"
     await rig.advance(70)
-    assert rig.gateway.calls[-2:] == HAND_BACK
+    assert rig.gateway.calls[-3:] == HAND_BACK
     assert not unit.hand_back_owed
 
 
@@ -4523,3 +4547,786 @@ async def test_an_unconfirmed_hand_back_raises_no_alarm_within_the_grace(
     await rig.advance(60)
     assert alarm(rig) == "on"
     assert len(errors_logged(caplog)) == 1
+
+
+# --- V5: the safe hand-back and what confirms it ----------------------------------------------
+
+
+def hand_back_shown(rig: Rig) -> Any:
+    return rig.state("sensor", "control_state").attributes["hand_back_confirmation"]
+
+
+def mqtt_gateway(rig: Rig) -> None:
+    """The gateway's firmware over MQTT: its commands reach the fake gateway."""
+
+    async def publish(call: ServiceCall) -> None:
+        topic, payload = call.data["topic"], call.data["payload"]
+        if topic.endswith("/ctrlsetpt"):
+            value = float(payload)
+            rig.gateway.override = None if value == 0 else value
+        elif topic.endswith("/chenable"):
+            rig.gateway.ch = payload == "1"
+        rig.gateway.calls.append(("setpoint" if "ctrlsetpt" in topic else "ch", float(payload)))
+        rig.gateway.publish()
+
+    rig.hass.services.async_register("mqtt", "publish", publish)
+
+
+GATEWAY_PATHS = {
+    "opentherm_gw": {},
+    "otgw_mqtt": {"write_path": "otgw_mqtt", "mqtt_top": "OTGW", "mqtt_node": "otgw-1"},
+}
+
+
+@pytest.mark.parametrize("path", list(GATEWAY_PATHS))
+@pytest.mark.parametrize("shown", ["unknown", "unavailable", "missing"])
+async def test_otgw_control_waits_until_the_gateway_has_reported(
+    rig: Rig, path: str, shown: str
+) -> None:
+    """P-21: the gateway's read-back holds no value since the start — pyotgw's report after a
+    reset, an entity not reporting, or none at all — while the boiler's own signals are fresh.
+    A boiler taken now could never be seen handed back: nothing is written, control waits for
+    data; once the read-back holds a value, control takes the boiler."""
+    if path == "otgw_mqtt":
+        mqtt_gateway(rig)
+    rig.gateway.read_back_shown = shown
+    rig.live()
+    await start(rig, **GATEWAY_PATHS[path])
+    await rig.switch(True)
+    await rig.advance(60)
+    assert rig.gateway.calls == []
+    assert rig.plugin_calls() <= {("weather", "get_forecasts")}  # nothing written at all
+    state = rig.state("sensor", "control_state")
+    assert state.state == "waiting_data"
+    assert state.attributes["reasons"] == ["read_back_unknown"]
+    rig.gateway.read_back_shown = None
+    await rig.advance(10)
+    assert rig.gateway.setpoints()[0] == EXPECTED  # control takes the boiler
+    assert rig.state("sensor", "control_state").state == "heating"
+
+
+async def test_an_unknown_gateway_read_back_while_controlling_is_not_a_hand_back_by_itself(
+    rig: Rig,
+) -> None:
+    """P-21, the other half: controlling, the read-back turns unknown while the flame and the
+    flow stay fresh — no hand-back by itself, control and its keep-alive go on (X1 adds the
+    information alarm ``confirmation_missing`` after 5 min). The boiler link decides: flame and
+    flow gone stale, X2's stale-link hand-back comes after five minutes."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(30)
+    rig.gateway.read_back_shown = "unknown"
+    count = len(rig.gateway.calls)
+    await rig.advance(600)
+    assert ("setpoint", 0.0) not in rig.gateway.calls[count:]  # no hand-back
+    assert rig.gateway.setpoints()[-1] == EXPECTED  # the keep-alive goes on
+    assert rig.state("sensor", "control_state").state == "heating"
+    rig.flow = None  # the boiler link goes stale
+    await rig.advance(310)
+    assert rig.gateway.calls[-3:] == HAND_BACK
+    assert rig.state("sensor", "control_state").state == "handed_back"
+
+
+@pytest.mark.parametrize("read_back", ["the_entity", "a_separate_one"])
+async def test_an_optimistic_setpoint_entity_does_not_confirm_a_hand_back(
+    rig: Rig, read_back: str
+) -> None:
+    """T-30 (S-09): a setpoint entity with ``assumed_state`` shows whatever it was given, the
+    device receiving or not. Switched off, the hand-back is done once written — nothing could
+    tell more — shown "unverified", and not sent again. Variant: an optimistic separate
+    read-back, the same."""
+    number = FakeNumber(rig.hass, assumed=True)  # the device is not receiving: no one can tell
+    number.register()
+    confirmed = number.entity_id
+    if read_back == "a_separate_one":
+        confirmed = "sensor.fake_boiler_flow_setpoint"
+        rig.hass.states.async_set(
+            confirmed, str(EXPECTED), {"unit_of_measurement": "°C", "assumed_state": True}
+        )
+    await start(rig, **held_entity(number, confirmed_entity=confirmed))
+    await rig.switch(True)
+    await rig.switch(False)
+    assert number.writes == [EXPECTED, LOWEST, 50.0]
+    unit = unit_of(rig)
+    assert not unit.hand_back_owed
+    assert hand_back_shown(rig) == "unverified"
+    await rig.advance(130)
+    assert number.writes == [EXPECTED, LOWEST, 50.0]  # no retry
+    assert alarm(rig) == "off"
+
+
+async def test_an_optimistic_entity_away_at_the_hand_back_is_retried(rig: Rig) -> None:
+    """T-30, negative: an optimistic target counts once written — a write to it while it is
+    away fails, so the hand-back stays owed, is shown and sent again; once it is back and
+    written, it is done."""
+    number = FakeNumber(rig.hass, assumed=True)
+    number.register()
+    await start(rig, **held_entity(number))
+    await rig.switch(True)
+    number.set_available(False)
+    await rig.switch(False)
+    unit = unit_of(rig)
+    assert unit.hand_back_owed
+    assert alarm(rig) == "on"
+    assert hand_back_shown(rig) == "not_confirmed"
+    number.set_available(True)
+    await rig.advance(60)
+    assert number.writes == [EXPECTED, LOWEST, 50.0]
+    assert not unit.hand_back_owed
+    assert alarm(rig) == "off"
+
+
+async def test_a_held_release_not_confirmed_raises_the_alarm_at_once(rig: Rig) -> None:
+    """The decision "Safe hand-back": a device that keeps its last value (declared held) refuses
+    the release — its write fails. The boiler is left at the lowest water temperature the
+    hand-back wrote first: ``hand_back_failed`` at once, the release sent again every minute,
+    the device holding the lowest meanwhile, until it goes through."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(rig, **held_entity(number, hand_back_value=15))
+    await rig.switch(True)
+    number.refuse = 15.0
+    await rig.switch(False)
+    assert number.value == LOWEST  # the device holds the lowest
+    assert alarm(rig) == "on"  # at once
+    assert hand_back_shown(rig) == "not_confirmed"
+    sent = number.writes.count(LOWEST)
+    await rig.advance(50)
+    assert number.writes.count(LOWEST) == sent  # not before a minute
+    await rig.advance(10)
+    assert number.writes.count(LOWEST) == sent + 1  # the lowest, then the release, again
+    assert number.value == LOWEST
+    number.refuse = None
+    await rig.advance(60)
+    assert number.value == 15.0
+    assert not unit_of(rig).hand_back_owed
+    assert alarm(rig) == "off"
+
+
+@pytest.mark.parametrize(
+    ("write_type", "alarm_at_s"), [("held", 10), ("expiring", 60)], ids=["held", "expiring"]
+)
+async def test_an_unconfirmed_release_leaves_the_lowest_water_temperature_and_alarms(
+    rig: Rig, write_type: str, alarm_at_s: int
+) -> None:
+    """Q1 M13: the release written but not taken — the device keeps the lowest the hand-back
+    wrote first. Declared held, the alarm rises a step later (10 s); sent again every minute
+    until it is read back. Negative: an expiring target lapses to the device's own value by
+    itself, so it alarms only once unconfirmed at the minute's retry, as before."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(rig, **held_entity(number, hand_back_value=15, write_type=write_type))
+    await rig.switch(True)
+    number.lowest = 20.0  # the device ignores 15 and keeps what it was given before
+    await rig.switch(False)
+    assert number.writes[-2:] == [LOWEST, 15.0]
+    assert number.value == LOWEST
+    assert alarm(rig) == "off"
+    await rig.advance(alarm_at_s - 10)
+    assert alarm(rig) == "off"
+    await rig.advance(10)
+    assert alarm(rig) == "on"
+    assert unit_of(rig).hand_back_owed
+    number.lowest = None
+    await rig.advance(70)  # sent again at the minute, and read back
+    assert number.value == 15.0
+    assert alarm(rig) == "off"
+    assert not unit_of(rig).hand_back_owed
+
+
+async def test_a_held_release_raises_no_alarm_within_the_start_grace(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """The held rule's negative: the hand-back the last run left owed, its target not showing
+    it at once — within V4's start grace no alarm, only once the grace is over."""
+    number = FakeNumber(rig.hass, lowest=20.0)
+    number.register()
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=options(rig.zones, **held_entity(number, hand_back_value=15)),
+    )
+    entry.add_to_hass(rig.hass)
+    seed_stores(hass_storage, entry, {"controlling": True, "hand_back_pending": True}, "0.2.2")
+    await set_up(rig, entry)
+    assert number.writes == [LOWEST, 15.0]
+    await rig.advance(50)
+    assert alarm(rig) == "off"  # within the grace
+    await rig.advance(20)
+    assert alarm(rig) == "on"
+
+
+TIMEOUT_PATH = {"write_path": "entity", "write_type": "expiring", "hand_back": "timeout"}
+
+
+@pytest.mark.parametrize("baseline", [45.0, None], ids=["baseline_known", "baseline_unknown"])
+async def test_a_timeout_hand_back_is_confirmed_when_the_read_back_returns_to_the_baseline(
+    rig: Rig, hass_storage: dict[str, Any], baseline: float | None
+) -> None:
+    """S-20: a timeout hand-back writes the lowest water temperature, then nothing: released once
+    the read-back is back within 0.5 K of the value from before the session; that value unknown,
+    once it is more than 0.5 K from both the plugin's last value and the lowest. Never written
+    again meanwhile — each write would arm the device's timer anew."""
+    number = FakeNumber(rig.hass, value=45.0)
+    number.register()
+    if baseline is None:  # the device had reported nothing before the session
+        rig.hass.states.async_set(number.entity_id, "unknown", {"unit_of_measurement": "°C"})
+    await start(
+        rig,
+        **TIMEOUT_PATH,
+        setpoint_entity=number.entity_id,
+        confirmed_entity=number.entity_id,
+        topology="virtual",
+    )
+    await rig.switch(True)
+    await rig.advance(30)
+    await rig.switch(False)
+    assert number.writes[-1] == LOWEST  # the lowest, then silence
+    unit = unit_of(rig)
+    assert unit.hand_back_owed
+    assert stored_control(hass_storage, rig)["release_baseline"] == baseline
+    count = len(number.writes)
+    await rig.advance(90)
+    assert len(number.writes) == count  # no rewrite
+    assert alarm(rig) == "off"  # not before three minutes
+    assert hand_back_shown(rig) == "waiting"
+    number.publish(45.0 if baseline is not None else 47.0)  # its timer ran out: its own value
+    await rig.advance(10)
+    assert not unit.hand_back_owed
+    assert hand_back_shown(rig) == "unverified"  # only the written entity shows it
+    assert len(number.writes) == count
+
+
+async def test_a_timeout_hand_back_not_released_alarms_after_three_minutes(rig: Rig) -> None:
+    """S-20, negative: the read-back stays at the lowest — the device's timer did not release.
+    No rewrite retries; ``hand_back_failed`` rises after three minutes, and the hand-back stays
+    owed and shown until the release."""
+    number = FakeNumber(rig.hass, value=45.0)
+    number.register()
+    await start(
+        rig,
+        **TIMEOUT_PATH,
+        setpoint_entity=number.entity_id,
+        confirmed_entity=number.entity_id,
+        topology="virtual",
+    )
+    await rig.switch(True)
+    await rig.advance(30)
+    await rig.switch(False)
+    count = len(number.writes)
+    await rig.advance(170)
+    assert alarm(rig) == "off"
+    await rig.advance(10)
+    assert alarm(rig) == "on"
+    assert hand_back_shown(rig) == "not_confirmed"
+    await rig.advance(300)
+    assert len(number.writes) == count  # never written again
+    assert unit_of(rig).hand_back_owed
+
+
+@pytest.mark.parametrize(
+    ("effect", "severity"),
+    [("own_control", ir.IssueSeverity.WARNING), ("heating_stops", ir.IssueSeverity.ERROR)],
+)
+async def test_a_target_another_controller_holds_counts_as_handed_back(
+    rig: Rig, caplog: pytest.LogCaptureFixture, effect: str, severity: ir.IssueSeverity
+) -> None:
+    """W3 (Q1 M12): after the hand-back another controller holds a held target at 60 °C —
+    neither the plugin's value, nor the lowest, nor the hand-back value — at two retry checks a
+    minute apart, with no hot water. The hand-back counts as done there and is not sent again:
+    shown ``taken_by_other``, one WARNING, and the repair issue — an error where the hand-back
+    stops heating, else a warning; not fixable, not persistent. Control taking the boiler
+    again deletes it."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(rig, **held_entity(number, hand_back_value_effect=effect))
+    await rig.switch(True)
+    number.forced = 60.0  # another controller writes its value over every other
+    caplog.clear()
+    await rig.switch(False)
+    assert number.writes[-2:] == [LOWEST, 50.0]  # the whole safe hand-back, over its value
+    assert number.value == 60.0
+    unit = unit_of(rig)
+    await rig.advance(60)  # the first retry check: judged, the write held back
+    assert number.writes[-2:] == [LOWEST, 50.0]
+    assert number.writes.count(LOWEST) == 1
+    assert unit.hand_back_owed
+    await rig.advance(60)  # the second, a minute later: another controller holds it
+    assert not unit.hand_back_owed
+    count = len(number.writes)
+    await rig.advance(180)
+    assert len(number.writes) == count  # never sent again
+    assert hand_back_shown(rig) == "taken_by_other"
+    assert alarm(rig) == "off"
+    found = issue(rig, "hand_back_taken_by_other")
+    assert found is not None
+    assert found.severity is severity
+    assert not found.is_fixable
+    assert not found.is_persistent
+    assert found.translation_placeholders == {"target": number.entity_id}
+    assert _logged(caplog, logging.WARNING, "another controller holds") == 1
+    number.forced = None
+    await rig.switch(True)  # control takes the boiler again
+    assert issue(rig, "hand_back_taken_by_other") is None
+
+
+@pytest.mark.parametrize("hot_water", ["draw", "unknown"])
+async def test_a_third_value_during_hot_water_is_judged_later(rig: Rig, hot_water: str) -> None:
+    """W6, negatives: during a hot-water draw, and for 120 s after it, the boiler's read-back
+    may show another value — no judgement, and the retry write is held back while it is shown.
+    With hot water unknown it takes three checks over 120 s."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(rig, **held_entity(number))
+    await rig.switch(True)
+    number.forced = 60.0
+    rig.dhw = True if hot_water == "draw" else None
+    rig.live()
+    await rig.switch(False)
+    unit = unit_of(rig)
+    await rig.advance(120)  # two retry checks
+    assert unit.hand_back_owed
+    assert number.writes.count(LOWEST) == 1  # held back while the third value shows
+    if hot_water == "unknown":
+        await rig.advance(60)  # the third check, 120 s after the first
+        assert not unit.hand_back_owed
+        return
+    rig.dhw = False  # the draw ends after the second check
+    await rig.advance(180)  # checks at 60 s and 120 s after the draw: none judges yet
+    assert unit.hand_back_owed
+    await rig.advance(60)  # then two checks a minute apart
+    assert not unit.hand_back_owed
+
+
+@pytest.mark.parametrize("case", ["no_trace", "never_on", "trace"])
+async def test_a_heating_switch_read_back_on_then_switched_off_is_taken_by_another(
+    rig: Rig, case: str
+) -> None:
+    """Q1 M12, two-valued targets: the heating switch read back "on" once after the hand-back,
+    then "off" with no trace of an outage, is another controller's: done there, never sent
+    again, with the repair issue. Never read back "on": owed, and sent again every minute.
+    "Off" after the switch was unavailable within the five minutes before: a lost command —
+    "on" is written again at once."""
+    number = FakeNumber(rig.hass, lowest=20.0)  # keeps the value target owed: 15 is ignored
+    number.register()
+    switch = FakeSwitch(rig.hass, stuck_off=case == "never_on")
+    switch.register()
+    control = held_entity(
+        number, hand_back_value=15, ch_entity=switch.entity_id, ch_write_type="held"
+    )
+    await start(rig, **control)
+    await rig.switch(True)
+    await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
+    await rig.switch(False)
+    unit = unit_of(rig)
+    assert unit.hand_back_owed
+    if case == "never_on":
+        assert not switch.on
+        sent = switch.writes.count(True)
+        await rig.advance(60)
+        assert switch.writes.count(True) == sent + 1  # sent again every minute
+        assert issue(rig, "hand_back_taken_by_other") is None
+        return
+    assert switch.on  # read back "on" once
+    if case == "trace":
+        switch.set_available(False)  # the device restarts...
+        switch.on = False
+        switch.set_available(True)  # ...and comes back off
+        await rig.advance(10)
+        assert switch.writes[-1] is True  # a lost command: "on" written again at once
+        assert switch.on
+        assert issue(rig, "hand_back_taken_by_other") is None
+        return
+    switch.on = False  # an automation switches heating off
+    switch.publish()
+    await rig.hass.async_block_till_done()
+    found = issue(rig, "hand_back_taken_by_other")
+    assert found is not None
+    assert found.translation_placeholders == {"target": switch.entity_id}
+    count = switch.writes.count(True)
+    await rig.advance(130)
+    assert switch.writes.count(True) == count  # not sent again
+    assert not switch.on
+    assert unit.hand_back_owed  # the value target is still owed, and sent again
+    number.lowest = None
+    await rig.advance(60)
+    assert not unit.hand_back_owed  # every target done
+    assert hand_back_shown(rig) == "taken_by_other"
+
+
+@pytest.mark.parametrize("trace", [False, True], ids=["no_trace", "trace"])
+async def test_an_external_switch_turned_back_on_after_the_hand_back_is_taken_by_another(
+    rig: Rig, trace: bool
+) -> None:
+    """Q1 M12 for the external-control switch, whose hand-back state is "off": read back "off"
+    once, then "on" with no trace of an outage — another controller's; with a trace, a lost
+    command, written "off" again. The heating switch, away, keeps the hand-back owed."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    heating = FakeSwitch(rig.hass)
+    heating.register()
+    external = FakeSwitch(rig.hass, entity_id="input_boolean.fake_external", on=False)
+    external.register()
+    await start(
+        rig,
+        write_path="entity",
+        setpoint_entity=number.entity_id,
+        write_type="held",
+        ch_entity=heating.entity_id,
+        ch_write_type="held",
+        hand_back="switch",
+        hand_back_entity=external.entity_id,
+        hand_back_entity_write_type="held",
+        confirmed_entity=number.entity_id,
+        topology="virtual",
+    )
+    await rig.switch(True)
+    assert external.on  # control took the boiler
+    await rig.advance(310)
+    heating.set_available(False)  # its part cannot go out: the hand-back stays owed
+    await rig.switch(False)
+    assert not external.on  # released: read back "off"
+    assert number.value == LOWEST  # the lowest came first
+    unit = unit_of(rig)
+    assert unit.hand_back_owed
+    if trace:
+        external.set_available(False)
+        external.on = True
+        external.set_available(True)  # back from an outage, on again
+        await rig.advance(10)
+        assert external.writes[-1] is False  # a lost command: "off" written again
+        assert issue(rig, "hand_back_taken_by_other") is None
+        return
+    external.on = True  # another controller takes external control
+    external.publish()
+    await rig.hass.async_block_till_done()
+    assert issue(rig, "hand_back_taken_by_other") is not None
+    count = len(external.writes)
+    await rig.advance(130)
+    assert len(external.writes) == count  # not sent again
+
+
+async def test_no_taken_issue_beside_the_step_aside_issue(rig: Rig) -> None:
+    """While V7's ``control_latched`` issue for another controller is up, it says so already:
+    a target judged held by another controller raises no ``hand_back_taken_by_other``."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(rig, **held_entity(number))
+    await rig.switch(True)
+    assert rig.entry is not None
+    ir.async_create_issue(
+        rig.hass,
+        DOMAIN,
+        f"control_latched_{rig.entry.entry_id}",
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="control_latched",
+    )
+    number.forced = 60.0
+    await rig.switch(False)
+    await rig.advance(120)
+    assert not unit_of(rig).hand_back_owed  # judged taken all the same
+    assert issue(rig, "hand_back_taken_by_other") is None
+
+
+async def test_the_hand_back_does_not_wait_between_its_parts_on_a_gateway(rig: Rig) -> None:
+    """The parts follow one another at once: a gateway whose read-back never shows the lowest
+    water temperature gets CH=1 and CS=0 in the same moment, not after a read-back or a wait."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    rig.gateway.echo = False  # the read-back shows the thermostat's value, never the lowest
+    before = len(rig.gateway.times)
+    await rig.switch(False)
+    assert rig.gateway.calls[-3:] == HAND_BACK
+    moments = rig.gateway.times[before:]
+    assert len(moments) == 2  # CS=<lowest> and CS=0
+    assert moments[1] - moments[0] < 1.0
+
+
+# --- P-40, S-21, S-49: the options ---------------------------------------------------------
+
+
+def switch_method(number: FakeNumber, external: str, write_type: str | None) -> dict[str, Any]:
+    control = {
+        "write_path": "entity",
+        "setpoint_entity": number.entity_id,
+        "write_type": "held",
+        "hand_back": "switch",
+        "hand_back_entity": external,
+        "confirmed_entity": number.entity_id,
+        "topology": "virtual",
+    }
+    if write_type is not None:
+        control["hand_back_entity_write_type"] = write_type
+    return control
+
+
+@pytest.mark.parametrize("write_type", [None, "unknown", "persistent"])
+async def test_an_external_switch_of_unknown_write_type_blocks_control(
+    rig: Rig, write_type: str | None
+) -> None:
+    """P-40: the external-control switch is turned on at every take and off at every hand-back,
+    so one the boiler may store would be worn: control is blocked with it — an entry saved
+    before the option existed too, until the user declares it — and the form refuses it."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    external = FakeSwitch(rig.hass, entity_id="input_boolean.fake_external", on=False)
+    external.register()
+    await start(rig, **switch_method(number, external.entity_id, write_type))
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)
+    assert err.value.translation_key == "blocked_hand_back_switch_not_writable"
+    assert number.writes == []
+    assert external.writes == []
+    flow = await _first_control_step(
+        rig, {"write_path": "entity", "topology": "virtual", "confirmed_entity": number.entity_id}
+    )
+    answer = {
+        "setpoint_entity": number.entity_id,
+        "write_type": "held",
+        "hand_back": "switch",
+        "hand_back_entity": external.entity_id,
+        "hand_back_entity_write_type": write_type or "unknown",
+    }
+    flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], answer)
+    assert flow["errors"] == {
+        "hand_back_entity_write_type": "hand_back_entity_write_type_not_supported"
+    }
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"], answer | {"hand_back_entity_write_type": "held"}
+    )
+    assert flow["step_id"] == "control_curve"
+
+
+async def test_an_expiring_external_switch_is_turned_on_every_keep_alive(rig: Rig) -> None:
+    """P-40: declared expiring, the external-control switch lapses unless repeated: turned on
+    again every 30 s while control holds the boiler — a held setpoint written once meanwhile —
+    and off at the hand-back, then left alone."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    external = FakeSwitch(rig.hass, entity_id="input_boolean.fake_external", on=False)
+    external.register()
+    await start(rig, **switch_method(number, external.entity_id, "expiring"))
+    await rig.switch(True)
+    assert external.writes == [True]
+    await rig.advance(95)
+    assert external.writes == [True] * 4  # at the take, then every 30 s
+    assert number.writes == [EXPECTED]  # the held setpoint: written once
+    await rig.switch(False)
+    assert external.writes[-1] is False
+    count = len(external.writes)
+    await rig.advance(60)
+    assert len(external.writes) == count  # nothing after the hand-back
+
+
+async def test_a_held_external_switch_is_turned_on_once_per_take(rig: Rig) -> None:
+    """P-40: declared held, the device keeps the external-control switch's state: turned on once
+    each time control takes the boiler, off at each hand-back."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    external = FakeSwitch(rig.hass, entity_id="input_boolean.fake_external", on=False)
+    external.register()
+    await start(rig, **switch_method(number, external.entity_id, "held"))
+    await rig.switch(True)
+    await rig.advance(120)
+    assert external.writes == [True]
+    await rig.switch(False)
+    assert external.writes == [True, False]
+    await rig.switch(True)
+    assert external.writes == [True, False, True]
+
+
+ENTITY_ANSWER = {"write_path": "entity", "topology": "virtual"}
+
+
+async def test_a_hand_back_value_above_the_maximum_is_refused(rig: Rig) -> None:
+    """S-21: the hand-back value is exempt only from the lowest water temperature. Above the
+    highest the plugin may write it is refused at the step, and at the save when a later step
+    lowered a maximum; options edited by hand get the blocker. It is never clamped."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(rig, **held_entity(number, hand_back_value=75))  # edited by hand: 75 > 70
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)
+    assert err.value.translation_key == "blocked_hand_back_value_above_max"
+    assert number.writes == []
+    assert rig.entry is not None
+    assert rig.entry.options["control"]["hand_back_value"] == 75  # never clamped
+    flow = await _first_control_step(rig, ENTITY_ANSWER | {"confirmed_entity": number.entity_id})
+    answer = {
+        "setpoint_entity": number.entity_id,
+        "write_type": "held",
+        "hand_back": "value",
+        "hand_back_value_effect": "own_control",
+    }
+    configure = rig.hass.config_entries.options.async_configure
+    flow = await configure(flow["flow_id"], answer | {"hand_back_value": 75})
+    assert flow["errors"] == {"hand_back_value": "hand_back_value_above_max"}
+    flow = await configure(flow["flow_id"], answer | {"hand_back_value": 60})
+    assert flow["step_id"] == "control_curve"
+    flow = await configure(flow["flow_id"], CURVE_ANSWER | {"hard_max": 55})
+    assert flow["step_id"] == "control_entity"  # the save found the lowered maximum
+    assert flow["errors"] == {"base": "hand_back_value_above_max"}
+    flow = await configure(flow["flow_id"], answer | {"hand_back_value": 50})
+    flow = await configure(flow["flow_id"], CURVE_ANSWER | {"hard_max": 55})
+    assert flow["type"] == "create_entry"
+    await rig.hass.async_block_till_done()
+    assert rig.entry.options["control"]["hand_back_value"] == 50
+
+
+@pytest.mark.parametrize(
+    ("changes", "blocked"),
+    [
+        ({}, True),
+        ({"hand_back_value_effect": "heating_stops"}, False),
+        ({"ch_entity": "input_boolean.fake_ch", "ch_write_type": "held"}, False),
+    ],
+    ids=["own_control", "heating_stops", "heating_switch"],
+)
+async def test_off_near_an_own_control_hand_back_value_is_refused(
+    rig: Rig, changes: dict[str, Any], blocked: bool
+) -> None:
+    """S-49: "off" sent as a low setpoint within 0.5 K of a hand-back value that returns the
+    boiler to its own control would hand it back instead of stopping heating: the blocker, and
+    the form at the save (back to the behaviour step). Allowed with a heating switch, which
+    sends "off" itself, and where the hand-back value stops heating."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    FakeSwitch(rig.hass).register()
+    await start(rig, **held_entity(number, hand_back_value=10.3) | changes)  # "off" is 10 °C
+    if blocked:
+        with pytest.raises(ServiceValidationError) as err:
+            await rig.switch(True)
+        assert err.value.translation_key == "blocked_off_setpoint_near_hand_back_value"
+        assert number.writes == []
+    else:
+        await rig.switch(True)
+        assert number.writes == [EXPECTED]
+        return
+    flow = await _first_control_step(rig, ENTITY_ANSWER | {"confirmed_entity": number.entity_id})
+    answer = {
+        "setpoint_entity": number.entity_id,
+        "write_type": "held",
+        "hand_back": "value",
+        "hand_back_value": 10.3,
+        "hand_back_value_effect": "own_control",
+    }
+    configure = rig.hass.config_entries.options.async_configure
+    flow = await configure(flow["flow_id"], answer)
+    flow = await configure(flow["flow_id"], CURVE_ANSWER)  # the simple level: then the save
+    assert flow["step_id"] == "control_behaviour"
+    assert flow["errors"] == {"base": "off_setpoint_near_hand_back_value"}
+    flow = await configure(flow["flow_id"], {"off_setpoint": 10.5})
+    assert flow["errors"] == {"off_setpoint": "off_setpoint_near_hand_back_value"}
+    flow = await configure(flow["flow_id"], {"off_setpoint": 5})
+    assert flow["step_id"] == "control_alarms"
+    flow = await configure(flow["flow_id"], {})
+    assert flow["type"] == "create_entry"
+    await rig.hass.async_block_till_done()  # the entry reloads with the options
+
+
+@pytest.mark.parametrize("stored", ["kept", "unreadable"])
+async def test_a_target_another_controller_holds_stays_so_after_a_restart(
+    rig: Rig, hass_storage: dict[str, Any], caplog: pytest.LogCaptureFixture, stored: str
+) -> None:
+    """The targets judged held by another controller are stored with the owed hand-back: after
+    a restart the setup's attempt writes the rest, not them — no fight at every start. Negative:
+    a stored list that cannot be read counts as none — every target is handed back again, with
+    a warning."""
+    number = FakeNumber(rig.hass, value=60.0)
+    number.register()
+    switch = FakeSwitch(rig.hass, on=False)
+    switch.register()
+    control = held_entity(number, ch_entity=switch.entity_id, ch_write_type="held")
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones, **control)
+    )
+    entry.add_to_hass(rig.hass)
+    taken: Any = [number.entity_id] if stored == "kept" else "garbage"
+    seed_stores(
+        hass_storage,
+        entry,
+        {"controlling": True, "hand_back_pending": True, "taken_by_other": taken},
+        "0.2.2",
+    )
+    caplog.clear()
+    await set_up(rig, entry)
+    assert switch.writes == [True]  # the heating part goes out either way
+    if stored == "kept":
+        assert number.writes == []  # another controller holds it: left alone
+        assert not unit_of(rig).hand_back_owed
+    else:
+        assert number.writes == [LOWEST, 50.0]
+        warned = _logged(caplog, logging.WARNING, "unreadable stored control data: taken_by_other")
+        assert warned == 1
+
+
+async def test_a_failed_lowest_does_not_keep_a_shown_release_owed(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The parts are tried whatever the others do: the device refuses the lowest water
+    temperature, the release still goes out and is read back — the hand-back is done, with a
+    warning, not owed and retried for a part that no longer matters."""
+    number = FakeNumber(rig.hass, refuse=LOWEST)
+    number.register()
+    await start(rig, **held_entity(number))
+    await rig.switch(True)
+    caplog.clear()
+    await rig.switch(False)
+    assert number.writes == [EXPECTED, 50.0]  # the lowest refused, the release through
+    assert not unit_of(rig).hand_back_owed
+    assert alarm(rig) == "off"
+    assert _logged(caplog, logging.WARNING, "Part of the hand-back failed") == 1
+
+
+@pytest.mark.parametrize("same_device", [True, False], ids=["same_device", "other_device"])
+async def test_an_outage_of_another_entity_of_the_same_device_is_a_trace(
+    rig: Rig, same_device: bool
+) -> None:
+    """X1's trace, as V5 needs it for two-valued targets: the heating switch changes with no
+    outage of its own, but another entity of the same device the plugin uses — the setpoint —
+    was unavailable within five minutes before: a lost command, written again, not another
+    controller. Negative: the setpoint on another device is no trace for the switch."""
+    from homeassistant.helpers import device_registry as dr
+
+    number = FakeNumber(rig.hass, lowest=20.0)  # keeps the value target owed: 15 is ignored
+    switch = FakeSwitch(rig.hass)
+    esp = MockConfigEntry(domain="esphome", data={})
+    esp.add_to_hass(rig.hass)
+    device = dr.async_get(rig.hass).async_get_or_create(
+        config_entry_id=esp.entry_id, identifiers={("esphome", "opentherm")}
+    )
+    other = dr.async_get(rig.hass).async_get_or_create(
+        config_entry_id=esp.entry_id, identifiers={("esphome", "another")}
+    )
+    for entity_id in (switch.entity_id, number.entity_id):  # registered before their states
+        domain, object_id = entity_id.split(".")
+        on = device if same_device or entity_id == switch.entity_id else other
+        entry = er.async_get(rig.hass).async_get_or_create(
+            domain, "esphome", object_id, suggested_object_id=object_id, device_id=on.id
+        )
+        assert entry.entity_id == entity_id
+    number.register()
+    switch.register()
+    control = held_entity(
+        number, hand_back_value=15, ch_entity=switch.entity_id, ch_write_type="held"
+    )
+    await start(rig, **control)
+    await rig.switch(True)
+    await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
+    await rig.switch(False)
+    assert switch.on
+    number.set_available(False)  # the device restarts: its setpoint entity drops out...
+    number.set_available(True)
+    switch.on = False  # ...and its heating switch comes back off, never seen unavailable
+    switch.publish()
+    await rig.advance(10)
+    if same_device:
+        assert switch.writes[-1] is True  # a lost command: "on" written again
+        assert switch.on
+        assert issue(rig, "hand_back_taken_by_other") is None
+    else:
+        assert switch.writes.count(True) == 2  # the session's and the hand-back's only
+        assert issue(rig, "hand_back_taken_by_other") is not None

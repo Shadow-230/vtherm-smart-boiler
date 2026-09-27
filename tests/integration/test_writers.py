@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.vtherm_smart_boiler.control_config import parse_control
+from custom_components.vtherm_smart_boiler.core.hand_back import CheckKind, CheckSource
 from custom_components.vtherm_smart_boiler.core.installation import (
     Boiler,
     BoilerClass,
@@ -19,6 +22,7 @@ from custom_components.vtherm_smart_boiler.transport import writers
 from custom_components.vtherm_smart_boiler.transport.writers import (
     EntityWriter,
     HandBackCheck,
+    HandBackFailed,
     OpenthermGwWriter,
     OtgwMqttWriter,
     WriteError,
@@ -28,6 +32,7 @@ from custom_components.vtherm_smart_boiler.transport.writers import (
 
 INSTALLATION = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
 READ_BACK = "sensor.gw_control_setpoint"
+LOWEST = 25.0  # the lowest water temperature set (the hard minimum's default)
 GATEWAYS = {
     "opentherm_gw": {"write_path": "opentherm_gw", "gateway_id": "gw1"},
     "otgw_mqtt": {"write_path": "otgw_mqtt", "mqtt_top": "OTGW", "mqtt_node": "otgw-1"},
@@ -78,7 +83,9 @@ async def test_opentherm_gw_writer(hass: HomeAssistant) -> None:
     assert calls == [
         ("opentherm_gw", "set_control_setpoint", {"gateway_id": "gw1", "temperature": 45.0}),
         ("opentherm_gw", "set_central_heating_ovrd", {"gateway_id": "gw1", "ch_override": False}),
-        # The gateway keeps a CH=0 through CS=0 (PIC 6.6): CH=1 first, then the setpoint.
+        # The safe hand-back: the lowest water temperature, then CH=1 — the gateway keeps a
+        # CH=0 through CS=0 (PIC 6.6) — then the release.
+        ("opentherm_gw", "set_control_setpoint", {"gateway_id": "gw1", "temperature": LOWEST}),
         ("opentherm_gw", "set_central_heating_ovrd", {"gateway_id": "gw1", "ch_override": True}),
         ("opentherm_gw", "set_control_setpoint", {"gateway_id": "gw1", "temperature": 0}),
     ]
@@ -118,6 +125,7 @@ async def test_mqtt_writer(hass: HomeAssistant) -> None:
     assert calls == [
         ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/ctrlsetpt", "payload": "38.3"}),
         ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/chenable", "payload": "1"}),
+        ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/ctrlsetpt", "payload": "25.0"}),
         ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/chenable", "payload": "1"}),
         ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/ctrlsetpt", "payload": "0"}),
     ]
@@ -143,13 +151,26 @@ async def test_entity_writer_with_value_hand_back(hass: HomeAssistant) -> None:
     assert isinstance(writer, EntityWriter)
     await writer.write_setpoint(41.0)
     await writer.write_heating(False)
-    checks = await writer.hand_back()
-    # Done only once each target shows it: the switch on, the setpoint at the hand-back value.
-    assert checks == (HandBackCheck("switch.ch", "on"), HandBackCheck("number.flow", 0.0))
+    checks = await writer.hand_back(release_from=41.0)
+    # Done only once each target shows it: the switch on, the setpoint at the hand-back value
+    # or — expiring — away from the plugin's value and the lowest. No read-back but the
+    # written entities themselves: unverified.
+    assert checks == (
+        HandBackCheck("switch.ch", "on", CheckKind.SWITCH, CheckSource.SELF),
+        HandBackCheck(
+            "number.flow",
+            0.0,
+            CheckKind.LEAVES_VALUE,
+            CheckSource.SELF,
+            release_from=41.0,
+            lowest=LOWEST,
+        ),
+    )
     ch = {"entity_id": "switch.ch"}
     assert calls == [
         ("number", "set_value", {"entity_id": "number.flow", "value": 41.0}),
         ("switch", "turn_off", ch),
+        ("number", "set_value", {"entity_id": "number.flow", "value": LOWEST}),  # the lowest
         ("switch", "turn_on", ch),  # the heating override is cleared: the boiler heats itself
         ("number", "set_value", {"entity_id": "number.flow", "value": 0.0}),
     ]
@@ -160,8 +181,8 @@ async def test_entity_writer_with_value_hand_back(hass: HomeAssistant) -> None:
     }
     calls.clear()
     await writer.write_setpoint(42.0)
-    await writer.hand_back()  # the switch was not touched this session: left alone
-    assert ("switch", "turn_on", ch) not in calls
+    await writer.hand_back()  # untouched this session: on all the same, as the effect says (S-27)
+    assert ("switch", "turn_on", ch) in calls
 
 
 @pytest.mark.parametrize("ch_write_type", ["persistent", "unknown"])
@@ -200,12 +221,15 @@ async def test_entity_writer_switch_and_timeout_hand_back(hass: HomeAssistant) -
     external = {"entity_id": "input_boolean.external_control"}
     await switch.write_setpoint(40.0)
     await switch.write_setpoint(41.0)
-    assert await switch.hand_back() == (HandBackCheck("input_boolean.external_control", "off"),)
+    assert await switch.hand_back() == (
+        HandBackCheck("input_boolean.external_control", "off", CheckKind.SWITCH, CheckSource.SELF),
+    )
     await switch.write_setpoint(42.0)
     assert calls == [
         ("input_boolean", "turn_on", external),  # control is taken once per session
         ("input_number", "set_value", {"entity_id": "input_number.flow", "value": 40.0}),
         ("input_number", "set_value", {"entity_id": "input_number.flow", "value": 41.0}),
+        ("input_number", "set_value", {"entity_id": "input_number.flow", "value": LOWEST}),
         ("input_boolean", "turn_off", external),
         ("input_boolean", "turn_on", external),
         ("input_number", "set_value", {"entity_id": "input_number.flow", "value": 42.0}),
@@ -221,8 +245,13 @@ async def test_entity_writer_switch_and_timeout_hand_back(hass: HomeAssistant) -
     timeout = make_writer(
         hass, options(write_path="entity", setpoint_entity="input_number.flow", hand_back="timeout")
     )
-    assert await timeout.hand_back() == ()
-    assert calls == []  # nothing written: the device's timeout hands back
+    [check] = await timeout.hand_back(baseline=45.0)
+    assert check.kind is CheckKind.BACK_TO_BASELINE
+    assert check.baseline == 45.0
+    # Only the lowest: the device's own timeout hands back.
+    assert calls == [
+        ("input_number", "set_value", {"entity_id": "input_number.flow", "value": LOWEST})
+    ]
     assert timeout.services == {("input_number", "set_value")}
 
 
@@ -279,8 +308,11 @@ async def test_each_hand_back_step_is_tried_whatever_the_others_do(hass: HomeAss
         ),
     )
     with pytest.raises(WriteError, match=r"switch\.turn_on"):
-        await writer.hand_back(full=True)
-    assert calls == [("number", "set_value", {"entity_id": "number.flow", "value": 0.0})]
+        await writer.hand_back()
+    assert calls == [
+        ("number", "set_value", {"entity_id": "number.flow", "value": LOWEST}),
+        ("number", "set_value", {"entity_id": "number.flow", "value": 0.0}),
+    ]
 
 
 @pytest.mark.parametrize("state", [None, "unavailable"])
@@ -345,14 +377,16 @@ async def test_a_target_without_a_value_yet_is_written(hass: HomeAssistant) -> N
     assert ("number", "set_value", {"entity_id": "number.flow", "value": 0.0}) in calls
 
 
-async def test_an_otgw_hand_back_tries_both_steps(hass: HomeAssistant) -> None:
-    """CH=1 and CS=0 are each tried whatever the other does; a failure is raised at the end."""
+async def test_an_otgw_hand_back_tries_every_part(hass: HomeAssistant) -> None:
+    """CS=<lowest>, CH=1 and CS=0 are each tried whatever the others do; a failure is raised
+    at the end."""
     calls = record(hass, ("opentherm_gw", "set_control_setpoint"))  # CH's service is missing
     writer = make_writer(hass, options(write_path="opentherm_gw", gateway_id="gw1"))
     with pytest.raises(WriteError, match="set_central_heating_ovrd"):
         await writer.hand_back()
     assert calls == [
-        ("opentherm_gw", "set_control_setpoint", {"gateway_id": "gw1", "temperature": 0})
+        ("opentherm_gw", "set_control_setpoint", {"gateway_id": "gw1", "temperature": LOWEST}),
+        ("opentherm_gw", "set_control_setpoint", {"gateway_id": "gw1", "temperature": 0}),
     ]
 
 
@@ -420,9 +454,10 @@ async def test_the_hand_back_value_goes_in_the_entitys_unit(hass: HomeAssistant)
             hand_back_value_effect="own_control",
         ),
     )
-    checks = await writer.hand_back()
-    assert calls[-1][2]["value"] == pytest.approx(104.0)
-    assert checks == (HandBackCheck("number.flow", 40.0),)  # read back in °C
+    [check] = await writer.hand_back()
+    assert [call[2]["value"] for call in calls] == [pytest.approx(77.0), pytest.approx(104.0)]
+    assert check.expected == 40.0  # read back in °C
+    assert check.kind is CheckKind.VALUE  # held
 
 
 # --- V4: a gateway's hand-back is judged by its read-back; cancels and caps -------------------
@@ -442,9 +477,18 @@ async def test_a_gateway_hand_back_is_judged_by_its_read_back(
     before = hass.states.get(READ_BACK)
     writer = make_writer(hass, options(**GATEWAYS[path], confirmed_entity=READ_BACK))
     checks = await writer.hand_back(release_from=release_from)
-    assert checks == (HandBackCheck(READ_BACK, release_from, leaves=True),)
+    assert checks == (
+        HandBackCheck(
+            READ_BACK,
+            0.0,  # CS=0 read back
+            CheckKind.LEAVES_VALUE,
+            CheckSource.SEPARATE,
+            release_from=release_from,
+            lowest=LOWEST,
+        ),
+    )
     assert checks[0].before is before  # the read-back as it stood before the writes
-    assert len(calls) == 2  # both parts written first
+    assert len(calls) == 3  # every part written first
 
 
 @pytest.mark.parametrize("path", list(GATEWAYS))
@@ -457,7 +501,7 @@ async def test_a_gateway_hand_back_without_a_read_back_cannot_count(
     writer = make_writer(hass, options(**GATEWAYS[path]))
     with pytest.raises(WriteError, match="read-back"):
         await writer.hand_back(release_from=45.0)
-    assert len(calls) == 2  # written all the same
+    assert len(calls) == 3  # written all the same
 
 
 async def test_a_cancel_inside_a_service_is_a_failed_write(hass: HomeAssistant) -> None:
@@ -483,7 +527,7 @@ async def test_a_cancel_inside_a_service_is_a_failed_write(hass: HomeAssistant) 
         await writer.write_setpoint(45.0)
     with pytest.raises(WriteError, match="cancelled inside the service"):
         await writer.hand_back()
-    assert calls == [45.0, 0]
+    assert calls == [45.0, LOWEST, 0]
 
 
 async def test_a_real_cancel_passes_through_the_writer(hass: HomeAssistant) -> None:
@@ -529,3 +573,230 @@ async def test_a_hand_back_write_can_be_capped(
     async with asyncio.timeout(5.0):  # well below the usual cap, set to an hour here
         with pytest.raises(WriteError):
             await writer.hand_back(write_timeout_s=0.05)
+
+
+# --- V5: the safe hand-back ---------------------------------------------------------------------
+
+NUMBER_SERVICES = (("number", "set_value"), ("switch", "turn_on"), ("switch", "turn_off"))
+ENTITY_PATH = {
+    "write_path": "entity",
+    "setpoint_entity": "number.flow",
+    "write_type": "held",
+    "ch_entity": "switch.ch",
+    "ch_write_type": "held",
+    "confirmed_entity": "sensor.flow_setpoint",
+    "hard_min": 22.0,
+}
+ORDERS = {
+    "opentherm_gw": (
+        GATEWAYS["opentherm_gw"],
+        [
+            ("opentherm_gw", "set_control_setpoint", {"gateway_id": "gw1", "temperature": 22.0}),
+            (
+                "opentherm_gw",
+                "set_central_heating_ovrd",
+                {"gateway_id": "gw1", "ch_override": True},
+            ),
+            ("opentherm_gw", "set_control_setpoint", {"gateway_id": "gw1", "temperature": 0}),
+        ],
+    ),
+    "otgw_mqtt": (
+        GATEWAYS["otgw_mqtt"],
+        [
+            ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/ctrlsetpt", "payload": "22.0"}),
+            ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/chenable", "payload": "1"}),
+            ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/ctrlsetpt", "payload": "0"}),
+        ],
+    ),
+    "value_own_control": (
+        ENTITY_PATH
+        | {"hand_back": "value", "hand_back_value": 50, "hand_back_value_effect": "own_control"},
+        [
+            ("number", "set_value", {"entity_id": "number.flow", "value": 22.0}),
+            ("switch", "turn_on", {"entity_id": "switch.ch"}),
+            ("number", "set_value", {"entity_id": "number.flow", "value": 50.0}),
+        ],
+    ),
+    "value_heating_stops": (
+        ENTITY_PATH
+        | {"hand_back": "value", "hand_back_value": 10, "hand_back_value_effect": "heating_stops"},
+        [
+            ("number", "set_value", {"entity_id": "number.flow", "value": 22.0}),
+            ("number", "set_value", {"entity_id": "number.flow", "value": 10.0}),
+        ],  # the heating switch left as it is (S-27)
+    ),
+    "timeout": (
+        ENTITY_PATH | {"hand_back": "timeout", "write_type": "expiring", "topology": "virtual"},
+        [
+            ("number", "set_value", {"entity_id": "number.flow", "value": 22.0}),
+            ("switch", "turn_on", {"entity_id": "switch.ch"}),
+        ],  # then silence: the device's own timeout releases
+    ),
+    "switch": (
+        ENTITY_PATH
+        | {
+            "hand_back": "switch",
+            "hand_back_entity": "switch.external",
+            "hand_back_entity_write_type": "held",
+            "topology": "virtual",
+        },
+        [
+            ("number", "set_value", {"entity_id": "number.flow", "value": 22.0}),
+            ("switch", "turn_on", {"entity_id": "switch.ch"}),
+            ("switch", "turn_off", {"entity_id": "switch.external"}),
+        ],
+    ),
+}
+
+
+@pytest.mark.parametrize("path", list(ORDERS))
+async def test_the_hand_back_order_per_path(hass: HomeAssistant, path: str) -> None:
+    """The safe hand-back (the user's decision of 2026-09-26/27): the lowest water temperature,
+    heating on where the boiler returns to a thermostat or its own control (on a gateway always
+    CH=1), then the release — the hand-back value, the external switch off, nothing more for
+    the timeout, CS=0 on a gateway."""
+    calls = record(hass, *GATEWAY_SERVICES, *NUMBER_SERVICES)
+    hass.states.async_set(READ_BACK, "45.0", {"unit_of_measurement": "°C"})
+    hass.states.async_set("sensor.flow_setpoint", "45.0", {"unit_of_measurement": "°C"})
+    present(hass, "number.flow", "switch.ch", "switch.external")
+    data, order = ORDERS[path]
+    writer = make_writer(hass, options(**{"confirmed_entity": READ_BACK} | data | {"hard_min": 22}))
+    await writer.hand_back(release_from=45.0)
+    assert calls == order
+
+
+@pytest.mark.parametrize("path", list(GATEWAYS))
+async def test_a_stand_alone_gateway_still_gets_ch_1_at_hand_back(
+    hass: HomeAssistant, path: str
+) -> None:
+    """CH=1 only clears the plugin's own CH=0 flag, which the gateway would keep through CS=0 and
+    mask any later demand: it is not the "heating on" a stopping hand-back leaves out (S-27).
+    Stand-alone, CS=0 still leaves the boiler without demand."""
+    calls = record(hass, *GATEWAY_SERVICES)
+    hass.states.async_set(READ_BACK, "45.0", {"unit_of_measurement": "°C"})
+    data = GATEWAYS[path] | {"topology": "gateway_standalone", "confirmed_entity": READ_BACK}
+    await make_writer(hass, options(**data)).hand_back(release_from=45.0)
+    heating = [c for c in calls if c[1] == "set_central_heating_ovrd" or "chenable" in str(c)]
+    assert len(heating) == 1
+    assert calls.index(heating[0]) == 1  # between the lowest and the release
+
+
+@pytest.mark.parametrize("lowest_fails", [False, True], ids=["not_shown", "write_fails"])
+async def test_the_hand_back_does_not_wait_between_its_parts(
+    hass: HomeAssistant, lowest_fails: bool
+) -> None:
+    """The parts follow one another at once: a read-back that never shows the lowest water
+    temperature — or a write of it that fails — holds up neither the heating part nor the
+    release, which go out in the same attempt; the failure is raised at the end, with what the
+    targets must show all the same."""
+    moments: list[float] = []
+    loop = asyncio.get_running_loop()
+
+    async def handle(call: ServiceCall) -> None:
+        moments.append(loop.time())
+        if lowest_fails and call.data.get("value") == 22.0:
+            raise HomeAssistantError("the device refused it")
+
+    for domain, service in NUMBER_SERVICES:
+        hass.services.async_register(domain, service, handle)
+    hass.states.async_set("sensor.flow_setpoint", "60.0", {"unit_of_measurement": "°C"})
+    present(hass, "number.flow", "switch.ch")
+    data, _order = ORDERS["value_own_control"]
+    writer = make_writer(hass, options(**data))
+    if lowest_fails:
+        with pytest.raises(HandBackFailed, match="refused") as failed:
+            await writer.hand_back(release_from=60.0)
+        checks = failed.value.checks
+    else:
+        checks = await writer.hand_back(release_from=60.0)
+    assert len(moments) == 3  # the lowest, the heating switch, the release
+    assert moments[-1] - moments[0] < 1.0  # no wait between them
+    assert [check.key for check in checks] == ["switch.ch", "number.flow"]
+    value = checks[1]
+    assert value.entity_id == "sensor.flow_setpoint"  # the separate read-back judges it
+    assert value.written is not lowest_fails  # every part of the release target, or not
+
+
+@pytest.mark.parametrize(
+    ("confirmed", "assumed", "source"),
+    [
+        ("sensor.flow_setpoint", None, CheckSource.SEPARATE),
+        ("number.flow", None, CheckSource.SELF),
+        (None, None, CheckSource.SELF),
+        ("number.flow", "number.flow", CheckSource.ASSUMED),
+        ("sensor.flow_setpoint", "sensor.flow_setpoint", CheckSource.ASSUMED),
+        ("sensor.flow_setpoint", "number.flow", CheckSource.SEPARATE),
+    ],
+)
+async def test_what_confirms_a_release(
+    hass: HomeAssistant, confirmed: str | None, assumed: str | None, source: CheckSource
+) -> None:
+    """S-09: a separate read-back without ``assumed_state`` confirms; the written entity itself
+    is the same check, unverified; an optimistic entity is no check at all."""
+    record(hass, *NUMBER_SERVICES)
+    for entity in ("number.flow", "sensor.flow_setpoint", "switch.ch"):
+        attributes: dict[str, Any] = {"unit_of_measurement": "°C"}
+        if entity == assumed:
+            attributes["assumed_state"] = True
+        hass.states.async_set(entity, "on" if entity == "switch.ch" else "45", attributes)
+    data, _order = ORDERS["value_own_control"]
+    writer = make_writer(hass, options(**data | {"confirmed_entity": confirmed}))
+    heating, value = await writer.hand_back()
+    assert value.source is source
+    assert value.held  # the setpoint is declared held
+    assert value.key == "number.flow"
+    assert heating.source is CheckSource.SELF  # a switch has no separate report
+
+
+async def test_no_lowest_is_left_without_a_release(hass: HomeAssistant) -> None:
+    """Negative: without a hand-back method there is no release to follow the lowest water
+    temperature, which a device that keeps its values would hold for good: nothing is written.
+    (Control is blocked without one; this guards a unit built from options that lost it.)"""
+    calls = record(hass, *NUMBER_SERVICES)
+    present(hass, "number.flow")
+    writer = make_writer(hass, options(write_path="entity", setpoint_entity="number.flow"))
+    assert await writer.hand_back(release_from=45.0) == ()
+    assert calls == []
+
+
+async def test_an_expiring_external_switch_is_due_again_every_keep_alive(
+    hass: HomeAssistant, freezer: Any
+) -> None:
+    """P-40: an expiring external-control switch is turned on at the take, again once a
+    keep-alive has passed — a clock set back counts as passed — and never before; a held one
+    only at the take; after the hand-back, not at all."""
+    from datetime import timedelta
+
+    calls = record(hass, *NUMBER_SERVICES)
+    present(hass, "number.flow", "switch.external")
+    base = {
+        "write_path": "entity",
+        "setpoint_entity": "number.flow",
+        "write_type": "held",
+        "hand_back": "switch",
+        "hand_back_entity": "switch.external",
+    }
+    on = ("switch", "turn_on", {"entity_id": "switch.external"})
+    expiring = make_writer(hass, options(**base, hand_back_entity_write_type="expiring"))
+    await expiring.keep_alive()
+    assert calls == []  # nothing taken yet: nothing to keep alive
+    await expiring.write_setpoint(40.0)
+    await expiring.keep_alive()
+    assert calls.count(on) == 1  # not before a keep-alive has passed
+    freezer.tick(timedelta(seconds=30))
+    await expiring.keep_alive()
+    assert calls.count(on) == 2
+    freezer.move_to(datetime.now(UTC) - timedelta(hours=1))  # the clock set back
+    await expiring.keep_alive()
+    assert calls.count(on) == 3
+    await expiring.hand_back()
+    freezer.tick(timedelta(seconds=60))
+    await expiring.keep_alive()
+    assert calls.count(on) == 3  # handed back: nothing kept alive
+    calls.clear()
+    held = make_writer(hass, options(**base, hand_back_entity_write_type="held"))
+    await held.write_setpoint(40.0)
+    freezer.tick(timedelta(seconds=90))
+    await held.keep_alive()
+    await held.write_setpoint(41.0)
+    assert calls.count(on) == 1  # once per take

@@ -488,17 +488,19 @@
           "hand_back": "Sposób oddania sterowania",
           "hand_back_value": "Wartość oddania",
           "hand_back_value_effect": "Co robi wartość oddania",
-          "hand_back_entity": "Przełącznik sterowania zewnętrznego"
+          "hand_back_entity": "Przełącznik sterowania zewnętrznego",
+          "hand_back_entity_write_type": "Typ zapisu przełącznika sterowania zewnętrznego"
         },
         "data_description": {
           "setpoint_entity": "Liczba (number albo input_number), która ustawia temperaturę zasilania kotła.",
           "write_type": "Wygasający: urządzenie porzuca wartość, jeśli nie jest powtarzana; jest powtarzana co 30 s. Trzymany: urządzenie zachowuje wartość i samo ją przekazuje; zapis tylko przy zmianie. Trwały lub nieznany (domyślnie): zapisywany w pamięci kotła albo może być — wtyczka nigdy nie zapisuje trwałej pamięci kotła, więc sterowanie z taką encją jest niedostępne. Ryzyko: parametr zapisywany w pamięci, zadeklarowany jako wygasający, byłby zapisywany co 30 s, około 2900 razy na dobę, i zużyłby pamięć kotła.",
-          "ch_entity": "Opcjonalny: przełącznik, który włącza i wyłącza grzanie, włączany z powrotem przy oddaniu sterowania; poniżej trzeba podać jego typ zapisu. Bez przełącznika „wyłącz” jest zapisywane jako niska nastawa. Nigdy nie wybieraj przełącznika zapisywanego w pamięci kotła (np. parametru kotła „grzanie aktywne”): każde przełączenie by ją zużywało. Włączony ma pozwalać grzać: flaga, która włączona zatrzymuje grzanie (jak „heating off” w EMS-ESP), odwraca każde polecenie i nie może być tu użyta.",
+          "ch_entity": "Opcjonalny: przełącznik, który włącza i wyłącza grzanie, włączany z powrotem przy oddaniu tam, gdzie kocioł wraca do własnego sterowania albo termostatu, a zostawiany bez zmian tam, gdzie oddanie zatrzymuje grzanie; poniżej trzeba podać jego typ zapisu. Bez przełącznika „wyłącz” jest zapisywane jako niska nastawa. Nigdy nie wybieraj przełącznika zapisywanego w pamięci kotła (np. parametru kotła „grzanie aktywne”): każde przełączenie by ją zużywało. Włączony ma pozwalać grzać: flaga, która włączona zatrzymuje grzanie (jak „heating off” w EMS-ESP), odwraca każde polecenie i nie może być tu użyta.",
           "ch_write_type": "Potrzebny przy przełączniku grzania: co urządzenie robi z jego stanem. Wygasający: porzucany, jeśli nie jest powtarzany; powtarzany co 30 s. Trzymany: urządzenie go zachowuje. Wtyczka nigdy nie zapisuje trwałej pamięci kotła, więc przełącznik zadeklarowany jako trwały lub nieznany jest odrzucany.",
-          "hand_back": "Jak sterowanie wraca do kotła przy każdym wyjściu: zapis wartości oddania; zaprzestanie zapisów, po którym przejmuje własny limit czasu urządzenia (tylko dla zapisów wygasających); albo wyłączenie przełącznika, który włącza sterowanie zewnętrzne. Wymagany; bez niego sterowania nie da się włączyć.",
-          "hand_back_value": "Nastawa zapisywana przy oddaniu, w °C, dla metody wartości: wartość, która przywraca kotłowi własne sterowanie, albo ta, którą ma zachować. 0 na jednych urządzeniach znaczy „własne sterowanie”, na innych „bez grzania”. Wymagana przy metodzie wartości; oddanie liczy się jako wykonane dopiero, gdy encja pokaże tę wartość.",
+          "hand_back": "Jak sterowanie wraca do kotła przy każdym wyjściu. Każde oddanie najpierw zapisuje najniższą temperaturę wody, potem włącza z powrotem przełącznik grzania tam, gdzie kocioł wraca do własnego sterowania albo termostatu, a potem wykonuje wybrany tu sposób: zapis wartości oddania; zaprzestanie zapisów, po którym przejmuje własny limit czasu urządzenia (tylko dla zapisów wygasających); albo wyłączenie przełącznika, który włącza sterowanie zewnętrzne. Wymagany; bez niego sterowania nie da się włączyć.",
+          "hand_back_value": "Nastawa zapisywana przy oddaniu, w °C, dla metody wartości: wartość, która przywraca kotłowi własne sterowanie, albo ta, którą ma zachować. 0 na jednych urządzeniach znaczy „własne sterowanie”, na innych „bez grzania”. Wymagana przy metodzie wartości. Nie może przekraczać najwyższej nastawy zasilania ani maksimum obiegu i nigdy nie jest do nich przycinana; oddanie liczy się jako wykonane, gdy pokaże ją odczyt zwrotny.",
           "hand_back_value_effect": "Wymagane przy metodzie wartości: co urządzenie robi z wartością oddania — wraca jego własne sterowanie albo grzanie ustaje. Przełącznik sterowania pokazuje to jako skutek oddania.",
-          "hand_back_entity": "Dla sposobu „przełącznik”: przełącznik, który włącza sterowanie zewnętrzne. Jest włączany na początku sterowania i wyłączany przy oddaniu — więc nigdy ustawienie, które urządzenie zapisuje w pamięci."
+          "hand_back_entity": "Dla sposobu „przełącznik”: przełącznik, który włącza sterowanie zewnętrzne. Jest włączany na początku sterowania i wyłączany przy oddaniu — więc nigdy ustawienie, które urządzenie zapisuje w pamięci; poniżej trzeba podać jego typ zapisu.",
+          "hand_back_entity_write_type": "Potrzebny przy metodzie przełącznika: co urządzenie robi ze stanem przełącznika. Wygasający: znika, jeśli nie jest powtarzany — włączany ponownie co 30 s, dopóki sterowanie trzyma kocioł. Trzymany: urządzenie go zachowuje — włączany raz za każdym razem, gdy sterowanie przejmuje kocioł. Trwały albo nieznany (domyślnie): może być zapisywany w pamięci kotła, którą każde przełączenie zużywa, więc sterowanie z nim jest niedostępne."
         }
       },
       "control_gateway": {
@@ -652,7 +654,10 @@
       "topology_not_for_path": "Ta ścieżka zapisu prowadzi przez wbudowaną bramkę OpenTherm: wybierz jedno z podłączeń bramki.",
       "gateway_unknown": "Żadna bramka OpenTherm skonfigurowana w Home Assistant nie ma tego identyfikatora: każdy zapis by się nie udał.",
       "mqtt_topic_invalid": "Wpisz poziom tematu tak, jak używa go firmware bramki, bez spacji i symboli wieloznacznych + i #.",
-      "modulation_not_percent": "Modulacja to procent zakresu kotła: wybierz czujnik w %."
+      "modulation_not_percent": "Modulacja to procent zakresu kotła: wybierz czujnik w %.",
+      "hand_back_entity_write_type_not_supported": "Zadeklaruj przełącznik sterowania zewnętrznego jako wygasający albo trzymany: wtyczka nigdy nie zapisuje do trwałej pamięci kotła.",
+      "hand_back_value_above_max": "Wartość oddania jest wyższa niż najwyższa nastawa zasilania albo maksimum obiegu: kocioł dostałby cieplejszą wodę, niż obieg dopuszcza.",
+      "off_setpoint_near_hand_back_value": "„Wyłączone” różni się od wartości oddania o mniej niż 0,5 K, a ta wartość oddaje kotłowi własne sterowanie: „wyłączone” oddałoby kocioł zamiast wyłączyć grzanie. Wybierz inną wartość."
     }
   },
   "selector": {
@@ -918,6 +923,17 @@
               "not_confirmed": "Niepotwierdzone: kocioł może to ignorować",
               "changed_from_outside": "Zmienione przez inny sterownik: zapisy wstrzymane",
               "unverified": "Niezweryfikowane: nic tego nie odczytuje"
+            }
+          },
+          "hand_back_confirmation": {
+            "name": "Odczyt oddania",
+            "state": {
+              "confirmed": "Potwierdzone przez urządzenie",
+              "confirmed_by_gateway": "Potwierdzone przez bramkę",
+              "unverified": "Niezweryfikowane: pokazuje je tylko zapisana encja",
+              "waiting": "Wysłane, czeka na odczyt",
+              "not_confirmed": "Niepotwierdzone: wysyłane ponownie co minutę",
+              "taken_by_other": "Wartość trzyma inny sterownik"
             }
           }
         }
@@ -1220,6 +1236,15 @@
     },
     "blocked_setpoint_unit_not_supported": {
       "message": "Jednostka encji nastawy nie jest jednostką temperatury (°C, °F lub K), więc zapisana wartość znaczyłaby dla niej coś innego: wybierz w opcjach encję nastawy temperatury zasilania kotła. Inne powody: {others}."
+    },
+    "blocked_hand_back_switch_not_writable": {
+      "message": "Zadeklaruj przełącznik sterowania zewnętrznego jako wygasający albo trzymany: wtyczka nigdy nie zapisuje do trwałej pamięci kotła. Inne powody: {others}."
+    },
+    "blocked_hand_back_value_above_max": {
+      "message": "Wartość oddania jest wyższa niż najwyższa nastawa zasilania albo maksimum obiegu: kocioł dostałby cieplejszą wodę, niż obieg dopuszcza. Inne powody: {others}."
+    },
+    "blocked_off_setpoint_near_hand_back_value": {
+      "message": "„Wyłączone” różni się od wartości oddania o mniej niż 0,5 K, a ta wartość oddaje kotłowi własne sterowanie: „wyłączone” oddałoby kocioł zamiast wyłączyć grzanie. Wybierz inną wartość. Inne powody: {others}."
     }
   },
   "issues": {
@@ -1261,6 +1286,10 @@
     "vt_reload_needed": {
       "title": "Część termostatów VT wymaga przeładowania, żeby pokazać wartości wtyczki",
       "description": "Te termostaty działały już, gdy wtyczka zarejestrowała się w Versatile Thermostat, i przejmą ją dopiero po przeładowaniu VT: {zones}. Przeładuj Versatile Thermostat, żeby pokazać na nich wartości ciepłej wody i grzejników wtyczki; do tego czasu pokazują je encje stref samej wtyczki. Nic innego od tego nie zależy."
+    },
+    "hand_back_taken_by_other": {
+      "title": "Po oddaniu kotłem steruje inny sterownik",
+      "description": "Wtyczka oddała kocioł, a inny sterownik — automatyzacja, własny program urządzenia albo inna integracja — trzyma teraz to, co wtyczka ustawiła: {target}. Wtyczka uznaje oddanie za wykonane i więcej tam nie zapisuje. Z termostatem albo własnym sterowaniem kotła grzanie idzie dalej pod nim; tam, gdzie oddanie zatrzymuje grzanie, kocioł grzeje tylko pod tym innym sterownikiem. Jeśli nie spodziewasz się innego sterownika, znajdź go."
     }
   }
 }

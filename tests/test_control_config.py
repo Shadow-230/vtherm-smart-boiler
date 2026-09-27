@@ -183,6 +183,9 @@ def test_every_blocker_is_listed() -> None:
         (OTGW, floor),
         (OTGW | {"count_threshold": 5}, RADIATORS),
         (ENTITY | {"off_setpoint": 30}, RADIATORS),
+        (ENTITY | {"hand_back": "switch", "hand_back_entity": "switch.external"}, RADIATORS),
+        (ENTITY | {"hand_back_value": 75}, RADIATORS),
+        (ENTITY | {"hand_back_value": 10}, RADIATORS),
     ]
     for data, installation in cases:
         found |= set(config_blockers(parse_control(data, RADIATORS, None), installation))
@@ -328,3 +331,116 @@ def test_a_passive_fixed_circuit_sets_the_floor_and_keeps_its_maximum() -> None:
     control = parse_control(OTGW, fixed, None).loop.control
     assert control.circuit_floor == 40.0
     assert control.circuit_max == 55.0
+
+
+# --- V5: the safe hand-back's options -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("write_type", "blocked"),
+    [
+        ("expiring", False),
+        ("held", False),
+        ("persistent", True),
+        ("unknown", True),
+        (None, True),  # no migration: an entry without it is blocked until declared
+        ("", True),
+    ],
+)
+def test_an_external_switch_of_unknown_write_type_blocks_control(
+    write_type: str | None, blocked: bool
+) -> None:
+    """P-40: the external-control switch declares its write type like every other target; one
+    the boiler may store is never written, so control is blocked with it."""
+    data = ENTITY | {"hand_back": "switch", "hand_back_entity": "switch.external"}
+    if write_type is not None:
+        data["hand_back_entity_write_type"] = write_type
+    options = parse_control(data, RADIATORS, None)
+    expected = WriteType(write_type) if write_type else WriteType.UNKNOWN
+    assert options.hand_back_entity_write_type is expected
+    blockers = config_blockers(options, RADIATORS)
+    assert ("hand_back_switch_not_writable" in blockers) is blocked
+    # Not asked of the other methods.
+    value = parse_control(ENTITY | {"hand_back_entity_write_type": "persistent"}, RADIATORS, None)
+    assert "hand_back_switch_not_writable" not in config_blockers(value, RADIATORS)
+
+
+@pytest.mark.parametrize(
+    ("value", "circuit_max", "boiler_max", "blocked"),
+    [
+        (70.0, None, None, False),  # at the hard maximum (default 70 °C)
+        (70.5, None, None, True),
+        (45.0, 40.0, None, True),  # the circuit's maximum
+        (40.0, 40.0, None, False),
+        (62.0, None, 60.0, True),  # the boiler's maximum
+        (0.0, 40.0, 60.0, False),  # exempt from the hard minimum only
+    ],
+)
+def test_a_hand_back_value_above_the_maximum_blocks_control(
+    value: float, circuit_max: float | None, boiler_max: float | None, blocked: bool
+) -> None:
+    """S-21: the hand-back value is exempt only from the lowest water temperature; above the
+    highest the boiler, the circuit or the plugin allows it blocks control, and it is never
+    clamped. Without a circuit maximum only the hard and the boiler maximum bound it."""
+    from custom_components.vtherm_smart_boiler.control_config import hand_back_value_problems
+
+    installation = Installation(
+        Boiler(BoilerClass.FLOW_SETPOINT),
+        (Circuit("main", max_flow=circuit_max),),
+        (Zone("climate.a", "main"),),
+    )
+    options = parse_control(ENTITY | {"hand_back_value": value}, installation, boiler_max)
+    assert options.hand_back_value == value  # never clamped
+    blockers = config_blockers(options, installation)
+    assert ("hand_back_value_above_max" in blockers) is blocked
+    assert ("hand_back_value_above_max" in hand_back_value_problems(options)) is blocked
+
+
+@pytest.mark.parametrize(
+    ("changes", "blocked"),
+    [
+        ({"hand_back_value": 10.0}, True),  # "off" at 10 °C: within 0.5 K
+        ({"hand_back_value": 10.5}, True),
+        ({"hand_back_value": 10.6}, False),
+        ({"hand_back_value": 9.5}, True),
+        ({"hand_back_value": 10.0, "hand_back_value_effect": "heating_stops"}, False),
+        ({"hand_back_value": 10.0, "ch_entity": "switch.ch", "ch_write_type": "held"}, False),
+        # A heating switch the boiler may store is not used: "off" goes as a low setpoint.
+        ({"hand_back_value": 10.0, "ch_entity": "switch.ch", "ch_write_type": "unknown"}, True),
+        ({"hand_back": "timeout", "write_type": "expiring"}, False),
+    ],
+)
+def test_off_near_an_own_control_hand_back_value_blocks_control(
+    changes: dict, blocked: bool
+) -> None:
+    """S-49: "off" sent as a low setpoint within 0.5 K of a hand-back value declared "the
+    device's own control resumes" would hand the boiler back instead of stopping heating."""
+    from custom_components.vtherm_smart_boiler.control_config import hand_back_value_problems
+
+    options = parse_control(ENTITY | changes, RADIATORS, None)
+    assert options.loop.off_setpoint == 10.0
+    blockers = config_blockers(options, RADIATORS)
+    assert ("off_setpoint_near_hand_back_value" in blockers) is blocked
+    assert ("off_setpoint_near_hand_back_value" in hand_back_value_problems(options)) is blocked
+
+
+@pytest.mark.parametrize(
+    ("changes", "on"),
+    [
+        ({"topology": "gateway_with_thermostat", "hand_back": "switch"}, True),
+        ({"topology": "gateway_standalone", "hand_back": "switch"}, False),
+        ({"topology": "virtual", "hand_back": "timeout"}, True),  # the device decides
+        ({"hand_back_value_effect": "own_control"}, True),
+        ({"hand_back_value_effect": "heating_stops"}, False),
+        ({"topology": "", "hand_back": "timeout"}, True),  # unknown: never off by itself
+    ],
+)
+def test_heating_goes_back_on_where_the_boiler_returns_to_its_own_control(
+    changes: dict, on: bool
+) -> None:
+    """S-27: the hand-back's heating part follows its effect — on where a thermostat or the
+    boiler's own control takes over, left as it is where the hand-back stops heating."""
+    from custom_components.vtherm_smart_boiler.control_config import hand_back_heating_on
+
+    options = parse_control(ENTITY | changes, RADIATORS, None)
+    assert hand_back_heating_on(options) is on

@@ -48,10 +48,12 @@ from .control_config import (
     INFO_ONLY_ALARMS,
     OTGW_PATHS,
     AlarmReaction,
+    ControlOptions,
     HandBack,
     Topology,
     ValueEffect,
     WritePath,
+    hand_back_value_problems,
 )
 from .core.alarms import (
     DEFAULT_FREQUENT_STARTS_PER_HOUR,
@@ -429,7 +431,16 @@ CURVE_KEYS = ("design_outdoor", "design_flow", "room", "exponent", "offset")
 # What a hand-back goes through: fixed while one is owed.
 HAND_BACK_KEYS = (
     "setpoint_entity", "ch_entity", "hand_back", "hand_back_value", "hand_back_value_effect",
-    "hand_back_entity", "gateway_id", "mqtt_top", "mqtt_node",
+    "hand_back_entity", "hand_back_entity_write_type", "gateway_id", "mqtt_top", "mqtt_node",
+)  # fmt: skip
+# What an absent hand-back answer means: the form fills in this default (an entry saved before
+# the answer existed has none).
+_HAND_BACK_DEFAULTS = {"hand_back_entity_write_type": WriteType.UNKNOWN.value}
+# The answers of the writable-entity step, dropped when the write path changes.
+ENTITY_STEP_KEYS = (
+    "setpoint_entity", "write_type", "ch_entity", "ch_write_type", "hand_back",
+    "hand_back_value", "hand_back_value_effect", "hand_back_entity", "hand_back_entity_write_type",
+    "gateway_id", "mqtt_top", "mqtt_node",
 )  # fmt: skip
 
 
@@ -470,6 +481,10 @@ def control_entity_schema(options: dict[str, Any]) -> vol.Schema:
                 "hand_back_value_effect", [e.value for e in ValueEffect]
             ),
             _optional("hand_back_entity", control): _entity(_ON_OFF_ENTITY),
+            vol.Required(
+                "hand_back_entity_write_type",
+                default=control.get("hand_back_entity_write_type", WriteType.UNKNOWN.value),
+            ): _select("write_type", [t.value for t in WriteType]),
         }
     )
 
@@ -588,11 +603,7 @@ def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
         return
     control = dict(options.get(CONTROL, {}))
     if control.get("write_path") != user_input["write_path"]:
-        for key in (
-            "setpoint_entity", "write_type", "ch_entity", "ch_write_type", "hand_back",
-            "hand_back_value", "hand_back_value_effect", "hand_back_entity", "gateway_id",
-            "mqtt_top", "mqtt_node",
-        ):  # fmt: skip
+        for key in ENTITY_STEP_KEYS:
             control.pop(key, None)
     _set_or_drop(
         control, user_input, ("write_path", "topology", "confirmed_entity", "ch_confirmed_entity")
@@ -602,11 +613,7 @@ def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
 
 def apply_control_details(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     control = dict(options.get(CONTROL, {}))
-    keys = (
-        "setpoint_entity", "write_type", "ch_entity", "ch_write_type", "hand_back",
-        "hand_back_value", "hand_back_value_effect", "hand_back_entity", "gateway_id",
-        "mqtt_top", "mqtt_node",
-    )  # fmt: skip
+    keys = ENTITY_STEP_KEYS
     _set_or_drop(control, user_input, tuple(k for k in keys if k in user_input or k in control))
     options[CONTROL] = control
 
@@ -711,12 +718,32 @@ def control_details_error(
         if not user_input.get("hand_back_value_effect"):
             # 0 means "no heat" on one device and "own control" on another: never assumed.
             return {"hand_back_value_effect": "hand_back_value_effect_missing"}
-    if method == HandBack.SWITCH and not user_input.get("hand_back_entity"):
-        return {"hand_back_entity": "hand_back_entity_missing"}
+    if method == HandBack.SWITCH:
+        if not user_input.get("hand_back_entity"):
+            return {"hand_back_entity": "hand_back_entity_missing"}
+        if user_input.get("hand_back_entity_write_type") not in writable:
+            # Turned on at every take and off at every hand-back: never a stored setting (P-40).
+            return {"hand_back_entity_write_type": "hand_back_entity_write_type_not_supported"}
     if method == HandBack.TIMEOUT and user_input.get("write_type") != WriteType.EXPIRING:
         # Only a value that lapses goes back on its own; any other would stay for good.
         return {"hand_back": "hand_back_timeout_not_expiring"}
     return {}
+
+
+def control_of(options: dict[str, Any]) -> ControlOptions | None:
+    """The control options as the plugin reads them; ``None`` while they cannot be read (the
+    save's own check then names the problem)."""
+    try:
+        return EntryConfig.from_options(options).control
+    except ConfigError, KeyError, TypeError, ValueError:
+        return None
+
+
+def hand_back_value_problem(options: dict[str, Any], problem: str) -> bool:
+    """Whether the options have this problem with the hand-back value (S-21, S-49), as the
+    blockers find it."""
+    control = control_of(options)
+    return control is not None and problem in hand_back_value_problems(control)
 
 
 def _outside(value: Any, bounds: tuple[float | None, float | None]) -> bool:
@@ -920,6 +947,10 @@ _PROBLEM_STEPS = {
     # the control steps were answered; what the hand-back goes through is picked there.
     "hand_back_pending": "control",
     "control_holds_boiler": "control",
+    # Found at the save: a later step lowered a maximum under the hand-back value, or moved
+    # "off" next to it.
+    "hand_back_value_above_max": "control_entity",
+    "off_setpoint_near_hand_back_value": "control_behaviour",
 }
 
 
@@ -927,6 +958,12 @@ def _given(data: Mapping[str, Any], key: str) -> Any:
     """An answer as given; an emptied field (``None`` or ``""``) is no answer."""
     found = data.get(key)
     return None if found in (None, "") else found
+
+
+def _hand_back_answer(data: Mapping[str, Any], key: str) -> Any:
+    """A hand-back answer as given, or the default the form fills in for it."""
+    found = _given(data, key)
+    return _HAND_BACK_DEFAULTS.get(key) if found is None else found
 
 
 def problem_step(code: str, subject: str | None) -> str:
@@ -1241,7 +1278,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         current = self.config_entry.options.get(CONTROL, {})
         shown = {str(marker) for marker in schema.schema}
         return any(
-            _given(user_input, key) != _given(current, key)
+            _hand_back_answer(user_input, key) != _hand_back_answer(current, key)
             for key in HAND_BACK_KEYS
             if key in shown
         )
@@ -1259,7 +1296,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         keys = ["write_path", *HAND_BACK_KEYS]
         if new.get("write_path") in OTGW_PATHS:
             keys.append("confirmed_entity")
-        return any(_given(new, key) != _given(current, key) for key in keys)
+        return any(_hand_back_answer(new, key) != _hand_back_answer(current, key) for key in keys)
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         menu = [
@@ -1297,6 +1334,11 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         problem = validate_problem(self.options)
         if problem is not None:
             return await self._back_to_problem(*problem)
+        control = control_of(self.options)
+        if control is not None and (problems := hand_back_value_problems(control)):
+            # A maximum lowered under the hand-back value, or "off" moved next to it, since the
+            # step that checks it (S-21, S-49): back to that step.
+            return await self._back_to_problem(problems[0], None)
         if self._saves_another_hand_back():
             # Checked again here, not only at the control steps: control may have taken the
             # boiler, or begun to owe it a hand-back, since they were answered (P-12). Nothing
@@ -1355,6 +1397,12 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 errors = control_details_error(
                     user_input, read_bounds(self.hass, user_input["setpoint_entity"])
                 )
+            if not errors and user_input.get("hand_back") == HandBack.VALUE:
+                candidate = copy.deepcopy(self.options)
+                apply_control_details(candidate, user_input)
+                if hand_back_value_problem(candidate, "hand_back_value_above_max"):
+                    # Never clamped: a clamped value would mean something else to the device.
+                    errors = {"hand_back_value": "hand_back_value_above_max"}
             blocker = await self._async_hand_back_blocker()
             if (
                 not errors
@@ -1467,6 +1515,8 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 float(user_input.get("off_setpoint", CONTROL_DEFAULTS["off_setpoint"])) >= hard_min
             ):
                 errors["off_setpoint"] = "off_setpoint_not_below_hard_min"
+            elif self._off_near_hand_back_value(user_input):
+                errors["off_setpoint"] = "off_setpoint_near_hand_back_value"
             elif count > len(self.options.get(ZONES, [])):
                 errors["count_threshold"] = "count_threshold_above_zones"
             elif count == 0 and not (
@@ -1481,6 +1531,13 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             data_schema=control_behaviour_schema(self.options),
             errors=errors,
         )
+
+    def _off_near_hand_back_value(self, user_input: dict[str, Any]) -> bool:
+        """S-49: "off" sent as a low setpoint next to a hand-back value that returns the boiler
+        to its own control would hand the boiler back instead of stopping heating."""
+        candidate = copy.deepcopy(self.options)
+        apply_control_behaviour(candidate, user_input)
+        return hand_back_value_problem(candidate, "off_setpoint_near_hand_back_value")
 
     def _setpoint_bounds(self) -> tuple[float | None, float | None]:
         """What the picked setpoint entity accepts; nothing to check on the gateway paths."""

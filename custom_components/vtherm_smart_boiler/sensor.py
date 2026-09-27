@@ -467,6 +467,7 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "unknown_zones",
             "room_sensor_lost_zones",
             "learning_paused",
+            "hand_back_confirmation",
         }
     )
 
@@ -490,6 +491,7 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "heating_on": status.heating_on,
             "heating_confirmation": status.heating_check,
             "hand_back_at": _time(status.hand_back_at),
+            "hand_back_confirmation": status.hand_back_check,
             "latched_by": list(status.latched_by),
             "unknown_zones": list(status.unknown_zones),
             "room_sensor_lost_zones": list(status.room_sensor_lost_zones),

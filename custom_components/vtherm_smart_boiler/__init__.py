@@ -181,6 +181,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     for key in (
         "hand_back_owed",
+        "hand_back_taken_by_other",
         "control_options_invalid",
         "auto_tpi_blocked",
         "learning_not_paused",

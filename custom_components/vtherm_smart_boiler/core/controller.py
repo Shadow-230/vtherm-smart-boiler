@@ -8,6 +8,8 @@ Order of precedence, checked on every tick:
    session: the user switching control off and on again (the control unit starts it).
 3. The boiler's signals are not fresh → no command (nothing is written without fresh data); if
    that lasts beyond the stale hand-back time, hand back once; control resumes with fresh data.
+   Before control takes the boiler, the read-back that would show its hand-back must hold a
+   value (P-21): until then nothing is written either.
 4. Otherwise heating on or off, decided at every step from frost protection and the zones'
    demand — VT's central mode and summer or winter reach the plugin through the zones, and
    nothing counted or timed holds heating against VT; and the
@@ -76,6 +78,7 @@ class Reason(StrEnum):
     PRECONDITION = "precondition"
     ALARM_HAND_BACK = "alarm_hand_back"
     BOILER_LINK_STALE = "boiler_link_stale"
+    READ_BACK_UNKNOWN = "read_back_unknown"  # nothing could show a hand-back got through
     OUTDOOR_SENSOR = "outdoor_sensor"
     OUTDOOR_WEATHER = "outdoor_weather"
     OUTDOOR_HELD = "outdoor_held"
@@ -147,6 +150,9 @@ class ControlInputs:
     blockers: tuple[str, ...] = ()  # preconditions not met
     hand_back_alarms: tuple[str, ...] = ()  # active alarms whose reaction is hand-back
     boiler_link: bool = True  # the boiler's own signals are fresh
+    # The read-back that shows a hand-back got through holds a value: control takes the boiler
+    # only with it (P-21, the gateway paths); once controlling, its loss decides nothing here.
+    read_back_known: bool = True
     flame: bool | None = None
     dhw: bool | None = None
     outdoor_sensor: float | None = None
@@ -277,6 +283,11 @@ def decide(
         waiting = replace(state, mode=mode, reasons=reasons, decided_at=None)
         return waiting, ControlDecision(mode, None, reasons=reasons)
     state = replace(state, waiting_since=None)
+    if not state.controlling and not inputs.read_back_known:
+        # A boiler taken now could never be seen handed back: nothing is written yet (P-21).
+        reasons = (Reason.READ_BACK_UNKNOWN,)
+        waiting = replace(state, mode=ControlMode.WAITING_DATA, reasons=reasons, decided_at=None)
+        return waiting, ControlDecision(ControlMode.WAITING_DATA, None, reasons=reasons)
 
     frost = frost_needed(inputs.zones, now, config.zone_max_age_s, state.frost, config.frost)
     return _heating_decision(state, inputs, config, frost)

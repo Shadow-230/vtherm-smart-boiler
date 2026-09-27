@@ -3,33 +3,50 @@
 Each writer knows the services it may call — the list a test checks. A write that fails raises
 ``WriteError``; the caller reports it and never assumes it applied. Home Assistant skips an
 unavailable entity without an error (and a missing one with a log line only), so a write to an
-entity first checks that it is there and available; an entity hand-back also says what each
-target must show once it has taken the hand-back, and it is done only when they do.
+entity first checks that it is there and available.
+
+Every hand-back is the safe hand-back (``SCOPE.md`` §5; the user's decision of 2026-09-26/27), its
+parts one after another at once, each tried whatever the others do, waiting for no read-back:
+(1) the water to the lowest water temperature set; (2) heating on where the boiler returns to a
+thermostat or its own control — on a gateway always ``CH=1``; (3) the release — ``CS=0``, the
+hand-back value, the external-control switch off, or nothing (the device's own timeout). It
+returns what each target must show once the hand-back reached it (``HandBackCheck``); only that
+confirmation waits for the read-back. A relay goes to its rest state instead, through a writer of
+its own (X8).
 
 OpenTherm Gateway facts (OTGW firmware documentation and the PIC 6.6 source,
 research/2026-09-24-otgw-topologies-f3-f7.md): a control-setpoint override of 8 °C or more lapses
 unless repeated within a minute; one between 1 and 7 °C never lapses and would lock out a
 thermostat for good if Home Assistant stopped, so it is refused; 0 cancels the override. ``CH=0``
 sets a flag the gateway keeps through ``CS=0`` and the override's lapse until ``CH=1`` or a reset:
-it masks CH enable under any later setpoint override and the demand of an on/off thermostat. So
-a hand-back sends ``CH=1`` first, then ``CS=0`` — should the second fail, the boiler heats at most
-until the override lapses, rather than staying cold while the thermostat calls. The plugin never
-touches the DHW-enable override.
+it masks CH enable under any later setpoint override and the demand of an on/off thermostat. So a
+hand-back always sends ``CH=1`` before ``CS=0`` — it only clears the plugin's own flag; stand-alone,
+``CS=0`` still leaves the boiler without demand. The plugin never touches the DHW-enable override.
 
 A gateway service's normal return proves nothing: pyotgw returns after a timeout of its own, and
 an MQTT publish once it is written to the socket. So a gateway's hand-back counts only once its
-setpoint read-back has left the value the plugin wrote (``HandBackCheck.leaves``).
+setpoint read-back shows the release.
 """
 
 from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
-from ..control_config import ControlOptions, HandBack, WritePath
+from homeassistant.util import dt as dt_util
+
+from ..control_config import (
+    KEEPALIVE_S,
+    ControlOptions,
+    HandBack,
+    WritePath,
+    hand_back_heating_on,
+)
+from ..core.guards import WriteType
+from ..core.hand_back import CheckKind, CheckSource, ReleaseRule
 from ..units import celsius_to, parse_number
 
 if TYPE_CHECKING:
@@ -50,18 +67,49 @@ class WriteError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class HandBackCheck:
-    """What a target must show once a hand-back has reached it: a value, or a switch state.
+    """What one target must show once the hand-back has reached it (V5).
 
-    ``leaves``: a gateway's release — its setpoint read-back holds a value more than half a kelvin
-    from ``expected``, the setpoint the plugin wrote. With that value unknown (``None``), a value
-    reported after the command counts: a state other than ``before``, the one the read-back had
-    when the command went out.
+    ``entity_id``: the entity read — a separate read-back where there is one; ``target``: the
+    entity written, where it is another (``None``: the same); ``expected``: the hand-back value
+    (0 on a gateway: ``CS=0`` read back), or a switch's hand-back state; ``kind`` and ``source``:
+    how the release shows, and whether a separate read-back, the written entity itself or an
+    optimistic one (``assumed_state``) shows it; ``held``: declared held — the device keeps the
+    last value it was given; ``written``: this attempt wrote every part of the target. What its
+    release is judged against: ``release_from``, the plugin's last value, ``lowest``, written
+    first, and ``baseline``, the value from before the session (the timeout); ``before``: the
+    read-back as it stood before the commands, for a value reported after them.
     """
 
     entity_id: str
     expected: float | str | None
-    leaves: bool = False
+    kind: CheckKind = CheckKind.VALUE
+    source: CheckSource = CheckSource.SEPARATE
+    held: bool = False
+    target: str | None = None
+    release_from: float | None = None
+    lowest: float | None = None
+    baseline: float | None = None
+    written: bool = True
     before: State | None = field(default=None, compare=False, repr=False)
+
+    @property
+    def key(self) -> str:
+        """The target this check stands for: the entity written."""
+        return self.target or self.entity_id
+
+    @property
+    def rule(self) -> ReleaseRule:
+        expected = None if isinstance(self.expected, str) else self.expected
+        return ReleaseRule(self.kind, expected, self.release_from, self.lowest, self.baseline)
+
+
+class HandBackFailed(WriteError):
+    """A part of a hand-back failed; ``checks``: what the targets must show all the same — one
+    whose part failed stays owed until it shows the hand-back."""
+
+    def __init__(self, message: str, checks: tuple[HandBackCheck, ...]) -> None:
+        super().__init__(message)
+        self.checks = checks
 
 
 class Writer(Protocol):
@@ -72,17 +120,24 @@ class Writer(Protocol):
 
     async def write_heating(self, on: bool) -> None: ...
 
+    async def keep_alive(self) -> None:
+        """While control holds the boiler: repeat what lapses besides the loop's own writes."""
+        ...
+
     async def hand_back(
         self,
-        full: bool = False,
         *,
         release_from: float | None = None,
+        baseline: float | None = None,
         write_timeout_s: float | None = None,
+        skip: Collection[str] = (),
     ) -> tuple[HandBackCheck, ...]:
-        """Give control back; ``full`` also clears what an earlier session may have left. Returns
-        what the targets must show for the hand-back to count as done. ``release_from``: the
-        setpoint the plugin last wrote, which a gateway's release must leave (``None``: not
-        known). ``write_timeout_s``: each write's cap, when not the usual one (at a stop)."""
+        """The safe hand-back. Returns what every target must show for it to count as done.
+        ``release_from``: the setpoint the plugin last wrote; ``baseline``: the read-back from
+        before the session (``None``: not known). ``write_timeout_s``: each write's cap, when not
+        the usual one (at a stop). ``skip``: targets not written this time — done, held by
+        another controller, a third value being judged, a timeout never rewritten — whose checks
+        are returned all the same."""
         ...
 
 
@@ -185,8 +240,10 @@ class EntityWriter(_ServiceWriter):
     """A setpoint entity (number, input_number) and optionally a heating switch.
 
     With a switch hand-back, the switch that enables external control is turned on before the
-    first write of each control session and off to hand back. A heating switch the session
-    turned on or off is turned back on at hand-back, so the boiler heats under its own control.
+    first write each time control takes the boiler — declared expiring, again every keep-alive
+    while control holds it (P-40) — and off to hand back. The hand-back turns a heating switch
+    back on where the boiler returns to a thermostat or its own control, and leaves it as it is
+    where the hand-back stops heating (S-27).
     """
 
     def __init__(self, hass: HomeAssistant, options: ControlOptions) -> None:
@@ -196,20 +253,38 @@ class EntityWriter(_ServiceWriter):
         self._options = options
         self._setpoint = options.setpoint_entity
         self._switch = options.ch_entity if options.loop.ch_writes else None
-        self._switched = False
+        self._heating_on = hand_back_heating_on(options)
+        self._lowest = options.loop.control.limits.hard_min
         self._hand_back = options.hand_back
         self._hand_back_value = options.hand_back_value
         self._external = options.hand_back_entity if options.hand_back is HandBack.SWITCH else None
+        self._external_expiring = options.hand_back_entity_write_type is WriteType.EXPIRING
         self._taken = False
+        self._taken_at: float | None = None  # when the external switch was last turned on
 
     @property
     def services(self) -> frozenset[tuple[str, str]]:
         return writer_services(self._options)
 
+    def _external_due(self) -> bool:
+        """The external switch is to be turned on now: control takes the boiler, or — declared
+        expiring — a keep-alive has passed since (a clock set back counts as passed)."""
+        if not self._taken or self._taken_at is None:
+            return True
+        elapsed = dt_util.utcnow().timestamp() - self._taken_at
+        return self._external_expiring and not 0 <= elapsed < KEEPALIVE_S
+
     async def _take(self) -> None:
-        if self._external and not self._taken:
+        if self._external and self._external_due():
             await self._call_entity("turn_on", self._external)
+            self._taken_at = dt_util.utcnow().timestamp()
         self._taken = True
+
+    async def keep_alive(self) -> None:
+        """An expiring external-control switch lapses unless repeated: turned on again every
+        keep-alive while control holds the boiler, whatever else is written."""
+        if self._taken and self._external and self._external_expiring:
+            await self._take()
 
     async def write_setpoint(self, value: float) -> None:
         checked = _as_entity_takes_it(self._check_target(self._setpoint), _checked(value, 0.0))
@@ -221,49 +296,123 @@ class EntityWriter(_ServiceWriter):
             raise WriteError("no heating switch")
         self._check_target(self._switch)
         await self._take()
-        self._switched = True
         await self._call_entity("turn_on" if on else "turn_off", self._switch)
+
+    async def _set_value(self, celsius: float, timeout_s: float | None) -> None:
+        value = _as_entity_takes_it(self._check_target(self._setpoint), celsius)
+        await self._call_entity("set_value", self._setpoint, timeout_s=timeout_s, value=value)
 
     async def hand_back(
         self,
-        full: bool = False,
         *,
         release_from: float | None = None,
+        baseline: float | None = None,
         write_timeout_s: float | None = None,
+        skip: Collection[str] = (),
     ) -> tuple[HandBackCheck, ...]:
-        """Each step is tried whatever the others do; any failure is raised at the end. Each
-        target shows the hand-back itself: ``release_from`` is a gateway's concern."""
+        """The lowest water temperature, the heating switch on where the effect says so, then the
+        release; each part tried whatever the others do, and any failure raised at the end with
+        the checks (``HandBackFailed``). The lowest is written only with the release target."""
         self._taken = False
+        self._taken_at = None
         errors: list[WriteError] = []
         checks: list[HandBackCheck] = []
-        if self._switch and (self._switched or full):
-            try:
-                await self._call_entity("turn_on", self._switch, timeout_s=write_timeout_s)
-                self._switched = False
-                checks.append(HandBackCheck(self._switch, "on"))
-            except WriteError as err:
-                errors.append(err)
-        try:
-            if self._hand_back is HandBack.VALUE:
-                if self._hand_back_value is None:
-                    raise WriteError("no hand-back value")
-                value = _as_entity_takes_it(
-                    self._check_target(self._setpoint), float(self._hand_back_value)
-                )
-                await self._call_entity(
-                    "set_value", self._setpoint, timeout_s=write_timeout_s, value=value
-                )
-                # Read back in °C, like every setpoint read-back.
-                checks.append(HandBackCheck(self._setpoint, float(self._hand_back_value)))
-            elif self._external:
-                await self._call_entity("turn_off", self._external, timeout_s=write_timeout_s)
-                checks.append(HandBackCheck(self._external, "off"))
-            # HandBack.TIMEOUT: stop writing; the device's own timeout hands back.
-        except WriteError as err:
-            errors.append(err)
+        before = self._hass.states.get(self._value_read_back())
+        release = self._external if self._hand_back is HandBack.SWITCH else self._setpoint
+        # Without a release to follow it, the lowest would stay with a device that keeps it.
+        releasing = self._hand_back is not None and release is not None and release not in skip
+        # 1. The lowest water temperature, with the release target only.
+        lowest = _checked(self._lowest, 0.0)
+        lowest_ok = releasing and await _part(
+            errors, lambda: self._set_value(lowest, write_timeout_s)
+        )
+        # 2. Heating on, where the boiler returns to a thermostat or its own control.
+        switch = self._switch
+        if switch and self._heating_on:
+            written = switch not in skip and await _part(
+                errors, lambda: self._call_entity("turn_on", switch, timeout_s=write_timeout_s)
+            )
+            checks.append(self._switch_check(switch, "on", written))
+        # 3. The release.
+        external = self._external
+        if self._hand_back is HandBack.VALUE:
+            value = self._hand_back_value
+            written = releasing and await _part(
+                errors, lambda: self._set_hand_back_value(value, write_timeout_s)
+            )
+            held = self._options.write_type is WriteType.HELD
+            kind = CheckKind.VALUE if held else CheckKind.LEAVES_VALUE
+            expected = None if value is None else float(value)  # read back in °C
+            checks.append(
+                self._value_check(kind, expected, lowest_ok and written, release_from, None, before)
+            )
+        elif self._hand_back is HandBack.SWITCH and external:
+            written = releasing and await _part(
+                errors, lambda: self._call_entity("turn_off", external, timeout_s=write_timeout_s)
+            )
+            checks.append(self._switch_check(external, "off", lowest_ok and written))
+        elif self._hand_back is HandBack.TIMEOUT:
+            # Nothing more: the device's own timeout releases, back to the value from before.
+            kind = CheckKind.BACK_TO_BASELINE
+            checks.append(self._value_check(kind, None, lowest_ok, release_from, baseline, before))
         if errors:
-            raise WriteError("; ".join(str(err) for err in errors))
+            raise HandBackFailed("; ".join(str(err) for err in errors), tuple(checks))
         return tuple(checks)
+
+    async def _set_hand_back_value(self, value: float | None, timeout_s: float | None) -> None:
+        if value is None:
+            raise WriteError("no hand-back value")
+        await self._set_value(float(value), timeout_s)
+
+    def _value_read_back(self) -> str:
+        """What judges the setpoint's release: the separate read-back, else the entity itself."""
+        return self._options.confirmed_entity or self._setpoint
+
+    def _source(self, read: str, written: str) -> CheckSource:
+        state = self._hass.states.get(read)
+        if state is not None and state.attributes.get("assumed_state") is True:
+            return CheckSource.ASSUMED  # it shows what it was given, not what the device has
+        return CheckSource.SELF if read == written else CheckSource.SEPARATE
+
+    def _value_check(
+        self,
+        kind: CheckKind,
+        expected: float | None,
+        written: bool,
+        release_from: float | None,
+        baseline: float | None,
+        before: State | None,
+    ) -> HandBackCheck:
+        read = self._value_read_back()
+        return HandBackCheck(
+            read,
+            expected,
+            kind,
+            self._source(read, self._setpoint),
+            held=self._options.write_type is WriteType.HELD,
+            target=None if read == self._setpoint else self._setpoint,
+            release_from=release_from,
+            lowest=self._lowest,
+            baseline=baseline,
+            written=written,
+            before=before,
+        )
+
+    def _switch_check(self, entity: str, state: str, written: bool) -> HandBackCheck:
+        """A switch has no separate report: its own state shows it, unverified."""
+        write_type = (
+            self._options.ch_write_type
+            if entity == self._switch
+            else self._options.hand_back_entity_write_type
+        )
+        return HandBackCheck(
+            entity,
+            state,
+            CheckKind.SWITCH,
+            self._source(entity, entity),
+            held=write_type is WriteType.HELD,
+            written=written,
+        )
 
 
 class _GatewayWriter(_ServiceWriter):
@@ -276,6 +425,10 @@ class _GatewayWriter(_ServiceWriter):
     def __init__(self, hass: HomeAssistant, options: ControlOptions) -> None:
         super().__init__(hass)
         self._reachable_by = options.confirmed_entity
+        self._lowest = options.loop.control.limits.hard_min
+
+    async def keep_alive(self) -> None:
+        """The loop repeats the gateway's overrides itself."""
 
     def _require_connected(self, reported: bool = False) -> None:
         """``reported``: the read-back must also hold a value — opentherm_gw's entities can stay
@@ -294,10 +447,19 @@ class _GatewayWriter(_ServiceWriter):
         return self._hass.states.get(self._reachable_by) if self._reachable_by else None
 
     def _release_check(self, before: State | None, release_from: float | None) -> HandBackCheck:
-        """What shows the release: the read-back leaving the value the plugin wrote."""
+        """What shows the release: the read-back at 0 (``CS=0``), or away from both the plugin's
+        last value and the lowest just written — the thermostat's own value."""
         if not self._reachable_by:
             raise WriteError("no gateway read-back: the release cannot be seen")
-        return HandBackCheck(self._reachable_by, release_from, leaves=True, before=before)
+        return HandBackCheck(
+            self._reachable_by,
+            0.0,
+            CheckKind.LEAVES_VALUE,
+            CheckSource.SEPARATE,
+            release_from=release_from,
+            lowest=self._lowest,
+            before=before,
+        )
 
 
 class OpenthermGwWriter(_GatewayWriter):
@@ -333,17 +495,27 @@ class OpenthermGwWriter(_GatewayWriter):
 
     async def hand_back(
         self,
-        full: bool = False,
         *,
         release_from: float | None = None,
+        baseline: float | None = None,
         write_timeout_s: float | None = None,
+        skip: Collection[str] = (),
     ) -> tuple[HandBackCheck, ...]:
-        """``CH=1``, then ``CS=0``; each is tried whatever the other does, and the hand-back
-        counts only with the gateway connected, once its read-back shows the release. pyotgw
-        writes the value the gateway accepted to its status at once; after a timeout it writes
-        nothing, and the service returns all the same."""
+        """``CS=<lowest>``, ``CH=1``, then ``CS=0``; each tried whatever the others do, and the
+        hand-back counts only with the gateway connected, once its read-back shows the release.
+        pyotgw writes the value the gateway accepted to its status at once; after a timeout it
+        writes nothing, and the service returns all the same."""
         before = self._read_back_now()
         await _all_of(
+            lambda: self._call(
+                self.DOMAIN,
+                "set_control_setpoint",
+                {
+                    "gateway_id": self._gateway,
+                    "temperature": _checked(self._lowest, OTGW_MIN_SETPOINT),
+                },
+                timeout_s=write_timeout_s,
+            ),
             lambda: self._call(
                 self.DOMAIN,
                 "set_central_heating_ovrd",
@@ -394,21 +566,36 @@ class OtgwMqttWriter(_GatewayWriter):
 
     async def hand_back(
         self,
-        full: bool = False,
         *,
         release_from: float | None = None,
+        baseline: float | None = None,
         write_timeout_s: float | None = None,
+        skip: Collection[str] = (),
     ) -> tuple[HandBackCheck, ...]:
-        """``CH=1``, then ``CS=0``; each is tried whatever the other does, and the hand-back
-        counts only with the gateway connected, once its read-back shows the release: a publish
-        is done once written to the socket, the firmware offline or not."""
+        """``CS=<lowest>``, ``CH=1``, then ``CS=0``; each tried whatever the others do, and the
+        hand-back counts only with the gateway connected, once its read-back shows the release:
+        a publish is done once written to the socket, the firmware offline or not."""
         before = self._read_back_now()
         await _all_of(
+            lambda: self._publish(
+                "ctrlsetpt", f"{_checked(self._lowest, OTGW_MIN_SETPOINT):.1f}", write_timeout_s
+            ),
             lambda: self._publish("chenable", "1", write_timeout_s),
             lambda: self._publish("ctrlsetpt", "0", write_timeout_s),
         )
         self._require_connected()
         return (self._release_check(before, release_from),)
+
+
+async def _part(errors: list[WriteError], write: Callable[[], Awaitable[None]]) -> bool:
+    """One part of a hand-back, whatever the others do: whether it went through; its failure
+    is kept for the end."""
+    try:
+        await write()
+    except WriteError as err:
+        errors.append(err)
+        return False
+    return True
 
 
 async def _all_of(*steps: Callable[[], Awaitable[None]]) -> None:

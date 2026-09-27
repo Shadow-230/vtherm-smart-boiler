@@ -142,6 +142,40 @@ def test_stale_boiler_link_writes_nothing_and_keeps_control() -> None:
     assert state.controlling
 
 
+def test_control_takes_the_boiler_only_with_a_read_back_value() -> None:
+    """P-21 (V5): on a gateway path control takes the boiler only once the read-back that shows
+    a hand-back got through holds a value — until then nothing is written, waiting for data;
+    then control takes the boiler."""
+    state, decisions = run(
+        [inputs(0.0, read_back_known=False), inputs(10.0, read_back_known=False), inputs(20.0)]
+    )
+    assert [d.mode for d in decisions[:2]] == [ControlMode.WAITING_DATA] * 2
+    assert all(d.command is None and not d.hand_back for d in decisions[:2])
+    assert decisions[0].reasons == (Reason.READ_BACK_UNKNOWN,)
+    assert decisions[2].command is not None
+    assert state.controlling
+
+
+def test_a_read_back_lost_while_controlling_is_no_hand_back_by_itself() -> None:
+    """P-21, negative: once controlling, a read-back that turns unknown is not judged here —
+    control goes on; the boiler link (flame, flow) decides a hand-back."""
+    _state, decisions = run(
+        [inputs(0.0), inputs(10.0, read_back_known=False), inputs(400.0, read_back_known=False)]
+    )
+    assert all(d.command is not None and not d.hand_back for d in decisions)
+    config = replace(CONFIG, stale_hand_back_s=300.0)
+    _state, decisions = run(
+        [
+            inputs(0.0),
+            inputs(10.0, read_back_known=False, boiler_link=False),
+            inputs(320.0, read_back_known=False, boiler_link=False),
+        ],
+        config,
+    )
+    assert [d.hand_back for d in decisions] == [False, False, True]  # the stale link's
+    assert Reason.BOILER_LINK_STALE in decisions[2].reasons
+
+
 def test_no_demand_is_idle() -> None:
     _state, [decision] = run([inputs(0.0, zones=(zone(0.0, valve_open=0.0),))])
     assert decision.mode is ControlMode.IDLE

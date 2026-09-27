@@ -557,6 +557,9 @@ async def test_a_hand_back_is_kept_and_retried_until_the_gateway_takes_it(rig: R
 # is judged against it after a crash (V4, R7). 55 °C is well away from the simulated boiler's own
 # curve at −2 °C (47 °C), which the simulator's read-back shows once the override is gone.
 LAST_COMMAND = {"heating": True, "setpoint": 55.0, "at": START.timestamp() - 600.0}
+# The safe hand-back on a gateway: the lowest water temperature (the hard minimum's default),
+# CH=1, then CS=0 (V5).
+SAFE_HAND_BACK = [("setpoint", 25.0), ("ch", True), ("setpoint", 0.0)]
 
 
 async def test_a_restart_without_a_clean_stop_hands_back_first(rig: Rig) -> None:
@@ -564,7 +567,7 @@ async def test_a_restart_without_a_clean_stop_hands_back_first(rig: Rig) -> None
     step gives it back in full, and control stays off until the user switches it on."""
     await start(rig, stored={"control": {"controlling": True, "last_command": LAST_COMMAND}})
     await rig.advance(30)
-    assert [(k, v) for _t, k, v in rig.gateway()][:2] == [("ch", True), ("setpoint", 0.0)]
+    assert [(k, v) for _t, k, v in rig.gateway()][:3] == SAFE_HAND_BACK
     assert rig.state("switch", "control").state == "off"
     count = len(rig.gateway())
     await rig.advance(180)
@@ -579,7 +582,7 @@ async def test_a_store_that_cannot_be_read_hands_back_first(
     await start(rig, stored={"__version__": 99, "control": {"controlling": False}})
     await rig.advance(30)
     assert "Could not read the stored data" in caplog.text
-    assert [(k, v) for _t, k, v in rig.gateway()][:2] == [("ch", True), ("setpoint", 0.0)]
+    assert [(k, v) for _t, k, v in rig.gateway()][:3] == SAFE_HAND_BACK
     assert rig.state("switch", "control").state == "off"
 
 
@@ -599,7 +602,7 @@ async def test_a_stored_latch_and_an_owed_hand_back_both_hold(rig: Rig) -> None:
         },
     )
     await rig.advance(30)
-    assert [(k, v) for _t, k, v in rig.gateway()][:2] == [("ch", True), ("setpoint", 0.0)]
+    assert [(k, v) for _t, k, v in rig.gateway()][:3] == SAFE_HAND_BACK
     count = len(rig.gateway())
     await rig.switch(True)
     await rig.advance(120)
@@ -807,7 +810,13 @@ async def test_a_home_assistant_in_fahrenheit(rig: Rig, write_path: str) -> None
 
 async def test_an_entity_hand_back_waits_for_its_target_and_is_stored(rig: Rig) -> None:
     """The setpoint entity goes unavailable while control holds the boiler: the hand-back is
-    shown as failed, stored for a restart and sent again; once the entity is back, it arrives."""
+    shown as failed, stored for a restart and sent again; once the entity is back, it arrives.
+
+    The simulated device is declared held, and its hand-back value hands the boiler to its own
+    curve, which the read-back — the boiler's control setpoint — then shows. A held target is
+    released only at its hand-back value (V5), so that steady other value counts as another
+    controller's at the second retry check: done, with no retry, and a repair issue (a question
+    for K4: an own-control value on a held device read back from the boiler)."""
     await start(rig, sim={"write_type": "held"}, **ENTITY_CONTROL)
     await rig.switch(True)
     await rig.advance(60)
@@ -825,9 +834,15 @@ async def test_an_entity_hand_back_waits_for_its_target_and_is_stored(rig: Rig) 
     rig.sim.failed.discard("flow_setpoint")
     rig.hub.refresh()
     await rig.advance(70)
-    assert entity_setpoints(rig)[-1] == 0.0
-    assert not rig.sim.plant.override_active(rig.now())
+    assert entity_setpoints(rig)[-2:] == [25.0, 0.0]  # the lowest, then the hand-back value
+    assert not rig.sim.plant.override_active(rig.now())  # the boiler is on its own curve
+    count = len(entity_setpoints(rig))
+    await rig.advance(130)
+    assert len(entity_setpoints(rig)) == count  # judged, not sent again
     assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
+    confirmation = rig.state("sensor", "control_state").attributes["hand_back_confirmation"]
+    assert confirmation == "taken_by_other"
+    assert not rig.storage[key]["data"]["control"]["hand_back_pending"]
 
 
 async def test_a_switch_hand_back_gives_the_boiler_its_own_control(rig: Rig) -> None:
@@ -836,7 +851,12 @@ async def test_a_switch_hand_back_gives_the_boiler_its_own_control(rig: Rig) -> 
     external = "switch.boiler_sim_external_control"
     control = {k: v for k, v in ENTITY_CONTROL.items() if not k.startswith("hand_back")}
     await start(
-        rig, sim={"write_type": "held"}, **control, hand_back="switch", hand_back_entity=external
+        rig,
+        sim={"write_type": "held"},
+        **control,
+        hand_back="switch",
+        hand_back_entity=external,
+        hand_back_entity_write_type="held",  # the simulated device keeps it (P-40)
     )
     await rig.switch(True)
     await rig.advance(60)
@@ -865,5 +885,6 @@ async def test_a_timeout_hand_back_lets_the_override_lapse(rig: Rig) -> None:
     assert count >= 3  # kept alive
     await rig.switch(False)
     await rig.advance(90)  # past the simulated device's one-minute timeout
-    assert len(entity_setpoints(rig)) == count  # nothing written after the hand-back
+    # The lowest water temperature, then nothing: the device's own timeout releases it.
+    assert entity_setpoints(rig)[count:] == [25.0]
     assert not rig.sim.plant.override_active(rig.now())

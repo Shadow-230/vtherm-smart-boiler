@@ -2,8 +2,10 @@
 
 No Home Assistant imports. Every value has a cautious default; a blocker is a translation key
 naming what the user must provide or fix before control may be switched on. Nothing goes to the
-boiler's persistent memory: a picked setpoint entity must be declared expiring or held, and a
-heating switch declared otherwise is left alone ("off" is then a low setpoint). Provisional
+boiler's persistent memory: a picked setpoint entity and an external-control switch must be
+declared expiring or held, and a heating switch declared otherwise is left alone ("off" is then a
+low setpoint). The hand-back value is bound by the highest water temperature, never clamped, and
+"off" must not read as it (S-21, S-49). Provisional
 decisions of phase F (to be confirmed at the review, `docs/plan-0.2.md` K4): control only for an
 installation with one circuit fed by the boiler flow (unmixed, or passive fixed); the curve must
 be entered, never silently defaulted; VT's central boiler must not run alongside.
@@ -108,6 +110,9 @@ CONFIG_BLOCKERS = (
     "underfloor_without_max_flow",
     "count_threshold_above_zones",
     "off_setpoint_not_below_hard_min",
+    "hand_back_switch_not_writable",
+    "hand_back_value_above_max",
+    "off_setpoint_near_hand_back_value",
 )
 OTGW_PATHS = frozenset({WritePath.OPENTHERM_GW, WritePath.OTGW_MQTT})
 # Write types control may use: nothing the boiler stores in its memory.
@@ -125,6 +130,12 @@ EXPONENT_BY_EMITTER = {
     EmitterType.CONVECTOR: 1.4,
     EmitterType.UNDERFLOOR: 1.1,
 }
+# "Off" sent as a low setpoint this close to a hand-back value that returns the boiler to its own
+# control would hand the boiler back instead of stopping heating (S-49).
+OFF_NEAR_HAND_BACK_K = 0.5
+# Hand-back effects where the heating part leaves a heating switch as it is: the hand-back stops
+# heating. X8's relay effects go to the relay's rest state instead, through its own writer.
+_HEATING_LEFT_AS_IT_IS = frozenset({HandBackEffect.HEATING_STOPS})
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +149,8 @@ class ControlOptions:
     hand_back_value: float | None = None  # never assumed: 0 means different things on devices
     hand_back_value_effect: ValueEffect | None = None
     hand_back_entity: str | None = None
+    # What the device does with the external-control switch (P-40): never assumed.
+    hand_back_entity_write_type: WriteType = WriteType.UNKNOWN
     gateway_id: str | None = None
     mqtt_top: str | None = None
     mqtt_node: str | None = None
@@ -282,6 +295,9 @@ def parse_control(
             else None
         ),
         hand_back_entity=data.get("hand_back_entity") or None,
+        hand_back_entity_write_type=WriteType(
+            data.get("hand_back_entity_write_type") or WriteType.UNKNOWN
+        ),
         gateway_id=data.get("gateway_id") or None,
         mqtt_top=data.get("mqtt_top") or None,
         mqtt_node=data.get("mqtt_node") or None,
@@ -314,6 +330,56 @@ def hand_back_effect(control: ControlOptions) -> HandBackEffect | None:
     )
 
 
+def hand_back_heating_on(control: ControlOptions) -> bool:
+    """The safe hand-back's heating part (S-27): a heating switch goes back on where the boiler
+    returns to a thermostat or its own control ("thermostat takes over", "device decides", and
+    Y1's "own control resumes"), and is left as it is where the hand-back stops heating. An
+    effect not known turns it on: missing data never switches heating off by itself."""
+    return hand_back_effect(control) not in _HEATING_LEFT_AS_IT_IS
+
+
+def highest_water_temperature(control: ControlConfig) -> float:
+    """The highest water temperature control may write: the hard maximum, and the circuit's and
+    the boiler's where they are set."""
+    return min(
+        value
+        for value in (control.limits.hard_max, control.circuit_max, control.boiler_max)
+        if value is not None
+    )
+
+
+def hand_back_value_above_max(value: float | None, highest: float) -> bool:
+    """S-21: the hand-back value is exempt only from the lowest water temperature."""
+    return value is not None and value > highest
+
+
+def off_near_hand_back_value(off_setpoint: float, hand_back_value: float | None) -> bool:
+    """S-49: "off" this close to the hand-back value would read as the hand-back."""
+    return hand_back_value is not None and abs(off_setpoint - hand_back_value) <= (
+        OFF_NEAR_HAND_BACK_K
+    )
+
+
+def hand_back_value_problems(control: ControlOptions) -> list[str]:
+    """What makes a hand-back value unsafe (translation keys), the form's check and a blocker
+    alike: above the highest water temperature (S-21) — it is never clamped, as a clamped value
+    would mean something else to the device; and "off" sent as a low setpoint within half a
+    kelvin of a value that returns the boiler to its own control (S-49)."""
+    if control.hand_back is not HandBack.VALUE or control.hand_back_value is None:
+        return []
+    found: list[str] = []
+    highest = highest_water_temperature(control.loop.control)
+    if hand_back_value_above_max(control.hand_back_value, highest):
+        found.append("hand_back_value_above_max")
+    if (
+        not control.loop.ch_writes
+        and control.hand_back_value_effect is ValueEffect.OWN_CONTROL
+        and off_near_hand_back_value(control.loop.off_setpoint, control.hand_back_value)
+    ):
+        found.append("off_setpoint_near_hand_back_value")
+    return found
+
+
 def config_blockers(control: ControlOptions, installation: Installation) -> list[str]:
     """What the configuration still lacks for control (translation keys)."""
     if not control.configured:
@@ -339,6 +405,13 @@ def config_blockers(control: ControlOptions, installation: Installation) -> list
         elif control.hand_back is HandBack.TIMEOUT and control.write_type is not WriteType.EXPIRING:
             # Only a lapsing value goes back on its own; any other would stay for good.
             found.append("timeout_needs_expiring_writes")
+        elif (
+            control.hand_back is HandBack.SWITCH
+            and control.hand_back_entity_write_type not in WRITABLE_TYPES
+        ):
+            # A switch the boiler may store would be worn by every take and hand-back (P-40).
+            found.append("hand_back_switch_not_writable")
+        found += hand_back_value_problems(control)
     elif path is WritePath.OPENTHERM_GW and not control.gateway_id:
         found.append("no_gateway")
     elif path is WritePath.OTGW_MQTT and not (control.mqtt_top and control.mqtt_node):

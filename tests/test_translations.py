@@ -155,6 +155,9 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
         issue = SOURCE["issues"][key]
         assert "{zones}" in issue["description"]
         assert issue["title"]
+    taken = SOURCE["issues"]["hand_back_taken_by_other"]  # V5
+    assert "{target}" in taken["description"]
+    assert taken["title"]
 
 
 def _values(entity: dict, attribute: str) -> set[str]:
@@ -167,6 +170,7 @@ def test_coded_states_and_attributes_are_translated() -> None:
     from custom_components.vtherm_smart_boiler.core.alarms import AlarmKind, Level
     from custom_components.vtherm_smart_boiler.core.emitters import FactorReason, FactorStatus
     from custom_components.vtherm_smart_boiler.core.guards import Confirmation
+    from custom_components.vtherm_smart_boiler.core.hand_back import HandBackConfirmation
     from custom_components.vtherm_smart_boiler.core.hot_water import HotWaterReason
     from custom_components.vtherm_smart_boiler.core.signal_check import OutdoorStatus
     from custom_components.vtherm_smart_boiler.core.zones import SelectionStatus
@@ -187,6 +191,9 @@ def test_coded_states_and_attributes_are_translated() -> None:
         assert _values(binary[f"alarm_{kind.value}"], "level") == {lv.value for lv in Level}
     assert _values(sensors["control_setpoint"], "confirmation") == confirmations
     assert _values(sensors["control_state"], "heating_confirmation") == confirmations
+    assert _values(sensors["control_state"], "hand_back_confirmation") == {
+        c.value for c in HandBackConfirmation
+    }
     assert _values(SOURCE["entity"]["switch"]["control"], "off_by") == {
         "heating_switch",
         "low_setpoint",
