@@ -45,7 +45,9 @@
       "alarm_correction_at_limit": { "default": "mdi:chart-bell-curve-cumulative" },
       "alarm_outdoor_sensor_suspect": { "default": "mdi:thermometer-alert" },
       "alarm_monitor_failed": { "default": "mdi:eye-off" },
-      "alarm_handed_back_in_frost": { "default": "mdi:snowflake-thermometer" }
+      "alarm_handed_back_in_frost": { "default": "mdi:snowflake-thermometer" },
+      "alarm_commands_lost": { "default": "mdi:message-alert-outline" },
+      "alarm_confirmation_missing": { "default": "mdi:help-rhombus-outline" }
     },
     "switch": {
       "control": { "default": "mdi:radiator", "state": { "off": "mdi:radiator-off" } }

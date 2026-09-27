@@ -314,6 +314,37 @@ def test_frost_protection_watches_the_zone_picked_or_every_zone() -> None:
     assert gone.loop.control.frost.zone is None
 
 
+@pytest.mark.parametrize(("off", "blocked"), [(24.5, True), (24.0, False), (25.0, True)])
+def test_off_must_be_at_least_1k_below_the_hard_minimum(off: float, blocked: bool) -> None:
+    """P-43 (decided): "off" as a low setpoint at least 1 K below the lowest water temperature,
+    or the boiler would not see a change — the guard's 0.5 K tolerance could not tell them
+    apart."""
+    options = parse_control(ENTITY | {"off_setpoint": off, "hard_min": 25}, RADIATORS, None)
+    assert ("off_setpoint_not_below_hard_min" in config_blockers(options, RADIATORS)) is blocked
+
+
+def test_the_new_options_are_read_with_cautious_defaults() -> None:
+    """X1: the return by itself is off unless stored as a clear true; the thermostat's own
+    request and the restart indicator are read (both none by default) and belong to what control
+    reads."""
+    options = parse_control(ENTITY, RADIATORS, None)
+    assert not options.return_after_outside_change
+    assert options.thermostat_setpoint_entity is None
+    assert options.restart_entity is None
+    for stored in ("yes", 1, None):
+        parsed = parse_control(ENTITY | {"return_after_outside_change": stored}, RADIATORS, None)
+        assert not parsed.return_after_outside_change
+    extra = {
+        "return_after_outside_change": True,
+        "thermostat_setpoint_entity": "sensor.thermostat_setpoint",
+        "restart_entity": "sensor.uptime",
+    }
+    options = parse_control(ENTITY | extra, RADIATORS, None)
+    assert options.return_after_outside_change
+    assert {"sensor.thermostat_setpoint", "sensor.uptime"} <= set(options.entities)
+    assert options.reaction("heating_off_ignored").value == "hand_back"  # fixed (answer O)
+
+
 def test_off_as_a_low_setpoint_must_be_below_the_hard_minimum() -> None:
     """Else "off" would heat; with a heating switch the low setpoint is not used for "off"."""
     options = parse_control(ENTITY | {"off_setpoint": 30}, RADIATORS, None)

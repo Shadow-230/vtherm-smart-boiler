@@ -53,6 +53,7 @@ from .control_config import (
     ValueEffect,
     WritePath,
     hand_back_value_problems,
+    off_too_close_to_lowest,
 )
 from .core.alarms import (
     DEFAULT_FREQUENT_STARTS_PER_HOUR,
@@ -68,7 +69,7 @@ from .core.guards import WriteType
 from .core.installation import BoilerClass, CircuitControl, DhwType, EmitterType
 from .core.metrics import ModulationScale
 from .core.reference_room import Strategy
-from .transport.entities import read_bounds, temperature_unit_of
+from .transport.entities import read_bounds, read_grid, temperature_unit_of
 from .vtherm_link import zone_name
 
 # --- field definitions ----------------------------------------------------------------------
@@ -398,6 +399,8 @@ _SETPOINT_ENTITY = {"domain": ["number", "input_number"]}
 _ON_OFF_ENTITY = {"domain": ["switch", "input_boolean"]}
 _READ_BACK_ENTITY = {"domain": ["sensor", "number", "input_number"]}
 _ECHO_ENTITY = {"domain": ["binary_sensor", "switch", "input_boolean"]}
+_THERMOSTAT_SETPOINT_ENTITY = {"domain": ["sensor", "number"], "device_class": "temperature"}
+_RESTART_ENTITY = {"domain": "sensor"}
 # Alarms whose reaction the user may choose (an internal error always hands back; frequent starts
 # stay information, as nothing counted may hold heating against VT). Another controller writing
 # to the boiler is not among them: it always makes the plugin step aside (S-11).
@@ -425,6 +428,7 @@ CONTROL_ADVANCED_KEYS = (
     "learning_pauses",
     "comfort_correction",
     "alarm_reactions",
+    "return_after_outside_change",
 )
 CURVE_KEYS = ("design_outdoor", "design_flow", "room", "exponent", "offset")
 # What a hand-back goes through: fixed while one is owed.
@@ -454,6 +458,11 @@ def control_schema(options: dict[str, Any]) -> vol.Schema:
             _optional("topology", control): _select("topology", [t.value for t in Topology]),
             _optional("confirmed_entity", control): _entity(_READ_BACK_ENTITY),
             _optional("ch_confirmed_entity", control): _entity(_ECHO_ENTITY),
+            # With an OpenTherm thermostat on a gateway (its text says so): its own request,
+            # which a fall-back after an outage shows. The form cannot show it only for that
+            # topology, chosen on this same page; the plugin reads it only with it.
+            _optional("thermostat_setpoint_entity", control): _entity(_THERMOSTAT_SETPOINT_ENTITY),
+            _optional("restart_entity", control): _entity(_RESTART_ENTITY),
         }
     )
 
@@ -579,21 +588,42 @@ def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
     )
 
 
+RETURN_KEY = "return_after_outside_change"
+
+
 def control_alarms_schema(options: dict[str, Any]) -> vol.Schema:
-    reactions = options.get(CONTROL, {}).get("alarm_reactions", {})
+    control = options.get(CONTROL, {})
+    reactions = control.get("alarm_reactions", {})
     choices = [r.value for r in AlarmReaction]
-    return vol.Schema(
-        {
-            vol.Required(alarm, default=reactions.get(alarm, AlarmReaction.INFO.value)): _select(
-                "alarm_reaction", choices
-            )
-            for alarm in REACTION_ALARMS
-        }
+    fields: dict[Any, Any] = {
+        vol.Required(alarm, default=reactions.get(alarm, AlarmReaction.INFO.value)): _select(
+            "alarm_reaction", choices
+        )
+        for alarm in REACTION_ALARMS
+    }
+    # Off by default, confirmed twice (decision 6); X8 hides it on the relay path.
+    fields[vol.Required(RETURN_KEY, default=control.get(RETURN_KEY) is True)] = (
+        selector.BooleanSelector()
     )
+    return vol.Schema(fields)
+
+
+def control_return_confirm_schema() -> vol.Schema:
+    return vol.Schema({vol.Required("understood", default=False): selector.BooleanSelector()})
+
+
+CONTROL_STEP_KEYS = (
+    "write_path",
+    "topology",
+    "confirmed_entity",
+    "ch_confirmed_entity",
+    "thermostat_setpoint_entity",
+    "restart_entity",
+)
 
 
 def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    """The first control step: the write path, topology and read-back; "none" removes control."""
+    """The first control step: the write path, topology and read-backs; "none" removes control."""
     if user_input["write_path"] == NO_CONTROL:
         options.pop(CONTROL, None)
         return
@@ -601,9 +631,7 @@ def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     if control.get("write_path") != user_input["write_path"]:
         for key in ENTITY_STEP_KEYS:
             control.pop(key, None)
-    _set_or_drop(
-        control, user_input, ("write_path", "topology", "confirmed_entity", "ch_confirmed_entity")
-    )
+    _set_or_drop(control, user_input, CONTROL_STEP_KEYS)
     options[CONTROL] = control
 
 
@@ -641,6 +669,10 @@ def apply_control_behaviour(options: dict[str, Any], user_input: dict[str, Any])
 def apply_control_alarms(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     control = dict(options.get(CONTROL, {}))
     control["alarm_reactions"] = {alarm: user_input[alarm] for alarm in REACTION_ALARMS}
+    if user_input.get(RETURN_KEY) is True:
+        control[RETURN_KEY] = True
+    else:
+        control.pop(RETURN_KEY, None)  # off: the default
     options[CONTROL] = control
 
 
@@ -681,6 +713,10 @@ def control_error(user_input: dict[str, Any]) -> dict[str, str]:
         return {"topology": "topology_no_control"}
     if Topology(topology) not in _PATH_TOPOLOGIES[WritePath(path)]:
         return {"topology": "topology_not_for_path"}
+    thermostat = user_input.get("thermostat_setpoint_entity")
+    if thermostat and thermostat == user_input.get("confirmed_entity"):
+        # The boiler's read-back shows the plugin's value, not the thermostat's own request.
+        return {"thermostat_setpoint_entity": "thermostat_setpoint_same_as_read_back"}
     return {}
 
 
@@ -872,8 +908,13 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
     control = options.get(CONTROL, {})
     monitor = options.get(MONITOR, {})
     curve_defaults = _schema_defaults(control_curve_schema(advanced))
-    control_defaults = curve_defaults | _schema_defaults(control_behaviour_schema({}))
-    reactions = _schema_defaults(control_alarms_schema({}))
+    alarm_defaults = _schema_defaults(control_alarms_schema({}))
+    control_defaults = (
+        curve_defaults
+        | _schema_defaults(control_behaviour_schema({}))
+        | {RETURN_KEY: alarm_defaults[RETURN_KEY]}
+    )
+    reactions = {alarm: alarm_defaults[alarm] for alarm in REACTION_ALARMS}
     return bool(
         any(key in options.get(SIGNALS, {}) for key in ADVANCED_SIGNALS)
         or _differ(
@@ -1218,6 +1259,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         self._zones_done = []
         self._circuits_done = []
         self._options: dict[str, Any] | None = None
+        self._alarms_answer: dict[str, Any] | None = None  # awaiting the return's confirmation
 
     @property
     def options(self) -> dict[str, Any]:  # type: ignore[override]
@@ -1387,8 +1429,12 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
+            grid = read_grid(self.hass, user_input["setpoint_entity"])
             if temperature_unit_of(self.hass, user_input["setpoint_entity"]) is False:
                 errors = {"setpoint_entity": "setpoint_unit_not_supported"}
+            elif grid is not None and grid.too_coarse:
+                # A value rounded to so coarse a step could read back as ignored (P-15).
+                errors = {"setpoint_entity": "setpoint_step_too_coarse"}
             else:
                 errors = control_details_error(
                     user_input, read_bounds(self.hass, user_input["setpoint_entity"])
@@ -1505,12 +1551,11 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             hard_min = float(
                 self.options.get(CONTROL, {}).get("hard_min", CONTROL_DEFAULTS["hard_min"])
             )
+            off = float(user_input.get("off_setpoint", CONTROL_DEFAULTS["off_setpoint"]))
             if _outside(user_input.get("off_setpoint"), self._setpoint_bounds()):
                 errors["off_setpoint"] = "off_setpoint_outside_entity_range"
-            elif (
-                float(user_input.get("off_setpoint", CONTROL_DEFAULTS["off_setpoint"])) >= hard_min
-            ):
-                errors["off_setpoint"] = "off_setpoint_not_below_hard_min"
+            elif off_too_close_to_lowest(off, hard_min):
+                errors["off_setpoint"] = "off_setpoint_not_below_hard_min"  # 1 K below (P-43)
             elif self._off_near_hand_back_value(user_input):
                 errors["off_setpoint"] = "off_setpoint_near_hand_back_value"
             elif count > len(self.options.get(ZONES, [])):
@@ -1547,6 +1592,28 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         if user_input is not None:
+            was_on = self.options.get(CONTROL, {}).get(RETURN_KEY) is True
+            if user_input.get(RETURN_KEY) is True and not was_on:
+                # Switched on: confirmed a second time before it is saved (decision 6).
+                self._alarms_answer = user_input
+                return await self.async_step_control_return_confirm()
             apply_control_alarms(self.options, user_input)
             return await self.async_step_save()
         return self._form(step_id="control_alarms", data_schema=control_alarms_schema(self.options))
+
+    async def async_step_control_return_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The second confirmation of the return by itself after another controller."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if user_input.get("understood") is True and self._alarms_answer is not None:
+                apply_control_alarms(self.options, self._alarms_answer)
+                self._alarms_answer = None
+                return await self.async_step_save()
+            errors = {"understood": "return_needs_confirmation"}
+        return self._form(
+            step_id="control_return_confirm",
+            data_schema=control_return_confirm_schema(),
+            errors=errors,
+        )

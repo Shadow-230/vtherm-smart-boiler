@@ -183,6 +183,26 @@ def judge_switch(state: str | None, expected: str, seen: bool, trace: bool) -> S
     return SwitchVerdict.LOST if trace else SwitchVerdict.TAKEN
 
 
+class RestartKind(StrEnum):
+    """What an optional restart indicator shows (Q3.7)."""
+
+    UPTIME = "uptime"  # a duration since the start: a restart makes it fall
+    COUNTER = "counter"  # a restart count: a restart makes it go up (a reset, down)
+    BOOT_TIME = "boot_time"  # the moment of the last start: a restart moves it
+
+
+def restart_seen(before: float | None, after: float | None, kind: RestartKind) -> bool:
+    """Whether a restart indicator's change from ``before`` to ``after`` shows a restart — a
+    trace of an outage, where the device's entities may never have gone unavailable (the OTGW
+    firmware over MQTT, EMS-ESP; Q3.7). A value not known shows nothing: its being unavailable or
+    unknown is a trace of its own."""
+    if before is None or after is None:
+        return False
+    if kind is RestartKind.UPTIME:
+        return after < before
+    return after != before
+
+
 def outage_seen(
     outages: Mapping[str, float],
     entities: Iterable[str],

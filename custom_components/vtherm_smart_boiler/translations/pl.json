@@ -468,13 +468,17 @@
           "write_path": "Ścieżka zapisu",
           "topology": "Podłączenie bramki",
           "confirmed_entity": "Odczyt zwrotny nastawy",
-          "ch_confirmed_entity": "Odczyt zwrotny włączenia ogrzewania"
+          "ch_confirmed_entity": "Odczyt zwrotny włączenia ogrzewania",
+          "thermostat_setpoint_entity": "Nastawa wody zadana przez termostat",
+          "restart_entity": "Wskaźnik restartu"
         },
         "data_description": {
           "write_path": "Bez sterowania (domyślnie); wybrana przez ciebie encja do zapisu, np. liczba EMS-ESP albo ESPHome OpenTherm; bramka OpenTherm Gateway przez integrację OpenTherm Gateway w Home Assistant; albo polecenia MQTT firmware OTGW. Wybierz ścieżkę, którą naprawdę oferuje twój interfejs kotła: zła oznacza zapisy, które się nie udają albo trafiają donikąd.",
           "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Tryb monitora: bramka tylko słucha i sterowanie jest niemożliwe. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki. Utrata danych kotła podnosi alarm i oddaje sterowanie w każdej topologii — bez termostatu grzanie ustaje, dopóki dane nie wrócą.",
           "confirmed_entity": "Encja, która pokazuje nastawę odebraną przez kocioł, np. „Control setpoint 1” urządzenia kotła w bramce — pokazuje ona, co bramka wysyła, więc nastawa jest pokazywana jako potwierdzona przez bramkę, nie przez kocioł. Wymagana: każdy zapis jest z nią porównywany, a zapis zignorowany przez kocioł albo nadpisany przez inny sterownik zostaje zgłoszony. Encja nastawy wtyczki pokazuje tylko potwierdzoną wartość, w przeciwnym razie stan nieznany. Wybranie encji, do której się pisze, niczego nie potwierdza: nastawa jest wtedy pokazywana jako niezweryfikowana.",
-          "ch_confirmed_entity": "Opcjonalnie: encja, która pokazuje, czy kocioł dostaje włączone ogrzewanie — np. „Central heating 1” urządzenia kotła w bramce, pokazujące, co bramka wysyła do kotła. Z nią włączanie i wyłączanie ogrzewania jest sprawdzane jak nastawa: przełączenie zignorowane przez kocioł jest zgłaszane, a zmienione przez inny sterownik zapisywane jeszcze raz, po czym wszystkie zapisy ustają. Bez niej włączenie ogrzewania jest pokazywane jako niezweryfikowane, a przełączenie przez inny sterownik pozostaje niezauważone. Wybranie encji, do której się pisze, albo żądania termostatu zamiast tego, co dostaje kocioł, niczego nie potwierdza albo zatrzymuje sterowanie."
+          "ch_confirmed_entity": "Opcjonalnie: encja, która pokazuje, czy kocioł dostaje włączone ogrzewanie — np. „Central heating 1” urządzenia kotła w bramce, pokazujące, co bramka wysyła do kotła. Z nią włączanie i wyłączanie ogrzewania jest sprawdzane jak nastawa: przełączenie zignorowane przez kocioł jest zgłaszane, a zmienione przez inny sterownik zapisywane jeszcze raz, po czym wszystkie zapisy ustają. Bez niej włączenie ogrzewania jest pokazywane jako niezweryfikowane, a przełączenie przez inny sterownik pozostaje niezauważone. Wybranie encji, do której się pisze, albo żądania termostatu zamiast tego, co dostaje kocioł, niczego nie potwierdza albo zatrzymuje sterowanie.",
+          "thermostat_setpoint_entity": "Opcjonalnie, dla bramki z termostatem OpenTherm: temperatura wody, o którą prosi sam termostat (w opentherm_gw „Control setpoint 1” urządzenia termostatu), nie odczyt zwrotny kotła. Gdy kocioł wróci do niej po przerwie, wtyczka wyśle swoje polecenie ponownie, zamiast uznać to za inny sterownik. Puste (domyślnie): liczy się tylko wartość sprzed wtyczki.",
+          "restart_entity": "Opcjonalnie: czujnik bramki lub interfejsu kotła, który pokazuje jego restarty — czas pracy liczony od nowa, licznik restartów, który rośnie, albo czas uruchomienia (na przykład licznik restartów firmware OTGW albo czujnik czasu pracy EMS-ESP lub ESPHome). Pokazany przez niego restart liczy się przez 5 minut jako ślad przerwy: jeśli kocioł wróci wtedy do własnej wartości, wtyczka uzna to za utracone polecenie i po prostu wyśle je ponownie. Puste (domyślnie): restart widać tylko wtedy, gdy encje urządzenia stają się niedostępne, a szybki restart, który niczego nie pokazuje, jest oceniany jak powrót bez śladu przerwy — pierwszy w ciągu godziny wtyczka wyśle ponownie, ale drugi może zostać uznany za inny sterownik i wtyczka ustąpi."
         }
       },
       "control_entity": {
@@ -583,7 +587,7 @@
       },
       "control_alarms": {
         "title": "Reakcje na alarmy",
-        "description": "Co robi sterowanie, gdy alarm jest aktywny: tylko informuje albo oddaje sterowanie kotłowi, dopóki nie wyłączysz i nie włączysz go ponownie. Inny sterownik piszący do kotła zawsze sprawia, że wtyczka ustępuje.",
+        "description": "Co robi sterowanie, gdy alarm jest aktywny: tylko informuje albo oddaje sterowanie kotłowi, dopóki nie wyłączysz i nie włączysz go ponownie. Inny sterownik piszący do kotła zawsze sprawia, że wtyczka ustępuje; nigdy z nim nie walczy.",
         "data": {
           "pressure_low": "Niskie ciśnienie",
           "pressure_high": "Wysokie ciśnienie",
@@ -595,7 +599,8 @@
           "hysteresis_drift": "Dryf histerezy",
           "low_flow": "Brak przepływu",
           "write_failed": "Zapis nieudany",
-          "write_ignored": "Kocioł ignoruje nastawę"
+          "write_ignored": "Kocioł ignoruje nastawę",
+          "return_after_outside_change": "Powrót po innym sterowniku bez udziału użytkownika"
         },
         "data_description": {
           "pressure_low": "Domyślnie: tylko informacja.",
@@ -608,7 +613,18 @@
           "hysteresis_drift": "Domyślnie: tylko informacja.",
           "low_flow": "Domyślnie: tylko informacja.",
           "write_failed": "Domyślnie: tylko informacja.",
-          "write_ignored": "Domyślnie: tylko informacja."
+          "write_ignored": "Domyślnie: tylko informacja.",
+          "return_after_outside_change": "Wyłączone (domyślnie): gdy inny sterownik dwa razy zmieni ustawienia kotła, wtyczka oddaje kocioł i ustępuje, dopóki nie wyłączysz i nie włączysz sterowania. Włączone: wtyczka sama przejmie kocioł po godzinie, w której nic innego do niego nie pisało. Ryzyko: jeśli inny sterownik tylko robi przerwę, będą się zmieniać; przy termostacie, który stale zmienia żądanie, ta godzina nigdy nie minie."
+        }
+      },
+      "control_return_confirm": {
+        "title": "Potwierdź samodzielny powrót",
+        "description": "Wtyczka sama przejmie kocioł godzinę po ostatnim zapisie innego sterownika. Jeśli ten sterownik nadal działa, oba będą sterować kotłem na zmianę. Zaznacz, aby potwierdzić.",
+        "data": {
+          "understood": "Rozumiem"
+        },
+        "data_description": {
+          "understood": "Zaznacz, aby włączyć samodzielny powrót; bez zaznaczenia pozostaje wyłączony."
         }
       }
     },
@@ -633,7 +649,7 @@
       "control_holds_boiler": "Sterowanie ma kocioł: najpierw wyłącz sterowanie, żeby kocioł został oddany przez urządzenie, które go trzyma; potem zmień, do czego sterowanie pisze, albo odczyt zwrotny bramki.",
       "count_threshold_above_zones": "Więcej stref, niż jest skonfigurowanych: grzanie nigdy nie zostałoby wezwane.",
       "no_demand_criterion": "Ustaw co najmniej jedno kryterium: liczba stref 0 wymaga progu mocy albo otwarcia.",
-      "off_setpoint_not_below_hard_min": "„Wyłącz” musi być poniżej najniższej nastawy zasilania, inaczej by grzało.",
+      "off_setpoint_not_below_hard_min": "„Wyłączone” musi być co najmniej 1 °C poniżej najniższej temperatury wody, inaczej kocioł nie zauważy zmiany.",
       "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury (°C, °F lub K): zapisana wartość znaczyłaby dla niej coś innego. Wybierz encję nastawy temperatury zasilania kotła.",
       "missing_signal": "Brakuje wymaganego sygnału.",
       "unknown_signal": "Nieznany sygnał w konfiguracji.",
@@ -655,7 +671,10 @@
       "modulation_not_percent": "Modulacja to procent zakresu kotła: wybierz czujnik w %.",
       "hand_back_entity_write_type_not_supported": "Zadeklaruj przełącznik sterowania zewnętrznego jako wygasający albo trzymany: wtyczka nigdy nie zapisuje do trwałej pamięci kotła.",
       "hand_back_value_above_max": "Wartość oddania jest wyższa niż najwyższa nastawa zasilania albo maksimum obiegu: kocioł dostałby cieplejszą wodę, niż obieg dopuszcza.",
-      "off_setpoint_near_hand_back_value": "„Wyłączone” różni się od wartości oddania o mniej niż 0,5 K, a ta wartość oddaje kotłowi własne sterowanie: „wyłączone” oddałoby kocioł zamiast wyłączyć grzanie. Wybierz inną wartość."
+      "off_setpoint_near_hand_back_value": "„Wyłączone” różni się od wartości oddania o mniej niż 0,5 K, a ta wartość oddaje kotłowi własne sterowanie: „wyłączone” oddałoby kocioł zamiast wyłączyć grzanie. Wybierz inną wartość.",
+      "thermostat_setpoint_same_as_read_back": "Wybierz encję termostatu, nie odczyt zwrotny nastawy.",
+      "return_needs_confirmation": "Zaznacz pole, aby to włączyć, albo wróć.",
+      "setpoint_step_too_coarse": "Ta encja przyjmuje wartości co ponad 1 °C: zaokrąglona wartość wyglądałaby na zignorowaną. Wybierz encję o drobniejszym kroku."
     }
   },
   "selector": {
@@ -920,7 +939,8 @@
               "waiting": "Wysłane, czeka na odczyt zwrotny",
               "not_confirmed": "Niepotwierdzone: kocioł może to ignorować",
               "changed_from_outside": "Zmienione przez inny sterownik: zapisy wstrzymane",
-              "unverified": "Niezweryfikowane: nic tego nie odczytuje"
+              "unverified": "Niezweryfikowane: nic tego nie odczytuje",
+              "clipped": "Obniżone przez kocioł (jego własny limit)"
             }
           },
           "hand_back_confirmation": {
@@ -947,7 +967,8 @@
               "waiting": "Wysłane, czeka na odczyt zwrotny",
               "not_confirmed": "Niepotwierdzone: kocioł może to ignorować",
               "changed_from_outside": "Zmienione przez inny sterownik: zapisy wstrzymane",
-              "unverified": "Niezweryfikowane: nic tego nie odczytuje"
+              "unverified": "Niezweryfikowane: nic tego nie odczytuje",
+              "clipped": "Obniżone przez kocioł (jego własny limit)"
             }
           }
         }
@@ -1112,7 +1133,12 @@
         "name": "Sterowanie: zapis nieudany"
       },
       "alarm_write_ignored": {
-        "name": "Sterowanie: kocioł nie przyjmuje zapisu"
+        "name": "Sterowanie: kocioł nie przyjmuje polecenia — sprawdź ustawienia",
+        "state_attributes": {
+          "targets": {
+            "name": "Cele"
+          }
+        }
       },
       "alarm_outside_change": {
         "name": "Sterowanie: zmiana przez inny sterownik"
@@ -1143,6 +1169,17 @@
       },
       "alarm_handed_back_in_frost": {
         "name": "Sterowanie: oddane, a w pomieszczeniu grozi mróz"
+      },
+      "alarm_commands_lost": {
+        "name": "Sterowanie: polecenia często giną"
+      },
+      "alarm_confirmation_missing": {
+        "name": "Sterowanie: brak potwierdzenia z kotła",
+        "state_attributes": {
+          "targets": {
+            "name": "Cele"
+          }
+        }
       }
     },
     "switch": {
@@ -1248,7 +1285,7 @@
       "message": "Encja nastawy nie przyjmuje każdej wartości, którą sterowanie może zapisać (limitu, nastawy „wyłączone” albo wartości oddania): dopasuj je w opcjach do jej zakresu. Inne powody: {others}."
     },
     "blocked_off_setpoint_not_below_hard_min": {
-      "message": "Nastawa „wyłącz” nie jest poniżej najniższej nastawy zasilania, więc „wyłącz” by grzało: obniż ją w opcjach. Inne powody: {others}."
+      "message": "Nastawa „wyłączone” nie jest co najmniej 1 °C poniżej najniższej temperatury wody: obniż ją w opcjach. Inne powody: {others}."
     },
     "blocked_setpoint_unit_not_supported": {
       "message": "Jednostka encji nastawy nie jest jednostką temperatury (°C, °F lub K), więc zapisana wartość znaczyłaby dla niej coś innego: wybierz w opcjach encję nastawy temperatury zasilania kotła. Inne powody: {others}."
@@ -1264,6 +1301,12 @@
     },
     "monitor_refresh_failed": {
       "message": "Monitor wtyczki nie mógł obliczyć swoich danych; szczegóły są w logu."
+    },
+    "blocked_setpoint_step_too_coarse": {
+      "message": "Encja nastawy przyjmuje teraz wartości co ponad 1 °C, więc odczyt zwrotny nie potwierdzi wartości: wybierz inną encję w opcjach. Inne powody: {others}."
+    },
+    "blocked_heating_off_ignored": {
+      "message": "Od początku sesji kocioł nie przyjął polecenia wtyczki „wyłącz grzanie”, więc wtyczka nie mogła wyłączyć ogrzewania. Sterowanie się zatrzymało, a kocioł został oddany. Sprawdź przełącznik ogrzewania wybrany w opcjach i ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej. Inne powody: {others}."
     }
   },
   "issues": {
@@ -1325,6 +1368,10 @@
     "control_latched": {
       "title": "Sterowanie ustąpiło: do kotła pisze inny sterownik",
       "description": "Inny sterownik znów zmienił to, co wtyczka zapisuje do kotła, po tym jak wtyczka raz przywróciła swoją wartość, więc wtyczka ustąpiła i z nim nie walczy. Oddała kocioł bezpiecznie: najpierw najniższa temperatura wody, potem włączone grzanie tam, gdzie przejmuje termostat albo własne sterowanie kotła, potem zwolnienie — przez to raz, na chwilę, nadpisała wartość innego sterownika. Z termostatem grzeje dalej termostat; bez niego kocioł grzeje tylko pod innym sterownikiem. Aby oddać sterowanie wtyczce, zatrzymaj inny sterownik, a potem wyłącz i włącz sterowanie. Jeśli włączono „Powrót po innym sterowniku bez udziału użytkownika”, sterowanie wraca też samo po godzinie, w której nic innego nie pisało do kotła (nie dotyczy przekaźników)."
+    },
+    "control_latched_heating_off_ignored": {
+      "title": "Sterowanie zatrzymane: kocioł nie przyjmuje „wyłącz grzanie”",
+      "description": "Od początku sesji kocioł nie przyjął polecenia wtyczki „wyłącz grzanie”, więc wtyczka nie mogła wyłączyć ogrzewania. Sterowanie się zatrzymało i bezpiecznie oddało kocioł: najpierw najniższa temperatura wody, potem włączone grzanie tam, gdzie przejmuje termostat albo własne sterowanie kotła, potem zwolnienie. Sprawdź przełącznik ogrzewania wybrany w opcjach i ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej."
     }
   }
 }

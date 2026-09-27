@@ -6,9 +6,12 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from ..core.foreign_heat import SourceKind
+from ..core.hand_back import RestartKind
+from ..core.limits import Grid
 from ..core.readings import BoilerSnapshot, Reading
 from ..core.signals import Signal
 from ..units import (
+    celsius_to,
     parse_binary,
     parse_number,
     power_to_kw,
@@ -153,3 +156,50 @@ def temperature_unit_of(hass: HomeAssistant, entity_id: str) -> bool | None:
         return None
     unit = state.attributes.get("unit_of_measurement")
     return temperature_unit_known(unit if isinstance(unit, str) else None)
+
+
+def read_grid(hass: HomeAssistant, entity_id: str) -> Grid | None:
+    """A setpoint entity's grid in its own unit (P-15)."""
+    return grid_from_state(hass.states.get(entity_id))
+
+
+def grid_from_state(state: State | None) -> Grid | None:
+    """A number or input_number entity's grid: its ``step``, counted from its ``min`` (else 0),
+    within its ``min`` and ``max``, in its own unit, with that unit's conversion from °C.
+    ``None`` without a step above 0, or in a unit that is not a temperature."""
+    if state is None:
+        return None
+    unit = state.attributes.get("unit_of_measurement")
+    unit = unit if isinstance(unit, str) else None
+    zero, one = celsius_to(0.0, unit), celsius_to(1.0, unit)
+    step = parse_number(state.attributes.get("step"))
+    if zero is None or one is None or step is None or step <= 0:
+        return None
+    return Grid(
+        step,
+        parse_number(state.attributes.get("min")),
+        parse_number(state.attributes.get("max")),
+        scale=one - zero,
+        offset=zero,
+    )
+
+
+_DURATION_UNITS = frozenset({"ms", "s", "min", "h", "d", "w"})
+
+
+def restart_reading(state: State | None) -> tuple[float | None, RestartKind]:
+    """A restart indicator's value and what kind it is: a timestamp sensor is a boot time; a
+    duration is an uptime; any other number a restart counter. ``None``: not known."""
+    if state is None:
+        return None, RestartKind.COUNTER
+    attributes = state.attributes
+    if attributes.get("device_class") == "timestamp":
+        from homeassistant.util import dt as dt_util
+
+        moment = dt_util.parse_datetime(state.state)
+        return (None if moment is None else moment.timestamp()), RestartKind.BOOT_TIME
+    duration = attributes.get("device_class") == "duration" or (
+        attributes.get("unit_of_measurement") in _DURATION_UNITS
+    )
+    kind = RestartKind.UPTIME if duration else RestartKind.COUNTER
+    return parse_number(state.state), kind

@@ -5,7 +5,8 @@ naming what the user must provide or fix before control may be switched on. Noth
 boiler's persistent memory: a picked setpoint entity and an external-control switch must be
 declared expiring or held, and a heating switch declared otherwise is left alone ("off" is then a
 low setpoint). The hand-back value is bound by the highest water temperature, never clamped, and
-"off" must not read as it (S-21, S-49). Provisional
+"off" must not read as it (S-21, S-49); "off" sent as a low setpoint stays at least 1 K below the
+lowest water temperature, or the boiler would not see a change (P-43). Provisional
 decisions of phase F (to be confirmed at the review, `docs/plan-0.2.md` K4): control only for an
 installation with one circuit fed by the boiler flow (unmixed, or passive fixed); the curve must
 be entered, never silently defaulted; VT's central boiler must not run alongside.
@@ -125,8 +126,13 @@ CONTROLLABLE_TOPOLOGIES = frozenset(
 INFO_ONLY_ALARMS = frozenset({"frequent_starts"})
 # Alarms that always hand control back, with no reaction to choose (decision 7): another
 # controller writing to the boiler makes the plugin step aside — the whole safe hand-back, then a
-# latch (decision 6, the user's answer H). A stored reaction for them is neutralised (S-11).
-ALWAYS_HAND_BACK_ALARMS = frozenset({"outside_change"})
+# latch (decision 6, the user's answer H) — and a boiler that ignores "heating off" from the start
+# of the session is blocked and handed back like an installation without a working heating switch
+# (answer O). A stored reaction for them is neutralised (S-11).
+ALWAYS_HAND_BACK_ALARMS = frozenset({"outside_change", "heating_off_ignored"})
+# "Off" sent as a low setpoint at least this far below the lowest water temperature (P-43,
+# decided): the boiler sees a change, and the guard's 0.5 K tolerance tells the two apart.
+OFF_BELOW_LOWEST_K = 1.0
 EXPONENT_BY_EMITTER = {
     EmitterType.RADIATOR: 1.3,
     EmitterType.CONVECTOR: 1.4,
@@ -164,6 +170,15 @@ class ControlOptions:
     learning: LearningConfig = field(default_factory=LearningConfig)
     learning_pauses: bool = True
     alarm_reactions: Mapping[str, AlarmReaction] = field(default_factory=dict)
+    # After stepping aside from another controller, take the boiler back by itself once nothing
+    # else wrote for an hour (decision 6; off by default, confirmed twice; not for relays).
+    return_after_outside_change: bool = False
+    # With an OpenTherm thermostat on a gateway: the thermostat's own requested water setpoint,
+    # which a fall-back after an outage shows (a lost command, not another controller).
+    thermostat_setpoint_entity: str | None = None
+    # A sensor that shows the gateway's or device's restarts — an uptime starting again, a restart
+    # counter going up, a boot time moving — a trace of an outage (Q3.7; none by default).
+    restart_entity: str | None = None
 
     @property
     def configured(self) -> bool:
@@ -187,6 +202,8 @@ class ControlOptions:
             self.hand_back_entity,
             self.confirmed_entity,
             self.ch_confirmed_entity,
+            self.thermostat_setpoint_entity,
+            self.restart_entity,
         )
         return tuple(e for e in found if e)
 
@@ -318,6 +335,9 @@ def parse_control(
         learning=LearningConfig(),
         learning_pauses=bool(value["learning_pauses"]),
         alarm_reactions=reactions,
+        return_after_outside_change=data.get("return_after_outside_change") is True,
+        thermostat_setpoint_entity=data.get("thermostat_setpoint_entity") or None,
+        restart_entity=data.get("restart_entity") or None,
     )
 
 
@@ -474,8 +494,14 @@ def config_blockers(control: ControlOptions, installation: Installation) -> list
             found.append("underfloor_without_max_flow")
     if control.loop.control.demand.count_threshold > len(installation.zones):
         found.append("count_threshold_above_zones")  # heating would never be asked for
-    if not control.loop.ch_writes and (
-        control.loop.off_setpoint >= control.loop.control.limits.hard_min
+    if not control.loop.ch_writes and off_too_close_to_lowest(
+        control.loop.off_setpoint, control.loop.control.limits.hard_min
     ):
-        found.append("off_setpoint_not_below_hard_min")  # "off" would heat
+        found.append("off_setpoint_not_below_hard_min")  # "off" would heat, or not show
     return found
+
+
+def off_too_close_to_lowest(off_setpoint: float, lowest: float) -> bool:
+    """P-43: "off" as a low setpoint must be at least ``OFF_BELOW_LOWEST_K`` below the lowest
+    water temperature."""
+    return off_setpoint > lowest - OFF_BELOW_LOWEST_K

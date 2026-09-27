@@ -391,19 +391,21 @@ async def test_an_otgw_hand_back_tries_every_part(hass: HomeAssistant) -> None:
 
 
 @pytest.mark.parametrize(
-    ("attributes", "written"),
+    ("attributes", "value", "written"),
     [
-        ({"unit_of_measurement": "°F", "step": 1, "min": 50, "max": 190}, 113.0),
-        ({"unit_of_measurement": "°C", "step": 1, "min": 20, "max": 80}, 46.0),
-        ({"unit_of_measurement": "°C", "step": 0.5, "min": 20, "max": 80}, 45.5),
-        ({"unit_of_measurement": "°C"}, 45.6),
+        ({"unit_of_measurement": "°F", "step": 1, "min": 50, "max": 190}, 45.0, 113.0),
+        ({"unit_of_measurement": "°F", "step": 1, "min": 50, "max": 190}, (114 - 32) / 1.8, 114.0),
+        ({"unit_of_measurement": "°C", "step": 1, "min": 20, "max": 80}, 46.0, 46.0),
+        ({"unit_of_measurement": "°C", "step": 0.5, "min": 0.25, "max": 80}, 69.75, 69.75),
+        ({"unit_of_measurement": "°C"}, 45.6, 45.6),
     ],
 )
 async def test_the_setpoint_goes_in_the_entitys_unit_and_step(
-    hass: HomeAssistant, attributes: dict[str, Any], written: float
+    hass: HomeAssistant, attributes: dict[str, Any], value: float, written: float
 ) -> None:
-    """P11, P87: a number takes its value in its own unit, rounded to its step — else 45 °C
-    would reach a °F boiler as 7 °C, and an unrounded value would read back as ignored."""
+    """P11, P87, P-15: a number takes its value in its own unit — else 45 °C would reach a °F
+    boiler as 7 °C — on its grid, where the loop put it inside the limits; the writer no longer
+    rounds, so what the guard compares is what the device gets."""
     calls = record(hass, ("number", "set_value"))
     hass.states.async_set("number.flow", "40", attributes)
     writer = make_writer(
@@ -417,8 +419,40 @@ async def test_the_setpoint_goes_in_the_entitys_unit_and_step(
             hand_back_value_effect="own_control",
         ),
     )
-    await writer.write_setpoint(45.6 if written != 113.0 else 45.0)
+    await writer.write_setpoint(value)
     assert calls[-1][2]["value"] == pytest.approx(written)
+
+
+@pytest.mark.parametrize(
+    ("attributes", "value"),
+    [
+        ({"unit_of_measurement": "°C", "step": 1, "min": 20, "max": 80}, 45.6),  # off its grid
+        ({"unit_of_measurement": "°C", "step": 0.5, "min": 0.25, "max": 80}, 70.0),
+        ({"unit_of_measurement": "°C", "step": 0.5, "min": 20, "max": 60}, 65.0),  # above max
+        ({"unit_of_measurement": "°C", "min": 30}, 25.0),  # below min
+    ],
+)
+async def test_a_value_off_the_entitys_grid_or_range_is_refused(
+    hass: HomeAssistant, attributes: dict[str, Any], value: float
+) -> None:
+    """P-15, P-98: a value not on the entity's grid, or outside its ``min`` and ``max``, is a
+    failed write — sent again at the next step, never rounded past the limits here."""
+    calls = record(hass, ("number", "set_value"))
+    hass.states.async_set("number.flow", "40", attributes)
+    writer = make_writer(
+        hass,
+        options(
+            write_path="entity",
+            setpoint_entity="number.flow",
+            write_type="held",
+            hand_back="value",
+            hand_back_value=40,
+            hand_back_value_effect="own_control",
+        ),
+    )
+    with pytest.raises(WriteError):
+        await writer.write_setpoint(value)
+    assert calls == []
 
 
 async def test_a_setpoint_entity_in_an_unknown_unit_is_not_written(hass: HomeAssistant) -> None:
@@ -799,4 +833,39 @@ async def test_an_expiring_external_switch_is_due_again_every_keep_alive(
     freezer.tick(timedelta(seconds=90))
     await held.keep_alive()
     await held.write_setpoint(41.0)
-    assert calls.count(on) == 1  # once per take
+    assert calls.count(on) == 1  # once per take — and, since X1, refreshed:
+    freezer.tick(timedelta(seconds=210))
+    await held.keep_alive()
+    assert calls.count(on) == 2  # every five minutes, with no echo required
+    await held.keep_alive(returned=True)
+    assert calls.count(on) == 3  # at once when it came back from unavailable
+    await held.keep_alive()
+    assert calls.count(on) == 3
+    await held.renew_external()
+    assert calls.count(on) == 4  # found off after an outage of its device (M15)
+
+
+async def test_the_hand_back_puts_its_values_on_the_entitys_grid(hass: HomeAssistant) -> None:
+    """P-15, P-98: the lowest water temperature and the hand-back value go on the setpoint
+    entity's grid — the lowest never below itself, the hand-back value never above the highest
+    water temperature — and the release is checked against the value on the grid."""
+    calls = record(hass, ("number", "set_value"))
+    hass.states.async_set(
+        "number.flow", "40", {"unit_of_measurement": "°C", "step": 0.5, "min": 0.25, "max": 90}
+    )
+    writer = make_writer(
+        hass,
+        options(
+            write_path="entity",
+            setpoint_entity="number.flow",
+            write_type="held",
+            hand_back="value",
+            hand_back_value=50,
+            hand_back_value_effect="own_control",
+        ),
+    )
+    checks = await writer.hand_back()
+    assert [call[2]["value"] for call in calls] == [25.25, 50.25]
+    (check,) = checks
+    assert check.expected == pytest.approx(50.25)
+    assert check.lowest == pytest.approx(25.25)

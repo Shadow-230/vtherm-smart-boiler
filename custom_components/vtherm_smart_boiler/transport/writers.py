@@ -44,10 +44,13 @@ from ..control_config import (
     HandBack,
     WritePath,
     hand_back_heating_on,
+    highest_water_temperature,
 )
-from ..core.guards import WriteType
+from ..core.guards import HELD_REFRESH_S, WriteType
 from ..core.hand_back import CheckKind, CheckSource, ReleaseRule
+from ..core.limits import GRID_EPSILON, is_on_grid
 from ..units import celsius_to, parse_number
+from .entities import grid_from_state
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant, State
@@ -120,8 +123,15 @@ class Writer(Protocol):
 
     async def write_heating(self, on: bool) -> None: ...
 
-    async def keep_alive(self) -> None:
-        """While control holds the boiler: repeat what lapses besides the loop's own writes."""
+    async def keep_alive(self, returned: bool = False) -> None:
+        """While control holds the boiler: repeat what the loop does not — an external-control
+        switch declared expiring every keep-alive, one declared held every five minutes and at
+        once when it came back from unavailable (``returned``)."""
+        ...
+
+    async def renew_external(self) -> None:
+        """Turn an external-control switch on again now: found off after an outage of its device
+        while control holds the boiler (a lost command, M15)."""
         ...
 
     async def hand_back(
@@ -147,20 +157,39 @@ def _checked(value: float, low: float) -> float:
     return round(value, 1)
 
 
+def _finite(value: float) -> float:
+    """A setpoint for an entity: finite and within the plausible range; not rounded — it comes
+    on the entity's grid already (P-15)."""
+    if not math.isfinite(value) or not 0.0 <= value <= MAX_SETPOINT:
+        raise WriteError(f"setpoint {value} outside 0 to {MAX_SETPOINT}")
+    return value
+
+
 def _as_entity_takes_it(state: State, value: float) -> float:
-    """A °C value as a number entity takes it: in its own unit (a °F entity gets °F), on its
-    step — else the device rounds it and the read-back looks like an ignored write. Steps up
-    to 1 K keep that rounding within the read-back tolerance."""
+    """A °C value in a number entity's own unit (a °F entity gets °F). It must already lie on
+    the entity's grid (``min`` + n * ``step``) and inside its ``min`` and ``max`` — the loop and
+    the hand-back put it there, inside the limits (P-15, P-98); anything else is refused, never
+    rounded here, so the guard compares the value the device gets."""
     unit = state.attributes.get("unit_of_measurement")
+    step = parse_number(state.attributes.get("step"))
+    if step is None or step <= 0:
+        value = round(value, 1)  # no grid: a tenth of a kelvin, as always
     converted = celsius_to(value, unit if isinstance(unit, str) else None)
     if converted is None:
         raise WriteError(f"{state.entity_id}: unit {unit!r} is not a temperature unit")
-    step = parse_number(state.attributes.get("step"))
+    low = parse_number(state.attributes.get("min"))
+    high = parse_number(state.attributes.get("max"))
+    slack = GRID_EPSILON * (step if step is not None and step > 0 else 1.0)
+    if (low is not None and converted < low - slack) or (
+        high is not None and converted > high + slack
+    ):
+        raise WriteError(f"{state.entity_id}: {converted:g} outside its range")
     if step is not None and step > 0:
-        low = parse_number(state.attributes.get("min"))
         base = 0.0 if low is None else low
-        converted = base + round((converted - base) / step) * step
-    return round(converted, 3)
+        if not is_on_grid(converted, step, base):
+            raise WriteError(f"{state.entity_id}: {converted:g} is not on its step {step:g}")
+        converted = base + round((converted - base) / step) * step  # the grid value exactly
+    return round(converted, 6)
 
 
 class _ServiceWriter:
@@ -255,6 +284,7 @@ class EntityWriter(_ServiceWriter):
         self._switch = options.ch_entity if options.loop.ch_writes else None
         self._heating_on = hand_back_heating_on(options)
         self._lowest = options.loop.control.limits.hard_min
+        self._highest = highest_water_temperature(options.loop.control)
         self._hand_back = options.hand_back
         self._hand_back_value = options.hand_back_value
         self._external = options.hand_back_entity if options.hand_back is HandBack.SWITCH else None
@@ -266,28 +296,42 @@ class EntityWriter(_ServiceWriter):
     def services(self) -> frozenset[tuple[str, str]]:
         return writer_services(self._options)
 
-    def _external_due(self) -> bool:
-        """The external switch is to be turned on now: control takes the boiler, or — declared
-        expiring — a keep-alive has passed since (a clock set back counts as passed)."""
+    def _external_due(self, returned: bool = False) -> bool:
+        """The external switch is to be turned on now: control takes the boiler; declared
+        expiring, a keep-alive has passed since; declared held, five minutes have (with no echo
+        required), or it came back from unavailable. A clock set back counts as passed."""
         if not self._taken or self._taken_at is None:
             return True
         elapsed = dt_util.utcnow().timestamp() - self._taken_at
-        return self._external_expiring and not 0 <= elapsed < KEEPALIVE_S
+        if elapsed < 0:
+            return True
+        if self._external_expiring:
+            return elapsed >= KEEPALIVE_S
+        return returned or elapsed >= HELD_REFRESH_S
 
-    async def _take(self) -> None:
-        if self._external and self._external_due():
+    async def _take(self, returned: bool = False) -> None:
+        if self._external and self._external_due(returned):
             await self._call_entity("turn_on", self._external)
             self._taken_at = dt_util.utcnow().timestamp()
         self._taken = True
 
-    async def keep_alive(self) -> None:
+    async def keep_alive(self, returned: bool = False) -> None:
         """An expiring external-control switch lapses unless repeated: turned on again every
-        keep-alive while control holds the boiler, whatever else is written."""
-        if self._taken and self._external and self._external_expiring:
-            await self._take()
+        keep-alive while control holds the boiler, whatever else is written; a held one every
+        five minutes, and at once when it came back from unavailable."""
+        if self._taken and self._external:
+            await self._take(returned)
+
+    async def renew_external(self) -> None:
+        """Found off after an outage of its device while control holds the boiler: turned on
+        again at once (M15)."""
+        if self._external:
+            await self._call_entity("turn_on", self._external)
+            self._taken_at = dt_util.utcnow().timestamp()
+            self._taken = True
 
     async def write_setpoint(self, value: float) -> None:
-        checked = _as_entity_takes_it(self._check_target(self._setpoint), _checked(value, 0.0))
+        checked = _as_entity_takes_it(self._check_target(self._setpoint), _finite(value))
         await self._take()
         await self._call_entity("set_value", self._setpoint, value=checked)
 
@@ -298,7 +342,9 @@ class EntityWriter(_ServiceWriter):
         await self._take()
         await self._call_entity("turn_on" if on else "turn_off", self._switch)
 
-    async def _set_value(self, celsius: float, timeout_s: float | None) -> None:
+    async def _set_value(self, celsius: float | None, timeout_s: float | None) -> None:
+        if celsius is None:
+            raise WriteError(f"{self._setpoint}: no value on its grid inside the limits")
         value = _as_entity_takes_it(self._check_target(self._setpoint), celsius)
         await self._call_entity("set_value", self._setpoint, timeout_s=timeout_s, value=value)
 
@@ -321,8 +367,13 @@ class EntityWriter(_ServiceWriter):
         release = self._external if self._hand_back is HandBack.SWITCH else self._setpoint
         # Without a release to follow it, the lowest would stay with a device that keeps it.
         releasing = self._hand_back is not None and release is not None and release not in skip
+        # The values on the setpoint entity's grid, inside the limits (P-15): the lowest never
+        # below itself, the hand-back value never above the highest water temperature.
+        grid = grid_from_state(self._hass.states.get(self._setpoint))
+        lowest: float | None = _checked(self._lowest, 0.0)
+        if grid is not None:
+            lowest = grid.put(self._lowest, self._lowest, self._highest)
         # 1. The lowest water temperature, with the release target only.
-        lowest = _checked(self._lowest, 0.0)
         lowest_ok = releasing and await _part(
             errors, lambda: self._set_value(lowest, write_timeout_s)
         )
@@ -336,15 +387,18 @@ class EntityWriter(_ServiceWriter):
         # 3. The release.
         external = self._external
         if self._hand_back is HandBack.VALUE:
-            value = self._hand_back_value
+            value = None if self._hand_back_value is None else float(self._hand_back_value)
+            if value is not None and grid is not None:
+                value = grid.put(value, None, self._highest)
             written = releasing and await _part(
                 errors, lambda: self._set_hand_back_value(value, write_timeout_s)
             )
             held = self._options.write_type is WriteType.HELD
             kind = CheckKind.VALUE if held else CheckKind.LEAVES_VALUE
-            expected = None if value is None else float(value)  # read back in °C
             checks.append(
-                self._value_check(kind, expected, lowest_ok and written, release_from, None, before)
+                self._value_check(
+                    kind, value, lowest_ok and written, release_from, None, before, lowest
+                )
             )
         elif self._hand_back is HandBack.SWITCH and external:
             written = releasing and await _part(
@@ -354,15 +408,17 @@ class EntityWriter(_ServiceWriter):
         elif self._hand_back is HandBack.TIMEOUT:
             # Nothing more: the device's own timeout releases, back to the value from before.
             kind = CheckKind.BACK_TO_BASELINE
-            checks.append(self._value_check(kind, None, lowest_ok, release_from, baseline, before))
+            checks.append(
+                self._value_check(kind, None, lowest_ok, release_from, baseline, before, lowest)
+            )
         if errors:
             raise HandBackFailed("; ".join(str(err) for err in errors), tuple(checks))
         return tuple(checks)
 
     async def _set_hand_back_value(self, value: float | None, timeout_s: float | None) -> None:
         if value is None:
-            raise WriteError("no hand-back value")
-        await self._set_value(float(value), timeout_s)
+            raise WriteError("no hand-back value, or none on the entity's grid")
+        await self._set_value(value, timeout_s)
 
     def _value_read_back(self) -> str:
         """What judges the setpoint's release: the separate read-back, else the entity itself."""
@@ -382,7 +438,10 @@ class EntityWriter(_ServiceWriter):
         release_from: float | None,
         baseline: float | None,
         before: State | None,
+        lowest: float | None,
     ) -> HandBackCheck:
+        """What the setpoint's read-back must show; ``expected`` and ``lowest`` as written, on
+        the entity's grid."""
         read = self._value_read_back()
         return HandBackCheck(
             read,
@@ -392,7 +451,7 @@ class EntityWriter(_ServiceWriter):
             held=self._options.write_type is WriteType.HELD,
             target=None if read == self._setpoint else self._setpoint,
             release_from=release_from,
-            lowest=self._lowest,
+            lowest=self._lowest if lowest is None else lowest,
             baseline=baseline,
             written=written,
             before=before,
@@ -427,8 +486,11 @@ class _GatewayWriter(_ServiceWriter):
         self._reachable_by = options.confirmed_entity
         self._lowest = options.loop.control.limits.hard_min
 
-    async def keep_alive(self) -> None:
+    async def keep_alive(self, returned: bool = False) -> None:
         """The loop repeats the gateway's overrides itself."""
+
+    async def renew_external(self) -> None:
+        """A gateway has no external-control switch."""
 
     def _require_connected(self, reported: bool = False) -> None:
         """``reported``: the read-back must also hold a value — opentherm_gw's entities can stay

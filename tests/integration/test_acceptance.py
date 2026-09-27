@@ -366,17 +366,24 @@ async def test_a_failed_outdoor_sensor_falls_back_to_the_weather(rig: Rig) -> No
 
 
 async def test_a_command_never_taken_is_detected_and_not_fought(rig: Rig) -> None:
-    """The boiler keeps its own steady value from the start and never takes ours: as another
-    controller (the user's decision) — one rewrite, then the alarm and a hand-back."""
+    """S-48, decision 6 (replaces "another controller" here): the boiler keeps its own steady
+    value from the start and never takes ours — ignored from the start once three counted sends
+    (the first five minutes after the unit's start carry its trace and do not count) went
+    unanswered: reported, not sent again this session, never another controller; control stays
+    on and nothing is handed back."""
     await start(rig)
     await rig.hass.services.async_call(SIM, "ignore_writes", {"enabled": True}, blocking=True)
     await rig.switch(True)
-    await rig.advance(180)
-    assert rig.state("binary_sensor", "alarm_outside_change").state == "off"  # the one rewrite
-    await rig.advance(110)
-    assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
-    assert rig.state("sensor", "control_state").state == "handed_back"
-    assert rig.setpoints()[-1] == 0.0
+    await rig.advance(700)
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"
+    await rig.advance(60)
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "on"
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
+    assert rig.state("sensor", "control_state").state != "handed_back"
+    assert 0.0 not in rig.setpoints()  # nothing handed back
+    count = len(rig.setpoints())
+    await rig.advance(300)
+    assert len(rig.setpoints()) == count  # not sent again this session
 
 
 async def test_vt_stopped_means_no_demand_not_a_hand_back(rig: Rig) -> None:
@@ -487,6 +494,8 @@ async def test_standalone_hand_back_stops_heating(rig: Rig) -> None:
 
 
 async def test_an_outside_change_is_rewritten_once_then_alarmed(rig: Rig) -> None:
+    """Another controller holds its value after the one rewrite: the plugin steps aside with the
+    whole safe hand-back — the lowest water temperature, CH=1, CS=0 — and never fights it."""
     await start(rig)
     await rig.switch(True)
     await rig.advance(60)
@@ -494,6 +503,11 @@ async def test_an_outside_change_is_rewritten_once_then_alarmed(rig: Rig) -> Non
     await rig.advance(180)
     assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
     assert rig.state("sensor", "control_state").state == "handed_back"
+    assert [(kind, value) for _t, kind, value in rig.gateway()[-3:]] == [
+        ("setpoint", 25.0),
+        ("ch", True),
+        ("setpoint", 0.0),
+    ]
     count = len(rig.setpoints())
     await rig.advance(120)
     assert len(rig.setpoints()) == count  # no fight

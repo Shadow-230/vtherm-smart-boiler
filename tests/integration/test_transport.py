@@ -79,3 +79,59 @@ async def test_other_inputs(hass: HomeAssistant) -> None:
     assert read_source(hass, "sensor.none", SourceKind.POWER) is None
     hass.states.async_set("weather.x", "sunny", {"temperature": 41.0, "temperature_unit": "°F"})
     assert read_weather_temperature(hass, "weather.x").value == pytest.approx(5.0)
+
+
+def test_a_restart_indicator_is_read_by_its_kind() -> None:
+    """Q3.7: a duration is an uptime, a timestamp a boot time, any other number a restart
+    counter; a value not known reads as ``None``."""
+    from homeassistant.core import State
+
+    from custom_components.vtherm_smart_boiler.core.hand_back import RestartKind, restart_seen
+    from custom_components.vtherm_smart_boiler.transport.entities import restart_reading
+
+    uptime = State("sensor.up", "120", {"device_class": "duration", "unit_of_measurement": "s"})
+    assert restart_reading(uptime) == (120.0, RestartKind.UPTIME)
+    assert restart_reading(State("sensor.up", "5", {"unit_of_measurement": "min"}))[1] is (
+        RestartKind.UPTIME
+    )
+    boot = State("sensor.boot", "2026-01-12T08:00:00+00:00", {"device_class": "timestamp"})
+    value, kind = restart_reading(boot)
+    assert kind is RestartKind.BOOT_TIME
+    assert value is not None
+    assert restart_reading(State("sensor.boot", "unknown", {"device_class": "timestamp"})) == (
+        None,
+        RestartKind.BOOT_TIME,
+    )
+    assert restart_reading(State("sensor.count", "7")) == (7.0, RestartKind.COUNTER)
+    assert restart_reading(State("sensor.count", "unavailable"))[0] is None
+    assert restart_reading(None) == (None, RestartKind.COUNTER)
+    assert restart_seen(5000.0, 12.0, RestartKind.UPTIME)
+    assert not restart_seen(12.0, 72.0, RestartKind.UPTIME)  # counting on: no restart
+    assert restart_seen(3.0, 4.0, RestartKind.COUNTER)
+    assert restart_seen(4.0, 0.0, RestartKind.COUNTER)  # a reset counter: cautious, a trace
+    assert not restart_seen(3.0, 3.0, RestartKind.COUNTER)
+    assert restart_seen(1.0, 2.0, RestartKind.BOOT_TIME)
+    assert not restart_seen(None, 2.0, RestartKind.BOOT_TIME)
+
+
+def test_a_setpoint_entitys_grid_is_read_in_its_unit() -> None:
+    """P-15: the grid of a number entity in its own unit; none without a step above 0 or in a
+    unit that is not a temperature."""
+    from homeassistant.core import State
+
+    from custom_components.vtherm_smart_boiler.transport.entities import grid_from_state
+
+    grid = grid_from_state(
+        State("number.flow", "40", {"unit_of_measurement": "°F", "step": 1, "min": 50})
+    )
+    assert grid is not None
+    assert grid.scale == pytest.approx(1.8)
+    assert grid.offset == pytest.approx(32.0)
+    assert grid.minimum == 50.0
+    assert grid.maximum is None
+    assert grid_from_state(State("number.flow", "40", {"unit_of_measurement": "°C"})) is None
+    assert grid_from_state(State("number.flow", "40", {"step": 0})) is None
+    assert grid_from_state(State("number.flow", "40", {"unit_of_measurement": "%", "step": 1})) is (
+        None
+    )
+    assert grid_from_state(None) is None

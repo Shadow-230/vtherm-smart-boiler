@@ -7,11 +7,15 @@ import pytest
 from custom_components.vtherm_smart_boiler.core.limits import (
     FlowLimits,
     FrostConfig,
+    Grid,
     LimitCode,
     Limited,
     frost_needed,
     handed_back_in_frost,
+    is_on_grid,
     limit_flow,
+    on_grid,
+    write_bounds,
 )
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 
@@ -57,6 +61,45 @@ def test_a_fixed_temperature_circuit_keeps_the_boiler_flow_above_it() -> None:
     assert limit_flow(32.0, 32.0, LIMITS, floor=40.0, circuit_max=38.0) == Limited(
         38.0, (LimitCode.FIXED_CIRCUIT, LimitCode.CIRCUIT_MAX)
     )
+
+
+def test_a_value_goes_on_the_entitys_grid_inside_the_limits() -> None:
+    """P-98: rounding to the entity's step stays inside the limits — the grid value just inside
+    where the nearest falls outside; none without one."""
+    assert on_grid(70.0, 0.5, 0.25, 25.0, 70.0) == 69.75  # a tie, the nearest above is outside
+    assert on_grid(45.3, 0.5, 0.0, 25.0, 70.0) == 45.5
+    assert on_grid(24.9, 1.0, 0.0, 25.0, 70.0) == 25.0  # the nearest (25) is inside
+    assert on_grid(25.2, 5.0, 0.0, 25.2, 70.0) == 30.0  # just inside from below
+    assert on_grid(40.0, 5.0, 0.0, 41.0, 44.0) is None  # no grid value inside
+    assert on_grid(45.37, 0.0, 0.0, 25.0, 70.0) == 45.37  # no step: no grid
+    assert on_grid(80.0, 0.0, 0.0, None, 70.0) is None
+    assert is_on_grid(69.75, 0.5, 0.25)
+    assert not is_on_grid(70.0, 0.5, 0.25)
+    assert is_on_grid(45.123, 0.0, 0.0)
+
+
+def test_a_grid_in_another_unit_is_applied_in_that_unit() -> None:
+    """P-15: a °F entity's grid is applied in °F and the value returned in °C; its step as a
+    temperature difference decides whether it is too coarse (above 1 K)."""
+    fahrenheit = Grid(step=1.0, minimum=50.0, maximum=190.0, scale=1.8, offset=32.0)
+    value = fahrenheit.put(45.3, 25.0, 70.0)
+    assert value is not None
+    assert fahrenheit.to_unit(value) == pytest.approx(114.0)
+    assert not fahrenheit.too_coarse  # 0.56 K
+    assert Grid(step=2.0, scale=1.8, offset=32.0).too_coarse  # 1.1 K
+    assert Grid(step=1.0).step_k == 1.0
+    assert not Grid(step=1.0).too_coarse
+    assert Grid(step=5.0).too_coarse
+    assert Grid(step=0.5, minimum=30.0, maximum=60.0).put(20.0, 25.0, 70.0) == 30.0
+    assert Grid(step=0.5, minimum=30.0, maximum=60.0).put(20.0, None, 25.0) is None
+
+
+def test_the_bounds_a_written_value_keeps() -> None:
+    limits = FlowLimits(hard_min=25.0, hard_max=70.0)
+    assert write_bounds(limits) == (25.0, 70.0)
+    assert write_bounds(limits, circuit_max=45.0, boiler_max=80.0) == (25.0, 45.0)
+    assert write_bounds(limits, floor=40.0) == (40.0, 70.0)
+    assert write_bounds(limits, circuit_max=35.0, floor=40.0) == (35.0, 35.0)
 
 
 @pytest.mark.parametrize(

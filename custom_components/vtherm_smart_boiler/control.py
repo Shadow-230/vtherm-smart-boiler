@@ -13,12 +13,27 @@ says so. Before each attempt the debt is marked and stored at once, so nothing t
 attempt short can lose it. Control takes the boiler through a gateway only once its read-back
 holds a value, so its hand-back can be seen (P-21).
 
+What the read-back shows is judged by decision 6's classes (``core.guards``, ``core.loop``): a
+lost command is sent again and counted — three a day raise "commands lost", never a hold; a
+command ignored from the start is not sent again this session ("write ignored", per target); a
+clip is shown; another controller is written over once, then the plugin steps aside. Each guard
+is told the trace of an outage around its target — the target, its read-back or another entity
+of the same device unavailable, unknown or missing within five minutes, or the optional restart
+indicator showing a restart — the OpenTherm thermostat's own request where it is mapped, hot
+water, and a target back from unavailable. The external-control switch is watched while control
+holds the boiler: off after an outage of its device, it is switched on again; off with no trace,
+the plugin steps aside at once without a fight.
+
 How control resumes after it stopped (``SCOPE.md`` §7):
 - another controller — an outside change always makes the plugin step aside, whatever reaction
   an earlier version stored: the whole safe hand-back, the target the other controller holds
   included (the user's answer H) — or an alarm set to hand back: a latch, shown with its cause,
   until the user switches control off and on; it survives a restart and never expires on its
-  own. Stepping aside raises the entry's one latch issue, again at each start while it holds;
+  own. Stepping aside raises the entry's one latch issue, again at each start while it holds.
+  Where the option is on, control also returns by itself — a new session — after an hour in
+  which the read-backs showed only the hand-back state;
+- heating off ignored from the start of a session (answer O): a latch and a blocker naming it,
+  until the user switches control off and on;
 - an internal error: at any change of the control switch;
 - a lost boiler link: on its own, once the data is fresh again;
 - the plugin's own monitor failing for five minutes: on its own, once it has worked for a minute
@@ -69,6 +84,7 @@ from .control_config import (
     ControlOptions,
     HandBack,
     HandBackEffect,
+    Topology,
     WritePath,
     config_blockers,
     frost_protection_by,
@@ -84,14 +100,18 @@ from .core.controller import (
     clock_start,
 )
 from .core.guards import (
+    TOLERANCE_K,
     Confirmation,
     GuardConfig,
+    GuardContext,
     GuardEvent,
     GuardState,
     WriteAction,
     WriteKind,
     WriteType,
+    add_loss,
     confirmation,
+    trace_seen,
     write_failed,
 )
 from .core.hand_back import (
@@ -108,6 +128,7 @@ from .core.hand_back import (
     judge_switch,
     outage_seen,
     released,
+    restart_seen,
     shown,
     third_value,
     watch_foreign,
@@ -119,13 +140,17 @@ from .core.learning import (
     plan_learning,
     release_all,
 )
-from .core.limits import handed_back_in_frost
+from .core.limits import Grid, handed_back_in_frost, write_bounds
 from .core.loop import (
+    HEATING_OFF_IGNORED,
+    OFF,
     ON,
     LastCommand,
     LoopOutput,
     LoopState,
+    after_hand_back_loop,
     loop_step,
+    new_session,
     parse_last_command,
     remember_command,
 )
@@ -134,9 +159,11 @@ from .core.signal_check import OutdoorStatus, curve_sensor
 from .core.signals import Signal
 from .transport.entities import (
     read_bounds,
+    read_grid,
     read_on_off,
     read_temperature,
     read_weather_temperature,
+    restart_reading,
     temperature_from_state,
     temperature_unit_of,
 )
@@ -148,6 +175,7 @@ from .transport.writers import (
     make_writer,
     writer_services,
 )
+from .units import parse_binary
 
 if TYPE_CHECKING:
     from .coordinator import SmartBoilerCoordinator
@@ -181,8 +209,12 @@ LATCHED_ISSUE = "control_latched"
 STOPPED_HEATING_ISSUE = "control_stopped_heating"
 STOPPED_HEATING_S = 60.0
 # Blockers that raise no such issue: Home Assistant starting (the minute starts once it runs),
-# an internal error (its own alarm) and the monitor failing (V6's own issue).
-_QUIET_BLOCKERS = frozenset({"ha_starting", "control_error", "monitor_failed"})
+# an internal error (its own alarm), the monitor failing (V6's own issue) and heating off ignored
+# from the start (the latch issue says so).
+_QUIET_BLOCKERS = frozenset({"ha_starting", "control_error", "monitor_failed", HEATING_OFF_IGNORED})
+# After stepping aside from another controller, where the option is on: control returns by
+# itself once the read-backs have shown only the hand-back state this long (decided).
+RETURN_QUIET_S = 3600.0
 # The monitor failing handed the boiler back: a repair issue, which becomes an information note
 # under the same id once control has resumed (the user's answer I).
 MONITOR_ISSUE = "monitor_failed"
@@ -199,8 +231,10 @@ RUNTIME_BLOCKERS = (
     "vt_central_boiler_unknown",
     "setpoint_outside_entity_range",
     "setpoint_unit_not_supported",
+    "setpoint_step_too_coarse",
     "control_error",
     "monitor_failed",
+    HEATING_OFF_IGNORED,
 )
 CONFIRMED_BY_GATEWAY = "confirmed_by_gateway"
 _SHOWN_CONFIRMED = frozenset({Confirmation.CONFIRMED.value, CONFIRMED_BY_GATEWAY})
@@ -230,6 +264,18 @@ def _local_minute(t: float) -> str:
     return dt_util.as_local(dt_util.utc_from_timestamp(t)).strftime("%Y-%m-%d %H:%M")
 
 
+def _level(raw: Any) -> float:
+    """A stored heating on/off baseline: 0 or 1; anything else raises ``ValueError``."""
+    value = _setpoint(raw)
+    if value not in (OFF, ON):
+        raise ValueError(f"not heating on/off: {raw!r}")
+    return value
+
+
+def _last(times: Sequence[float]) -> float | None:
+    return max(times) if times else None
+
+
 def _entity_ids(raw: Any) -> set[str]:
     """A stored list of entity ids; anything else raises ``ValueError``."""
     if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
@@ -247,6 +293,15 @@ def _kept_alarms(raw: Any) -> set[ControlAlarm]:
         if alarm in _KEPT_ALARMS:
             kept.add(alarm)
     return kept
+
+
+def _memory_moved(before: LoopState, after: LoopState) -> bool:
+    """Whether a value stored at once changed: a guard's baseline or its last fall-back without
+    a trace."""
+    return any(
+        old.baseline != new.baseline or _last(old.fallbacks) != _last(new.fallbacks)
+        for old, new in ((before.setpoint, after.setpoint), (before.switch, after.switch))
+    )
 
 
 def _zones_changed(before: LearningState, after: LearningState) -> bool:
@@ -297,12 +352,17 @@ class ControlAlarm(StrEnum):
     # Control does not hold the boiler where a hand-back stops heating, and a room is near
     # freezing: frost protection rests on the boiler's own (S-57). Information only.
     HANDED_BACK_IN_FROST = "handed_back_in_frost"
+    COMMANDS_LOST = "commands_lost"  # three lost commands within a day: information only
+    CONFIRMATION_MISSING = "confirmation_missing"  # the read-back unknown for five minutes
 
 
 _EVENT_ALARM = {
     GuardEvent.IGNORED: ControlAlarm.WRITE_IGNORED,
     GuardEvent.OUTSIDE_CHANGE: ControlAlarm.OUTSIDE_CHANGE,
 }
+# Alarms that inform and never hand back, whatever reaction was stored: a lost command is sent
+# again, a missing confirmation decides nothing (the boiler link does).
+_INFO_ONLY = frozenset({ControlAlarm.COMMANDS_LOST, ControlAlarm.CONFIRMATION_MISSING})
 # Alarms kept across a restart: they explain a latch that survives it.
 _KEPT_ALARMS = frozenset({ControlAlarm.OUTSIDE_CHANGE, ControlAlarm.CONTROL_ERROR})
 
@@ -333,6 +393,8 @@ class ControlStatus:
     hand_back_check: str | None = None  # where the last hand-back stands (HandBackConfirmation)
     monitor_failed_since: float | None = None  # the monitor's current run of failed refreshes
     frost_protection_by: str | None = None  # who keeps frost protection now (FrostProtection)
+    ignored_targets: tuple[str, ...] = ()  # targets ignored from the start ("write ignored")
+    unconfirmed_targets: tuple[str, ...] = ()  # targets whose confirmation is missing
 
     @property
     def confirmed_setpoint(self) -> float | None:
@@ -472,6 +534,16 @@ class ControlUnit:
         self._stopped_heating_issue = False  # the issue is up
         # S-57: the alarm "handed back in frost"; kept across sessions for its hysteresis.
         self._frost_alarm = False
+        # X1: the restart indicator's last restart seen (a trace of an outage), which targets
+        # were unavailable at the last step, the external-control switch's watch, and the quiet
+        # hour before control returns by itself.
+        self._restart_at: float | None = None
+        self._restart_value: float | None = None
+        self._targets_down: dict[str, bool] = {}
+        self._external_seen_on = False
+        self._external_renew = False
+        self._external_returned = False
+        self._quiet_since: float | None = None
 
     # --- status, listeners, storage -----------------------------------------------------
 
@@ -551,6 +623,12 @@ class ControlUnit:
             # The one rewrite after an outside change: within a day of it, no more are made.
             "rewritten_at": session.loop.setpoint.rewritten_at,
             "heating_rewritten_at": session.loop.switch.rewritten_at,
+            # Decision 6: the values from before the plugin, and the last fall-back without a
+            # trace of each guard — a second within the hour is another controller's.
+            "baseline": session.loop.setpoint.baseline,
+            "heating_baseline": session.loop.switch.baseline,
+            "fallback_at": _last(session.loop.setpoint.fallbacks),
+            "heating_fallback_at": _last(session.loop.switch.fallbacks),
             "failed": session.failed,
             "alarms": sorted(alarm.value for alarm in session.alarms & _KEPT_ALARMS),
             "hand_back_pending": self._hand_back_pending,
@@ -590,14 +668,26 @@ class ControlUnit:
         latched_by: tuple[str, ...] = field(
             "latched_by", lambda raw: tuple(str(a) for a in raw), ()
         )
-        rewritten_at: float | None = field("rewritten_at", float, None)
-        heating_rewritten_at: float | None = field("heating_rewritten_at", float, None)
+        rewritten_at: float | None = field("rewritten_at", _setpoint, None)
+        heating_rewritten_at: float | None = field("heating_rewritten_at", _setpoint, None)
+        baseline: float | None = field("baseline", _setpoint, None)
+        heating_baseline: float | None = field("heating_baseline", _level, None)
+        fallback_at: float | None = field("fallback_at", _setpoint, None)
+        heating_fallback_at: float | None = field("heating_fallback_at", _setpoint, None)
         latched = _flag(data.get("latched"))
         self._session = _Session(
             loop=LoopState(
                 control=ControlState(latched=latched, latched_by=latched_by if latched else ()),
-                setpoint=GuardState(rewritten_at=rewritten_at),
-                switch=GuardState(rewritten_at=heating_rewritten_at),
+                setpoint=GuardState(
+                    rewritten_at=rewritten_at,
+                    baseline=baseline,
+                    fallbacks=() if fallback_at is None else (fallback_at,),
+                ),
+                switch=GuardState(
+                    rewritten_at=heating_rewritten_at,
+                    baseline=heating_baseline,
+                    fallbacks=() if heating_fallback_at is None else (heating_fallback_at,),
+                ),
             ),
             learning=LearningState(
                 paused=paused,
@@ -818,14 +908,32 @@ class ControlUnit:
             found.append("vt_central_boiler_active")
         if self._unit_not_supported():
             found.append("setpoint_unit_not_supported")  # its range cannot be checked either
-        elif self._outside_entity_range():
-            found.append("setpoint_outside_entity_range")
+        else:
+            grid = self._grid()
+            if grid is not None and grid.too_coarse:
+                # A value on so coarse a grid could read back beyond the tolerance (P-15).
+                found.append("setpoint_step_too_coarse")
+            if self._outside_entity_range(grid):
+                found.append("setpoint_outside_entity_range")
         if self._session.failed:
             found.append("control_error")
         if self._coordinator.monitor_lost(now):
             # A hand-back; control resumes on its own once the monitor works again (answer I).
             found.append("monitor_failed")
+        control = self._session.loop.control
+        if control.latched and HEATING_OFF_IGNORED in control.latched_by:
+            # The boiler did not take "heating off" from the start of the session (answer O):
+            # blocked until the user switches control off and on after fixing it (X5.21).
+            found.append(HEATING_OFF_IGNORED)
         return tuple(found)
+
+    def _grid(self) -> Grid | None:
+        """The setpoint entity's grid (P-15), on the entity path; ``None`` elsewhere or without
+        a step."""
+        options = self.options
+        if options.write_path is not WritePath.ENTITY or not options.setpoint_entity:
+            return None
+        return read_grid(self._hass, options.setpoint_entity)
 
     def _unit_not_supported(self) -> bool:
         """A setpoint entity in a unit that is not a temperature: a value written would mean
@@ -835,22 +943,34 @@ class ControlUnit:
             return False
         return temperature_unit_of(self._hass, options.setpoint_entity) is False
 
-    def _outside_entity_range(self) -> bool:
+    def _outside_entity_range(self, grid: Grid | None) -> bool:
         """A setpoint entity that would reject a value control may write (a limit, the low "off"
-        value or the hand-back value): every write of it would fail."""
+        value or the hand-back value), or has no value on its grid for it inside the limits
+        (P-15): every write of it would fail."""
         options = self.options
         if options.write_path is not WritePath.ENTITY or not options.setpoint_entity:
             return False
         low, high = read_bounds(self._hass, options.setpoint_entity)
         control = options.loop.control
-        values = [control.limits.hard_min, highest_water_temperature(control)]
+        lowest, highest = write_bounds(
+            control.limits, control.circuit_max, control.boiler_max, control.circuit_floor
+        )
+        # Each value with the bounds its grid value must keep.
+        values: list[tuple[float, float | None, float | None]] = [
+            (control.limits.hard_min, control.limits.hard_min, highest),
+            (highest_water_temperature(control), lowest, highest),
+        ]
         if not options.loop.ch_writes:
-            values.append(options.loop.off_setpoint)
+            values.append((options.loop.off_setpoint, None, options.loop.off_setpoint))
         if options.hand_back is HandBack.VALUE and options.hand_back_value is not None:
-            values.append(options.hand_back_value)
-        return any(
+            values.append((options.hand_back_value, None, highest))
+        if any(
             (low is not None and value < low) or (high is not None and value > high)
-            for value in values
+            for value, _low, _high in values
+        ):
+            return True
+        return grid is not None and any(
+            grid.put(value, below, above) is None for value, below, above in values
         )
 
     async def async_set_enabled(self, enabled: bool, now: float | None = None) -> None:
@@ -879,11 +999,18 @@ class ControlUnit:
 
     def _end_session(self) -> None:
         """A new session starts fresh; only the learning pauses carry on (a pending hand-back and
-        its alarm belong to the unit, not the session). A latch goes with the session, and its
-        repair issue with it."""
-        self._session = _Session(learning=self._session.learning)
+        its alarm belong to the unit, not the session), and each guard's one rewrite, kept for its
+        day (provisional, K4). A latch goes with the session, and its repair issue with it; so
+        does a target ignored from the start, which the new session tries again."""
+        now = dt_util.utcnow().timestamp()
+        self._session = _Session(
+            loop=new_session(self._session.loop, now), learning=self._session.learning
+        )
         self._writer = None
         self._baseline = None
+        self._quiet_since = None
+        self._external_seen_on = False
+        self._external_renew = False
         self._forget_last_command()
         self._report_latched(anew=False)
         self._coordinator.schedule_control_save()
@@ -968,26 +1095,40 @@ class ControlUnit:
             _LOGGER.info("The control switch did not restore its state: control is off")
             self._restored = True
             self._coordinator.schedule_control_save()
+        if self._follow_return(now):
+            await self._coordinator.async_save_control_now()  # the latch is gone
+            session = self._session
         blockers = self.blockers(now)
         monitor_failed = "monitor_failed" in blockers
         if self.enabled and not blockers and self._writer is None:
             self._writer = self._writer_factory(self._hass, self.options)
         zones = self._coordinator.link.zones()
         snapshot = self._coordinator.transport.snapshot(now)
-        if self._coordinator.dhw_now(snapshot):
+        dhw = self._coordinator.dhw_now(snapshot)
+        if dhw:
             self._dhw_seen_at = now  # a draw keeps a third value from being judged (W6)
+        self._watch_external(now)  # another controller switching it off steps aside at once
         inputs = self._inputs(now, snapshot, zones, blockers)
         confirmed = self._confirmed()
         if session.loop.setpoint.baseline is not None:
-            # Noted before the step: a hand-back resets the guards, and a timeout hand-back is
-            # released back to this value.
+            # Noted before the step: a timeout hand-back is released back to this value.
             self._baseline = session.loop.setpoint.baseline
         was_latched = session.loop.control.latched
+        before = session.loop
+        setpoint_context, heating_context = self._contexts(now, dhw)
         session.loop, out = loop_step(
-            session.loop, inputs, confirmed, self.options.loop, self._confirmed_heating()
+            session.loop,
+            inputs,
+            confirmed,
+            self.options.loop,
+            self._confirmed_heating(),
+            setpoint_context=setpoint_context,
+            heating_context=heating_context,
+            grid=self._grid(),
         )
         if session.loop.control.latched and not was_latched:
             self._latched_now()
+            blockers = self.blockers(now)  # a latch may name a blocker of its own (answer O)
         if out.hand_back:
             self._note_blocker_release(out, blockers)  # stored with the hand-back, at once
             await self._async_hand_back_writes(now)
@@ -1021,11 +1162,25 @@ class ControlUnit:
                 session.alarms.discard(alarm)
         for event in out.events:
             session.alarms.add(_EVENT_ALARM[event])
-        if out.events:
-            await self._coordinator.async_save_control_now()  # the alarm behind a latch
-        setpoint = session.loop.setpoint
-        if setpoint.confirmed_at is not None and not setpoint.ignored_reported:
-            session.alarms.discard(ControlAlarm.WRITE_IGNORED)  # the value holds
+        # Per target (P-09): on while a guard is ignored from the start, whichever it is — and
+        # while the latch for heating off ignored from the start holds, a restart included.
+        ignored = out.ignored
+        latch = session.loop.control
+        if latch.latched and HEATING_OFF_IGNORED in latch.latched_by and "heating" not in ignored:
+            ignored = (*ignored, "heating")
+        for flagged, alarm in (
+            (bool(ignored), ControlAlarm.WRITE_IGNORED),
+            (out.commands_lost, ControlAlarm.COMMANDS_LOST),  # information: sent again
+            (bool(out.unconfirmed), ControlAlarm.CONFIRMATION_MISSING),  # information only
+        ):
+            if flagged:
+                session.alarms.add(alarm)
+            else:
+                session.alarms.discard(alarm)
+        if out.events or _memory_moved(before, session.loop):
+            # The alarm behind a latch; the values from before the plugin and the fall-backs
+            # without a trace a later judgement rests on.
+            await self._coordinator.async_save_control_now()
         setpoint_check, heating_check = self._checks()
         command = out.decision.command
         await self._async_learning(
@@ -1059,6 +1214,8 @@ class ControlUnit:
             hand_back_check=self._hand_back_shown,
             monitor_failed_since=self._coordinator.monitor_failed_since,
             frost_protection_by=self._frost_protection_shown(),
+            ignored_targets=ignored,
+            unconfirmed_targets=out.unconfirmed,
         )
 
     def _follow_unknown_zones(self, now: float, zones: Sequence[ZoneState]) -> tuple[str, ...]:
@@ -1196,28 +1353,42 @@ class ControlUnit:
     def _latched_now(self) -> None:
         """The latch was set in this step: for another controller, the plugin steps aside — the
         whole safe hand-back follows at once, which no guard holds back and which skips no
-        target (the user's answer H) — and its repair issue is raised anew."""
+        target (the user's answer H); for heating off ignored from the start, control is blocked
+        and hands back (answer O). Its repair issue is raised anew."""
         latched_by = self._session.loop.control.latched_by
         if ControlAlarm.OUTSIDE_CHANGE.value in latched_by:
             _LOGGER.warning(
                 "Another controller writes to the boiler: control steps aside with the safe "
                 "hand-back and stays off until control is switched off and on"
             )
+        if HEATING_OFF_IGNORED in latched_by:
+            _LOGGER.warning(
+                'The boiler did not take "heating off" from the start of the session: control '
+                "hands the boiler back and stays blocked until control is switched off and on"
+            )
         self._report_latched(anew=True)
+
+    def _latch_cause(self) -> str | None:
+        """The cause the entry's one latch issue names: another controller, or heating off
+        ignored from the start; ``None`` for any other latch (Y1 names those)."""
+        control = self._session.loop.control
+        if self.hand_back_only or not control.latched:
+            return None
+        for cause in (ControlAlarm.OUTSIDE_CHANGE.value, HEATING_OFF_IGNORED):
+            if cause in control.latched_by:
+                return cause
+        return None
 
     def _report_latched(self, anew: bool) -> None:
         """The entry's one latch issue while control stays latched after stepping aside from
-        another controller (V7); deleted otherwise. ``anew``: the latch was just set — raised
+        another controller (V7), or blocked for heating off ignored from the start (answer O),
+        its text naming the cause; deleted otherwise. ``anew``: the latch was just set — raised
         anew, so an earlier one the user dismissed does not hide it; at a start the issue a
         stored latch keeps is raised as it was left. An error where the hand-back stops heating,
         else a warning; not fixable: switching control off and on clears the latch."""
         issue_id = f"{LATCHED_ISSUE}_{self._coordinator.config_entry.entry_id}"
-        control = self._session.loop.control
-        if (
-            self.hand_back_only
-            or not control.latched
-            or ControlAlarm.OUTSIDE_CHANGE.value not in control.latched_by
-        ):
+        cause = self._latch_cause()
+        if cause is None:
             ir.async_delete_issue(self._hass, DOMAIN, issue_id)
             return
         if anew:
@@ -1229,7 +1400,11 @@ class ControlUnit:
             is_fixable=False,
             is_persistent=False,
             severity=ir.IssueSeverity.ERROR if self._stops_heating() else ir.IssueSeverity.WARNING,
-            translation_key=LATCHED_ISSUE,
+            translation_key=(
+                LATCHED_ISSUE
+                if cause == ControlAlarm.OUTSIDE_CHANGE.value
+                else f"{LATCHED_ISSUE}_{HEATING_OFF_IGNORED}"
+            ),
         )
 
     def _boiler_link(self, snapshot: BoilerSnapshot, now: float) -> bool:
@@ -1303,7 +1478,7 @@ class ControlUnit:
                 if alarm.active and self.options.reaction(kind.value) is AlarmReaction.HAND_BACK
             ]
         for alarm in sorted(self._session.alarms):
-            if alarm in (
+            if alarm in _INFO_ONLY or alarm in (
                 ControlAlarm.CONTROL_ERROR,
                 ControlAlarm.HAND_BACK_FAILED,
                 ControlAlarm.BOILER_LINK_LOST,
@@ -1381,18 +1556,30 @@ class ControlUnit:
                 loop = replace(loop, switch=write_failed(loop.switch))
         self._session.loop = loop
         await self._async_remember_command(out, setpoint_ok, heating_ok, now)
-        if self._keeps_external_alive() and out.decision.command is not None and not out.blocked:
-            # Control holds the boiler: an expiring external-control switch is turned on again
-            # every keep-alive, whatever else is written (P-40).
+        holds = out.decision.command is not None and not out.blocked
+        if self._external_renew and holds:
+            # Found off after an outage of its device (M15): turned on again at once.
+            self._external_renew = False
             await self._async_write(
-                "external", writer.keep_alive, now, WriteAction(ON, WriteKind.KEEPALIVE)
+                "external", writer.renew_external, now, WriteAction(ON, WriteKind.RESEND)
+            )
+        elif self._keeps_external_alive() and holds:
+            # Control holds the boiler: an external-control switch declared expiring is turned on
+            # again every keep-alive (P-40), one declared held every five minutes and at once
+            # when it came back from unavailable (X1), whatever else is written.
+            returned, self._external_returned = self._external_returned, False
+            await self._async_write(
+                "external",
+                lambda: writer.keep_alive(returned),
+                now,
+                WriteAction(ON, WriteKind.KEEPALIVE),
             )
 
     def _keeps_external_alive(self) -> bool:
         options = self.options
         return (
             options.hand_back is HandBack.SWITCH
-            and options.hand_back_entity_write_type is WriteType.EXPIRING
+            and options.hand_back_entity_write_type in (WriteType.EXPIRING, WriteType.HELD)
             and self._session.loop.control.controlling
         )
 
@@ -1750,11 +1937,12 @@ class ControlUnit:
     def _judge_two_valued(self, target: _Target, now: float) -> None:
         check = target.check
         state = self._hass.states.get(check.entity_id)
+        traced = outage_seen(self._outages, self._trace_entities(check.entity_id), now)
         verdict = judge_switch(
             None if state is None else state.state,
             str(check.expected),
             target.seen,
-            outage_seen(self._outages, self._trace_entities(check.entity_id), now),
+            traced or trace_seen(self._restart_at, now),  # X1's trace, the restart included
         )
         target.released = verdict is SwitchVerdict.RELEASED
         target.lost = verdict is SwitchVerdict.LOST
@@ -1872,21 +2060,193 @@ class ControlUnit:
         self._monitor_issue_since = None
         ir.async_delete_issue(self._hass, DOMAIN, self._monitor_issue_id())
 
-    def _trace_entities(self, entity_id: str) -> set[str]:
-        """Where an outage of a two-valued target would show: the target, its read-back, and
-        every entity of the same device the plugin reads or writes."""
-        found = {entity_id}
-        if entity_id == self.options.ch_entity and self.options.ch_confirmed_entity:
+    def _trace_entities(self, entity_id: str | set[str]) -> set[str]:
+        """Where an outage of a target would show (X1's trace): the target, its read-back, the
+        optional restart indicator, and every entity of the same device the plugin reads or
+        writes."""
+        found = {entity_id} if isinstance(entity_id, str) else set(entity_id)
+        if self.options.ch_entity in found and self.options.ch_confirmed_entity:
             found.add(self.options.ch_confirmed_entity)
+        if self.options.restart_entity:
+            found.add(self.options.restart_entity)  # unavailable or unknown: a trace too
         registry = er.async_get(self._hass)
-        entry = registry.async_get(entity_id)
-        if entry is None or entry.device_id is None:
+        devices = {
+            entry.device_id
+            for entry in (registry.async_get(entity) for entity in list(found))
+            if entry is not None and entry.device_id is not None
+        }
+        if not devices:
             return found
         for other in self._outages:
             other_entry = registry.async_get(other)
-            if other_entry is not None and other_entry.device_id == entry.device_id:
+            if other_entry is not None and other_entry.device_id in devices:
                 found.add(other)
         return found
+
+    def _outage_at(self, entities: set[str]) -> float | None:
+        """When the last trace of an outage around these entities was seen: one of them, or
+        another entity of the same device, unavailable, unknown or missing; or a restart the
+        optional indicator showed (Q3.7)."""
+        moments = [
+            self._outages[entity]
+            for entity in self._trace_entities(entities)
+            if entity in self._outages
+        ]
+        if self._restart_at is not None:
+            moments.append(self._restart_at)
+        return max(moments) if moments else None
+
+    def _returned(self, key: str, entity: str | None) -> bool:
+        """Whether a target came back from unavailable or unknown since the last step."""
+        if not entity:
+            return False
+        state = self._hass.states.get(entity)
+        up = state is not None and state.state not in UNAVAILABLE_STATES
+        was_down = self._targets_down.get(key, False)
+        self._targets_down[key] = not up
+        return up and was_down
+
+    def _thermostat_value(self) -> float | None:
+        """The OpenTherm thermostat's own requested water setpoint, where a gateway has one and
+        the optional field is mapped; ``None`` otherwise, or while it is unavailable."""
+        options = self.options
+        entity = options.thermostat_setpoint_entity
+        if not entity or options.topology is not Topology.GATEWAY_WITH_THERMOSTAT:
+            return None
+        return read_temperature(self._hass, entity).value
+
+    def _contexts(self, now: float, dhw: bool | None) -> tuple[GuardContext, GuardContext]:
+        """What each guard knows beside its read-back: the trace of an outage around its target,
+        the thermostat's own request (the setpoint), hot water, the target back from unavailable
+        or unknown, and the last command stored (never a baseline)."""
+        options = self.options
+        gateway = options.write_path in OTGW_PATHS
+        setpoint_target = options.confirmed_entity if gateway else options.setpoint_entity
+        if gateway:
+            heating_target = options.ch_confirmed_entity or options.confirmed_entity
+        else:
+            heating_target = options.ch_entity if options.loop.ch_writes else None
+        setpoint_around = {e for e in (setpoint_target, options.confirmed_entity) if e}
+        heating_around = {e for e in (heating_target, options.ch_confirmed_entity) if e}
+        last = self._last_command
+        return (
+            GuardContext(
+                outage_at=self._outage_at(setpoint_around),
+                thermostat=self._thermostat_value(),
+                dhw=dhw,
+                returned=self._returned("setpoint", setpoint_target),
+                last_command=None if last is None else last.setpoint,
+            ),
+            GuardContext(
+                outage_at=self._outage_at(heating_around),
+                dhw=dhw,
+                returned=self._returned("heating", heating_target),
+                last_command=None if last is None else (ON if last.heating else OFF),
+            ),
+        )
+
+    def _watch_external(self, now: float) -> None:
+        """M14, M15: while control holds the boiler through the external-control switch it
+        turned on, the switch is read at every step. Off after an outage of the switch or its
+        device (unavailable, unknown or missing within five minutes, or a restart seen) — turned
+        on again at once, counted as a lost command. Off with no trace — a person, an automation,
+        its own button, while it stayed available — another controller: the plugin steps aside
+        at once, with no rewrite (the whole safe hand-back; the switch, already off, counts as
+        released). Not judged while unknown, nor before it was read back on."""
+        options = self.options
+        entity = options.hand_back_entity
+        returned = self._returned("external", entity)
+        control = self._session.loop.control
+        if (
+            options.hand_back is not HandBack.SWITCH
+            or not entity
+            or self._writer is None
+            or not control.controlling
+            or control.latched
+        ):
+            self._external_seen_on = False
+            self._external_returned = False
+            return
+        self._external_returned = self._external_returned or returned
+        state = self._hass.states.get(entity)
+        on = None if state is None else parse_binary(state.state)
+        if on is True:
+            self._external_seen_on = True
+            return
+        if on is None or not self._external_seen_on:
+            return
+        self._external_seen_on = False
+        traced = outage_seen(self._outages, self._trace_entities(entity), now) or trace_seen(
+            self._restart_at, now
+        )
+        if traced:
+            _LOGGER.info(
+                "The external-control switch came back off after an outage of its device: "
+                "switched on again"
+            )
+            self._external_renew = True
+            loop = self._session.loop
+            self._session.loop = replace(loop, losses=add_loss(loop.losses, now, "external"))
+            return
+        _LOGGER.warning(
+            "The external-control switch was switched off while it stayed available: control "
+            "steps aside without a fight"
+        )
+        self._session.alarms.add(ControlAlarm.OUTSIDE_CHANGE)
+
+    def _follow_return(self, now: float) -> bool:
+        """The optional return by itself (off by default; not for relays): after the plugin
+        stepped aside from another controller, control comes back — a new session, which clears
+        the latch and its issue and keeps the one rewrite — once the read-backs have shown only
+        the hand-back state for an hour without a break; an unknown read-back breaks it. Whether
+        it returned now."""
+        control = self._session.loop.control
+        if not (
+            self.options.return_after_outside_change
+            and self.enabled
+            and control.latched
+            and ControlAlarm.OUTSIDE_CHANGE.value in control.latched_by
+        ):
+            self._quiet_since = None
+            return False
+        if not self._hand_back_state_shown():
+            self._quiet_since = None
+            return False
+        self._quiet_since = clock_start(self._quiet_since, now)  # a clock set back (C9)
+        if now - self._quiet_since < RETURN_QUIET_S:
+            return False
+        _LOGGER.info(
+            "Nothing else has written to the boiler for an hour: control returns by itself"
+        )
+        self._end_session()
+        return True
+
+    def _hand_back_state_shown(self) -> bool:
+        """Whether the read-backs show only the hand-back state: the gateway's released override
+        (0), the hand-back value, the value from before the session (a timeout), or the external
+        switch off — with an OpenTherm thermostat also its own request, where that field is
+        mapped. Without a known value to compare, never: the return does not come."""
+        options = self.options
+        read_back = self._confirmed()
+        if read_back is None:
+            return False  # an unknown read-back breaks the hour
+        thermostat = self._thermostat_value()
+        if thermostat is not None and abs(read_back - thermostat) <= TOLERANCE_K:
+            return True
+        expected: float | None = None
+        if options.write_path in OTGW_PATHS:
+            expected = 0.0
+        elif options.hand_back is HandBack.VALUE and options.hand_back_value is not None:
+            grid = self._grid()
+            value = float(options.hand_back_value)
+            placed = None if grid is None else grid.put(value, None, None)
+            expected = value if placed is None else placed
+        elif options.hand_back is HandBack.TIMEOUT:
+            expected = self._session.loop.setpoint.baseline
+        elif options.hand_back is HandBack.SWITCH and options.hand_back_entity:
+            state = self._hass.states.get(options.hand_back_entity)
+            return state is not None and state.state == "off"
+        return expected is not None and abs(read_back - expected) <= TOLERANCE_K
 
     def _shown_now(self) -> str | None:
         """Where the hand-back stands, as ``hand_back_confirmation`` shows it."""
@@ -1933,6 +2293,10 @@ class ControlUnit:
         The unit's start counts as such a moment for all of them: nothing before it was seen."""
         entities = sorted({*self.options.entities, *self._coordinator.config.signals.values()})
         self._outages = dict.fromkeys(entities, now)
+        if self.options.restart_entity:
+            self._restart_value = restart_reading(
+                self._hass.states.get(self.options.restart_entity)
+            )[0]
         if entities:
             self._unsubs.append(
                 async_track_state_change_event(self._hass, entities, self._note_outage)
@@ -1941,11 +2305,19 @@ class ControlUnit:
     @callback
     def _note_outage(self, event: Event[EventStateChangedData]) -> None:
         entity_id = event.data["entity_id"]
+        old, new = event.data["old_state"], event.data["new_state"]
+        now = dt_util.utcnow().timestamp()
         if entity_id in self._outages and any(
-            state is None or state.state in UNAVAILABLE_STATES
-            for state in (event.data["old_state"], event.data["new_state"])
+            state is None or state.state in UNAVAILABLE_STATES for state in (old, new)
         ):
-            self._outages[entity_id] = dt_util.utcnow().timestamp()
+            self._outages[entity_id] = now
+        if entity_id == self.options.restart_entity:
+            # Q3.7: a restart the device's entities may never show as unavailable.
+            value, kind = restart_reading(new)
+            if value is not None:
+                if restart_seen(self._restart_value, value, kind):
+                    self._restart_at = now
+                self._restart_value = value
 
     def _in_start_grace(self, now: float) -> bool:
         """Within a minute of this unit's start, while it still owes what the last run left: a
@@ -2008,13 +2380,14 @@ class ControlUnit:
             await self._coordinator.async_save_control_now()
 
     async def _async_hand_back_now(self, now: float) -> None:
-        """Hand back at once if control holds the boiler (unload, stop, error)."""
+        """Hand back at once if control holds the boiler (unload, stop, error). The guards keep
+        their memory — above all the one rewrite, stored after it (P-06)."""
         loop = self._session.loop
         if loop.control.controlling:
             await self._async_hand_back_writes(now)
             loop = self._session.loop
             control = replace(loop.control, controlling=False, command=None, decided_at=None)
-            self._session.loop = LoopState(control)
+            self._session.loop = after_hand_back_loop(loop, control)
         else:
             if self._hand_back_pending:
                 await self._async_try_hand_back(now)

@@ -552,7 +552,7 @@ async def test_the_one_rewrite_and_the_latch_are_stored_at_once(
     await rig.switch(True)
     await rig.advance(30)
     rig.gateway.forced = 60.0
-    await rig.advance(10)
+    await rig.advance(20)  # held two steps (M10)
     assert rig.gateway.setpoints()[-1] == EXPECTED  # the one rewrite
     assert stored_control(hass_storage, rig)["rewritten_at"] is not None
     await rig.advance(140)  # not confirmed in time: an outside change, handed back, latched
@@ -562,56 +562,104 @@ async def test_the_one_rewrite_and_the_latch_are_stored_at_once(
     assert stored["latched_by"] == ["outside_change"]
 
 
-async def test_an_unconfirmed_write_is_reported_and_writing_goes_on(rig: Rig) -> None:
-    rig.gateway.readable = False  # nothing says whether the value arrived
-    await start(rig)
-    await rig.switch(True)
-    await rig.advance(90)
-    assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"
-    await rig.advance(60)
-    assert rig.state("binary_sensor", "alarm_write_ignored").state == "on"
-    assert rig.state("sensor", "control_state").state == "heating"  # information only
-    count = len(rig.gateway.setpoints())
-    await rig.advance(60)
-    assert len(rig.gateway.setpoints()) > count  # the keep-alive goes on
-
-
-async def test_a_value_never_taken_from_the_start_is_an_outside_change(rig: Rig) -> None:
-    """The user's decision: the read-back keeps another steady value — the thermostat's — from
-    the start, so ours is never confirmed: one rewrite, then an outside change, which hands
-    back by default."""
-    rig.gateway.echo = False
-    await start(rig)
-    await rig.switch(True)
-    await rig.advance(130)
-    assert rig.gateway.calls.count(("setpoint", EXPECTED)) >= 2  # the first write and the rewrite
-    assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
-    await rig.advance(140)  # the rewrite not confirmed in time; the next step hands back
-    assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
-    assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"
-    assert rig.state("sensor", "control_state").state == "handed_back"
-    assert rig.gateway.calls[-1] == ("setpoint", 0.0)
-
-
-async def test_a_dropped_override_is_sent_again_not_fought(rig: Rig) -> None:
-    """A boiler's Data-Invalid answer clears the gateway's override: the read-back falls back
-    to the thermostat's value from before the session. Sent again at once, no outside change;
-    when it keeps falling back, the write is reported as ignored."""
+@pytest.mark.parametrize("shown", ["unknown", "unavailable"])
+async def test_confirmation_missing_never_hands_back(rig: Rig, shown: str) -> None:
+    """M11: the read-back unknown or unavailable for ten minutes while the boiler link stays
+    fresh: nothing is judged — no "write ignored", no outside change — and after five minutes
+    the information alarm "confirmation missing", naming the setpoint; control goes on, never a
+    hand-back by itself (the boiler link decides that, X2). It clears at the first known
+    read-back. Negative: 4 minutes 50 seconds — off."""
     await start(rig)
     await rig.switch(True)
     await rig.advance(30)  # confirmed
+    rig.gateway.read_back_shown = shown  # the read-back drops out; the gateway still reports
+    await rig.advance(290)
+    missing = rig.state("binary_sensor", "alarm_confirmation_missing")
+    assert missing.state == "off"
+    await rig.advance(20)
+    missing = rig.state("binary_sensor", "alarm_confirmation_missing")
+    assert missing.state == "on"
+    assert missing.attributes["targets"] == ["setpoint"]
     count = len(rig.gateway.setpoints())
-    rig.gateway.override = None  # dropped
-    await rig.advance(10)
-    assert rig.gateway.setpoints()[count:] == [EXPECTED]  # at once, not at the keep-alive
+    await rig.advance(280)
+    assert rig.state("sensor", "control_state").state == "heating"  # information only
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"
     assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
-    for _ in range(3):  # it keeps falling back
+    assert 0.0 not in rig.gateway.setpoints()[count:]  # no hand-back
+    if shown == "unknown":
+        assert len(rig.gateway.setpoints()) > count  # the keep-alive goes on
+    rig.gateway.read_back_shown = None
+    await rig.advance(10)
+    assert rig.state("binary_sensor", "alarm_confirmation_missing").state == "off"
+
+
+async def test_a_value_never_taken_from_the_start_is_ignored_from_the_start(rig: Rig) -> None:
+    """S-48, decision 6 (replaces 0.2.1's "another controller" here): the read-back keeps the
+    value from before the plugin — the thermostat's — after each of the session's first three
+    sends: ignored from the start. "Write ignored" names the setpoint; no hand-back and no outside
+    change; the setpoint is not written again this session, keep-alives included, while heating
+    on/off goes on."""
+    rig.gateway.echo = False
+    await start(rig)
+    await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
+    await rig.switch(True)
+    await rig.advance(250)
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"  # two attempts
+    await rig.advance(120)
+    ignored = rig.state("binary_sensor", "alarm_write_ignored")
+    assert ignored.state == "on"
+    assert ignored.attributes["targets"] == ["setpoint"]
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
+    assert rig.state("sensor", "control_state").state == "heating"  # control goes on
+    assert rig.state("sensor", "control_setpoint").attributes["confirmation"] == "not_confirmed"
+    count = len(rig.gateway.setpoints())
+    heating = rig.gateway.calls.count(("ch", True))
+    await rig.advance(120)
+    assert len(rig.gateway.setpoints()) == count  # not again this session
+    assert rig.gateway.calls.count(("ch", True)) > heating  # the other target goes on
+    await rig.switch(False)
+    rig.gateway.echo = True
+    await rig.switch(True)  # a new session tries it again
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+    await rig.advance(10)
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"
+
+
+async def test_a_dropped_override_is_sent_again_not_fought(rig: Rig) -> None:
+    """A boiler's Data-Invalid answer clears the gateway's override: the read-back falls back to
+    the thermostat's value from before the session. In the start phase (the value never held
+    120 s) each drop is sent again at once, and the third makes it ignored from the start —
+    "write ignored", no outside change, control goes on. After the start phase (a new session),
+    a first drop without a trace is a lost command, sent again at once; a second within the hour
+    that no send explains is another controller's: the one rewrite (decision 6, answer E)."""
+    await start(rig)
+    await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
+    await rig.switch(True)
+    for drop in range(3):
+        await rig.advance(30)  # confirmed, for less than 120 s
+        count = len(rig.gateway.setpoints())
+        rig.gateway.override = None  # dropped
         await rig.advance(10)
-        rig.gateway.override = None
-        await rig.advance(10)
+        if drop < 2:
+            assert rig.gateway.setpoints()[count:] == [EXPECTED]  # at once
     assert rig.state("binary_sensor", "alarm_write_ignored").state == "on"
     assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
     assert rig.state("sensor", "control_state").state == "heating"
+
+    await rig.switch(False)
+    await rig.advance(10)  # the gateway reports the thermostat's value again
+    await rig.switch(True)  # a new session
+    await rig.advance(150)  # confirmed and held: the start phase is over
+    count = len(rig.gateway.setpoints())
+    rig.gateway.override = None  # dropped, with no trace
+    await rig.advance(10)
+    assert rig.gateway.setpoints()[count:] == [EXPECTED]  # a lost command: at once
+    assert unit_of(rig)._session.loop.setpoint.rewritten_at is None
+    await rig.advance(600)
+    rig.gateway.override = None  # again, ten minutes later
+    await rig.advance(10)
+    assert unit_of(rig)._session.loop.setpoint.rewritten_at is not None  # the one rewrite
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"
 
 
 @pytest.mark.parametrize(
@@ -1986,6 +2034,10 @@ async def test_an_internal_error_is_cleared_by_any_switch_change(
     assert "control_error" not in rig.state("sensor", "control_state").attributes["blockers"]
 
 
+def guard_rewritten_at(rig: Rig) -> float | None:
+    return unit_of(rig)._session.loop.setpoint.rewritten_at
+
+
 async def test_the_one_rewrite_is_remembered_across_a_restart(
     rig: Rig, hass_storage: dict[str, Any]
 ) -> None:
@@ -1997,8 +2049,8 @@ async def test_the_one_rewrite_is_remembered_across_a_restart(
     await rig.advance(20)
     assert rig.gateway.setpoints()[-1] == EXPECTED
     rig.gateway.forced = 60.0  # another controller writes its own value
-    await rig.advance(20)
-    assert rig.gateway.setpoints().count(EXPECTED) == 1  # not written again
+    await rig.advance(20)  # held two steps (M10): judged
+    assert guard_rewritten_at(rig) == now - 3600.0  # not written again
     assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
 
 
@@ -2013,7 +2065,9 @@ async def test_a_day_after_the_one_rewrite_another_outside_change_is_rewritten(
     await rig.advance(20)
     rig.gateway.forced = 60.0
     await rig.advance(20)
-    assert rig.gateway.setpoints().count(EXPECTED) == 2  # rewritten once more
+    assert guard_rewritten_at(rig) == now + 40.0  # rewritten once more
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
 
 
 async def test_a_latch_holds_through_a_day_and_a_night(
@@ -2290,26 +2344,54 @@ async def test_a_user_freshness_limit_stops_writes_on_a_frozen_source(rig: Rig) 
 
 
 async def test_heating_switched_from_outside_is_written_once_then_handed_back(rig: Rig) -> None:
-    """P22: with a heating echo, heating on/off is confirmed by the gateway, and another
-    controller switching it is written again once; the next time, every write stops."""
+    """P22, S-40 (decision 6, answers E and H): with a heating echo, heating on/off is confirmed
+    by the gateway. "On" before the plugin, "on" commanded: another controller switching it off
+    for two steps — away from its value from before the plugin — is written again once; the next
+    time, every write stops and the plugin steps aside with the whole safe hand-back."""
     await start(rig, ch_confirmed_entity=CH_ECHO)
+    await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
     await rig.switch(True)
-    await rig.advance(30)
+    await rig.advance(150)  # confirmed and held: the start phase is over
     assert rig.state("sensor", "control_state").attributes["heating_confirmation"] == (
         "confirmed_by_gateway"
     )
     rig.gateway.forced_ch = False  # another controller switches heating off
     count = len(rig.gateway.calls)
-    await rig.advance(10)
+    await rig.advance(20)  # held two steps
     assert ("ch", True) in rig.gateway.calls[count:]  # the one rewrite
     rig.gateway.forced_ch = None
     await rig.advance(20)  # ours again
     rig.gateway.forced_ch = False  # and switched off again
-    await rig.advance(10)
+    await rig.advance(20)
     assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
     await rig.advance(10)
     assert rig.state("sensor", "control_state").state == "handed_back"
-    assert rig.gateway.calls[-3:] == HAND_BACK  # the hand-back
+    assert rig.gateway.calls[-3:] == HAND_BACK  # the whole safe hand-back, the lowest first
+
+
+async def test_heating_switched_back_to_its_baseline_is_first_a_lost_command(rig: Rig) -> None:
+    """S-40, answer E: "off" before the plugin (no thermostat calling), "on" commanded; the echo
+    flips back to "off" while it stayed available — a fall-back without a trace: the first within
+    the hour is a lost command, "on" sent again at once, no alarm; a second that no send explains
+    is another controller's — the one rewrite."""
+    rig.gateway.ch = False
+    rig.gateway.publish()
+    await start(rig, ch_confirmed_entity=CH_ECHO)
+    await rig.advance(310)
+    await rig.switch(True)
+    await rig.advance(150)
+    rig.gateway.ch = False  # dropped: the gateway's heating override is gone
+    count = len(rig.gateway.calls)
+    await rig.advance(10)
+    assert ("ch", True) in rig.gateway.calls[count:]  # sent again at once
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
+    assert unit_of(rig)._session.loop.switch.rewritten_at is None
+    assert unit_of(rig)._session.loop.switch.fallbacks
+    await rig.advance(600)
+    rig.gateway.ch = False  # again within the hour, no send explains it
+    await rig.advance(10)
+    assert unit_of(rig)._session.loop.switch.rewritten_at is not None  # the one rewrite
+    assert rig.state("sensor", "control_state").state == "heating"
 
 
 async def test_keep_alives_do_not_move_the_last_change(rig: Rig) -> None:
@@ -2678,7 +2760,8 @@ async def test_a_0_2_1_store_moves_to_the_control_store(
     # With what 0.2.2 adds: the wish, off without a restored switch, stored at once (V3); the
     # setpoint a gateway's release must leave, none while nothing is owed (V4); the value a
     # timeout hand-back releases back to, and the targets another controller holds (V5);
-    # whether a blocker stopped heating (V7).
+    # whether a blocker stopped heating (V7); each guard's value from before the plugin and its
+    # last fall-back without a trace (X1).
     moved = control | {
         "enabled": False,
         "last_command": None,
@@ -2687,6 +2770,10 @@ async def test_a_0_2_1_store_moves_to_the_control_store(
         "release_baseline": None,
         "taken_by_other": [],
         "stopped_heating": False,
+        "baseline": None,
+        "heating_baseline": None,
+        "fallback_at": None,
+        "heating_fallback_at": None,
     }
     assert hass_storage[control_key(entry)]["data"] == moved
     main = hass_storage[main_key(entry)]["data"]
@@ -4683,7 +4770,7 @@ async def test_an_unknown_gateway_read_back_while_controlling_is_not_a_hand_back
     rig.gateway.read_back_shown = "unknown"
     count = len(rig.gateway.calls)
     await rig.advance(600)
-    assert ("setpoint", 0.0) not in rig.gateway.calls[count:]  # no hand-back
+    assert 0.0 not in rig.gateway.setpoints()[count:]  # no hand-back
     assert rig.gateway.setpoints()[-1] == EXPECTED  # the keep-alive goes on
     assert rig.state("sensor", "control_state").state == "heating"
     rig.flow = None  # the boiler link goes stale
@@ -5390,6 +5477,8 @@ async def test_an_outage_of_another_entity_of_the_same_device_is_a_trace(
     await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
     await rig.switch(False)
     assert switch.on
+    # The session's "on", its five-minute refresh (a held value, X1), the hand-back's.
+    assert switch.writes == [True, True, True]
     number.set_available(False)  # the device restarts: its setpoint entity drops out...
     number.set_available(True)
     switch.on = False  # ...and its heating switch comes back off, never seen unavailable
@@ -5400,7 +5489,7 @@ async def test_an_outage_of_another_entity_of_the_same_device_is_a_trace(
         assert switch.on
         assert issue(rig, "hand_back_taken_by_other") is None
     else:
-        assert switch.writes.count(True) == 2  # the session's and the hand-back's only
+        assert switch.writes.count(True) == 3  # the session's two and the hand-back's only
         assert issue(rig, "hand_back_taken_by_other") is not None
 
 
@@ -6279,7 +6368,7 @@ async def test_stepping_aside_makes_the_whole_safe_hand_back(
     number.forced = 60.0  # another controller writes its value, and again over every write
     number.value = 60.0
     number.publish(60.0)
-    await rig.advance(10)
+    await rig.advance(20)  # held two steps (M10)
     assert number.writes == [EXPECTED, EXPECTED]  # the one rewrite
     switch_writes = len(switch.writes)
     start_at = len(rig.services)
@@ -6355,3 +6444,457 @@ async def test_removing_the_entry_deletes_the_v7_issues(rig: Rig) -> None:
     registry = ir.async_get(rig.hass)
     for key in ("control_stopped_heating", "control_latched"):
         assert registry.async_get_issue(DOMAIN, f"{key}_{entry_id}") is None
+
+
+# --- X1: the guards' memory, decision 6's classes, answer O, the external switch, the return ---
+
+
+async def test_the_one_rewrite_is_remembered_across_a_clean_reload(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """P-06, T-01 (integration half), M20: one rewrite; the entry reloads cleanly — the stop's
+    own hand-back keeps the guards' memory — and another controller writes again within the day:
+    no second rewrite; the plugin steps aside with the whole safe hand-back, the latch and the
+    entry's one latch issue."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(30)  # confirmed
+    rig.gateway.forced = 60.0
+    await rig.advance(20)  # held two steps: the one rewrite
+    rewritten = unit_of(rig)._session.loop.setpoint.rewritten_at
+    assert rewritten is not None
+    rig.gateway.forced = None
+    await rig.advance(20)  # ours again
+    assert rig.entry is not None
+    assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
+    await rig.hass.async_block_till_done()
+    assert stored_control(hass_storage, rig)["rewritten_at"] == rewritten  # after the stop
+    await rig.advance(20)  # control resumes
+    assert unit_of(rig)._session.loop.setpoint.rewritten_at == rewritten
+    rig.gateway.forced = 60.0  # the other controller again, the same day
+    for _ in range(10):
+        await rig.advance(10)
+        if rig.state("sensor", "control_state").state == "handed_back":
+            break
+    assert unit_of(rig)._session.loop.setpoint.rewritten_at == rewritten  # no second rewrite
+    assert rig.gateway.calls[-3:] == HAND_BACK  # the whole safe hand-back
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
+    assert issue(rig, "control_latched") is not None
+
+
+@pytest.mark.parametrize("ignored", ["off", "on"])
+async def test_an_ignored_heating_switch_raises_write_ignored(
+    rig: Rig, hass_storage: dict[str, Any], ignored: str
+) -> None:
+    """T-04 (P-09) with answer O: OTGW with a heating echo, the setpoint confirmed. The echo
+    never follows CH=0 — "on" before the plugin and after each of the session's first three sends
+    of "off": "write ignored" names the heating switch and, at the next step, control is blocked
+    and the boiler handed back (CS=<lowest>, CH=1, CS=0) whatever alarm reaction is stored; the
+    latch names ``heating_off_ignored``, so do the entry's latch issue and a blocker. The latch
+    survives a reload and clears only when control is switched off and on. Negative: the echo
+    never follows CH=1 — only "on" ignored, the switch staying off — "write ignored" as decision
+    6 says: no block, no latch, the setpoint still written."""
+    stays_on = ignored == "off"
+    rig.gateway.forced_ch = stays_on  # the echo stays where it was before the plugin
+    rig.gateway.publish()
+    if stays_on:  # no zone calls: control asks "off"
+        rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await start(rig, ch_confirmed_entity=CH_ECHO, alarm_reactions={"write_ignored": "info"})
+    await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
+    await rig.switch(True)
+    await rig.advance(350)
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"  # two attempts
+    await rig.advance(10)  # the third, 360 s after the first send
+    alarm = rig.state("binary_sensor", "alarm_write_ignored")
+    assert alarm.state == "on"
+    assert alarm.attributes["targets"] == ["heating"]
+    await rig.advance(10)
+    state = rig.state("sensor", "control_state")
+    blockers = rig.state("switch", "control").attributes["blockers"]
+    if not stays_on:
+        assert state.state == "heating"
+        assert state.attributes["latched_by"] == []
+        assert "heating_off_ignored" not in blockers
+        count = len(rig.gateway.setpoints())
+        await rig.advance(60)
+        assert len(rig.gateway.setpoints()) > count  # the setpoint still written
+        return
+    assert state.state == "handed_back"
+    assert state.attributes["latched_by"] == ["heating_off_ignored"]
+    assert rig.gateway.calls[-3:] == HAND_BACK
+    assert "heating_off_ignored" in blockers
+    found = issue(rig, "control_latched")
+    assert found is not None
+    assert found.translation_key == "control_latched_heating_off_ignored"
+    assert found.severity is ir.IssueSeverity.WARNING  # a thermostat takes over
+    assert stored_control(hass_storage, rig)["latched_by"] == ["heating_off_ignored"]
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "on"
+    assert rig.entry is not None
+    assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
+    await rig.hass.async_block_till_done()
+    await rig.advance(30)
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["heating_off_ignored"]
+    assert "heating_off_ignored" in rig.state("switch", "control").attributes["blockers"]
+    assert issue(rig, "control_latched") is not None
+    alarm = rig.state("binary_sensor", "alarm_write_ignored")
+    assert alarm.state == "on"  # the alarm with the latch, through the reload
+    assert alarm.attributes["targets"] == ["heating"]
+    count = len(rig.gateway.calls)
+    await rig.advance(60)
+    assert len(rig.gateway.calls) == count  # nothing written
+    await rig.switch(False)
+    assert issue(rig, "control_latched") is None
+    await rig.switch(True)  # the user's off and on: a new session tries the switch again
+    assert "heating_off_ignored" not in rig.state("switch", "control").attributes["blockers"]
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == []
+
+
+@pytest.mark.parametrize("heating_target", [True, False], ids=["heating", "setpoint_only"])
+async def test_write_ignored_clears_per_guard(rig: Rig, heating_target: bool) -> None:
+    """P-09: "write ignored" follows each guard. The heating switch's "on" ignored from the
+    start (the switch stays off; its "off" never refused, so answer O does not apply) and the
+    setpoint confirmed: the alarm stays on naming the heating switch — the setpoint's
+    confirmation never clears it; a new session (off, then on) with the heating value taken
+    clears it. Negative: a path without a heating target — the setpoint alone decides."""
+    if heating_target:
+        rig.gateway.forced_ch = False
+        rig.gateway.publish()
+        await start(rig, ch_confirmed_entity=CH_ECHO)
+    else:
+        rig.gateway.echo = False  # the setpoint is never taken
+        await start(rig)
+    await rig.advance(310)
+    await rig.switch(True)
+    await rig.advance(370)
+    alarm = rig.state("binary_sensor", "alarm_write_ignored")
+    assert alarm.state == "on"
+    assert alarm.attributes["targets"] == (["heating"] if heating_target else ["setpoint"])
+    if heating_target:
+        setpoint = rig.state("sensor", "control_setpoint")
+        assert setpoint.attributes["confirmation"] == "confirmed_by_gateway"
+        await rig.advance(300)
+        assert rig.state("binary_sensor", "alarm_write_ignored").state == "on"
+        rig.gateway.forced_ch = None
+    else:
+        rig.gateway.echo = True
+    await rig.switch(False)
+    await rig.advance(10)
+    await rig.switch(True)
+    await rig.advance(130)  # the value held 120 s
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"
+
+
+@pytest.mark.parametrize("case", ["ignored", "outage", "unknown", "once_taken"])
+async def test_heating_off_ignored_from_the_start_blocks_and_hands_back(
+    rig: Rig, case: str
+) -> None:
+    """Answer O on the entity path, with a held heating switch as its own read-back: it stays on
+    after each of the session's first three sends of "off" — blocked and handed back, with the
+    blocker; switching control off and on clears it and a new session tries the switch again.
+    Negatives: the switch unavailable within an attempt (a trace: that attempt does not count,
+    the block comes later); a read-back unknown throughout (nothing judged, no blocker); the
+    switch refusing "off" after it once took "off" in this session (not "from the start")."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    switch = FakeSwitch(rig.hass, stuck_on=case != "once_taken")  # takes "on", not "off"
+    switch.register()
+    echo = switch.entity_id
+    if case == "unknown":
+        echo = "input_boolean.fake_ch_echo"
+        rig.hass.states.async_set(echo, "unknown")
+    control = held_entity(
+        number, ch_entity=switch.entity_id, ch_write_type="held", ch_confirmed_entity=echo
+    )
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await start(rig, **control)
+    await rig.advance(310)
+    await rig.switch(True)
+    if case == "outage":
+        await rig.advance(50)
+        switch.set_available(False)
+        await rig.advance(10)
+        switch.set_available(True)
+    if case == "once_taken":
+        await rig.advance(150)  # "off" taken and held: the start phase is over
+        assert not switch.on
+        rig.zones.set("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+        await rig.advance(20)
+        switch.stuck_on = True  # from now on it will not go off
+        rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await rig.advance(400)
+    blockers = rig.state("switch", "control").attributes["blockers"]
+    if case == "ignored":
+        assert rig.state("sensor", "control_state").state == "handed_back"
+        assert "heating_off_ignored" in blockers
+        assert switch.on  # the hand-back left heating on: the device's own control resumes
+        await rig.switch(False)
+        await rig.switch(True)
+        assert "heating_off_ignored" not in rig.state("switch", "control").attributes["blockers"]
+        assert switch.writes[-1] is False  # tried again
+        return
+    assert "heating_off_ignored" not in blockers
+    assert rig.state("sensor", "control_state").state == "idle"
+    if case == "outage":
+        await rig.advance(400)  # three counted attempts after the trace
+        assert rig.state("sensor", "control_state").state == "handed_back"
+        assert "heating_off_ignored" in rig.state("switch", "control").attributes["blockers"]
+
+
+async def _external_switch_rig(rig: Rig) -> tuple[FakeNumber, FakeSwitch]:
+    """Control through a held setpoint entity, given back by switching off an external-control
+    switch declared held; past the five minutes the unit's own start counts as a trace."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    external = FakeSwitch(rig.hass, entity_id="input_boolean.fake_external", on=False)
+    external.register()
+    await start(
+        rig,
+        write_path="entity",
+        setpoint_entity=number.entity_id,
+        write_type="held",
+        hand_back="switch",
+        hand_back_entity=external.entity_id,
+        hand_back_entity_write_type="held",
+        confirmed_entity=number.entity_id,
+        topology="virtual",
+    )
+    await rig.advance(310)
+    await rig.switch(True)
+    assert external.on  # control took the boiler
+    await rig.advance(30)
+    return number, external
+
+
+async def test_the_external_control_switch_switched_off_steps_aside_without_a_rewrite(
+    rig: Rig,
+) -> None:
+    """M14: the external-control switch goes off while it stayed available (no trace within
+    five minutes): another controller — no "on" written back, at once the whole safe hand-back
+    (its release counts as done: the switch is already off), the latch and the entry's one
+    latch issue; left alone afterwards."""
+    number, external = await _external_switch_rig(rig)
+    ons = external.writes.count(True)
+    external.on = False  # a person, an automation or its own button
+    external.publish()
+    await rig.advance(10)
+    state = rig.state("sensor", "control_state")
+    assert state.state == "handed_back"
+    assert state.attributes["latched_by"] == ["outside_change"]
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
+    assert external.writes.count(True) == ons  # no fight
+    assert number.writes[-1] == LOWEST  # the lowest water temperature, first
+    assert not unit_of(rig).hand_back_owed  # the switch, off, shows the release
+    assert issue(rig, "control_latched") is not None
+    await rig.advance(180)
+    assert external.writes.count(True) == ons
+
+
+@pytest.mark.parametrize("minutes", [4, 6])
+async def test_the_external_control_switch_off_after_its_device_restart_is_switched_on_again(
+    rig: Rig, minutes: int
+) -> None:
+    """M15: the switch was unavailable within the five minutes before it reads off — its device
+    restarted: switched on again at the next step, counted as a lost command, no alarm.
+    Negative: unavailable six minutes before — another controller: the plugin steps aside."""
+    _number, external = await _external_switch_rig(rig)
+    external.set_available(False)
+    await rig.advance(10)
+    external.set_available(True)  # back on
+    await rig.advance(minutes * 60 - 10)
+    ons = external.writes.count(True)
+    external.on = False
+    external.publish()
+    await rig.advance(10)
+    if minutes == 4:
+        assert external.writes.count(True) == ons + 1  # switched on again
+        assert external.on
+        assert rig.state("sensor", "control_state").state != "handed_back"
+        assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
+        assert [who for _t, who in unit_of(rig)._session.loop.losses] == ["external"]
+    else:
+        assert external.writes.count(True) == ons
+        assert rig.state("sensor", "control_state").state == "handed_back"
+        assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
+
+
+@pytest.mark.parametrize("case", ["returns", "option_off", "unknown"])
+async def test_the_return_by_itself_after_an_hour_without_a_foreign_value(
+    rig: Rig, case: str
+) -> None:
+    """Decision 6's optional return: the plugin stepped aside from another controller; the
+    read-back then shows only the hand-back state (stand-alone: the released override, 0) for an
+    hour — control resumes as a new session, the latch and its issue go, the one rewrite stays.
+    With the option off it stays aside after two hours. Negative: the read-back unknown for the
+    hour — no return."""
+    rig.gateway.thermostat = 0.0  # stand-alone: without the override the gateway reads 0
+    rig.gateway.publish()
+    await start(
+        rig, topology="gateway_standalone", return_after_outside_change=case != "option_off"
+    )
+    await rig.switch(True)
+    await rig.advance(30)
+    rig.gateway.forced = 60.0
+    for _ in range(30):
+        await rig.advance(10)
+        if rig.state("sensor", "control_state").state == "handed_back":
+            break
+    rewritten = unit_of(rig)._session.loop.setpoint.rewritten_at
+    assert rewritten is not None
+    assert issue(rig, "control_latched") is not None
+    rig.gateway.forced = None  # the other controller is gone
+    if case == "unknown":
+        rig.gateway.read_back_shown = "unknown"
+    await rig.advance(3540, step=60.0)
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
+    await rig.advance(120, step=60.0)
+    if case == "returns":
+        state = rig.state("sensor", "control_state")
+        assert state.attributes["latched_by"] == []
+        assert state.state == "heating"
+        assert issue(rig, "control_latched") is None
+        assert unit_of(rig)._session.loop.setpoint.rewritten_at == rewritten
+        assert rig.gateway.setpoints()[-1] == EXPECTED  # control takes the boiler again
+        return
+    await rig.advance(3600, step=60.0)
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
+    assert issue(rig, "control_latched") is not None
+
+
+async def test_setpoint_step_over_1k_is_refused_or_compared_after_rounding(rig: Rig) -> None:
+    """T-55 (P-15, P-98): a setpoint entity with a step of 0.5 from 0.25 and the hard maximum
+    70: 70 is sent as 69.75, read back as 69.75 it confirms — no false "ignored" — and the
+    hand-back value goes on the grid too, and is checked after rounding. The step raised to 5
+    after setup: the runtime blocker ``setpoint_step_too_coarse``. A °F entity with a step of
+    2 °F (1.1 K) is refused the same way."""
+    number = FakeNumber(rig.hass, attributes={"min": 0.25, "max": 90, "step": 0.5})
+    number.register()
+    rig.outdoor = -30.0
+    rig.live()
+    control = held_entity(number, curve={"design_outdoor": -15, "design_flow": 75})
+    await start(rig, **control)
+    await rig.switch(True)
+    assert number.writes == [69.75]
+    await rig.advance(150)
+    setpoint = rig.state("sensor", "control_setpoint")
+    assert setpoint.attributes["requested"] == 69.8  # shown rounded to a tenth
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"
+    assert rig.state("binary_sensor", "alarm_write_failed").state == "off"
+    await rig.switch(False)
+    assert number.writes[-2:] == [25.25, 50.25]  # the lowest and the hand-back value, on grid
+    assert not unit_of(rig).hand_back_owed  # 50.25 read back: the release
+    number.attributes["step"] = 5
+    number.publish(number.value)
+    blockers = unit_of(rig).blockers(dt_util.utcnow().timestamp())
+    assert "setpoint_step_too_coarse" in blockers
+    number.attributes.update({"step": 2, "min": 50, "max": 190})
+    number.unit = "°F"
+    number.publish(number.value)
+    blockers = unit_of(rig).blockers(dt_util.utcnow().timestamp())
+    assert "setpoint_step_too_coarse" in blockers
+    number.attributes["step"] = 1
+    number.publish(number.value)
+    blockers = unit_of(rig).blockers(dt_util.utcnow().timestamp())
+    assert "setpoint_step_too_coarse" not in blockers
+
+
+@pytest.mark.parametrize("indicator", ["uptime", "counter", "unavailable", "none"])
+async def test_a_restart_the_indicator_shows_is_a_trace(rig: Rig, indicator: str) -> None:
+    """Q3.7: the optional restart indicator — an uptime that falls, a restart counter that goes
+    up, or the indicator itself unavailable — is a trace of an outage: the gateway's override
+    falling back just after it is a lost command with a trace, which primes nothing, so a
+    fall-back without a trace later in the hour is only the first such (sent again). Negative:
+    without the indicator the first counts as one without a trace, and the second within the
+    hour that no send explains is another controller's — the one rewrite."""
+    entity = "sensor.gateway_uptime"
+    attributes = (
+        {"unit_of_measurement": "s", "device_class": "duration"} if indicator == "uptime" else {}
+    )
+    before = "5000" if indicator == "uptime" else "3"
+    rig.hass.states.async_set(entity, before, attributes)
+    extra = {} if indicator == "none" else {"restart_entity": entity}
+    await start(rig, **extra)
+    await rig.advance(310)
+    await rig.switch(True)
+    await rig.advance(150)  # held: the start phase is over
+    if indicator == "uptime":
+        rig.hass.states.async_set(entity, "12", attributes)  # restarted: counting again
+    elif indicator == "counter":
+        rig.hass.states.async_set(entity, "4", attributes)  # one more restart
+    elif indicator == "unavailable":
+        rig.hass.states.async_set(entity, "unavailable", attributes)
+        rig.hass.states.async_set(entity, "3", attributes)
+    rig.gateway.override = None  # the restart lost the override
+    count = len(rig.gateway.setpoints())
+    await rig.advance(10)
+    assert rig.gateway.setpoints()[count:] == [EXPECTED]  # sent again at once
+    guard = unit_of(rig)._session.loop.setpoint
+    assert (guard.fallbacks == ()) is (indicator != "none")
+    await rig.advance(600)
+    rig.gateway.override = None  # again, now with no trace
+    await rig.advance(10)
+    rewritten = unit_of(rig)._session.loop.setpoint.rewritten_at
+    assert (rewritten is not None) is (indicator == "none")
+
+
+async def test_frequent_lost_commands_raise_commands_lost_never_a_hold(rig: Rig) -> None:
+    """M1: three lost commands within a day — the gateway restarting three times, its restart
+    counter going up and its override lost each time — raise the information alarm "commands
+    lost"; the command is sent again each time, control goes on and nothing is handed back. It
+    clears after a day without a loss."""
+    entity = "sensor.gateway_reboot_count"
+    rig.hass.states.async_set(entity, "3")
+    await start(rig, restart_entity=entity)
+    await rig.advance(310)
+    await rig.switch(True)
+    await rig.advance(150)
+    for restarts in (4, 5, 6):
+        assert rig.state("binary_sensor", "alarm_commands_lost").state == "off"
+        rig.hass.states.async_set(entity, str(restarts))
+        rig.gateway.override = None
+        count = len(rig.gateway.setpoints())
+        await rig.advance(10)
+        assert rig.gateway.setpoints()[count:] == [EXPECTED]  # sent again at once
+        await rig.advance(600)
+    assert rig.state("binary_sensor", "alarm_commands_lost").state == "on"
+    assert rig.state("sensor", "control_state").state == "heating"
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
+    assert 0.0 not in rig.gateway.setpoints()  # never a hold, never a hand-back
+    await rig.advance(24 * 3600, step=300.0)
+    assert rig.state("binary_sensor", "alarm_commands_lost").state == "off"
+
+
+@pytest.mark.parametrize("path", ["value", "thermostat"])
+async def test_the_return_by_itself_knows_each_hand_back_state(rig: Rig, path: str) -> None:
+    """The return by itself on other paths: a held setpoint entity given back to its own control
+    with a value — quiet while it shows that value; a gateway with an OpenTherm thermostat —
+    quiet while it shows the thermostat's own request, where the optional field is mapped."""
+    if path == "value":
+        number = FakeNumber(rig.hass)
+        number.register()
+        await start(rig, **held_entity(number), return_after_outside_change=True)
+    else:
+        thermostat = "sensor.fake_thermostat_control_setpoint"
+        rig.hass.states.async_set(thermostat, "40.0", {"unit_of_measurement": "°C"})
+        await start(rig, thermostat_setpoint_entity=thermostat, return_after_outside_change=True)
+    await rig.switch(True)
+    await rig.advance(30)
+    if path == "value":
+        number.forced = 60.0
+        number.value = 60.0
+        number.publish(60.0)
+    else:
+        rig.gateway.forced = 60.0
+    for _ in range(30):
+        await rig.advance(10)
+        if rig.state("sensor", "control_state").state == "handed_back":
+            break
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
+    if path == "value":
+        number.forced = None  # gone; the device shows the hand-back value
+        number.value = 50.0
+        number.publish(50.0)
+    else:
+        rig.gateway.forced = None  # gone; the gateway shows the thermostat's request (40)
+    await rig.advance(3660, step=60.0)
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == []
+    assert issue(rig, "control_latched") is None

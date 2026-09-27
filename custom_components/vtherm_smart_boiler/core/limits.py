@@ -1,15 +1,18 @@
-"""Limits on the flow setpoint and frost protection.
+"""Limits on the flow setpoint, a setpoint entity's grid, and frost protection.
 
 Every setpoint the plugin writes passes ``limit_flow``. Caps that protect the installation — the
 hard maximum, a circuit's maximum (underfloor on an unmixed loop), the boiler's own maximum —
 win over the hard minimum when the two conflict. The weather-dependent ceiling protects nothing
 but gas, so it never falls below the hard minimum, nor below the temperature a fixed circuit (a
-thermostatic mixing valve) needs from the boiler. Frost protection watches the same rooms for the
-alarm "handed back in frost": a hand-back that stops heating leaves a room near freezing.
+thermostatic mixing valve) needs from the boiler. A value for an entity with a step is put on its
+grid inside the limits, in the entity's own unit, before the write guard compares it (P-15, P-98).
+Frost protection watches the same rooms for the alarm "handed back in frost": a hand-back that
+stops heating leaves a room near freezing.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -77,6 +80,107 @@ def limit_flow(
             return Limited(install, (lower_code, install_code))
         return Limited(lower, (lower_code,))
     return Limited(requested)
+
+
+def write_bounds(
+    limits: FlowLimits,
+    circuit_max: float | None = None,
+    boiler_max: float | None = None,
+    floor: float | None = None,
+) -> tuple[float, float]:
+    """The lowest and highest heating setpoint ``limit_flow`` can give: a value put on an
+    entity's grid stays inside them."""
+    high = min(v for v in (limits.hard_max, circuit_max, boiler_max) if v is not None)
+    low = limits.hard_min if floor is None else max(limits.hard_min, floor)
+    return min(low, high), high
+
+
+GRID_EPSILON = 1e-6  # how close to a grid value (in steps) counts as on it
+MAX_STEP_K = 1.0  # a setpoint entity with a coarser step cannot confirm a value (P-15)
+
+
+def on_grid(
+    value: float, step: float, base: float, low: float | None, high: float | None
+) -> float | None:
+    """``value`` on the grid ``base + n * step``: the nearest grid value inside ``[low, high]``,
+    the one just inside where the nearest falls outside; ``None`` without one inside. A step of 0
+    or less is no grid: ``value`` itself, inside the bounds."""
+    if step <= 0:
+        inside = (low is None or value >= low) and (high is None or value <= high)
+        return value if inside else None
+    n = round((value - base) / step)
+    if low is not None and base + n * step < low - GRID_EPSILON * step:
+        n = math.ceil((low - base) / step - GRID_EPSILON)
+    if high is not None and base + n * step > high + GRID_EPSILON * step:
+        n = math.floor((high - base) / step + GRID_EPSILON)
+    candidate = base + n * step
+    if (low is not None and candidate < low - GRID_EPSILON * step) or (
+        high is not None and candidate > high + GRID_EPSILON * step
+    ):
+        return None
+    return round(candidate, 9)
+
+
+def is_on_grid(value: float, step: float, base: float) -> bool:
+    """Whether ``value`` lies on the grid ``base + n * step`` (no grid: always)."""
+    if step <= 0:
+        return True
+    n = (value - base) / step
+    return abs(n - round(n)) <= GRID_EPSILON * max(1.0, abs(n))
+
+
+@dataclass(frozen=True, slots=True)
+class Grid:
+    """A setpoint entity's grid in its own unit — ``minimum`` (else 0) plus steps — within its
+    ``minimum`` and ``maximum``. ``scale`` and ``offset`` turn °C into that unit
+    (``unit = °C * scale + offset``: °F 1.8 and 32, K 1 and 273.15)."""
+
+    step: float
+    minimum: float | None = None
+    maximum: float | None = None
+    scale: float = 1.0
+    offset: float = 0.0
+
+    @property
+    def base(self) -> float:
+        return 0.0 if self.minimum is None else self.minimum
+
+    @property
+    def step_k(self) -> float:
+        """The step as a temperature difference, in K."""
+        return self.step / self.scale
+
+    @property
+    def too_coarse(self) -> bool:
+        """A step above ``MAX_STEP_K``: a value on it could read back more than the tolerance
+        away from what was asked (P-15)."""
+        return self.step_k > MAX_STEP_K
+
+    def to_unit(self, celsius: float) -> float:
+        return celsius * self.scale + self.offset
+
+    def to_celsius(self, value: float) -> float:
+        return (value - self.offset) / self.scale
+
+    def put(
+        self, celsius: float, low: float | None = None, high: float | None = None
+    ) -> float | None:
+        """``celsius`` on the grid inside ``[low, high]`` (°C) and the entity's own range, in
+        °C; ``None`` without a grid value inside."""
+        lows = [
+            v for v in (self.minimum, None if low is None else self.to_unit(low)) if v is not None
+        ]
+        highs = [
+            v for v in (self.maximum, None if high is None else self.to_unit(high)) if v is not None
+        ]
+        value = on_grid(
+            self.to_unit(celsius),
+            self.step,
+            self.base,
+            max(lows) if lows else None,
+            min(highs) if highs else None,
+        )
+        return None if value is None else round(self.to_celsius(value), 9)
 
 
 PLAUSIBLE_ROOM = (-30.0, 45.0)  # °C: a room reading outside is a broken sensor, not a room

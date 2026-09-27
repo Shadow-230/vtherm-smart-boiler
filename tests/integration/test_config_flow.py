@@ -539,14 +539,172 @@ async def test_the_form_no_longer_offers_a_reaction_to_outside_changes(
     assert options["control"]["alarm_reactions"]["pressure_low"] == "hand_back"
     translations = Path(flow.__file__).parent / "translations"
     for language, sentence in (
-        ("en", "Another controller writing to the boiler always makes the plugin step aside."),
-        ("pl", "Inny sterownik piszący do kotła zawsze sprawia, że wtyczka ustępuje."),
+        (
+            "en",
+            "Another controller writing to the boiler always makes the plugin step aside; it "
+            "never fights it.",
+        ),
+        (
+            "pl",
+            "Inny sterownik piszący do kotła zawsze sprawia, że wtyczka ustępuje; nigdy z nim "
+            "nie walczy.",
+        ),
     ):
         texts = json.loads((translations / f"{language}.json").read_text(encoding="utf-8"))
         step = texts["options"]["step"]["control_alarms"]
         assert "outside_change" not in step["data"]
         assert "outside_change" not in step["data_description"]
         assert step["description"].endswith(sentence)
+
+
+MQTT_CONTROL = {
+    "write_path": "otgw_mqtt",
+    "topology": "gateway_standalone",
+    "confirmed_entity": "sensor.fake_boiler_ch_setpoint",
+}
+ADVANCED_CURVE = {
+    "design_outdoor": -15,
+    "design_flow": 55,
+    "hard_min": 25,
+    "hard_max": 70,
+    "room": 20,
+    "exponent": 1.3,
+    "offset": 0,
+    "ceiling_band": 10,
+    "frost_limit": 5,
+    "frost_release": 7,
+}
+
+
+async def to_control_behaviour(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
+    result = await open_control(hass, entry_id)
+    result = await options_step(hass, result, MQTT_CONTROL)
+    result = await options_step(hass, result, {"mqtt_top": "OTGW", "mqtt_node": "otgw-1"})
+    result = await options_step(hass, result, ADVANCED_CURVE)
+    assert result["step_id"] == "control_behaviour"
+    return result
+
+
+async def test_off_must_be_at_least_1k_below_the_hard_minimum(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """P-43: "off" sent as a low setpoint within a kelvin of the lowest water temperature would
+    not be seen as a change — refused: 24.5 against 25; 24 is allowed."""
+    entry_id = await create_entry(hass, entities, "advanced", ("living",))
+    result = await to_control_behaviour(hass, entry_id)
+    result = await options_step(hass, result, {"off_setpoint": 24.5})
+    assert result["errors"] == {"off_setpoint": "off_setpoint_not_below_hard_min"}
+    result = await options_step(hass, result, {"off_setpoint": 24})
+    assert result["step_id"] == "control_alarms"
+
+
+async def test_the_return_option_needs_a_second_confirmation(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 6: the return by itself after another controller is off by default and switched
+    on only with a second confirmation — without the tick, an error; with it, saved. Switching
+    it off again needs none."""
+    entry_id = await create_entry(hass, entities, "advanced", ("living",))
+    result = await to_control_behaviour(hass, entry_id)
+    result = await options_step(hass, result, {"off_setpoint": 10})
+    assert result["step_id"] == "control_alarms"
+    shown = result["data_schema"]({})
+    assert shown["return_after_outside_change"] is False  # off by default
+    result = await options_step(hass, result, {"return_after_outside_change": True})
+    assert result["step_id"] == "control_return_confirm"
+    result = await options_step(hass, result, {"understood": False})
+    assert result["errors"] == {"understood": "return_needs_confirmation"}
+    result = await options_step(hass, result, {"understood": True})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry.options["control"]["return_after_outside_change"] is True
+    assert entry.runtime_data.config.control.return_after_outside_change
+
+    result = await to_control_behaviour(hass, entry_id)
+    result = await options_step(hass, result, {"off_setpoint": 10})
+    result = await options_step(hass, result, {"return_after_outside_change": False})
+    assert result["type"] is FlowResultType.CREATE_ENTRY  # off: no confirmation
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert "return_after_outside_change" not in control
+
+
+async def test_the_thermostats_own_setpoint_is_not_the_read_back(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """The optional field for an OpenTherm thermostat's own request is refused where it is the
+    setpoint read-back; the optional restart indicator is kept (Q3.7)."""
+    hass.states.async_set("sensor.thermostat_ch_setpoint", "40", {"device_class": "temperature"})
+    hass.states.async_set("sensor.gateway_reboot_count", "3")
+    entry_id = await create_entry(hass, entities, "simple")
+    result = await open_control(hass, entry_id)
+    control = MQTT_CONTROL | {"topology": "gateway_with_thermostat"}
+    result = await options_step(
+        hass, result, control | {"thermostat_setpoint_entity": control["confirmed_entity"]}
+    )
+    assert result["errors"] == {
+        "thermostat_setpoint_entity": "thermostat_setpoint_same_as_read_back"
+    }
+    result = await options_step(
+        hass,
+        result,
+        control
+        | {
+            "thermostat_setpoint_entity": "sensor.thermostat_ch_setpoint",
+            "restart_entity": "sensor.gateway_reboot_count",
+        },
+    )
+    assert result["step_id"] == "control_mqtt"
+    result = await options_step(hass, result, {"mqtt_top": "OTGW", "mqtt_node": "otgw-1"})
+    result = await options_step(
+        hass, result, {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_max": 70}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    options = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert options["thermostat_setpoint_entity"] == "sensor.thermostat_ch_setpoint"
+    assert options["restart_entity"] == "sensor.gateway_reboot_count"
+
+
+@pytest.mark.parametrize(
+    ("attributes", "refused"),
+    [
+        ({"unit_of_measurement": "°C", "step": 5, "min": 20, "max": 80}, True),
+        ({"unit_of_measurement": "°C", "step": 1, "min": 20, "max": 80}, False),
+        ({"unit_of_measurement": "°F", "step": 2, "min": 50, "max": 190}, True),  # 1.1 K
+        ({"unit_of_measurement": "°F", "step": 1, "min": 50, "max": 190}, False),  # 0.56 K
+    ],
+)
+async def test_setpoint_step_over_1k_is_refused_in_the_form(
+    hass: HomeAssistant, entities: dict[str, str], attributes: dict[str, Any], refused: bool
+) -> None:
+    """T-55 (P-15): a setpoint entity whose step is above 1 K (in its own unit: above 1.8 °F)
+    is refused — a value rounded to it could read back beyond the tolerance, as ignored."""
+    hass.states.async_set("number.boiler_flow", "40", attributes)
+    entry_id = await create_entry(hass, entities, "simple")
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.boiler_flow"},
+    )
+    result = await options_step(
+        hass,
+        result,
+        {
+            "setpoint_entity": "number.boiler_flow",
+            "write_type": "held",
+            "ch_write_type": "unknown",
+            "hand_back": "value",
+            "hand_back_value": 30,
+            "hand_back_value_effect": "own_control",
+        },
+    )
+    if refused:
+        assert result["errors"] == {"setpoint_entity": "setpoint_step_too_coarse"}
+    else:
+        assert result["step_id"] == "control_curve"
 
 
 async def test_control_limits_must_suit_the_setpoint_entity(

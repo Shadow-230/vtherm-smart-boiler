@@ -204,9 +204,11 @@ class OutdoorSensorProblem(SmartBoilerEntity, BinarySensorEntity):
 
 
 class ControlAlarmSensor(ControlEntity, BinarySensorEntity):
-    """A control alarm: a write failed or was ignored, another controller changed a value,
-    a hand-back failed, the boiler link was lost, control stopped on an internal error, or a
-    room is near freezing while a hand-back that stops heating holds."""
+    """A control alarm: a write failed or was ignored from the start, commands keep getting lost,
+    the boiler's confirmation is missing, another controller changed a value, a hand-back failed,
+    the boiler link was lost, control stopped on an internal error, or a room is near freezing
+    while a hand-back that stops heating holds. "Write ignored" and "confirmation missing" name
+    their targets."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 
@@ -217,3 +219,12 @@ class ControlAlarmSensor(ControlEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         return self.kind in self.control.status.alarms
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        status = self.control.status
+        if self.kind is ControlAlarm.WRITE_IGNORED:
+            return {"targets": list(status.ignored_targets)}
+        if self.kind is ControlAlarm.CONFIRMATION_MISSING:
+            return {"targets": list(status.unconfirmed_targets)}
+        return None

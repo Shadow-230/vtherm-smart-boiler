@@ -101,12 +101,8 @@ def test_alarm_hand_back_is_latched_until_a_new_session() -> None:
         ]
     )
     assert decisions[1].hand_back
-    assert [d.mode for d in decisions[1:]] == [
-        ControlMode.HANDED_BACK,
-        ControlMode.HANDED_BACK,
-        ControlMode.NOT_ALLOWED,
-        ControlMode.HANDED_BACK,
-    ]
+    # P-48: the latch comes before a blocker — the status still lists the blocker.
+    assert [d.mode for d in decisions[1:]] == [ControlMode.HANDED_BACK] * 4
     assert state.latched_by == ("pressure_low",)  # the cause stays with the latch
     # Control being off does not clear it (e.g. a switch not restored after a restart): only the
     # user switching control off and on again, which starts a new session.
@@ -115,6 +111,38 @@ def test_alarm_hand_back_is_latched_until_a_new_session() -> None:
     assert state.latched_by == ("pressure_low",)
     _state, decisions = run([inputs(210.0)], state=ControlState())
     assert decisions[0].mode is ControlMode.HEATING
+
+
+def test_an_alarm_during_a_blocker_still_latches() -> None:
+    """T-49 (P-48): a step with a transient blocker and an alarm set to hand back latches, with
+    the alarm as its cause; the next step, the blocker gone, stays handed back."""
+    state, decisions = run(
+        [
+            inputs(0.0),
+            inputs(30.0, blockers=("vt_central_boiler_unknown",), hand_back_alarms=("x",)),
+            inputs(60.0),
+        ]
+    )
+    assert decisions[1].hand_back
+    assert decisions[1].mode is ControlMode.HANDED_BACK
+    assert state.latched
+    assert state.latched_by == ("x",)
+    assert decisions[2].mode is ControlMode.HANDED_BACK
+    assert decisions[2].command is None
+
+
+def test_a_clip_holds_the_comfort_correction() -> None:
+    """While the boiler holds the water lower than asked (its own limit), the correction does
+    not rise: a clip is never learned (X1, principle 13)."""
+    config = ControlConfig(curve=CURVE, ramp_k_per_min=None, decision_interval_s=60.0)
+    for clipped, rises in ((True, False), (False, True)):
+        state = ControlState()
+        t = 0.0
+        while t <= 7200.0:
+            short = zone(t, temperature=19.0, valve_open=1.0)
+            state, _ = decide(state, inputs(t, zones=(short,), clipped=clipped), config)
+            t += 10.0
+        assert (state.correction > 0.0) is rises
 
 
 def test_vt_modes_act_through_the_zones() -> None:

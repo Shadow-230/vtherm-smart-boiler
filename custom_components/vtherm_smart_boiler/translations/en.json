@@ -468,13 +468,17 @@
           "write_path": "Write path",
           "topology": "Gateway connection",
           "confirmed_entity": "Setpoint read-back",
-          "ch_confirmed_entity": "Heating on/off read-back"
+          "ch_confirmed_entity": "Heating on/off read-back",
+          "thermostat_setpoint_entity": "Thermostat's own water setpoint",
+          "restart_entity": "Restart indicator"
         },
         "data_description": {
           "write_path": "No control (default); a writable entity you pick, e.g. an EMS-ESP or ESPHome OpenTherm number; the OpenTherm Gateway through Home Assistant's OpenTherm Gateway integration; or the OTGW firmware's MQTT commands. Pick the path your boiler interface really offers: a wrong one means writes that fail or go nowhere.",
           "topology": "How the gateway sits between thermostat and boiler. With a thermostat: on hand-back the thermostat takes over. Stand-alone, without a thermostat: on hand-back, and whenever Home Assistant stops for more than about a minute, the boiler stops heating. Monitor mode: the gateway only listens and control is not possible. Virtual: a controller on the Home Assistant side, e.g. ESPHome, drives the boiler. Required; declare it as it is — the plugin never changes the gateway's mode. A lost link to the boiler's data raises an alarm and hands back in every topology — stand-alone, heating stops until the data returns.",
           "confirmed_entity": "The entity that reports the setpoint the boiler received, e.g. the gateway's \"Control setpoint 1\" on its boiler device — it shows what the gateway sends, so the setpoint is shown as confirmed by the gateway, not by the boiler. Required: every write is checked against it, and a write the boiler ignores or another controller overwrites is reported. The plugin's setpoint entity shows only a confirmed value, otherwise unknown. Picking the entity you write confirms nothing: the setpoint is then shown as unverified.",
-          "ch_confirmed_entity": "Optional: an entity that reports whether the boiler receives heating enabled — e.g. the gateway's \"Central heating 1\" on its boiler device, which shows what the gateway sends to the boiler. With it, heating on/off is checked like the setpoint: a switch the boiler ignores is reported, and one another controller changes is written again once, then every write stops. Without it, heating on/off is shown as unverified and another controller switching it goes unnoticed. Picking the entity you write, or the thermostat's request instead of what the boiler receives, confirms nothing or stops control."
+          "ch_confirmed_entity": "Optional: an entity that reports whether the boiler receives heating enabled — e.g. the gateway's \"Central heating 1\" on its boiler device, which shows what the gateway sends to the boiler. With it, heating on/off is checked like the setpoint: a switch the boiler ignores is reported, and one another controller changes is written again once, then every write stops. Without it, heating on/off is shown as unverified and another controller switching it goes unnoticed. Picking the entity you write, or the thermostat's request instead of what the boiler receives, confirms nothing or stops control.",
+          "thermostat_setpoint_entity": "Optional, for a gateway with an OpenTherm thermostat: the water temperature the thermostat itself asks for (with opentherm_gw, the thermostat device's \"Control setpoint 1\"), not the boiler's read-back. When the boiler falls back to it after an outage, the plugin sends its command again instead of taking it for another controller. Empty (default): only the value from before the plugin counts.",
+          "restart_entity": "Optional: a sensor of the gateway or boiler interface that shows its restarts — an uptime that starts again from a low value, a restart counter that goes up, or a boot time (for example the OTGW firmware's reboot count, or an EMS-ESP or ESPHome uptime sensor). A restart it shows counts for 5 minutes as a trace of an outage: the boiler falling back to its own value then is taken as a lost command and simply sent again. Empty (default): a restart is seen only when the device's entities go unavailable, and a quick restart that shows nothing is judged as a fall-back without a trace — the first within an hour is still sent again, but a second may be taken for another controller, and the plugin steps aside."
         }
       },
       "control_entity": {
@@ -583,7 +587,7 @@
       },
       "control_alarms": {
         "title": "Alarm reactions",
-        "description": "What control does while an alarm is active: information only, or hand control back to the boiler until you switch control off and on again. Another controller writing to the boiler always makes the plugin step aside.",
+        "description": "What control does while an alarm is active: information only, or hand control back to the boiler until you switch control off and on again. Another controller writing to the boiler always makes the plugin step aside; it never fights it.",
         "data": {
           "pressure_low": "Low pressure",
           "pressure_high": "High pressure",
@@ -595,7 +599,8 @@
           "hysteresis_drift": "Hysteresis drifting",
           "low_flow": "Low flow",
           "write_failed": "Write failed",
-          "write_ignored": "Boiler ignores the setpoint"
+          "write_ignored": "Boiler ignores the setpoint",
+          "return_after_outside_change": "Return by itself after another controller"
         },
         "data_description": {
           "pressure_low": "Default: information only.",
@@ -608,7 +613,18 @@
           "hysteresis_drift": "Default: information only.",
           "low_flow": "Default: information only.",
           "write_failed": "Default: information only.",
-          "write_ignored": "Default: information only."
+          "write_ignored": "Default: information only.",
+          "return_after_outside_change": "Off (default): after another controller changed the boiler twice, the plugin hands the boiler back and steps aside until you switch control off and on. On: it takes the boiler back by itself after an hour in which nothing else wrote to it. Risk: if the other controller only pauses, the two take turns; with a thermostat that keeps changing its request, the hour never passes."
+        }
+      },
+      "control_return_confirm": {
+        "title": "Confirm the return by itself",
+        "description": "The plugin will take the boiler back by itself an hour after another controller last wrote to it. If that controller is still there, both will control the boiler in turns. Tick to confirm.",
+        "data": {
+          "understood": "I understand"
+        },
+        "data_description": {
+          "understood": "Tick to switch the return by itself on; without the tick it stays off."
         }
       }
     },
@@ -633,7 +649,7 @@
       "control_holds_boiler": "Control has the boiler: switch control off first, so the boiler is given back through the device that has it; then change what control writes to or the gateway's read-back.",
       "count_threshold_above_zones": "More zones than are configured: heating would never be asked for.",
       "no_demand_criterion": "Set at least one criterion: a zone count of 0 needs a power or an opening threshold.",
-      "off_setpoint_not_below_hard_min": "\"Off\" must be below the lowest flow setpoint, or it would heat.",
+      "off_setpoint_not_below_hard_min": "\"Off\" must be at least 1 °C below the lowest water temperature, or the boiler would not see a change.",
       "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit (°C, °F or K): a value written would mean something else to it. Pick the boiler's flow setpoint entity.",
       "missing_signal": "A required signal is missing.",
       "unknown_signal": "Unknown signal in the configuration.",
@@ -655,7 +671,10 @@
       "modulation_not_percent": "Modulation is a percentage of the boiler's range: pick a sensor in %.",
       "hand_back_entity_write_type_not_supported": "Declare the external control switch expiring or held: the plugin never writes to the boiler's persistent memory.",
       "hand_back_value_above_max": "The hand-back value is above the highest flow setpoint or the circuit's maximum: the boiler would get hotter water than the circuit allows.",
-      "off_setpoint_near_hand_back_value": "\"Off\" is within 0.5 K of the hand-back value, which returns the boiler to its own control: \"off\" would hand the boiler back instead of stopping heating. Pick another value."
+      "off_setpoint_near_hand_back_value": "\"Off\" is within 0.5 K of the hand-back value, which returns the boiler to its own control: \"off\" would hand the boiler back instead of stopping heating. Pick another value.",
+      "thermostat_setpoint_same_as_read_back": "Pick the thermostat's own entity, not the setpoint read-back.",
+      "return_needs_confirmation": "Tick the box to switch this on, or go back.",
+      "setpoint_step_too_coarse": "This entity takes values in steps above 1 °C: a rounded value would read back as ignored. Pick an entity with a finer step."
     }
   },
   "selector": {
@@ -920,7 +939,8 @@
               "waiting": "Sent, waiting for the read-back",
               "not_confirmed": "Not confirmed: the boiler may ignore it",
               "changed_from_outside": "Changed by another controller: writes stopped",
-              "unverified": "Unverified: nothing echoes it"
+              "unverified": "Unverified: nothing echoes it",
+              "clipped": "Held lower by the boiler (its own limit)"
             }
           },
           "hand_back_confirmation": {
@@ -947,7 +967,8 @@
               "waiting": "Sent, waiting for the read-back",
               "not_confirmed": "Not confirmed: the boiler may ignore it",
               "changed_from_outside": "Changed by another controller: writes stopped",
-              "unverified": "Unverified: nothing echoes it"
+              "unverified": "Unverified: nothing echoes it",
+              "clipped": "Held lower by the boiler (its own limit)"
             }
           }
         }
@@ -1112,7 +1133,12 @@
         "name": "Control: write failed"
       },
       "alarm_write_ignored": {
-        "name": "Control: the boiler does not take a write"
+        "name": "Control: the boiler does not accept a command — check the settings",
+        "state_attributes": {
+          "targets": {
+            "name": "Targets"
+          }
+        }
       },
       "alarm_outside_change": {
         "name": "Control: changed by another controller"
@@ -1143,6 +1169,17 @@
       },
       "alarm_handed_back_in_frost": {
         "name": "Control: handed back while a room is near freezing"
+      },
+      "alarm_commands_lost": {
+        "name": "Control: commands often lost"
+      },
+      "alarm_confirmation_missing": {
+        "name": "Control: the boiler's confirmation is missing",
+        "state_attributes": {
+          "targets": {
+            "name": "Targets"
+          }
+        }
       }
     },
     "switch": {
@@ -1248,7 +1285,7 @@
       "message": "The setpoint entity does not accept every value control may write (a limit, the \"off\" setpoint or the hand-back value): adjust them to its range in the options. Other reasons: {others}."
     },
     "blocked_off_setpoint_not_below_hard_min": {
-      "message": "The \"off\" setpoint is not below the lowest flow setpoint, so \"off\" would heat: lower it in the options. Other reasons: {others}."
+      "message": "The \"off\" setpoint is not at least 1 °C below the lowest water temperature: lower it in the options. Other reasons: {others}."
     },
     "blocked_setpoint_unit_not_supported": {
       "message": "The setpoint entity's unit is not a temperature unit (°C, °F or K), so a value written would mean something else to it: pick the boiler's flow setpoint entity in the options. Other reasons: {others}."
@@ -1264,6 +1301,12 @@
     },
     "monitor_refresh_failed": {
       "message": "The plugin's monitor could not compute its data; the log has the details."
+    },
+    "blocked_setpoint_step_too_coarse": {
+      "message": "The setpoint entity now takes values in steps above 1 °C, so its read-back cannot confirm a value: pick another entity in the options. Other reasons: {others}."
+    },
+    "blocked_heating_off_ignored": {
+      "message": "From the start of the session the boiler did not take the plugin's \"heating off\", so the plugin could not switch heating off. Control stopped and the boiler was handed back. Check the heating switch picked in the options and the boiler's settings, then switch control off and on. The monitor keeps running. Other reasons: {others}."
     }
   },
   "issues": {
@@ -1325,6 +1368,10 @@
     "control_latched": {
       "title": "Control stepped aside: another controller writes to the boiler",
       "description": "Another controller changed what the plugin writes to the boiler again after the plugin had written its value back once, so the plugin stepped aside and does not fight it. It handed the boiler back safely: first the lowest water temperature, then heating on where a thermostat or the boiler's own control takes over, then the release — this wrote over the other controller's value once, briefly. With a thermostat, the thermostat keeps heating; without one, the boiler heats only under the other controller. To give control back to the plugin, stop the other controller, then switch control off and on. If \"Return by itself after another controller\" is on, control also comes back on its own after an hour in which nothing else wrote to the boiler (not for relays)."
+    },
+    "control_latched_heating_off_ignored": {
+      "title": "Control stopped: the boiler does not take \"heating off\"",
+      "description": "From the start of the session the boiler did not take the plugin's \"heating off\", so the plugin could not switch heating off. Control stopped and handed the boiler back safely: first the lowest water temperature, then heating on where a thermostat or the boiler's own control takes over, then the release. Check the heating switch picked in the options and the boiler's settings, then switch control off and on. The monitor keeps running."
     }
   }
 }
