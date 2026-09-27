@@ -21,9 +21,27 @@ Claude connects to this instance only after you say to start, only at the addres
     chain output {
       type filter hook output priority 0; policy accept;
       ip daddr { <production-ha-ip>, <broker-ip>, <gateway-ip> } drop
+      ip6 daddr { <production-ha-ipv6>, <broker-ipv6>, <gateway-ipv6> } drop
     }
   }
   ```
+
+  The container's traffic is forwarded (port 8123 is published), so it does not pass the LXC's
+  output chain: block it on the forwarding path too, in Docker's `DOCKER-USER` chain, for IPv4
+  and IPv6 (the IPv6 chain exists where Docker manages ip6tables; to check at J2):
+
+  ```
+  iptables  -I DOCKER-USER -d <production-ha-ip>,<broker-ip>,<gateway-ip> -j DROP
+  ip6tables -I DOCKER-USER -d <production-ha-ipv6>,<broker-ipv6>,<gateway-ipv6> -j DROP
+  ```
+
+  Make both rules persistent (for example with `iptables-persistent`), since Docker rebuilds its
+  chains at start but keeps `DOCKER-USER`'s rules only while they are loaded.
+- The check (T-25): from inside the container, every TCP attempt to the production Home
+  Assistant, its broker and the gateway, over IPv4 and IPv6, must time out or be refused, e.g.
+  `docker exec ha-test python3 -c "import socket; socket.create_connection(('<ip>', <port>), 5)"`
+  for each address and port. You run it at J2; Claude repeats it over SSH only after you have
+  said to start J4.
 
 - Internet access for pulling the image and VT's Python requirements (`vtherm_api` from PyPI).
 
