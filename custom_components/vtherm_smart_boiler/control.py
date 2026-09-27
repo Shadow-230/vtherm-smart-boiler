@@ -14,13 +14,21 @@ attempt short can lose it. Control takes the boiler through a gateway only once 
 holds a value, so its hand-back can be seen (P-21).
 
 How control resumes after it stopped (``SCOPE.md`` §7):
-- an alarm set to hand back, an outside change included: a latch, shown with its cause, until
-  the user switches control off and on; it survives a restart and never expires on its own;
+- another controller — an outside change always makes the plugin step aside, whatever reaction
+  an earlier version stored: the whole safe hand-back, the target the other controller holds
+  included (the user's answer H) — or an alarm set to hand back: a latch, shown with its cause,
+  until the user switches control off and on; it survives a restart and never expires on its
+  own. Stepping aside raises the entry's one latch issue, again at each start while it holds;
 - an internal error: at any change of the control switch;
 - a lost boiler link: on its own, once the data is fresh again;
 - the plugin's own monitor failing for five minutes: on its own, once it has worked for a minute
   without a failure, with an information note (the user's answer I);
-- a blocker: on its own, once it is gone.
+- a blocker: on its own, once it is gone. Where a hand-back stops heating, a blocker that ended
+  a session holding the boiler and still holds a minute later raises a repair issue (S-10).
+
+Control never stops heating silently: where a hand-back stops heating, the control switch says
+that frost protection rests on the boiler's own, and a room near freezing while control does
+not hold the boiler raises an alarm, which never starts heating itself (S-57).
 
 The control switch and control's entities stay available whatever the monitor does (P-02).
 """
@@ -63,6 +71,7 @@ from .control_config import (
     HandBackEffect,
     WritePath,
     config_blockers,
+    frost_protection_by,
     hand_back_effect,
     highest_water_temperature,
 )
@@ -110,6 +119,7 @@ from .core.learning import (
     plan_learning,
     release_all,
 )
+from .core.limits import handed_back_in_frost
 from .core.loop import (
     ON,
     LastCommand,
@@ -162,7 +172,17 @@ STOP_WRITE_TIMEOUT_S = 3.0
 STOP_REPORT_WAIT_S = 5.0
 OWED_ISSUE = "hand_back_owed"  # a repair issue, fixable by saying the boiler was returned
 TAKEN_ISSUE = "hand_back_taken_by_other"  # after the hand-back another controller holds a target
-LATCHED_ISSUE = "control_latched"  # V7's: control stepped aside from another controller
+# The entry's one latch issue: control stepped aside from another controller (V7; Y1 extends it
+# to every latch).
+LATCHED_ISSUE = "control_latched"
+# A blocker ended a session that held the boiler where a hand-back stops heating: a repair issue
+# once the blocker has held this long — longer than a VT reload, short enough to warn (S-10;
+# provisional, K4).
+STOPPED_HEATING_ISSUE = "control_stopped_heating"
+STOPPED_HEATING_S = 60.0
+# Blockers that raise no such issue: Home Assistant starting (the minute starts once it runs),
+# an internal error (its own alarm) and the monitor failing (V6's own issue).
+_QUIET_BLOCKERS = frozenset({"ha_starting", "control_error", "monitor_failed"})
 # The monitor failing handed the boiler back: a repair issue, which becomes an information note
 # under the same id once control has resumed (the user's answer I).
 MONITOR_ISSUE = "monitor_failed"
@@ -274,6 +294,9 @@ class ControlAlarm(StrEnum):
     CORRECTION_AT_LIMIT = "correction_at_limit"  # the comfort correction at 3 K for hours
     OUTDOOR_SENSOR_SUSPECT = "outdoor_sensor_suspect"  # stuck, or far from the weather
     MONITOR_FAILED = "monitor_failed"  # the plugin's own monitor fails for five minutes
+    # Control does not hold the boiler where a hand-back stops heating, and a room is near
+    # freezing: frost protection rests on the boiler's own (S-57). Information only.
+    HANDED_BACK_IN_FROST = "handed_back_in_frost"
 
 
 _EVENT_ALARM = {
@@ -309,6 +332,7 @@ class ControlStatus:
     writes_stopped: bool = False  # another controller has the boiler: nothing is written
     hand_back_check: str | None = None  # where the last hand-back stands (HandBackConfirmation)
     monitor_failed_since: float | None = None  # the monitor's current run of failed refreshes
+    frost_protection_by: str | None = None  # who keeps frost protection now (FrostProtection)
 
     @property
     def confirmed_setpoint(self) -> float | None:
@@ -380,7 +404,9 @@ class ControlUnit:
         self._writer: Writer | None = None
         self.enabled = False
         self._session = _Session()
-        self._status = ControlStatus(options.configured)
+        self._status = ControlStatus(
+            options.configured, frost_protection_by=self._frost_protection_shown()
+        )
         self._published: ControlStatus | None = None
         self._last_change_at: float | None = None
         self._hand_back_at: float | None = None
@@ -438,6 +464,14 @@ class ControlUnit:
         # The monitor's issue is up for a hand-back it caused: when its failures began. It
         # becomes the information note once control holds the boiler again (answer I).
         self._monitor_issue_since: float | None = None
+        # S-10: a blocker ended a session that held the boiler where a hand-back stops heating.
+        # Kept, and stored, until control controls again or the user switches it off; its
+        # repair issue follows once a blocker has held for ``STOPPED_HEATING_S``.
+        self._stopped_by_blocker = False
+        self._blocked_since: float | None = None  # the current run of blockers that count
+        self._stopped_heating_issue = False  # the issue is up
+        # S-57: the alarm "handed back in frost"; kept across sessions for its hysteresis.
+        self._frost_alarm = False
 
     # --- status, listeners, storage -----------------------------------------------------
 
@@ -492,7 +526,8 @@ class ControlUnit:
 
     def stored(self) -> dict[str, Any]:
         """What must survive a restart: whether the boiler may hold a value of ours, paused zones,
-        latches, a hand-back still to be done, the user's wish and the last command."""
+        latches, a hand-back still to be done, the user's wish, the last command, and a blocker
+        that stopped heating (S-10)."""
         session = self._session
         owed = self._holding or self._hand_back_pending
         if self.hand_back_only:
@@ -522,6 +557,9 @@ class ControlUnit:
             "release_from": self._release_from,
             "release_baseline": self._release_baseline,
             "taken_by_other": sorted(self._taken_targets),
+            # A blocker ended a session where a hand-back stops heating: the next run tells the
+            # user again while it holds (S-10).
+            "stopped_heating": self._stopped_by_blocker and not self.hand_back_only,
         }
 
     def restore(self, data: Mapping[str, Any]) -> None:
@@ -590,6 +628,8 @@ class ControlUnit:
         self._stored_enabled = wish
         self._last_command = field("last_command", parse_last_command, None)
         self._command_stored = self._last_command
+        # Read cautiously too: the issue follows only while a blocker holds (S-10).
+        self._stopped_by_blocker = _flag(data.get("stopped_heating")) and not self.hand_back_only
         # From now on the stores get this unit's state: a save made before its start must not
         # write the state loaded earlier over a hand-back made since.
         self._coordinator.provide_stored_control(self.stored)
@@ -620,6 +660,7 @@ class ControlUnit:
         if not (self.options.configured or self.follow_learning):
             return
         self._report_owed()
+        self._report_latched(anew=False)  # a stored latch holds: its issue again (V7)
         self._started_at = dt_util.utcnow().timestamp()
         self._monitor_issue_since = self._monitor_issue_left()
         self._track_outages(self._started_at)
@@ -709,6 +750,9 @@ class ControlUnit:
             # hand-back still owed: the issue outlives it, until a later run gets it through or
             # the user settles it by hand.
             self._report_owed(persistent=True)
+        # The issue of a blocker that stopped heating goes with the unit; the stored flag makes
+        # the next run raise it again while a blocker holds (S-10).
+        self._delete_stopped_heating_issue()
         await self._async_learning_calls(deadline)
         self._coordinator.schedule_control_save()
 
@@ -821,6 +865,8 @@ class ControlUnit:
             # then on).
             self._session.failed = False
             self._session.alarms.discard(ControlAlarm.CONTROL_ERROR)
+            if not enabled:
+                self._clear_stopped_heating()  # the user has seen to it (S-10)
             # The wish is stored before anything else can fail (P-11).
             await self._coordinator.async_save_control_now()
             await self._async_run_step(now)
@@ -833,11 +879,13 @@ class ControlUnit:
 
     def _end_session(self) -> None:
         """A new session starts fresh; only the learning pauses carry on (a pending hand-back and
-        its alarm belong to the unit, not the session)."""
+        its alarm belong to the unit, not the session). A latch goes with the session, and its
+        repair issue with it."""
         self._session = _Session(learning=self._session.learning)
         self._writer = None
         self._baseline = None
         self._forget_last_command()
+        self._report_latched(anew=False)
         self._coordinator.schedule_control_save()
 
     def _forget_last_command(self) -> bool:
@@ -886,6 +934,7 @@ class ControlUnit:
                 mode=ControlMode.NOT_ALLOWED,
                 alarms=frozenset(self._alarms()),
                 hand_back_check=self._hand_back_shown,
+                frost_protection_by=self._frost_protection_shown(),
             )
         else:
             if self._step_failing:
@@ -933,10 +982,14 @@ class ControlUnit:
             # Noted before the step: a hand-back resets the guards, and a timeout hand-back is
             # released back to this value.
             self._baseline = session.loop.setpoint.baseline
+        was_latched = session.loop.control.latched
         session.loop, out = loop_step(
             session.loop, inputs, confirmed, self.options.loop, self._confirmed_heating()
         )
+        if session.loop.control.latched and not was_latched:
+            self._latched_now()
         if out.hand_back:
+            self._note_blocker_release(out, blockers)  # stored with the hand-back, at once
             await self._async_hand_back_writes(now)
         else:
             await self._async_writes(out, now)
@@ -945,6 +998,8 @@ class ControlUnit:
             self._report_monitor_failed(now)  # the session held the boiler
         elif self._monitor_issue_since is not None and controlling and not monitor_failed:
             self._note_monitor_recovered(now)  # control holds the boiler again
+        self._follow_stopped_heating(now, blockers)
+        self._follow_frost(now, zones)
         if Reason.BOILER_LINK_STALE in out.decision.reasons and (
             out.hand_back or out.decision.mode is ControlMode.HANDED_BACK
         ):
@@ -1003,6 +1058,7 @@ class ControlUnit:
             writes_stopped=out.blocked,
             hand_back_check=self._hand_back_shown,
             monitor_failed_since=self._coordinator.monitor_failed_since,
+            frost_protection_by=self._frost_protection_shown(),
         )
 
     def _follow_unknown_zones(self, now: float, zones: Sequence[ZoneState]) -> tuple[str, ...]:
@@ -1025,7 +1081,156 @@ class ControlUnit:
         alarms = set(self._session.alarms)
         if self._hand_back_failed:
             alarms.add(ControlAlarm.HAND_BACK_FAILED)
+        if self._frost_alarm:
+            alarms.add(ControlAlarm.HANDED_BACK_IN_FROST)
         return alarms
+
+    # --- stopping with an alarm (V7: S-10, S-57, S-11) ------------------------------------
+
+    def _frost_protection_shown(self) -> str | None:
+        """Who keeps frost protection now, as the control switch shows it (S-57)."""
+        shown = frost_protection_by(self.options, self._session.loop.control.controlling)
+        return None if shown is None else shown.value
+
+    def _stops_heating(self) -> bool:
+        """A hand-back stops heating: nothing heats the house once control lets go."""
+        return hand_back_effect(self.options) is HandBackEffect.HEATING_STOPS
+
+    def _follow_frost(self, now: float, zones: Sequence[ZoneState]) -> None:
+        """S-57: while control does not hold the boiler where a hand-back stops heating, a room
+        near freezing raises the alarm "handed back in frost" at the step that sees it, and it
+        goes once every watched room with a known temperature is back at the release, or once
+        control holds the boiler again. Information only: it never starts heating."""
+        control = self.options.loop.control
+        raised = handed_back_in_frost(
+            zones,
+            now,
+            control.zone_max_age_s,
+            control.frost,
+            heating_stops=self._stops_heating(),
+            controlling=self._session.loop.control.controlling,
+            active=self._frost_alarm,
+        )
+        if raised and not self._frost_alarm:
+            _LOGGER.warning(
+                "A room is near freezing while control does not hold the boiler, and with this "
+                "installation nothing heats then: frost protection rests on the boiler's own"
+            )
+        elif self._frost_alarm and not raised:
+            _LOGGER.info("No room is near freezing any more, or control holds the boiler again")
+        self._frost_alarm = raised
+
+    def _note_blocker_release(self, out: LoopOutput, blockers: tuple[str, ...]) -> None:
+        """S-10: a blocker ends the session that held the boiler, where a hand-back stops
+        heating — any blocker but Home Assistant starting, an internal error or the monitor
+        failing, which have their own. Noted before the hand-back, whose save stores it at
+        once: a run that ends before the issue is raised leaves it to the next."""
+        if (
+            Reason.PRECONDITION in out.decision.reasons
+            and any(blocker not in _QUIET_BLOCKERS for blocker in blockers)
+            and self._stops_heating()
+        ):
+            self._stopped_by_blocker = True
+
+    def _follow_stopped_heating(self, now: float, blockers: tuple[str, ...]) -> None:
+        """S-10: once a blocker has ended a session that held the boiler where a hand-back
+        stops heating, a repair issue follows when a blocker that counts has held for
+        ``STOPPED_HEATING_S`` — with Home Assistant running. The issue goes when control
+        controls again or the user switches control off; the unit stopping takes it too, and
+        the next run raises it again while a blocker holds."""
+        if self._session.loop.control.controlling:
+            self._clear_stopped_heating()  # control holds the boiler again
+            return
+        counting = [blocker for blocker in blockers if blocker not in _QUIET_BLOCKERS]
+        if not counting or "ha_starting" in blockers:
+            self._blocked_since = None  # the minute counts once Home Assistant runs
+            return
+        self._blocked_since = clock_start(self._blocked_since, now)  # a clock set back (C9)
+        if (
+            self._stopped_by_blocker
+            and self.enabled
+            and self._stops_heating()
+            and not self._stopped_heating_issue
+            and now - self._blocked_since >= STOPPED_HEATING_S
+        ):
+            self._report_stopped_heating(counting)
+
+    def _stopped_heating_issue_id(self) -> str:
+        return f"{STOPPED_HEATING_ISSUE}_{self._coordinator.config_entry.entry_id}"
+
+    def _report_stopped_heating(self, blockers: Sequence[str]) -> None:
+        """The repair issue of a blocker that stopped heating: an error, as the hand-back stops
+        heating; raised anew, so an earlier one the user dismissed does not hide it."""
+        _LOGGER.warning(
+            "Control stays stopped by %s, and with this installation a hand-back stops heating: "
+            "the boiler does not heat until control resumes",
+            ", ".join(blockers),
+        )
+        issue_id = self._stopped_heating_issue_id()
+        ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key=STOPPED_HEATING_ISSUE,
+        )
+        self._stopped_heating_issue = True
+
+    def _clear_stopped_heating(self) -> None:
+        """Control holds the boiler again, or the user switched it off: nothing of S-10 is left,
+        and the store follows."""
+        self._blocked_since = None
+        if self._stopped_by_blocker:
+            self._stopped_by_blocker = False
+            self._coordinator.schedule_control_save()
+        if self._stopped_heating_issue:
+            self._delete_stopped_heating_issue()
+
+    def _delete_stopped_heating_issue(self) -> None:
+        self._stopped_heating_issue = False
+        ir.async_delete_issue(self._hass, DOMAIN, self._stopped_heating_issue_id())
+
+    def _latched_now(self) -> None:
+        """The latch was set in this step: for another controller, the plugin steps aside — the
+        whole safe hand-back follows at once, which no guard holds back and which skips no
+        target (the user's answer H) — and its repair issue is raised anew."""
+        latched_by = self._session.loop.control.latched_by
+        if ControlAlarm.OUTSIDE_CHANGE.value in latched_by:
+            _LOGGER.warning(
+                "Another controller writes to the boiler: control steps aside with the safe "
+                "hand-back and stays off until control is switched off and on"
+            )
+        self._report_latched(anew=True)
+
+    def _report_latched(self, anew: bool) -> None:
+        """The entry's one latch issue while control stays latched after stepping aside from
+        another controller (V7); deleted otherwise. ``anew``: the latch was just set — raised
+        anew, so an earlier one the user dismissed does not hide it; at a start the issue a
+        stored latch keeps is raised as it was left. An error where the hand-back stops heating,
+        else a warning; not fixable: switching control off and on clears the latch."""
+        issue_id = f"{LATCHED_ISSUE}_{self._coordinator.config_entry.entry_id}"
+        control = self._session.loop.control
+        if (
+            self.hand_back_only
+            or not control.latched
+            or ControlAlarm.OUTSIDE_CHANGE.value not in control.latched_by
+        ):
+            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+            return
+        if anew:
+            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.ERROR if self._stops_heating() else ir.IssueSeverity.WARNING,
+            translation_key=LATCHED_ISSUE,
+        )
 
     def _boiler_link(self, snapshot: BoilerSnapshot, now: float) -> bool:
         """The boiler's own signals are there: flame and flow known.
@@ -1107,8 +1312,9 @@ class ControlUnit:
                 ControlAlarm.CORRECTION_AT_LIMIT,
                 ControlAlarm.OUTDOOR_SENSOR_SUSPECT,
                 ControlAlarm.MONITOR_FAILED,
+                ControlAlarm.HANDED_BACK_IN_FROST,
             ):
-                continue  # a blocker, a retry of its own, and a hand-back already made
+                continue  # a blocker, a retry of its own, a hand-back already made, information
             if self.options.reaction(alarm.value) is AlarmReaction.HAND_BACK:
                 active.append(alarm.value)
         return tuple(active)

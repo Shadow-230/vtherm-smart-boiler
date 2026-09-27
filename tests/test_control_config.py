@@ -444,3 +444,73 @@ def test_heating_goes_back_on_where_the_boiler_returns_to_its_own_control(
 
     options = parse_control(ENTITY | changes, RADIATORS, None)
     assert hand_back_heating_on(options) is on
+
+
+# --- V7: an outside change always steps aside (S-11); who keeps frost protection (S-57) ----------
+
+
+@pytest.mark.parametrize(
+    "reactions",
+    [
+        {"outside_change": "info"},  # stored by 0.2.1's form
+        {"outside_change": "hand_back"},
+        {"outside_change": "no longer a reaction"},  # a hand edit: neutralised, not refused
+        {"outside_change": None},
+        {},
+        None,
+    ],
+)
+def test_an_outside_change_always_hands_back_whatever_is_stored(reactions: object) -> None:
+    """S-11 (decision 6, the user's answer H): another controller always makes the plugin step
+    aside — there is no reaction to choose, and a stored "information" is neutralised."""
+    data = OTGW | {"alarm_reactions": reactions}
+    options = parse_control(data, RADIATORS, None)
+    assert options.reaction("outside_change") is AlarmReaction.HAND_BACK
+    assert "outside_change" not in options.alarm_reactions
+    assert config_blockers(options, RADIATORS) == []
+
+
+def test_other_alarms_keep_their_stored_reaction_beside_the_outside_change() -> None:
+    """Negative: only the outside change is fixed; the others keep what the user chose, and an
+    alarm without a stored reaction informs."""
+    data = OTGW | {
+        "alarm_reactions": {
+            "outside_change": "info",
+            "pressure_low": "hand_back",
+            "write_ignored": "info",
+        }
+    }
+    options = parse_control(data, RADIATORS, None)
+    assert options.reaction("pressure_low") is AlarmReaction.HAND_BACK
+    assert options.reaction("write_ignored") is AlarmReaction.INFO
+    assert options.reaction("pressure_high") is AlarmReaction.INFO
+    assert options.reaction("an alarm this version does not know") is AlarmReaction.INFO
+
+
+@pytest.mark.parametrize(
+    ("data", "after_hand_back"),
+    [
+        (OTGW, "boiler"),  # stand-alone: the hand-back stops heating
+        (OTGW | {"topology": "gateway_with_thermostat"}, "thermostat"),
+        (ENTITY | {"hand_back_value_effect": "heating_stops"}, "boiler"),
+        (ENTITY | {"hand_back_value_effect": "own_control"}, "device"),
+        (ENTITY | {"hand_back": "timeout", "write_type": "expiring"}, "device"),  # virtual
+        (OTGW | {"topology": "monitor_mode"}, None),  # control cannot run: nothing to say
+        (OTGW | {"topology": ""}, None),  # the effect unknown
+    ],
+)
+def test_the_switch_says_who_keeps_frost_protection_after_a_hand_back(
+    data: dict, after_hand_back: str | None
+) -> None:
+    """S-57: while the session controls, the plugin keeps frost protection; otherwise whoever
+    the hand-back's effect leaves it with — the thermostat, the boiler's own (if it has one)
+    where the hand-back stops heating, or the boiler's or the device's own control."""
+    from custom_components.vtherm_smart_boiler.control_config import (
+        FrostProtection,
+        frost_protection_by,
+    )
+
+    options = parse_control(data, RADIATORS, None)
+    assert frost_protection_by(options, controlling=True) is FrostProtection.PLUGIN
+    shown = frost_protection_by(options, controlling=False)
+    assert (None if shown is None else shown.value) == after_hand_back

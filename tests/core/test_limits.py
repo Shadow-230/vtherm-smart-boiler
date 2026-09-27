@@ -10,6 +10,7 @@ from custom_components.vtherm_smart_boiler.core.limits import (
     LimitCode,
     Limited,
     frost_needed,
+    handed_back_in_frost,
     limit_flow,
 )
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
@@ -103,3 +104,65 @@ def test_implausible_room_temperatures_are_rejected() -> None:
     """A sensor reading -127 °C is broken, not a frozen room."""
     assert not frost_needed([zone(-127.0), zone(20.0)], 100.0, 600.0, False, FrostConfig())
     assert frost_needed([zone(-5.0)], 100.0, 600.0, False, FrostConfig())
+
+
+# --- V7, S-57: handed back while a room is near freezing ----------------------------------------
+
+
+def in_frost(
+    zones: list[ZoneState],
+    active: bool = False,
+    heating_stops: bool = True,
+    controlling: bool = False,
+    config: FrostConfig | None = None,
+) -> bool:
+    return handed_back_in_frost(
+        zones,
+        100.0,
+        600.0,
+        config or FrostConfig(room_limit=5.0, release=7.0),
+        heating_stops=heating_stops,
+        controlling=controlling,
+        active=active,
+    )
+
+
+def test_handed_back_in_frost_rises_below_the_limit_and_clears_at_the_release() -> None:
+    """S-57: where a hand-back stops heating and control does not hold the boiler, a watched
+    zone below the frost limit raises the alarm; it holds until every watched zone with a known
+    temperature is at or above the release."""
+    assert in_frost([zone(4.0), zone(20.0)])
+    assert not in_frost([zone(6.0)])  # between the limit and the release: not raised
+    assert in_frost([zone(6.0)], active=True)  # once raised, it holds below the release
+    assert in_frost([zone(7.5), zone(6.9)], active=True)
+    assert not in_frost([zone(7.5)], active=True)
+    assert not in_frost([zone(7.0)], active=True)  # at the release: off
+
+
+def test_handed_back_in_frost_never_while_controlling_or_where_something_else_heats() -> None:
+    """Negatives: while control holds the boiler its own frost protection heats; with a
+    thermostat or a device's own control after the hand-back, frost protection rests on it."""
+    assert not in_frost([zone(3.0)], controlling=True)
+    assert not in_frost([zone(3.0)], active=True, controlling=True)
+    assert not in_frost([zone(3.0)], heating_stops=False)
+    assert not in_frost([zone(3.0)], active=True, heating_stops=False)
+
+
+def test_handed_back_in_frost_ignores_unknown_stale_and_implausible_rooms() -> None:
+    """Missing data: a zone with no temperature, a stale one or a broken sensor is not counted;
+    with no watched zone known the alarm stays off, and a raised one goes off."""
+    assert not in_frost([zone(None)])
+    assert not in_frost([zone(None)], active=True)
+    assert not in_frost([zone(2.0, reported=None)])
+    assert not in_frost([zone(2.0, reported=-10_000.0)])
+    assert not in_frost([zone(-127.0)])
+    assert not in_frost([])
+    assert not in_frost([], active=True)
+
+
+def test_handed_back_in_frost_watches_the_zones_frost_protection_watches() -> None:
+    """Every zone by default, or only the zone the user picked for frost protection."""
+    zones = [zone(3.0, zid="garage"), zone(20.0, zid="living")]
+    assert in_frost(zones)
+    assert not in_frost(zones, config=FrostConfig(zone="living"))
+    assert in_frost(zones, config=FrostConfig(zone="garage"))

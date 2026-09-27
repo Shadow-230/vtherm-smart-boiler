@@ -44,7 +44,6 @@ from .const import (
 from .control_config import (
     CONTROL_DEFAULTS,
     CURVE_DEFAULTS,
-    DEFAULT_REACTIONS,
     INFO_ONLY_ALARMS,
     OTGW_PATHS,
     AlarmReaction,
@@ -400,12 +399,12 @@ _ON_OFF_ENTITY = {"domain": ["switch", "input_boolean"]}
 _READ_BACK_ENTITY = {"domain": ["sensor", "number", "input_number"]}
 _ECHO_ENTITY = {"domain": ["binary_sensor", "switch", "input_boolean"]}
 # Alarms whose reaction the user may choose (an internal error always hands back; frequent starts
-# stay information, as nothing counted may hold heating against VT).
+# stay information, as nothing counted may hold heating against VT). Another controller writing
+# to the boiler is not among them: it always makes the plugin step aside (S-11).
 REACTION_ALARMS = (
     *(kind.value for kind in AlarmKind if kind.value not in INFO_ONLY_ALARMS),
     "write_failed",
     "write_ignored",
-    "outside_change",
 )
 # Control fields only the advanced level shows; at the simple level they keep their defaults.
 CONTROL_ADVANCED_KEYS = (
@@ -585,12 +584,9 @@ def control_alarms_schema(options: dict[str, Any]) -> vol.Schema:
     choices = [r.value for r in AlarmReaction]
     return vol.Schema(
         {
-            vol.Required(
-                alarm,
-                default=reactions.get(
-                    alarm, DEFAULT_REACTIONS.get(alarm, AlarmReaction.INFO).value
-                ),
-            ): _select("alarm_reaction", choices)
+            vol.Required(alarm, default=reactions.get(alarm, AlarmReaction.INFO.value)): _select(
+                "alarm_reaction", choices
+            )
             for alarm in REACTION_ALARMS
         }
     )

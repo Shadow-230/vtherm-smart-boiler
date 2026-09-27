@@ -123,8 +123,10 @@ CONTROLLABLE_TOPOLOGIES = frozenset(
 # Alarms that stay information: nothing the plugin counts may hold heating against VT, so many
 # starts never hand back (``SCOPE.md`` principle 12).
 INFO_ONLY_ALARMS = frozenset({"frequent_starts"})
-# Alarms whose default reaction hands control back: another controller is writing too.
-DEFAULT_REACTIONS: Mapping[str, AlarmReaction] = {"outside_change": AlarmReaction.HAND_BACK}
+# Alarms that always hand control back, with no reaction to choose (decision 7): another
+# controller writing to the boiler makes the plugin step aside — the whole safe hand-back, then a
+# latch (decision 6, the user's answer H). A stored reaction for them is neutralised (S-11).
+ALWAYS_HAND_BACK_ALARMS = frozenset({"outside_change"})
 EXPONENT_BY_EMITTER = {
     EmitterType.RADIATOR: 1.3,
     EmitterType.CONVECTOR: 1.4,
@@ -168,9 +170,13 @@ class ControlOptions:
         return self.write_path is not None
 
     def reaction(self, alarm: str) -> AlarmReaction:
+        """What an active alarm does: a fixed reaction where there is one, else the user's
+        choice; an alarm without one informs."""
+        if alarm in ALWAYS_HAND_BACK_ALARMS:
+            return AlarmReaction.HAND_BACK
         if alarm in INFO_ONLY_ALARMS:
             return AlarmReaction.INFO
-        return self.alarm_reactions.get(alarm, DEFAULT_REACTIONS.get(alarm, AlarmReaction.INFO))
+        return self.alarm_reactions.get(alarm, AlarmReaction.INFO)
 
     @property
     def entities(self) -> tuple[str, ...]:
@@ -280,6 +286,9 @@ def parse_control(
     reactions = {
         str(alarm): AlarmReaction(reaction)
         for alarm, reaction in (data.get("alarm_reactions") or {}).items()
+        # A fixed reaction leaves nothing to choose: a stored one is neutralised, whatever it
+        # holds (0.2.1's form offered "information" for an outside change, S-11).
+        if str(alarm) not in ALWAYS_HAND_BACK_ALARMS
     }
     return ControlOptions(
         write_path=path,
@@ -328,6 +337,31 @@ def hand_back_effect(control: ControlOptions) -> HandBackEffect | None:
         if control.topology is not None
         else None
     )
+
+
+class FrostProtection(StrEnum):
+    """Who keeps frost protection now (S-57), as the control switch shows it."""
+
+    PLUGIN = "plugin"  # the session controls: the plugin's own frost protection
+    THERMOSTAT = "thermostat"  # handed back to the thermostat
+    BOILER = "boiler"  # a hand-back stops heating: the boiler's own, if it has one
+    DEVICE = "device"  # the boiler's or the device's own control
+
+
+_FROST_PROTECTION_AFTER = {
+    HandBackEffect.THERMOSTAT_TAKES_OVER: FrostProtection.THERMOSTAT,
+    HandBackEffect.HEATING_STOPS: FrostProtection.BOILER,
+    HandBackEffect.DEVICE_DECIDES: FrostProtection.DEVICE,
+}
+
+
+def frost_protection_by(control: ControlOptions, controlling: bool) -> FrostProtection | None:
+    """S-57: the plugin while its session controls; otherwise whoever the hand-back's effect
+    leaves the boiler with. ``None`` where the effect is not known (control cannot run)."""
+    if controlling:
+        return FrostProtection.PLUGIN
+    effect = hand_back_effect(control)
+    return None if effect is None else _FROST_PROTECTION_AFTER[effect]
 
 
 def hand_back_heating_on(control: ControlOptions) -> bool:

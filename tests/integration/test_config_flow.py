@@ -470,7 +470,8 @@ async def test_control_at_the_advanced_level_and_back(
     assert result["errors"] == {"off_setpoint": "off_setpoint_not_below_hard_min"}
     result = await options_step(hass, result, {"ramp_k_per_min": 0.5, "off_setpoint": 12})
     assert result["step_id"] == "control_alarms"
-    assert result["data_schema"]({})["outside_change"] == "hand_back"  # the default
+    # Another controller always makes the plugin step aside: no reaction to choose (S-11).
+    assert "outside_change" not in result["data_schema"].schema
     result = await options_step(hass, result, {"pressure_low": "hand_back"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
@@ -487,7 +488,7 @@ async def test_control_at_the_advanced_level_and_back(
     assert control["off_setpoint"] == 12
     assert "daily_cap" not in control  # nothing is written to the boiler's memory
     assert control["alarm_reactions"]["pressure_low"] == "hand_back"
-    assert control["alarm_reactions"]["outside_change"] == "hand_back"
+    assert "outside_change" not in control["alarm_reactions"]
     assert entry.runtime_data.config.control.loop.control.ramp_k_per_min == 0.5
 
     # Back to simple with defaults restored: only the simple control fields remain.
@@ -507,6 +508,45 @@ async def test_control_at_the_advanced_level_and_back(
     await hass.async_block_till_done()
     assert "control" not in hass.config_entries.async_get_entry(entry_id).options
     assert control_switch(hass, entry_id) is None  # its entities are removed too
+
+
+async def test_the_form_no_longer_offers_a_reaction_to_outside_changes(
+    hass: HomeAssistant,
+) -> None:
+    """S-11: another controller writing to the boiler always makes the plugin step aside. The
+    alarm reactions step offers no choice for it, even where an earlier version stored one, and
+    its description says so; saving the step drops the stored reaction and keeps the others."""
+    import json
+    from pathlib import Path
+
+    from custom_components.vtherm_smart_boiler import config_flow as flow
+
+    options: dict[str, Any] = {
+        "level": "advanced",
+        "control": {
+            "write_path": "opentherm_gw",
+            "alarm_reactions": {"outside_change": "info", "pressure_low": "hand_back"},
+        },
+    }
+    schema = flow.control_alarms_schema(options)
+    assert "outside_change" not in {str(marker) for marker in schema.schema}
+    shown = schema({})
+    assert "outside_change" not in shown
+    assert shown["pressure_low"] == "hand_back"  # the others keep what the user chose
+    assert shown["write_ignored"] == "info"  # and inform by default
+    flow.apply_control_alarms(options, shown)
+    assert "outside_change" not in options["control"]["alarm_reactions"]
+    assert options["control"]["alarm_reactions"]["pressure_low"] == "hand_back"
+    translations = Path(flow.__file__).parent / "translations"
+    for language, sentence in (
+        ("en", "Another controller writing to the boiler always makes the plugin step aside."),
+        ("pl", "Inny sterownik piszący do kotła zawsze sprawia, że wtyczka ustępuje."),
+    ):
+        texts = json.loads((translations / f"{language}.json").read_text(encoding="utf-8"))
+        step = texts["options"]["step"]["control_alarms"]
+        assert "outside_change" not in step["data"]
+        assert "outside_change" not in step["data_description"]
+        assert step["description"].endswith(sentence)
 
 
 async def test_control_limits_must_suit_the_setpoint_entity(

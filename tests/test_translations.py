@@ -165,6 +165,9 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
     assert set(PLACEHOLDER.findall(note["description"])) == {"since", "until"}
     assert note["title"]
     assert SOURCE["exceptions"]["monitor_refresh_failed"]["message"]  # the refresh's failure
+    for key in ("control_stopped_heating", "control_latched"):  # V7's two repair issues
+        assert SOURCE["issues"][key]["title"], key
+        assert SOURCE["issues"][key]["description"], key
 
 
 def _values(entity: dict, attribute: str) -> set[str]:
@@ -204,6 +207,11 @@ def test_coded_states_and_attributes_are_translated() -> None:
     assert _values(SOURCE["entity"]["switch"]["control"], "off_by") == {
         "heating_switch",
         "low_setpoint",
+    }
+    from custom_components.vtherm_smart_boiler.control_config import FrostProtection
+
+    assert _values(SOURCE["entity"]["switch"]["control"], "frost_protection_by") == {
+        who.value for who in FrostProtection
     }
 
 

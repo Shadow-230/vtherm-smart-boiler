@@ -63,6 +63,10 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
             "experimental": True,
             "blockers": list(status.blockers),
             "hand_back_effect": None if effect is None else effect.value,
+            # Who keeps frost protection now: the plugin while it controls, else whoever the
+            # hand-back leaves the boiler with — after a stand-alone hand-back, the boiler's own,
+            # if it has one (S-57).
+            "frost_protection_by": status.frost_protection_by,
             # How "off" reaches the boiler: a heating switch really switches heating off; a low
             # setpoint may leave the boiler's CH pump running.
             "off_by": "heating_switch" if self.control.options.loop.ch_writes else "low_setpoint",

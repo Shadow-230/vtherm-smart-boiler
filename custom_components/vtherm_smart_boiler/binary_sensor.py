@@ -205,7 +205,8 @@ class OutdoorSensorProblem(SmartBoilerEntity, BinarySensorEntity):
 
 class ControlAlarmSensor(ControlEntity, BinarySensorEntity):
     """A control alarm: a write failed or was ignored, another controller changed a value,
-    a hand-back failed, the boiler link was lost, or control stopped on an internal error."""
+    a hand-back failed, the boiler link was lost, control stopped on an internal error, or a
+    room is near freezing while a hand-back that stops heating holds."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 

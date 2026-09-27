@@ -614,22 +614,83 @@ async def test_a_dropped_override_is_sent_again_not_fought(rig: Rig) -> None:
     assert rig.state("sensor", "control_state").state == "heating"
 
 
-async def test_an_outside_change_set_to_information_stops_every_write(rig: Rig) -> None:
-    """P53: another controller has the boiler. With the alarm set to information, control stays
-    on, but nothing is written — heating on/off included."""
-    await start(rig, alarm_reactions={"outside_change": "info"})
+@pytest.mark.parametrize(
+    ("topology", "severity"),
+    [
+        ("gateway_standalone", ir.IssueSeverity.ERROR),
+        ("gateway_with_thermostat", ir.IssueSeverity.WARNING),
+    ],
+)
+async def test_an_outside_change_always_steps_aside(
+    rig: Rig,
+    hass_storage: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+    topology: str,
+    severity: ir.IssueSeverity,
+) -> None:
+    """S-11 (decision 6, the user's answer H; replaces 0.2.1's "information" test, P53): the
+    reaction "information" an earlier version stored no longer counts. Another controller holds
+    its value after the one rewrite: writes stop for the one step between the block and the
+    latch, then the plugin steps aside — the latch and the whole safe hand-back, and the entry's
+    one latch issue, an error where the hand-back stops heating, else a warning. The latch, and
+    its issue, come back after a restart; off, then on, clears both."""
+    await start(rig, topology=topology, alarm_reactions={"outside_change": "info"})
     await rig.switch(True)
     await rig.advance(30)  # confirmed
-    rig.gateway.forced = 60.0
-    await rig.advance(180)
+    rig.gateway.forced = 60.0  # another controller writes and keeps its value
+    await rig.advance(10)
+    assert rig.gateway.setpoints()[-1] == EXPECTED  # the one rewrite
+    caplog.clear()
+    stopped: list[bool] = []
+    for _ in range(20):  # the rewrite is not confirmed in time: an outside change
+        await rig.advance(10)
+        state = rig.state("sensor", "control_state")
+        stopped.append(state.attributes["writes_stopped"])
+        if state.state == "handed_back":
+            break
+    assert stopped[-2:] == [True, False]  # writes stopped, for one step only
+    assert stopped.count(True) == 1
+    assert rig.gateway.calls[-3:] == HAND_BACK  # the whole safe hand-back, over its 60 °C
     assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
-    state = rig.state("sensor", "control_state")
-    assert state.attributes["writes_stopped"] is True
-    assert state.state == "heating"  # the decision goes on; nothing is sent
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
+    found = issue(rig, "control_latched")
+    assert found is not None
+    assert found.translation_key == "control_latched"
+    assert found.severity is severity
+    assert not found.is_fixable
+    assert not found.is_persistent
+    assert _logged(caplog, logging.WARNING, "control steps aside") == 1
+    stored = stored_control(hass_storage, rig)
+    assert stored["latched"] is True
+    assert stored["latched_by"] == ["outside_change"]
     count = len(rig.gateway.calls)
-    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
     await rig.advance(120)
-    assert len(rig.gateway.calls) == count  # no heating off, no keep-alive
+    assert len(rig.gateway.calls) == count  # no fight
+
+    # A restart: the unload leaves the issue while the latch holds; Home Assistant's own restart
+    # would leave a non-persistent issue inactive, so it is gone here.
+    assert rig.entry is not None
+    entry_id = rig.entry.entry_id
+    assert await rig.hass.config_entries.async_unload(entry_id)
+    await rig.hass.async_block_till_done()
+    assert issue(rig, "control_latched") is not None
+    ir.async_delete_issue(rig.hass, DOMAIN, f"control_latched_{entry_id}")
+    assert await rig.hass.config_entries.async_setup(entry_id)
+    await rig.hass.async_block_till_done()
+    await rig.advance(60)
+    assert len(rig.gateway.calls) == count  # still latched: nothing written
+    assert rig.state("switch", "control").state == "on"
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
+    found = issue(rig, "control_latched")
+    assert found is not None
+    assert found.severity is severity
+
+    rig.gateway.forced = None
+    await rig.switch(False)
+    assert issue(rig, "control_latched") is None  # the latch went with the session
+    await rig.switch(True)  # the user's off and on
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+    assert issue(rig, "control_latched") is None
 
 
 async def test_a_failing_write_raises_an_alarm(rig: Rig) -> None:
@@ -2616,7 +2677,8 @@ async def test_a_0_2_1_store_moves_to_the_control_store(
     entry = await start_with_stored(rig, hass_storage, control)
     # With what 0.2.2 adds: the wish, off without a restored switch, stored at once (V3); the
     # setpoint a gateway's release must leave, none while nothing is owed (V4); the value a
-    # timeout hand-back releases back to, and the targets another controller holds (V5).
+    # timeout hand-back releases back to, and the targets another controller holds (V5);
+    # whether a blocker stopped heating (V7).
     moved = control | {
         "enabled": False,
         "last_command": None,
@@ -2624,6 +2686,7 @@ async def test_a_0_2_1_store_moves_to_the_control_store(
         "release_from": None,
         "release_baseline": None,
         "taken_by_other": [],
+        "stopped_heating": False,
     }
     assert hass_storage[control_key(entry)]["data"] == moved
     main = hass_storage[main_key(entry)]["data"]
@@ -5011,24 +5074,31 @@ async def test_an_external_switch_turned_back_on_after_the_hand_back_is_taken_by
 
 async def test_no_taken_issue_beside_the_step_aside_issue(rig: Rig) -> None:
     """While V7's ``control_latched`` issue for another controller is up, it says so already:
-    a target judged held by another controller raises no ``hand_back_taken_by_other``."""
+    a target judged held by another controller after the step-aside — here the heating switch,
+    read back on and then switched off with no trace of an outage — raises no
+    ``hand_back_taken_by_other``. (Before V7 the test raised the latch issue by hand; now a
+    switch-off ends the latch and its issue, so the step-aside itself raises it.)"""
     number = FakeNumber(rig.hass)
     number.register()
-    await start(rig, **held_entity(number))
+    switch = FakeSwitch(rig.hass)
+    switch.register()
+    await start(rig, **held_entity(number, ch_entity=switch.entity_id, ch_write_type="held"))
     await rig.switch(True)
-    assert rig.entry is not None
-    ir.async_create_issue(
-        rig.hass,
-        DOMAIN,
-        f"control_latched_{rig.entry.entry_id}",
-        is_fixable=False,
-        severity=ir.IssueSeverity.WARNING,
-        translation_key="control_latched",
-    )
-    number.forced = 60.0
-    await rig.switch(False)
-    await rig.advance(120)
+    await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
+    number.forced = 60.0  # another controller writes its value, and again over every write
+    number.value = 60.0
+    number.publish(60.0)
+    for _ in range(20):
+        await rig.advance(10)
+        if rig.state("sensor", "control_state").state == "handed_back":
+            break
+    assert issue(rig, "control_latched") is not None
+    assert switch.on  # the step-aside switched heating on: the device's own control resumes
+    switch.on = False  # the other controller switches heating off, with no outage
+    switch.publish()
+    await rig.advance(180)
     assert not unit_of(rig).hand_back_owed  # judged taken all the same
+    assert hand_back_shown(rig) == "taken_by_other"
     assert issue(rig, "hand_back_taken_by_other") is None
 
 
@@ -5799,3 +5869,489 @@ async def test_removing_the_entry_deletes_the_monitor_issue(rig: Rig) -> None:
     await rig.hass.config_entries.async_remove(entry_id)
     await rig.hass.async_block_till_done()
     assert ir.async_get(rig.hass).async_get_issue(DOMAIN, f"monitor_failed_{entry_id}") is None
+
+
+# --- V7: stopping with an alarm (S-10, S-57, S-11; the user's answer H) --------------------------
+
+
+def vt_central_boiler(rig: Rig, configured: bool) -> None:
+    """VT's own central boiler as VT shows it: configured, it blocks control."""
+    boiler = er.async_get(rig.hass).async_get_or_create(
+        "binary_sensor", VT_PLATFORM, "central_boiler_state"
+    )
+    rig.hass.states.async_set(boiler.entity_id, "off", {"is_central_boiler_configured": configured})
+
+
+def stopped_heating(rig: Rig) -> ir.IssueEntry | None:
+    return issue(rig, "control_stopped_heating")
+
+
+async def start_stopping_heating(rig: Rig, installation: str) -> FakeNumber:
+    """Control on, where a hand-back stops heating: a stand-alone gateway, or a setpoint entity
+    whose hand-back value is declared to stop heating."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    if installation == "standalone":
+        await start(rig, topology="gateway_standalone")
+    else:
+        await start(rig, **held_entity(number, hand_back_value_effect="heating_stops"))
+    await rig.switch(True)
+    await rig.advance(30)
+    return number
+
+
+@pytest.mark.parametrize("installation", ["standalone", "value_stops_heating"])
+async def test_a_blocker_that_stops_a_stand_alone_session_raises_an_issue(
+    rig: Rig, caplog: pytest.LogCaptureFixture, installation: str
+) -> None:
+    """S-10: a hand-back stops heating here. A blocker that ends a session holding the boiler
+    hands it back at once; still there a minute later, it raises the repair issue — an error,
+    neither fixable nor persistent — once. Control resuming once the blocker is gone deletes
+    it."""
+    number = await start_stopping_heating(rig, installation)
+    writes = len(number.writes)
+    count = len(rig.gateway.calls)
+    caplog.clear()
+    vt_central_boiler(rig, True)
+    await rig.advance(10)
+    if installation == "standalone":
+        assert rig.gateway.calls[count:] == HAND_BACK
+    else:
+        assert number.writes[writes:] == [LOWEST, 50.0]
+    assert "vt_central_boiler_active" in blockers(rig)
+    await rig.advance(50)
+    assert stopped_heating(rig) is None  # not a minute yet
+    await rig.advance(10)
+    found = stopped_heating(rig)
+    assert found is not None
+    assert found.translation_key == "control_stopped_heating"
+    assert found.severity is ir.IssueSeverity.ERROR
+    assert not found.is_fixable
+    assert not found.is_persistent
+    await rig.advance(120)
+    assert _logged(caplog, logging.WARNING, "stays stopped by vt_central_boiler_active") == 1
+    vt_central_boiler(rig, False)
+    await rig.advance(10)
+    assert rig.state("sensor", "control_state").state == "heating"  # control resumed
+    assert stopped_heating(rig) is None
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "ha_starting",
+        "control_error",
+        "monitor_failed",
+        "thermostat_takes_over",
+        "device_decides",
+        "cleared_within_a_minute",
+    ],
+)
+async def test_no_stopped_heating_issue_where_the_blocker_has_its_own_or_heating_goes_on(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    """S-10, negatives: Home Assistant starting, an internal error (its own alarm) and the
+    monitor failing (V6's own issue) raise no such issue; nor does any blocker where a
+    thermostat or the device's own control takes over, nor one gone within the minute."""
+    from homeassistant.core import CoreState
+
+    number = FakeNumber(rig.hass)
+    number.register()
+    if case == "thermostat_takes_over":
+        await start(rig, topology="gateway_with_thermostat")
+    elif case == "device_decides":
+        await start(rig, **held_entity(number))
+    else:
+        await start(rig, topology="gateway_standalone")
+    await rig.switch(True)
+    await rig.advance(30)
+    assert rig.entry is not None
+    unit = rig.entry.runtime_data.control
+    if case == "ha_starting":
+        rig.hass.set_state(CoreState.starting)
+        await rig.advance(10)
+        assert blockers(rig) == ["ha_starting"]
+    elif case == "control_error":
+        original = control_module.loop_step
+
+        def broken(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(control_module, "loop_step", broken)
+        await rig.advance(10)
+        monkeypatch.setattr(control_module, "loop_step", original)
+    elif case == "monitor_failed":
+        breaker = break_monitor(monkeypatch)
+        breaker.failing = True
+        await refresh(rig)
+        await rig.advance(300)
+        assert issue(rig, "monitor_failed") is not None  # V6's own
+    else:
+        vt_central_boiler(rig, True)
+        await rig.advance(10)
+    assert rig.state("switch", "control").attributes["frost_protection_by"] != "plugin"  # handed
+    if case == "cleared_within_a_minute":
+        await rig.advance(40)
+        assert stopped_heating(rig) is None
+        vt_central_boiler(rig, False)  # gone within the minute, as after a VT reload
+    await rig.advance(120)
+    assert stopped_heating(rig) is None
+    assert not unit.stored()["stopped_heating"]
+    if case == "cleared_within_a_minute":
+        assert rig.state("sensor", "control_state").state == "heating"  # control resumed
+    if case == "ha_starting":
+        rig.hass.set_state(CoreState.running)
+
+
+@pytest.mark.parametrize("how", ["switched_off", "unloaded"])
+async def test_the_stopped_heating_issue_goes_when_control_is_switched_off_or_unloaded(
+    rig: Rig, how: str
+) -> None:
+    """S-10: the user switching control off clears it for good — nothing comes back while the
+    blocker holds; the unit stopping takes the issue with it."""
+    await start_stopping_heating(rig, "standalone")
+    vt_central_boiler(rig, True)
+    await rig.advance(70)
+    assert stopped_heating(rig) is not None
+    assert rig.entry is not None
+    if how == "unloaded":
+        assert await rig.hass.config_entries.async_unload(rig.entry.entry_id)
+        await rig.hass.async_block_till_done()
+        assert stopped_heating(rig) is None
+        return
+    await rig.switch(False)
+    assert stopped_heating(rig) is None
+    assert not rig.entry.runtime_data.control.stored()["stopped_heating"]
+    await rig.advance(120)
+    assert stopped_heating(rig) is None
+
+
+@pytest.mark.parametrize("wish", ["on", "switched_off"])
+async def test_the_stopped_heating_issue_comes_back_after_a_restart_while_the_blocker_holds(
+    rig: Rig, hass_storage: dict[str, Any], wish: str
+) -> None:
+    """S-10 (the cautious reading, V7's report): the issue goes with the unit, but whether a
+    blocker stopped heating is stored at once. The next run raises the issue again once a
+    blocker has held for a minute; once control resumes, it is gone for good. Negative: after
+    the user switched control off, nothing comes back."""
+    await start_stopping_heating(rig, "standalone")
+    vt_central_boiler(rig, True)
+    await rig.advance(10)
+    assert stored_control(hass_storage, rig)["stopped_heating"] is True
+    if wish == "switched_off":
+        await rig.switch(False)
+        assert stored_control(hass_storage, rig)["stopped_heating"] is False
+    assert rig.entry is not None
+    assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
+    await rig.hass.async_block_till_done()
+    assert stopped_heating(rig) is None
+    await rig.advance(40)
+    assert stopped_heating(rig) is None  # not a minute yet
+    await rig.advance(30)
+    if wish == "switched_off":
+        assert stopped_heating(rig) is None
+        return
+    assert stopped_heating(rig) is not None
+    vt_central_boiler(rig, False)
+    await rig.advance(10)
+    assert rig.state("sensor", "control_state").state == "heating"
+    assert stopped_heating(rig) is None
+    assert unit_of(rig).stored()["stopped_heating"] is False  # the next save stores it
+
+
+@pytest.mark.parametrize("stored", [True, "unreadable", False, None])
+async def test_a_stored_stopped_heating_is_read_cautiously(
+    rig: Rig, hass_storage: dict[str, Any], stored: Any
+) -> None:
+    """Missing data: a stored flag that cannot be read counts as set — the issue then only
+    follows while a blocker holds and the wish is on; none stored, none raised."""
+    control: dict[str, Any] = {"enabled": True}
+    if stored is not None:
+        control["stopped_heating"] = stored
+    vt_central_boiler(rig, True)
+    await start_with_stored(rig, hass_storage, control, "0.2.2", topology="gateway_standalone")
+    await rig.advance(70)
+    assert rig.gateway.calls == []
+    raised = stored in (True, "unreadable")
+    assert (stopped_heating(rig) is not None) is raised
+
+
+async def test_the_switch_says_the_plugin_keeps_frost_protection_only_while_it_controls(
+    rig: Rig,
+) -> None:
+    """S-57, stand-alone: the plugin while its session controls; after the hand-back — and
+    before control ever took the boiler — the boiler's own, if it has one."""
+    await start(rig, topology="gateway_standalone")
+    assert rig.state("switch", "control").attributes["frost_protection_by"] == "boiler"
+    await rig.switch(True)
+    assert rig.state("switch", "control").attributes["frost_protection_by"] == "plugin"
+    await rig.advance(20)
+    assert rig.state("switch", "control").attributes["frost_protection_by"] == "plugin"
+    await rig.switch(False)
+    assert rig.state("switch", "control").attributes["frost_protection_by"] == "boiler"
+
+
+@pytest.mark.parametrize(
+    ("installation", "handed_back"),
+    [
+        ("gateway_standalone", "boiler"),
+        ("gateway_with_thermostat", "thermostat"),
+        ("own_control", "device"),  # a value declared to return the device's own control
+        ("heating_stops", "boiler"),  # a value declared to stop heating
+        ("timeout", "device"),  # the virtual topology: the device decides
+    ],
+)
+async def test_the_switch_says_who_keeps_frost_protection(
+    rig: Rig, installation: str, handed_back: str
+) -> None:
+    """S-57: ``frost_protection_by`` is ``plugin`` while the session controls, and otherwise
+    follows the hand-back's effect: ``thermostat``, ``boiler`` where it stops heating, or
+    ``device`` where the device decides (and, once Y1 adds it, its own control resuming)."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    if installation.startswith("gateway"):
+        await start(rig, topology=installation)
+    elif installation == "timeout":
+        await start(rig, **held_entity(number, write_type="expiring", hand_back="timeout"))
+    else:
+        await start(rig, **held_entity(number, hand_back_value_effect=installation))
+    shown = rig.state("switch", "control").attributes
+    assert shown["frost_protection_by"] == handed_back  # control has not taken the boiler
+    await rig.switch(True)
+    await rig.advance(10)
+    assert rig.state("switch", "control").attributes["frost_protection_by"] == "plugin"
+    await rig.switch(False)
+    await rig.advance(10)
+    assert rig.state("switch", "control").attributes["frost_protection_by"] == handed_back
+
+
+def room(rig: Rig, temperature: float | None, zone: str = "living") -> None:
+    """VT reports the room at this temperature, not calling for heat."""
+    rig.zones.set(zone, current_temperature=temperature, hvac_action="idle")
+
+
+def in_frost(rig: Rig) -> str:
+    return rig.state("binary_sensor", "alarm_handed_back_in_frost").state
+
+
+async def test_handed_back_in_frost_raises_an_alarm(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """S-57: stand-alone with control off, nothing heats: a watched room below the frost limit
+    raises the alarm at the next step; it holds below the release and goes at or above it. It
+    is information only: nothing is written to the boiler."""
+    await start(rig, topology="gateway_standalone")
+    await rig.advance(10)
+    assert in_frost(rig) == "off"
+    room(rig, 4.0)
+    await rig.advance(10)
+    assert in_frost(rig) == "on"
+    assert rig.state("switch", "control").attributes["frost_protection_by"] == "boiler"
+    assert _logged(caplog, logging.WARNING, "near freezing") == 1
+    room(rig, 6.0)  # above the limit, below the release
+    await rig.advance(10)
+    assert in_frost(rig) == "on"
+    room(rig, 7.5)
+    await rig.advance(10)
+    assert in_frost(rig) == "off"
+    assert rig.gateway.calls == []  # it never starts heating
+    room(rig, 6.0)
+    await rig.advance(30)
+    assert in_frost(rig) == "off"  # not raised again until below the limit
+
+
+@pytest.mark.parametrize(
+    "case", ["unknown", "lost_after", "thermostat", "no_topology", "controlling"]
+)
+async def test_handed_back_in_frost_negatives(rig: Rig, case: str) -> None:
+    """S-57, negatives: a room whose temperature is not known is not counted (with none known
+    the alarm stays off, or goes); with a thermostat it never rises, nor where the hand-back's
+    effect is not known (no topology: control is blocked anyway); while control holds the
+    boiler it is off — and it rises once a switch-off hands the boiler back."""
+    topology = {"thermostat": "gateway_with_thermostat", "no_topology": ""}.get(
+        case, "gateway_standalone"
+    )
+    await start(rig, topology=topology)
+    if case == "controlling":
+        await rig.switch(True)
+    room(rig, None if case == "unknown" else 4.0)
+    await rig.advance(30)
+    if case == "lost_after":
+        assert in_frost(rig) == "on"
+        # The zone drops out: no watched room is known, so the alarm goes, and control's state
+        # names the zone it cannot see.
+        rig.zones.set("living", "unavailable", current_temperature=None)
+        await rig.advance(10)
+        assert in_frost(rig) == "off"
+        living = rig.zones.entities["living"]
+        assert rig.state("sensor", "control_state").attributes["unknown_zones"] == [living]
+        return
+    assert in_frost(rig) == "off"
+    if case == "controlling":
+        assert rig.state("sensor", "control_state").state == "frost"  # the plugin heats
+        await rig.switch(False)
+        await rig.advance(10)
+        assert in_frost(rig) == "on"
+    elif case in ("thermostat", "no_topology"):
+        await rig.advance(120)
+        assert in_frost(rig) == "off"
+    if case == "no_topology":
+        assert "no_topology" in blockers(rig)
+        assert rig.state("switch", "control").attributes["frost_protection_by"] is None
+
+
+@pytest.mark.parametrize("latched_by", [["outside_change"], ["pressure_low"], None])
+async def test_a_stored_step_aside_raises_its_issue_at_start(
+    rig: Rig, hass_storage: dict[str, Any], latched_by: list[str] | None
+) -> None:
+    """V7: while a stored latch from stepping aside holds, each start raises the entry's latch
+    issue again. Negatives: a latch by another alarm is Y1's (its text names the alarm); with
+    no latch, an issue an earlier run left is deleted."""
+    stored: dict[str, Any] = {}
+    if latched_by is not None:
+        stored = {"latched": True, "latched_by": latched_by}
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=options(rig.zones, topology="gateway_standalone"),
+    )
+    entry.add_to_hass(rig.hass)
+    ir.async_create_issue(  # left by an earlier run
+        rig.hass,
+        DOMAIN,
+        f"control_latched_{entry.entry_id}",
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="control_latched",
+    )
+    seed_stores(hass_storage, entry, stored, "0.2.2")
+    await set_up(rig, entry)
+    found = issue(rig, "control_latched")
+    if latched_by == ["outside_change"]:
+        assert found is not None
+        assert found.severity is ir.IssueSeverity.ERROR  # stand-alone: heating stops
+    else:
+        assert found is None
+
+
+async def test_removing_control_from_the_options_deletes_the_latch_issue(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """Without control in the options no switch is left to clear the latch: its issue goes."""
+    entry_options = options(rig.zones)
+    del entry_options["control"]
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=entry_options)
+    entry.add_to_hass(rig.hass)
+    ir.async_create_issue(
+        rig.hass,
+        DOMAIN,
+        f"control_latched_{entry.entry_id}",
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="control_latched",
+    )
+    seed_stores(hass_storage, entry, {"latched": True, "latched_by": ["outside_change"]}, "0.2.2")
+    await set_up(rig, entry)
+    assert issue(rig, "control_latched") is None
+
+
+@pytest.mark.parametrize("effect", ["own_control", "heating_stops"])
+async def test_stepping_aside_makes_the_whole_safe_hand_back(
+    rig: Rig, caplog: pytest.LogCaptureFixture, effect: str
+) -> None:
+    """The user's answer H: at the step-aside the held setpoint entity gets the lowest water
+    temperature over the other controller's 60 °C, the heating switch goes on where the effect
+    allows (left as it is where the hand-back stops heating), then the release. The other
+    controller writes its 60 °C again: V5 judges the target taken by another controller — no
+    retry every minute — and raises no ``hand_back_taken_by_other`` beside the latch issue."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    switch = FakeSwitch(rig.hass)
+    switch.register()
+    control = held_entity(
+        number, hand_back_value_effect=effect, ch_entity=switch.entity_id, ch_write_type="held"
+    )
+    await start(rig, **control)
+    await rig.switch(True)
+    await rig.advance(30)
+    assert number.writes == [EXPECTED]
+    number.forced = 60.0  # another controller writes its value, and again over every write
+    number.value = 60.0
+    number.publish(60.0)
+    await rig.advance(10)
+    assert number.writes == [EXPECTED, EXPECTED]  # the one rewrite
+    switch_writes = len(switch.writes)
+    start_at = len(rig.services)
+    for _ in range(20):
+        await rig.advance(10)
+        if rig.state("sensor", "control_state").state == "handed_back":
+            break
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
+    parts = [
+        (service, data.get("value"))
+        for domain, service, data in rig.services[start_at:]
+        if domain in ("input_number", "input_boolean")
+    ]
+    if effect == "own_control":
+        assert parts == [("set_value", LOWEST), ("turn_on", None), ("set_value", 50.0)]
+        assert switch.writes[switch_writes:] == [True]
+    else:
+        assert parts == [("set_value", LOWEST), ("set_value", 50.0)]  # heating left as it is
+        assert switch.writes[switch_writes:] == []
+    assert number.value == 60.0  # the other controller's value again
+    writes = len(number.writes)
+    unit = unit_of(rig)
+    await rig.advance(60)  # the first retry check: a third value, the write held back
+    assert len(number.writes) == writes
+    await rig.advance(60)  # the second, a minute later: another controller holds it
+    assert not unit.hand_back_owed
+    await rig.advance(180)
+    assert len(number.writes) == writes  # never written again
+    assert hand_back_shown(rig) == "taken_by_other"
+    assert issue(rig, "hand_back_taken_by_other") is None
+    found = issue(rig, "control_latched")
+    assert found is not None
+    stops = effect == "heating_stops"
+    assert found.severity is (ir.IssueSeverity.ERROR if stops else ir.IssueSeverity.WARNING)
+
+
+async def test_stepping_aside_on_a_gateway_makes_the_whole_safe_hand_back(rig: Rig) -> None:
+    """The user's answer H on a gateway: CS=<lowest>, CH=1, CS=0 over the other controller's
+    60 °C; its value read back afterwards shows the release (the override is gone), so nothing
+    is retried."""
+    await start(rig, topology="gateway_standalone")
+    await rig.switch(True)
+    await rig.advance(30)
+    rig.gateway.forced = 60.0
+    for _ in range(20):
+        await rig.advance(10)
+        if rig.state("sensor", "control_state").state == "handed_back":
+            break
+    assert rig.gateway.calls[-3:] == HAND_BACK
+    assert not unit_of(rig).hand_back_owed
+    count = len(rig.gateway.calls)
+    await rig.advance(180)
+    assert len(rig.gateway.calls) == count
+    assert issue(rig, "control_latched") is not None
+    assert issue(rig, "hand_back_taken_by_other") is None
+
+
+async def test_removing_the_entry_deletes_the_v7_issues(rig: Rig) -> None:
+    await start(rig)
+    assert rig.entry is not None
+    entry_id = rig.entry.entry_id
+    for key in ("control_stopped_heating", "control_latched"):
+        ir.async_create_issue(
+            rig.hass,
+            DOMAIN,
+            f"{key}_{entry_id}",
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key=key,
+        )
+    await rig.hass.config_entries.async_remove(entry_id)
+    await rig.hass.async_block_till_done()
+    registry = ir.async_get(rig.hass)
+    for key in ("control_stopped_heating", "control_latched"):
+        assert registry.async_get_issue(DOMAIN, f"{key}_{entry_id}") is None

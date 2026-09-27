@@ -583,7 +583,7 @@
       },
       "control_alarms": {
         "title": "Reakcje na alarmy",
-        "description": "Co robi sterowanie, gdy alarm jest aktywny: tylko informuje albo oddaje sterowanie kotłowi, dopóki nie wyłączysz i nie włączysz go ponownie.",
+        "description": "Co robi sterowanie, gdy alarm jest aktywny: tylko informuje albo oddaje sterowanie kotłowi, dopóki nie wyłączysz i nie włączysz go ponownie. Inny sterownik piszący do kotła zawsze sprawia, że wtyczka ustępuje.",
         "data": {
           "pressure_low": "Niskie ciśnienie",
           "pressure_high": "Wysokie ciśnienie",
@@ -595,8 +595,7 @@
           "hysteresis_drift": "Dryf histerezy",
           "low_flow": "Brak przepływu",
           "write_failed": "Zapis nieudany",
-          "write_ignored": "Kocioł ignoruje nastawę",
-          "outside_change": "Nastawa zmieniona z zewnątrz"
+          "write_ignored": "Kocioł ignoruje nastawę"
         },
         "data_description": {
           "pressure_low": "Domyślnie: tylko informacja.",
@@ -609,8 +608,7 @@
           "hysteresis_drift": "Domyślnie: tylko informacja.",
           "low_flow": "Domyślnie: tylko informacja.",
           "write_failed": "Domyślnie: tylko informacja.",
-          "write_ignored": "Domyślnie: tylko informacja.",
-          "outside_change": "Domyślnie: oddaj — do kotła zapisuje też inny sterownik, a wtyczka z nim nie walczy. Przy „informacji” sterowanie przestaje zapisywać, ale jego ostatnie polecenia zostają w mocy: wysłane wyłączenie grzania trzyma kocioł wyłączony, choć strefy wołają."
+          "write_ignored": "Domyślnie: tylko informacja."
         }
       }
     },
@@ -1142,6 +1140,9 @@
       },
       "alarm_monitor_failed": {
         "name": "Sterowanie: monitor stale zawodzi"
+      },
+      "alarm_handed_back_in_frost": {
+        "name": "Sterowanie: oddane, a w pomieszczeniu grozi mróz"
       }
     },
     "switch": {
@@ -1154,6 +1155,15 @@
               "thermostat_takes_over": "Przejmuje termostat",
               "heating_stops": "Grzanie staje do powrotu sterowania",
               "device_decides": "Działa własne zabezpieczenie urządzenia"
+            }
+          },
+          "frost_protection_by": {
+            "name": "Ochrona przed mrozem przez",
+            "state": {
+              "plugin": "Wtyczka",
+              "thermostat": "Termostat",
+              "boiler": "Własna ochrona kotła, jeśli ją ma",
+              "device": "Własne sterowanie kotła lub urządzenia"
             }
           },
           "off_by": {
@@ -1307,6 +1317,14 @@
     "monitor_recovered": {
       "title": "Monitor wtyczki przez pewien czas zawodził; sterowanie wróciło",
       "description": "Monitor wtyczki zawodził od {since} do {until}, więc w tym czasie sterowanie oddało kocioł. Monitor znów działa i sterowanie wróciło samo. Błąd jest w logu; jeśli to się powtórzy, zgłoś go."
+    },
+    "control_stopped_heating": {
+      "title": "Sterowanie stanęło, a kocioł nie grzeje",
+      "description": "Sterowanie oddało kocioł, bo coś je teraz blokuje (przełącznik sterowania pokazuje co). W tej instalacji oddanie zatrzymuje grzanie: kocioł znów grzeje, gdy sterowanie wróci po zniknięciu blokady albo gdy przywrócisz mu własne sterowanie. Ochrona przed mrozem zależy teraz od własnej ochrony kotła, jeśli ją ma."
+    },
+    "control_latched": {
+      "title": "Sterowanie ustąpiło: do kotła pisze inny sterownik",
+      "description": "Inny sterownik znów zmienił to, co wtyczka zapisuje do kotła, po tym jak wtyczka raz przywróciła swoją wartość, więc wtyczka ustąpiła i z nim nie walczy. Oddała kocioł bezpiecznie: najpierw najniższa temperatura wody, potem włączone grzanie tam, gdzie przejmuje termostat albo własne sterowanie kotła, potem zwolnienie — przez to raz, na chwilę, nadpisała wartość innego sterownika. Z termostatem grzeje dalej termostat; bez niego kocioł grzeje tylko pod innym sterownikiem. Aby oddać sterowanie wtyczce, zatrzymaj inny sterownik, a potem wyłącz i włącz sterowanie. Jeśli włączono „Powrót po innym sterowniku bez udziału użytkownika”, sterowanie wraca też samo po godzinie, w której nic innego nie pisało do kotła (nie dotyczy przekaźników)."
     }
   }
 }

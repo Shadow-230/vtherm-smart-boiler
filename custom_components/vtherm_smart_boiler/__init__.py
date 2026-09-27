@@ -75,6 +75,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 hass, coordinator, config, coordinator.stored_control
             )
             await _async_forget_control_session(coordinator)
+            _forget_latch_issue(hass, entry)
         for unit in _units(coordinator):
             await unit.async_hand_back_owed(dt_util.utcnow().timestamp())
         _report_control_problem(hass, entry, config)
@@ -183,6 +184,8 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "hand_back_owed",
         "hand_back_taken_by_other",
         "monitor_failed",  # the monitor's issue, or its note (V6)
+        "control_stopped_heating",  # a blocker stopped heating (V7)
+        "control_latched",  # the entry's one latch issue (V7)
         "control_options_invalid",
         "auto_tpi_blocked",
         "learning_not_paused",
@@ -315,6 +318,14 @@ async def _async_forget_control_session(coordinator: SmartBoilerCoordinator) -> 
         return
     coordinator.stored_control = {**stored, "enabled": False, "last_command": None}
     await coordinator.async_save_control_now()
+
+
+def _forget_latch_issue(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Control is not in the options: no control switch is left to clear the latch its issue
+    tells of (V7), so the issue goes."""
+    from homeassistant.helpers import issue_registry as ir
+
+    ir.async_delete_issue(hass, DOMAIN, f"control_latched_{entry.entry_id}")
 
 
 def _learning_left(stored: Mapping[str, Any]) -> bool:

@@ -4,7 +4,8 @@ Every setpoint the plugin writes passes ``limit_flow``. Caps that protect the in
 hard maximum, a circuit's maximum (underfloor on an unmixed loop), the boiler's own maximum —
 win over the hard minimum when the two conflict. The weather-dependent ceiling protects nothing
 but gas, so it never falls below the hard minimum, nor below the temperature a fixed circuit (a
-thermostatic mixing valve) needs from the boiler.
+thermostatic mixing valve) needs from the boiler. Frost protection watches the same rooms for the
+alarm "handed back in frost": a hand-back that stops heating leaves a room near freezing.
 """
 
 from __future__ import annotations
@@ -123,3 +124,24 @@ def frost_needed(
     if any(t < config.room_limit for t in temperatures):
         return True
     return active and any(t < config.release for t in temperatures)
+
+
+def handed_back_in_frost(
+    zones: Sequence[ZoneState],
+    now: float,
+    max_age: float | None,
+    config: FrostConfig,
+    *,
+    heating_stops: bool,
+    controlling: bool,
+    active: bool,
+) -> bool:
+    """The alarm "handed back in frost" (S-57): control does not hold the boiler — for any
+    reason, a switch-off included — where a hand-back stops heating (``heating_stops``), so
+    frost protection rests on the boiler's own, if it has one, and a watched zone reads below
+    the frost limit. Once raised (``active``) it holds until every watched zone with a known
+    temperature is at or above the release. A zone not known is not counted, so with none known
+    it is off. Information only: it never starts heating (principle 12)."""
+    if controlling or not heating_stops:
+        return False
+    return frost_needed(zones, now, max_age, active, config)

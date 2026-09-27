@@ -583,7 +583,7 @@
       },
       "control_alarms": {
         "title": "Alarm reactions",
-        "description": "What control does while an alarm is active: information only, or hand control back to the boiler until you switch control off and on again.",
+        "description": "What control does while an alarm is active: information only, or hand control back to the boiler until you switch control off and on again. Another controller writing to the boiler always makes the plugin step aside.",
         "data": {
           "pressure_low": "Low pressure",
           "pressure_high": "High pressure",
@@ -595,8 +595,7 @@
           "hysteresis_drift": "Hysteresis drifting",
           "low_flow": "Low flow",
           "write_failed": "Write failed",
-          "write_ignored": "Boiler ignores the setpoint",
-          "outside_change": "Setpoint changed from outside"
+          "write_ignored": "Boiler ignores the setpoint"
         },
         "data_description": {
           "pressure_low": "Default: information only.",
@@ -609,8 +608,7 @@
           "hysteresis_drift": "Default: information only.",
           "low_flow": "Default: information only.",
           "write_failed": "Default: information only.",
-          "write_ignored": "Default: information only.",
-          "outside_change": "Default: hand back — another controller writes to the boiler too, and the plugin does not fight it. With \"information\", control stops writing but its last commands stay in force: a heating off it sent keeps the boiler off while zones call."
+          "write_ignored": "Default: information only."
         }
       }
     },
@@ -1142,6 +1140,9 @@
       },
       "alarm_monitor_failed": {
         "name": "Control: the monitor keeps failing"
+      },
+      "alarm_handed_back_in_frost": {
+        "name": "Control: handed back while a room is near freezing"
       }
     },
     "switch": {
@@ -1154,6 +1155,15 @@
               "thermostat_takes_over": "The thermostat takes over",
               "heating_stops": "Heating stops until control resumes",
               "device_decides": "The device's own fallback applies"
+            }
+          },
+          "frost_protection_by": {
+            "name": "Frost protection by",
+            "state": {
+              "plugin": "The plugin",
+              "thermostat": "The thermostat",
+              "boiler": "The boiler's own, if it has one",
+              "device": "The boiler's or the device's own control"
             }
           },
           "off_by": {
@@ -1307,6 +1317,14 @@
     "monitor_recovered": {
       "title": "The plugin's monitor failed for a while; control has resumed",
       "description": "The plugin's monitor failed from {since} to {until}, so control handed the boiler back meanwhile. The monitor works again and control has resumed by itself. The log has the error; if this happens again, report it."
+    },
+    "control_stopped_heating": {
+      "title": "Control stopped and the boiler does not heat",
+      "description": "Control handed the boiler back because something now blocks it (the control switch lists what). With this installation a hand-back stops heating: the boiler heats again when control resumes once the blocker is gone, or when you return it to its own control. Frost protection now rests on the boiler's own, if it has one."
+    },
+    "control_latched": {
+      "title": "Control stepped aside: another controller writes to the boiler",
+      "description": "Another controller changed what the plugin writes to the boiler again after the plugin had written its value back once, so the plugin stepped aside and does not fight it. It handed the boiler back safely: first the lowest water temperature, then heating on where a thermostat or the boiler's own control takes over, then the release — this wrote over the other controller's value once, briefly. With a thermostat, the thermostat keeps heating; without one, the boiler heats only under the other controller. To give control back to the plugin, stop the other controller, then switch control off and on. If \"Return by itself after another controller\" is on, control also comes back on its own after an hour in which nothing else wrote to the boiler (not for relays)."
     }
   }
 }

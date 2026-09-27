@@ -3,9 +3,11 @@
 The same step drives the simulator in tests and the real write path in Home Assistant. Heating
 on/off goes through a guard of its own, as 1 and 0; when the write path cannot switch heating on
 and off, "off" is written as a low setpoint. Once a guard has found another controller, every
-write stops — the setpoint and heating on/off alike, whatever the alarm's reaction: the plugin
-never fights it. A hand-back is passed on as it is — the guards never hold it back — and resets
-the guards, so a later control session starts fresh.
+write stops — the setpoint and heating on/off alike: the plugin never fights it. That lasts one
+step: an outside change always hands back (S-11), so the next step latches and steps aside. A
+hand-back is passed on as it is — the guards never hold it back, and it names no target to
+leave out: the control unit makes the whole safe hand-back, over the other controller's value
+too (the user's answer H) — and resets the guards, so a later control session starts fresh.
 """
 
 from __future__ import annotations
@@ -82,6 +84,8 @@ def loop_step(
 ) -> tuple[LoopState, LoopOutput]:
     control, decision = decide(state.control, inputs, config.control)
     if decision.hand_back:
+        # Whole, whatever a guard found: no target is left out, the one another controller
+        # holds included (the user's answer H).
         return LoopState(control), LoopOutput(decision, hand_back=True)
     blocked = state.setpoint.blocked is not None or state.switch.blocked is not None
     if decision.command is None or blocked:
@@ -105,7 +109,7 @@ def loop_step(
     events = (*planned.events, *heat.events)
     if planned.state.blocked is not None or heat.state.blocked is not None:
         # Another controller: every write stops, and a write planned for the other target in
-        # this step is not made.
+        # this step is not made. The outside change it reports steps aside at the next step.
         setpoint = planned.state if planned.state.blocked is not None else state.setpoint
         switch = heat.state if heat.state.blocked is not None else state.switch
         return LoopState(control, setpoint, switch), LoopOutput(
