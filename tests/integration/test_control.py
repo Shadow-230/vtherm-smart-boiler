@@ -11,6 +11,7 @@ import asyncio
 import copy
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
@@ -82,25 +83,49 @@ class FakeGateway:
     lost: list[tuple[str, Any]] = field(default_factory=list)  # calls that went nowhere
     block: asyncio.Event | None = None  # a heating setpoint's call waits for this (a slow gateway)
     block_hand_back: asyncio.Event | None = None  # the next hand-back's first call waits for it
+    hang: asyncio.Event | None = None  # every call waits for this (a gateway that hangs)
+    # CS=0 arrives, and its call raises this (a bug, a task cancelled inside the integration)
+    release_error: Callable[[], BaseException] | None = None
+    # CS=0 arrives and the call returns, but the gateway keeps the override and nothing new is
+    # reported: pyotgw after its own timeout, or a command the PIC did not take
+    ignore_release: bool = False
+    watch: Callable[[str, Any], None] | None = None  # told of every call as it arrives
     calls: list[tuple[str, Any]] = field(default_factory=list)
     times: list[float] = field(default_factory=list)  # when each setpoint arrived
 
     def register(self) -> None:
         async def setpoint(call: ServiceCall) -> None:
             value = float(call.data["temperature"])
+            if self.watch is not None:
+                self.watch("setpoint", value)
+            if self.hang is not None:
+                await self.hang.wait()
             if not self.connected:
                 self.lost.append(("setpoint", value))
                 return
             self.calls.append(("setpoint", value))
             self.times.append(datetime.now(UTC).timestamp())
+            if value == 0 and self.release_error is not None:
+                raise self.release_error()
+            if value == 0 and self.ignore_release:
+                return
             self.override = None if value == 0 else value
-            self.publish()
+            if value == 0 and self.echo and self.readable and self.forced is None:
+                # pyotgw writes the value the gateway accepted to its status at once; the
+                # boiler's next report (``publish``) shows what it gets from then on.
+                self.hass.states.async_set(CONFIRMED, "0.0", {"unit_of_measurement": "°C"})
+            else:
+                self.publish()
             if self.fail_after:
                 raise HomeAssistantError("timed out")
             if self.block is not None and value != 0:
                 await self.block.wait()
 
         async def heating(call: ServiceCall) -> None:
+            if self.watch is not None:
+                self.watch("ch", call.data["ch_override"])
+            if self.hang is not None:
+                await self.hang.wait()
             if not self.connected:
                 self.lost.append(("ch", call.data["ch_override"]))
                 return
@@ -1313,7 +1338,7 @@ async def test_a_late_confirmation_leaves_a_session_that_has_the_boiler_alone(ri
     assert rig.entry is not None
     control = rig.entry.runtime_data.control
     assert control.holding
-    control.release_owed_hand_back()
+    await control.async_release_owed_hand_back()
     assert control.holding  # at once, not only after the next write sets it again
     assert control.stored()["controlling"] is True
     await rig.switch(False)
@@ -2571,8 +2596,14 @@ async def test_a_0_2_1_store_moves_to_the_control_store(
     and the entry store gets the marker, both at once."""
     control = unit_state(latched=True, latched_by=["pressure_low"], rewritten_at=1000.0)
     entry = await start_with_stored(rig, hass_storage, control)
-    # With what 0.2.2 adds (V3): the wish, off without a restored switch, stored at once.
-    moved = control | {"enabled": False, "last_command": None, "resume_since": {}}
+    # With what 0.2.2 adds: the wish, off without a restored switch, stored at once (V3), and
+    # the setpoint a gateway's release must leave, none while nothing is owed (V4).
+    moved = control | {
+        "enabled": False,
+        "last_command": None,
+        "resume_since": {},
+        "release_from": None,
+    }
     assert hass_storage[control_key(entry)]["data"] == moved
     main = hass_storage[main_key(entry)]["data"]
     assert main["control_store"] == 1
@@ -3239,10 +3270,10 @@ async def test_an_unexpected_failure_of_the_first_hand_back_does_not_fail_setup(
     original = OpenthermGwWriter.hand_back
     failures = [RuntimeError("an unexpected failure")]
 
-    async def hand_back(self: OpenthermGwWriter, full: bool = False) -> Any:
+    async def hand_back(self: OpenthermGwWriter, full: bool = False, **kwargs: Any) -> Any:
         if failures:
             raise failures.pop()
-        return await original(self, full)
+        return await original(self, full, **kwargs)
 
     monkeypatch.setattr(OpenthermGwWriter, "hand_back", hand_back)
     entry = owed_entry(rig, hass_storage)
@@ -3718,3 +3749,777 @@ async def test_control_added_back_after_removal_starts_off(
     await rig.advance(70)
     assert rig.state("switch", "control").state == "off"
     assert len(rig.gateway.calls) == count
+
+
+# --- V4: the hand-back's bookkeeping (P-12, P-42, P-49, P-50, P-51, P-52; Open after R6 #8) -----
+
+CURVE_ANSWER = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_max": 70}
+
+
+def unit_of(rig: Rig) -> Any:
+    assert rig.entry is not None
+    return rig.entry.runtime_data.control
+
+
+def alarm(rig: Rig) -> str:
+    return rig.state("binary_sensor", "alarm_hand_back_failed").state
+
+
+def errors_logged(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """The plugin's own records at ERROR or above."""
+    return [
+        record
+        for record in caplog.records
+        if record.levelno >= logging.ERROR and record.name.startswith("custom_components")
+    ]
+
+
+@pytest.mark.parametrize("raised", ["cancelled", "runtime_error"])
+async def test_a_hand_back_cut_by_a_foreign_cancel_stays_owed(
+    rig: Rig, hass_storage: dict[str, Any], raised: str
+) -> None:
+    """T-05 (P-42, R1): while control hands back, the gateway's service raises CancelledError —
+    a task inside its integration cancelled under the call, not a stop — or RuntimeError. The
+    hand-back is owed and stored, shown as failed, and sent again a minute later; once the
+    service works it goes through."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    unit = unit_of(rig)
+    rig.gateway.release_error = (
+        asyncio.CancelledError
+        if raised == "cancelled"
+        else lambda: RuntimeError("a bug in the gateway's integration")
+    )
+    await rig.switch(False)  # the step decides to hand back; CS=0 raises
+    assert unit.hand_back_owed
+    assert stored_control(hass_storage, rig)["hand_back_pending"] is True
+    assert alarm(rig) == "on"
+    sent = rig.gateway.setpoints().count(0.0)
+    await rig.advance(50)
+    assert rig.gateway.setpoints().count(0.0) == sent  # not before a minute
+    await rig.advance(20)
+    assert rig.gateway.setpoints().count(0.0) == sent + 1  # sent again after a minute
+    assert unit.hand_back_owed
+    rig.gateway.release_error = None
+    await rig.advance(60)
+    assert not unit.hand_back_owed
+    assert alarm(rig) == "off"
+
+
+async def test_a_real_cancel_of_a_hand_back_keeps_it_owed_and_stored(
+    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R1, negative: the step that hands back is itself cancelled. The cancel passes — it is no
+    failed attempt — and the debt, stored at once before the first write, stays owed; the
+    next attempt comes a minute later and goes through."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    unit = unit_of(rig)
+    only_saves_made_at_once(rig, monkeypatch)
+    rig.gateway.block_hand_back = asyncio.Event()
+    off = asyncio.ensure_future(unit.async_set_enabled(False))
+    await settle(rounds=50)
+    assert rig.gateway.calls[-1] == ("ch", True)  # hanging in the hand-back's first call
+    assert stored_control(hass_storage, rig)["hand_back_pending"] is True  # stored before it
+    step = unit._step_task
+    assert step is not None
+    step.cancel()
+    await off  # switching off returns: the cancel ended the step, nothing else failed
+    assert step.cancelled()
+    assert unit.hand_back_owed
+    assert alarm(rig) == "off"  # no failed attempt
+    await rig.advance(70)
+    assert rig.gateway.calls[-2:] == HAND_BACK  # the next attempt
+    assert not unit.hand_back_owed
+
+
+@pytest.mark.parametrize("ending", ["unload", "reload", "step_error"])
+async def test_stop_never_raises_when_the_hand_back_raises_unexpectedly(
+    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch, ending: str
+) -> None:
+    """T-06 (P-42, R1): ``writer.hand_back`` raises what no writer reports (a bug). Nothing
+    escapes; the debt stays owed and stored — with the persistent issue when the entry unloads,
+    and the issue shown with ``control_error`` after a failed step — and the next start makes a
+    full hand-back. Every attempt made while the debt exists is full (P-49); the first, made for
+    the session's end, is not."""
+    from custom_components.vtherm_smart_boiler.transport.writers import OpenthermGwWriter
+
+    hass = rig.hass
+    original = OpenthermGwWriter.hand_back
+    fulls: list[bool] = []
+    # The attempts that fail: the stop's, and after a failed step the step's too.
+    failures = 2 if ending == "step_error" else 1
+
+    async def hand_back(self: OpenthermGwWriter, full: bool = False, **kwargs: Any) -> Any:
+        nonlocal failures
+        fulls.append(full)
+        if failures:
+            failures -= 1
+            raise RuntimeError("a bug in the writer")
+        return await original(self, full, **kwargs)
+
+    monkeypatch.setattr(OpenthermGwWriter, "hand_back", hand_back)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    unit = unit_of(rig)
+    entry = rig.entry
+    assert entry is not None
+    if ending == "step_error":
+        step = type(unit)._async_step
+
+        async def broken(self: Any, now: float) -> None:
+            raise RuntimeError("a bug in the step")
+
+        monkeypatch.setattr(type(unit), "_async_step", broken)
+        await rig.advance(10)
+        assert unit.hand_back_owed
+        found = issue(rig, "hand_back_owed")
+        assert found is not None
+        assert not found.is_persistent  # shown while the entry runs
+        assert rig.state("binary_sensor", "alarm_control_error").state == "on"
+        assert alarm(rig) == "on"
+        assert stored_control(hass_storage, rig)["hand_back_pending"] is True
+        monkeypatch.setattr(type(unit), "_async_step", step)
+    if ending == "reload":
+        assert await hass.config_entries.async_reload(entry.entry_id)  # the stop's attempt raises
+        await hass.async_block_till_done()
+    else:
+        assert await hass.config_entries.async_unload(entry.entry_id)  # its hand-back raises
+        await hass.async_block_till_done()
+        found = issue(rig, "hand_back_owed")
+        assert found is not None
+        assert found.is_persistent
+        assert stored_control(hass_storage, rig)["hand_back_pending"] is True
+        count = len(rig.gateway.calls)
+        await set_up(rig, entry)  # the next start
+        assert rig.gateway.calls[count:][:2] == HAND_BACK
+    # The session's own hand-back is not full; every later one is, a debt existing (P-49).
+    assert fulls == [False] + [True] * (2 if ending == "step_error" else 1)
+    assert not unit_of(rig).hand_back_owed
+    assert issue(rig, "hand_back_owed") is None
+
+
+@pytest.mark.parametrize("older_debt", [True, False], ids=["older_debt", "no_debt"])
+async def test_an_end_of_session_hand_back_is_full_while_an_older_debt_exists(
+    rig: Rig, hass_storage: dict[str, Any], older_debt: bool
+) -> None:
+    """P-49 (R2): the last run left a hand-back owed, with its held heating switch left off, and
+    this session's writes all fail (both targets away). Switched off, the session's hand-back is
+    full: the heating switch goes back on, though this session never switched it — its success
+    would clear the older debt too. Negative: without an older debt it is not full, and a switch
+    this session never touched is left as it is (V5 decides that anew)."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    switch = FakeSwitch(rig.hass, on=False)
+    switch.register()
+    number.set_available(False)
+    switch.set_available(False)
+    control = held_entity(number, ch_entity=switch.entity_id, ch_write_type="held")
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones, **control)
+    )
+    entry.add_to_hass(rig.hass)
+    owed = {"controlling": True, "hand_back_pending": True} if older_debt else {}
+    seed_stores(hass_storage, entry, owed, "0.2.2")
+    await set_up(rig, entry)
+    await rig.switch(True)  # a session whose writes all fail
+    await rig.advance(20)
+    assert number.writes == []
+    assert switch.writes == []
+    unit = unit_of(rig)
+    assert unit.holding
+    assert unit.hand_back_owed is older_debt
+    switch.set_available(True)  # back, and still off
+    await rig.switch(False)
+    assert switch.on is older_debt
+
+
+async def test_a_release_by_hand_waits_for_a_running_attempt(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """P-51 (R3): the user confirms in the repair flow that the boiler was returned while a
+    hand-back attempt hangs in a slow gateway. The release waits for the attempt; afterwards
+    nothing is owed — the attempt, which did not see its release, did not set the debt again —
+    and nothing is retried."""
+    from custom_components.vtherm_smart_boiler import repairs
+
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    unit = unit_of(rig)
+    assert rig.entry is not None
+    hanging = asyncio.Event()
+    rig.gateway.block_hand_back = hanging
+    rig.gateway.ignore_release = True  # the attempt will not see its release
+    off = asyncio.ensure_future(unit.async_set_enabled(False))
+    await settle(rounds=50)
+    assert rig.gateway.calls[-1] == ("ch", True)  # the attempt hangs in its first call
+    assert unit.hand_back_owed
+    release = asyncio.ensure_future(repairs.async_release(rig.hass, rig.entry.entry_id))
+    assert not await settle(release, rounds=50), "the release did not wait for the attempt"
+    hanging.set()
+    await off
+    await release
+    await rig.hass.async_block_till_done()
+    assert not unit.hand_back_owed
+    assert not unit.holding
+    assert stored_control(hass_storage, rig)["hand_back_pending"] is False
+    assert issue(rig, "hand_back_owed") is None
+    count = len(rig.gateway.calls)
+    await rig.advance(130)
+    assert len(rig.gateway.calls) == count  # nothing retried
+
+
+async def test_gateway_id_cannot_change_while_a_hand_back_is_owed(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """T-13 (P-12, R4): two gateways. The control steps pass with nothing owed and pick gw2;
+    before the save, the unit starts owing a hand-back through gw1. The save goes back to the
+    control step with the reason, the options stay, and the hand-back goes on through gw1.
+    Negative: with nothing owed at the save, gw2 is saved."""
+    for gateway in ("gw", "gw2"):
+        MockConfigEntry(domain="opentherm_gw", data={"id": gateway}).add_to_hass(rig.hass)
+    await start(rig)
+    assert rig.entry is not None
+    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": CONFIRMED})
+    assert flow["step_id"] == "control_gateway"
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"], {"gateway_id": "gw2"}
+    )
+    assert flow["step_id"] == "control_curve"
+    # Before the save: control takes the boiler, the gateway drops, control is switched off.
+    await rig.switch(True)
+    await rig.advance(20)
+    rig.gateway.connected = False
+    rig.live()
+    await rig.switch(False)
+    assert unit_of(rig).hand_back_owed
+    flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], CURVE_ANSWER)
+    assert flow["step_id"] == "control"
+    assert flow["errors"] == {"base": "hand_back_pending"}
+    await rig.hass.async_block_till_done()
+    assert rig.entry.options["control"]["gateway_id"] == "gw"
+    rig.gateway.connected = True
+    await rig.advance(70)
+    assert not unit_of(rig).hand_back_owed  # through gw1
+    released = {
+        data["gateway_id"]
+        for domain, service, data in rig.services
+        if (domain, service) == ("opentherm_gw", "set_control_setpoint")
+        and data["temperature"] == 0
+    }
+    assert released == {"gw"}
+    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": CONFIRMED})
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"], {"gateway_id": "gw2"}
+    )
+    flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], CURVE_ANSWER)
+    assert flow["type"] == "create_entry"
+    await rig.hass.async_block_till_done()
+    assert rig.entry.options["control"]["gateway_id"] == "gw2"
+
+
+@pytest.mark.parametrize(
+    ("node", "saved"), [("otgw-2", False), ("  otgw-1 ", True)], ids=["changed", "spaces"]
+)
+async def test_mqtt_topics_cannot_change_while_control_holds_the_boiler(
+    rig: Rig, node: str, saved: bool
+) -> None:
+    """T-14 (P-12, R4): the MQTT step passes while control is off; before the save control takes
+    the boiler. A changed node is refused at the save, back at the control step, the options
+    kept; the same node with spaces around it passes."""
+
+    async def publish(call: ServiceCall) -> None:
+        if call.data["topic"].endswith("/ctrlsetpt"):
+            value = float(call.data["payload"])
+            rig.gateway.override = None if value == 0 else value
+            rig.gateway.publish()
+
+    rig.hass.services.async_register("mqtt", "publish", publish)
+    # Without the opentherm_gw path's gateway: the flow drops what another path left.
+    await start(rig, write_path="otgw_mqtt", mqtt_top="OTGW", mqtt_node="otgw-1", gateway_id=None)
+    assert rig.entry is not None
+    flow = await _first_control_step(
+        rig,
+        {"write_path": "otgw_mqtt", "topology": "gateway_with_thermostat"}
+        | {"confirmed_entity": CONFIRMED},
+    )
+    assert flow["step_id"] == "control_mqtt"
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"], {"mqtt_top": "OTGW", "mqtt_node": node}
+    )
+    assert flow["step_id"] == "control_curve"
+    await rig.switch(True)  # control takes the boiler before the save
+    await rig.advance(20)
+    assert unit_of(rig).holding
+    flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], CURVE_ANSWER)
+    if saved:
+        assert flow["type"] == "create_entry"
+    else:
+        assert flow["step_id"] == "control"
+        assert flow["errors"] == {"base": "control_holds_boiler"}
+    await rig.hass.async_block_till_done()
+    assert rig.entry.options["control"]["mqtt_node"] == "otgw-1"
+
+
+async def test_the_gateways_read_back_cannot_change_at_the_save(rig: Rig) -> None:
+    """R4: the gateway's read-back, which judges its release, re-picked while nothing was owed;
+    owed before the save: refused there. Negative, a missing control section: "no control"
+    stays possible at the save, the hand-back going through what took the boiler."""
+    MockConfigEntry(domain="opentherm_gw", data={"id": "gw"}).add_to_hass(rig.hass)
+    await start(rig)
+    assert rig.entry is not None
+    other = "sensor.somewhere_else_temperature"
+    rig.hass.states.async_set(other, "20.0", {"unit_of_measurement": "°C"})
+    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": other})
+    assert flow["step_id"] == "control_gateway"
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"], {"gateway_id": "gw"}
+    )
+    await rig.switch(True)
+    await rig.advance(20)
+    rig.gateway.connected = False
+    rig.live()
+    await rig.switch(False)
+    flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], CURVE_ANSWER)
+    assert flow["errors"] == {"base": "hand_back_pending"}
+    assert rig.entry.options["control"]["confirmed_entity"] == CONFIRMED
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"], {"write_path": "none"}
+    )
+    assert flow["type"] == "create_entry"
+    await rig.hass.async_block_till_done()
+    assert "control" not in rig.entry.options
+
+
+async def test_a_stop_during_the_save_leaves_no_unawaited_write(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, recwarn: pytest.WarningsRecorder
+) -> None:
+    """P-52 (R5): the store save made before a write is slow, and the unit stops meanwhile. The
+    write's coroutine is made only once the save is done, so the stop leaves none behind
+    unawaited; only the stop's own hand-back is written."""
+    import gc
+
+    await start(rig)
+    unit = unit_of(rig)
+    assert rig.entry is not None
+    coordinator = rig.entry.runtime_data
+    original = coordinator.async_save_control_now
+    gate = asyncio.Event()
+
+    async def slow() -> None:
+        if unit.holding and not unit._stopping:
+            await gate.wait()  # the save before the first write
+        await original()
+
+    monkeypatch.setattr(coordinator, "async_save_control_now", slow)
+    on = asyncio.ensure_future(unit.async_set_enabled(True))
+    await settle(rounds=50)
+    assert unit.holding
+    assert rig.gateway.calls == []  # waiting in the save
+    await unit.async_stop()
+    gate.set()
+    await on
+    await rig.hass.async_block_till_done()
+    gc.collect()
+    assert not [w for w in recwarn if "was never awaited" in str(w.message)]
+    assert rig.gateway.calls == HAND_BACK
+
+
+@pytest.mark.parametrize(
+    ("after_s", "shown", "done"),
+    [(3.0, "value", True), (8.0, "value", False), (3.0, "unknown", False)],
+    ids=["within_the_wait", "after_it", "unknown"],
+)
+async def test_a_late_echo_at_stop_counts_within_the_wait(
+    rig: Rig, hass_storage: dict[str, Any], after_s: float, shown: str, done: bool
+) -> None:
+    """P-50 (R6, Open after R6 #8): a held entity shows a new value only when its device reports
+    again (ESPHome, MQTT). Home Assistant stops: after the hand-back's writes the stop waits up
+    to 5 s for the report. Within it the hand-back counts, with no persistent issue; after it,
+    or with a report of no value, the hand-back stays owed, with the persistent issue."""
+    number = FakeNumber(rig.hass, echo_later=True)
+    number.register()
+    await start(rig, **held_entity(number))
+    await rig.switch(True)
+    number.publish(number.value)
+    stop = asyncio.ensure_future(rig.hass.async_stop())
+    await settle(rounds=100)
+    assert number.writes[-1] == 50.0  # written, not shown yet
+    assert not stop.done()  # waiting for the report
+    rig.freezer.tick(after_s)
+    if shown == "unknown":
+        rig.hass.states.async_set(number.entity_id, "unknown", {"unit_of_measurement": "°C"})
+    elif after_s < 5.0:
+        number.publish(number.value)
+    await settle(rounds=100)
+    if after_s >= 5.0:
+        number.publish(number.value)  # too late
+    rig.freezer.tick(10.0)
+    await stop
+    found = issue(rig, "hand_back_owed")
+    stored = stored_control(hass_storage, rig)
+    if done:
+        assert found is None
+        assert stored["hand_back_pending"] is False
+    else:
+        assert found is not None
+        assert found.is_persistent
+        assert stored["hand_back_pending"] is True
+
+
+def owed_with_command(rig: Rig, hass_storage: dict[str, Any], **extra: Any) -> MockConfigEntry:
+    """An entry whose last run held the boiler with a known last command, and left the
+    hand-back owed — as a stop that could not get it through leaves it."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones, **extra)
+    )
+    entry.add_to_hass(rig.hass)
+    command = {"heating": True, "setpoint": EXPECTED, "at": START.timestamp() - 600.0}
+    seed_stores(
+        hass_storage,
+        entry,
+        {"controlling": True, "hand_back_pending": True, "last_command": command},
+        "0.2.2",
+    )
+    return entry
+
+
+@pytest.mark.parametrize(("away_s", "alarmed"), [(40, False), (70, True)])
+async def test_the_first_hand_back_after_start_raises_no_alarm_within_the_grace(
+    rig: Rig,
+    hass_storage: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+    away_s: int,
+    alarmed: bool,
+) -> None:
+    """P-50 (R6): a hand-back the last run left owed, and the gateway away for a while after the
+    start. Within the first minute: no ``hand_back_failed``, no ERROR, and the persistent issue
+    the last stop left stays as it was; the hand-back is sent at each step and goes through
+    once the gateway is back. Negative: away for 70 s, the alarm rises once the minute is over."""
+    rig.gateway.connected = False
+    rig.live()
+    entry = owed_with_command(rig, hass_storage)
+    control_module.report_owed_hand_back(rig.hass, entry.entry_id, persistent=True)
+    caplog.clear()
+    await set_up(rig, entry)
+    unit = unit_of(rig)
+    for elapsed in range(10, away_s + 1, 10):
+        await rig.advance(10)
+        if elapsed < 60:
+            assert alarm(rig) == "off", elapsed
+            found = issue(rig, "hand_back_owed")
+            assert found is not None
+            assert found.is_persistent  # neither deleted nor raised again
+    assert unit.hand_back_owed
+    assert len(rig.gateway.lost) >= 2 * (away_s // 10)  # sent at each step
+    if alarmed:
+        assert alarm(rig) == "on"
+        assert len(errors_logged(caplog)) == 1
+        return
+    assert errors_logged(caplog) == []
+    rig.gateway.connected = True
+    await rig.advance(10)
+    assert rig.gateway.calls[:2] == HAND_BACK
+    assert not unit.hand_back_owed
+    assert alarm(rig) == "off"
+    assert issue(rig, "hand_back_owed") is None
+    assert errors_logged(caplog) == []
+
+
+@pytest.mark.parametrize("read_back", ["the_plugins_value", "unknown"])
+async def test_an_otgw_hand_back_the_gateway_did_not_take_stays_owed(
+    rig: Rig, read_back: str
+) -> None:
+    """Open after R6 #8 (R7): the gateway is connected and its service returns normally, but CS=0
+    did not take (pyotgw's own timeout, say): the read-back stays at the plugin's value. The
+    hand-back stays owed, is sent again every minute and shown as failed after a minute; it is
+    done as soon as the read-back leaves the plugin's value. Negative: a read-back without a
+    value never counts."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    unit = unit_of(rig)
+    rig.gateway.ignore_release = True
+    await rig.switch(False)
+    assert rig.gateway.calls[-2:] == HAND_BACK  # sent, and the service returned
+    assert unit.hand_back_owed
+    assert alarm(rig) == "off"  # not yet a minute
+    if read_back == "unknown":
+        rig.gateway.override = None  # it lapsed, but nothing tells
+        rig.gateway.readable = False
+    await rig.advance(50)
+    assert unit.hand_back_owed
+    assert rig.gateway.setpoints().count(0.0) == 1
+    await rig.advance(20)
+    assert rig.gateway.setpoints().count(0.0) == 2  # sent again after a minute
+    assert alarm(rig) == "on"
+    await rig.advance(60)
+    assert rig.gateway.setpoints().count(0.0) == 3  # and every minute
+    assert unit.hand_back_owed
+    rig.gateway.override = None  # the override lapses: the thermostat's value shows
+    rig.gateway.readable = True
+    # Seen at the next step; after a read-back without a value the attempt failed (C1), and
+    # the next one comes a minute later.
+    await rig.advance(10 if read_back == "the_plugins_value" else 60)
+    assert not unit.hand_back_owed
+    assert alarm(rig) == "off"
+
+
+@pytest.mark.parametrize("reported", [True, False], ids=["reported", "nothing_new"])
+async def test_an_otgw_hand_back_without_a_known_value_needs_a_report_after_it(
+    rig: Rig, hass_storage: dict[str, Any], reported: bool
+) -> None:
+    """R7: neither a setpoint of this session nor a stored one is known (a store from 0.2.1):
+    the release counts once the read-back reports a value after the command — pyotgw writes the
+    accepted 0 at once. Negative: a read-back with nothing new since keeps it owed."""
+    entry = owed_entry(rig, hass_storage)  # no last command stored
+    if not reported:
+        rig.gateway.ignore_release = True
+    await set_up(rig, entry)
+    assert rig.gateway.calls[:2] == HAND_BACK
+    assert unit_of(rig).hand_back_owed is not reported
+
+
+@pytest.mark.parametrize("stored", ["kept", "unreadable"])
+async def test_the_value_a_release_must_leave_outlives_a_restart(
+    rig: Rig, hass_storage: dict[str, Any], caplog: pytest.LogCaptureFixture, stored: str
+) -> None:
+    """R7: switched off with the gateway away, then a restart. The session and its last command
+    are gone, but the setpoint the release must leave is stored: once the gateway is back, its
+    steady read-back — the thermostat's value — counts at once. Negative: a stored value that
+    cannot be read is ignored, with a warning, and the steady read-back does not count."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    rig.gateway.connected = False
+    rig.live()
+    await rig.switch(False)
+    assert rig.entry is not None
+    entry = rig.entry
+    assert await rig.hass.config_entries.async_unload(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    kept = stored_control(hass_storage, rig)
+    assert kept["hand_back_pending"] is True
+    assert kept["release_from"] == pytest.approx(EXPECTED, abs=0.05)
+    assert kept["last_command"] is None  # forgotten when the session ended (V3)
+    if stored == "unreadable":
+        kept["release_from"] = "garbage"
+    rig.gateway.connected = True
+    rig.gateway.override = None  # it lapsed while Home Assistant was down
+    rig.gateway.ignore_release = True  # the release adds no report: only the value tells
+    rig.live()
+    caplog.clear()
+    await set_up(rig, entry)
+    assert unit_of(rig).hand_back_owed is (stored == "unreadable")
+    warned = _logged(caplog, logging.WARNING, "unreadable stored control data: release_from")
+    assert warned == (1 if stored == "unreadable" else 0)
+
+
+async def test_a_clock_set_back_does_not_hold_up_the_owed_retry(rig: Rig) -> None:
+    """R8 (C9): a hand-back failed and is due again in a minute; then the wall clock is set back
+    an hour. The retry comes at the next step, not once the clock has caught up. Negative:
+    without the set back, a step ten seconds later does not retry."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    unit = unit_of(rig)
+    rig.gateway.release_error = lambda: HomeAssistantError("the gateway is busy")
+    await rig.switch(False)
+    assert unit.hand_back_owed
+    assert rig.gateway.setpoints().count(0.0) == 1
+    rig.freezer.tick(10)
+    await unit._async_timer(datetime.now(UTC))
+    assert rig.gateway.setpoints().count(0.0) == 1  # due in a minute
+    rig.gateway.release_error = None
+    rig.freezer.move_to(datetime.now(UTC) - timedelta(hours=1))
+    rig.live()
+    await unit._async_timer(datetime.now(UTC))
+    assert rig.gateway.setpoints().count(0.0) == 2  # at once
+    assert not unit.hand_back_owed
+
+
+@pytest.mark.parametrize("attempt", ["switch_off", "step_error", "stop"])
+async def test_the_owed_marker_is_stored_before_every_hand_back_write(
+    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch, attempt: str
+) -> None:
+    """R1 (P-42, Q3.3): at the moment a hand-back's first write goes out, the control store
+    already says one is owed — saved at once, not with the delayed save — so a crash, or a kill
+    during a stop (Docker's 10 s), still leaves it owed."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    unit = unit_of(rig)
+    only_saves_made_at_once(rig, monkeypatch)
+    assert stored_control(hass_storage, rig)["hand_back_pending"] is False
+    seen: list[bool] = []
+
+    def watch(kind: str, value: Any) -> None:
+        if (kind, value) == ("ch", True):
+            seen.append(stored_control(hass_storage, rig)["hand_back_pending"])
+
+    rig.gateway.watch = watch
+    if attempt == "switch_off":
+        await rig.switch(False)
+    elif attempt == "step_error":
+
+        async def broken(self: Any, now: float) -> None:
+            raise RuntimeError("a bug in the step")
+
+        monkeypatch.setattr(type(unit), "_async_step", broken)
+        await rig.advance(10)
+    else:
+        await unit.async_stop()
+    assert seen == [True]
+
+
+async def test_a_store_that_cannot_be_written_does_not_hold_up_a_hand_back(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """R1, negative: the store cannot be written before the hand-back (a full disk): logged, and
+    the hand-back still goes out and counts as its read-back says."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    unit = unit_of(rig)
+    assert rig.entry is not None
+
+    async def fail() -> None:
+        raise OSError("no space left on the device")
+
+    monkeypatch.setattr(rig.entry.runtime_data, "async_save_control_now", fail)
+    await unit.async_stop()
+    assert rig.gateway.calls[-2:] == HAND_BACK
+    assert not unit.hand_back_owed
+    assert _logged(caplog, logging.ERROR, "Could not store the owed hand-back") == 1
+
+
+@pytest.mark.parametrize(
+    "case", ["writes_capped", "budget_cut", "smartpi_in_budget", "no_time_for_smartpi"]
+)
+async def test_the_stop_hand_back_fits_home_assistants_budget(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, case: str
+) -> None:
+    """R6 (Q3.3): Home Assistant gives all shutdown jobs together 20 s, then cancels them. At a
+    stop each hand-back write is capped at 3 s, and the whole — writes, the wait for a late
+    report and SmartPI's calls — ends within 15 s: a gateway that hangs leaves the hand-back
+    owed, with the persistent issue, before Home Assistant cuts it."""
+    hass = rig.hass
+    learning: list[bool] = []
+    smartpi_hangs = asyncio.Event()
+
+    async def set_learning(call: ServiceCall) -> None:
+        learning.append(call.data["learning_enabled"])
+        if call.data["learning_enabled"]:
+            await smartpi_hangs.wait()
+        smartpi_zone(rig, call.data["learning_enabled"])
+
+    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    smartpi_zone(rig, True)
+    await start(rig)
+    await rig.switch(True)
+    unit = unit_of(rig)
+    if case in ("smartpi_in_budget", "no_time_for_smartpi"):
+        rig.dhw = True
+        await rig.advance(10)  # SmartPI paused; its resume at the stop will hang
+        assert learning == [False]
+        monkeypatch.setattr(control_module, "STOP_BUDGET_S", 2.0)
+        if case == "no_time_for_smartpi":
+            rig.gateway.ignore_release = True  # unconfirmed: the wait takes what is left
+    else:
+        rig.gateway.hang = asyncio.Event()  # every call hangs
+        if case == "budget_cut":
+            monkeypatch.setattr(control_module, "STOP_BUDGET_S", 4.0)
+    stop = asyncio.ensure_future(unit.async_stop())
+    await settle(rounds=50)
+    assert not stop.done()
+    rig.freezer.tick(1.9)
+    await settle(rounds=50)
+    assert not stop.done()
+    if case == "writes_capped":
+        rig.freezer.tick(1.2)  # 3.1 s: the first write gave up, the second hangs
+        await settle(rounds=50)
+        assert not stop.done()
+        rig.freezer.tick(3.1)  # 6.2 s: the second gave up too
+    else:
+        rig.freezer.tick(2.2)  # 4.1 s: past the budget (2 s or 4 s)
+    assert await settle(stop, rounds=100), "the stop outlasted its budget"
+    await stop
+    if case == "smartpi_in_budget":
+        assert learning == [False, True]  # the resume was tried, and given up at the budget
+        assert rig.gateway.calls[-2:] == HAND_BACK
+        assert not unit.hand_back_owed
+        return
+    if case == "no_time_for_smartpi":
+        assert learning == [False]  # no time left for the resume: not made now...
+        assert rig.zones.entities["living"] in unit.stored()["resuming"]  # ...but at next start
+    assert unit.hand_back_owed
+    found = issue(rig, "hand_back_owed")
+    assert found is not None
+    assert found.is_persistent
+    ran_out = _logged(caplog, logging.ERROR, "ran out of time")
+    if case != "no_time_for_smartpi":  # there the wait and the budget end together
+        assert ran_out == (1 if case == "budget_cut" else 0)
+
+
+async def test_a_cancel_raised_by_the_writer_itself_is_a_failed_attempt(
+    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R1 (P-42): a CancelledError that leaves the writer itself, while the step is not being
+    cancelled — not through a service call, which makes it a failed write — counts as a failed
+    attempt: owed, stored, shown, and sent again a minute later."""
+    from custom_components.vtherm_smart_boiler.transport.writers import OpenthermGwWriter
+
+    original = OpenthermGwWriter.hand_back
+    failures = 1
+
+    async def hand_back(self: OpenthermGwWriter, full: bool = False, **kwargs: Any) -> Any:
+        nonlocal failures
+        if failures:
+            failures -= 1
+            raise asyncio.CancelledError
+        return await original(self, full, **kwargs)
+
+    monkeypatch.setattr(OpenthermGwWriter, "hand_back", hand_back)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    unit = unit_of(rig)
+    await rig.switch(False)
+    assert unit.hand_back_owed
+    assert stored_control(hass_storage, rig)["hand_back_pending"] is True
+    assert alarm(rig) == "on"
+    await rig.advance(70)
+    assert rig.gateway.calls[-2:] == HAND_BACK
+    assert not unit.hand_back_owed
+
+
+async def test_an_unconfirmed_hand_back_raises_no_alarm_within_the_grace(
+    rig: Rig,
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """P-50 (R6): the hand-back the last run left is sent but not shown — the gateway kept the
+    override. With a grace longer than the minute such a hand-back gets (a value K4 may pick), it
+    is sent again after each minute without an alarm or an ERROR; once the grace is over, it is
+    shown as failed."""
+    monkeypatch.setattr(control_module, "START_GRACE_S", 150.0)
+    entry = owed_with_command(rig, hass_storage)
+    rig.gateway.override = EXPECTED  # still in force: a quick restart
+    rig.gateway.ignore_release = True
+    rig.live()
+    caplog.clear()
+    await set_up(rig, entry)
+    unit = unit_of(rig)
+    assert unit.hand_back_owed
+    await rig.advance(130)
+    assert rig.gateway.setpoints().count(0.0) == 3  # at the start, then after each minute
+    assert alarm(rig) == "off"
+    assert errors_logged(caplog) == []
+    await rig.advance(60)
+    assert alarm(rig) == "on"
+    assert len(errors_logged(caplog)) == 1

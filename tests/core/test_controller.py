@@ -14,6 +14,8 @@ from custom_components.vtherm_smart_boiler.core.controller import (
     ControlMode,
     ControlState,
     Reason,
+    clock_due,
+    clock_start,
     decide,
     fallback_setpoint,
 )
@@ -487,3 +489,75 @@ def test_a_clock_jumping_forward_does_not_raise_the_correction_at_once() -> None
     jumped = zone(3610.0, valve_open=1.0, temperature=19.0, target=21.0)
     state, _ = run([inputs(3610.0, zones=(jumped,))], state=state)
     assert state.correction <= 0.1  # 70 s of heat flow, not an hour
+
+
+# --- V4, R8 (C9): a wall clock set back holds nothing up ---------------------------------------
+
+
+def test_a_clock_set_back_does_not_hold_up_the_stale_hand_back() -> None:
+    """The boiler's data went stale, then the wall clock was set back an hour: the wait for the
+    stale hand-back starts again when the clock went back — five minutes, not an hour and five.
+    Negative: a clock that only moves forward keeps the wait's start."""
+    config = replace(CONFIG, stale_hand_back_s=300.0)
+    state, _ = run([inputs(10000.0), inputs(10030.0, boiler_link=False)], config)
+    assert state.waiting_since == 10030.0
+    state, decisions = run(
+        [
+            inputs(6430.0, boiler_link=False),  # an hour back
+            inputs(6600.0, boiler_link=False),
+            inputs(6730.0, boiler_link=False),
+        ],
+        config,
+        state,
+    )
+    assert [d.hand_back for d in decisions] == [False, False, True]
+    assert Reason.BOILER_LINK_STALE in decisions[2].reasons
+    state, _ = run([inputs(0.0), inputs(30.0, boiler_link=False)], config)
+    state, _ = run([inputs(60.0, boiler_link=False)], config, state)
+    assert state.waiting_since == 30.0  # not reset
+
+
+def test_a_clock_set_back_makes_the_water_decision_due() -> None:
+    """A water decision stamped later than now — the wall clock was set back — is due now, not
+    once the clock has caught up. Negative: within the interval, without a set-back, the water
+    temperature waits (as ``test_the_water_temperature_waits_for_the_interval…``)."""
+    state, [first] = run([inputs(10000.0)])
+    state, [early] = run([inputs(10060.0, outdoor_sensor=-5.0)], state=state)
+    assert first.command is not None
+    assert early.command is not None
+    assert early.command.setpoint == first.command.setpoint  # waits for the interval
+    state, [back] = run([inputs(9000.0, outdoor_sensor=-5.0)], state=state)
+    assert back.command is not None
+    assert back.command.setpoint > first.command.setpoint  # decided again at once
+    assert state.decided_at == 9000.0
+
+
+def test_a_clock_set_back_does_not_move_the_comfort_correction() -> None:
+    """The correction's fall counts the time since the last decision; with the clock set back
+    that time would be negative, and the fall a rise. It counts as none."""
+    state = replace(ControlState(), correction=2.0)
+    state, _ = run([inputs(10000.0, zones=(satisfied(10000.0),))], WATER, state)
+    assert state.correction == 2.0
+    state, _ = run([inputs(8200.0, zones=(satisfied(8200.0),))], WATER, state)  # 30 min back
+    assert state.decided_at == 8200.0  # decided again
+    assert state.correction == 2.0  # neither risen by the negative time nor fallen
+
+
+@pytest.mark.parametrize(
+    ("since", "now", "expected"),
+    [(None, 100.0, 100.0), (50.0, 100.0, 50.0), (100.0, 100.0, 100.0), (500.0, 100.0, 100.0)],
+    ids=["none", "earlier", "same", "later"],
+)
+def test_a_start_later_than_now_counts_as_now(
+    since: float | None, now: float, expected: float
+) -> None:
+    assert clock_start(since, now) == expected
+
+
+@pytest.mark.parametrize(
+    ("at", "expected"),
+    [(160.0, 160.0), (100.0, 100.0), (40.0, 40.0), (161.0, 100.0), (3700.0, 100.0)],
+    ids=["a_minute_ahead", "now", "past", "past_the_longest", "an_hour_ahead"],
+)
+def test_a_moment_further_ahead_than_planned_is_due_now(at: float, expected: float) -> None:
+    assert clock_due(at, 100.0, 60.0) == expected

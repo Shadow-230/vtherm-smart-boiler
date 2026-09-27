@@ -553,10 +553,16 @@ async def test_a_hand_back_is_kept_and_retried_until_the_gateway_takes_it(rig: R
     assert len(rig.gateway()) == count  # given back: nothing more is sent
 
 
+# What a run of 0.2.2 stores at once when it first commands the boiler (V3): a gateway's release
+# is judged against it after a crash (V4, R7). 55 °C is well away from the simulated boiler's own
+# curve at −2 °C (47 °C), which the simulator's read-back shows once the override is gone.
+LAST_COMMAND = {"heating": True, "setpoint": 55.0, "at": START.timestamp() - 600.0}
+
+
 async def test_a_restart_without_a_clean_stop_hands_back_first(rig: Rig) -> None:
     """The last run held the boiler and never gave it back (a crash, a power cut): the first
     step gives it back in full, and control stays off until the user switches it on."""
-    await start(rig, stored={"control": {"controlling": True}})
+    await start(rig, stored={"control": {"controlling": True, "last_command": LAST_COMMAND}})
     await rig.advance(30)
     assert [(k, v) for _t, k, v in rig.gateway()][:2] == [("ch", True), ("setpoint", 0.0)]
     assert rig.state("switch", "control").state == "off"
@@ -588,6 +594,7 @@ async def test_a_stored_latch_and_an_owed_hand_back_both_hold(rig: Rig) -> None:
                 "latched": True,
                 "latched_by": ["outside_change"],
                 "hand_back_pending": True,
+                "last_command": LAST_COMMAND,
             }
         },
     )

@@ -6,7 +6,9 @@ writes through the writer, and turns guard events and failures into alarms. The 
 only while control is switched on. An internal error hands back and blocks control until the user
 switches it off and on again; unloading the entry and stopping Home Assistant hand back too. A
 hand-back is retried until it is confirmed — an entity hand-back counts only once each target
-shows what it was given — and a failed one says so.
+shows what it was given, a gateway's once its read-back has left the value the plugin wrote —
+and a failed one says so. Before each attempt the debt is marked and stored at once, so nothing
+that cuts an attempt short can lose it.
 
 How control resumes after it stopped (``SCOPE.md`` §7):
 - an alarm set to hand back, an outside change included: a latch, shown with its cause, until
@@ -20,7 +22,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping, Sequence
+import math
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -28,10 +31,18 @@ from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import CALLBACK_TYPE, CoreState, Event, HassJob, HomeAssistant
+from homeassistant.core import (
+    CALLBACK_TYPE,
+    CoreState,
+    Event,
+    EventStateChangedData,
+    HassJob,
+    HomeAssistant,
+    callback,
+)
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import issue_registry as ir
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.util import dt as dt_util
 from homeassistant.util.async_ import create_eager_task
 
@@ -44,7 +55,14 @@ from .control_config import (
     WritePath,
     config_blockers,
 )
-from .core.controller import ControlInputs, ControlMode, ControlState, Reason
+from .core.controller import (
+    ControlInputs,
+    ControlMode,
+    ControlState,
+    Reason,
+    clock_due,
+    clock_start,
+)
 from .core.guards import (
     Confirmation,
     GuardConfig,
@@ -79,6 +97,7 @@ from .transport.entities import (
     read_on_off,
     read_temperature,
     read_weather_temperature,
+    temperature_from_state,
     temperature_unit_of,
 )
 from .transport.writers import HandBackCheck, WriteError, Writer, make_writer, writer_services
@@ -89,7 +108,21 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 DAY = 86400.0
 LEARNING_TIMEOUT_S = 5.0
+# An owed hand-back is sent again this long after an attempt; a gateway's not released by then
+# counts as failed — its override's own lapse time (provisional, K4).
 HAND_BACK_RETRY_S = 60.0
+RELEASE_TOLERANCE_K = 0.5  # a target within this of what it was given shows it
+# For this long after a unit starts, the hand-back the last run left owed raises no alarm and
+# logs at DEBUG only: a device may report again only once it has reconnected (P-50; provisional,
+# K4; Q3.5, ESPHome). A target still away meanwhile is tried again at every step.
+START_GRACE_S = 60.0
+# The stop's hand-back — its writes, a short wait for a device that reports late, SmartPI's
+# calls — ends within this: Home Assistant cancels every shutdown job at 20 s (provisional, K4;
+# Q3.3). Each write at a stop is capped at 3 s (pyotgw gives each command 3 s itself), and the
+# wait is 5 s at most.
+STOP_BUDGET_S = 15.0
+STOP_WRITE_TIMEOUT_S = 3.0
+STOP_REPORT_WAIT_S = 5.0
 OWED_ISSUE = "hand_back_owed"  # a repair issue, fixable by saying the boiler was returned
 ZONE_UNKNOWN_ALARM_S = 30 * 60.0  # a zone unknown this long is reported
 RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control counts as off
@@ -112,6 +145,20 @@ _SHOWN_CONFIRMED = frozenset({Confirmation.CONFIRMED.value, CONFIRMED_BY_GATEWAY
 def _flag(raw: Any) -> bool:
     """A stored flag; anything that is not a clear "no" counts as set (the cautious side)."""
     return stored_flag(raw)
+
+
+def _setpoint(raw: Any) -> float:
+    """A stored setpoint: a finite number; anything else raises ``ValueError``."""
+    if isinstance(raw, bool) or not isinstance(raw, int | float) or not math.isfinite(raw):
+        raise ValueError(f"not a finite number: {raw!r}")
+    return float(raw)
+
+
+def _cancelled_from_outside() -> bool:
+    """Whether the running task is itself being cancelled — a stop, Home Assistant's own cut —
+    rather than a ``CancelledError`` raised inside a call it made."""
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
 
 
 def _kept_alarms(raw: Any) -> set[ControlAlarm]:
@@ -263,6 +310,17 @@ class ControlUnit:
         self._hand_back_pending = False
         self._hand_back_failed = False  # shown as an alarm: an attempt failed or went unconfirmed
         self._hand_back_checks: tuple[HandBackCheck, ...] = ()
+        # The setpoint a gateway's release must leave: the last one the plugin wrote, kept and
+        # stored while its hand-back is owed — the session and its last command may be gone.
+        self._release_from: float | None = None
+        # Gateway releases seen since the hand-back went out: pyotgw shows the accepted CS=0 only
+        # until the boiler's next report, so a release counts from the moment it is seen.
+        self._released: set[str] = set()
+        self._checks_unsub: CALLBACK_TYPE | None = None
+        self._checks_seen: asyncio.Event | None = None  # a stop waits on it for a late report
+        # The start grace: the debt the last run left, and when this unit was built.
+        self._carried_debt = False
+        self._grace_from = dt_util.utcnow().timestamp()
         # The boiler may hold a value of ours: set before every write attempt and stored at once,
         # cleared only by a confirmed hand-back. After a crash it makes the next start hand back.
         self._holding = False
@@ -368,6 +426,7 @@ class ControlUnit:
             "failed": session.failed,
             "alarms": sorted(alarm.value for alarm in session.alarms & _KEPT_ALARMS),
             "hand_back_pending": self._hand_back_pending,
+            "release_from": self._release_from,
         }
 
     def restore(self, data: Mapping[str, Any]) -> None:
@@ -420,6 +479,8 @@ class ControlUnit:
         # The last run held the boiler and never confirmed a hand-back (a crash, a power cut):
         # handed back in full at the first step; control may take the boiler again afterwards.
         self._hand_back_pending = _flag(data.get("hand_back_pending")) or self._holding
+        self._carried_debt = self._hand_back_pending
+        self._release_from = field("release_from", _setpoint, None)
         # The wish: only a clear "on" is on; one that cannot be read is off, not the restored
         # switch (P-11).
         wish = data.get("enabled")
@@ -437,8 +498,8 @@ class ControlUnit:
 
     async def async_hand_back_owed(self, now: float) -> None:
         """At setup, before anything else can fail: one full attempt at a hand-back the last
-        run left owed. A failure stays owed, shown and retried by the clock, or reported for
-        good if setup gives up. Never raises."""
+        run left owed. A failure stays owed and is retried by the clock — shown once the start
+        grace is over — or reported for good if setup gives up. Never raises."""
         if not self.options.configured:
             return
         async with self._lock:
@@ -505,39 +566,56 @@ class ControlUnit:
         await self.async_stop()
 
     async def async_stop(self) -> None:
-        """Stop the clock and hand back; nothing is written afterwards. Never raises."""
+        """Stop the clock and hand back — the writes, a short wait for a device that reports
+        late and SmartPI's calls, all within ``STOP_BUDGET_S`` — and write nothing afterwards.
+        Never raises; Home Assistant's own cancellation passes, the debt stored before the first
+        write (R1), and the next start makes the hand-back."""
+        deadline = self._hass.loop.time() + STOP_BUDGET_S
         while self._unsubs:
             self._unsubs.pop()()
         if self._stop_unsub is not None:
             self._stop_unsub()
             self._stop_unsub = None
-        if (self._holding or self._session.loop.control.controlling) and not self._stopped:
-            # Kept (and stored) until the hand-back has gone through: if Home Assistant cuts
-            # this short, it is retried at the next start. The boiler may hold a value of ours
-            # while a step's own hand-back is on its way, which this stop may cancel.
-            self._hand_back_pending = True
-            self._coordinator.schedule_control_save()
         self._stopping = True
         step = self._step_task
         if step is not None and not step.done():
             step.cancel()  # a slow step (a hanging service) must not hold up the hand-back
-        async with self._lock:
-            if self._stopped:
-                return
+        try:
+            async with asyncio.timeout_at(deadline), self._lock:
+                if self._stopped:
+                    return
+                self._stopped = True
+                await self._async_stop_hand_back(dt_util.utcnow().timestamp(), deadline)
+        except TimeoutError:
+            _LOGGER.error(
+                "The hand-back at the stop ran out of time (%.0f s); it stays owed and is made "
+                "at the next start",
+                STOP_BUDGET_S,
+            )
+            if self._holding or self._session.loop.control.controlling:
+                self._hand_back_pending = True
+        except Exception:
+            _LOGGER.exception("Handing control back on stop failed")
+        finally:
             self._stopped = True
-            now = dt_util.utcnow().timestamp()
-            try:
-                await self._async_hand_back_now(now)
-            except Exception:
-                _LOGGER.exception("Handing control back on stop failed")
             self._writer = None
-            if self._hand_back_pending:
-                # The entry unloads — disabled, reloaded, Home Assistant stopping — with the
-                # hand-back still owed: the issue outlives it, until a later run gets it through
-                # or the user settles it by hand.
-                self._report_owed(persistent=True)
-        await self._async_learning_calls()
+            self._follow_checks(())
+        if self._hand_back_pending:
+            # The entry unloads — disabled, reloaded, Home Assistant stopping — with the
+            # hand-back still owed: the issue outlives it, until a later run gets it through or
+            # the user settles it by hand.
+            self._report_owed(persistent=True)
+        await self._async_learning_calls(deadline)
         self._coordinator.schedule_control_save()
+
+    async def _async_stop_hand_back(self, now: float, deadline: float) -> None:
+        """The stop's own hand-back, each write capped at ``STOP_WRITE_TIMEOUT_S``. One its
+        targets do not show yet gets ``STOP_REPORT_WAIT_S`` more, within the budget, for a device
+        that reports late (ESPHome, MQTT); still unconfirmed, it stays owed (R6)."""
+        await self._async_hand_back_now(now)
+        if self._hand_back_pending and self._hand_back_checks:
+            until = min(self._hass.loop.time() + STOP_REPORT_WAIT_S, deadline)
+            await self._async_wait_for_checks(until)
 
     async def _async_timer(self, _now: datetime) -> None:
         # At most one step waits while another runs: a long step delays the next one instead
@@ -928,17 +1006,20 @@ class ControlUnit:
             return
         loop = self._session.loop
         # The setpoint first: a gateway applies heating on/off only while its setpoint override
-        # is in force. A write that fails is sent again at the next step.
+        # is in force. A write that fails is sent again at the next step. Each write is made
+        # only once it is due: a stop cancelling the step leaves none behind unawaited (P-52).
         setpoint_ok = heating_ok = False
         if out.setpoint is not None:
+            value = out.setpoint.value
             setpoint_ok = await self._async_write(
-                "setpoint", writer.write_setpoint(out.setpoint.value), now, out.setpoint
+                "setpoint", lambda: writer.write_setpoint(value), now, out.setpoint
             )
             if not setpoint_ok:
                 loop = replace(loop, setpoint=write_failed(loop.setpoint))
         if out.heating is not None:
+            on = out.heating.value == ON
             heating_ok = await self._async_write(
-                "heating", writer.write_heating(out.heating.value == ON), now, out.heating
+                "heating", lambda: writer.write_heating(on), now, out.heating
             )
             if not heating_ok:
                 loop = replace(loop, switch=write_failed(loop.switch))
@@ -972,7 +1053,9 @@ class ControlUnit:
             self._command_stored = command
             await self._coordinator.async_save_control_now()
 
-    async def _async_write(self, kind: str, call: Any, now: float, action: WriteAction) -> bool:
+    async def _async_write(
+        self, kind: str, write: Callable[[], Awaitable[None]], now: float, action: WriteAction
+    ) -> bool:
         session = self._session
         if not self._holding or action.kind is WriteKind.REWRITE:
             # Before the attempt: a write reported as failed may still reach the boiler, and
@@ -980,7 +1063,7 @@ class ControlUnit:
             self._holding = True
             await self._coordinator.async_save_control_now()
         try:
-            await call
+            await write()  # made only now, after the save (P-52)
         except WriteError as err:
             if kind in session.failing:
                 _LOGGER.debug("The boiler %s write failed again: %s", kind, err)
@@ -1020,15 +1103,75 @@ class ControlUnit:
         await self._coordinator.async_save_control_now()  # a latch set with it must survive a crash
         await self._async_release_learning(now)
 
-    async def _async_try_hand_back(self, now: float, full: bool = False) -> bool:
+    async def _async_try_hand_back(self, now: float, full: bool = False) -> None:
         """One hand-back attempt; a failure is kept, shown and retried until it goes through.
-        ``full``: also clear what an earlier session may have set (a retry after a restart). An
-        attempt whose targets do not show the hand-back yet stays owed until they do."""
-        full = full or self._full_hand_back_due
+        ``full``: also clear what an earlier session may have set (a retry after a restart) — so
+        is every attempt made while a debt exists (P-49). The debt is marked and stored at once
+        before anything is written, so whatever cuts the attempt short — any exception, a cancel
+        inside a service, a crash — leaves it owed (P-42); a real cancellation passes, the debt
+        kept. An attempt whose targets do not show the hand-back yet stays owed until they do."""
+        full = full or self._full_hand_back_due or self._hand_back_pending
+        self._release_from = self._value_to_leave()
+        self._hand_back_pending = True
+        self._hand_back_retry_at = now + HAND_BACK_RETRY_S
+        self._follow_checks(())
+        await self._async_store_owed()
         try:
             writer = self._writer or self._writer_factory(self._hass, self.options)
-            checks = await writer.hand_back(full=full)
-        except (WriteError, ValueError) as err:
+            checks = await writer.hand_back(
+                full=full,
+                release_from=self._release_from,
+                write_timeout_s=STOP_WRITE_TIMEOUT_S if self._stopping else None,
+            )
+            self._follow_checks(checks)
+            confirmed = self._checks_hold()
+        except asyncio.CancelledError as err:
+            if _cancelled_from_outside():
+                raise  # a real cancellation: the debt stays marked and stored
+            self._attempt_failed(now, err, expected=False)
+            return
+        except WriteError as err:
+            self._attempt_failed(now, err, expected=True)
+            return
+        except Exception as err:  # a bug must not lose the debt either
+            self._attempt_failed(now, err, expected=False)
+            return
+        if not confirmed:
+            self._hand_back_pending = True
+            self._coordinator.schedule_control_save()
+            return
+        await self._async_hand_back_confirmed()
+
+    async def _async_store_owed(self) -> None:
+        """The debt in the store before a hand-back's first write. A store that cannot be written
+        does not hold the hand-back up: the boiler gets its own control back all the same."""
+        try:
+            await self._coordinator.async_save_control_now()
+        except Exception:
+            _LOGGER.exception("Could not store the owed hand-back before making it; made anyway")
+
+    def _value_to_leave(self) -> float | None:
+        """The setpoint the plugin last wrote, which a gateway's release must leave: this
+        session's, else the last command stored, else the one an earlier attempt at the same
+        debt had; ``None`` when none is known."""
+        written = self._session.loop.setpoint.written
+        if written is not None:
+            return written
+        command = self._last_command
+        if command is not None and command.setpoint is not None:
+            return command.setpoint
+        return self._release_from
+
+    def _attempt_failed(self, now: float, err: BaseException, expected: bool) -> None:
+        """An attempt that did not get through: owed, shown, and sent again a minute later.
+        Within the start grace a target not back yet (``expected``: a failed write) is only sent
+        again at the next step, logged at DEBUG (P-50); anything else — a bug — shows at once."""
+        self._hand_back_pending = True
+        self._follow_checks(())
+        if expected and self._in_start_grace(now):
+            _LOGGER.debug("The hand-back the last run left owed did not get through yet: %s", err)
+            self._hand_back_retry_at = now
+        else:
             if self._hand_back_logged:
                 _LOGGER.debug("Handing control back failed again: %s", err)
             else:
@@ -1036,21 +1179,10 @@ class ControlUnit:
                     "Handing control back failed; retrying every minute: %s", err, exc_info=err
                 )
                 self._hand_back_logged = True
-            self._hand_back_pending = True
             self._hand_back_failed = True
-            self._hand_back_checks = ()
             self._hand_back_retry_at = now + HAND_BACK_RETRY_S
-            self._coordinator.schedule_control_save()
-            self._report_owed()
-            return False
-        if checks and not self._checks_hold(checks):
-            self._hand_back_pending = True
-            self._hand_back_checks = checks
-            self._hand_back_retry_at = now + HAND_BACK_RETRY_S
-            self._coordinator.schedule_control_save()
-            return True
-        await self._async_hand_back_confirmed()
-        return True
+        self._coordinator.schedule_control_save()
+        self._report_owed()
 
     async def _async_hand_back_confirmed(self) -> None:
         """The boiler has its own control back. Unless this is a stop's own hand-back, the last
@@ -1063,34 +1195,103 @@ class ControlUnit:
 
     async def _async_follow_hand_back(self, now: float) -> None:
         """An owed hand-back: done once its targets show it; otherwise sent again every minute,
-        and shown as failed once a sent one has gone unconfirmed that long."""
-        if self._hand_back_checks and self._checks_hold(self._hand_back_checks):
+        and shown as failed once a sent one has gone unconfirmed that long — not within the
+        start grace (P-50)."""
+        if self._hand_back_checks and self._checks_hold():
             await self._async_hand_back_confirmed()
             return
+        # A retry further ahead than planned means the wall clock went back: due now (C9).
+        self._hand_back_retry_at = clock_due(self._hand_back_retry_at, now, HAND_BACK_RETRY_S)
         if now < self._hand_back_retry_at:
             return
         if self._hand_back_checks:
-            if not self._hand_back_logged:
-                _LOGGER.error(
-                    "The hand-back was not confirmed by %s; sending it again every minute",
-                    ", ".join(check.entity_id for check in self._hand_back_checks),
-                )
-                self._hand_back_logged = True
-            self._hand_back_failed = True
+            targets = ", ".join(check.entity_id for check in self._hand_back_checks)
+            if self._in_start_grace(now):
+                _LOGGER.debug("The hand-back the last run left owed is not shown yet: %s", targets)
+            else:
+                if not self._hand_back_logged:
+                    _LOGGER.error(
+                        "The hand-back was not confirmed by %s; sending it again every minute",
+                        targets,
+                    )
+                    self._hand_back_logged = True
+                self._hand_back_failed = True
         await self._async_try_hand_back(now, full=True)
 
-    def _checks_hold(self, checks: Sequence[HandBackCheck]) -> bool:
-        """Every target shows what the hand-back gave it (a value within half a kelvin)."""
-        for check in checks:
-            if isinstance(check.expected, str):
-                state = self._hass.states.get(check.entity_id)
-                if state is None or state.state != check.expected:
-                    return False
-                continue
-            reading = read_temperature(self._hass, check.entity_id)
-            if reading.value is None or abs(float(reading.value) - check.expected) > 0.5:
-                return False
-        return True
+    def _checks_hold(self) -> bool:
+        """Every target shows what the hand-back gave it: a value within half a kelvin, a switch
+        state, or — a gateway — a read-back that has left the value the plugin wrote. A release
+        seen once counts from then on: pyotgw shows the accepted CS=0 only until the boiler's
+        next report, which may carry a thermostat asking for about the same value."""
+        for check in self._hand_back_checks:
+            if check.leaves and self._released_now(check):
+                self._released.add(check.entity_id)
+        return all(self._check_holds(check) for check in self._hand_back_checks)
+
+    def _check_holds(self, check: HandBackCheck) -> bool:
+        if check.leaves:
+            return check.entity_id in self._released
+        if isinstance(check.expected, str):
+            state = self._hass.states.get(check.entity_id)
+            return state is not None and state.state == check.expected
+        reading = read_temperature(self._hass, check.entity_id)
+        return (
+            reading.value is not None
+            and check.expected is not None
+            and abs(float(reading.value) - check.expected) <= RELEASE_TOLERANCE_K
+        )
+
+    def _released_now(self, check: HandBackCheck) -> bool:
+        """A gateway's read-back holds a value, and not the plugin's: more than half a kelvin
+        from the setpoint the plugin wrote or — that one unknown — reported after the command. A
+        read-back missing, unknown or unavailable never shows a release."""
+        state = self._hass.states.get(check.entity_id)
+        reading = temperature_from_state(state)
+        if reading.value is None:
+            return False
+        if check.expected is None or isinstance(check.expected, str):
+            return state is not check.before
+        return abs(float(reading.value) - check.expected) > RELEASE_TOLERANCE_K
+
+    def _follow_checks(self, checks: tuple[HandBackCheck, ...]) -> None:
+        """The targets a hand-back waits on. Each of their reports is looked at as it comes, so a
+        release shown only for a moment still counts, and a stop waiting for them ends once all
+        show the hand-back."""
+        self._hand_back_checks = checks
+        self._released = set()
+        if self._checks_unsub is not None:
+            self._checks_unsub()
+            self._checks_unsub = None
+        if checks:
+            self._checks_unsub = async_track_state_change_event(
+                self._hass, sorted({check.entity_id for check in checks}), self._on_check_report
+            )
+
+    @callback
+    def _on_check_report(self, _event: Event[EventStateChangedData]) -> None:
+        if self._checks_hold() and self._checks_seen is not None:
+            self._checks_seen.set()
+
+    async def _async_wait_for_checks(self, until: float) -> None:
+        """At a stop: the hand-back's targets get until ``until`` (the loop's clock) to show it."""
+        seen = asyncio.Event()
+        self._checks_seen = seen
+        try:
+            if not self._checks_hold():
+                async with asyncio.timeout_at(until):
+                    await seen.wait()
+        except TimeoutError:
+            _LOGGER.debug("The hand-back at the stop was not shown in time; it stays owed")
+            return
+        finally:
+            self._checks_seen = None
+        await self._async_hand_back_confirmed()
+
+    def _in_start_grace(self, now: float) -> bool:
+        """Within a minute of this unit's start, while it still owes what the last run left: a
+        device may not have reported since its own restart (P-50)."""
+        self._grace_from = clock_start(self._grace_from, now)  # a clock set back (C9)
+        return self._carried_debt and now - self._grace_from < START_GRACE_S
 
     def _hand_back_done(self) -> None:
         """No hand-back is owed any more: it was confirmed, or control has the boiler again."""
@@ -1100,7 +1301,9 @@ class ControlUnit:
             self._hand_back_logged = False
         self._hand_back_pending = False
         self._hand_back_failed = False
-        self._hand_back_checks = ()
+        self._follow_checks(())
+        self._release_from = None
+        self._carried_debt = False
         if changed:
             self._coordinator.schedule_control_save()
         self._report_owed()
@@ -1109,29 +1312,37 @@ class ControlUnit:
         """A repair issue shows a hand-back still owed — without the control entities at once,
         with them once it has failed, and for good when the entry unloads with it — and lets the
         user say they returned the boiler by hand (its target gone for good, say), which nothing
-        else could settle."""
+        else could settle. Within the start grace the issue the last stop left stays as it was,
+        neither deleted nor raised again (P-50)."""
         entry_id = self._coordinator.config_entry.entry_id
-        if self._hand_back_pending and (
-            persistent or self.hand_back_only or self._hand_back_failed
+        shown = persistent or self._hand_back_failed
+        if (
+            self._hand_back_pending
+            and not shown
+            and self._in_start_grace(dt_util.utcnow().timestamp())
         ):
+            return
+        if self._hand_back_pending and (shown or self.hand_back_only):
             report_owed_hand_back(self._hass, entry_id, persistent=persistent)
         else:
             ir.async_delete_issue(self._hass, DOMAIN, f"{OWED_ISSUE}_{entry_id}")
 
-    def release_owed_hand_back(self) -> None:
+    async def async_release_owed_hand_back(self) -> None:
         """The user returned the boiler to its own control by hand: nothing is owed any more, and
-        retrying stops. Control, if on, takes the boiler afresh at its next step. A session
-        that has taken the boiler again since keeps what it holds — a confirmation given late
-        must not make a crash forget it — and makes its own hand-back at the end (R6, C7)."""
-        controlling = self._session.loop.control.controlling
-        if not (self._hand_back_pending or (self._holding and not controlling)):
-            return
-        _LOGGER.warning("The owed hand-back is settled by hand, as the user confirmed")
-        if not controlling:
-            self._holding = False
-            self._full_hand_back_due = False
-        self._hand_back_done()
-        self._coordinator.schedule_control_save()
+        retrying stops. An attempt on its way ends first — it would set the debt again (P-51).
+        Control, if on, takes the boiler afresh at its next step. A session that has taken the
+        boiler again since keeps what it holds — a confirmation given late must not make a
+        crash forget it — and makes its own hand-back at the end (R6, C7)."""
+        async with self._lock:
+            controlling = self._session.loop.control.controlling
+            if not (self._hand_back_pending or (self._holding and not controlling)):
+                return
+            _LOGGER.warning("The owed hand-back is settled by hand, as the user confirmed")
+            if not controlling:
+                self._holding = False
+                self._full_hand_back_due = False
+            self._hand_back_done()
+            await self._coordinator.async_save_control_now()
 
     async def _async_hand_back_now(self, now: float) -> None:
         """Hand back at once if control holds the boiler (unload, stop, error)."""
@@ -1222,18 +1433,29 @@ class ControlUnit:
         elif learning.resuming != before.resuming:
             self._coordinator.schedule_control_save()  # only when a resume was last sent
 
-    async def _async_learning_calls(self) -> None:
+    async def _async_learning_calls(self, deadline: float | None = None) -> None:
         """Make the planned SmartPI calls, together and without the lock. Whether each took is
-        read back from SmartPI's flag at the next steps, whatever the call reported."""
+        read back from SmartPI's flag at the next steps, whatever the call reported. At a stop
+        they fit in what is left of its budget (``deadline``, the loop's clock); with nothing
+        left they are not made, and the stored resumes are sent again at the next start."""
         calls, self._learning_calls = self._learning_calls, []
-        if calls:
-            await asyncio.gather(
-                *(self._async_set_learning(zone_id, enabled) for zone_id, enabled in calls)
-            )
+        if not calls:
+            return
+        timeout_s = LEARNING_TIMEOUT_S
+        if deadline is not None:
+            timeout_s = min(timeout_s, deadline - self._hass.loop.time())
+            if timeout_s <= 0:
+                _LOGGER.debug("No time left at the stop for %d SmartPI call(s)", len(calls))
+                return
+        await asyncio.gather(
+            *(self._async_set_learning(zone_id, enabled, timeout_s) for zone_id, enabled in calls)
+        )
 
-    async def _async_set_learning(self, zone_id: str, enabled: bool) -> bool:
+    async def _async_set_learning(
+        self, zone_id: str, enabled: bool, timeout_s: float = LEARNING_TIMEOUT_S
+    ) -> bool:
         try:
-            async with asyncio.timeout(LEARNING_TIMEOUT_S):
+            async with asyncio.timeout(timeout_s):
                 await self._hass.services.async_call(
                     SMARTPI_DOMAIN,
                     SMARTPI_SERVICE,

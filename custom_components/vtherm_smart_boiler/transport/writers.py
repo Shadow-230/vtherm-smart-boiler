@@ -15,15 +15,19 @@ it masks CH enable under any later setpoint override and the demand of an on/off
 a hand-back sends ``CH=1`` first, then ``CS=0`` — should the second fail, the boiler heats at most
 until the override lapses, rather than staying cold while the thermostat calls. The plugin never
 touches the DHW-enable override.
+
+A gateway service's normal return proves nothing: pyotgw returns after a timeout of its own, and
+an MQTT publish once it is written to the socket. So a gateway's hand-back counts only once its
+setpoint read-back has left the value the plugin wrote (``HandBackCheck.leaves``).
 """
 
 from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Coroutine
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Protocol
 
 from ..control_config import ControlOptions, HandBack, WritePath
 from ..units import celsius_to, parse_number
@@ -46,10 +50,18 @@ class WriteError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class HandBackCheck:
-    """What a target must show once a hand-back has reached it: a value, or a switch state."""
+    """What a target must show once a hand-back has reached it: a value, or a switch state.
+
+    ``leaves``: a gateway's release — its setpoint read-back holds a value more than half a kelvin
+    from ``expected``, the setpoint the plugin wrote. With that value unknown (``None``), a value
+    reported after the command counts: a state other than ``before``, the one the read-back had
+    when the command went out.
+    """
 
     entity_id: str
-    expected: float | str
+    expected: float | str | None
+    leaves: bool = False
+    before: State | None = field(default=None, compare=False, repr=False)
 
 
 class Writer(Protocol):
@@ -60,9 +72,17 @@ class Writer(Protocol):
 
     async def write_heating(self, on: bool) -> None: ...
 
-    async def hand_back(self, full: bool = False) -> tuple[HandBackCheck, ...]:
+    async def hand_back(
+        self,
+        full: bool = False,
+        *,
+        release_from: float | None = None,
+        write_timeout_s: float | None = None,
+    ) -> tuple[HandBackCheck, ...]:
         """Give control back; ``full`` also clears what an earlier session may have left. Returns
-        what the targets must show for the hand-back to count as done."""
+        what the targets must show for the hand-back to count as done. ``release_from``: the
+        setpoint the plugin last wrote, which a gateway's release must leave (``None``: not
+        known). ``write_timeout_s``: each write's cap, when not the usual one (at a stop)."""
         ...
 
 
@@ -103,14 +123,37 @@ class _ServiceWriter:
             raise WriteError(f"{entity_id} is unavailable")
         return state
 
-    async def _call_entity(self, service: str, entity_id: str, **data: object) -> None:
+    async def _call_entity(
+        self,
+        service: str,
+        entity_id: str,
+        *,
+        timeout_s: float | None = None,
+        **data: object,
+    ) -> None:
         self._check_target(entity_id)
-        await self._call(_domain(entity_id), service, {"entity_id": entity_id, **data})
+        await self._call(
+            _domain(entity_id), service, {"entity_id": entity_id, **data}, timeout_s=timeout_s
+        )
 
-    async def _call(self, domain: str, service: str, data: dict[str, object]) -> None:
+    async def _call(
+        self,
+        domain: str,
+        service: str,
+        data: dict[str, object],
+        *,
+        timeout_s: float | None = None,
+    ) -> None:
+        """One service call, capped at ``timeout_s`` (else ``WRITE_TIMEOUT_S``)."""
         try:
-            async with asyncio.timeout(WRITE_TIMEOUT_S):
+            async with asyncio.timeout(WRITE_TIMEOUT_S if timeout_s is None else timeout_s):
                 await self._hass.services.async_call(domain, service, data, blocking=True)
+        except asyncio.CancelledError as err:
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise  # the caller is being cancelled (a stop): not a failed write
+            # A task inside the integration was cancelled under the call (P-42).
+            raise WriteError(f"{domain}.{service}: cancelled inside the service") from err
         except Exception as err:  # every failure is a failed write, reported upstream
             raise WriteError(f"{domain}.{service}: {err!r}") from err
 
@@ -181,14 +224,21 @@ class EntityWriter(_ServiceWriter):
         self._switched = True
         await self._call_entity("turn_on" if on else "turn_off", self._switch)
 
-    async def hand_back(self, full: bool = False) -> tuple[HandBackCheck, ...]:
-        """Each step is tried whatever the others do; any failure is raised at the end."""
+    async def hand_back(
+        self,
+        full: bool = False,
+        *,
+        release_from: float | None = None,
+        write_timeout_s: float | None = None,
+    ) -> tuple[HandBackCheck, ...]:
+        """Each step is tried whatever the others do; any failure is raised at the end. Each
+        target shows the hand-back itself: ``release_from`` is a gateway's concern."""
         self._taken = False
         errors: list[WriteError] = []
         checks: list[HandBackCheck] = []
         if self._switch and (self._switched or full):
             try:
-                await self._call_entity("turn_on", self._switch)
+                await self._call_entity("turn_on", self._switch, timeout_s=write_timeout_s)
                 self._switched = False
                 checks.append(HandBackCheck(self._switch, "on"))
             except WriteError as err:
@@ -200,11 +250,13 @@ class EntityWriter(_ServiceWriter):
                 value = _as_entity_takes_it(
                     self._check_target(self._setpoint), float(self._hand_back_value)
                 )
-                await self._call_entity("set_value", self._setpoint, value=value)
+                await self._call_entity(
+                    "set_value", self._setpoint, timeout_s=write_timeout_s, value=value
+                )
                 # Read back in °C, like every setpoint read-back.
                 checks.append(HandBackCheck(self._setpoint, float(self._hand_back_value)))
             elif self._external:
-                await self._call_entity("turn_off", self._external)
+                await self._call_entity("turn_off", self._external, timeout_s=write_timeout_s)
                 checks.append(HandBackCheck(self._external, "off"))
             # HandBack.TIMEOUT: stop writing; the device's own timeout hands back.
         except WriteError as err:
@@ -236,6 +288,16 @@ class _GatewayWriter(_ServiceWriter):
             raise WriteError(f"the gateway is not connected: {entity} is unavailable")
         if reported and state.state == "unknown":
             raise WriteError(f"the gateway has reported nothing since: {entity} is unknown")
+
+    def _read_back_now(self) -> State | None:
+        """The read-back as it stands before a hand-back's commands go out."""
+        return self._hass.states.get(self._reachable_by) if self._reachable_by else None
+
+    def _release_check(self, before: State | None, release_from: float | None) -> HandBackCheck:
+        """What shows the release: the read-back leaving the value the plugin wrote."""
+        if not self._reachable_by:
+            raise WriteError("no gateway read-back: the release cannot be seen")
+        return HandBackCheck(self._reachable_by, release_from, leaves=True, before=before)
 
 
 class OpenthermGwWriter(_GatewayWriter):
@@ -269,25 +331,36 @@ class OpenthermGwWriter(_GatewayWriter):
         )
         self._require_connected()
 
-    async def hand_back(self, full: bool = False) -> tuple[HandBackCheck, ...]:
+    async def hand_back(
+        self,
+        full: bool = False,
+        *,
+        release_from: float | None = None,
+        write_timeout_s: float | None = None,
+    ) -> tuple[HandBackCheck, ...]:
         """``CH=1``, then ``CS=0``; each is tried whatever the other does, and the hand-back
-        counts only with the gateway connected."""
+        counts only with the gateway connected, once its read-back shows the release. pyotgw
+        writes the value the gateway accepted to its status at once; after a timeout it writes
+        nothing, and the service returns all the same."""
+        before = self._read_back_now()
         await _all_of(
-            self._call(
+            lambda: self._call(
                 self.DOMAIN,
                 "set_central_heating_ovrd",
                 {"gateway_id": self._gateway, "ch_override": True},
+                timeout_s=write_timeout_s,
             ),
-            self._call(
+            lambda: self._call(
                 self.DOMAIN,
                 "set_control_setpoint",
                 {"gateway_id": self._gateway, "temperature": 0},
+                timeout_s=write_timeout_s,
             ),
         )
         # The gateway's full status comes with every (re)connection, so a read-back without a
         # value means nothing has come from the gateway since the connection was lost.
         self._require_connected(reported=True)
-        return ()
+        return (self._release_check(before, release_from),)
 
 
 class OtgwMqttWriter(_GatewayWriter):
@@ -303,9 +376,12 @@ class OtgwMqttWriter(_GatewayWriter):
     def services(self) -> frozenset[tuple[str, str]]:
         return frozenset({("mqtt", "publish")})
 
-    async def _publish(self, command: str, payload: str) -> None:
+    async def _publish(self, command: str, payload: str, timeout_s: float | None = None) -> None:
         await self._call(
-            "mqtt", "publish", {"topic": f"{self._base}/{command}", "payload": payload}
+            "mqtt",
+            "publish",
+            {"topic": f"{self._base}/{command}", "payload": payload},
+            timeout_s=timeout_s,
         )
 
     async def write_setpoint(self, value: float) -> None:
@@ -316,29 +392,35 @@ class OtgwMqttWriter(_GatewayWriter):
         await self._publish("chenable", "1" if on else "0")
         self._require_connected()
 
-    async def hand_back(self, full: bool = False) -> tuple[HandBackCheck, ...]:
+    async def hand_back(
+        self,
+        full: bool = False,
+        *,
+        release_from: float | None = None,
+        write_timeout_s: float | None = None,
+    ) -> tuple[HandBackCheck, ...]:
         """``CH=1``, then ``CS=0``; each is tried whatever the other does, and the hand-back
-        counts only with the gateway connected."""
-        await _all_of(self._publish("chenable", "1"), self._publish("ctrlsetpt", "0"))
+        counts only with the gateway connected, once its read-back shows the release: a publish
+        is done once written to the socket, the firmware offline or not."""
+        before = self._read_back_now()
+        await _all_of(
+            lambda: self._publish("chenable", "1", write_timeout_s),
+            lambda: self._publish("ctrlsetpt", "0", write_timeout_s),
+        )
         self._require_connected()
-        return ()
+        return (self._release_check(before, release_from),)
 
 
-async def _all_of(*steps: Coroutine[Any, Any, None]) -> None:
+async def _all_of(*steps: Callable[[], Awaitable[None]]) -> None:
     """Run every step in order, each whatever the others do; raise their failures at the end.
-    Cancelled midway (a stop), the steps not started are closed, not left behind."""
+    Each write is made only when its turn comes: cancelled midway (a stop), none is left
+    behind unawaited (P-52)."""
     errors: list[WriteError] = []
-    waiting = list(steps)
-    try:
-        while waiting:
-            step = waiting.pop(0)
-            try:
-                await step
-            except WriteError as err:
-                errors.append(err)
-    finally:
-        for step in waiting:
-            step.close()
+    for step in steps:
+        try:
+            await step()
+        except WriteError as err:
+            errors.append(err)
     if errors:
         raise WriteError("; ".join(str(err) for err in errors))
 

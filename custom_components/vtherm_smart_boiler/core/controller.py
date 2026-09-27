@@ -195,6 +195,18 @@ class ControlDecision:
     correction_at_limit: bool = False  # the correction at its band's edge for hours: tell the user
 
 
+def clock_start(since: float | None, now: float) -> float:
+    """When a wait began. A start later than now means the wall clock was set back: the wait
+    starts again now, rather than lasting until the clock has caught up (C9)."""
+    return now if since is None or since > now else since
+
+
+def clock_due(at: float, now: float, longest_s: float) -> float:
+    """When a moment planned at most ``longest_s`` ahead is due. One further ahead means the wall
+    clock was set back: it is due now, rather than once the clock has caught up (C9)."""
+    return now if at - now > longest_s else at
+
+
 def fallback_setpoint(config: ControlConfig) -> float:
     """Without any outdoor temperature (the last one held for a while): the user's value, else
     the curve's design point — never too little heat; the valves keep rooms from overheating."""
@@ -247,7 +259,7 @@ def decide(
         state = replace(state, latched=True, latched_by=latched_by)
         return _release(state, ControlMode.HANDED_BACK, Reason.ALARM_HAND_BACK)
     if not inputs.boiler_link:
-        since = state.waiting_since if state.waiting_since is not None else now
+        since = clock_start(state.waiting_since, now)
         state = replace(state, waiting_since=since)
         if (
             state.controlling
@@ -306,6 +318,7 @@ def _heating_decision(
         or state.command is None
         or prior_target is None
         or prior_upper is None
+        or state.decided_at > now  # the wall clock was set back: decided again now (C9)
         or now - state.decided_at >= config.decision_interval_s
         or frost != state.frost
     )
@@ -421,7 +434,8 @@ def _correction(state: ControlState, inputs: ControlInputs, config: ControlConfi
     satisfied = bool(opened) and all(z.demand is not None and z.demand < SATISFIED for z in opened)
     correction = state.correction
     if too_warm or (satisfied and not short):
-        elapsed = now - state.decided_at if state.decided_at is not None else 0.0
+        # A decision later than now (the wall clock set back) counts as made now (C9).
+        elapsed = max(0.0, now - state.decided_at) if state.decided_at is not None else 0.0
         correction -= 2.0 * elapsed / CORRECTION_RISE_S
     elif short:
         correction += state.heat_s / CORRECTION_RISE_S  # only while heat flows

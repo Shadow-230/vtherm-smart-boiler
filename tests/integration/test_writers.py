@@ -27,6 +27,16 @@ from custom_components.vtherm_smart_boiler.transport.writers import (
 )
 
 INSTALLATION = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
+READ_BACK = "sensor.gw_control_setpoint"
+GATEWAYS = {
+    "opentherm_gw": {"write_path": "opentherm_gw", "gateway_id": "gw1"},
+    "otgw_mqtt": {"write_path": "otgw_mqtt", "mqtt_top": "OTGW", "mqtt_node": "otgw-1"},
+}
+GATEWAY_SERVICES = (
+    ("opentherm_gw", "set_control_setpoint"),
+    ("opentherm_gw", "set_central_heating_ovrd"),
+    ("mqtt", "publish"),
+)
 
 
 def record(
@@ -57,7 +67,10 @@ async def test_opentherm_gw_writer(hass: HomeAssistant) -> None:
     calls = record(
         hass, ("opentherm_gw", "set_control_setpoint"), ("opentherm_gw", "set_central_heating_ovrd")
     )
-    writer = make_writer(hass, options(write_path="opentherm_gw", gateway_id="gw1"))
+    hass.states.async_set(READ_BACK, "45.0", {"unit_of_measurement": "°C"})
+    writer = make_writer(
+        hass, options(write_path="opentherm_gw", gateway_id="gw1", confirmed_entity=READ_BACK)
+    )
     assert isinstance(writer, OpenthermGwWriter)
     await writer.write_setpoint(45.04)
     await writer.write_heating(False)
@@ -88,8 +101,15 @@ async def test_otgw_refuses_setpoints_that_never_lapse_or_are_implausible(
 
 async def test_mqtt_writer(hass: HomeAssistant) -> None:
     calls = record(hass, ("mqtt", "publish"))
+    hass.states.async_set(READ_BACK, "38.3", {"unit_of_measurement": "°C"})
     writer = make_writer(
-        hass, options(write_path="otgw_mqtt", mqtt_top="OTGW/", mqtt_node="otgw-1")
+        hass,
+        options(
+            write_path="otgw_mqtt",
+            mqtt_top="OTGW/",
+            mqtt_node="otgw-1",
+            confirmed_entity=READ_BACK,
+        ),
     )
     assert isinstance(writer, OtgwMqttWriter)
     await writer.write_setpoint(38.26)
@@ -403,3 +423,109 @@ async def test_the_hand_back_value_goes_in_the_entitys_unit(hass: HomeAssistant)
     checks = await writer.hand_back()
     assert calls[-1][2]["value"] == pytest.approx(104.0)
     assert checks == (HandBackCheck("number.flow", 40.0),)  # read back in °C
+
+
+# --- V4: a gateway's hand-back is judged by its read-back; cancels and caps -------------------
+
+
+@pytest.mark.parametrize("path", list(GATEWAYS))
+@pytest.mark.parametrize("release_from", [45.0, None], ids=["known", "unknown"])
+async def test_a_gateway_hand_back_is_judged_by_its_read_back(
+    hass: HomeAssistant, path: str, release_from: float | None
+) -> None:
+    """R7 (Open after R6 #8): a service's normal return proves nothing — pyotgw returns after a
+    timeout, and an MQTT publish once written to the socket. The hand-back returns a check on
+    the gateway's setpoint read-back: released once it leaves the value the plugin wrote (the
+    caller's; unknown: a value reported after the command, judged from the state before it)."""
+    calls = record(hass, *GATEWAY_SERVICES)
+    hass.states.async_set(READ_BACK, "45.0", {"unit_of_measurement": "°C"})
+    before = hass.states.get(READ_BACK)
+    writer = make_writer(hass, options(**GATEWAYS[path], confirmed_entity=READ_BACK))
+    checks = await writer.hand_back(release_from=release_from)
+    assert checks == (HandBackCheck(READ_BACK, release_from, leaves=True),)
+    assert checks[0].before is before  # the read-back as it stood before the writes
+    assert len(calls) == 2  # both parts written first
+
+
+@pytest.mark.parametrize("path", list(GATEWAYS))
+async def test_a_gateway_hand_back_without_a_read_back_cannot_count(
+    hass: HomeAssistant, path: str
+) -> None:
+    """Negative: without a read-back the release cannot be seen, so the hand-back fails after
+    its writes, and stays owed."""
+    calls = record(hass, *GATEWAY_SERVICES)
+    writer = make_writer(hass, options(**GATEWAYS[path]))
+    with pytest.raises(WriteError, match="read-back"):
+        await writer.hand_back(release_from=45.0)
+    assert len(calls) == 2  # written all the same
+
+
+async def test_a_cancel_inside_a_service_is_a_failed_write(hass: HomeAssistant) -> None:
+    """P-42: a service that raises CancelledError while the caller is not being cancelled (a
+    task inside the integration cancelled under it) is a failed write, like any other error:
+    the hand-back's other part is still tried."""
+    calls: list[float] = []
+
+    async def cancelled(call: ServiceCall) -> None:
+        calls.append(call.data["temperature"])
+        raise asyncio.CancelledError
+
+    async def heating(call: ServiceCall) -> None:
+        return None
+
+    hass.services.async_register("opentherm_gw", "set_control_setpoint", cancelled)
+    hass.services.async_register("opentherm_gw", "set_central_heating_ovrd", heating)
+    hass.states.async_set(READ_BACK, "45.0", {"unit_of_measurement": "°C"})
+    writer = make_writer(
+        hass, options(write_path="opentherm_gw", gateway_id="gw1", confirmed_entity=READ_BACK)
+    )
+    with pytest.raises(WriteError, match="cancelled inside the service"):
+        await writer.write_setpoint(45.0)
+    with pytest.raises(WriteError, match="cancelled inside the service"):
+        await writer.hand_back()
+    assert calls == [45.0, 0]
+
+
+async def test_a_real_cancel_passes_through_the_writer(hass: HomeAssistant) -> None:
+    """Negative: the caller itself being cancelled (a stop) is not a failed write: it passes."""
+    started = asyncio.Event()
+
+    async def hang(call: ServiceCall) -> None:
+        started.set()
+        await asyncio.sleep(3600)
+
+    hass.services.async_register("opentherm_gw", "set_control_setpoint", hang)
+    writer = make_writer(hass, options(write_path="opentherm_gw", gateway_id="gw1"))
+    task = asyncio.ensure_future(writer.write_setpoint(45.0))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.parametrize("path", ["entity", *GATEWAYS])
+async def test_a_hand_back_write_can_be_capped(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    """R6: at a stop each hand-back write gets the cap it is given, not the usual 10 s."""
+
+    async def hang(call: ServiceCall) -> None:
+        await asyncio.sleep(3600)
+
+    for domain, service in (*GATEWAY_SERVICES, ("number", "set_value")):
+        hass.services.async_register(domain, service, hang)
+    monkeypatch.setattr(writers, "WRITE_TIMEOUT_S", 3600.0)
+    hass.states.async_set(READ_BACK, "45.0", {"unit_of_measurement": "°C"})
+    present(hass, "number.flow")
+    data = GATEWAYS.get(path) or {
+        "write_path": "entity",
+        "setpoint_entity": "number.flow",
+        "write_type": "held",
+        "hand_back": "value",
+        "hand_back_value": 30,
+        "hand_back_value_effect": "own_control",
+    }
+    writer = make_writer(hass, options(**data, confirmed_entity=READ_BACK))
+    async with asyncio.timeout(5.0):  # well below the usual cap, set to an hour here
+        with pytest.raises(WriteError):
+            await writer.hand_back(write_timeout_s=0.05)

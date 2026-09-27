@@ -916,7 +916,17 @@ _PROBLEM_STEPS = {
     "reference_zone_unknown": "reference",
     "alarm_limits_out_of_order": "monitor",
     "invalid_control": "control",
+    # Found at the save (P-12): control took the boiler, or began to owe it a hand-back, after
+    # the control steps were answered; what the hand-back goes through is picked there.
+    "hand_back_pending": "control",
+    "control_holds_boiler": "control",
 }
+
+
+def _given(data: Mapping[str, Any], key: str) -> Any:
+    """An answer as given; an emptied field (``None`` or ``""``) is no answer."""
+    found = data.get(key)
+    return None if found in (None, "") else found
 
 
 def problem_step(code: str, subject: str | None) -> str:
@@ -1230,14 +1240,26 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         the answer leaves out was cleared: the frontend leaves an emptied optional field out."""
         current = self.config_entry.options.get(CONTROL, {})
         shown = {str(marker) for marker in schema.schema}
-
-        def value(data: Mapping[str, Any], key: str) -> Any:
-            found = data.get(key)
-            return None if found in (None, "") else found
-
         return any(
-            value(user_input, key) != value(current, key) for key in HAND_BACK_KEYS if key in shown
+            _given(user_input, key) != _given(current, key)
+            for key in HAND_BACK_KEYS
+            if key in shown
         )
+
+    def _saves_another_hand_back(self) -> bool:
+        """Whether the options to be saved change what a hand-back goes through: the path, what
+        it writes to, the gateway or its topics, or a gateway's read-back, which judges its
+        release (P-12). Taking control out changes nothing: the options that took the boiler
+        still hand it back, through a unit that only does that."""
+        new = self.options.get(CONTROL)
+        if not isinstance(new, Mapping):
+            return False
+        current = self.config_entry.options.get(CONTROL)
+        current = current if isinstance(current, Mapping) else {}
+        keys = ["write_path", *HAND_BACK_KEYS]
+        if new.get("write_path") in OTGW_PATHS:
+            keys.append("confirmed_entity")
+        return any(_given(new, key) != _given(current, key) for key in keys)
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         menu = [
@@ -1275,6 +1297,13 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         problem = validate_problem(self.options)
         if problem is not None:
             return await self._back_to_problem(*problem)
+        if self._saves_another_hand_back():
+            # Checked again here, not only at the control steps: control may have taken the
+            # boiler, or begun to owe it a hand-back, since they were answered (P-12). Nothing
+            # is saved; the control step says why.
+            blocker = await self._async_hand_back_blocker()
+            if blocker is not None:
+                return await self._back_to_problem(blocker, None)
         entry = self.config_entry
         if entry.state in (ConfigEntryState.SETUP_ERROR, ConfigEntryState.SETUP_RETRY):
             # The failed setup left no update listener to reload it (H9): the new options are

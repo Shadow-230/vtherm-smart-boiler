@@ -48,7 +48,7 @@ async def async_release(hass: HomeAssistant, entry_id: str) -> None:
     coordinator = entry.runtime_data
     unit = coordinator.control or coordinator.hand_back_unit
     if unit is not None:
-        unit.release_owed_hand_back()
+        await unit.async_release_owed_hand_back()  # after an attempt on its way (P-51)
         return
     # No unit: the options that took the boiler are gone; the store keeps what was owed.
     _LOGGER.warning("The owed hand-back is settled by hand, as the user confirmed")
