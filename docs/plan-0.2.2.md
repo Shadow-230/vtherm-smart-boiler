@@ -7,7 +7,7 @@ later release, and the lessons of the comparison with the 0.2 audit
 high ones: a corrupt store makes the plugin forget that it holds the boiler; the control switch goes
 unavailable when the monitor fails; one entity can be both heating switch and hand-back switch; the
 OTGW "off" masks an on/off thermostat after a crash; and the water's lower bound ignores the boiler's
-minimum power. The user's decisions of 2026-09-26/27 settle decisions 1–8 below and bring control of
+minimum power. The user's decisions of 2026-09-26/27 settle decisions 1–15 below and bring control of
 boilers switched on and off by a relay (class 3) into this release. The steps of `docs/plan-0.2.md`
 still open (J2, J4, K1–K7) follow on 0.2.2: it becomes the first version to reach the test HA and to
 be published (pre-release 0.2.2b1, then 0.2.2 — the user confirms at K5, decision 16 below).
@@ -32,8 +32,8 @@ documents, whose diffs wait for the user's consent; phase V may start meanwhile.
   with the plugin's safeguards (step X8).
 - **Missing data never switches heating off by itself**, the link to the boiler aside; every feature
   works with what the installation gives, and says what it lacks.
-- **The user settled the main safety gaps (decisions 1–8)**; the rest keep the most cautious option
-  until the user decides (phase Q).
+- **The user settled the safety gaps (decisions 1–15)**; the first published version and the
+  repository's content are decided at K4 and K5 (phase Q).
 - **The monitor says "unknown" when it cannot judge**, and its numbers stop drifting (phase Y).
 - **The missing safety tests, coverage per module and a simulator ready for J4** (phase Z).
 
@@ -47,8 +47,8 @@ documents, whose diffs wait for the user's consent; phase V may start meanwhile.
 - A step names the problems it must close; the review's row, its §6 test and section 4's proposal
   say what "closed" means.
 - 🔒 marks a step that needs the user's consent or action; ✅ marks a finished step.
-- "Decision n" refers to the numbered list below. Decisions 1–8 are the user's (2026-09-26/27); the
-  others keep their provisional option until the user decides.
+- "Decision n" refers to the numbered list below. Decisions 1–15 are the user's (2026-09-26/27);
+  decision 16 keeps its provisional option until the user decides.
 
 ## Terms
 
@@ -95,7 +95,8 @@ provisional option this plan first proposed, the answer holds.
   boiler back (for a relay, see "On/off control" below). An installation that gives no confirmation
   at all gets only the monitor — except a relay that reports no state of its own, which the user
   accepted under control with blind repeats (point D below), shown as "controlled without
-  confirmation".
+  confirmation". When VT gives no answer at all, nothing asks for heat: the plugin hands the boiler
+  to a working thermostat, or, without one, does not heat (decision 3).
 - **Boiler protection follows the boiler's own logic.** The plugin stops heating for an alarm only
   where the boiler itself stops: while the boiler reports its own low-water-pressure fault, where it
   reports one, control sends its usual "off" — no hand-back, no latch — and heats again by itself
@@ -163,9 +164,9 @@ provisional option this plan first proposed, the answer holds.
 
 ## Decisions 1–16 (Q4 🔒)
 
-Decisions 1–8 were taken on 2026-09-26/27. The others keep their provisional option — the most
-cautious one found, written into `SCOPE.md` as provisional (Q1) and built so that the user's answer
-changes one place in the code — until the user decides.
+Decisions 1–15 were taken on 2026-09-26/27; decision 16 waits for Z4, K4 and K5. A provisional
+option — the most cautious one found — is written into `SCOPE.md` as provisional (Q1) and built so
+that the user's answer changes one place in the code.
 
 1. **OTGW with an on/off thermostat** (S-01, review question 4). The PIC keeps `CH=0` through `CS=0`
    and the override's lapse, so after a crash while "off" an on/off thermostat on the gateway cannot
@@ -201,10 +202,13 @@ changes one place in the code — until the user decides.
      (`SCOPE.md` §7) for the grace period. VT zones not started yet are recognised (a test with the
      vendored VT), and the grace also covers the "VT central boiler unknown" blocker during a VT
      reload (P-105);
-   - when every zone is unknown after that, heating on the curve as before, with an alarm at once —
-     with the monitor only too;
-   - a hand-back after 1 hour only where a working thermostat takes over; no summer switch of the
-     plugin's own.
+   - when every zone is unknown after that, nothing asks for heat (decided 2026-09-27: "without VT
+     and without a thermostat nothing can send the need for heat"). With a working thermostat the
+     boiler is handed back to it at once, after the grace; without one the plugin does not heat —
+     it sends its usual "off", no hand-back, and resumes when a zone answers again. Either way an
+     alarm and a repair issue at once, with the monitor only too. This replaces "heat on the curve
+     when no zone is known" (S-03), whatever the outdoor temperature; no summer switch of the
+     plugin's own is needed.
 4. **Frost protection and the valves** (S-05). A zone VT switched off keeps its valve closed, so heat
    for it cannot arrive. *Decided:* frost protection still watches every zone, or the one zone the
    user picks (N4), but heats only for a cold zone whose emitter can take heat — VT reports an
@@ -269,31 +273,37 @@ changes one place in the code — until the user decides.
    - an allow-list in the code: a new alarm informs by default; stored reactions no longer allowed
      are neutralised; every hand-back or latch caused by an alarm raises a repair issue.
 8. **The drop rule and a value never accepted** (Open after R6 #1, S-48): merged into decision 6.
-9. **The fixed fallback** (S-26). *Provisional:* the specification follows the code — the user's
-   fixed fallback replaces the last value after 3 h of holding it. *Open:* apply it at once.
+9. **The fixed fallback** (S-26). *Decided (2026-09-27):* as the code does — with the outdoor
+   temperature lost, the last value holds for 3 h, then the user's fixed fallback (or the design
+   flow) replaces it; the specification follows.
 10. **The circuit maximum and the boiler's overshoot** (S-14). The maximum limits the setpoint; the
-    boiler may overshoot it. *Provisional:* the option text says what it limits; a new alarm rises
-    when the measured flow stays above a circuit's maximum by more than a margin (proposed: 5 K),
-    reaction "information" by default. *Open:* the setpoint limited to the maximum minus the
-    measured overshoot.
-11. **"Off" as a low setpoint** (L4 of `docs/plan-0.2.1.md`, S-39) — still open. *Provisional until
-    L4:* its risk (the CH pump may keep running) is shown at every level, in the form and on the
-    control switch.
-12. **A deviating outdoor sensor** (Open after R6 #7). The provisional decision of
-    `docs/plan-0.2.1.md` (the curve takes the colder of the two) stays until the user confirms it.
+    boiler may overshoot it. *Decided (2026-09-27):* the option text says what the maximum limits,
+    and an alarm, information only, rises when the measured flow stays above a circuit's maximum;
+    the user sets its limits — by how much and for how long — with cautious defaults (proposed:
+    5 K for 10 minutes) listed with their reasons (S-37). The alarm needs a flow reading; without
+    one it is shown as inactive.
+11. **"Off" as a low setpoint** (L4 of `docs/plan-0.2.1.md`, S-39). *Decided (2026-09-27):* control
+    without a heating switch is blocked — such installations get the monitor — until Q3 shows that
+    a low setpoint stops both the boiler and its pump; the same holds for decision 1's alternative
+    (a low `CS` with `CH` left alone).
+12. **A deviating outdoor sensor** (Open after R6 #7). *Decided (2026-09-27):* the curve takes the
+    colder of the sensor and the weather entity, as `docs/plan-0.2.1.md` provisionally decided.
 13. **Before 0.3: anti-cycling and principle 12** (S-18). Class 3 comes into 0.2.2 as VT's own
     central boiler works — no minimum on and off times and no cap on switchings per hour, which VT
     does not have either (the user, 2026-09-27: "as VT's native control works"); Q1 removes both from
     `SCOPE.md`'s class 3. Duty cycling, a start budget and an FC1 summer switch in `PLAN.md` 0.3 still
     contradict principle 12; `PLAN.md` marks them "to be decided against principle 12" (Q2).
-14. **Tests with the real VT in CI** (P-119, review question 14): may CI fetch VT 10.4.0 and SmartPI
-    0.4.0 from their tags? *Provisional:* no; the real-VT tests keep running locally before every
-    commit.
-15. **J4 in the test HA** (review question 15): an unclean restart and a lost keep-alive through the
-    test container (e.g. `docker kill` over SSH), or in-process only. *Provisional:* in-process only.
-16. **The release** (review question 16, S-53): 0.2.2 is the first version published (pre-release
-    0.2.2b1, then 0.2.2); whether the public repository carries `CLAUDE.md`, the plans and the
-    reviews is decided at K5.
+14. **Tests with the real VT in CI** (P-119, review question 14). *Decided (2026-09-27):* CI fetches
+    VT 10.4.0 and SmartPI 0.4.0 from their tags on GitHub's servers, so the real-VT tests run on
+    every change; nothing is downloaded locally.
+15. **J4 in the test HA** (review question 15). *Decided (2026-09-27):* an unclean restart and a lost
+    link are provoked in the test HA's own container (e.g. `docker kill` over SSH), only in the test
+    LXC and only after the user says to start (J4).
+16. **The release** (review question 16, S-53). *Decided (2026-09-27):* which version is published
+    first depends on how many problems 0.2.2 still has — decided after the independent check (Z4)
+    and at K4; *provisional:* pre-release 0.2.2b1, then 0.2.2. Whether the public repository
+    carries `CLAUDE.md`, the plans and the reviews (and so whether it starts from a clean history)
+    is decided at K5.
 
 The review's other questions get an answer in a step, which the user confirms or changes: 3 (X4),
 5 (V1), 6 (V3), 8 and 9 (Y1), 10 and 19 (X5), 11 and 12 (Y3), 20 (Y4). Questions 13, 17 and 18 are
@@ -362,10 +372,10 @@ In practice: `SCOPE.md`, `PLAN.md` and the plans say what 0.2.2 does; the resear
 
 | Step | Work |
 |---|---|
-| Q1 | `SCOPE.md`, `PLAN.md` and `CLAUDE.md` take the decisions of 2026-09-26/27 and the provisional options still open, and each specification problem of the review is settled in the text or assigned to a step (index): the missing-data rule; principle 12's stated exceptions, each with its reason — frost protection (as now), heating on the curve when no zone is known and the recognition period (decision 3), the activation delay (decision 5), the stop on the boiler's own fault — replacing "frost protection is the one exception"; principle 13's rule 7 (decision 2); class 3 in 0.2.2 without minimum times or a switching cap, with the link, the read-back and the rest state of a relay (X8); the matrix of outside changes (decision 6), with the changed drop rule, "held" resent every few minutes, and no hand-back retries against another controller; the wall thermostat's texts. Text only: "unknown" is written and counts once read back (S-28); SmartPI's promised signals and the Auto-TPI pause marked for a later release — Auto-TPI "detected, not paused" (S-29); a circuit takes its zones' emitter types (S-33); one term for the device and zone count, with a note for users coming from VT (S-36); the fixed thresholds and times listed with their reasons (S-37); switch zones follow VT's device state, one start per TPI cycle (S-38); CH on/off outside the drop rule (S-40); units of the options (S-44); settling an owed hand-back by hand (S-45); the ramp's rationale (S-47); principle 9 for SmartPI, which learns its own outdoor term (S-50); removing the entry: a last attempt and a persistent issue, no veto (S-54); class 2's persistent writes a stated exception, or dropped (S-56); principle 13 resets only session values, says which rule values may be options, and the source chain is clarified (S-58); the internal contradictions (S-59); each feature without a release gets one or goes (S-60); learning pauses under the control stages (S-61); the alarms that have a reaction (S-62); the risks of "held" (S-12); the activation delay (S-07) |
-| Q2 | plan corrections: stale texts in `docs/plan-0.1.md`, `docs/plan-0.2.md` and `PLAN.md` (S-46); J2: the firewall rule in `devenv/README.md` also on the forwarding path (`DOCKER-USER`) and for IPv6, with the check T-25 (S-19); J4: a held device that restarts (S-13), starts under control against the boiler's own regulation (S-15, T-24), an on/off thermostat after a crash (T-07); K1: the README also covers removal, how often data update, troubleshooting, known limitations and supported devices (S-52); K5 sets the manifest to 0.2.2b1 and K7 to 0.2.2 (S-53); in `docs/plan-0.2.1.md`: M4's removal text (S-54), N5's text part reopened (S-50), "After 0.2.1" pointing to this plan, "Done" worded as "after the fixes an independent check finds none" (S-55); `PLAN.md` 0.3 items marked for decision 13 (S-18); J4 also: a relay that restarts or loses Wi-Fi, the wall thermostat after a hand-back; K1 also: the relay setup recommendations; `PLAN.md`: on/off-only boilers (relay) moved from "Later" into 0.2.2, and in 0.3 the wall-thermostat link and the "apply" mode of the lowest flow |
+| Q1 | `SCOPE.md`, `PLAN.md` and `CLAUDE.md` take the decisions of 2026-09-26/27 and the provisional options still open, and each specification problem of the review is settled in the text or assigned to a step (index): the missing-data rule; principle 12's stated exceptions, each with its reason — frost protection (as now), the recognition period and "no heating when VT gives no answer and no thermostat is there" (decision 3), the activation delay (decision 5), the stop on the boiler's own fault — replacing "frost protection is the one exception"; principle 13's rule 7 (decision 2); class 3 in 0.2.2 without minimum times or a switching cap, with the link, the read-back and the rest state of a relay (X8); the matrix of outside changes (decision 6), with the changed drop rule, "held" resent every few minutes, and no hand-back retries against another controller; the wall thermostat's texts. Text only: "unknown" is written and counts once read back (S-28); SmartPI's promised signals and the Auto-TPI pause marked for a later release — Auto-TPI "detected, not paused" (S-29); a circuit takes its zones' emitter types (S-33); one term for the device and zone count, with a note for users coming from VT (S-36); the fixed thresholds and times listed with their reasons (S-37); switch zones follow VT's device state, one start per TPI cycle (S-38); CH on/off outside the drop rule (S-40); units of the options (S-44); settling an owed hand-back by hand (S-45); the ramp's rationale (S-47); principle 9 for SmartPI, which learns its own outdoor term (S-50); removing the entry: a last attempt and a persistent issue, no veto (S-54); class 2's persistent writes a stated exception, or dropped (S-56); principle 13 resets only session values, says which rule values may be options, and the source chain is clarified (S-58); the internal contradictions (S-59); each feature without a release gets one or goes (S-60); learning pauses under the control stages (S-61); the alarms that have a reaction (S-62); the risks of "held" (S-12); the activation delay (S-07) |
+| Q2 | plan corrections: stale texts in `docs/plan-0.1.md`, `docs/plan-0.2.md` and `PLAN.md` (S-46); J2: the firewall rule in `devenv/README.md` also on the forwarding path (`DOCKER-USER`) and for IPv6, with the check T-25 (S-19); J4: a held device that restarts (S-13), starts under control against the boiler's own regulation (S-15, T-24), an on/off thermostat after a crash (T-07); K1: the README also covers removal, how often data update, troubleshooting, known limitations and supported devices (S-52); K5 sets the manifest to 0.2.2b1 and K7 to 0.2.2 (S-53); in `docs/plan-0.2.1.md`: M4's removal text (S-54), N5's text part reopened (S-50), "After 0.2.1" pointing to this plan, "Done" worded as "after the fixes an independent check finds none" (S-55), L4 marked ✅ with the decision of 2026-09-27 (decision 11); `PLAN.md` 0.3 items marked for decision 13 (S-18); J4 also: a relay that restarts or loses Wi-Fi, the wall thermostat after a hand-back, an unclean restart and a lost link provoked in the test container (decision 15); K1 also: the relay setup recommendations; `PLAN.md`: on/off-only boilers (relay) moved from "Later" into 0.2.2, and in 0.3 the wall-thermostat link and the "apply" mode of the lowest flow |
 | Q3 | research over the network, kept in `research/`: which VT version first loads external feature managers (review question 13, P-60); whether OpenTherm boilers raise a `CS` below their minimum CH setpoint (ID 49) and fire, and whether `CS` = 10 °C means "no demand" (question 17); whether Home Assistant's shutdown stage leaves time for the slowest hand-back (question 18); a generic rule tying the lowest flow to the boiler's minimum power (decision 2, S-02); how soon an ESPHome device reports its value after a start (P-50); how the OTGW firmware over MQTT shows a gateway that drops and a broken link between the ESP and the PIC (Open after R6 #8); `research/diy/INDEX.md` completed for `gateway-6.6.asm`, or the file removed (S-51); which boilers report the low-water-pressure fault over OpenTherm and whether the gateway reads it; whether a Shelly relay's switch-off timer restarts on a repeated "on" (on a real device at J4). Web sources read as pages only: the web tool saves a fetched PDF outside the project |
-| Q4 🔒 | the user takes decisions 9–15 above — at any time, at the latest at K4, together with L4 of `docs/plan-0.2.1.md` — and decision 16 at K5; also X3's case of every zone and the outdoor temperature unknown at once. Decisions 1–8 were taken on 2026-09-26/27 |
+| Q4 🔒 | the user takes decision 16 — the first published version after Z4 and at K4, the repository's content at K5. Decisions 1–15 and L4 of `docs/plan-0.2.1.md` were taken on 2026-09-26/27 |
 
 Done when: the specification states every decision and every provisional option, the plans have no
 stale step, and the research answers are in `research/`.
@@ -402,9 +412,9 @@ dangerous combination the review found is refused in the form and among the bloc
 |---|---|
 | X1 | the guards: their memory (the block, the baseline) kept across hand-backs inside a session, reset only at its end, and the one-rewrite memory kept for its day, through a clean restart too (P-06, T-01); the baseline learned from the first known read-back that is not the plugin's value (P-07, T-02); "ignored" tracked per guard, so a boiler ignoring CH on/off is reported (P-09, T-04); an alarm together with a transient blocker latches (P-48, T-49); a hand-back passes while a guard is blocked (T-19); a setpoint entity with a step above 1 K refused, the value rounded inside the limits and compared after rounding (P-15, P-98, T-55); "off" at least 1 K below the hard minimum (P-43); a held device that returns from unavailable with its initial value rewritten without counting an outside change (S-13, T-47); CH on/off outside the drop rule, as stated (S-40); decision 6's classes — lost command, ignored from the start, clipped, another controller — with the optional return by itself, held values sent again after a device returns and every few minutes with no echo required, and the external-control switch watched (S-11, S-48); a value another controller writes judged even while the plugin's value keeps changing or the read-back was unknown at the send; `write_ignored` cleared per guard |
 | X2 | the boiler link and freshness: staleness judged over a window, so a link fresh one step in five still hands back; `boiler_link_lost` raised whenever control is on and the link is stale beyond the limit — after a restart, a blocker, or switching on with the link down — and kept while it lasts; each signal's own age limit, the flame's included, and the weather entity's own (P-08, P-41; T-03, T-26); a silent MQTT drop and a broken link between the ESP and the PIC shown as far as Q3 finds the firmware allows (Open after R6 #8) |
-| X3 | demand and zones: the opening threshold over the calling zones only (P-13, T-46); a VT device power ≤ 0 is no data, and a criterion no zone can feed is refused in the form; at run time such a criterion counts as without data — the zones' demand is judged as for unknown zones (decision 3), with an alarm naming the missing input, never as "no demand" (P-14, T-27); the power criterion, for every write path: a zone's mean power over its cycle, as VT counts it, but only while at least one calling zone has its valve open or its device active (`core/demand.py:64-65, 78-86`); control requires at least one VT zone (S-04); a zone whose mode is "off" has no demand whatever `is_ready` says (S-34, T-17); VT's `safety_state` read as a lost sensor for the zone alarm (S-35, T-44); power shedding removes a zone's demand (T-45); the reference room and the critical zone skip zones with a lost sensor or not ready (P-18); an implausible room temperature of a watched zone is unknown, with the same alarm after its limit, and one plausibility rule for room temperatures (S-06); decision 3: the recognition period, the grace period with VT zones not yet started recognised and the P-105 blocker covered, the alarm when every zone is unknown (with the monitor only too), and the hand-back after 1 hour only to a working thermostat (S-03, T-28); with every zone and the outdoor temperature unknown at once beyond its hold (`core/controller.py:198-203`), the case goes to the user at Q4 — *provisional:* as today, the fixed fallback where the user set one (decision 9), else the design flow, with `zone_unknown` and the outdoor alarm raised |
+| X3 | demand and zones: the opening threshold over the calling zones only (P-13, T-46); a VT device power ≤ 0 is no data, and a criterion no zone can feed is refused in the form; at run time such a criterion counts as without data — the zones' demand is judged as for unknown zones (decision 3), with an alarm naming the missing input (P-14, T-27); the power criterion, for every write path: a zone's mean power over its cycle, as VT counts it, but only while at least one calling zone has its valve open or its device active (`core/demand.py:64-65, 78-86`); control requires at least one VT zone (S-04); a zone whose mode is "off" has no demand whatever `is_ready` says (S-34, T-17); VT's `safety_state` read as a lost sensor for the zone alarm (S-35, T-44); power shedding removes a zone's demand (T-45); the reference room and the critical zone skip zones with a lost sensor or not ready (P-18); an implausible room temperature of a watched zone is unknown, with the same alarm after its limit, and one plausibility rule for room temperatures (S-06); decision 3: the recognition period, the grace period with VT zones not yet started recognised and the P-105 blocker covered, and, with every zone unknown after the grace, a hand-back to a working thermostat, else no heating — the usual "off" — with an alarm and a repair issue at once (with the monitor only too), replacing "heat on the curve" and the design-flow heating of `core/controller.py:198-203, 395-396` in that case (S-03, T-28) |
 | X4 | frost, fallback, ramp, correction, learning pauses, activation delay: frost protection as decision 4 — heat only for cold zones that can take it, a notification for a cold zone VT keeps closed (S-05); VT's activation delay as decision 5 (S-07); `frost_since` reset at hand-back (P-45); FALLBACK shown only while heating (P-47); the fixed fallback as decision 9 (S-26); the ramp skipped only for installation limits — the hard maximum, a circuit, the boiler — not for a falling weather ceiling (S-23); the circuit maximum as decision 10 (S-14, T-20); the comfort correction: "heat flows" means the flame when known, else the command (S-24, review question 3), the no-rise rule counts only zones taking heat (S-08), every rule of principle 13 mapped, with a freeze while a cap holds the setpoint (S-25, T-48), no rise with the clock set back (P-46, T-18), its value published and resettable (P-38); learning pauses per cause — the flow condition and the one-hour cap each where it belongs (P-89); a hot-water draw still pauses SmartPI, as the zones get no heat meanwhile, and the specification says so (S-41) |
-| X5 | configuration, refused in the form and, for hand-edited options, among the blockers: the same entity as heating switch and hand-back switch, or the setpoint entity as hand-back switch (P-03, T-38); one entity for two signals, unless it may feed both (P-16, T-32); "off" against the hard minimum at the simple level and after "restore defaults" (P-25); the path and topology pairing (P-44); the MQTT or `opentherm_gw` integration set up and enabled (P-69); an option value this version does not know (P-70); entity domains and integrations checked on the server, zones VT climates only (P-79, review question 19); cross-field checks of the design flow, the room, the hard maximum and the design outdoor range (P-68); the gateway field without custom values (P-106); removing a circuit that has zones (P-64); "restore defaults" keeps the monitoring days, or says it does not (P-65); an options edit that would block control (the boiler class, a second circuit, fewer zones than the count threshold, underfloor without a maximum flow) warned and confirmed before it is saved (Open after R6 #3); a save that does not touch control reloads without a hand-back, or the options say it hands back (P-67, review question 10); a passive fixed circuit's floor with a margin (S-42); the risks of "held" in the option (S-12); the risk of "off" as a low setpoint at every level (decision 11, S-39); one list of the options' keys (P-71); the flow's own paths tested (T-12, T-37); a VT zone built on the gateway's own thermostat entity refused; the per-zone option "closes when VT switches it off" (decision 4) |
+| X5 | configuration, refused in the form and, for hand-edited options, among the blockers: the same entity as heating switch and hand-back switch, or the setpoint entity as hand-back switch (P-03, T-38); one entity for two signals, unless it may feed both (P-16, T-32); "off" against the hard minimum at the simple level and after "restore defaults" (P-25); the path and topology pairing (P-44); the MQTT or `opentherm_gw` integration set up and enabled (P-69); an option value this version does not know (P-70); entity domains and integrations checked on the server, zones VT climates only (P-79, review question 19); cross-field checks of the design flow, the room, the hard maximum and the design outdoor range (P-68); the gateway field without custom values (P-106); removing a circuit that has zones (P-64); "restore defaults" keeps the monitoring days, or says it does not (P-65); an options edit that would block control (the boiler class, a second circuit, fewer zones than the count threshold, underfloor without a maximum flow) warned and confirmed before it is saved (Open after R6 #3); a save that does not touch control reloads without a hand-back, or the options say it hands back (P-67, review question 10); a passive fixed circuit's floor with a margin (S-42); the risks of "held" in the option (S-12); control without a heating switch blocked, such installations getting the monitor, until Q3 shows a low setpoint stops the boiler and its pump (decision 11, S-39); one list of the options' keys (P-71); the flow's own paths tested (T-12, T-37); a VT zone built on the gateway's own thermostat entity refused; the per-zone option "closes when VT switches it off" (decision 4) |
 | X6 | the two high specification problems: both gateway topologies ask what is wired to the thermostat terminals, and control is blocked for an on/off contact or "I don't know" (decision 1, S-01; T-07 in Z3); the OTGW's `CH=` given the write type "held" — kept by the PIC until `CH=1` or a reset, not persistent, so the heating switch stays usable — in the code (`control_config.py:208-209`, `core/loop.py:115-117`) and the texts; the option "lowest flow for the boiler" with its default and risk texts, applied as a lower bound together with the hard minimum, and its "suggest" mode — the monitor's evidence of short burns at the floor and a suggested value the user applies, suggestions only where the boiler's own curve rules (decision 2, S-02, S-56); the wall thermostat's fallback temperature shown from the existing optional signal, with a warning when it is unknown or low, and the form's translated texts on the wall thermostat (its heating setting and off switch do nothing while the plugin controls, its hot-water settings still work; after a hand-back or an outage it heats by its own setting and program); an answer about the thermostat terminals that contradicts the topology refused in the form |
 | X7 | VT: a VT central entry the user disabled means no VT central boiler, and one stuck in setup error raises a visible issue after a time limit instead of blocking for ever (P-20, T-52); reloading VT's central entry uses the entry's stored data rather than handing back (P-105); an unknown VT central-boiler state leaves the Auto-TPI issue unchanged (P-54); the "reload VT" repair skips unavailable or not-ready zones (P-59); a VT without external feature managers detected by its version (P-60, from Q3); entity renames followed through the entity registry, or a repair issue (P-19); the public attribute `hot_water` renamed `heat_available` before the first release (P-61); the `smart_boiler` attribute on VT climates changed only on a real change (P-63); registration errors never reach VT (T-53); the "VT central boiler active" blocker kept until the Home Assistant restart its text asks for |
 | X8 | on/off control (class 3), as decided on 2026-09-26/27: the write path "relay" (a switch, or a boiler thermostat entity between heat and off) for on/off boilers, the water-temperature parts hidden; the relay's own settings asked in the form (its state after a power cut, its switch-off timer, whether it reports its state); flame and flow optional for the entry, with a blocker for water-temperature control where either is missing; the link is the relay — the alarm after 5 minutes out of reach, the command sent again on its return, and no hand-back meanwhile (an exception to X2's stale-link hand-back, `core/controller.py:249-257`); a relay found in another state sent the command again; its state checked at a fixed interval; a relay that reports no state controlled with blind repeats and shown as "controlled without confirmation"; the rest state at hand-back ("off" by default, "on" only when the user chose it, with its risk text) and a notification when it leaves the house without heating — the hand-back never switches a relay on otherwise, unlike today's heating switch (`transport/writers.py:189-193`, S-27); the last command restored at once after a planned restart; optional proof that the boiler heats; the power criterion as in X3; the migration from VT's central boiler, with the restart it needs; the setup texts; `write_ignored` clearing without a setpoint target; tests for each, with missing and unknown inputs |
@@ -458,8 +468,8 @@ Left on purpose for a later release:
    it helps.
 5. Relay commands beyond a switch and a boiler thermostat entity (VT's free-form actions) — later,
    if asked.
-6. Still 🔒 from `docs/plan-0.2.1.md`: L4 (decision 11, with decision 1's alternative, a low `CS` with `CH`
-   left alone) and R2 (the icon).
+6. Still 🔒 from `docs/plan-0.2.1.md`: R2 (the icon). "Off" as a low setpoint (L4, decision 11) and decision
+   1's low `CS` with `CH` left alone stay blocked until Q3's research shows they are safe.
 
 What a step leaves open is added here by name, as the rules say.
 
@@ -527,4 +537,4 @@ V1 · P-21 V5
 
 Decisions of 2026-09-26/27: 1 X6 · 2 X6, Q1 · 3 X3 · 4 X4, X5 · 5 X4 · 6 X1, V5, V7 · 7 Y1 ·
 missing data Q1, X8, Y1, Y4 and every step's negative tests · boiler protection Y1 · safe hand-back V5 ·
-on/off control X8 · the wall thermostat X5, X6 · the findings of the checks: their own list
+on/off control X8 · the wall thermostat X5, X6 · 9 X4, Q1 · 10 X4 · 11 X5, Q3 · 12 Q1 · 14 Z2 · 15 Q2 (J4) · 16 Q4 · the findings of the checks: their own list
