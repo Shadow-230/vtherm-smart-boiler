@@ -6,11 +6,14 @@ user's decisions of 2026-09-25 are applied: Versatile Thermostat decides whether
 counter or timer blocks the boiler, and every value the plugin learns stays within firm limits.
 The steps of `docs/plan-0.2.md` still open (J2, J4, K1–K7) follow on 0.2.1: it is the first
 version to reach the test HA and to be published (pre-release 0.2.1b1, then 0.2.1 — confirmed by
-the user at K5).
+the user at K5). (0.2.2: the first published version is 0.2.2, provisional, `docs/plan-0.2.2.md`
+decision 16.)
 Scope: `SCOPE.md`; overview: `PLAN.md`.
 
 Phases run in order: L, M, N, O, U, W, R. R1 and R4 are small and may come earlier. L4 waits for
-the user and does not hold up the build.
+the user and does not hold up the build. (Both provisional decisions below were decided on
+2026-09-27, `docs/plan-0.2.2.md` decisions 11 and 12; lifting decision 11's block waits for the
+user at K4, answer K.)
 
 ## In short
 
@@ -155,7 +158,7 @@ notes in `research/2026-09-24-code-review/findings.md`):
 - **The GitHub repository** does not exist yet: the manifest's `documentation`,
   `issue_tracker` and `codeowners` follow at K5 (R1).
 
-## Provisional decision (the most cautious option; the user confirms it, L4 or K4)
+## Provisional decision (the most cautious option; the user confirms it, L4 or K4) — decided 2026-09-27 (`docs/plan-0.2.2.md` decisions 11 and 12)
 
 - An outdoor sensor deviating from the weather entity (R6, A3): the curve takes the colder of
   the two, so a sensor right in a cold-air pool, or a weather entity for somewhere else, cannot
@@ -210,7 +213,7 @@ user sees when one is pending.
 | M1 ✅ | entity path: every write and hand-back checks its target — missing, `unavailable` or `unknown` is a failure, since Home Assistant skips such an entity without an error (corrected at R5: `unknown` is written, as Home Assistant calls it); a value hand-back counts as done only once read back; the hand-back value is declared with its effect (P01, S08) |
 | M2 ✅ | OTGW hand-back sends CH=1, then CS=0 — the PIC keeps a CH=0 through CS=0 — over the services and the firmware's MQTT, also after a restart; `TSet` stays a valid read-back, as the PIC sends it with CH=0 too (P02, S02) |
 | M3 ✅ | a "controlling" marker stored at once, not after the 120 s save delay, and after an unclean restart handled like a pending hand-back when control does not resume; "a write since the last hand-back" set before each attempt (P04, P05, S07) |
-| M4 ✅ | a pending hand-back outlives option changes: "No control", another write path or removing the entry is refused while it is pending, or a hand-back-only unit keeps retrying, with a repair issue; the retry is the one loop allowed after an exit (P06, S21) |
+| M4 ✅ | a pending hand-back outlives option changes: "No control", another write path or removing the entry is refused while it is pending, or a hand-back-only unit keeps retrying, with a repair issue; the retry is the one loop allowed after an exit (P06, S21). 0.2.2: removal cannot be refused, as Home Assistant offers no veto — a last attempt and a persistent issue (S-54) |
 | M5 ✅ | Home Assistant's stop: the hand-back cancels a running step instead of waiting for it; SmartPI calls leave the step's critical section (P28, P89) |
 | M6 ✅ | latches and resumption: a table "cause → how control resumes" (alarm hand-back, internal error, outside change, daily cap, blockers) in the specification and the code; an internal-error latch is cleared by any switch change; a restored latch shows its cause and never expires on its own; the guards' memory (rewrite window) survives a restart; review question 6 moot with the cap gone (M0); an option check tightened by an update does not stop a pending hand-back (P29, P35, P86, S22) |
 | M7 ✅ | stand-alone gateway (the user's decision): a lost boiler link raises an alarm and control hands back — heating stops, as the options and the control switch say; "no write without fresh data" holds for every topology; a failed outdoor sensor still leads to the fallback setpoint, not to zero heat, so sensor failure and link loss are told apart (S06, S09) |
@@ -234,7 +237,7 @@ only case where the plugin heats on its own.
 | N2 ✅ | VT's modes: central modes through the zones' demand, zones outside the central mode counting (P15, S04); "Stopped" is not a hand-back: control goes on with no demand, frost protection still watching (the user); an unknown central mode is not Auto (P84); no summer switch of the plugin's own — summer and winter come from VT, and with VT off the plugin does not heat; the summer threshold goes, the monitor keeping the building's heating threshold for its degree-days (P100, S15); VT's central-boiler detection fails closed (P52); VT's load state follows its entries (P111); VT's setup after Home Assistant's start (review question 9, from L3) |
 | N3 ✅ | demand from VT: a zone with an unknown or `unavailable` mode is unknown, and with no zone known the curve heats (P03); "auto" and heat_cool heat by `hvac_action` and `on_percent` (P12); the demand source per VT type, VT's minimum activation respected (P40, S31); zone freshness from the temperature's age (P91); `count_threshold` checked against the zones (P19); a criterion can stand alone, as in VT (review question 7); with some zones unknown the known ones decide, and a zone unknown for longer than a limit raises an alarm (the user) |
 | N4 ✅ | frost protection stays as a safety net and watches every zone, or one zone the user picks (the user's decisions); implausible temperatures rejected; frost heating that goes on without the zone warming raises an alarm — it is not stopped (P14, S03) |
-| N5 ✅ | bounded learning on the comfort correction: band +3 K, 1 K per 30 min only while heat flows, falling twice as fast, a zone without opening data not blocking the fall, no rise while another zone is more than 1 K over its setpoint, reset at hand-back and at the end of a session, information when it stays at the band's edge for hours; its interaction with the zones' PI integrators and with the outdoor terms of TPI and SmartPI described, with recommended VT settings (P13, P24, S13, S30, review question 8) |
+| N5 ✅ | bounded learning on the comfort correction: band +3 K, 1 K per 30 min only while heat flows, falling twice as fast, a zone without opening data not blocking the fall, no rise while another zone is more than 1 K over its setpoint, reset at hand-back and at the end of a session, information when it stays at the band's edge for hours; its interaction with the zones' PI integrators and with the outdoor terms of TPI and SmartPI described, with recommended VT settings (P13, P24, S13, S30, review question 8). Its documentation part — SmartPI learns its own outdoor term — is written by plan 0.2.2 Q1 (S-50) |
 | N6 ✅ | "off" (provisional, L4): through the heating switch where one is configured and declared expiring or held, else as a low setpoint; the options say what a low setpoint may leave running (the CH pump, as L3 finds) (S01, P51) |
 | N7 ✅ | the curve's inputs: an outdoor sensor found stuck or deviating hands the curve to the weather entity or the fallback setpoint, with an alarm (P16, S05); the outdoor reading's age under the one freshness rule (P26, O1); fallback setpoint = the last effective outdoor temperature for a limited time, then the design point (P25, S16); the ramp in K per minute at every step, not one step per decision (P83) |
 | N8 ✅ | limits and option dependencies: the weather ceiling never below `hard_min` (P27, S10); the "off" setpoint checked against `hard_min` and the entity (P51, S10); an opening threshold of 0 refused, a passive fixed circuit's maximum flow applied (P51); the emitter type without a default, or a warning (P60); what "one written circuit" means with several configured circuits (S32) |
@@ -318,6 +321,8 @@ and across restarts.
 
 ## Open after R6 (the user decides, at K4 at the latest)
 
+Taken over by `docs/plan-0.2.2.md` (its index).
+
 1. The drop rule (a2, C6): a value that keeps falling back to the one before the session is sent
    again for good; behind an OpenTherm thermostat a rejected `CS` falls back to the thermostat's
    modulating value and can read as another controller — a false outside change and a latched
@@ -352,15 +357,16 @@ and across restarts.
 
 ## After 0.2.1
 
-The open steps of `docs/plan-0.2.md` follow: J2 🔒, J4 🔒, K1 🔒, K4 🔒 (the review, with L4 if
-still open), K5 🔒 (public repository, pre-release 0.2.1b1), K6 🔒, K7 🔒 (release 0.2.1).
+The corrections of `docs/plan-0.2.2.md` follow, then J2, J4, K1, K2 (its ✅ withdrawn until its
+validation runs, which needs K5's repository) and K4–K7 of `docs/plan-0.2.md` (pre-release and
+release 0.2.2, provisional).
 
 ## Done for 0.2.1
 
 - Every finding of `docs/review-2026-09-24.md` fixed, or moot by a recorded decision (index).
 - All tests, `ruff check` and `ruff format --check` pass; mypy runs in CI.
 - The in-process acceptance scenarios pass, the new ones included.
-- The independent review (R6) finds no critical or high problem.
+- After the fixes, an independent check finds no critical or high problem (S-55).
 
 ## Index: review finding → step
 
