@@ -572,8 +572,10 @@ How control decides (principle 12):
   non-condensing boiler condenses in its flue (take the value from its manual); too high — warmer
   water than the rooms need. 0.2.2 only suggests: the monitor shows its evidence of short burns
   at that temperature and a suggested value — the reference + 2 K, rounded up to 0.5 °C and kept
-  below the caps (provisional, K4) — which the user enters; an estimate from the boiler's minimum
-  power is shown beside it where the inputs exist (to be settled by Q3). Nothing changes by
+  below the caps (provisional, K4) — which the user enters; an "about" estimate from the boiler's
+  minimum power — the curve's flow where the emitters give off that power — is shown beside it
+  only where the minimum power, an entered or confidently measured design load and an entered
+  curve exist, never for a non-condensing boiler (Q3.4; provisional, K4). Nothing changes by
   itself; "apply" comes in 0.3. Where the boiler's own curve sets the water temperature, the
   plugin only suggests, worded for the device that sets it, never a parallel shift of that curve;
   no suggestion while a stand-alone installation is handed back.
@@ -600,26 +602,28 @@ How control decides (principle 12):
   interaction and the VT settings recommended with it.
 - **"Off"** goes through the heating switch (built-in OTGW: `CH=0`, held, with `CS` of at least
   8 °C; a relay: the relay off). Control without a usable heating switch is blocked, and such
-  installations get the monitor, as is decision 1's alternative (a low `CS` with `CH` left alone):
-  research looks at whether a low setpoint stops both the boiler and its pump (to be settled by
-  Q3), and only the user lifts the block, at K4, even if that research is favourable (decision 11,
+  installations get the monitor, as is decision 1's alternative (a low `CS` with `CH` left alone).
+  The research of 2026-09-27 found no boiler where a low setpoint with CH enabled stops the CH
+  pump (Q3.2); only the user lifts the block, at K4, whatever the research finds (decision 11,
   answer K). A boiler that ignores "heating off" from the start of the session is treated in the
   same way: control is blocked and the boiler handed back, with an alarm, and a blocker names the
   reason until the user switches control off and on after fixing it (answer O).
-- **Boiler protection** follows the boiler's own logic. Two optional signals take binary sensors
-  the user maps: "the boiler's own low-water-pressure fault" (simple level) and "another fault
-  the boiler reports as stopping it" (advanced); which entities carry them on each path is to be
-  settled by Q3. While either reads a known "on" for 5 min (provisional, K4), control sends its
-  usual "off" — frost heating included — with no hand-back and no latch, and heats again by
-  itself in the step where every mapped fault reads off, unknown or unavailable (an unknown fault
-  counts as no fault). Without a mapped fault, low pressure raises only an "add water"
-  notification, at a threshold the user takes from the boiler's manual — none by default. A
-  broken or silent pressure sensor never stops heating. High pressure and hot flue gas inform,
-  with a notification that says what to do: read the safety valve's rating on the valve itself
-  (often 3 bar in Europe, about 2.1 bar in North America); let water out only with the heating
-  off and cold. With enough data a warning comes earlier — "your pressure keeps falling — there
-  is a risk of a leak" — judged with the water temperature taken into account, since heating the
-  water changes the pressure.
+- **Boiler protection** follows the boiler's own logic. Two optional signals take binary sensors the
+  user maps: "the boiler's own low-water-pressure fault" (simple level) and "another fault the
+  boiler reports as stopping it" (advanced) — on `opentherm_gw` the boiler's "Low water pressure"
+  and its other fault sensors, on ESPHome its fault binary sensors, on EMS-ESP no standard one
+  (model-specific service codes) (Q3.9). On OTGW such a flag counts only while the boiler's "Fault
+  indication" is on, as the gateway reads the fault details once per new fault and never again after
+  it clears (provisional, K4). While either reads a known "on" for 5 min (provisional, K4), control
+  sends its usual "off" — frost heating included — with no hand-back and no latch, and heats again
+  by itself in the step where every mapped fault reads off, unknown or unavailable (an unknown fault
+  counts as no fault). Without a mapped fault, low pressure raises only an "add water" notification,
+  at a threshold the user takes from the boiler's manual — none by default. A broken or silent
+  pressure sensor never stops heating. High pressure and hot flue gas inform, with a notification
+  that says what to do: read the safety valve's rating on the valve itself (often 3 bar in Europe,
+  about 2.1 bar in North America); let water out only with the heating off and cold. With enough
+  data a warning comes earlier — "your pressure keeps falling — there is a risk of a leak" — judged
+  with the water temperature taken into account, since heating the water changes the pressure.
 
 Fixed safeguards (principle 11), for every write — flow setpoint, CH on/off, modulation cap,
 room values and a relay:
@@ -632,10 +636,11 @@ room values and a relay:
   not a stale one — many sources report only on change — so age counts only with a user-set
   limit; without one, a source that freezes without going unavailable is not caught, and the
   option's description says so. Gateway connectivity is part of freshness (its entities go
-  unavailable); a silent drop of the OTGW firmware's MQTT, or a broken link between its ESP and
-  its PIC, is seen only as far as the firmware shows it (to be settled by Q3). A 0 from a value
-  outside the gateway's regular polling counts as unknown, and bounds fall back to safe defaults
-  (0.2 reads no such values).
+  unavailable); a silent drop of the OTGW firmware's MQTT is seen through its availability topic
+  within about 90 s, while a broken link between its ESP and its PIC is not seen through Home
+  Assistant at all — the option's text says so (Q3.6). A 0 from a value outside the gateway's
+  regular polling counts as unknown, and bounds fall back to safe defaults (0.2 reads no such
+  values).
 - A lost boiler link — flame or flow not fresh for 5 min within the last 10 min, so a link fresh
   one step in five is still lost — stops every write; the alarm "boiler link lost" rises whenever
   the control switch is on and the link is lost, whatever blockers or a latch show, and control
@@ -707,17 +712,20 @@ room values and a relay:
 
 The four classes of a change seen in the read-back:
 
-- **Lost command** — the read-back is back at the state from before the plugin (the baseline:
-  the first known read-back that is not the plugin's value; with an OpenTherm thermostat, its own
-  request, where the optional field for it is mapped) and there is a trace of an outage within the
-  5 min before: the target, its read-back or another entity of the same device was `unavailable`,
-  `unknown` or missing, or the gateway or device restarted (how a restart shows on each path: to
-  be settled by Q3). A single such fall-back without a trace is a lost command too. The plugin
-  sends the command again at once — both targets as one loss — with no alarm; 3 losses within
-  24 h raise the information alarm "commands lost", never a hold. A second untraced fall-back
-  within 60 min that no send explains counts as another controller; a send explains a fall-back
-  when it comes before the plugin's latest send was read back as its value, or within 120 s of a
-  send of a new value (answer E).
+- **Lost command** — the read-back is back at the state from before the plugin (the baseline: the
+  first known read-back that is not the plugin's value; with an OpenTherm thermostat, its own
+  request, where the optional field for it is mapped) and there is a trace of an outage within the 5
+  min before: the target, its read-back or another entity of the same device was `unavailable`,
+  `unknown` or missing, or the gateway or device restarted — on `opentherm_gw` and ESPHome a restart
+  shows as entities going `unavailable`; on the OTGW firmware's MQTT and EMS-ESP a quick restart may
+  show nothing but a restarted uptime, which the plugin reads only where the user maps an optional
+  restart indicator (Q3.7; provisional, K4). A PIC reset during bus traffic and a Data-Invalid reply
+  to ID 1 leave no trace at all. A single such fall-back without a trace is a lost command too. The
+  plugin sends the command again at once — both targets as one loss — with no alarm; 3 losses within
+  24 h raise the information alarm "commands lost", never a hold. A second untraced fall-back within
+  60 min that no send explains counts as another controller; a send explains a fall-back when it
+  comes before the plugin's latest send was read back as its value, or within 120 s of a send of a
+  new value (answer E).
 - **Ignored from the start** — the boiler never takes the value: never read back as the plugin's
   for longer than 120 s after each of the session's first 3 sends (provisional, K4). The plugin
   stops sending it for the session and says "the boiler does not accept the command — check the
@@ -951,10 +959,10 @@ yet; the user reviews every provisional value at K4.
 | "Handed back in frost" below the frost limit, cleared at the release | alarms | provisional, K4 (S-57) |
 | The lowest-water-temperature suggestion: the reference + 2 K, rounded up to 0.5 °C, below the caps | monitor | provisional, K4 |
 | J4's starts criterion: at most the boiler's own regulation's starts per hour × 1.10 | acceptance | provisional, K4 (S-15) |
-| The wait for a late report at start and stop | hand-back | to be settled by Q3; provisionally 60 s at the start, within Home Assistant's stop budget at the stop |
+| The wait for a late report: 60 s at the start; at the stop the whole hand-back within 15 s, each write capped at 3 s, the read-back wait min(5 s, the time left) | hand-back | Home Assistant gives all shutdown jobs 20 s together (Q3.3); an ESPHome device reports within about 60 s of a start, up to about 74 s without mDNS — 90 s the alternative (Q3.5); provisional, K4 |
 
 | The last command saved at once on a move of 1.0 K | control state (V3) | provisional, K4 (reason to confirm) |
-| At the stop: a 5-s wait, 15 s for the hand-back, 4 s for each write; at the start a 60-s grace; an OTGW release window of 60 s | hand-back (V4) | provisional, K4 (reason to confirm) |
+| An OTGW release window of 60 s | hand-back (V4) | provisional, K4 (reason to confirm) |
 | A held release's alarm after 10 s; taken by another after 2 checks 60 s apart (3 over 120 s with hot water unknown, none within 120 s of a draw) | hand-back (V5) | provisional, K4 (reason to confirm) |
 | The monitor failing: 300 s within 600 s; control resuming after 60 s without a failed refresh | control (V6) | 300 s decided (answer I); the rest provisional, K4 |
 | The "blocker stopped heating" issue after 60 s | control (V7) | provisional, K4 (reason to confirm) |
