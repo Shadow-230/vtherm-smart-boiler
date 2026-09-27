@@ -497,6 +497,7 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "room_sensor_lost_zones": list(status.room_sensor_lost_zones),
             "learning_paused": list(status.paused_zones),
             "writes_stopped": status.writes_stopped,
+            "monitor_failed_since": _time(status.monitor_failed_since),
         }
 
 

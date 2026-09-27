@@ -2,22 +2,30 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import replace
 
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.controller import (
     _LIMIT_REASON,
+    MAX_STEP_S,
+    OUTAGE_BACK_S,
+    OUTAGE_LOST_S,
+    OUTAGE_WINDOW_S,
     BoilerCommand,
     ControlConfig,
     ControlInputs,
     ControlMode,
     ControlState,
+    OutageWindow,
     Reason,
+    bad_time,
     clock_due,
     clock_start,
     decide,
     fallback_setpoint,
+    follow_outage,
 )
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.limits import FlowLimits, LimitCode
@@ -595,3 +603,118 @@ def test_a_start_later_than_now_counts_as_now(
 )
 def test_a_moment_further_ahead_than_planned_is_due_now(at: float, expected: float) -> None:
     assert clock_due(at, 100.0, 60.0) == expected
+
+
+# --- V6: a lasting outage judged over a window (the plugin's monitor; X2's link reuses it) -----
+
+
+def checks(window: OutageWindow, moments: Iterable[tuple[float, bool]]) -> OutageWindow:
+    """The window after a check at each moment: (time, bad)."""
+    for t, bad in moments:
+        window = follow_outage(window, t, bad)
+    return window
+
+
+def failing(start: float, stop: float, step: float = 30.0) -> list[tuple[float, bool]]:
+    """A failed check every ``step`` seconds from ``start`` up to, not including, ``stop``."""
+    count = round((stop - start) / step)
+    return [(start + i * step, True) for i in range(count)]
+
+
+def test_the_outage_values() -> None:
+    """Five minutes (the user's answer I) within ten; back after a minute (provisional, K4)."""
+    assert (OUTAGE_LOST_S, OUTAGE_WINDOW_S, OUTAGE_BACK_S, MAX_STEP_S) == (300, 600, 60, 60)
+
+
+def test_a_check_counts_until_the_next_one_at_most_a_minute() -> None:
+    assert bad_time(((0.0, True), (45.0, False)), 100.0) == 45.0
+    assert bad_time(((0.0, True),), 20.0) == 20.0  # the last one until now
+    assert bad_time(((0.0, True),), 100.0) == MAX_STEP_S  # nothing since: a minute at most
+    assert bad_time(((0.0, False), (30.0, True)), 50.0) == 20.0
+    assert bad_time(((0.0, True), (30.0, True)), 620.0) == 70.0  # only what is in the window
+
+
+def test_failed_checks_covering_five_minutes_within_ten_are_a_loss() -> None:
+    """Checks every 30 s, all failed: 290 s of them is no loss yet, 300 s is — judged at any
+    moment, not only at a check (control steps between the monitor's refreshes)."""
+    window = checks(OutageWindow(), failing(0.0, 300.0))  # the last at 270 s
+    assert not window.lost
+    assert not follow_outage(window, 290.0).lost
+    lost = follow_outage(window, 300.0)
+    assert lost.lost
+    assert lost.lost_from == 0.0
+
+
+def test_a_flapping_outage_is_a_loss_by_its_window() -> None:
+    """Nine checks in ten fail, every 30 s: no run of failures reaches five minutes (270 s at
+    most), yet together they cover five minutes within ten — a loss, from the first failure."""
+    window = OutageWindow()
+    lost_at = None
+    for i in range(40):
+        window = follow_outage(window, 30.0 * i, i % 10 != 9)
+        if window.lost and lost_at is None:
+            lost_at = 30.0 * i
+    assert lost_at == 330.0
+    assert window.lost_from == 0.0
+
+
+def test_one_failed_check_every_five_minutes_is_never_a_loss() -> None:
+    window = OutageWindow()
+    for i in range(240):  # two hours, a check every 30 s
+        window = follow_outage(window, 30.0 * i, i % 10 == 0)
+        assert not window.lost
+
+
+def test_a_loss_ends_after_a_minute_without_a_failure_and_clears_the_window() -> None:
+    """A single good check does not end a loss; a minute of good ones without a break does, and
+    the window starts afresh: one failure afterwards is no loss, though the last ten minutes held
+    five of them."""
+    window = checks(OutageWindow(), failing(0.0, 330.0))
+    assert window.lost
+    window = checks(window, [(330.0, False), (360.0, True)])  # a single good check
+    assert window.lost
+    window = checks(window, [(390.0, False), (420.0, False)])
+    assert follow_outage(window, 449.0).lost  # good for 59 s
+    back = follow_outage(window, 450.0, False)
+    assert not back.lost
+    assert back.checks == ()
+    assert back.lost_from is None
+    assert back.good_since == 390.0
+    again = checks(back, [(480.0, True)])
+    assert not again.lost
+    assert not follow_outage(again, 600.0).lost
+
+
+def test_a_loss_ends_a_minute_after_the_last_good_check_without_a_new_one() -> None:
+    """The monitor refreshes rarely where polling is off: a good check, then a minute without a
+    failure, ends the loss."""
+    window = checks(OutageWindow(), [*failing(0.0, 330.0), (330.0, False)])
+    assert follow_outage(window, 389.0).lost
+    assert not follow_outage(window, 390.0).lost
+
+
+def test_no_checks_are_no_loss() -> None:
+    """Missing input: no check yet (just after a start) counts as nothing failed."""
+    assert bad_time((), 100.0) == 0.0
+    assert follow_outage(OutageWindow(), 1e9) == OutageWindow()
+    assert not follow_outage(OutageWindow(), 0.0, False).lost
+    assert not follow_outage(OutageWindow(), 0.0, True).lost
+
+
+def test_a_clock_set_back_does_not_stretch_the_window() -> None:
+    """A check earlier than the last one means the wall clock was set back: the later checks go.
+    A moment taken just before the last check is judged at that check."""
+    window = checks(OutageWindow(), failing(10000.0, 10270.0))  # 240 s of failures
+    back = follow_outage(window, 6400.0, True)  # an hour back
+    assert back.checks == ((6400.0, True),)
+    assert not follow_outage(back, 6430.0, True).lost
+    assert follow_outage(window, 10200.0) == follow_outage(window, 10240.0)
+
+
+def test_a_loss_starts_at_its_first_failure_in_the_window() -> None:
+    """A failure long before does not count as the start of the loss."""
+    moments = [(0.0, True), (30.0, False), *failing(700.0, 1030.0)]
+    window = checks(OutageWindow(), moments)
+    assert window.lost
+    assert window.lost_from == 700.0
+    assert window.checks[0][0] >= 1000.0 - OUTAGE_WINDOW_S - MAX_STEP_S  # old checks go

@@ -158,6 +158,13 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
     taken = SOURCE["issues"]["hand_back_taken_by_other"]  # V5
     assert "{target}" in taken["description"]
     assert taken["title"]
+    failed = SOURCE["issues"]["monitor_failed"]  # V6: the issue, and the note it becomes
+    assert failed["title"]
+    assert failed["description"]
+    note = SOURCE["issues"]["monitor_recovered"]
+    assert set(PLACEHOLDER.findall(note["description"])) == {"since", "until"}
+    assert note["title"]
+    assert SOURCE["exceptions"]["monitor_refresh_failed"]["message"]  # the refresh's failure
 
 
 def _values(entity: dict, attribute: str) -> set[str]:

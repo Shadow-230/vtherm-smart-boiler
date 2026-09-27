@@ -19,7 +19,7 @@ from .coordinator import SmartBoilerCoordinator
 from .entity import ControlEntity
 
 # Blockers that pass on their own; control switched on waits for them instead of refusing.
-TRANSIENT_BLOCKERS = frozenset({"ha_starting", "vt_central_boiler_unknown"})
+TRANSIENT_BLOCKERS = frozenset({"ha_starting", "vt_central_boiler_unknown", "monitor_failed"})
 # Blockers the switch change itself clears.
 CLEARED_BY_SWITCHING = frozenset({"control_error"})
 

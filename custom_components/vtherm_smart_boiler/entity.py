@@ -63,6 +63,12 @@ class ControlEntity(SmartBoilerEntity):
             raise ValueError("control is not set up")
         self.control: ControlUnit = control
 
+    @property
+    def available(self) -> bool:
+        """Available while the control unit runs, whatever the monitor's refresh does: the
+        control switch must stop the plugin exactly when something is wrong (P-02)."""
+        return not self.control.stopping
+
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         self.async_on_remove(self.control.async_add_listener(self.async_write_ha_state))

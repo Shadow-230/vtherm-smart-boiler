@@ -1139,6 +1139,9 @@
       },
       "alarm_outdoor_sensor_suspect": {
         "name": "Sterowanie: czujnik zewnętrzny pominięty"
+      },
+      "alarm_monitor_failed": {
+        "name": "Sterowanie: monitor stale zawodzi"
       }
     },
     "switch": {
@@ -1225,6 +1228,9 @@
     "blocked_control_error": {
       "message": "Sterowanie zatrzymało się po błędzie wewnętrznym. Sprawdź log, potem wyłącz i włącz sterowanie. Inne powody: {others}."
     },
+    "blocked_monitor_failed": {
+      "message": "Monitor wtyczki zawodzi od 5 minut, więc sterowanie oddało kocioł; wróci samo, gdy monitor znów zadziała. Sprawdź log. Inne powody: {others}."
+    },
     "blocked_timeout_needs_expiring_writes": {
       "message": "Limit czasu urządzenia oddaje sterowanie tylko przy zapisach wygasających: wybierz w opcjach wartość oddania albo przełącznik. Inne powody: {others}."
     },
@@ -1245,6 +1251,9 @@
     },
     "blocked_off_setpoint_near_hand_back_value": {
       "message": "„Wyłączone” różni się od wartości oddania o mniej niż 0,5 K, a ta wartość oddaje kotłowi własne sterowanie: „wyłączone” oddałoby kocioł zamiast wyłączyć grzanie. Wybierz inną wartość. Inne powody: {others}."
+    },
+    "monitor_refresh_failed": {
+      "message": "Monitor wtyczki nie mógł obliczyć swoich danych; szczegóły są w logu."
     }
   },
   "issues": {
@@ -1290,6 +1299,14 @@
     "hand_back_taken_by_other": {
       "title": "Po oddaniu kotłem steruje inny sterownik",
       "description": "Wtyczka oddała kocioł, a inny sterownik — automatyzacja, własny program urządzenia albo inna integracja — trzyma teraz to, co wtyczka ustawiła: {target}. Wtyczka uznaje oddanie za wykonane i więcej tam nie zapisuje. Z termostatem albo własnym sterowaniem kotła grzanie idzie dalej pod nim; tam, gdzie oddanie zatrzymuje grzanie, kocioł grzeje tylko pod tym innym sterownikiem. Jeśli nie spodziewasz się innego sterownika, znajdź go."
+    },
+    "monitor_failed": {
+      "title": "Sterowanie oddało kocioł: monitor wtyczki stale zawodzi",
+      "description": "Monitor wtyczki zawodzi od 5 minut — to błąd we wtyczce; szczegóły są w logu — więc sterowanie oddało kocioł. Wróci samo, gdy monitor znów zadziała. Do tego czasu grzeje termostat albo własne sterowanie kotła, jeśli instalacja je ma; tam, gdzie oddanie zatrzymuje grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci."
+    },
+    "monitor_recovered": {
+      "title": "Monitor wtyczki przez pewien czas zawodził; sterowanie wróciło",
+      "description": "Monitor wtyczki zawodził od {since} do {until}, więc w tym czasie sterowanie oddało kocioł. Monitor znów działa i sterowanie wróciło samo. Błąd jest w logu; jeśli to się powtórzy, zgłoś go."
     }
   }
 }

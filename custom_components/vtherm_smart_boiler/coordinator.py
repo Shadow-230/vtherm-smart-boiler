@@ -37,7 +37,7 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.storage import Store
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from . import feature_manager
@@ -70,6 +70,7 @@ from .core.alarms import (
     unstable_ignition,
 )
 from .core.analysis import Analysis, analyse
+from .core.controller import OutageWindow, follow_outage
 from .core.critical_zone import CriticalZone, critical_zone
 from .core.cycles import classify_burns, find_burns
 from .core.daily import KEEP_DAYS, DaySummary, settings_key, summarize_day
@@ -114,6 +115,7 @@ SAVE_DELAY_S = 120
 # An emitter factor is recomputed at every update while its zone heats: saved at this pace, so
 # the store is not rewritten every two minutes all winter.
 FACTOR_SAVE_DELAY_S = 15 * 60
+MONITOR_REFRESH = "The monitor refresh"  # the quick path, as its failure and recovery are logged
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +198,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._analysing = False
         # A lasting failure of a periodic job is logged once, with its trace, and its end once.
         self._failing: set[str] = set()
+        # The monitor's refreshes of the last ten minutes, each failed or not: control hands back
+        # while they fail for five (V6); and the first failure of the current streak, shown.
+        self._refreshes = OutageWindow()
+        self.monitor_failed_since: float | None = None
         self._save_due: float | None = None  # when the pending delayed save runs
         # Day summaries for the verdict, kept for up to a year (SCOPE.md §10).
         self.daily: dict[float, DaySummary] = {}
@@ -630,8 +636,50 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     # --- quick path -----------------------------------------------------------------------
 
     async def _async_update_data(self) -> MonitorData:
-        feature_manager.async_check(self.hass, self)
-        return self._compute(dt_util.utcnow().timestamp())
+        """The quick path. Any exception in it is logged once with its trace, and its end once;
+        Home Assistant is told through ``UpdateFailed``, so the monitor's entities go unavailable
+        while control's stay (P-02); and each refresh, failed or not, is counted for control."""
+        now = dt_util.utcnow().timestamp()
+        try:
+            feature_manager.async_check(self.hass, self)
+            data = self._compute(now)
+        except Exception as err:
+            self._job_failed(MONITOR_REFRESH)
+            self._count_refresh(now, failed=True)
+            raise UpdateFailed(
+                translation_domain=DOMAIN, translation_key="monitor_refresh_failed"
+            ) from err
+        self._count_refresh(now, failed=False)
+        self._job_works(MONITOR_REFRESH)
+        return data
+
+    def _count_refresh(self, now: float, failed: bool) -> None:
+        self._refreshes = follow_outage(self._refreshes, now, failed)
+        if not failed:
+            self.monitor_failed_since = None
+        elif self.monitor_failed_since is None or self.monitor_failed_since > now:
+            self.monitor_failed_since = now
+
+    @property
+    def monitor_failing(self) -> bool:
+        """The monitor's last refresh failed: its data, alarms included, is stale."""
+        return self.monitor_failed_since is not None
+
+    def monitor_lost(self, now: float) -> bool:
+        """The monitor counts as failed at ``now``: its failed refreshes cover five minutes within
+        ten, until it has worked for a minute without a failure (V6, the user's answer I)."""
+        self._refreshes = follow_outage(self._refreshes, now)
+        return self._refreshes.lost
+
+    @property
+    def monitor_lost_from(self) -> float | None:
+        """While the monitor counts as failed: its first failure in the window then."""
+        return self._refreshes.lost_from
+
+    @property
+    def monitor_works_since(self) -> float | None:
+        """The first refresh of the current run of good ones; ``None`` after a failure."""
+        return self._refreshes.good_since
 
     def _max_age(self, signal: Signal) -> float | None:
         return self.config.freshness.get(signal)  # one rule: only a limit the user set
@@ -893,8 +941,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 if moved:  # a fit that has not moved is not written again every five minutes
                     self.schedule_save()
             # Published as of now, not as of the analysis' start: the quick path may have
-            # moved on meanwhile (a reading gone stale), and must not be set back.
-            self.async_set_updated_data(self._compute(dt_util.utcnow().timestamp()))
+            # moved on meanwhile (a reading gone stale), and must not be set back. Through the
+            # refresh itself, so a failure of it is counted and logged there, once (V6).
+            await self.async_refresh()
         except Exception:  # the monitor keeps its last results; the next run tries again
             self._job_failed("The periodic analysis")
         else:

@@ -43,7 +43,8 @@
       "alarm_zone_unknown": { "default": "mdi:help-circle-outline" },
       "alarm_frost_not_warming": { "default": "mdi:snowflake-alert" },
       "alarm_correction_at_limit": { "default": "mdi:chart-bell-curve-cumulative" },
-      "alarm_outdoor_sensor_suspect": { "default": "mdi:thermometer-alert" }
+      "alarm_outdoor_sensor_suspect": { "default": "mdi:thermometer-alert" },
+      "alarm_monitor_failed": { "default": "mdi:eye-off" }
     },
     "switch": {
       "control": { "default": "mdi:radiator", "state": { "off": "mdi:radiator-off" } }

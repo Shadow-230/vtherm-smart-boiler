@@ -1139,6 +1139,9 @@
       },
       "alarm_outdoor_sensor_suspect": {
         "name": "Control: outdoor sensor left out"
+      },
+      "alarm_monitor_failed": {
+        "name": "Control: the monitor keeps failing"
       }
     },
     "switch": {
@@ -1225,6 +1228,9 @@
     "blocked_control_error": {
       "message": "Control stopped after an internal error. Check the log, then switch control off and on again. Other reasons: {others}."
     },
+    "blocked_monitor_failed": {
+      "message": "The plugin's monitor has failed for 5 minutes, so control handed the boiler back; it resumes on its own once the monitor works again. Check the log. Other reasons: {others}."
+    },
     "blocked_timeout_needs_expiring_writes": {
       "message": "The device's timeout hands back only with expiring writes: choose a hand-back value or a switch in the options. Other reasons: {others}."
     },
@@ -1245,6 +1251,9 @@
     },
     "blocked_off_setpoint_near_hand_back_value": {
       "message": "\"Off\" is within 0.5 K of the hand-back value, which returns the boiler to its own control: \"off\" would hand the boiler back instead of stopping heating. Pick another value. Other reasons: {others}."
+    },
+    "monitor_refresh_failed": {
+      "message": "The plugin's monitor could not compute its data; the log has the details."
     }
   },
   "issues": {
@@ -1290,6 +1299,14 @@
     "hand_back_taken_by_other": {
       "title": "After the hand-back another controller holds the boiler",
       "description": "The plugin handed the boiler back, and another controller — an automation, a device's own program or another integration — now holds what the plugin had set: {target}. The plugin counts the hand-back as done and does not write there again. With a thermostat or the boiler's own control, heating goes on under it; where the hand-back stops heating, the boiler heats only under that other controller. If you do not expect another controller, find it."
+    },
+    "monitor_failed": {
+      "title": "Control handed the boiler back: the plugin's monitor keeps failing",
+      "description": "The plugin's monitor has failed for 5 minutes — an error in the plugin; the log has the details — so control handed the boiler back. It resumes by itself once the monitor works again. Meanwhile a thermostat or the boiler's own control heats where your installation has one; where a hand-back stops heating, the boiler does not heat until control resumes."
+    },
+    "monitor_recovered": {
+      "title": "The plugin's monitor failed for a while; control has resumed",
+      "description": "The plugin's monitor failed from {since} to {until}, so control handed the boiler back meanwhile. The monitor works again and control has resumed by itself. The log has the error; if this happens again, report it."
     }
   }
 }

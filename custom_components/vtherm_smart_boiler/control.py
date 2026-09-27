@@ -18,7 +18,11 @@ How control resumes after it stopped (``SCOPE.md`` §7):
   the user switches control off and on; it survives a restart and never expires on its own;
 - an internal error: at any change of the control switch;
 - a lost boiler link: on its own, once the data is fresh again;
+- the plugin's own monitor failing for five minutes: on its own, once it has worked for a minute
+  without a failure, with an information note (the user's answer I);
 - a blocker: on its own, once it is gone.
+
+The control switch and control's entities stay available whatever the monitor does (P-02).
 """
 
 from __future__ import annotations
@@ -159,6 +163,10 @@ STOP_REPORT_WAIT_S = 5.0
 OWED_ISSUE = "hand_back_owed"  # a repair issue, fixable by saying the boiler was returned
 TAKEN_ISSUE = "hand_back_taken_by_other"  # after the hand-back another controller holds a target
 LATCHED_ISSUE = "control_latched"  # V7's: control stepped aside from another controller
+# The monitor failing handed the boiler back: a repair issue, which becomes an information note
+# under the same id once control has resumed (the user's answer I).
+MONITOR_ISSUE = "monitor_failed"
+MONITOR_NOTE = "monitor_recovered"
 ZONE_UNKNOWN_ALARM_S = 30 * 60.0  # a zone unknown this long is reported
 RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control counts as off
 SMARTPI_DOMAIN = "vtherm_smartpi"
@@ -172,6 +180,7 @@ RUNTIME_BLOCKERS = (
     "setpoint_outside_entity_range",
     "setpoint_unit_not_supported",
     "control_error",
+    "monitor_failed",
 )
 CONFIRMED_BY_GATEWAY = "confirmed_by_gateway"
 _SHOWN_CONFIRMED = frozenset({Confirmation.CONFIRMED.value, CONFIRMED_BY_GATEWAY})
@@ -194,6 +203,11 @@ def _cancelled_from_outside() -> bool:
     rather than a ``CancelledError`` raised inside a call it made."""
     task = asyncio.current_task()
     return task is not None and task.cancelling() > 0
+
+
+def _local_minute(t: float) -> str:
+    """A moment as a note shows it: Home Assistant's local time, to the minute."""
+    return dt_util.as_local(dt_util.utc_from_timestamp(t)).strftime("%Y-%m-%d %H:%M")
 
 
 def _entity_ids(raw: Any) -> set[str]:
@@ -259,6 +273,7 @@ class ControlAlarm(StrEnum):
     FROST_NOT_WARMING = "frost_not_warming"  # frost heating for long without the room warming
     CORRECTION_AT_LIMIT = "correction_at_limit"  # the comfort correction at 3 K for hours
     OUTDOOR_SENSOR_SUSPECT = "outdoor_sensor_suspect"  # stuck, or far from the weather
+    MONITOR_FAILED = "monitor_failed"  # the plugin's own monitor fails for five minutes
 
 
 _EVENT_ALARM = {
@@ -293,6 +308,7 @@ class ControlStatus:
     room_sensor_lost_zones: tuple[str, ...] = ()  # VT keeps their last temperature
     writes_stopped: bool = False  # another controller has the boiler: nothing is written
     hand_back_check: str | None = None  # where the last hand-back stands (HandBackConfirmation)
+    monitor_failed_since: float | None = None  # the monitor's current run of failed refreshes
 
     @property
     def confirmed_setpoint(self) -> float | None:
@@ -418,6 +434,10 @@ class ControlUnit:
         # Failures already logged: a lasting one is logged once, and its recovery once.
         self._learning_failing: set[str] = set()
         self._hand_back_logged = False
+        self._step_failing = False  # the control step failed: logged once, its end once
+        # The monitor's issue is up for a hand-back it caused: when its failures began. It
+        # becomes the information note once control holds the boiler again (answer I).
+        self._monitor_issue_since: float | None = None
 
     # --- status, listeners, storage -----------------------------------------------------
 
@@ -430,6 +450,12 @@ class ControlUnit:
     def holding(self) -> bool:
         """The boiler may hold a value control wrote: its hand-back is still to come."""
         return self._holding
+
+    @property
+    def stopping(self) -> bool:
+        """The unit is stopping or stopped (unload, reload, Home Assistant stopping): its
+        entities are unavailable from then on, and only then (P-02)."""
+        return self._stopping or self._stopped
 
     @property
     def status(self) -> ControlStatus:
@@ -595,6 +621,7 @@ class ControlUnit:
             return
         self._report_owed()
         self._started_at = dt_util.utcnow().timestamp()
+        self._monitor_issue_since = self._monitor_issue_left()
         self._track_outages(self._started_at)
         self._unsubs.append(
             async_track_time_interval(
@@ -751,6 +778,9 @@ class ControlUnit:
             found.append("setpoint_outside_entity_range")
         if self._session.failed:
             found.append("control_error")
+        if self._coordinator.monitor_lost(now):
+            # A hand-back; control resumes on its own once the monitor works again (answer I).
+            found.append("monitor_failed")
         return tuple(found)
 
     def _unit_not_supported(self) -> bool:
@@ -796,6 +826,8 @@ class ControlUnit:
             await self._async_run_step(now)
             if not enabled:
                 self._end_session()
+                # The user has seen to it: the monitor's issue, or its note, goes (answer I).
+                self._delete_monitor_issue()
         await self._async_learning_calls()
         self._notify()
 
@@ -825,7 +857,13 @@ class ControlUnit:
         try:
             await self._async_step(now)
         except Exception:
-            _LOGGER.exception("The control step failed; handing control back")
+            # A lasting error is logged once with its trace, then at DEBUG (P-24).
+            first = not self._step_failing
+            self._step_failing = True
+            if first:
+                _LOGGER.exception("The control step failed; handing control back")
+            else:
+                _LOGGER.debug("The control step failed again", exc_info=True)
             newly = not self._session.failed or ControlAlarm.CONTROL_ERROR not in (
                 self._session.alarms
             )
@@ -837,7 +875,10 @@ class ControlUnit:
             try:
                 await self._async_hand_back_now(now)
             except Exception:
-                _LOGGER.exception("Handing control back after an error failed")
+                if first:
+                    _LOGGER.exception("Handing control back after an error failed")
+                else:
+                    _LOGGER.debug("Handing control back after an error failed again", exc_info=True)
             self._coordinator.schedule_control_save()
             self._status = replace(
                 self._status,
@@ -846,6 +887,16 @@ class ControlUnit:
                 alarms=frozenset(self._alarms()),
                 hand_back_check=self._hand_back_shown,
             )
+        else:
+            if self._step_failing:
+                self._step_failing = False
+                if self._session.failed:
+                    _LOGGER.info(
+                        "The control step works again; control stays stopped until the control "
+                        "switch is switched off and on"
+                    )
+                else:
+                    _LOGGER.info("The control step works again")
 
     async def _async_step(self, now: float) -> None:
         session = self._session
@@ -869,6 +920,7 @@ class ControlUnit:
             self._restored = True
             self._coordinator.schedule_control_save()
         blockers = self.blockers(now)
+        monitor_failed = "monitor_failed" in blockers
         if self.enabled and not blockers and self._writer is None:
             self._writer = self._writer_factory(self._hass, self.options)
         zones = self._coordinator.link.zones()
@@ -888,6 +940,11 @@ class ControlUnit:
             await self._async_hand_back_writes(now)
         else:
             await self._async_writes(out, now)
+        controlling = session.loop.control.controlling
+        if out.hand_back and monitor_failed:
+            self._report_monitor_failed(now)  # the session held the boiler
+        elif self._monitor_issue_since is not None and controlling and not monitor_failed:
+            self._note_monitor_recovered(now)  # control holds the boiler again
         if Reason.BOILER_LINK_STALE in out.decision.reasons and (
             out.hand_back or out.decision.mode is ControlMode.HANDED_BACK
         ):
@@ -901,6 +958,7 @@ class ControlUnit:
             (out.decision.frost_stuck, ControlAlarm.FROST_NOT_WARMING),  # heating goes on
             (out.decision.correction_at_limit, ControlAlarm.CORRECTION_AT_LIMIT),  # information
             (self._outdoor_suspect(), ControlAlarm.OUTDOOR_SENSOR_SUSPECT),  # left out
+            (monitor_failed, ControlAlarm.MONITOR_FAILED),  # a blocker: control is handed back
         ):
             if flagged:
                 session.alarms.add(alarm)
@@ -944,6 +1002,7 @@ class ControlUnit:
             room_sensor_lost_zones=tuple(z.zone_id for z in zones if z.room_sensor_lost),
             writes_stopped=out.blocked,
             hand_back_check=self._hand_back_shown,
+            monitor_failed_since=self._coordinator.monitor_failed_since,
         )
 
     def _follow_unknown_zones(self, now: float, zones: Sequence[ZoneState]) -> tuple[str, ...]:
@@ -1027,10 +1086,12 @@ class ControlUnit:
         return check is not None and check.status in (OutdoorStatus.STUCK, OutdoorStatus.DEVIATES)
 
     def _hand_back_alarms(self) -> tuple[str, ...]:
-        """Active alarms whose reaction is to hand control back."""
+        """Active alarms whose reaction is to hand control back. The monitor's are left out
+        while its refresh fails: its last data is stale, and unknown values never count
+        (decision 7)."""
         active: list[str] = []
         data = self._coordinator.data
-        if data is not None:
+        if data is not None and not self._coordinator.monitor_failing:
             active += [
                 kind.value
                 for kind, alarm in data.alarms.items()
@@ -1045,6 +1106,7 @@ class ControlUnit:
                 ControlAlarm.FROST_NOT_WARMING,
                 ControlAlarm.CORRECTION_AT_LIMIT,
                 ControlAlarm.OUTDOOR_SENSOR_SUSPECT,
+                ControlAlarm.MONITOR_FAILED,
             ):
                 continue  # a blocker, a retry of its own, and a hand-back already made
             if self.options.reaction(alarm.value) is AlarmReaction.HAND_BACK:
@@ -1532,6 +1594,77 @@ class ControlUnit:
             translation_placeholders={"target": ", ".join(sorted(self._taken_targets))},
         )
         self._taken_issue = True
+
+    # --- the monitor failing (V6, the user's answer I) ------------------------------------------
+
+    def _monitor_issue_id(self) -> str:
+        return f"{MONITOR_ISSUE}_{self._coordinator.config_entry.entry_id}"
+
+    def _monitor_issue_left(self) -> float | None:
+        """The monitor's issue an earlier run of this entry left up (a reload keeps it): when its
+        failures began — the time it kept, else when the issue was raised — so the note follows
+        once control holds the boiler again; ``None`` without one, or with only its note."""
+        issue = ir.async_get(self._hass).async_get_issue(DOMAIN, self._monitor_issue_id())
+        if issue is None or not issue.active or issue.translation_key != MONITOR_ISSUE:
+            return None
+        since = (issue.data or {}).get("since")
+        if isinstance(since, bool) or not isinstance(since, int | float):
+            return issue.created.timestamp()
+        return float(since) if math.isfinite(since) else issue.created.timestamp()
+
+    def _report_monitor_failed(self, now: float) -> None:
+        """The monitor has failed for five minutes and control handed back the boiler it held: a
+        repair issue — an error where the hand-back stops heating, else a warning. Raised anew,
+        so an earlier one the user dismissed does not hide it."""
+        since = self._coordinator.monitor_lost_from
+        since = now if since is None else since
+        stops = hand_back_effect(self.options) is HandBackEffect.HEATING_STOPS
+        _LOGGER.warning(
+            "The plugin's monitor has failed for five minutes: control hands the boiler back, "
+            "and resumes on its own once the monitor works again"
+        )
+        issue_id = self._monitor_issue_id()
+        ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.ERROR if stops else ir.IssueSeverity.WARNING,
+            translation_key=MONITOR_ISSUE,
+            data={"since": since},
+        )
+        self._monitor_issue_since = since
+
+    def _note_monitor_recovered(self, now: float) -> None:
+        """Control holds the boiler again after the monitor's hand-back: the issue becomes the
+        information note — from the first failure to the first good refresh — under the same id,
+        a warning, as Home Assistant has no information level."""
+        since = self._monitor_issue_since
+        self._monitor_issue_since = None
+        until = self._coordinator.monitor_works_since
+        until = now if until is None else until
+        _LOGGER.info("The plugin's monitor works again: control has resumed")
+        issue_id = self._monitor_issue_id()
+        ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=MONITOR_NOTE,
+            translation_placeholders={
+                "since": _local_minute(now if since is None else since),
+                "until": _local_minute(until),
+            },
+        )
+
+    def _delete_monitor_issue(self) -> None:
+        self._monitor_issue_since = None
+        ir.async_delete_issue(self._hass, DOMAIN, self._monitor_issue_id())
 
     def _trace_entities(self, entity_id: str) -> set[str]:
         """Where an outage of a two-valued target would show: the target, its read-back, and

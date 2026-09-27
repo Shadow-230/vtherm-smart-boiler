@@ -26,6 +26,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers import storage as ha_storage
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
@@ -34,6 +35,7 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.vtherm_smart_boiler import control as control_module
 from custom_components.vtherm_smart_boiler.const import DOMAIN
+from custom_components.vtherm_smart_boiler.core.alarms import AlarmKind
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 
@@ -5330,3 +5332,470 @@ async def test_an_outage_of_another_entity_of_the_same_device_is_a_trace(
     else:
         assert switch.writes.count(True) == 2  # the session's and the hand-back's only
         assert issue(rig, "hand_back_taken_by_other") is not None
+
+
+# --- V6: the stop button (P-02, P-24; T-15, T-54; the user's answer I) ---------------------------
+
+
+@dataclass
+class Breaker:
+    """The monitor's refresh, made to fail on demand: while ``failing``, its computation — or the
+    feature manager's check before it — raises. ``runs``: when each refresh ran, and whether it
+    failed."""
+
+    failing: bool = False
+    runs: list[tuple[float, bool]] = field(default_factory=list)
+
+
+def break_monitor(monkeypatch: pytest.MonkeyPatch, where: str = "compute") -> Breaker:
+    from custom_components.vtherm_smart_boiler import feature_manager
+    from custom_components.vtherm_smart_boiler.coordinator import SmartBoilerCoordinator
+
+    breaker = Breaker()
+    if where == "compute":
+        compute = SmartBoilerCoordinator._compute
+
+        def broken(self: SmartBoilerCoordinator, now: float) -> Any:
+            breaker.runs.append((now, breaker.failing))
+            if breaker.failing:
+                raise RuntimeError("the monitor cannot compute")
+            return compute(self, now)
+
+        monkeypatch.setattr(SmartBoilerCoordinator, "_compute", broken)
+        return breaker
+    check = feature_manager.async_check
+
+    def broken_check(hass: HomeAssistant, coordinator: Any) -> None:
+        breaker.runs.append((dt_util.utcnow().timestamp(), breaker.failing))
+        if breaker.failing:
+            raise RuntimeError("the feature manager's check fails")
+        check(hass, coordinator)
+
+    monkeypatch.setattr(feature_manager, "async_check", broken_check)
+    return breaker
+
+
+async def refresh(rig: Rig) -> None:
+    """A refresh of the monitor now, as its clock or a state change makes one."""
+    assert rig.entry is not None
+    await rig.entry.runtime_data.async_refresh()
+    await rig.hass.async_block_till_done()
+
+
+def control_entities() -> list[tuple[str, str]]:
+    """The switch, control's state and setpoint, and every control alarm."""
+    return [
+        ("switch", "control"),
+        ("sensor", "control_state"),
+        ("sensor", "control_setpoint"),
+        *(("binary_sensor", f"alarm_{kind.value}") for kind in control_module.ControlAlarm),
+    ]
+
+
+def blockers(rig: Rig) -> list[str]:
+    return list(rig.state("switch", "control").attributes["blockers"])
+
+
+def local_minute(t: float) -> str:
+    """A moment as the monitor's note shows it: local time, to the minute."""
+    return dt_util.as_local(dt_util.utc_from_timestamp(t)).strftime("%Y-%m-%d %H:%M")
+
+
+@pytest.mark.parametrize("where", ["compute", "feature_manager"])
+async def test_control_switch_stays_usable_when_the_monitor_refresh_fails(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, where: str
+) -> None:
+    """T-15 (P-02): the monitor's refresh fails at every run — its computation, or the feature
+    manager's check before it. The monitor's own entities go unavailable; the control switch,
+    control's state and its alarms do not, so switching control off still hands back at once."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(30)
+    breaker = break_monitor(monkeypatch, where)
+    breaker.failing = True
+    await refresh(rig)
+    await rig.advance(60)
+    assert [failed for _, failed in breaker.runs] == [True] * len(breaker.runs)
+    assert len(breaker.runs) >= 2
+    assert rig.state("binary_sensor", "connection").state == "unavailable"  # the monitor's own
+    for domain, key in control_entities():
+        assert rig.state(domain, key).state != "unavailable", key
+    count = len(rig.gateway.calls)
+    await rig.switch(False)
+    assert rig.gateway.calls[count:] == HAND_BACK
+    assert rig.state("switch", "control").state == "off"
+    for domain, key in control_entities():
+        assert rig.state(domain, key).state != "unavailable", key
+
+
+async def test_control_entities_go_unavailable_only_once_control_stops(rig: Rig) -> None:
+    """Negative for T-15: control's entities follow the control unit — unavailable once it stops
+    (an unload, Home Assistant stopping), and not before."""
+    from homeassistant.helpers.entity_component import DATA_INSTANCES
+
+    await start(rig)
+    assert rig.entry is not None
+    unit = rig.entry.runtime_data.control
+    entities = [
+        rig.hass.data[DATA_INSTANCES][domain].get_entity(rig.entity(domain, key))
+        for domain, key in control_entities()
+    ]
+    assert all(entity is not None and entity.available for entity in entities)
+    await unit.async_stop()
+    assert not any(entity is not None and entity.available for entity in entities)
+
+
+@pytest.mark.parametrize("on", [False, True], ids=["monitor_only", "controlling"])
+async def test_a_lasting_fast_path_error_is_logged_once(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, on: bool
+) -> None:
+    """T-54 (P-24): the monitor's computation fails for ten minutes, then works. One ERROR with
+    its trace from the plugin and at most one without (Home Assistant's "Error fetching …"); the
+    recovery is one INFO from the plugin — Home Assistant adds its own "recovered" line, once.
+    With control on, its hand-back and its resume are one line each."""
+    await start(rig)
+    if on:
+        await rig.switch(True)
+    breaker = break_monitor(monkeypatch)
+    caplog.clear()
+    breaker.failing = True
+    await rig.advance(600)
+    breaker.failing = False
+    await rig.advance(120)
+    assert sum(failed for _, failed in breaker.runs) >= 14  # every refresh of ten minutes
+    ours = [r for r in caplog.records if r.name.startswith("custom_components.vtherm_smart_boiler")]
+    errors = [r for r in ours if r.levelno >= logging.ERROR]
+    assert len([r for r in errors if r.exc_info]) == 1
+    assert len([r for r in errors if not r.exc_info]) <= 1
+    assert _logged(caplog, logging.INFO, "monitor refresh works again") == 1
+    assert _logged(caplog, logging.INFO, "data recovered") <= 1  # Home Assistant's own line
+    handed_back = _logged(caplog, logging.WARNING, "monitor has failed")
+    resumed = _logged(caplog, logging.INFO, "control has resumed")
+    assert (handed_back, resumed) == ((1, 1) if on else (0, 0))
+    if on:
+        assert rig.gateway.setpoints()[-1] == EXPECTED  # control resumed
+
+
+@pytest.mark.parametrize(
+    ("topology", "severity"),
+    [
+        ("gateway_standalone", ir.IssueSeverity.ERROR),
+        ("gateway_with_thermostat", ir.IssueSeverity.WARNING),
+    ],
+)
+async def test_control_hands_back_when_the_monitor_keeps_failing(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, topology: str, severity: ir.IssueSeverity
+) -> None:
+    """The user's answer I: the monitor failing for five minutes is a blocker — a hand-back, its
+    alarm, and a repair issue (an error where the hand-back stops heating). A single good refresh
+    does not resume; a minute of them without a failure does, on its own, and the issue becomes
+    the information note, from the first failure to the first good refresh."""
+    await start(rig, topology=topology)
+    await rig.switch(True)
+    await rig.advance(30)
+    breaker = break_monitor(monkeypatch)
+    breaker.failing = True
+    await refresh(rig)  # the first failure, now
+    first = dt_util.utcnow().timestamp()
+    count = len(rig.gateway.calls)
+    await rig.advance(290)
+    assert ("setpoint", 0.0) not in rig.gateway.calls[count:]
+    assert rig.gateway.setpoints()[-1] == EXPECTED  # still controlling: keep-alives go on
+    assert "monitor_failed" not in blockers(rig)
+    assert rig.state("binary_sensor", "alarm_monitor_failed").state == "off"
+    since = rig.state("sensor", "control_state").attributes["monitor_failed_since"]
+    assert since == dt_util.utc_from_timestamp(first).isoformat()
+    assert issue(rig, "monitor_failed") is None
+    count = len(rig.gateway.calls)
+    await rig.advance(10)  # five minutes of failed refreshes
+    assert rig.gateway.calls[count:] == HAND_BACK
+    assert "monitor_failed" in blockers(rig)
+    assert rig.state("binary_sensor", "alarm_monitor_failed").state == "on"
+    assert rig.state("sensor", "control_state").state == "not_allowed"
+    found = issue(rig, "monitor_failed")
+    assert found is not None
+    assert found.translation_key == "monitor_failed"
+    assert found.severity is severity
+    assert not found.is_persistent
+    assert not found.is_fixable
+    handed = len(rig.gateway.calls)
+    breaker.failing = False
+    await refresh(rig)  # a single good refresh...
+    breaker.failing = True
+    await rig.advance(120)
+    assert len(rig.gateway.calls) == handed  # ...does not resume
+    assert "monitor_failed" in blockers(rig)
+    breaker.failing = False
+    await refresh(rig)  # works again from now
+    back = dt_util.utcnow().timestamp()
+    await rig.advance(50)
+    assert len(rig.gateway.calls) == handed  # not a minute yet
+    await rig.advance(10)
+    assert rig.gateway.setpoints()[-1] == EXPECTED  # control resumed on its own
+    assert "monitor_failed" not in blockers(rig)
+    assert rig.state("binary_sensor", "alarm_monitor_failed").state == "off"
+    assert rig.state("sensor", "control_state").attributes["monitor_failed_since"] is None
+    note = issue(rig, "monitor_failed")
+    assert note is not None
+    assert note.translation_key == "monitor_recovered"
+    assert note.severity is ir.IssueSeverity.WARNING
+    assert note.translation_placeholders == {
+        "since": local_minute(first),
+        "until": local_minute(back),
+    }
+
+
+@pytest.mark.parametrize("when", ["switched_on_while_failing", "controlling"])
+async def test_stale_monitor_alarms_do_not_hand_back(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, when: str
+) -> None:
+    """Decision 7: while the monitor fails, the alarms of its last data are stale — unknown, and
+    unknown values never count. An alarm set to hand back that they hold hands nothing back and
+    latches nothing; once the monitor works again, the same alarm, now known, hands back."""
+    rig.boiler = FakeBoiler(rig.hass, (*SIGNALS, Signal.PRESSURE))
+    rig.boiler.set(Signal.PRESSURE, 0.5 if when == "switched_on_while_failing" else 1.5)
+    rig.live()
+    entry_options = options(rig.zones, alarm_reactions={"pressure_low": "hand_back"})
+    entry_options["signals"][Signal.PRESSURE.value] = rig.boiler.entity(Signal.PRESSURE)
+    entry = add_entry(rig, entry_options)
+    assert await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    rig.entry = entry
+    coordinator = entry.runtime_data
+    breaker = break_monitor(monkeypatch)
+    if when == "controlling":
+        await rig.switch(True)
+        await rig.advance(30)
+        rig.boiler.set(Signal.PRESSURE, 0.5)
+        await refresh(rig)  # the monitor's last data holds the alarm...
+    assert coordinator.data.alarms[AlarmKind.PRESSURE_LOW].active
+    breaker.failing = True
+    await refresh(rig)  # ...and then the monitor fails
+    if when == "switched_on_while_failing":
+        await rig.switch(True)
+    await rig.advance(200)
+    assert ("setpoint", 0.0) not in rig.gateway.calls
+    assert rig.gateway.setpoints()[-1] == EXPECTED  # still controlling
+    state = rig.state("sensor", "control_state")
+    assert state.state == "heating"
+    assert state.attributes["latched_by"] == []
+    breaker.failing = False
+    await refresh(rig)  # the monitor works again: the alarm is known
+    await rig.advance(10)
+    assert rig.gateway.calls[-1] == ("setpoint", 0.0)
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["pressure_low"]
+
+
+async def test_a_lasting_control_step_error_is_logged_once(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """P-24: the control step failing at every step for five minutes is one ERROR with its trace
+    (then DEBUG), and the first step without the error one INFO. A new failure after that is a
+    new streak: logged again."""
+    await start(rig)
+    await rig.switch(True)
+    assert rig.entry is not None
+    unit = rig.entry.runtime_data.control
+    original = type(unit)._async_step
+
+    async def broken(self: Any, now: float) -> None:
+        raise RuntimeError("a bug")
+
+    monkeypatch.setattr(type(unit), "_async_step", broken)
+    await rig.advance(300)
+    assert _logged(caplog, logging.ERROR, "control step failed") == 1
+    failure = next(r for r in caplog.records if "control step failed" in r.getMessage())
+    assert failure.exc_info is not None  # with the trace
+    monkeypatch.setattr(type(unit), "_async_step", original)
+    await rig.advance(30)
+    assert _logged(caplog, logging.INFO, "control step works again") == 1
+    assert _logged(caplog, logging.ERROR, "control step failed") == 1
+    monkeypatch.setattr(type(unit), "_async_step", broken)
+    await rig.advance(30)
+    assert _logged(caplog, logging.ERROR, "control step failed") == 2
+
+
+async def test_a_short_monitor_failure_changes_nothing(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Negative: 290 s of failed refreshes, then the monitor works — no blocker, no alarm, no
+    issue and no hand-back; control keeps writing."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(30)
+    breaker = break_monitor(monkeypatch)
+    breaker.failing = True
+    await refresh(rig)
+    count = len(rig.gateway.calls)
+    await rig.advance(290)
+    breaker.failing = False
+    await refresh(rig)  # 290 s of failures
+    await rig.advance(600)
+    assert ("setpoint", 0.0) not in rig.gateway.calls[count:]
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+    assert "monitor_failed" not in blockers(rig)
+    assert rig.state("binary_sensor", "alarm_monitor_failed").state == "off"
+    assert issue(rig, "monitor_failed") is None
+
+
+async def test_a_flapping_monitor_still_hands_back(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nine refreshes in ten fail, one every 20 s: no run of failures lasts five minutes (180 s
+    here), yet together they cover five minutes within ten, and control hands back then — not
+    earlier."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(30)
+    breaker = break_monitor(monkeypatch)
+    first = dt_util.utcnow().timestamp()
+    for i in range(30):
+        breaker.failing = i % 10 != 9
+        await refresh(rig)
+        await rig.advance(20)
+        if 0.0 in rig.gateway.setpoints():
+            break
+    assert 0.0 in rig.gateway.setpoints()
+    handed_at = rig.gateway.times[rig.gateway.setpoints().index(0.0)]
+    assert handed_at == first + 320  # 180 s, 20 s good, then 120 s more
+    longest = run = 0.0
+    for (t, failed), (t_next, _) in pairwise(breaker.runs):
+        run = run + (t_next - t) if failed else 0.0
+        longest = max(longest, run)
+    assert longest < 300
+    assert "monitor_failed" in blockers(rig)
+
+
+async def test_one_failed_refresh_every_five_minutes_never_hands_back(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Negative for a flapping monitor: a single failed refresh every five minutes, for half an
+    hour, never adds up to five minutes within ten."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(30)
+    breaker = break_monitor(monkeypatch)
+    count = len(rig.gateway.calls)
+    for _ in range(6):
+        breaker.failing = True
+        await refresh(rig)
+        breaker.failing = False
+        await rig.advance(300)
+    assert sum(failed for _, failed in breaker.runs) == 6
+    assert ("setpoint", 0.0) not in rig.gateway.calls[count:]
+    assert "monitor_failed" not in blockers(rig)
+    assert rig.state("binary_sensor", "alarm_monitor_failed").state == "off"
+
+
+async def test_the_monitor_recovered_note_goes_when_control_is_switched_off(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Answer I's information note stays through a reload of the entry, and goes when the user
+    switches control off."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(30)
+    breaker = break_monitor(monkeypatch)
+    breaker.failing = True
+    await refresh(rig)
+    await rig.advance(300)
+    breaker.failing = False
+    await refresh(rig)
+    await rig.advance(60)
+    note = issue(rig, "monitor_failed")
+    assert note is not None
+    assert note.translation_key == "monitor_recovered"
+    assert rig.entry is not None
+    assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
+    await rig.hass.async_block_till_done()
+    await rig.advance(20)
+    assert rig.gateway.setpoints()[-1] == EXPECTED  # control runs again after the reload
+    kept = issue(rig, "monitor_failed")
+    assert kept is not None
+    assert kept.translation_key == "monitor_recovered"
+    await rig.switch(False)
+    assert issue(rig, "monitor_failed") is None
+
+
+async def test_a_monitor_failing_before_control_holds_the_boiler_raises_no_issue(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing was handed back, so no repair issue: the alarm and the blocker show it. Switching
+    control on waits for the monitor instead of being refused, writes nothing meanwhile, and
+    control takes the boiler once the monitor works again — with no note either."""
+    await start(rig)
+    breaker = break_monitor(monkeypatch)
+    breaker.failing = True
+    await refresh(rig)
+    await rig.advance(300)
+    assert "monitor_failed" in blockers(rig)
+    assert rig.state("binary_sensor", "alarm_monitor_failed").state == "on"
+    await rig.switch(True)  # not refused: the blocker passes on its own
+    await rig.advance(60)
+    assert rig.state("switch", "control").state == "on"
+    assert rig.gateway.calls == []
+    assert issue(rig, "monitor_failed") is None
+    breaker.failing = False
+    await refresh(rig)
+    await rig.advance(60)
+    assert rig.gateway.setpoints() == [EXPECTED]
+    assert rig.state("binary_sensor", "alarm_monitor_failed").state == "off"
+    assert issue(rig, "monitor_failed") is None
+
+
+@pytest.mark.parametrize(
+    "data", [{"since": 1768197600.0}, {"since": "not a time"}, None], ids=["known", "bad", "none"]
+)
+async def test_a_monitor_issue_left_by_the_last_run_becomes_the_note_when_control_resumes(
+    rig: Rig, data: dict[str, Any] | None
+) -> None:
+    """A reload keeps the monitor's issue: once the new run's control holds the boiler, it becomes
+    the note, from the failure's start the issue kept — unknown or unreadable, from when the
+    issue was raised — to when the new run's monitor first worked."""
+    entry = add_entry(rig, options(rig.zones))
+    ir.async_create_issue(
+        rig.hass,
+        DOMAIN,
+        f"monitor_failed_{entry.entry_id}",
+        is_fixable=False,
+        is_persistent=False,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key="monitor_failed",
+        data=data,
+    )
+    raised = dt_util.utcnow().timestamp()
+    await rig.advance(120)
+    assert await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    rig.entry = entry
+    worked = dt_util.utcnow().timestamp()
+    left = issue(rig, "monitor_failed")
+    assert left is not None
+    assert left.translation_key == "monitor_failed"  # control does not hold the boiler yet
+    await rig.switch(True)
+    note = issue(rig, "monitor_failed")
+    assert note is not None
+    assert note.translation_key == "monitor_recovered"
+    since = 1768197600.0 if data == {"since": 1768197600.0} else raised
+    assert note.translation_placeholders == {
+        "since": local_minute(since),
+        "until": local_minute(worked),
+    }
+
+
+async def test_removing_the_entry_deletes_the_monitor_issue(rig: Rig) -> None:
+    await start(rig)
+    assert rig.entry is not None
+    entry_id = rig.entry.entry_id
+    ir.async_create_issue(
+        rig.hass,
+        DOMAIN,
+        f"monitor_failed_{entry_id}",
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="monitor_recovered",
+        translation_placeholders={"since": "-", "until": "-"},
+    )
+    await rig.hass.config_entries.async_remove(entry_id)
+    await rig.hass.async_block_till_done()
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, f"monitor_failed_{entry_id}") is None

@@ -29,7 +29,7 @@ hours the decision says so: the curve is probably too low. Every limit still app
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
@@ -60,6 +60,13 @@ MAX_STEP_S = 60.0  # the most heat flow a single step counts (a clock jumping fo
 OVERHEAT_K = 1.0  # a zone this far over its setpoint stops the rise
 FROST_ALARM_S = 2 * HOUR  # frost heating this long without the room warming is reported
 FROST_WARMING_K = 0.5  # the watched room must have warmed by this much
+# A lasting outage — the plugin's own monitor failing (V6), the boiler link gone stale (X2) — is
+# judged over a window: each check counts until the next one, at most ``MAX_STEP_S``; failed
+# checks covering ``OUTAGE_LOST_S`` within the last ``OUTAGE_WINDOW_S`` are a loss, which ends
+# once the checks have been good for ``OUTAGE_BACK_S`` without a break.
+OUTAGE_LOST_S = 300.0  # decided: five minutes (the user's answer I; decision 7)
+OUTAGE_WINDOW_S = 600.0  # provisional, K4
+OUTAGE_BACK_S = 60.0  # provisional, K4
 
 
 class ControlMode(StrEnum):
@@ -211,6 +218,65 @@ def clock_due(at: float, now: float, longest_s: float) -> float:
     """When a moment planned at most ``longest_s`` ahead is due. One further ahead means the wall
     clock was set back: it is due now, rather than once the clock has caught up (C9)."""
     return now if at - now > longest_s else at
+
+
+@dataclass(frozen=True, slots=True)
+class OutageWindow:
+    """The checks of something that may fail or go stale, judged over a window: the plugin's own
+    monitor (a refresh that failed; V6), the boiler link (a step without fresh data; X2)."""
+
+    checks: tuple[tuple[float, bool], ...] = ()  # (time, bad) of each check that still counts
+    lost: bool = False  # bad for five minutes within ten; stays until good for a minute
+    lost_from: float | None = None  # the first bad moment in the window when the loss began
+    good_since: float | None = None  # the first check of the current run of good ones
+
+
+def _spans(checks: Sequence[tuple[float, bool]], at: float) -> Iterator[tuple[float, float, bool]]:
+    """Each check from its time until the next check — the last one until ``at`` — and at most
+    ``MAX_STEP_S``: a source that goes quiet is not judged on its last check for ever."""
+    for i, (t, bad) in enumerate(checks):
+        end = checks[i + 1][0] if i + 1 < len(checks) else at
+        yield t, min(end, t + MAX_STEP_S), bad
+
+
+def bad_time(
+    checks: Sequence[tuple[float, bool]], now: float, window_s: float = OUTAGE_WINDOW_S
+) -> float:
+    """The seconds within the last ``window_s`` that bad checks cover; none without checks."""
+    start = now - window_s
+    return sum(max(0.0, end - max(t, start)) for t, end, bad in _spans(checks, now) if bad)
+
+
+def follow_outage(window: OutageWindow, now: float, bad: bool | None = None) -> OutageWindow:
+    """The window at ``now``, with a check made now (``bad``) or none (``None``: time passing).
+
+    A loss begins once bad checks cover ``OUTAGE_LOST_S`` within the last ``OUTAGE_WINDOW_S`` —
+    a source that keeps dropping out counts, not only one gone for good — and ends once the
+    checks have been good for ``OUTAGE_BACK_S`` without a break; its checks are then cleared,
+    so a single failure afterwards is no loss. No check yet counts as nothing bad. A check
+    earlier than the last one means the wall clock was set back: the later ones go (C9); a
+    moment taken just before the last check is judged at that check.
+    """
+    checks = window.checks
+    good_since = window.good_since
+    if bad is not None:
+        checks = (*(check for check in checks if check[0] <= now), (now, bad))
+        if bad:
+            good_since = None
+        elif good_since is None or good_since > now:
+            good_since = now
+    at = max(now, checks[-1][0]) if checks else now
+    start = at - OUTAGE_WINDOW_S
+    checks = tuple(check for check in checks if check[0] > start - MAX_STEP_S)
+    if window.lost:
+        if good_since is not None and at - good_since >= OUTAGE_BACK_S:
+            return OutageWindow(good_since=good_since)
+        return replace(window, checks=checks, good_since=good_since)
+    if bad_time(checks, at) >= OUTAGE_LOST_S:
+        spans = _spans(checks, at)
+        first = min(max(t, start) for t, end, failed in spans if failed and end > start)
+        return OutageWindow(checks, True, first, good_since)
+    return OutageWindow(checks, False, None, good_since)
 
 
 def fallback_setpoint(config: ControlConfig) -> float:
