@@ -574,6 +574,11 @@ Left on purpose for a later release:
    (review question 19, its second half) — 0.3.
 10. A recorded "heating commanded" entity and event for users leaving VT's central boiler — 0.3.
 11. A wiring field for the relay (alone, parallel, series) — later, if asked.
+12. Whether a Shelly relay's switch-off timer restarts on a repeated "on" (Q3.10) — K6, on the
+    user's own relay if they have one; until then the relay texts say it is not documented.
+13. A broken link between the OTGW firmware's ESP and its PIC is not visible through Home
+    Assistant (the firmware keeps its connection flags on by design, Q3.6); X2 keeps
+    "availability only" and the option's text says so — later, if the firmware gains a signal.
 
 What a step leaves open is added here by name, as the rules say.
 
