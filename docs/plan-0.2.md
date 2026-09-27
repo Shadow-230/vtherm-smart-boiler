@@ -4,19 +4,16 @@ Goal: the first release with control — the 0.1 monitor (`docs/plan-0.1.md`) pl
 control in flow-setpoint mode: the plugin decides the water temperature. Room-value mode (the
 boiler's own curve decides it) moves to 0.3. Control is opt-in, marked experimental, and
 available after the monitoring period (default 7 days, `SCOPE.md` §10). On/off-only boilers
-(relay) come later. GitHub and every publication come at the end of 0.2 (the user's decision,
-2026-09-24).
+(relay) come later (0.2.2: on/off boilers through a relay, `docs/plan-0.2.2.md` X8). GitHub and
+every publication come at the end of 0.2 (the user's decision, 2026-09-24).
 Scope: `SCOPE.md`; overview: `PLAN.md`.
 
 Phases run in order: F, G, H, I, J, K — the build first, then the test HA with the user (J2, J4),
 the review and the release. S3 can happen at any time.
 
-Status on 2026-09-24: built through phase J in-process — F to I, J1, J3 and K2 done, J4's
-in-process scenarios pass (`tests/integration/test_acceptance.py`); the control code went through
-two independent reviews, every finding fixed or listed below under "Open for 0.2". A third,
-wider review (`docs/review-2026-09-24.md`) and the user's decisions of 2026-09-25 come first as
-0.2.1 (`docs/plan-0.2.1.md`); then J2 (the test HA), J4 in the test HA and phase K, which
-publish 0.2.1. S3 stays optional.
+Status on 2026-09-27: built through 0.2.1 and its review (`docs/review-2026-09-26.md`); the
+corrections of `docs/plan-0.2.2.md` come next; then J2, J4 and phase K publish 0.2.2 (provisional,
+`docs/plan-0.2.2.md` decision 16). S3 stays optional.
 
 ## Rules that shape this release
 
@@ -96,17 +93,17 @@ Flow-setpoint mode; 0.2 writes one circuit, a second circuit through the boiler 
 
 | Step | Work |
 |---|---|
-| G0 ✅ | control model: a state machine — monitor, heating, idle, summer, frost protection, fallback setpoint, handed back — every decision with its reason |
+| G0 ✅ | control model: a state machine — monitor, heating, idle, summer, frost protection, fallback setpoint, handed back — every decision with its reason (0.2.1: no summer state; summer and winter come from VT) |
 | G1 ✅ | heating curve per circuit (entered; taking it from the boiler's parameters is left for later); effective outdoor temperature, smoothed, with the weather entity as the fallback source |
 | G2 ✅ | limits: hard minimum and maximum, weather-dependent ceiling, underfloor maximum capping a shared unmixed circuit, frost protection |
 | G3 ✅ | summer/winter threshold with hysteresis (0.2.1: summer and winter come from VT; the threshold stays in the monitor only) |
 | G4 ✅ | boiler demand from device count, total power or valve opening |
 | G5 ✅ | basic anti-cycling: minimum burn, minimum pause, starts per hour (removed in 0.2.1: VT decides whether to heat, and nothing counted or timed holds heating against it) |
 | G6 ✅ | failure rules: stale data → no write; failed sensor → safe fallback setpoint (value is an option); low-flow warning when all valves are closed while the pump runs (needs a pump-running or CH-active signal; otherwise unavailable with the reason) |
-| G7 ✅ | decision clock at the shortest VT zone cycle (default 5 min); keep-alive clock every 30 s (built as an option, default 5 min; 0.2.1: it sets the water temperature only, heating on/off follows the zones at every 10 s step) |
+| G7 ✅ | decision clock for the water temperature, an option (default 5 min, VT's default cycle); keep-alive every 30 s where the write path needs it; heating on/off follows the zones at every 10 s step (0.2.1) |
 | G8 ✅ | ramp: the water temperature changes at a limited rate (option, cautious default); with a persistent write type, steps of at least the minimum change (0.2.1: K per minute at every step; nothing persistent is written) |
 | G9 ✅ | write guards for every write: rate limits; minimum on and off times and a cap on switchings per hour for CH on/off; for persistent writes (declared persistent or unknown) a minimum change (default 1 K) and a daily cap — once reached, the last value held and an alarm raised, or hand-back, the user's choice; a value changed from outside written again at most once, then an alarm, no fight (keep-alive repeats of an expiring override are not rewrites); a hand-back write held back by no guard and not bound by the hard limits (values are options, the guards are fixed). 0.2.1: a write-rate guard replaces the rate limits; the minimum on and off times, the switching cap, the minimum change and the daily cap go, as nothing is written to the boiler's persistent memory |
-| G10 ✅ | closed-loop tests against the simulator extended with a controllable boiler (an expiring setpoint override like OTGW's, CH enable, modulation cap, DHW-enable bit): rooms hold their setpoints, hard limits are never exceeded, starts stay within the budget (no budget from 0.2.1), after hand-back the boiler returns to its own control, no write without fresh data |
+| G10 ✅ | closed-loop tests against the simulator extended with a controllable boiler (an expiring setpoint override like OTGW's, CH enable, modulation cap, DHW-enable bit): rooms hold their setpoints, hard limits are never exceeded, starts stay within the budget (no budget from 0.2.1), after hand-back the boiler returns to its own control, no write without fresh data (0.2.2: starts under control compared with the boiler's own regulation, S-15, T-24 — `docs/plan-0.2.2.md` Z3) |
 
 Done when: every law has unit tests, including limits, stale data and sensor failure, and the
 closed-loop tests pass.
@@ -119,10 +116,10 @@ reaches a real boiler.
 
 | Step | Work |
 |---|---|
-| H0 ✅ | writers in a separate module, created only while control is enabled; the read transport keeps no write method |
+| H0 ✅ | writers in a separate module, created only while control is enabled; the read transport keeps no write method (0.2.1: a writer lives through hand-backs inside a session; a unit that only hands back may exist, M4) |
 | H1 ✅ | write transport: (1) user-picked entity; (2) built-in OTGW through `opentherm_gw` services or firmware MQTT commands. Repetition by write type: built-in OTGW `CS` every 30 s; a picked entity by its declared write type — expiring: repeated every 30 s; persistent or unknown (default): on change only, within the persistent-write guards (G9) — from 0.2.1 never written, control stays off; state from the value the boiler confirmed, never the requested one, read from the mapped confirmed-setpoint entity (required); on/off overrides the device does not echo (e.g. CH enable) stay marked unverified and rely on the write guards; ignored command reported; DHW-enable bit kept as it was; a 0 from rarely polled values treated as unknown |
-| H2 ✅ | hand-back on unload, reload, error, data loss, `central_mode` "Stopped" (0.2.1: "Stopped" acts through the zones' demand, not a hand-back; the OTGW hand-back sends CH=1 before CS=0) and an alarm set to hand back, with every override cleared (setpoint, CH on/off, modulation cap) — the user's chosen method: for built-in OTGW `CS=0` (default) or monitor mode (only with a physical thermostat, if F3 allows it), for an entity a value, the device's timeout or a switch; control cannot be enabled without one; what hand-back leads to depends on the topology (the thermostat takes over, or heating stops) and is shown to the user; reload leaves no loop running |
-| H3 ✅ | replaces VT's central boiler; a warning when both are active; obeys `central_mode` (0.2.1: through the zones' demand, as VT applies it per zone) |
+| H2 ✅ | hand-back on unload, reload, error, data loss, `central_mode` "Stopped" (0.2.1: "Stopped" acts through the zones' demand, not a hand-back; the OTGW hand-back sends CH=1 before CS=0) and an alarm set to hand back, with every override cleared (setpoint, CH on/off, modulation cap) — the user's chosen method: for built-in OTGW `CS=0` (default) or monitor mode (only with a physical thermostat, if F3 allows it), for an entity a value, the device's timeout or a switch; control cannot be enabled without one; what hand-back leads to depends on the topology (the thermostat takes over, or heating stops) and is shown to the user; reload leaves no loop running (0.2.1: monitor mode is not offered as a hand-back method; 0.2.2: the safe hand-back — the lowest water temperature, `CH=1`, then the release, `docs/plan-0.2.2.md` V5) |
+| H3 ✅ | replaces VT's central boiler; a warning when both are active; obeys `central_mode` (0.2.1: through the zones' demand, as VT applies it per zone; 0.2.2: a blocker, cleared only after the Home Assistant restart VT needs, `docs/plan-0.2.2.md` X7) |
 | H4 ✅ | VT feature manager with the two zone values; every exception caught so VT's loop never breaks |
 | H5 ✅ | learning pauses (options, on by default): SmartPI (`set_smartpi_learning`) during DHW in zones calling for heat, in zones with foreign heat on, and during large water temperature changes; Auto-TPI resumed only with `reinitialise: false` (built: Auto-TPI is not paused, as `set_auto_tpi_mode` is not a pure pause; a repair issue names the zones) |
 | H6 ✅ | gateway topology: detected where the gateway reports it, otherwise declared (built: declared, as F3 found it cannot be read); control is unavailable, with the reason shown, where the topology does not allow it; the plugin never changes the gateway mode on its own |
@@ -134,7 +131,7 @@ reaches a real boiler.
 |---|---|
 | I1 ✅ | control switch: off by default, available after the monitoring period (default 7 days, user may change it), marked experimental; cannot be enabled without a hand-back method and a confirmed-setpoint entity; the verdict stays visible |
 | I2 ✅ | fields: writable entity or built-in device, write type for a picked entity (expiring, persistent, or unknown — counted as persistent) and the reaction to a reached daily cap (hold and alarm, or hand back), gateway topology (detected or declared) with the hand-back effect stated, hand-back method, limits and curve per circuit, demand thresholds, anti-cycling, learning pauses, write-guard values (0.2.1: anti-cycling, the write-guard values, the persistent write type and the cap reaction go), alarm reactions per alarm type (built: info or hand back, no separate stop); each with a cautious default, a description and its risks; simple and advanced levels |
-| I3 ✅ | control-state entities: current setpoint and its reason, last write and read-back, hand-back state, anti-cycling state |
+| I3 ✅ | control-state entities: current setpoint and its reason, last write and read-back, hand-back state, anti-cycling state (0.2.1: no anti-cycling state in 0.2) |
 | I4 ✅ | translations EN and PL; key-parity test |
 | I5 ✅ | alarm thresholds as advanced options (open from 0.1) |
 
@@ -145,10 +142,10 @@ Done when: integration tests cover enabling and disabling control, every hand-ba
 
 | Step | Work |
 |---|---|
-| J1 ✅ | `devenv/`: `compose.yaml` (pinned image, config volume, plugin, VT and SmartPI mounted read-only, port), `configuration.yaml` with a fake boiler from helpers, rooms and weather; `scripts/deploy_test.sh` syncs files to the test LXC with rsync over SSH and restarts Home Assistant; setup guide for the user |
-| J2 🔒 | user, at any time: LXC (Debian 12, `nesting=1`, `keyctl=1` if unprivileged), Docker, firewall blocking the production HA, its broker and the gateway; a long-lived token for Claude; address, token and SSH key in `devenv/local.env` and `devenv/ssh/` (git-ignored) |
+| J1 ✅ | `devenv/`: `compose.yaml` (pinned image, config volume, plugin, VT and SmartPI mounted read-only, port), `configuration.yaml` with a fake boiler from helpers, rooms and weather; `scripts/deploy_test.sh` syncs files to the test LXC with rsync over SSH and restarts Home Assistant; setup guide for the user (0.2.1 R4: one tar stream over SSH, no rsync; the simulator component instead of helpers) |
+| J2 🔒 | user, at any time: LXC (Debian 12, `nesting=1`, `keyctl=1` if unprivileged), Docker, firewall blocking the production HA, its broker and the gateway — on the LXC's own output and on the forwarding path for the container (`DOCKER-USER`), for IPv4 and IPv6 (`devenv/README.md`, S-19); a long-lived token for Claude; address, token and SSH key in `devenv/local.env` and `devenv/ssh/` (git-ignored). Check T-25: from inside the container, TCP to the production HA, its broker and the gateway, over IPv4 and IPv6, must time out or be refused — run by the user at J2; Claude repeats it over SSH only after the user has said to start J4 |
 | J3 ✅ | physics simulator of our own as a test-only component in the test HA: writable setpoint entities (expiring and persistent, with a write counter) and an OTGW-like command path, burner with minimum power and hysteresis, water volume, house as one mass, zones; topologies: gateway or monitor mode, with a physical thermostat, without one, or with a virtual one |
-| J4 🔒 | acceptance scenarios, first automated in-process against the simulator (no Home Assistant instance; done: `tests/integration/test_acceptance.py`), then the same run by Claude in the test HA through its API once the user says to start: hand-back on every exit, confirmed, and retried while its target is unavailable; a restart without a clean stop handing back; keep-alive loss; hard limits; stale data and a lost boiler link (an alarm, then hand-back); outdoor-sensor failure (the fallback setpoint, never zero heat); reload; DHW-enable bit kept; ignored command detected; heating on and off following VT's zones at once, both ways, with no hold — a short-cycling boiler included; `central_mode` "Stopped" giving no demand rather than a hand-back; zones `unavailable`, in "auto" or of the over_climate type; frost protection; the comfort correction within +3 K; control refused without a hand-back, without a confirmed-setpoint source, or with a persistent or unknown write target; an alarm handing back; every topology allowing control only where it may and handing back as described; a value changed from outside, or never confirmed, rewritten at most once and then an alarm; a hand-back write passing every guard (the list as changed by 0.2.1); plus the monitor on fake entities |
+| J4 🔒 | acceptance scenarios, first automated in-process against the simulator (no Home Assistant instance; done: `tests/integration/test_acceptance.py`), then the same run by Claude in the test HA through its API once the user says to start: hand-back on every exit, confirmed, and retried while its target is unavailable; a restart without a clean stop handing back; keep-alive loss; hard limits; stale data and a lost boiler link (an alarm, then hand-back); outdoor-sensor failure (the fallback setpoint, never zero heat); reload; DHW-enable bit kept; ignored command detected; heating on and off following VT's zones at once, both ways, with no hold — a short-cycling boiler included; `central_mode` "Stopped" giving no demand rather than a hand-back; zones `unavailable`, in "auto" or of the over_climate type; frost protection; the comfort correction within +3 K; control refused without a hand-back, without a confirmed-setpoint source, or with a persistent or unknown write target; an alarm handing back; every topology allowing control only where it may and handing back as described; a value changed from outside, or never confirmed, rewritten at most once and then an alarm; a hand-back write passing every guard (the list as changed by 0.2.1); plus the monitor on fake entities. 0.2.2 revises these to the decisions of 2026-09-26/27 (`docs/plan-0.2.2.md`) and adds, in the simulator only (nothing reaches a real boiler before K4): one scenario per class of decision 6 — a lost command with a trace; a single untraced fall-back; a second within an hour, and one a send explains (answer E); ignored from the start; clipped; another controller, with the full safe hand-back (answer H), the latch and the return by itself; a held device that restarts (S-13, T-47); the lost link, and for a relay an alarm, the command again on its return and no hand-back; the recognition period, the grace period and "every zone unknown", with and without the "own room controller" tick (answer F), and on the relay path with the tick and each rest state (answer M); frost heating only for zones that can take heat, and a repair issue for a closed one; only decision 7's alarms handing back — the plugin's own monitor failing for 5 min hands back, then control resumes by itself (answer I), and the boiler's own fault gives the usual "off" after 5 min; the safe hand-back, its parts at once one after the other, and at a step aside written once even over the other controller's value, a target it then takes counting as done (answer H); control refused for an on/off contact or "I don't know" on the thermostat terminals, without a heating switch, for a boiler that ignores "heating off" from the start of the session (blocked and handed back until control is switched off and on, answer O), for a gateway entry with no answer on its thermostat terminals (answer K) and for a relay without the "separate contact" tick (answer G) — the simulator's PIC `CH=0` flag with an on/off thermostat shows why (T-07); a lost or damaged store handing back first (answer K); the activation delay, on the relay path too; a relay that restarts (seen unavailable, or found in its declared power-cut state without that, answer D; the fourth such restart within 24 h, and a relay declared "last" or "I don't know" changing while available, stepping aside, answer N), loses Wi-Fi, is switched by an automation or its own button (the step aside setting the rest state once, then leaving the relay alone, answer L), has a switch-off timer, or goes through a planned restart; starts under control against the boiler's own regulation — at most the boiler's own starts per hour × 1.10 (provisional, K4), over 24 h at +8 °C and at −5 °C in the same simulated house, the ratio reported for K4 (S-15, T-24); the wall thermostat after a hand-back; an unclean restart with `docker kill ha-test` over SSH and a lost link provoked by a means Z3 prepares, both in the test container only, after the user says to start (decision 15) |
 
 Done when: every scenario passes in the test HA.
 
@@ -156,19 +153,19 @@ Done when: every scenario passes in the test HA.
 
 | Step | Work |
 |---|---|
-| K1 🔒 | release files: `LICENSE` (official Apache-2.0 text, fetched with the user's consent at this step), `NOTICE`, `README.md` (installation, what each entity means, what stays local, a section "Options and risks", what hand-back does on each write path, a template for the user's manual fallback), `CHANGELOG.md`, `hacs.json`; `manifest.json` code owners, documentation and issue tracker once the repository exists (K5); the README states the minimum VT version |
+| K1 🔒 | release files: `LICENSE` (official Apache-2.0 text, fetched with the user's consent at this step), `NOTICE`, `README.md` (installation, what each entity means, what stays local, a section "Options and risks", what hand-back does on each write path, a template for the user's manual fallback; removal; how often data update — the 30 s tick, the 10 s control step, the 5-min analysis, forecasts every 30 min; troubleshooting; known limitations, among them changes no read-back can see and a clip of a flat setpoint judged as another controller; supported devices; the relay setup recommendations, with the Shelly timer "not documented" until K6; the wall-thermostat texts — S-52), `CHANGELOG.md`, `hacs.json`; `manifest.json` code owners, documentation and issue tracker once the repository exists (K5); the README states the minimum VT version (10.2.0 loads external feature managers; 10.4.0 is the version tested) |
 | K2 | workflows: tests, ruff, Hassfest, HACS action — written; its ✅ withdrawn until the validation passes (`docs/plan-0.2.1.md`, R1) |
 | K3 ✅ | local git since 2026-09-24; `.gitignore` written before the first commit: `.tools/`, `.venv/`, `.tmp/`, `data/`, `vendor/`, `research/`, `home-assessment.md`, `devenv/local.env`, `devenv/ssh/` |
-| K4 🔒 | the user reviews the 0.1 monitor laws, the control laws, the write guards and the defaults, and confirms the provisional decisions — before anything reaches a real boiler (the user's decisions, 2026-09-24) |
-| K5 🔒 | GitHub repository (created by the user, or by Claude with the user's consent), public — HACS installs only from public repositories — with the description, topics and issues the HACS action checks; the manifest's code owners, documentation and issue tracker filled in; a pre-release `0.2.1b1` |
-| K6 🔒 | the user installs the pre-release on their installation through HACS; control is off by default, so it monitors first: 7 days; before control is enabled, a written manual fallback (how to return the boiler to its own control) is ready; control starts under supervision in mild weather; several days without errors; redacted diagnostics the user places in `data/` can be analysed |
-| K7 🔒 | release 0.2.1 |
+| K4 🔒 | the user reviews the 0.1 monitor laws, the control laws, the write guards and the defaults, and confirms the provisional decisions — before anything reaches a real boiler (the user's decisions, 2026-09-24). The agenda adds `docs/plan-0.2.2-details.md` Q4's list: the first published version (decision 16); the default of 20 °C and every "(provisional, K4)" value of `SCOPE.md`'s fixed-values table; the plan's answers to review questions 3, 5, 6, 8–12, 19 and 20; whether to lift the block on "off" as a low setpoint and on decision 1's low `CS` (decision 11, answer K); and the 0.2.1 change log read together with `docs/review-2026-09-26-vs-0.2.md` |
+| K5 🔒 | GitHub repository (created by the user, or by Claude with the user's consent), public — HACS installs only from public repositories — with the description, topics and issues the HACS action checks; the manifest's code owners, documentation and issue tracker filled in; a pre-release — `docs/plan-0.2.2.md` Z2 sets the manifest and `tests/test_release.py` to 0.2.2b1, and K5 publishes it or sets both to the version decision 16 picks at K4; K5 also decides the repository's content (whether it carries `CLAUDE.md`, the plans and the reviews, and so whether it starts from a clean history) |
+| K6 🔒 | the user installs the pre-release on their installation through HACS; control is off by default, so it monitors first: 7 days; before control is enabled, a written manual fallback (how to return the boiler to its own control) is ready; control starts under supervision in mild weather; several days without errors; redacted diagnostics the user places in `data/` can be analysed. Where the user has a Shelly relay of their own, they check whether its switch-off timer restarts on a repeated "on" (`docs/plan-0.2.2.md` Q3.10); the result is kept in `research/`. It is never done at J4, which uses the simulator only |
+| K7 🔒 | release — the manifest and `tests/test_release.py` set to the release version (provisional 0.2.2, decision 16) |
 
 ## Done for 0.2
 
 All tests and `ruff` pass; every acceptance scenario passes in the test HA; the author's
 installation has monitored for 7 days and then run control without errors; the user has reviewed
-0.1 and 0.2; release 0.2.0 is published.
+0.1 and 0.2; published as 0.2.2 (provisional).
 
 ## Open for 0.2
 
@@ -181,14 +178,16 @@ installation has monitored for 7 days and then run control without errors; the u
   decisions of 2026-09-25 settle several: a lost link raises an alarm, nothing persistent is
   written, the comfort correction stays within +3 K — `docs/plan-0.2.1.md`):
   - Stand-alone gateway: with the boiler's data lost, or an alarm set to hand back, the boiler
-    does not heat until the data returns or the user acts.
+    does not heat until the data returns or the user acts. (0.2.2: decision 7 narrows the alarm
+    hand-backs, and a relay out of reach gets an alarm and no hand-back.)
   - Two gateway disturbances in a day (reset, power blip) count as two outside changes: control
-    hands back and stays latched until switched off and on.
+    hands back and stays latched until switched off and on. (0.2.2: moot, decision 6 — a lost
+    command is sent again.)
   - A source that freezes without going unavailable (MQTT without availability) is not caught
     unless a freshness limit is set; control then runs on the curve without seeing the boiler.
   - Near the daily cap of wearing writes "off" is no longer written, so the boiler may heat
-    without demand until the day's window frees up.
-  - Comfort correction is on by default (up to 10 K above the curve); a session's first setpoint
+    without demand until the day's window frees up. (Removed, 0.2.1 M0.)
+  - Comfort correction is on by default (up to 10 K above the curve; +3 K, 0.2.1 N5); a session's first setpoint
     is the curve's value, not ramped; Auto-TPI is not paused (a repair issue only); an OTGW
     read-back confirms what the gateway sent, not what the boiler took; the control switch comes
     back after a restart as it was.
