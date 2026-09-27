@@ -3,16 +3,21 @@
 Working rules, code conventions and verified facts for Claude. **Where to continue:** the first
 step without ✅ (optional ones aside) in [`docs/plan-0.1.md`](docs/plan-0.1.md), then in
 [`docs/plan-0.2.1.md`](docs/plan-0.2.1.md) (corrections that come before the rest of 0.2), then
-in [`docs/plan-0.2.2.md`](docs/plan-0.2.2.md) (corrections after the review of 2026-09-26),
-then in [`docs/plan-0.2.md`](docs/plan-0.2.md), whose status line says where the build stands; phases
-run in order. 0.1 and 0.2 are built in one go;
-0.2 is the first release.
+in [`docs/plan-0.2.2.md`](docs/plan-0.2.2.md) (corrections after the review of 2026-09-26; the
+details of each step are in [`docs/plan-0.2.2-details.md`](docs/plan-0.2.2-details.md), which opens
+with "Start here"), then in [`docs/plan-0.2.md`](docs/plan-0.2.md), whose status line says where the
+build stands; phases run in order. A 🔒 step whose plan says it holds nothing up is noted in the
+report and passed; work goes on with the next step. 0.1 and 0.2 are built in one go; the first
+published version is decided at K4 and K5 (`docs/plan-0.2.2.md`, decision 16; provisionally
+0.2.2b1).
 
 - **Scope** (general, any installation): [`SCOPE.md`](SCOPE.md)
 - **Development plan:** [`PLAN.md`](PLAN.md); plans per release:
   [`docs/plan-0.1.md`](docs/plan-0.1.md), [`docs/plan-0.2.md`](docs/plan-0.2.md),
-  [`docs/plan-0.2.1.md`](docs/plan-0.2.1.md), [`docs/plan-0.2.2.md`](docs/plan-0.2.2.md)
-- **Research** (network reads, dated): `research/`
+  [`docs/plan-0.2.1.md`](docs/plan-0.2.1.md), [`docs/plan-0.2.2.md`](docs/plan-0.2.2.md) with
+  [`docs/plan-0.2.2-details.md`](docs/plan-0.2.2-details.md)
+- **Research** (network reads, and the notes and raw results of every analysis and check, dated):
+  `research/`
 - **Author's own assessment**, private — never a source of values for code, defaults, tests or
   docs: [`home-assessment.md`](home-assessment.md)
 
@@ -49,7 +54,9 @@ Each topic lives only in its file; do not copy it here.
   included), repositories, installs, environments, issues or pull requests.
   Exceptions: files and directories in the agreed layout (the "Layout" sections of
   `docs/plan-0.1.md` and `docs/plan-0.2.md`) are created without asking; results of network
-  reads may be kept in `research/` in the working directory (git-ignored).
+  reads, and every finding and result of an analysis or check, are kept in `research/` in the
+  working directory (git-ignored) — the user's rule, 2026-09-27: all findings and results are
+  saved there.
 - These rules bind subagents too: every delegated task includes, in full, every rule of this
   file and every restriction the user has given — not a summary.
 - Tools, Python, package caches and temporary files live inside the project (`.tools/`, `.venv/`,
@@ -59,8 +66,10 @@ Each topic lives only in its file; do not copy it here.
 - Git is local only (since 2026-09-24): commit after every completed step with a descriptive
   message; never add a remote or push without the user's consent. Code, test and
   tool-configuration files may be changed without asking — history keeps every change.
-  Documents (`*.md`) and the user's files still need a shown diff and consent. Anything not
-  tracked by git is shown and confirmed before it is deleted or overwritten.
+  Documents (`*.md`) and the user's files still need a shown diff and consent — except a ✅ on a
+  finished step and an addition to a plan's "Open after" list, which are committed at once, with
+  the diff shown in the step's report (the user, 2026-09-27). Anything not tracked by git is shown
+  and confirmed before it is deleted or overwritten.
 - Autonomous work: phases run in order without waiting; work stops at every 🔒 step; the user
   reviews before anything reaches a real boiler (`docs/plan-0.2.md`, K4); each finished step
   is marked ✅ in its plan and committed, so the next session knows where to continue; a step
