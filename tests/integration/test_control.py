@@ -2571,10 +2571,12 @@ async def test_a_0_2_1_store_moves_to_the_control_store(
     and the entry store gets the marker, both at once."""
     control = unit_state(latched=True, latched_by=["pressure_low"], rewritten_at=1000.0)
     entry = await start_with_stored(rig, hass_storage, control)
-    assert hass_storage[control_key(entry)]["data"] == control
+    # With what 0.2.2 adds (V3): the wish, off without a restored switch, stored at once.
+    moved = control | {"enabled": False, "last_command": None, "resume_since": {}}
+    assert hass_storage[control_key(entry)]["data"] == moved
     main = hass_storage[main_key(entry)]["data"]
     assert main["control_store"] == 1
-    assert main["control"] == control
+    assert main["control"] == control  # the copy follows with the delayed save
     await rig.advance(30)
     assert rig.gateway.calls == []
     assert issue(rig, "control_state_unreadable") is None
@@ -3278,3 +3280,441 @@ async def test_forecasts_that_cannot_be_loaded_at_all_do_not_fail_setup(
     assert _logged(caplog, logging.ERROR, "Could not load the stored forecasts") == 1
     await rig.hass.async_block_till_done(wait_background_tasks=True)
     assert forecasts.calls  # recording goes on
+
+
+# --- V3: saved at once — last command, SmartPI pause, on/off wish, error latch ------------------
+
+SWITCH = "switch.boiler_boiler_control_experimental"
+
+
+def only_saves_made_at_once(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    """From now on the control store gets only what is saved at once: the delayed control save
+    is dropped, so whatever the store shows was written without waiting."""
+    assert rig.entry is not None
+    monkeypatch.setattr(rig.entry.runtime_data, "schedule_control_save", lambda: None)
+
+
+def smartpi_zone(rig: Rig, learning: bool) -> None:
+    rig.zones.set(
+        "living",
+        hvac_action="heating",
+        valve_open_percent=60,
+        on_percent=0.6,
+        configuration={"proportional_function": "smartpi"},
+        specific_states={"smartpi_learning_enabled": learning},
+    )
+
+
+@pytest.mark.parametrize("stored_pause", [True, False], ids=["stored", "not_stored"])
+async def test_a_smartpi_pause_is_stored_before_the_call(
+    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch, stored_pause: bool
+) -> None:
+    """T-29 (P-10): the pause is in the control store before SmartPI is asked, so a crash right
+    after the call still knows the zone is the plugin's to resume. Negative: a store without the
+    pause resumes nothing."""
+    hass = rig.hass
+    zone = rig.zones.entities["living"]
+    calls: list[tuple[bool, dict[str, Any]]] = []
+
+    async def set_learning(call: ServiceCall) -> None:
+        stored = copy.deepcopy(stored_control(hass_storage, rig))
+        calls.append((call.data["learning_enabled"], stored))
+        smartpi_zone(rig, call.data["learning_enabled"])
+
+    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    smartpi_zone(rig, True)
+    await start(rig)
+    only_saves_made_at_once(rig, monkeypatch)
+    await rig.switch(True)
+    rig.dhw = True
+    await rig.advance(10)
+    assert [enabled for enabled, _ in calls] == [False]
+    left = calls[0][1]  # what a crash at the call would leave
+    assert zone in left["paused"]
+
+    # The crash: the next start finds that store, and SmartPI still paused.
+    assert rig.entry is not None
+    entry = rig.entry
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    if not stored_pause:
+        left = {**left, "paused": {}}
+    seed_stores(hass_storage, entry, left, "0.2.2")
+    smartpi_zone(rig, False)
+    rig.dhw = False
+    calls.clear()
+    await set_up(rig, entry)
+    await rig.switch(False)  # control off: what the plugin paused is resumed
+    resumed = [enabled for enabled, _ in calls]
+    assert resumed == ([True] if stored_pause else [])
+
+
+@pytest.mark.parametrize("disabled", [True, False], ids=["disabled", "enabled"])
+async def test_control_waits_for_the_switch_to_restore_then_counts_as_off(
+    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch, disabled: bool
+) -> None:
+    """T-31 (answer K): a control switch disabled in Home Assistant is never added, so it cannot
+    restore the wish. The owed hand-back goes at once; nothing is decided for a minute; then
+    control counts as off, whatever the stored wish, and nothing more is written. Negative: the
+    same switch enabled restores the wish "on"."""
+    steps = 0
+    original = control_module.loop_step
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        nonlocal steps
+        steps += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(control_module, "loop_step", counted)
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.add_to_hass(rig.hass)
+    if disabled:
+        er.async_get(rig.hass).async_get_or_create(
+            "switch",
+            DOMAIN,
+            f"{entry.entry_id}_control",
+            config_entry=entry,
+            disabled_by=er.RegistryEntryDisabler.USER,
+        )
+    seed_stores(hass_storage, entry, {"controlling": True, "enabled": True}, "0.2.2")
+    await set_up(rig, entry)
+    assert rig.gateway.calls[:2] == HAND_BACK  # the owed hand-back, at once
+    unit = entry.runtime_data.control
+    if not disabled:
+        assert unit.enabled
+        await rig.advance(10)
+        assert rig.gateway.setpoints()[-1] == EXPECTED
+        return
+    await rig.advance(50)
+    assert steps == 0  # no decision while the switch may still restore
+    assert not unit.enabled
+    await rig.advance(20)
+    assert steps > 0
+    assert not unit.enabled  # counts as off
+    assert rig.gateway.calls == HAND_BACK  # nothing more written
+    assert stored_control(hass_storage, rig)["enabled"] is False
+    await rig.advance(60)
+    assert rig.gateway.calls == HAND_BACK
+
+
+@pytest.mark.parametrize("wish", [False, True], ids=["off", "on"])
+async def test_the_switch_off_survives_an_unclean_restart(
+    rig: Rig, hass_storage: dict[str, Any], wish: bool
+) -> None:
+    """T-39 (P-11): the user switched control off, and Home Assistant crashed before its restore
+    cache was written, which still says "on". The stored wish decides: off, and nothing is
+    written but the owed hand-back. Negative: a stored "on" comes back on."""
+    mock_restore_cache(rig.hass, [State(SWITCH, "on")])
+    await start_with_stored(rig, hass_storage, {"controlling": True, "enabled": wish}, "0.2.2")
+    await rig.advance(70)
+    assert rig.state("switch", "control").state == ("on" if wish else "off")
+    if wish:
+        assert rig.gateway.setpoints()[-1] == EXPECTED
+    else:
+        assert rig.gateway.calls == HAND_BACK
+
+
+async def test_the_wish_is_stored_at_once(
+    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P-11: switching on or off is in the control store before anything else happens, even
+    when nothing is written to the boiler (here: no fresh data)."""
+    rig.flow = None
+    rig.live()
+    await start(rig)
+    only_saves_made_at_once(rig, monkeypatch)
+    await rig.switch(True)
+    assert rig.gateway.calls == []
+    assert stored_control(hass_storage, rig)["enabled"] is True
+    await rig.switch(False)
+    assert stored_control(hass_storage, rig)["enabled"] is False
+
+
+@pytest.mark.parametrize("restored", ["on", "off", None], ids=["on", "off", "none"])
+async def test_a_first_start_without_a_stored_wish_uses_the_restored_switch(
+    rig: Rig, hass_storage: dict[str, Any], restored: str | None
+) -> None:
+    """The first start of 0.2.2 has no stored wish: the switch's restored state decides once,
+    and is stored from then on. Negative: without a restored state control is off."""
+    if restored is not None:
+        mock_restore_cache(rig.hass, [State(SWITCH, restored)])
+    await start(rig)
+    on = restored == "on"
+    assert rig.state("switch", "control").state == ("on" if on else "off")
+    await rig.advance(10)
+    assert (EXPECTED in rig.gateway.setpoints()) is on
+    assert stored_control(hass_storage, rig)["enabled"] is on
+
+
+@pytest.mark.parametrize("raw", ["yes", 1, [], {"on": True}])
+async def test_an_unreadable_stored_wish_counts_as_off(
+    rig: Rig, hass_storage: dict[str, Any], caplog: pytest.LogCaptureFixture, raw: Any
+) -> None:
+    """Negative: a wish that cannot be read is "off", not the restored switch."""
+    mock_restore_cache(rig.hass, [State(SWITCH, "on")])
+    await start_with_stored(rig, hass_storage, {"enabled": raw}, "0.2.2")
+    await rig.advance(70)
+    assert rig.state("switch", "control").state == "off"
+    assert rig.gateway.calls == []
+    assert _logged(caplog, logging.WARNING, "unreadable stored control data: enabled") == 1
+
+
+@pytest.mark.parametrize("failed", [True, False], ids=["failed", "not_failed"])
+async def test_an_internal_error_outlives_a_restart(
+    rig: Rig, hass_storage: dict[str, Any], failed: bool
+) -> None:
+    """C10: the restore of the wish "on" does not clear an internal error: the switch shows on,
+    the error blocks and nothing is written, until the user switches off and on. Negative:
+    without a stored error control runs at once."""
+    stored = {"enabled": True, "failed": failed, "alarms": ["control_error"] if failed else []}
+    await start_with_stored(rig, hass_storage, stored, "0.2.2")
+    await rig.advance(30)
+    assert rig.state("switch", "control").state == "on"
+    if not failed:
+        assert rig.gateway.setpoints()[-1] == EXPECTED
+        return
+    assert "control_error" in rig.state("switch", "control").attributes["blockers"]
+    assert rig.state("binary_sensor", "alarm_control_error").state == "on"
+    assert rig.gateway.calls == []
+    assert stored_control(hass_storage, rig)["failed"] is True
+    await rig.switch(False)
+    await rig.switch(True)
+    assert rig.gateway.setpoints() == [EXPECTED]
+    assert rig.state("binary_sensor", "alarm_control_error").state == "off"
+
+
+@pytest.mark.parametrize("on", [True, False], ids=["controlling", "off"])
+async def test_an_internal_error_is_stored_at_once(
+    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch, on: bool
+) -> None:
+    """C10: an internal error, and the alarm that explains it, are in the control store at once,
+    with control on or off."""
+    await start(rig)
+    if on:
+        await rig.switch(True)
+    only_saves_made_at_once(rig, monkeypatch)
+    assert rig.entry is not None
+    unit = rig.entry.runtime_data.control
+    assert not stored_control(hass_storage, rig).get("failed")
+
+    async def broken(self: Any, now: float) -> None:
+        raise RuntimeError("a bug")
+
+    monkeypatch.setattr(type(unit), "_async_step", broken)
+    await rig.advance(10)
+    stored = stored_control(hass_storage, rig)
+    assert stored["failed"] is True
+    assert stored["alarms"] == ["control_error"]
+    assert stored["last_command"] is None
+
+
+def last_command(hass_storage: dict[str, Any], rig: Rig) -> Any:
+    return stored_control(hass_storage, rig)["last_command"]
+
+
+async def test_the_last_command_is_stored_at_once(
+    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Decision 3 needs the last command after a crash: the first one, and every change of
+    heating on/off, are stored at once; a setpoint step below a kelvin waits for the next save,
+    and one that adds up to a kelvin is stored at once."""
+    await start(rig, decision_interval_min=1, ramp_k_per_min=None)
+    assert rig.entry is not None
+    unit = rig.entry.runtime_data.control
+    only_saves_made_at_once(rig, monkeypatch)
+    at = datetime.now(UTC).timestamp()
+    await rig.switch(True)
+    first = last_command(hass_storage, rig)
+    # The setpoint as control gave it to the writer, in °C (the gateway gets it rounded).
+    assert first == {"heating": True, "setpoint": pytest.approx(EXPECTED, abs=0.05), "at": at}
+
+    # Colder outside: the outdoor average, and with it the setpoint, rises by small steps.
+    rig.outdoor = OUTDOOR - 10.0
+    small_steps = 0
+    for _ in range(60):
+        await rig.advance(60)
+        written = unit.stored()["last_command"]["setpoint"]
+        if written - first["setpoint"] >= 1.0:
+            break  # a kelvin from the one stored: stored at once
+        if written != first["setpoint"]:
+            small_steps += 1
+            assert last_command(hass_storage, rig) == first  # below a kelvin: not yet
+    else:
+        pytest.fail("the setpoint never rose by a kelvin")
+    assert small_steps > 0
+    stored = last_command(hass_storage, rig)["setpoint"]
+    assert stored - first["setpoint"] >= 1.0  # stored at once when it got that far
+    assert abs(written - stored) < 1.0  # any step since is below a kelvin from it
+    assert rig.gateway.setpoints()[-1] == pytest.approx(written, abs=0.05)
+
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await rig.advance(10)
+    assert rig.gateway.calls[-1] == ("ch", False)
+    assert last_command(hass_storage, rig)["heating"] is False
+
+
+async def test_an_unreadable_last_command_is_ignored(
+    rig: Rig, hass_storage: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Negative: a last command that cannot be read is none, with a warning; the rest of the
+    stored state is restored as it was."""
+    stored = {"last_command": "garbage", "latched": True, "latched_by": ["pressure_low"]}
+    await start_with_stored(rig, hass_storage, stored, "0.2.2")
+    assert rig.entry is not None
+    kept = rig.entry.runtime_data.control.stored()
+    assert kept["last_command"] is None
+    assert (kept["latched"], kept["latched_by"]) == (True, ["pressure_low"])
+    assert _logged(caplog, logging.WARNING, "unreadable stored control data: last_command") == 1
+
+
+ENDINGS = ("ha_stop", "unload", "switch_off", "latch", "internal_error", "blocker", "stale_link")
+
+
+@pytest.mark.parametrize("ending", ENDINGS)
+async def test_the_last_command_survives_only_the_stops_hand_back(
+    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch, ending: str
+) -> None:
+    """The hand-back made by a stop (Home Assistant stopping, an unload or reload) keeps the last
+    command for the next start; a session that ends for any other reason forgets it."""
+    hass = rig.hass
+    rig.boiler = FakeBoiler(hass, (*SIGNALS, Signal.PRESSURE))
+    rig.boiler.set(Signal.PRESSURE, 1.5)
+    rig.live()
+    entry_options = options(rig.zones, alarm_reactions={"pressure_low": "hand_back"})
+    entry_options["signals"][Signal.PRESSURE.value] = rig.boiler.entity(Signal.PRESSURE)
+    await set_up(rig, add_entry(rig, entry_options))
+    await rig.switch(True)
+    assert rig.entry is not None
+    unit = rig.entry.runtime_data.control
+    assert last_command(hass_storage, rig) is not None
+    if ending == "ha_stop":
+        await hass.async_stop()
+    elif ending == "unload":
+        assert await hass.config_entries.async_unload(rig.entry.entry_id)
+    elif ending == "switch_off":
+        await rig.switch(False)
+    elif ending == "latch":
+        rig.boiler.set(Signal.PRESSURE, 0.5)
+        await rig.advance(40)
+    elif ending == "internal_error":
+
+        async def broken(self: Any, now: float) -> None:
+            raise RuntimeError("a bug")
+
+        monkeypatch.setattr(type(unit), "_async_step", broken)
+        await rig.advance(10)
+    elif ending == "blocker":
+        boiler = er.async_get(hass).async_get_or_create(
+            "binary_sensor", VT_PLATFORM, "central_boiler_state"
+        )
+        hass.states.async_set(boiler.entity_id, "off", {"is_central_boiler_configured": True})
+        await rig.advance(10)
+    else:
+        rig.flow = None
+        rig.live()
+        await rig.advance(310)
+    await hass.async_block_till_done()
+    assert rig.gateway.calls[-1] == ("setpoint", 0.0)  # handed back
+    kept = ending in ("ha_stop", "unload")
+    stored = last_command(hass_storage, rig)
+    assert (stored is not None) is kept
+    if kept:
+        assert stored["heating"] is True
+        assert stored["setpoint"] == pytest.approx(EXPECTED, abs=0.05)
+
+
+@pytest.mark.parametrize("outcome", ["takes", "never_takes", "nothing_paused"])
+async def test_a_resume_that_did_not_take_is_followed_after_control_leaves_the_options(
+    rig: Rig, hass_storage: dict[str, Any], outcome: str
+) -> None:
+    """C15: control leaves the options while a SmartPI zone is paused, and the resume made on
+    the way out does not take. After the reload a unit that only follows learning sends it again
+    every minute until the flag reads on, and gives up a day after the first resume. Negative:
+    with nothing paused, no such unit is built."""
+    hass = rig.hass
+    zone = rig.zones.entities["living"]
+    calls: list[bool] = []
+    skipping = True
+
+    async def set_learning(call: ServiceCall) -> None:
+        enabled = call.data["learning_enabled"]
+        calls.append(enabled)
+        if not enabled or not skipping:
+            smartpi_zone(rig, enabled)
+
+    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    smartpi_zone(rig, True)
+    await start(rig)
+    await rig.switch(True)
+    if outcome != "nothing_paused":
+        rig.dhw = True
+        await rig.advance(10)
+        assert calls == [False]
+    assert rig.entry is not None
+    entry = rig.entry
+    hass.config_entries.async_update_entry(entry, options=without_control(dict(entry.options)))
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data
+    assert coordinator.control is None
+    if outcome == "nothing_paused":
+        assert coordinator.hand_back_unit is None
+        assert calls == []
+        return
+    unit = coordinator.hand_back_unit
+    assert unit is not None
+    assert ("vtherm_smartpi", "set_smartpi_learning") in unit.allowed_services
+    assert calls == [False, True]  # resumed on the way out, and skipped
+    assert zone in stored_control(hass_storage, rig)["resuming"]
+    await rig.advance(130)
+    assert calls.count(True) >= 3  # sent again every minute
+    if outcome == "takes":
+        skipping = False
+        await rig.advance(60)
+        count = len(calls)
+        await rig.advance(180)
+        assert len(calls) == count  # read back on: done
+        assert stored_control(hass_storage, rig)["resuming"] == {}
+        return
+    await rig.advance(86400, step=600.0)
+    count = len(calls)
+    await rig.advance(1800, step=600.0)
+    assert len(calls) == count  # given up a day after the first resume
+    assert stored_control(hass_storage, rig)["resuming"] == {}
+    assert rig.gateway.calls[-1] == ("setpoint", 0.0)  # nothing but the hand-back written
+
+
+@pytest.mark.parametrize("paused", [False, True], ids=["no_unit", "learning_unit"])
+async def test_control_added_back_after_removal_starts_off(
+    rig: Rig, hass_storage: dict[str, Any], paused: bool
+) -> None:
+    """Control left the options while on: the stored wish and last command go, so control
+    added back later starts off, with no command to give again — whether a unit still follows
+    SmartPI resumes or none runs."""
+    hass = rig.hass
+
+    async def set_learning(call: ServiceCall) -> None:
+        if not call.data["learning_enabled"]:
+            smartpi_zone(rig, False)  # a pause takes; a resume never does
+
+    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    smartpi_zone(rig, True)
+    await start(rig)
+    await rig.switch(True)
+    if paused:
+        rig.dhw = True
+        await rig.advance(10)
+    assert rig.entry is not None
+    entry = rig.entry
+    with_control = dict(entry.options)
+    hass.config_entries.async_update_entry(entry, options=without_control(with_control))
+    await hass.async_block_till_done()
+    assert (entry.runtime_data.hand_back_unit is not None) is paused
+    await rig.advance(10)
+    stored = stored_control(hass_storage, rig)
+    assert (stored["enabled"], stored["last_command"]) == (False, None)
+    count = len(rig.gateway.calls)
+    hass.config_entries.async_update_entry(entry, options=with_control)
+    await hass.async_block_till_done()
+    await rig.advance(70)
+    assert rig.state("switch", "control").state == "off"
+    assert len(rig.gateway.calls) == count

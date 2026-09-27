@@ -42,9 +42,10 @@ async def async_setup_entry(
 class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
     """The user's wish to control the boiler; control runs only while nothing blocks it.
 
-    After a restart the switch comes back as it was; control then waits for its blockers (Home
-    Assistant starting, missing data) to clear. Switching on by hand is refused while a blocker
-    that needs the user remains.
+    After a restart the switch comes back as the user left it (the wish is stored at once);
+    control then waits for its blockers (Home Assistant starting, missing data) to clear. A
+    switch disabled in Home Assistant means control off. Switching on by hand is refused while
+    a blocker that needs the user remains.
     """
 
     def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
@@ -70,10 +71,14 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        last = await self.async_get_last_state()
-        if last is not None and last.state == STATE_ON:
-            await self.control.async_set_enabled(True)
-        self.control.mark_restored()
+        # The wish the control store kept comes first: the restore cache may be older than a
+        # change the user made just before a crash (P-11). Without one (the first start of this
+        # version), the switch's restored state, once; without that, off.
+        wish = self.control.stored_wish
+        if wish is None:
+            last = await self.async_get_last_state()
+            wish = last is not None and last.state == STATE_ON
+        await self.control.async_restore_enabled(wish)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         blockers = [

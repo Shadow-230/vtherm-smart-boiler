@@ -74,6 +74,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             coordinator.hand_back_unit = _hand_back_unit(
                 hass, coordinator, config, coordinator.stored_control
             )
+            await _async_forget_control_session(coordinator)
         for unit in _units(coordinator):
             await unit.async_hand_back_owed(dt_util.utcnow().timestamp())
         _report_control_problem(hass, entry, config)
@@ -260,16 +261,21 @@ def _hand_back_unit(
 ) -> ControlUnit | None:
     """Control is not in the options, but the last run left a hand-back owed (``stored``, the
     control state read at setup): a unit built from the options that took the boiler makes it,
-    and does nothing else."""
+    and does nothing else but follow the SmartPI resumes it left. With nothing owed but such
+    resumes, a unit without options only follows them (C15)."""
     import logging
 
     from homeassistant.helpers import issue_registry as ir
 
     from .control import ControlUnit
-    from .control_config import parse_control
+    from .control_config import ControlOptions, parse_control
 
     if not owes_hand_back(stored):
-        return None
+        if not _learning_left(stored):
+            return None
+        unit = ControlUnit(hass, coordinator, ControlOptions(), follow_learning=True)
+        unit.restore(stored)
+        return unit
     taken_with = stored.get("taken_with")
     options = None
     if isinstance(taken_with, Mapping):
@@ -296,6 +302,24 @@ def _hand_back_unit(
     unit = ControlUnit(hass, coordinator, options, raw=taken_with, hand_back_only=True)
     unit.restore(stored)
     return unit
+
+
+async def _async_forget_control_session(coordinator: SmartBoilerCoordinator) -> None:
+    """Control is not in the options: the wish and the last command the last run stored go at
+    once, so control added back later starts off, with nothing to give again. A unit that only
+    hands back or follows learning stores them so itself."""
+    stored = coordinator.stored_control
+    if not stored.get("enabled") and stored.get("last_command") is None:
+        return
+    coordinator.stored_control = {**stored, "enabled": False, "last_command": None}
+    await coordinator.async_save_control_now()
+
+
+def _learning_left(stored: Mapping[str, Any]) -> bool:
+    """Whether the last run left SmartPI zones paused, or resumes still to be followed."""
+    return any(
+        isinstance(stored.get(key), Mapping) and stored[key] for key in ("paused", "resuming")
+    )
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:

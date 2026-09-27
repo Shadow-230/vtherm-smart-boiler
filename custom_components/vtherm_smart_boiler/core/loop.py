@@ -10,6 +10,8 @@ the guards, so a later control session starts fresh.
 
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 
 from .controller import ControlConfig, ControlDecision, ControlInputs, ControlState, decide
@@ -26,6 +28,9 @@ from .guards import (
 
 DEFAULT_OFF_SETPOINT = 10.0
 ON, OFF = 1.0, 0.0  # heating on/off as the guard sees it
+# A setpoint written this far from the last command stored is stored at once; a smaller step
+# (a ramp's) waits for the next save (provisional, K4).
+LAST_COMMAND_SAVE_K = 1.0
 
 
 def _no_echo_switch() -> GuardConfig:
@@ -123,3 +128,52 @@ def loop_step(
     return LoopState(control, planned.state, heat.state), LoopOutput(
         decision, planned.action, heating, False, events, heating_on
     )
+
+
+@dataclass(frozen=True, slots=True)
+class LastCommand:
+    """The last command given to the boiler: heating on/off as commanded and the setpoint as
+    written (after the ramp; ``None`` before one got through), with when it was written. Kept
+    across a restart so the next start can give it again (decision 3) or, for a relay, its
+    state."""
+
+    heating: bool
+    setpoint: float | None
+    at: float
+
+    def as_dict(self) -> dict[str, bool | float | None]:
+        return {"heating": self.heating, "setpoint": self.setpoint, "at": self.at}
+
+
+def _finite(raw: object) -> float:
+    if isinstance(raw, bool) or not isinstance(raw, int | float) or not math.isfinite(raw):
+        raise ValueError(f"not a finite number: {raw!r}")
+    return float(raw)
+
+
+def parse_last_command(raw: object) -> LastCommand:
+    """A stored last command; anything else raises ``ValueError`` or ``TypeError``."""
+    if not isinstance(raw, Mapping):
+        raise TypeError("the last command is not a mapping")
+    heating = raw.get("heating")
+    if not isinstance(heating, bool):
+        raise ValueError(f"heating is not a flag: {heating!r}")
+    setpoint = raw.get("setpoint")
+    return LastCommand(
+        heating, None if setpoint is None else _finite(setpoint), _finite(raw.get("at"))
+    )
+
+
+def remember_command(
+    stored: LastCommand | None, heating: bool, setpoint: float | None, now: float
+) -> tuple[LastCommand, bool]:
+    """The last command after a write went through, and whether it is to be stored at once
+    against the one last stored at once (``stored``): a first command, heating switched on or
+    off, or a setpoint at least ``LAST_COMMAND_SAVE_K`` from it — so a ramp's small steps are
+    stored at once only as they add up."""
+    command = LastCommand(heating, setpoint, now)
+    if stored is None or stored.heating != heating:
+        return command, True
+    if stored.setpoint is None or setpoint is None:
+        return command, stored.setpoint != setpoint
+    return command, abs(setpoint - stored.setpoint) >= LAST_COMMAND_SAVE_K

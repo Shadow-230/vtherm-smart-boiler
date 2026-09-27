@@ -64,6 +64,8 @@ class LearningState:
     last_toggle: Mapping[str, float] = field(default_factory=dict)
     # Zones the plugin resumed, until their flag reads on: when the resume was last sent.
     resuming: Mapping[str, float] = field(default_factory=dict)
+    # ...and when it was first sent: a zone is followed for ``give_up_s`` from then at most.
+    resume_since: Mapping[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,21 +88,23 @@ def follow_resumes(
     config: LearningConfig,
 ) -> tuple[LearningState, tuple[str, ...]]:
     """Zones resumed by the plugin, read back: done once the flag reads on; sent again every
-    ``check_s`` while it reads off; dropped once gone for ``give_up_s``. Returns the zones to
-    resume again now."""
+    ``check_s`` while it reads off; no longer followed ``give_up_s`` after the first resume —
+    one that never takes (the user may have switched learning off on purpose), or a zone gone
+    (another zone, or the algorithm replaced). A zone not seen is not sent again: once it is
+    back, its flag decides. Returns the zones to resume again now."""
     resuming = dict(state.resuming)
+    # A resume stored without its start (by 0.2.1) counts from its last send.
+    since = {zone_id: state.resume_since.get(zone_id, sent) for zone_id, sent in resuming.items()}
     again: list[str] = []
     for zone_id, sent_at in state.resuming.items():
         flag = flags.get(zone_id)
-        if flag is True:
+        if flag is True or now - since[zone_id] >= config.give_up_s:
             resuming.pop(zone_id)
-        elif flag is False:
-            if now - sent_at >= config.check_s:
-                again.append(zone_id)
-                resuming[zone_id] = now
-        elif now - sent_at >= config.give_up_s:
-            resuming.pop(zone_id)  # gone for long: another zone, or the algorithm replaced
-    return replace(state, resuming=resuming), tuple(again)
+            since.pop(zone_id)
+        elif flag is False and now - sent_at >= config.check_s:
+            again.append(zone_id)
+            resuming[zone_id] = now
+    return replace(state, resuming=resuming, resume_since=since), tuple(again)
 
 
 def plan_learning(
@@ -133,6 +137,7 @@ def plan_learning(
     paused = dict(state.paused)
     toggles = dict(state.last_toggle)
     resuming = dict(state.resuming)
+    resume_since = dict(state.resume_since)
     pause: list[str] = []
     resume: list[str] = list(again)
     causes: dict[str, tuple[PauseCause, ...]] = {}
@@ -166,10 +171,14 @@ def plan_learning(
             if zone.learning is not True:
                 resume.append(zone.zone_id)
                 resuming[zone.zone_id] = now
+                resume_since.setdefault(zone.zone_id, now)
             paused.pop(zone.zone_id, None)
             toggles[zone.zone_id] = now
     return LearningPlan(
-        LearningState(paused, setpoints, toggles, resuming), tuple(pause), tuple(resume), causes
+        LearningState(paused, setpoints, toggles, resuming, resume_since),
+        tuple(pause),
+        tuple(resume),
+        causes,
     )
 
 
@@ -181,4 +190,6 @@ def release_all(state: LearningState, now: float) -> tuple[LearningState, tuple[
     toggles = dict(state.last_toggle)
     toggles.update(dict.fromkeys(state.paused, now))
     resuming = {**state.resuming, **dict.fromkeys(state.paused, now)}
-    return LearningState({}, state.setpoints, toggles, resuming), tuple(state.paused)
+    since = {**dict.fromkeys(state.paused, now), **state.resume_since}
+    released = LearningState({}, state.setpoints, toggles, resuming, since)
+    return released, tuple(state.paused)

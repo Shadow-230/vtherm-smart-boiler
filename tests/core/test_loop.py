@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from custom_components.vtherm_smart_boiler.core.controller import ControlConfig, ControlInputs
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.guards import (
@@ -14,9 +16,12 @@ from custom_components.vtherm_smart_boiler.core.guards import (
     WriteType,
 )
 from custom_components.vtherm_smart_boiler.core.loop import (
+    LastCommand,
     LoopConfig,
     LoopState,
     loop_step,
+    parse_last_command,
+    remember_command,
 )
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 
@@ -149,3 +154,66 @@ def test_a_blocked_setpoint_leaves_this_steps_heating_write_unmade() -> None:
     assert out.blocked
     assert out.heating is None
     assert state.switch == before  # not recorded as written
+
+
+# --- the last command (V3) ------------------------------------------------------------------
+
+
+def test_the_first_command_is_saved_at_once() -> None:
+    command, save_now = remember_command(None, True, 45.0, 10.0)
+    assert command == LastCommand(True, 45.0, 10.0)
+    assert save_now
+
+
+def test_a_change_of_heating_is_saved_at_once() -> None:
+    _, save_now = remember_command(LastCommand(True, 45.0, 0.0), False, 45.0, 10.0)
+    assert save_now
+
+
+def test_a_setpoint_change_of_a_kelvin_or_more_is_saved_at_once() -> None:
+    before = LastCommand(True, 45.0, 0.0)
+    assert remember_command(before, True, 46.0, 10.0)[1]
+    assert remember_command(before, True, 44.0, 10.0)[1]
+    assert remember_command(before, True, None, 10.0)[1]
+    assert remember_command(LastCommand(True, None, 0.0), True, 45.0, 10.0)[1]
+
+
+def test_a_small_setpoint_step_waits_for_the_next_save() -> None:
+    command, save_now = remember_command(LastCommand(True, 45.0, 0.0), True, 45.5, 10.0)
+    assert command == LastCommand(True, 45.5, 10.0)  # kept in memory, written with the next save
+    assert not save_now
+
+
+def test_a_last_command_round_trips() -> None:
+    command = LastCommand(False, None, 12.5)
+    assert parse_last_command(command.as_dict()) == command
+    assert parse_last_command({"heating": True, "setpoint": 40, "at": 3}) == LastCommand(
+        True, 40.0, 3.0
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "garbage",
+        [],
+        {},
+        {"heating": "yes", "setpoint": 40.0, "at": 0.0},
+        {"heating": 1, "setpoint": 40.0, "at": 0.0},
+        {"heating": True, "setpoint": "40", "at": 0.0},
+        {"heating": True, "setpoint": True, "at": 0.0},
+        {"heating": True, "setpoint": float("nan"), "at": 0.0},
+        {"heating": True, "setpoint": 40.0},
+        {"heating": True, "setpoint": 40.0, "at": None},
+        {"heating": True, "setpoint": 40.0, "at": float("inf")},
+    ],
+)
+def test_an_unreadable_last_command_is_refused(raw: object) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        parse_last_command(raw)
+
+
+def test_small_steps_are_stored_at_once_as_they_add_up() -> None:
+    stored = LastCommand(True, 45.0, 0.0)
+    assert not remember_command(stored, True, 45.5, 10.0)[1]
+    assert remember_command(stored, True, 46.0, 20.0)[1]  # a kelvin from the one stored

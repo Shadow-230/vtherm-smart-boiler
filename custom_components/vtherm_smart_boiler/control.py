@@ -62,7 +62,15 @@ from .core.learning import (
     plan_learning,
     release_all,
 )
-from .core.loop import ON, LoopOutput, LoopState, loop_step
+from .core.loop import (
+    ON,
+    LastCommand,
+    LoopOutput,
+    LoopState,
+    loop_step,
+    parse_last_command,
+    remember_command,
+)
 from .core.readings import BoilerSnapshot, ZoneState
 from .core.signal_check import OutdoorStatus, curve_sensor
 from .core.signals import Signal
@@ -116,6 +124,13 @@ def _kept_alarms(raw: Any) -> set[ControlAlarm]:
         if alarm in _KEPT_ALARMS:
             kept.add(alarm)
     return kept
+
+
+def _zones_changed(before: LearningState, after: LearningState) -> bool:
+    """Whether the zones paused or followed changed (not only when a resume was last sent)."""
+    return before.paused.keys() != after.paused.keys() or (
+        before.resuming.keys() != after.resuming.keys()
+    )
 
 
 def _shown(check: Confirmation | None, gateway: bool, self_echo: bool) -> str | None:
@@ -215,7 +230,9 @@ class ControlUnit:
     ``raw``: the control options as stored; kept with the state while the boiler may hold a value
     of ours, so a later start can hand back through what took the boiler even if the options
     changed. ``hand_back_only``: built from such stored options after control left the options;
-    it never controls, only makes the owed hand-back, shown as a repair issue.
+    it never controls, only makes the owed hand-back, shown as a repair issue, and follows the
+    SmartPI resumes the last run left. ``follow_learning``: such a unit built without options
+    (nothing owed, only resumes to follow): it only follows them.
     """
 
     def __init__(
@@ -226,12 +243,14 @@ class ControlUnit:
         writer_factory: WriterFactory = make_writer,
         raw: Mapping[str, Any] | None = None,
         hand_back_only: bool = False,
+        follow_learning: bool = False,
     ) -> None:
         self._hass = hass
         self._coordinator = coordinator
         self.options = options
         self._raw = dict(raw or {})
-        self.hand_back_only = hand_back_only
+        self.hand_back_only = hand_back_only or follow_learning
+        self.follow_learning = follow_learning
         self._writer_factory = writer_factory
         self._writer: Writer | None = None
         self.enabled = False
@@ -252,7 +271,13 @@ class ControlUnit:
         # A session took the boiler while a hand-back was owed: what the earlier one set (a
         # held heating switch left off, say) is this session's to give back too.
         self._full_hand_back_due = False
-        self._restored = False
+        self._restored = False  # the user's wish is known: restored by the switch, or timed out
+        # The wish as the last run stored it: ``None`` when none was stored (the first start of
+        # 0.2.2). Stored as it is until the switch restores it.
+        self._stored_enabled: bool | None = None
+        # The last command given to the boiler, and the one last stored at once (V3).
+        self._last_command: LastCommand | None = None
+        self._command_stored: LastCommand | None = None
         self._started_at = dt_util.utcnow().timestamp()
         self._lock = asyncio.Lock()
         self._tick_waiting = False
@@ -289,9 +314,14 @@ class ControlUnit:
     def allowed_services(self) -> frozenset[tuple[str, str]]:
         """Every service control may call, derived from the configuration alone."""
         services = set(writer_services(self.options))
-        if services and self.options.learning_pauses:
+        if (services and self.options.learning_pauses) or self.follow_learning:
             services.add((SMARTPI_DOMAIN, SMARTPI_SERVICE))
         return frozenset(services)
+
+    @property
+    def stored_wish(self) -> bool | None:
+        """The user's on/off wish as the last run stored it; ``None`` when none was stored."""
+        return self._stored_enabled
 
     def async_add_listener(self, update: Callable[[], None]) -> Callable[[], None]:
         self._listeners.append(update)
@@ -311,14 +341,25 @@ class ControlUnit:
 
     def stored(self) -> dict[str, Any]:
         """What must survive a restart: whether the boiler may hold a value of ours, paused zones,
-        latches and a hand-back still to be done."""
+        latches, a hand-back still to be done, the user's wish and the last command."""
         session = self._session
         owed = self._holding or self._hand_back_pending
+        if self.hand_back_only:
+            enabled: bool | None = False  # control is not in the options: it is off
+        elif self._restored:
+            enabled = self.enabled
+        else:
+            enabled = self._stored_enabled  # kept until the switch restores it
+        # Control not in the options has no command to give again.
+        command = None if self.hand_back_only else self._last_command
         return {
+            "enabled": enabled,
+            "last_command": None if command is None else command.as_dict(),
             "controlling": self._holding,
             "taken_with": dict(self._raw) if owed and self._raw else None,
             "paused": dict(session.learning.paused),
             "resuming": dict(session.learning.resuming),
+            "resume_since": dict(session.learning.resume_since),
             "latched": session.loop.control.latched,
             "latched_by": list(session.loop.control.latched_by),
             # The one rewrite after an outside change: within a day of it, no more are made.
@@ -350,6 +391,9 @@ class ControlUnit:
         resuming: dict[str, float] = field(
             "resuming", lambda raw: {str(z): float(t) for z, t in raw.items()}, {}
         )
+        resume_since: dict[str, float] = field(
+            "resume_since", lambda raw: {str(z): float(t) for z, t in raw.items()}, {}
+        )
         alarms: set[ControlAlarm] = field("alarms", _kept_alarms, set())
         latched_by: tuple[str, ...] = field(
             "latched_by", lambda raw: tuple(str(a) for a in raw), ()
@@ -363,7 +407,12 @@ class ControlUnit:
                 setpoint=GuardState(rewritten_at=rewritten_at),
                 switch=GuardState(rewritten_at=heating_rewritten_at),
             ),
-            learning=LearningState(paused=paused, last_toggle=dict(paused), resuming=resuming),
+            learning=LearningState(
+                paused=paused,
+                last_toggle=dict(paused),
+                resuming=resuming,
+                resume_since={z: t for z, t in resume_since.items() if z in resuming},
+            ),
             alarms=alarms,
             failed=_flag(data.get("failed")),
         )
@@ -371,6 +420,15 @@ class ControlUnit:
         # The last run held the boiler and never confirmed a hand-back (a crash, a power cut):
         # handed back in full at the first step; control may take the boiler again afterwards.
         self._hand_back_pending = _flag(data.get("hand_back_pending")) or self._holding
+        # The wish: only a clear "on" is on; one that cannot be read is off, not the restored
+        # switch (P-11).
+        wish = data.get("enabled")
+        if wish is not None and not isinstance(wish, bool):
+            _LOGGER.warning("Ignoring unreadable stored control data: enabled; control is off")
+            wish = False
+        self._stored_enabled = wish
+        self._last_command = field("last_command", parse_last_command, None)
+        self._command_stored = self._last_command
         # From now on the stores get this unit's state: a save made before its start must not
         # write the state loaded earlier over a hand-back made since.
         self._coordinator.provide_stored_control(self.stored)
@@ -398,7 +456,7 @@ class ControlUnit:
 
     async def async_start(self) -> None:
         """Start the control clock and hand back when Home Assistant stops."""
-        if not self.options.configured:
+        if not (self.options.configured or self.follow_learning):
             return
         self._report_owed()
         self._started_at = dt_util.utcnow().timestamp()
@@ -419,9 +477,22 @@ class ControlUnit:
                 EVENT_HOMEASSISTANT_STOP, self._async_ha_stop
             )
 
-    def mark_restored(self) -> None:
-        """The switch has restored the user's choice: control steps may run."""
-        self._restored = True
+    async def async_restore_enabled(self, on: bool) -> None:
+        """The switch, once added, gives the user's wish back after a restart (the stored wish,
+        or its own restored state when none was stored): control steps may run. Unlike a change
+        made by the user, it does not clear an internal error (C10). A switch that is never
+        added (disabled) leaves control off once ``RESTORE_WAIT_S`` has passed."""
+        async with self._lock:
+            if self._restored or self._stopped or self._stopping:
+                return
+            self._restored = True
+            self._stored_enabled = on
+            await self._coordinator.async_save_control_now()
+            if on != self.enabled:
+                self.enabled = on
+                await self._async_run_step(dt_util.utcnow().timestamp())
+        await self._async_learning_calls()
+        self._notify()
 
     async def _async_shutdown(self) -> None:
         # Home Assistant is going through its list of shutdown jobs: removing this one from it
@@ -565,9 +636,12 @@ class ControlUnit:
                 return
             now = dt_util.utcnow().timestamp() if now is None else now
             self.enabled = enabled
-            # Any change of the switch clears an internal error (a latch needs off, then on).
+            # Any change of the switch by the user clears an internal error (a latch needs off,
+            # then on).
             self._session.failed = False
             self._session.alarms.discard(ControlAlarm.CONTROL_ERROR)
+            # The wish is stored before anything else can fail (P-11).
+            await self._coordinator.async_save_control_now()
             await self._async_run_step(now)
             if not enabled:
                 self._end_session()
@@ -579,19 +653,35 @@ class ControlUnit:
         its alarm belong to the unit, not the session)."""
         self._session = _Session(learning=self._session.learning)
         self._writer = None
+        self._forget_last_command()
         self._coordinator.schedule_control_save()
+
+    def _forget_last_command(self) -> bool:
+        """A session ended for a reason other than a stop's own hand-back: its last command is
+        not to be given again. Whether there was one; the caller stores it."""
+        if self._stopping or self._last_command is None:
+            return False
+        self._last_command = None
+        self._command_stored = None
+        return True
 
     # --- the step -------------------------------------------------------------------------
 
     async def _async_tick_locked(self, now: float) -> None:
-        if not self.options.configured:
+        if not (self.options.configured or self.follow_learning):
             return
         try:
             await self._async_step(now)
         except Exception:
             _LOGGER.exception("The control step failed; handing control back")
+            newly = not self._session.failed or ControlAlarm.CONTROL_ERROR not in (
+                self._session.alarms
+            )
             self._session.failed = True
             self._session.alarms.add(ControlAlarm.CONTROL_ERROR)
+            if self._forget_last_command() or newly:
+                # Stored before the hand-back is tried: the error outlives a crash (C10).
+                await self._coordinator.async_save_control_now()
             try:
                 await self._async_hand_back_now(now)
             except Exception:
@@ -606,13 +696,25 @@ class ControlUnit:
 
     async def _async_step(self, now: float) -> None:
         session = self._session
-        if self._hand_back_pending and not session.loop.control.controlling:
+        if (
+            self._hand_back_pending
+            and not session.loop.control.controlling
+            and self.options.configured
+        ):
             await self._async_follow_hand_back(now)
         if self.hand_back_only:
+            # Resumes the last run left are followed until SmartPI's flag reads on (C15).
+            await self._async_release_learning(now)
             self._report_owed()
             return
-        if not self._restored and now - self._started_at < RESTORE_WAIT_S:
-            return  # the switch has not restored the user's choice yet: decide nothing
+        if not self._restored:
+            if now - self._started_at < RESTORE_WAIT_S:
+                return  # the switch has not restored the user's choice yet: decide nothing
+            # The switch never came (disabled in Home Assistant): control counts as off, and
+            # so does the wish from now on (answer K).
+            _LOGGER.info("The control switch did not restore its state: control is off")
+            self._restored = True
+            self._coordinator.schedule_control_save()
         blockers = self.blockers(now)
         if self.enabled and not blockers and self._writer is None:
             self._writer = self._writer_factory(self._hass, self.options)
@@ -827,15 +929,48 @@ class ControlUnit:
         loop = self._session.loop
         # The setpoint first: a gateway applies heating on/off only while its setpoint override
         # is in force. A write that fails is sent again at the next step.
-        if out.setpoint is not None and not await self._async_write(
-            "setpoint", writer.write_setpoint(out.setpoint.value), now, out.setpoint
-        ):
-            loop = replace(loop, setpoint=write_failed(loop.setpoint))
-        if out.heating is not None and not await self._async_write(
-            "heating", writer.write_heating(out.heating.value == ON), now, out.heating
-        ):
-            loop = replace(loop, switch=write_failed(loop.switch))
+        setpoint_ok = heating_ok = False
+        if out.setpoint is not None:
+            setpoint_ok = await self._async_write(
+                "setpoint", writer.write_setpoint(out.setpoint.value), now, out.setpoint
+            )
+            if not setpoint_ok:
+                loop = replace(loop, setpoint=write_failed(loop.setpoint))
+        if out.heating is not None:
+            heating_ok = await self._async_write(
+                "heating", writer.write_heating(out.heating.value == ON), now, out.heating
+            )
+            if not heating_ok:
+                loop = replace(loop, switch=write_failed(loop.switch))
         self._session.loop = loop
+        await self._async_remember_command(out, setpoint_ok, heating_ok, now)
+
+    async def _async_remember_command(
+        self, out: LoopOutput, setpoint_ok: bool, heating_ok: bool, now: float
+    ) -> None:
+        """The last command after a write went through: heating on/off as commanded and the
+        setpoint as written. What did not get through keeps its earlier value; a heating state
+        never known is not stored. Stored at once when it matters (``remember_command``)."""
+        if not (setpoint_ok or heating_ok):
+            return
+        previous = self._last_command
+        if setpoint_ok and out.setpoint is not None:
+            setpoint: float | None = out.setpoint.value
+        else:
+            setpoint = None if previous is None else previous.setpoint
+        if heating_ok and out.heating is not None:
+            heating: bool | None = out.heating.value == ON
+        elif out.heating is None:
+            heating = out.heating_on  # not written now: as last written
+        else:
+            heating = None if previous is None else previous.heating  # its write failed
+        if heating is None:
+            return
+        command, save_now = remember_command(self._command_stored, heating, setpoint, now)
+        self._last_command = command
+        if save_now:
+            self._command_stored = command
+            await self._coordinator.async_save_control_now()
 
     async def _async_write(self, kind: str, call: Any, now: float, action: WriteAction) -> bool:
         session = self._session
@@ -881,6 +1016,7 @@ class ControlUnit:
             await self._async_try_hand_back(now)
         self._hand_back_at = now
         self._last_change_at = now
+        self._forget_last_command()  # the session ended; a stop's own hand-back keeps it
         await self._coordinator.async_save_control_now()  # a latch set with it must survive a crash
         await self._async_release_learning(now)
 
@@ -913,18 +1049,23 @@ class ControlUnit:
             self._hand_back_retry_at = now + HAND_BACK_RETRY_S
             self._coordinator.schedule_control_save()
             return True
+        await self._async_hand_back_confirmed()
+        return True
+
+    async def _async_hand_back_confirmed(self) -> None:
+        """The boiler has its own control back. Unless this is a stop's own hand-back, the last
+        command is not to be given again."""
         self._holding = False
         self._full_hand_back_due = False
         self._hand_back_done()
-        return True
+        if self._forget_last_command():
+            await self._coordinator.async_save_control_now()
 
     async def _async_follow_hand_back(self, now: float) -> None:
         """An owed hand-back: done once its targets show it; otherwise sent again every minute,
         and shown as failed once a sent one has gone unconfirmed that long."""
         if self._hand_back_checks and self._checks_hold(self._hand_back_checks):
-            self._holding = False
-            self._full_hand_back_due = False
-            self._hand_back_done()
+            await self._async_hand_back_confirmed()
             return
         if now < self._hand_back_retry_at:
             return
@@ -1052,27 +1193,34 @@ class ControlUnit:
         )
         self._learning_calls += [(zone_id, False) for zone_id in plan.pause]
         self._learning_calls += [(zone_id, True) for zone_id in plan.resume]
-        if plan.pause or plan.resume:
-            self._coordinator.schedule_control_save()
+        before = self._session.learning
         self._session.learning = plan.state
+        if plan.pause or _zones_changed(before, plan.state):
+            # Stored before SmartPI is asked (the calls come after the step): a crash right
+            # after a pause must still know the zone is the plugin's to resume (P-10).
+            await self._coordinator.async_save_control_now()
+        elif plan.resume or plan.state.resuming != before.resuming:
+            self._coordinator.schedule_control_save()  # a resume sent again: only its time
 
     async def _async_release_learning(self, now: float) -> None:
         """Resume every zone the plugin paused, and follow the resumes until SmartPI's flag
         reads on: one that did not take is sent again every minute."""
-        learning = self._session.learning
+        before = learning = self._session.learning
         if learning.paused:
             learning, zones = release_all(learning, now)
             self._learning_calls += [(zone_id, True) for zone_id in zones]
-            self._coordinator.schedule_control_save()
         if learning.resuming:
             link = self._coordinator.link
             flags = {z: link.zone_algorithm(z).smartpi_learning for z in learning.resuming}
             followed, again = follow_resumes(learning, flags, now, self.options.learning)
             self._learning_calls += [(zone_id, True) for zone_id in again]
-            if followed.resuming != learning.resuming:
-                self._coordinator.schedule_control_save()
             learning = followed
         self._session.learning = learning
+        if _zones_changed(before, learning):
+            # Which zones are paused or followed is stored before SmartPI is asked (P-10).
+            await self._coordinator.async_save_control_now()
+        elif learning.resuming != before.resuming:
+            self._coordinator.schedule_control_save()  # only when a resume was last sent
 
     async def _async_learning_calls(self) -> None:
         """Make the planned SmartPI calls, together and without the lock. Whether each took is

@@ -184,3 +184,44 @@ def test_with_heating_off_a_hot_water_pause_ends_without_waiting_for_the_flow() 
         state, [zone("a", learning=False)], False, 30.0, 45.0, 12 * MIN, CONFIG, heating=False
     )
     assert off.resume == ("a",)  # heating off: the flow will not come back, nothing to wait for
+
+
+def test_a_resume_that_never_takes_is_given_up_after_a_day() -> None:
+    """C15: a resume whose flag keeps reading off is sent again every minute, but for a day at
+    most after the first one — then it is no longer followed (the user may have switched
+    learning off on purpose)."""
+    state = LearningState(paused={"a": 0.0}, last_toggle={"a": 0.0})
+    state, _ = release_all(state, 0.0)
+    assert state.resume_since == {"a": 0.0}
+    sent = 0
+    for minute in range(1, 24 * 60):
+        state, again = follow_resumes(state, {"a": False}, minute * MIN, CONFIG)
+        sent += len(again)
+    assert sent == 24 * 60 - 1  # every minute
+    assert state.resume_since == {"a": 0.0}  # a resend does not move the first resume
+    state, again = follow_resumes(state, {"a": False}, 24 * 60 * MIN, CONFIG)
+    assert (state.resuming, state.resume_since, again) == ({}, {}, ())
+
+
+def test_a_resume_that_takes_is_forgotten_with_its_start() -> None:
+    state, _ = release_all(LearningState(paused={"a": 0.0}), 0.0)
+    state, again = follow_resumes(state, {"a": True}, MIN, CONFIG)
+    assert (state.resuming, state.resume_since, again) == ({}, {}, ())
+
+
+def test_a_resume_without_its_start_counts_from_its_last_send() -> None:
+    """Negative: a resume stored before its start was kept (0.2.1) counts from the stored send."""
+    state = LearningState(resuming={"a": 10 * MIN})
+    state, _ = follow_resumes(state, {"a": False}, 24 * 60 * MIN, CONFIG)
+    assert "a" in state.resuming
+    state, again = follow_resumes(state, {"a": False}, 24 * 60 * MIN + 10 * MIN, CONFIG)
+    assert (state.resuming, again) == ({}, ())
+
+
+def test_a_resume_planned_by_a_step_keeps_its_start() -> None:
+    state = plan(LearningState(), [zone("a")], 0, dhw=True).state
+    result = plan(state, [zone("a", learning=False)], 12)
+    assert result.state.resume_since == {"a": 12 * MIN}
+    again = plan(result.state, [zone("a", learning=False)], 14)
+    assert again.resume == ("a",)
+    assert again.state.resume_since == {"a": 12 * MIN}
