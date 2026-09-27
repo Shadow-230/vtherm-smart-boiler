@@ -74,10 +74,10 @@ so `core` can be imported on its own; `core` tests import it directly.
 | B1 ✅ | data format: boiler state (flame, flow, return, modulation, setpoint, DHW, pressure, flue gas), zone state (on_percent, valve, temperature, target, active, power), weather |
 | B2 ✅ | installation model (boiler → circuits of four control types → zones); parameters with source and confidence; declared-versus-measured findings |
 | B3 ✅ | building load estimate: coarse answers (insulation, thermal mass) or an entered design heat load or loss coefficient; refined from measured data |
-| B4 ✅ | burn-cycle detection; DHW from its signal, inference from a shared return with a confidence |
+| B4 ✅ | burn-cycle detection; DHW from its signal, inference from a shared return with a confidence (0.2.1: inference from a shared return removed, W2) |
 | B5 ✅ | metrics: starts per hour, burn times, condensing share (return threshold as a parameter, default 55 °C), degree-days, gas per degree-day from a mapped gas meter, else estimated from modulation when consumption data exist; binned by outdoor temperature |
 | B6 ✅ | emitter power factor (EN 442 exponent by emitter type — defaults: radiator 1.3, underfloor 1.1, convector 1.4, advanced override), heating zones only, last value held, unavailable with a reason |
-| B7 ✅ | hot water available per zone: no while DHW is active, while the flow has fallen near room temperature, or while the flow signal is stale |
+| B7 ✅ | hot water available per zone: no while DHW is active, while the flow has fallen near room temperature, or while the flow signal is stale (0.2.1: unknown, not "no", while the flow is unknown or stale, W5) |
 | B8 ✅ | reference room: strategies, selection hysteresis, explicit "no active zone" and "no valid measurement" |
 | B9 ✅ | critical zone per circuit |
 | B10 ✅ | signal check: which optional signals are present and fresh; outdoor sensor plausibility against the weather entity |
@@ -112,7 +112,7 @@ metrics. The test HA (`devenv/`, test LXC) is built with 0.2 (`docs/plan-0.2.md`
 | D2 ✅ | config flow, simple and advanced: boiler class and power, optional gas consumption at minimum and maximum power, entity fields per signal (required: flame, flow temperature), circuits, VT zones per circuit with emitter type and size, foreign-heat switches or sensors per zone, building (coarse answers or heat loss), weather entity, reference-room strategy; options flow; every option with a cautious default and a description of what it does and what it risks |
 | D3 ✅ | transport from mapped entities: freshness per signal, capabilities from filled fields |
 | D4 ✅ | `vtherm_link.py`: VT zones, `central_mode`, device power; capability detection |
-| D5 ✅ | coordinator: state events plus a 30 s tick; bounded rolling history in HA storage. Done differently: the rolling history (8 days) is rebuilt from the recorder at start, which keeps these states anyway, and seeded from current states; HA storage keeps only the monitoring start, held emitter factors and measured parameters. Without the recorder the history starts empty after a restart. The analysis (`core/analysis.py`) runs every 5 min on a copy, off the event loop |
+| D5 ✅ | coordinator: state events plus a 30 s tick; bounded rolling history in HA storage. Done differently: the rolling history (8 days) is rebuilt from the recorder at start, which keeps these states anyway, and seeded from current states; HA storage keeps only the monitoring start, held emitter factors and measured parameters. Without the recorder the history starts empty after a restart. The analysis (`core/analysis.py`) runs every 5 min on a copy, off the event loop (0.2: the store also keeps the control state; 0.2.2 V1: in its own store, written at once) |
 | D6 ✅ | entities: boiler metrics, connection, signal check, per-zone hot water available and emitter power factor, critical zone, reference room, verdict, alarms; advanced entities hidden by default. Entities for a feature exist only when its signals are mapped |
 | D7 ✅ | FC0: `weather.get_forecasts` (hourly and daily) every 30 min, 90-day retention. Stored in weekly partitions, one storage file each |
 | D8 ✅ | diagnostics download, redacted |
