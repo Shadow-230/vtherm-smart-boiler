@@ -211,11 +211,21 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
 
     # --- lifecycle ------------------------------------------------------------------------
 
+    @property
+    def loaded(self) -> bool:
+        """Both stores have been read: what the last run left is known."""
+        return self._loaded
+
+    async def async_load(self) -> None:
+        """Read both stores — first in setup, so a hand-back the last run left owed is known
+        (and made) before anything else can fail."""
+        await self._async_load_store(dt_util.utcnow().timestamp())
+
     async def async_start(self) -> None:
-        """Load stored state, rebuild the history and start following the entities."""
+        """Find VT, rebuild the history and start following the entities (after
+        ``async_load``)."""
         now = dt_util.utcnow().timestamp()
         await self.link.async_detect()
-        await self._async_load_store(now)
         # Current states seed the history too: without the recorder they are all there is, and
         # an entity that does not change would otherwise never enter it.
         zones = set(self.config.zone_entities)
@@ -237,7 +247,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             )
         )
         if self.forecasts is not None:
-            await self.forecasts.async_load(now)
+            try:
+                await self.forecasts.async_load(now)
+            except Exception:  # forecasts are an extra: they never fail setup
+                _LOGGER.exception("Could not load the stored forecasts; recording goes on")
             self._unsubs.append(
                 async_track_time_interval(
                     self.hass, self._async_forecast_tick, timedelta(seconds=FORECAST_SECONDS)

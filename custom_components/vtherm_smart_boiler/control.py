@@ -371,12 +371,33 @@ class ControlUnit:
         # The last run held the boiler and never confirmed a hand-back (a crash, a power cut):
         # handed back in full at the first step; control may take the boiler again afterwards.
         self._hand_back_pending = _flag(data.get("hand_back_pending")) or self._holding
+        # From now on the stores get this unit's state: a save made before its start must not
+        # write the state loaded earlier over a hand-back made since.
+        self._coordinator.provide_stored_control(self.stored)
 
     # --- lifecycle ------------------------------------------------------------------------
 
+    async def async_hand_back_owed(self, now: float) -> None:
+        """At setup, before anything else can fail: one full attempt at a hand-back the last
+        run left owed. A failure stays owed, shown and retried by the clock, or reported for
+        good if setup gives up. Never raises."""
+        if not self.options.configured:
+            return
+        async with self._lock:
+            if self._stopped or self._stopping or not self._hand_back_pending:
+                return
+            try:
+                await self._async_try_hand_back(now, full=True)
+            except Exception:
+                _LOGGER.exception("Handing back what the last run left owed failed")
+                self._hand_back_pending = True
+                self._hand_back_failed = True
+                self._hand_back_retry_at = now + HAND_BACK_RETRY_S
+                self._report_owed()
+            self._coordinator.schedule_control_save()
+
     async def async_start(self) -> None:
         """Start the control clock and hand back when Home Assistant stops."""
-        self._coordinator.provide_stored_control(self.stored)
         if not self.options.configured:
             return
         self._report_owed()

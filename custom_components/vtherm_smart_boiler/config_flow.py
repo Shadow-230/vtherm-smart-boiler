@@ -14,6 +14,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.config_entries import (
     ConfigEntry,
+    ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlow,
@@ -1274,6 +1275,12 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         problem = validate_problem(self.options)
         if problem is not None:
             return await self._back_to_problem(*problem)
+        entry = self.config_entry
+        if entry.state in (ConfigEntryState.SETUP_ERROR, ConfigEntryState.SETUP_RETRY):
+            # The failed setup left no update listener to reload it (H9): the new options are
+            # put in place first, then the entry is set up again with them.
+            self.hass.config_entries.async_update_entry(entry, options=self.options)
+            self.hass.config_entries.async_schedule_reload(entry.entry_id)
         return self.async_create_entry(data=self.options)
 
     # --- control: path and topology → path details → curve and limits → (advanced) behaviour

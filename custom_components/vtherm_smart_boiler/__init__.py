@@ -34,6 +34,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     for module in _RUNTIME_MODULES:
         await async_import_module(hass, f"{__package__}.{module}")
 
+    from homeassistant.util import dt as dt_util
+
     from . import feature_manager
     from .config import ConfigError, EntryConfig
     from .control import ControlUnit
@@ -61,30 +63,73 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ) from err
     coordinator = SmartBoilerCoordinator(hass, entry, config)
     try:
-        await coordinator.async_start()
-        await coordinator.async_config_entry_first_refresh()
-        _report_control_problem(hass, entry, config)
+        # What the last run left, first: a hand-back it owed is made before anything else can
+        # fail, and the unit that makes it is the one that runs (P-05, C14).
+        await coordinator.async_load()
         if config.control.configured:
             control = ControlUnit(hass, coordinator, config.control, raw=entry.options.get(CONTROL))
             control.restore(coordinator.stored_control)
             coordinator.control = control
-            await control.async_start()
         else:
-            coordinator.hand_back_unit = _hand_back_unit(hass, coordinator, config)
-            if coordinator.hand_back_unit is not None:
-                await coordinator.hand_back_unit.async_start()
+            coordinator.hand_back_unit = _hand_back_unit(
+                hass, coordinator, config, coordinator.stored_control
+            )
+        for unit in _units(coordinator):
+            await unit.async_hand_back_owed(dt_util.utcnow().timestamp())
+        _report_control_problem(hass, entry, config)
+        await coordinator.async_start()
+        await coordinator.async_config_entry_first_refresh()
+        for unit in _units(coordinator):
+            await unit.async_start()
         entry.runtime_data = coordinator
         await _async_migrate_zone_unique_ids(hass, entry, config)
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         feature_manager.async_attach(hass, coordinator)
         _remove_stale_entities(hass, entry, coordinator.expected_unique_ids)
+        entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+        coordinator.async_start_background()
     except Exception:
-        feature_manager.async_detach(hass, coordinator)
-        await _async_stop(coordinator)  # no control clock is left running
+        await _async_setup_failed(hass, entry, coordinator)
         raise
-    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
-    coordinator.async_start_background()
     return True
+
+
+async def _async_setup_failed(
+    hass: HomeAssistant, entry: ConfigEntry, coordinator: SmartBoilerCoordinator
+) -> None:
+    """Nothing of a failed setup keeps running: the units hand back again if still owed (a
+    persistent issue tells of one that did not get through), then every clock, listener and
+    task stops. Home Assistant retries a setup that is not ready, which hands back first again;
+    after an error, the issue stays until a reload or an options change."""
+    import logging
+
+    from . import feature_manager
+    from .control import report_owed_hand_back
+
+    logger = logging.getLogger(__name__)
+    try:
+        feature_manager.async_detach(hass, coordinator)
+    except Exception:
+        logger.exception("Could not let go of VT after a failed setup")
+    for unit in _units(coordinator):
+        await unit.async_stop()  # hands back again if still owed; never raises
+    try:
+        await coordinator.async_stop()
+    except Exception:
+        logger.exception("Could not stop cleanly after a failed setup")
+    if not coordinator.loaded:
+        # The stores could not even be read: what they owe is reported from them, cautiously.
+        await _async_report_owed_from_store(hass, entry)
+    elif not _units(coordinator) and owes_hand_back(coordinator.stored_control):
+        # Owed with nothing to make it (the options that took the boiler are gone).
+        report_owed_hand_back(hass, entry.entry_id, persistent=True)
+    if hasattr(entry, "runtime_data"):
+        # Not left for the options flow or a listener to take for a running entry.
+        object.__delattr__(entry, "runtime_data")
+
+
+def _units(coordinator: SmartBoilerCoordinator) -> list[ControlUnit]:
+    return [unit for unit in (coordinator.control, coordinator.hand_back_unit) if unit is not None]
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -111,21 +156,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from . import feature_manager
 
     coordinator = entry.runtime_data
-    for unit in (coordinator.control, coordinator.hand_back_unit):
-        if unit is not None:
-            await unit.async_stop()  # hand back before anything else goes
+    for unit in _units(coordinator):
+        await unit.async_stop()  # hand back before anything else goes
     feature_manager.async_detach(hass, coordinator)
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         await coordinator.async_stop()
     return unloaded
-
-
-async def _async_stop(coordinator: SmartBoilerCoordinator) -> None:
-    for unit in (coordinator.control, coordinator.hand_back_unit):
-        if unit is not None:
-            await unit.async_stop()
-    await coordinator.async_stop()
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -216,10 +253,14 @@ async def _async_report_owed_from_store(hass: HomeAssistant, entry: ConfigEntry)
 
 
 def _hand_back_unit(
-    hass: HomeAssistant, coordinator: SmartBoilerCoordinator, config: EntryConfig
+    hass: HomeAssistant,
+    coordinator: SmartBoilerCoordinator,
+    config: EntryConfig,
+    stored: Mapping[str, Any],
 ) -> ControlUnit | None:
-    """Control is not in the options, but the last run left a hand-back owed: a unit built from
-    the options that took the boiler makes it, and does nothing else."""
+    """Control is not in the options, but the last run left a hand-back owed (``stored``, the
+    control state read at setup): a unit built from the options that took the boiler makes it,
+    and does nothing else."""
     import logging
 
     from homeassistant.helpers import issue_registry as ir
@@ -227,14 +268,15 @@ def _hand_back_unit(
     from .control import ControlUnit
     from .control_config import parse_control
 
-    stored = coordinator.stored_control
     if not owes_hand_back(stored):
         return None
     taken_with = stored.get("taken_with")
-    try:
-        options = parse_control(taken_with, config.installation, None)
-    except KeyError, TypeError, ValueError:
-        options = None
+    options = None
+    if isinstance(taken_with, Mapping):
+        try:
+            options = parse_control(taken_with, config.installation, None)
+        except Exception:  # whatever cannot be read: the user is asked to hand back by hand
+            options = None
     if options is None or not options.configured:
         logging.getLogger(__name__).error(
             "A hand-back is owed, but the options that took the boiler are gone: return the "
@@ -265,7 +307,9 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
     def meaningful(options: Mapping[str, Any]) -> dict[str, Any]:
         return {key: value for key, value in options.items() if key != LEVEL}
 
-    if meaningful(entry.options) != meaningful(entry.runtime_data.options):
+    coordinator = getattr(entry, "runtime_data", None)
+    if coordinator is None or meaningful(entry.options) != meaningful(coordinator.options):
+        # Not running (its setup failed): whatever changed, it is set up again.
         await hass.config_entries.async_reload(entry.entry_id)
 
 

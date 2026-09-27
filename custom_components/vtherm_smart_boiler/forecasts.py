@@ -100,10 +100,20 @@ class ForecastRecorder:
         """Load the partitions still inside the retention; remove the files of older ones."""
         first = partition_of(now - DEFAULT_RETENTION_S)
         loaded = []
+        unreadable = 0
         for partition in range(first, partition_of(now) + 1):
-            data = await self._storage(partition).async_load()
-            if data and isinstance(data.get("snapshots"), list):
+            # Each week on its own: one that cannot be read (written by a later version, say)
+            # costs that week, not the others or the entry's setup.
+            try:
+                data = await self._storage(partition).async_load()
+            except Exception as err:
+                _LOGGER.debug("Could not read stored forecast week %s: %r", partition, err)
+                unreadable += 1
+                continue
+            if isinstance(data, dict) and isinstance(data.get("snapshots"), list):
                 loaded.append(data["snapshots"])
+        if unreadable:
+            _LOGGER.warning("Skipped %s stored forecast weeks that could not be read", unreadable)
         skipped = self.store.load(loaded)
         if skipped:
             _LOGGER.warning("Skipped %s unreadable stored forecast snapshots", skipped)

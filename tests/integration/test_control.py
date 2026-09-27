@@ -36,7 +36,14 @@ from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 
-from .harness import BOILER_ENTITIES, VT_PLATFORM, FakeBoiler, FakeZones
+from .harness import (
+    BOILER_ENTITIES,
+    VT_PLATFORM,
+    WEATHER_ENTITY,
+    FakeBoiler,
+    FakeForecasts,
+    FakeZones,
+)
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -2392,7 +2399,7 @@ async def test_unreadable_control_data_still_restores_what_matters(
     )
     assert rig.entry is not None
     unit = rig.entry.runtime_data.control
-    assert unit.hand_back_owed
+    assert rig.gateway.calls[:2] == HAND_BACK  # the owed hand-back was kept (made at setup)
     stored = unit.stored()  # what a restart keeps, the cause included (T9)
     assert stored["latched"] is True
     assert stored["latched_by"] == ["outside_change"]
@@ -2403,8 +2410,7 @@ async def test_control_data_that_cannot_be_read_hands_back(
 ) -> None:
     """P66: when whether the plugin held the boiler cannot be read, it is taken that it did."""
     await start_with_stored(rig, hass_storage, {"controlling": "maybe"})
-    assert rig.entry is not None
-    assert rig.entry.runtime_data.control.hand_back_owed
+    assert rig.gateway.calls == HAND_BACK  # made at setup
 
 
 # --- V1: the control store (P-01, P-04, P-58) ---------------------------------------------------
@@ -2604,12 +2610,14 @@ async def test_a_store_written_by_0_2_1_after_a_downgrade_keeps_a_hand_back_owed
     assert rig.gateway.calls == HAND_BACK
 
 
+@pytest.mark.parametrize("confirmed", [True, False], ids=["confirmed", "unconfirmed"])
 async def test_setup_failing_before_the_store_is_read_leaves_it_intact(
-    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch, confirmed: bool
 ) -> None:
-    """T-10 (P-04): a setup that fails before the stores are read writes nothing over them —
-    not the defaults over the held boiler, the monitoring start or the day summaries — and the
-    next good setup hands back."""
+    """T-10 (P-04), in V2's order: the stores are read first, so a setup that fails later — VT
+    cannot be detected — has already sent the hand-back the last run left owed. The day
+    summaries and the monitoring start are kept as they were; a hand-back still owed is
+    reported by a persistent issue and made by the next good setup."""
     from homeassistant.config_entries import ConfigEntryState
 
     from custom_components.vtherm_smart_boiler.core.daily import DaySummary
@@ -2621,7 +2629,9 @@ async def test_setup_failing_before_the_store_is_read_leaves_it_intact(
         0.0, 0.0, False, 8.5, None, 4.0, 60.0,
     )  # fmt: skip
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.created_at = START - timedelta(days=7)  # the monitoring start (V1)
     entry.add_to_hass(rig.hass)
+    rig.entry = entry
     seed_stores(
         hass_storage,
         entry,
@@ -2630,9 +2640,10 @@ async def test_setup_failing_before_the_store_is_read_leaves_it_intact(
         monitoring_since=START.timestamp() - 7 * 86400,
         daily={str(int(day_start)): day.to_dict()},
     )
-    before = copy.deepcopy(
-        {key: hass_storage[key] for key in (main_key(entry), control_key(entry))}
-    )
+    before = copy.deepcopy(hass_storage[main_key(entry)]["data"])
+    if not confirmed:
+        rig.gateway.connected = False
+        rig.live()
 
     async def fail(_link: VThermLink) -> None:
         raise RuntimeError("the installed vtherm_api could not be read")
@@ -2643,13 +2654,29 @@ async def test_setup_failing_before_the_store_is_read_leaves_it_intact(
         await rig.hass.async_block_till_done()
         assert entry.state is ConfigEntryState.SETUP_ERROR
         await rig.advance(150)  # past the delayed save
-    assert {key: hass_storage[key] for key in before} == before
-    assert rig.gateway.calls == []
+    sent = rig.gateway.calls if confirmed else rig.gateway.lost
+    assert sent[:2] == HAND_BACK  # sent before the failure
+    main = hass_storage[main_key(entry)]["data"]
+    assert main["daily"] == before["daily"]
+    assert main["monitoring_since"] == before["monitoring_since"]
+    found = issue(rig, "hand_back_owed")
+    stored = stored_control(hass_storage, rig)
+    if confirmed:
+        assert found is None
+        assert (stored["controlling"], stored["hand_back_pending"]) == (False, False)
+    else:
+        assert found is not None
+        assert found.is_persistent
+        assert stored["hand_back_pending"] is True
+        rig.gateway.connected = True
+        rig.live()
+    calls = len(rig.gateway.calls)
     assert await rig.hass.config_entries.async_reload(entry.entry_id)
     await rig.hass.async_block_till_done()
-    rig.entry = entry
     await rig.advance(20)
-    assert rig.gateway.calls == HAND_BACK
+    # The next good setup makes what is still owed, and nothing more.
+    assert rig.gateway.calls[calls:] == ([] if confirmed else HAND_BACK)
+    assert issue(rig, "hand_back_owed") is None
 
 
 async def start_created(
@@ -2856,3 +2883,398 @@ async def test_a_release_by_hand_writes_the_control_store(
     assert (main["control"]["controlling"], main["control"]["hand_back_pending"]) == (False, False)
     assert main["control_store"] == 1
     assert issue(rig, "control_state_unreadable") is None
+
+
+# --- V2: a setup that fails (P-05, P-33, P-57; C14, H9) -----------------------------------------
+
+
+def mark_computing(rig: Rig, monkeypatch: pytest.MonkeyPatch, fail: bool = False) -> None:
+    """Every run of the monitor's computation is marked in the record of service calls, so it
+    can be ordered against the writes; ``fail``: it raises, as the first refresh then does."""
+    from custom_components.vtherm_smart_boiler.coordinator import SmartBoilerCoordinator
+
+    original = SmartBoilerCoordinator._compute
+
+    def compute(self: SmartBoilerCoordinator, now: float) -> Any:
+        rig.services.append(("compute", "", {}))
+        if fail:
+            raise RuntimeError("the monitor cannot compute")
+        return original(self, now)
+
+    monkeypatch.setattr(SmartBoilerCoordinator, "_compute", compute)
+
+
+def marks(rig: Rig) -> str:
+    """The record as marks: H for a hand-back (the gateway's CS=0), C for a computation."""
+    found = []
+    for domain, service, data in rig.services:
+        if domain == "compute":
+            found.append("C")
+        elif (domain, service) == ("opentherm_gw", "set_control_setpoint") and data.get(
+            "temperature"
+        ) == 0:
+            found.append("H")
+    return "".join(found)
+
+
+def owed_entry(rig: Rig, hass_storage: dict[str, Any], **extra: Any) -> MockConfigEntry:
+    """An entry whose last run left a hand-back owed (0.2.2's stores)."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones) | extra
+    )
+    entry.add_to_hass(rig.hass)
+    seed_stores(hass_storage, entry, {"controlling": True, "hand_back_pending": True}, "0.2.2")
+    rig.entry = entry
+    return entry
+
+
+@pytest.mark.parametrize("confirmed", [True, False], ids=["confirmed", "unconfirmed"])
+async def test_an_owed_hand_back_is_made_before_the_first_refresh_fails(
+    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch, confirmed: bool
+) -> None:
+    """T-11 (P-05): the monitor's first refresh fails on every attempt. A hand-back the last run
+    left owed is made before it, at each attempt while it is owed; one still owed when setup
+    gives up is reported by a persistent issue; nothing keeps running."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    mark_computing(rig, monkeypatch, fail=True)
+    if not confirmed:
+        rig.gateway.connected = False  # the gateway drops what it gets: nothing confirms
+        rig.live()
+    entry = owed_entry(rig, hass_storage)
+    assert not await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+    # Setup's own attempt goes first; the failure path tries again while still owed.
+    assert marks(rig) == ("HC" if confirmed else "HCH")
+    await rig.advance(10)  # Home Assistant's first retry (5 s), a background task
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+    assert marks(rig) == ("HCC" if confirmed else "HCHHCH")
+    found = issue(rig, "hand_back_owed")
+    stored = stored_control(hass_storage, rig)
+    if confirmed:
+        assert found is None
+        assert (stored["controlling"], stored["hand_back_pending"]) == (False, False)
+    else:
+        assert found is not None
+        assert found.is_persistent
+        assert stored["hand_back_pending"] is True
+    assert await rig.hass.config_entries.async_unload(entry.entry_id)  # no more retries
+    count = len(rig.services)
+    await rig.advance(300)
+    assert len(rig.services) == count  # no control clock, no refresh left running
+
+
+async def test_an_unreadable_forecast_partition_does_not_fail_setup(
+    rig: Rig,
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    forecasts: FakeForecasts,
+) -> None:
+    """T-11, forecast variant (P-05): one stored forecast week cannot be read (written by a later
+    version, say). It is skipped with one warning; the other weeks are loaded and the entry
+    runs."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    from custom_components.vtherm_smart_boiler.core.forecast import (
+        PARTITION_S,
+        ForecastKind,
+        ForecastPoint,
+        ForecastSnapshot,
+        partition_of,
+    )
+    from custom_components.vtherm_smart_boiler.forecasts import partition_key
+
+    entry = add_entry(rig, options(rig.zones) | {"weather": WEATHER_ENTITY})
+    current = partition_of(START.timestamp())
+    weeks = (current - 2, current - 1, current)
+    taken = {week: week * PARTITION_S + 60.0 for week in weeks}
+    for week, at in taken.items():
+        snapshot = ForecastSnapshot(at, ForecastKind.DAILY, (ForecastPoint(at + 3600, 4.0),))
+        key = partition_key(entry.entry_id, week)
+        hass_storage[key] = {"version": 1, "key": key, "data": {"snapshots": [snapshot.to_dict()]}}
+    unreadable = partition_key(entry.entry_id, current - 1)
+    original = ha_storage.Store.async_load
+
+    async def load(store: ha_storage.Store[Any]) -> Any:
+        if store.key == unreadable:
+            raise NotImplementedError("a later version's data")
+        return await original(store)
+
+    monkeypatch.setattr(ha_storage.Store, "async_load", load)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        assert await rig.hass.config_entries.async_setup(entry.entry_id)
+        await rig.hass.async_block_till_done()
+    rig.entry = entry
+    assert entry.state is ConfigEntryState.LOADED
+    warnings = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "forecast" in record.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "1" in warnings[0].getMessage()  # how many weeks were skipped
+    recorder = entry.runtime_data.forecasts
+    assert recorder is not None
+    loaded = {s.taken_at for s in recorder.store.snapshots()}
+    assert taken[current - 2] in loaded
+    assert taken[current] in loaded
+    assert taken[current - 1] not in loaded
+
+
+@pytest.mark.parametrize(
+    "taken_with",
+    [None, "not options", {"write_path": "no such path"}],
+    ids=["missing", "not_a_mapping", "unparsable"],
+)
+async def test_an_owed_hand_back_without_its_options_raises_a_fixable_issue(
+    rig: Rig, hass_storage: dict[str, Any], caplog: pytest.LogCaptureFixture, taken_with: Any
+) -> None:
+    """T-09 (P-33): a hand-back is owed, control is gone from the options, and the options that
+    took the boiler are missing or cannot be read: nothing can hand back. The monitor runs; a
+    fixable issue asks the user to return the boiler by hand; once confirmed, nothing is owed,
+    and no issue comes back after a restart."""
+    from homeassistant.components.repairs import DOMAIN as REPAIRS
+    from homeassistant.config_entries import ConfigEntryState
+    from homeassistant.setup import async_setup_component
+
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=without_control(options(rig.zones))
+    )
+    entry.add_to_hass(rig.hass)
+    control: dict[str, Any] = {"controlling": True}
+    if taken_with is not None:
+        control["taken_with"] = taken_with
+    seed_stores(hass_storage, entry, control, "0.2.2")
+    caplog.clear()
+    await set_up(rig, entry)
+    assert entry.state is ConfigEntryState.LOADED
+    await rig.advance(30)
+    assert entry.runtime_data.last_update_success  # the monitor runs
+    assert rig.state("sensor", "signal_problems").state != "unavailable"
+    found = issue(rig, "hand_back_owed")
+    assert found is not None
+    assert found.is_fixable
+    assert not found.is_persistent
+    assert _logged(caplog, logging.ERROR, "the options that took the boiler are gone") == 1
+    assert rig.gateway.calls == []  # nothing to hand back through
+    assert await async_setup_component(rig.hass, REPAIRS, {})
+    manager = rig.hass.data[REPAIRS]["flow_manager"]
+    flow = await manager.async_init(DOMAIN, data={"issue_id": found.issue_id})
+    flow = await manager.async_configure(flow["flow_id"], {})
+    assert flow["type"] == "create_entry"
+    await rig.hass.async_block_till_done()
+    stored = stored_control(hass_storage, rig)
+    assert (stored["controlling"], stored["hand_back_pending"]) == (False, False)
+    assert await rig.hass.config_entries.async_reload(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    await rig.advance(30)
+    assert issue(rig, "hand_back_owed") is None
+    assert rig.gateway.calls == []
+
+
+@pytest.mark.parametrize("failed", ["setup_error", "setup_retry"])
+async def test_options_saved_in_setup_error_reload_the_entry(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, failed: str
+) -> None:
+    """H9: the entry's setup failed, so no update listener is left to reload it. Options saved
+    then set it up again, with the new options."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    from custom_components.vtherm_smart_boiler.coordinator import SmartBoilerCoordinator
+
+    if failed == "setup_error":
+        original = rig.hass.config_entries.async_forward_entry_setups
+        failures = [RuntimeError("the platforms could not be set up")]
+
+        async def forward(*args: Any, **kwargs: Any) -> None:
+            if failures:
+                raise failures.pop()
+            await original(*args, **kwargs)
+
+        monkeypatch.setattr(rig.hass.config_entries, "async_forward_entry_setups", forward)
+        expected = ConfigEntryState.SETUP_ERROR
+    else:
+        compute = SmartBoilerCoordinator._compute
+        failures = [RuntimeError("the monitor cannot compute")]
+
+        def once(self: SmartBoilerCoordinator, now: float) -> Any:
+            if failures:
+                raise failures.pop()
+            return compute(self, now)
+
+        monkeypatch.setattr(SmartBoilerCoordinator, "_compute", once)
+        expected = ConfigEntryState.SETUP_RETRY
+    entry = add_entry(rig, options(rig.zones))
+    assert not await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    assert entry.state is expected
+    assert not hasattr(entry, "runtime_data")  # nothing of the failed setup is left
+    flow = await rig.hass.config_entries.options.async_init(entry.entry_id)
+    flow = await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"], {"next_step_id": "freshness"}
+    )
+    flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], {"flow": 30})
+    assert flow["type"] == "create_entry"
+    await rig.hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.options["freshness"] == {"flow": 1800.0}
+
+
+async def test_options_changed_without_a_running_entry_reload_it(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """H9, the listener's guard: called for an entry without its runtime data, it reloads
+    rather than failing on what is not there."""
+    from custom_components.vtherm_smart_boiler import _async_options_updated
+
+    reloaded: list[str] = []
+
+    async def reload(entry_id: str) -> bool:
+        reloaded.append(entry_id)
+        return True
+
+    entry = add_entry(rig, options(rig.zones))
+    monkeypatch.setattr(rig.hass.config_entries, "async_reload", reload)
+    await _async_options_updated(rig.hass, entry)
+    assert reloaded == [entry.entry_id]
+
+
+async def test_a_failure_after_the_platforms_still_stops_everything(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P-57: the last step of setup fails, after control has started and taken the boiler: the
+    failure path hands back, stops the control clock and lets go of VT; no update listener is
+    left and nothing writes afterwards."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    from custom_components.vtherm_smart_boiler import feature_manager
+    from custom_components.vtherm_smart_boiler.coordinator import SmartBoilerCoordinator
+
+    started: list[SmartBoilerCoordinator] = []
+
+    def fail(self: SmartBoilerCoordinator) -> None:
+        started.append(self)
+        raise RuntimeError("the background jobs could not start")
+
+    monkeypatch.setattr(SmartBoilerCoordinator, "async_start_background", fail)
+    mock_restore_cache(rig.hass, [State("switch.boiler_boiler_control_experimental", "on")])
+    entry = add_entry(rig, options(rig.zones))
+    assert not await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    assert rig.gateway.setpoints()[0] == EXPECTED  # control had taken the boiler
+    assert rig.gateway.calls[-2:] == HAND_BACK
+    (coordinator,) = started
+    unit = coordinator.control
+    assert unit is not None
+    assert unit._unsubs == []  # no control clock
+    assert unit._stop_unsub is None  # no shutdown job
+    assert feature_manager.registration(rig.hass) is None
+    assert entry.update_listeners == []
+    assert not hasattr(entry, "runtime_data")
+    count = len(rig.gateway.calls)
+    await rig.advance(300)
+    assert len(rig.gateway.calls) == count
+
+
+async def test_an_owed_hand_back_does_not_wait_for_the_first_refresh(
+    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C14: the hand-back the last run left owed goes out before the monitor's first
+    computation, not after it."""
+    mark_computing(rig, monkeypatch)
+    entry = owed_entry(rig, hass_storage)
+    await set_up(rig, entry)
+    assert marks(rig).startswith("HC")
+    assert issue(rig, "hand_back_owed") is None
+    await rig.advance(10)
+    stored = stored_control(hass_storage, rig)
+    assert (stored["controlling"], stored["hand_back_pending"]) == (False, False)
+
+
+async def test_a_store_read_that_fails_writes_nothing_and_still_reports_the_debt(
+    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P-04 kept under the new order: reading the stores itself fails unexpectedly. Nothing is
+    written over them, and as no unit could be built, a boiler the last run held is reported
+    by a persistent issue."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    from custom_components.vtherm_smart_boiler.coordinator import SmartBoilerCoordinator
+
+    async def fail(_self: SmartBoilerCoordinator) -> None:
+        raise RuntimeError("the stored data could not be read")
+
+    monkeypatch.setattr(SmartBoilerCoordinator, "async_load", fail)
+    entry = owed_entry(rig, hass_storage)
+    before = copy.deepcopy(
+        {key: hass_storage[key] for key in (main_key(entry), control_key(entry))}
+    )
+    assert not await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    await rig.advance(150)  # past the delayed save
+    assert {key: hass_storage[key] for key in before} == before
+    assert rig.gateway.calls == []
+    found = issue(rig, "hand_back_owed")
+    assert found is not None
+    assert found.is_persistent
+
+
+async def test_an_unexpected_failure_of_the_first_hand_back_does_not_fail_setup(
+    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hand-back made at setup fails in a way no writer reports (a bug, say): setup goes on,
+    the hand-back stays owed and shown, and the control clock retries it."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    from custom_components.vtherm_smart_boiler.transport.writers import OpenthermGwWriter
+
+    original = OpenthermGwWriter.hand_back
+    failures = [RuntimeError("an unexpected failure")]
+
+    async def hand_back(self: OpenthermGwWriter, full: bool = False) -> Any:
+        if failures:
+            raise failures.pop()
+        return await original(self, full)
+
+    monkeypatch.setattr(OpenthermGwWriter, "hand_back", hand_back)
+    entry = owed_entry(rig, hass_storage)
+    await set_up(rig, entry)
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.control.hand_back_owed
+    assert issue(rig, "hand_back_owed") is not None
+    assert rig.gateway.calls == []
+    await rig.advance(70)  # the clock's retry, a minute later
+    assert rig.gateway.calls[:2] == HAND_BACK
+    assert not entry.runtime_data.control.hand_back_owed
+    assert issue(rig, "hand_back_owed") is None
+
+
+async def test_forecasts_that_cannot_be_loaded_at_all_do_not_fail_setup(
+    rig: Rig,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    forecasts: FakeForecasts,
+) -> None:
+    """P-05: loading the stored forecasts fails as a whole (the old weeks' files cannot be
+    removed, say): logged, and the entry runs and records on."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    from custom_components.vtherm_smart_boiler.forecasts import ForecastRecorder
+
+    async def fail(_self: ForecastRecorder, _now: float) -> None:
+        raise OSError("the storage directory cannot be read")
+
+    monkeypatch.setattr(ForecastRecorder, "async_load", fail)
+    entry = add_entry(rig, options(rig.zones) | {"weather": WEATHER_ENTITY})
+    caplog.clear()
+    await set_up(rig, entry)
+    assert entry.state is ConfigEntryState.LOADED
+    assert _logged(caplog, logging.ERROR, "Could not load the stored forecasts") == 1
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    assert forecasts.calls  # recording goes on
