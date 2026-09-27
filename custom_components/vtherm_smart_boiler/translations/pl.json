@@ -1242,6 +1242,10 @@
       "title": "Opcji sterowania nie da się użyć",
       "description": "Zapisanych opcji sterowania nie da się użyć, więc sterowanie jest wyłączone; monitor działa dalej. Dziennik podaje, której opcji; otwórz opcje i skonfiguruj sterowanie ponownie."
     },
+    "control_state_unreadable": {
+      "title": "Nie udało się odczytać pamięci wtyczki o kotle",
+      "description": "Plik, w którym wtyczka pamięta, czy steruje kotłem, nie dał się odczytać: brakuje go albo jest uszkodzony (Home Assistant może osobno zgłosić uszkodzony plik). Dla bezpieczeństwa wtyczka przyjęła, że sterowała kotłem, i najpierw go oddała. Potem sterowanie działa normalnie; sprawdź, czy kocioł i przełącznik sterowania są w stanie, jakiego oczekujesz."
+    },
     "hand_back_owed_after_removal": {
       "title": "Kocioł może nadal trzymać wartość z VTherm Smart Boiler",
       "description": "Integrację usunięto, zanim oddanie sterowania dotarło do kotła. Przywróć kotłu własne sterowanie ręcznie — ustaw na nowo encję nastawy albo wyczyść nadpisania bramki — a potem zignoruj to zgłoszenie."

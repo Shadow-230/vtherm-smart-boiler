@@ -35,7 +35,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 from homeassistant.util.async_ import create_eager_task
 
-from .const import CONTROL_TICK_SECONDS, DOMAIN
+from .const import CONTROL_TICK_SECONDS, DOMAIN, stored_flag
 from .control_config import (
     OTGW_PATHS,
     AlarmReaction,
@@ -103,7 +103,7 @@ _SHOWN_CONFIRMED = frozenset({Confirmation.CONFIRMED.value, CONFIRMED_BY_GATEWAY
 
 def _flag(raw: Any) -> bool:
     """A stored flag; anything that is not a clear "no" counts as set (the cautious side)."""
-    return raw not in (None, False, 0)
+    return stored_flag(raw)
 
 
 def _kept_alarms(raw: Any) -> set[ControlAlarm]:
@@ -424,7 +424,7 @@ class ControlUnit:
             # this short, it is retried at the next start. The boiler may hold a value of ours
             # while a step's own hand-back is on its way, which this stop may cancel.
             self._hand_back_pending = True
-            self._coordinator.schedule_save()
+            self._coordinator.schedule_control_save()
         self._stopping = True
         step = self._step_task
         if step is not None and not step.done():
@@ -445,7 +445,7 @@ class ControlUnit:
                 # or the user settles it by hand.
                 self._report_owed(persistent=True)
         await self._async_learning_calls()
-        self._coordinator.schedule_save()
+        self._coordinator.schedule_control_save()
 
     async def _async_timer(self, _now: datetime) -> None:
         # At most one step waits while another runs: a long step delays the next one instead
@@ -558,7 +558,7 @@ class ControlUnit:
         its alarm belong to the unit, not the session)."""
         self._session = _Session(learning=self._session.learning)
         self._writer = None
-        self._coordinator.schedule_save()
+        self._coordinator.schedule_control_save()
 
     # --- the step -------------------------------------------------------------------------
 
@@ -575,7 +575,7 @@ class ControlUnit:
                 await self._async_hand_back_now(now)
             except Exception:
                 _LOGGER.exception("Handing control back after an error failed")
-            self._coordinator.schedule_save()
+            self._coordinator.schedule_control_save()
             self._status = replace(
                 self._status,
                 blockers=tuple(dict.fromkeys((*self._status.blockers, "control_error"))),
@@ -627,7 +627,7 @@ class ControlUnit:
         for event in out.events:
             session.alarms.add(_EVENT_ALARM[event])
         if out.events:
-            await self._coordinator.async_save_now()  # the alarm behind a latch
+            await self._coordinator.async_save_control_now()  # the alarm behind a latch
         setpoint = session.loop.setpoint
         if setpoint.confirmed_at is not None and not setpoint.ignored_reported:
             session.alarms.discard(ControlAlarm.WRITE_IGNORED)  # the value holds
@@ -822,7 +822,7 @@ class ControlUnit:
             # Before the attempt: a write reported as failed may still reach the boiler, and
             # the one rewrite a day must be remembered even if Home Assistant crashes now.
             self._holding = True
-            await self._coordinator.async_save_now()
+            await self._coordinator.async_save_control_now()
         try:
             await call
         except WriteError as err:
@@ -860,7 +860,7 @@ class ControlUnit:
             await self._async_try_hand_back(now)
         self._hand_back_at = now
         self._last_change_at = now
-        await self._coordinator.async_save_now()  # a latch set with it must survive a crash
+        await self._coordinator.async_save_control_now()  # a latch set with it must survive a crash
         await self._async_release_learning(now)
 
     async def _async_try_hand_back(self, now: float, full: bool = False) -> bool:
@@ -883,14 +883,14 @@ class ControlUnit:
             self._hand_back_failed = True
             self._hand_back_checks = ()
             self._hand_back_retry_at = now + HAND_BACK_RETRY_S
-            self._coordinator.schedule_save()
+            self._coordinator.schedule_control_save()
             self._report_owed()
             return False
         if checks and not self._checks_hold(checks):
             self._hand_back_pending = True
             self._hand_back_checks = checks
             self._hand_back_retry_at = now + HAND_BACK_RETRY_S
-            self._coordinator.schedule_save()
+            self._coordinator.schedule_control_save()
             return True
         self._holding = False
         self._full_hand_back_due = False
@@ -940,7 +940,7 @@ class ControlUnit:
         self._hand_back_failed = False
         self._hand_back_checks = ()
         if changed:
-            self._coordinator.schedule_save()
+            self._coordinator.schedule_control_save()
         self._report_owed()
 
     def _report_owed(self, persistent: bool = False) -> None:
@@ -969,7 +969,7 @@ class ControlUnit:
             self._holding = False
             self._full_hand_back_due = False
         self._hand_back_done()
-        self._coordinator.schedule_save(0)
+        self._coordinator.schedule_control_save()
 
     async def _async_hand_back_now(self, now: float) -> None:
         """Hand back at once if control holds the boiler (unload, stop, error)."""
@@ -1032,7 +1032,7 @@ class ControlUnit:
         self._learning_calls += [(zone_id, False) for zone_id in plan.pause]
         self._learning_calls += [(zone_id, True) for zone_id in plan.resume]
         if plan.pause or plan.resume:
-            self._coordinator.schedule_save()
+            self._coordinator.schedule_control_save()
         self._session.learning = plan.state
 
     async def _async_release_learning(self, now: float) -> None:
@@ -1042,14 +1042,14 @@ class ControlUnit:
         if learning.paused:
             learning, zones = release_all(learning, now)
             self._learning_calls += [(zone_id, True) for zone_id in zones]
-            self._coordinator.schedule_save()
+            self._coordinator.schedule_control_save()
         if learning.resuming:
             link = self._coordinator.link
             flags = {z: link.zone_algorithm(z).smartpi_learning for z in learning.resuming}
             followed, again = follow_resumes(learning, flags, now, self.options.learning)
             self._learning_calls += [(zone_id, True) for zone_id in again]
             if followed.resuming != learning.resuming:
-                self._coordinator.schedule_save()
+                self._coordinator.schedule_control_save()
             learning = followed
         self._session.learning = learning
 

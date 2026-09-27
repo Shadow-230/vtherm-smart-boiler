@@ -7,12 +7,18 @@ alarms. The analysis runs every few minutes on a copy of the history, off the ev
 summaries, verdict, trend warnings, report, outdoor check and building fit. After a restart the
 history is rebuilt from the recorder, which keeps these states anyway; the plugin's own storage
 holds only small things (monitoring start, held emitter factors, measured parameters).
+
+The control state — whether the boiler may hold a value of ours, an owed hand-back, latches —
+lives in a store of its own, written at once and atomically; the entry's store keeps a copy.
+One function reads it for every place that asks (``async_read_control_state``): a state that
+cannot be read counts as "the plugin held the boiler" wherever control is configured.
 """
 
 from __future__ import annotations
 
 import copy
 import logging
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
@@ -37,6 +43,8 @@ from homeassistant.util import dt as dt_util
 from . import feature_manager
 from .config import EntryConfig
 from .const import (
+    CONTROL_STORE_MARKER,
+    CONTROL_STORE_VERSION,
     DOMAIN,
     FORECAST_SECONDS,
     HISTORY_DAYS,
@@ -44,6 +52,14 @@ from .const import (
     STORAGE_VERSION,
     SUMMARY_SECONDS,
     TICK_SECONDS,
+    UNREADABLE_ISSUE,
+    assumed_owed_state,
+    control_state_owed,
+    control_store_key,
+    has_control_section,
+    main_store_key,
+    owes_hand_back,
+    stored_flag,
 )
 from .core.alarms import (
     Alarm,
@@ -155,14 +171,21 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self.parameters = config.parameters
         # Days summarised with other settings no longer count (A4): the key of the current ones.
         self.settings_key = settings_key(summary_settings(config))
+        # Counts from the entry's creation (set when the store is read), so a lost store never
+        # starts the monitoring period again.
         self.monitoring_since = dt_util.utcnow().timestamp()
         self.forecasts = (
             ForecastRecorder(hass, entry.entry_id, config.weather) if config.weather else None
         )
         self.analysis: Analysis | None = None
-        self._store: Store[dict[str, Any]] = Store(
-            hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}"
-        )
+        self._store = main_store(hass, entry.entry_id)
+        self._control_store = control_store(hass, entry.entry_id)
+        # Nothing is written before both stores were read: a setup that fails earlier must not
+        # write the defaults over what the last run left (P-04).
+        self._loaded = False
+        # The boiler's hold and an owed hand-back as last written to the entry store's copy: a
+        # change of them is written there at once too.
+        self._main_owed: tuple[bool, bool] | None = None
         self._unsubs: list[CALLBACK_TYPE] = []
         self._factors: dict[str, FactorResult] = {}
         self._hot_water: dict[str, bool | None] = {}
@@ -242,7 +265,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         for key in ("auto_tpi_blocked", "learning_not_paused"):
             ir.async_delete_issue(self.hass, DOMAIN, f"{key}_{self.config_entry.entry_id}")
         await self.async_shutdown()
-        await self._store.async_save(self._stored_data())
+        if self._loaded:
+            await self._control_store.async_save(self._stored_control())
+            await self._store.async_save(self._stored_data())
         if self.forecasts is not None:
             await self.forecasts.async_flush()
 
@@ -250,20 +275,27 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
 
     async def _async_load_store(self, now: float) -> None:
         """What the last run stored, field by field: a broken field is skipped, not the rest.
-        A store that cannot be read at all hands back first, as the last run may have held the
-        boiler; an unreadable start of monitoring starts it again (control waits longer)."""
-        try:
-            stored = _mapping(await self._store.async_load())
-        except Exception:  # an unsupported version, a read error: the defaults, cautiously
-            _LOGGER.exception("Could not read the stored data; a hand-back is made first")
-            stored = {"control": {"controlling": True}}
-        try:
-            self.monitoring_since = float(stored.get("monitoring_since", now))
-        except TypeError, ValueError:
-            _LOGGER.warning("Ignoring an unreadable start of monitoring: it starts again now")
-            self.monitoring_since = now
-        control = stored.get("control")
-        self.stored_control = control if isinstance(control, dict) else {}
+        The control state comes through ``async_read_control_state``: one that cannot be read
+        where control is configured makes a full hand-back first. The monitoring start is the
+        entry's creation; a lost store does not start it again."""
+        entry = self.config_entry
+        read = await async_read_control_state(
+            self.hass, entry.entry_id, entry.options, main=self._store, control=self._control_store
+        )
+        stored = _mapping(read.main)
+        self.monitoring_since = self._monitoring_start(stored, now)
+        self.stored_control = dict(read.state)
+        self._main_owed = _owed_flags(stored.get("control"))
+        if read.owed and not read.readable:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                f"{UNREADABLE_ISSUE}_{entry.entry_id}",
+                is_fixable=False,
+                is_persistent=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key=UNREADABLE_ISSUE,
+            )
         factors = stored.get("factors")
         for zone_id, data in factors.items() if isinstance(factors, dict) else ():
             if zone_id not in self.config.zone_entities or not isinstance(data, dict):
@@ -300,6 +332,34 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 self.parameters = self.parameters.with_estimate(ParameterKey(key), estimate)
             except KeyError, TypeError, ValueError:
                 _LOGGER.warning("Ignoring an unreadable stored value for %s", key)
+        self._loaded = True
+        if read.rewrite:
+            # Moved from a 0.2.1 store, or taken cautiously after a loss: written at once, so
+            # the next start reads it from the control store.
+            await self._control_store.async_save(self._stored_control())
+            await self._store.async_save(self._stored_data())
+
+    def _monitoring_start(self, stored: dict[str, Any], now: float) -> float:
+        """The entry's creation; for an entry without one (migrated from Home Assistant's old
+        storage, epoch 0), the stored start, else now."""
+        created = getattr(self.config_entry, "created_at", None)
+        try:
+            at = created.timestamp() if isinstance(created, datetime) else 0.0
+        except OverflowError, OSError, ValueError:
+            at = 0.0
+        if math.isfinite(at) and at > 0:
+            return at
+        raw = stored.get("monitoring_since")
+        if raw is None:
+            return now
+        try:
+            since = float(raw)
+        except TypeError, ValueError:
+            since = math.nan
+        if not math.isfinite(since):
+            _LOGGER.warning("Ignoring an unreadable start of monitoring: it starts again now")
+            return now
+        return since
 
     def _stored_data(self) -> dict[str, Any]:
         self._save_due = None
@@ -312,6 +372,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     "confidence": estimate.confidence,
                     "at": estimate.at,
                 }
+        control = self._stored_control()
+        self._main_owed = _owed_flags(control)
         return {
             "monitoring_since": self.monitoring_since,
             "factors": {
@@ -321,7 +383,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             },
             "measured": measured,
             "daily": {str(int(start)): day.to_dict() for start, day in sorted(self.daily.items())},
-            "control": self._stored_control(),
+            # A copy of the control state: the fallback, and what 0.2.1 reads after a downgrade.
+            "control": control,
+            CONTROL_STORE_MARKER: CONTROL_STORE_VERSION,
         }
 
     def provide_stored_control(self, provider: Callable[[], dict[str, Any]]) -> None:
@@ -333,8 +397,31 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         provider = self._control_provider
         return provider() if provider is not None else self.stored_control
 
+    async def async_save_control_now(self) -> None:
+        """Write the control state at once: for what a crash must not lose (the controlling
+        marker, a latch). The entry store's copy is written at once too when the boiler's hold
+        or an owed hand-back changed, otherwise with the delayed save."""
+        if not self._loaded or self._stopped:
+            return
+        await self._control_store.async_save(self._stored_control())
+        if _owed_flags(self._stored_control()) != self._main_owed:
+            await self.async_save_now()
+        else:
+            self.schedule_save()
+
+    def schedule_control_save(self) -> None:
+        """``async_save_control_now`` from code that cannot wait: written at the next turn of
+        the event loop."""
+        if not self._loaded or self._stopped:
+            return
+        self._control_store.async_delay_save(self._stored_control, 0)
+        changed = _owed_flags(self._stored_control()) != self._main_owed
+        self.schedule_save(0 if changed else SAVE_DELAY_S)
+
     async def async_save_now(self) -> None:
-        """Write the store at once: for what a crash must not lose (the controlling marker)."""
+        """Write the entry's store at once."""
+        if not self._loaded or self._stopped:
+            return
         await self._store.async_save(self._stored_data())
 
     def _keep_days(self, days: Sequence[DaySummary], now: float) -> None:
@@ -361,8 +448,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         """Save within ``delay``. Each delayed save restarts the store's timer, so one is
         scheduled only when it comes sooner than the one pending: frequent updates would
         otherwise postpone the write for ever. A stopped installation saves nothing more: the
-        one set up after a reload owns the store."""
-        if self._stopped:
+        one set up after a reload owns the store; nothing is saved before the store was read."""
+        if self._stopped or not self._loaded:
             return
         due = dt_util.utcnow().timestamp() + delay
         if self._save_due is None or due < self._save_due:
@@ -823,6 +910,94 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         if job in self._failing:
             _LOGGER.info("%s works again", job)
             self._failing.discard(job)
+
+
+def main_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
+    """The entry's store: the monitor's data and a copy of the control state. Written atomically:
+    a crash while writing leaves the old file whole."""
+    return Store(hass, STORAGE_VERSION, main_store_key(entry_id), atomic_writes=True)
+
+
+def control_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
+    """The control state alone, written at once and atomically on every change."""
+    return Store(hass, CONTROL_STORE_VERSION, control_store_key(entry_id), atomic_writes=True)
+
+
+@dataclass(frozen=True, slots=True)
+class ControlRead:
+    """The control state as read, with the cautious answer to whether a hand-back is owed."""
+
+    state: dict[str, Any]
+    readable: bool  # read from the control store, or from a 0.2.1 entry store
+    owed: bool
+    main: object  # the entry's store as loaded: None when missing or unreadable
+    rewrite: bool  # not from the control store: it (and the marker) are to be written
+
+
+async def _async_try_load(store: Store[dict[str, Any]]) -> object:
+    try:
+        return await store.async_load()
+    except Exception:  # an unsupported version, a read error: it cannot be read
+        _LOGGER.exception("Could not read the stored data of %s", store.key)
+        return None
+
+
+async def async_read_control_state(
+    hass: HomeAssistant,
+    entry_id: str,
+    options: Any,
+    *,
+    main: Store[dict[str, Any]] | None = None,
+    control: Store[dict[str, Any]] | None = None,
+) -> ControlRead:
+    """The control state of an entry, for setup, the options flow, removal, the repair release
+    and a report of unreadable options alike:
+    - the control store, when it holds a mapping;
+    - otherwise, from an entry store without the marker (0.2.1's, or one 0.2.2 never saved),
+      its ``control`` copy, or nothing owed without one. Such a store next to a control store
+      was written by 0.2.1 after a downgrade: its copy is the newer one, and a hand-back either
+      of them owes stays owed;
+    - otherwise it cannot be read (missing, damaged, of another shape — Home Assistant renames a
+      damaged file and returns nothing, as it does for a new entry). A hand-back is then owed
+      when the options hold a control section or the entry store's copy owes one, and the state
+      is that copy with the boiler held; otherwise nothing is owed.
+    """
+    main = main_store(hass, entry_id) if main is None else main
+    control = control_store(hass, entry_id) if control is None else control
+    raw_control = await _async_try_load(control)
+    raw_main = await _async_try_load(main)
+    main_data = raw_main if isinstance(raw_main, dict) else None
+    copy = main_data.get("control") if main_data is not None else None
+    from_0_2_1 = main_data is not None and CONTROL_STORE_MARKER not in main_data
+    if isinstance(raw_control, dict):
+        if not (from_0_2_1 and isinstance(copy, dict)):
+            return ControlRead(raw_control, True, owes_hand_back(raw_control), raw_main, False)
+        _LOGGER.warning("The stored data was written by an earlier version; its copy is taken")
+        state = dict(copy)
+        if owes_hand_back(raw_control):
+            state = assumed_owed_state(state)
+        return ControlRead(state, True, owes_hand_back(state), raw_main, True)
+    if from_0_2_1 and (copy is None or isinstance(copy, dict)):
+        state = dict(copy or {})
+        return ControlRead(state, True, owes_hand_back(state), raw_main, True)
+    if raw_control is not None:
+        _LOGGER.warning("Ignoring stored control data that is not a mapping")
+    if control_state_owed(copy, readable=False, has_control_section=has_control_section(options)):
+        _LOGGER.error(
+            "The stored control state cannot be read (missing or damaged); taken as holding the "
+            "boiler: it is handed back first"
+        )
+        return ControlRead(assumed_owed_state(copy), False, True, raw_main, True)
+    _LOGGER.warning(
+        "No stored control state could be read; control is not configured, so nothing is owed"
+    )
+    return ControlRead({}, False, False, raw_main, True)
+
+
+def _owed_flags(control: object) -> tuple[bool, bool] | None:
+    if not isinstance(control, dict):
+        return None
+    return stored_flag(control.get("controlling")), stored_flag(control.get("hand_back_pending"))
 
 
 def _mapping(value: object) -> dict[str, Any]:

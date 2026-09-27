@@ -422,8 +422,9 @@ async def test_zone_entities_from_before_move_to_the_stable_key(
 async def test_a_store_with_broken_fields_still_loads(
     hass: HomeAssistant, hass_storage: dict[str, Any], zones: FakeZones
 ) -> None:
-    """P66: a broken field is skipped, not the whole store; an unreadable start of monitoring
-    starts it again, which keeps control off for another monitoring period."""
+    """P66: a broken field is skipped, not the whole store. The monitoring start is the entry's
+    creation (V1, R6): a broken stored start no longer starts it again — here the entry was just
+    created, so it is about now."""
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
     living = zones.add("living")
@@ -451,7 +452,9 @@ async def test_a_store_that_is_not_a_mapping_is_ignored(
     zones: FakeZones,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Stored data of another shape starts from the defaults, with a warning."""
+    """Stored data of another shape starts from the defaults, with a warning. The monitoring
+    start is the entry's creation, not restarted by the loss (V1, R6): about now, as the entry
+    was just created."""
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
     entry = entry_for(boiler, zones)
@@ -898,7 +901,8 @@ async def test_everything_stored_survives_a_restart(
     hass: HomeAssistant, hass_storage: dict[str, Any], zones: FakeZones
 ) -> None:
     """A restart loads what the last run stored and, stopped again, stores the same: the start
-    of monitoring, the zones' factors, the measured building values and the day summaries."""
+    of monitoring (the entry's creation, V1), the zones' factors, the measured building values
+    and the day summaries."""
     from custom_components.vtherm_smart_boiler.core.daily import DaySummary
     from custom_components.vtherm_smart_boiler.core.parameters import ParameterKey, Source
 
@@ -912,8 +916,10 @@ async def test_everything_stored_survives_a_restart(
         start, start + DAY, DAY, 12, 10, 1, 7200.0, 36000.0, 3600.0, 7200.0,
         0.0, 0.0, False, 8.5, None, 4.0, 60.0,
     )  # fmt: skip
+    created = float(int(now - 10 * DAY))
+    entry.created_at = datetime.fromtimestamp(created, UTC)
     stored = {
-        "monitoring_since": now - 10 * DAY,
+        "monitoring_since": created,
         "factors": {living: {"value": 0.8, "at": now - 600, "output_w": None}},
         "measured": {"loss_coefficient": {"value": 0.25, "confidence": 0.6, "at": now - DAY}},
         "daily": {str(int(start)): day.to_dict()},
@@ -933,3 +939,71 @@ async def test_everything_stored_survives_a_restart(
     for field_name in ("monitoring_since", "measured", "daily"):
         assert saved[field_name] == stored[field_name], field_name
     assert saved["factors"][living]["value"] == 0.8
+
+
+async def test_a_new_entry_without_control_owes_nothing(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """V1, R3 and R4: a new monitor-only entry has no stores. Nothing is owed and nothing is
+    reported; both stores are written, and only after both were read."""
+    from unittest.mock import patch
+
+    from homeassistant.helpers import issue_registry as ir
+    from homeassistant.helpers.storage import Store
+
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    keys = {f"{DOMAIN}.{entry.entry_id}", f"{DOMAIN}.{entry.entry_id}.control"}
+    order: list[tuple[str, str]] = []
+    load, write = Store.async_load, Store._async_write_data
+
+    async def recorded_load(store: Store[Any]) -> Any:
+        if store.key in keys:
+            order.append(("read", store.key))
+        return await load(store)
+
+    async def recorded_write(store: Store[Any], data: dict[str, Any]) -> None:
+        if store.key in keys:
+            order.append(("write", store.key))
+        await write(store, data)
+
+    # Patched for the setup only: the storage mock's own patches must be undone after these.
+    with (
+        patch.object(Store, "async_load", recorded_load),
+        patch.object(Store, "_async_write_data", recorded_write),
+    ):
+        await setup(hass, entry)
+    assert entry.state is ConfigEntryState.LOADED
+    reads = [key for action, key in order if action == "read"]
+    first_write = next(i for i, (action, _) in enumerate(order) if action == "write")
+    assert set(reads[:2]) == keys  # both read ...
+    assert all(action == "read" for action, _ in order[:first_write])  # ... before any write
+    assert keys <= set(hass_storage)
+    assert hass_storage[f"{DOMAIN}.{entry.entry_id}.control"]["data"] == {}
+    assert hass_storage[f"{DOMAIN}.{entry.entry_id}"]["data"]["control_store"] == 1
+    assert entry.runtime_data.stored_control == {}
+    assert entry.runtime_data.hand_back_unit is None
+    issues = ir.async_get(hass)
+    for key in ("control_state_unreadable", "hand_back_owed"):
+        assert issues.async_get_issue(DOMAIN, f"{key}_{entry.entry_id}") is None
+    assert "nothing is owed" in caplog.text  # a warning, not an error
+
+
+async def test_both_stores_are_written_atomically(hass: HomeAssistant) -> None:
+    """V1, R1: a crash while writing leaves the old file whole, for either store and for every
+    place that writes them."""
+    from custom_components.vtherm_smart_boiler.coordinator import control_store, main_store
+
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    assert coordinator._store._atomic_writes
+    assert coordinator._control_store._atomic_writes
+    assert coordinator._control_store.key == f"{DOMAIN}.{entry.entry_id}.control"
+    assert main_store(hass, entry.entry_id)._atomic_writes
+    assert control_store(hass, entry.entry_id)._atomic_writes

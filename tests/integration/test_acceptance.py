@@ -164,7 +164,9 @@ async def start(
     monitor: dict[str, Any] | None = None,
     **control: Any,
 ) -> None:
-    """The simulator, VT's zones and the plugin; ``stored``: what an earlier run left."""
+    """The simulator, VT's zones and the plugin; ``stored``: what an earlier run left in the
+    entry store (0.2.1's layout). Without it, the entry ran before and its control store owes
+    nothing: an entry with control and no stores at all would hand back first (V1)."""
     hass = rig.hass
     assert await async_setup_component(hass, SIM, {SIM: {"outdoor": -2.0} | (sim or {})})
     await hass.async_block_till_done()
@@ -187,6 +189,9 @@ async def start(
         key = f"{DOMAIN}.{entry.entry_id}"
         version = stored.pop("__version__", 1)  # another version: a store this one cannot read
         rig.storage[key] = {"version": version, "key": key, "data": stored}
+    else:
+        key = f"{DOMAIN}.{entry.entry_id}.control"
+        rig.storage[key] = {"version": 1, "key": key, "data": {}}
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     rig.entry = entry

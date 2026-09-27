@@ -8,11 +8,15 @@ the calls they receive.
 from __future__ import annotations
 
 import asyncio
+import copy
+import json
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from itertools import pairwise
+from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from homeassistant.const import EVENT_CALL_SERVICE
@@ -20,6 +24,7 @@ from homeassistant.core import Event, HomeAssistant, ServiceCall, State
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers import storage as ha_storage
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
@@ -41,6 +46,12 @@ CH_ECHO = "binary_sensor.fake_gateway_central_heating"
 OUTDOOR = 5.0
 EXPECTED = round(HeatingCurve().flow(OUTDOOR), 1)  # the curve's setpoint at 5 °C outside
 START = datetime(2026, 1, 12, 8, tzinfo=UTC)
+# Home Assistant's own store loader, taken before the test storage mock replaces it: a test that
+# needs a real file on disk (under its tmp_path) puts it back for its own body only (with
+# monkeypatch, whose undo may run after the mock's, the mock would outlive the test).
+REAL_STORE_LOAD = ha_storage.Store._async_load
+# The store layouts an earlier run may have left (V1): 0.2.1's, and 0.2.2's control store.
+LAYOUTS = ("0.2.1", "0.2.2")
 
 
 @dataclass
@@ -137,6 +148,7 @@ class Rig:
     # only on change, as MQTT entities do)
     outdoor_reported: bool = True  # the same for the outdoor temperature
     services: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
+    storage: dict[str, Any] = field(default_factory=dict)  # the test's stores (hass_storage)
 
     def live(self) -> None:
         """The gateway's periodic reports: fresh boiler signals and setpoint echo; without its
@@ -207,13 +219,13 @@ def options(zones: FakeZones, **control: Any) -> dict[str, Any]:
 
 
 @pytest.fixture
-async def rig(hass: HomeAssistant, freezer, zones: FakeZones) -> Rig:
+async def rig(hass: HomeAssistant, freezer, zones: FakeZones, hass_storage: dict[str, Any]) -> Rig:
     freezer.move_to(START)
     boiler = FakeBoiler(hass, SIGNALS)
     gateway = FakeGateway(hass)
     gateway.register()
     zones.add("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
-    rig = Rig(hass, freezer, boiler, zones, gateway)
+    rig = Rig(hass, freezer, boiler, zones, gateway, storage=hass_storage)
     rig.live()
 
     def record(event: Event) -> None:
@@ -224,11 +236,28 @@ async def rig(hass: HomeAssistant, freezer, zones: FakeZones) -> Rig:
     return rig
 
 
-async def start(rig: Rig, **control: Any) -> None:
-    entry = MockConfigEntry(
-        domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones, **control)
-    )
+def control_key(entry: MockConfigEntry) -> str:
+    return f"{DOMAIN}.{entry.entry_id}.control"
+
+
+def ran_before(rig: Rig, entry: MockConfigEntry, control: dict[str, Any] | None = None) -> None:
+    """The entry ran before and left its control store, by default owing nothing. Control is
+    configured only in the options of an entry that ran, so one with a control section and no
+    stores counts as having lost them: it hands back first (V1, R4)."""
+    key = control_key(entry)
+    rig.storage[key] = {"version": 1, "key": key, "data": dict(control or {})}
+
+
+def add_entry(rig: Rig, entry_options: dict[str, Any]) -> MockConfigEntry:
+    """An entry that ran before, owing nothing."""
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=entry_options)
     entry.add_to_hass(rig.hass)
+    ran_before(rig, entry)
+    return entry
+
+
+async def start(rig: Rig, **control: Any) -> None:
+    entry = add_entry(rig, options(rig.zones, **control))
     assert await rig.hass.config_entries.async_setup(entry.entry_id)
     await rig.hass.async_block_till_done()
     rig.entry = entry
@@ -278,6 +307,7 @@ async def test_control_is_off_by_default_and_refused_during_monitoring(rig: Rig)
         options=options(rig.zones) | {"monitor": {"monitoring_days": 7}},
     )
     entry.add_to_hass(hass)
+    ran_before(rig, entry)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     switch = er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_control")
@@ -580,8 +610,7 @@ async def test_a_monitor_alarm_set_to_hand_back_hands_back(rig: Rig) -> None:
     rig.live()
     entry_options = options(rig.zones, alarm_reactions={"pressure_low": "hand_back"})
     entry_options["signals"][Signal.PRESSURE.value] = rig.boiler.entity(Signal.PRESSURE)
-    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=entry_options)
-    entry.add_to_hass(rig.hass)
+    entry = add_entry(rig, entry_options)
     assert await rig.hass.config_entries.async_setup(entry.entry_id)
     await rig.hass.async_block_till_done()
     rig.entry = entry
@@ -1028,19 +1057,25 @@ async def test_a_value_hand_back_the_device_does_not_take_stays_owed(rig: Rig) -
 
 
 def stored_control(hass_storage: dict[str, Any], rig: Rig) -> dict[str, Any]:
+    """The control store, which the entry store's copy follows."""
     assert rig.entry is not None
-    return hass_storage[f"{DOMAIN}.{rig.entry.entry_id}"]["data"]["control"]
+    return hass_storage[control_key(rig.entry)]["data"]
 
 
 async def test_the_controlling_marker_is_stored_at_once(
     rig: Rig, hass_storage: dict[str, Any]
 ) -> None:
     """Were Home Assistant to crash now, the next start must know the boiler was held — not only
-    after the store's two-minute delay."""
+    after the store's two-minute delay: in the control store, and in the entry store's copy,
+    which a change of the hold is written to at once as well (V1, R2)."""
     await start(rig)
     await rig.switch(True)
     assert rig.gateway.setpoints() == [EXPECTED]
     assert stored_control(hass_storage, rig)["controlling"] is True
+    assert rig.entry is not None
+    main = hass_storage[f"{DOMAIN}.{rig.entry.entry_id}"]["data"]
+    assert main["control"]["controlling"] is True
+    assert main["control_store"] == 1
 
 
 async def test_an_unclean_restart_hands_back_when_control_does_not_resume(
@@ -1067,13 +1102,14 @@ async def test_an_unclean_restart_hands_back_when_control_does_not_resume(
     assert entry.runtime_data.control.stored()["controlling"] is False
 
 
+@pytest.mark.parametrize("layout", LAYOUTS)
 async def test_an_unclean_restart_with_control_on_hands_back_first_then_resumes(
-    rig: Rig, hass_storage: dict[str, Any]
+    rig: Rig, hass_storage: dict[str, Any], layout: str
 ) -> None:
     """The last run held the boiler and ended without a hand-back, and control is to stay on:
     what that run left is given back in full first, then control takes the boiler afresh."""
     mock_restore_cache(rig.hass, [State("switch.boiler_boiler_control_experimental", "on")])
-    await start_with_stored(rig, hass_storage, {"controlling": True})
+    await start_with_stored(rig, hass_storage, {"controlling": True}, layout)
     await rig.advance(20)
     calls = rig.gateway.calls
     back = calls.index(("setpoint", 0.0))
@@ -1759,29 +1795,54 @@ async def test_a_slow_smartpi_call_does_not_hold_up_control(rig: Rig) -> None:
     assert ("setpoint", 0.0) in rig.gateway.calls
 
 
+def seed_stores(
+    hass_storage: dict[str, Any],
+    entry: MockConfigEntry,
+    control: Any,
+    layout: str = "0.2.1",
+    **main: Any,
+) -> None:
+    """The stores an earlier run left. 0.2.1: the entry store alone, with the control state
+    under "control" (moved to the control store at the next start). 0.2.2: the control store,
+    and the entry store with its copy and the marker."""
+    key = f"{DOMAIN}.{entry.entry_id}"
+    data = {"monitoring_since": 0.0, "control": control} | main
+    if layout == "0.2.2":
+        hass_storage[control_key(entry)] = {
+            "version": 1,
+            "key": control_key(entry),
+            "data": control,
+        }
+        data["control_store"] = 1
+    hass_storage[key] = {"version": 1, "key": key, "data": data}
+
+
 async def start_with_stored(
-    rig: Rig, hass_storage: dict[str, Any], control: dict[str, Any], **extra: Any
+    rig: Rig,
+    hass_storage: dict[str, Any],
+    control: dict[str, Any],
+    layout: str = "0.2.1",
+    **extra: Any,
 ) -> MockConfigEntry:
-    """Set up the entry over a store left by an earlier run."""
+    """Set up the entry over the stores left by an earlier run, in either layout."""
     entry = MockConfigEntry(
         domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones, **extra)
     )
     entry.add_to_hass(rig.hass)
-    hass_storage[f"{DOMAIN}.{entry.entry_id}"] = {
-        "version": 1,
-        "key": f"{DOMAIN}.{entry.entry_id}",
-        "data": {"monitoring_since": 0.0, "control": control},
-    }
+    seed_stores(hass_storage, entry, control, layout)
     assert await rig.hass.config_entries.async_setup(entry.entry_id)
     await rig.hass.async_block_till_done()
     rig.entry = entry
     return entry
 
 
+@pytest.mark.parametrize("layout", LAYOUTS)
 async def test_a_restored_latch_shows_its_cause_and_never_expires(
-    rig: Rig, hass_storage: dict[str, Any]
+    rig: Rig, hass_storage: dict[str, Any], layout: str
 ) -> None:
-    await start_with_stored(rig, hass_storage, {"latched": True, "latched_by": ["pressure_low"]})
+    await start_with_stored(
+        rig, hass_storage, {"latched": True, "latched_by": ["pressure_low"]}, layout
+    )
     await rig.advance(120)  # past the wait for the switch to restore its state
     state = rig.state("sensor", "control_state")
     assert state.attributes["latched_by"] == ["pressure_low"]
@@ -2041,13 +2102,7 @@ async def test_a_deviating_outdoor_sensor_gives_way_only_to_colder_weather(
     rig.hass.states.async_set(
         "weather.fake_home", "cloudy", {"temperature": 0.0, "temperature_unit": "°C"}
     )
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Boiler",
-        data={},
-        options=options(rig.zones) | {"weather": "weather.fake_home"},
-    )
-    entry.add_to_hass(rig.hass)
+    entry = add_entry(rig, options(rig.zones) | {"weather": "weather.fake_home"})
     assert await rig.hass.config_entries.async_setup(entry.entry_id)
     await rig.hass.async_block_till_done(wait_background_tasks=True)
     rig.entry = entry
@@ -2111,8 +2166,7 @@ async def test_a_user_freshness_limit_stops_writes_on_a_frozen_source(rig: Rig) 
     """The flow stops reporting while its entity stays available (MQTT without availability):
     with a limit of ten minutes set, nothing is written after it, and control hands back."""
     entry_options = options(rig.zones) | {"freshness": {"flow": 600.0}}
-    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=entry_options)
-    entry.add_to_hass(rig.hass)
+    entry = add_entry(rig, entry_options)
     assert await rig.hass.config_entries.async_setup(entry.entry_id)
     await rig.hass.async_block_till_done()
     rig.entry = entry
@@ -2317,8 +2371,9 @@ async def test_a_resume_smartpi_skipped_is_sent_again_until_it_reads_on(rig: Rig
     )
 
 
+@pytest.mark.parametrize("layout", LAYOUTS)
 async def test_unreadable_control_data_still_restores_what_matters(
-    rig: Rig, hass_storage: dict[str, Any]
+    rig: Rig, hass_storage: dict[str, Any], layout: str
 ) -> None:
     """P66: one broken field no longer throws the rest away — a hand-back owed and a latch are
     kept whatever else is unreadable."""
@@ -2333,6 +2388,7 @@ async def test_unreadable_control_data_still_restores_what_matters(
             "rewritten_at": "yesterday",
             "alarms": ["no_such_alarm"],
         },
+        layout,
     )
     assert rig.entry is not None
     unit = rig.entry.runtime_data.control
@@ -2349,3 +2405,454 @@ async def test_control_data_that_cannot_be_read_hands_back(
     await start_with_stored(rig, hass_storage, {"controlling": "maybe"})
     assert rig.entry is not None
     assert rig.entry.runtime_data.control.hand_back_owed
+
+
+# --- V1: the control store (P-01, P-04, P-58) ---------------------------------------------------
+
+
+def main_key(entry: MockConfigEntry) -> str:
+    return f"{DOMAIN}.{entry.entry_id}"
+
+
+def without_control(entry_options: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in entry_options.items() if key != "control"}
+
+
+def seed_main(hass_storage: dict[str, Any], entry: MockConfigEntry, **data: Any) -> None:
+    """An entry store written by 0.2.2: with the marker, so its control store is expected."""
+    key = main_key(entry)
+    hass_storage[key] = {
+        "version": 1,
+        "key": key,
+        "data": {"monitoring_since": 0.0, "control": {}, "control_store": 1} | data,
+    }
+
+
+def seed_control(hass_storage: dict[str, Any], entry: MockConfigEntry, data: Any) -> None:
+    hass_storage[control_key(entry)] = {"version": 1, "key": control_key(entry), "data": data}
+
+
+async def set_up(rig: Rig, entry: MockConfigEntry) -> None:
+    assert await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    rig.entry = entry
+
+
+HAND_BACK = [("ch", True), ("setpoint", 0.0)]  # CH=1, then CS=0 (the order changes in V5)
+
+
+async def test_a_corrupt_store_file_hands_back_first(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """T-08 (P-01): a control store file cut off mid-write — a real file, read by Home
+    Assistant's own loader, which renames it and returns nothing, as for a new entry. With
+    control configured the plugin takes it that it held the boiler: a full hand-back first, a
+    notice, and the monitoring period still counts from the entry's creation. The file lives
+    under the test's tmp_path, never in the test configuration inside .venv."""
+    hass = rig.hass
+    storage = tmp_path / ".storage"
+    storage.mkdir()
+    monkeypatch.setattr(hass.config, "config_dir", str(tmp_path))
+    real_files = patch.object(ha_storage.Store, "_async_load", REAL_STORE_LOAD)
+    real_files.start()
+    try:
+        await _corrupt_store_file_hands_back_first(rig, storage)
+    finally:
+        real_files.stop()
+
+
+async def _corrupt_store_file_hands_back_first(rig: Rig, storage: Path) -> None:
+    hass = rig.hass
+    mock_restore_cache(hass, [State("switch.boiler_boiler_control_experimental", "on")])
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.add_to_hass(hass)
+    main = {
+        "version": 1,
+        "minor_version": 1,
+        "key": main_key(entry),
+        "data": {
+            "monitoring_since": 0.0,
+            "control": {"controlling": False, "hand_back_pending": False},
+            "control_store": 1,
+        },
+    }
+    (storage / main_key(entry)).write_text(json.dumps(main), encoding="utf-8")
+    whole = json.dumps(
+        {
+            "version": 1,
+            "minor_version": 1,
+            "key": control_key(entry),
+            "data": {"controlling": True, "hand_back_pending": False},
+        }
+    )
+    (storage / control_key(entry)).write_text(whole[: len(whole) // 2], encoding="utf-8")
+    await set_up(rig, entry)
+    await rig.advance(30)
+    files = await hass.async_add_executor_job(lambda: {path.name for path in storage.iterdir()})
+    assert control_key(entry) not in files
+    assert any(name.startswith(f"{control_key(entry)}.corrupt.") for name in files)  # kept
+    registry = ir.async_get(hass)
+    assert any(
+        domain == "homeassistant"
+        and issue_id.startswith(f"storage_corruption_{control_key(entry)}")
+        for domain, issue_id in registry.issues
+    )
+    assert rig.gateway.calls[:2] == HAND_BACK  # the first step hands back in full
+    assert rig.gateway.setpoints()[-1] == EXPECTED  # then control takes the boiler afresh
+    assert issue(rig, "control_state_unreadable") is not None
+    assert entry.runtime_data.monitoring_since == entry.created_at.timestamp()
+
+
+@pytest.mark.parametrize("main_left", [True, False], ids=["control_store_lost", "both_lost"])
+async def test_a_missing_control_store_of_an_entry_that_ran_hands_back_first(
+    rig: Rig, hass_storage: dict[str, Any], main_left: bool
+) -> None:
+    """The entry store has the marker, so the control store was written, and now it is gone —
+    or both stores are. Control is configured, so the entry ran: a full hand-back first."""
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.add_to_hass(rig.hass)
+    if main_left:
+        seed_main(hass_storage, entry, control={"controlling": False})
+    await set_up(rig, entry)
+    await rig.advance(30)
+    assert rig.gateway.calls == HAND_BACK
+    assert issue(rig, "control_state_unreadable") is not None
+    stored = stored_control(hass_storage, rig)  # written afresh, the hand-back confirmed
+    assert (stored["controlling"], stored["hand_back_pending"]) == (False, False)
+
+
+async def test_a_lost_control_store_without_control_hands_back_what_the_copy_owes(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """Control left the options while a hand-back was owed, then the control store was lost:
+    the entry store's copy still owes it, and the options that took the boiler make it."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    taken_with = held_entity(number) | {"curve": {"design_outdoor": -15, "design_flow": 55}}
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=without_control(options(rig.zones))
+    )
+    entry.add_to_hass(rig.hass)
+    seed_main(hass_storage, entry, control={"hand_back_pending": True, "taken_with": taken_with})
+    await set_up(rig, entry)
+    await rig.advance(20)
+    assert number.writes == [50.0]
+    assert issue(rig, "control_state_unreadable") is not None
+
+
+def unit_state(**changes: Any) -> dict[str, Any]:
+    """The control state as a unit stores it."""
+    return {
+        "controlling": False,
+        "taken_with": None,
+        "paused": {},
+        "resuming": {},
+        "latched": False,
+        "latched_by": [],
+        "rewritten_at": None,
+        "heating_rewritten_at": None,
+        "failed": False,
+        "alarms": [],
+        "hand_back_pending": False,
+    } | changes
+
+
+async def test_a_0_2_1_store_moves_to_the_control_store(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """The first start after 0.2.1: its entry store holds the control state without the
+    marker. Nothing is owed, so nothing is handed back; the state moves to the control store
+    and the entry store gets the marker, both at once."""
+    control = unit_state(latched=True, latched_by=["pressure_low"], rewritten_at=1000.0)
+    entry = await start_with_stored(rig, hass_storage, control)
+    assert hass_storage[control_key(entry)]["data"] == control
+    main = hass_storage[main_key(entry)]["data"]
+    assert main["control_store"] == 1
+    assert main["control"] == control
+    await rig.advance(30)
+    assert rig.gateway.calls == []
+    assert issue(rig, "control_state_unreadable") is None
+
+
+async def test_a_0_2_1_store_that_held_the_boiler_still_hands_back(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    await start_with_stored(rig, hass_storage, unit_state(controlling=True))
+    await rig.advance(30)
+    assert rig.gateway.calls == HAND_BACK
+    assert issue(rig, "control_state_unreadable") is None  # it was read: no notice
+
+
+@pytest.mark.parametrize(
+    ("in_control_store", "in_copy"), [(False, True), (True, False)], ids=["copy", "store"]
+)
+async def test_a_store_written_by_0_2_1_after_a_downgrade_keeps_a_hand_back_owed(
+    rig: Rig, hass_storage: dict[str, Any], in_control_store: bool, in_copy: bool
+) -> None:
+    """After a downgrade to 0.2.1 and back, the control store is older than 0.2.1's entry store
+    (which has no marker): its copy is taken, and a hand-back either of them owes stays owed."""
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.add_to_hass(rig.hass)
+    seed_control(hass_storage, entry, {"controlling": in_control_store})
+    hass_storage[main_key(entry)] = {
+        "version": 1,
+        "key": main_key(entry),
+        "data": {"monitoring_since": 0.0, "control": {"controlling": in_copy}},
+    }
+    await set_up(rig, entry)
+    await rig.advance(30)
+    assert rig.gateway.calls == HAND_BACK
+
+
+async def test_setup_failing_before_the_store_is_read_leaves_it_intact(
+    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-10 (P-04): a setup that fails before the stores are read writes nothing over them —
+    not the defaults over the held boiler, the monitoring start or the day summaries — and the
+    next good setup hands back."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    from custom_components.vtherm_smart_boiler.core.daily import DaySummary
+    from custom_components.vtherm_smart_boiler.vtherm_link import VThermLink
+
+    day_start = float(int(START.timestamp() - 3 * 86400))
+    day = DaySummary(
+        day_start, day_start + 86400, 86400, 12, 10, 1, 7200.0, 36000.0, 3600.0, 7200.0,
+        0.0, 0.0, False, 8.5, None, 4.0, 60.0,
+    )  # fmt: skip
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.add_to_hass(rig.hass)
+    seed_stores(
+        hass_storage,
+        entry,
+        {"controlling": True},
+        "0.2.2",
+        monitoring_since=START.timestamp() - 7 * 86400,
+        daily={str(int(day_start)): day.to_dict()},
+    )
+    before = copy.deepcopy(
+        {key: hass_storage[key] for key in (main_key(entry), control_key(entry))}
+    )
+
+    async def fail(_link: VThermLink) -> None:
+        raise RuntimeError("the installed vtherm_api could not be read")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(VThermLink, "async_detect", fail)
+        assert not await rig.hass.config_entries.async_setup(entry.entry_id)
+        await rig.hass.async_block_till_done()
+        assert entry.state is ConfigEntryState.SETUP_ERROR
+        await rig.advance(150)  # past the delayed save
+    assert {key: hass_storage[key] for key in before} == before
+    assert rig.gateway.calls == []
+    assert await rig.hass.config_entries.async_reload(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    rig.entry = entry
+    await rig.advance(20)
+    assert rig.gateway.calls == HAND_BACK
+
+
+async def start_created(
+    rig: Rig, hass_storage: dict[str, Any], created_at: Any, **main: Any
+) -> MockConfigEntry:
+    """An entry created at ``created_at`` that ran before, with a monitoring period of 7 days;
+    ``main``: the entry store's fields."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=options(rig.zones) | {"monitor": {"monitoring_days": 7}},
+    )
+    entry.created_at = created_at
+    entry.add_to_hass(rig.hass)
+    ran_before(rig, entry)
+    seed_main(hass_storage, entry, **main)
+    hass_storage[main_key(entry)]["data"].pop("monitoring_since")
+    if "monitoring_since" in main:
+        hass_storage[main_key(entry)]["data"]["monitoring_since"] = main["monitoring_since"]
+    await set_up(rig, entry)
+    return entry
+
+
+def monitoring_blocked(rig: Rig) -> bool:
+    assert rig.entry is not None
+    return "monitoring_period" in rig.entry.runtime_data.control.blockers(START.timestamp())
+
+
+async def test_a_lost_monitoring_start_falls_back_to_the_entry_creation(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """T-35 (P-01): the stored start is gone, the entry was created 10 days ago: the 7-day
+    monitoring period is over — a lost store does not start it again."""
+    created = START - timedelta(days=10)
+    await start_created(rig, hass_storage, created)
+    assert not monitoring_blocked(rig)
+    verdict = rig.state("sensor", "verdict")
+    assert verdict.attributes["monitoring_since"] == created.timestamp()
+
+
+async def test_monitoring_counts_from_the_entry_creation_even_after_a_restarted_start(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """A stored start of yesterday — 0.2.1 started it again after losing its store — does not
+    hold control back: the entry was created 10 days ago."""
+    created = START - timedelta(days=10)
+    entry = await start_created(
+        rig, hass_storage, created, monitoring_since=(START - timedelta(days=1)).timestamp()
+    )
+    assert not monitoring_blocked(rig)
+    assert entry.runtime_data.monitoring_since == created.timestamp()
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        ((START - timedelta(days=3)).timestamp(), (START - timedelta(days=3)).timestamp()),
+        (None, START.timestamp()),
+        ("long ago", START.timestamp()),
+    ],
+    ids=["stored", "none_stored", "unreadable"],
+)
+async def test_an_entry_without_a_creation_time_uses_the_stored_start(
+    rig: Rig, hass_storage: dict[str, Any], stored: Any, expected: float
+) -> None:
+    """An entry migrated from Home Assistant's old storage has epoch 0 as its creation: the
+    stored start counts, and without a readable one, now."""
+    main = {} if stored is None else {"monitoring_since": stored}
+    entry = await start_created(rig, hass_storage, datetime.fromtimestamp(0, UTC), **main)
+    assert entry.runtime_data.monitoring_since == expected
+    assert monitoring_blocked(rig)
+
+
+@pytest.mark.parametrize("section", [True, False], ids=["control", "monitor_only"])
+async def test_an_unreadable_store_guards_the_options_flow(
+    rig: Rig, hass_storage: dict[str, Any], section: bool
+) -> None:
+    """P-58: the entry is not running and its control store cannot be read. With a control
+    section the options flow answers as setup would — a hand-back is owed — and keeps the write
+    path; a monitor-only entry owes nothing and may set control up."""
+    entry_options = options(rig.zones)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=entry_options if section else without_control(entry_options),
+    )
+    entry.add_to_hass(rig.hass)  # never set up
+    rig.entry = entry
+    seed_main(hass_storage, entry)
+    seed_control(hass_storage, entry, ["not", "a", "mapping"])
+    number = FakeNumber(rig.hass)
+    number.register()
+    flow = await _first_control_step(
+        rig,
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": number.entity_id},
+    )
+    if section:
+        assert flow["errors"] == {"write_path": "hand_back_pending"}
+    else:
+        assert flow["step_id"] == "control_entity"
+
+
+@pytest.mark.parametrize("section", [True, False], ids=["control", "monitor_only"])
+async def test_removing_an_entry_with_an_unreadable_store_raises_the_issue(
+    rig: Rig, hass_storage: dict[str, Any], section: bool
+) -> None:
+    """P-58: removal answers as setup would; both stores go with the entry."""
+    entry_options = options(rig.zones)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=entry_options if section else without_control(entry_options),
+    )
+    entry.add_to_hass(rig.hass)
+    seed_main(hass_storage, entry)
+    seed_control(hass_storage, entry, "damaged")
+    await rig.hass.config_entries.async_remove(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    found = ir.async_get(rig.hass).async_get_issue(
+        DOMAIN, f"hand_back_owed_after_removal_{entry.entry_id}"
+    )
+    assert (found is not None) is section
+    if found is not None:
+        assert found.is_persistent
+    assert control_key(entry) not in hass_storage
+    assert main_key(entry) not in hass_storage
+
+
+@pytest.mark.parametrize("section", [True, False], ids=["control", "monitor_only"])
+async def test_unreadable_options_and_an_unreadable_store_still_report_a_held_boiler(
+    rig: Rig, hass_storage: dict[str, Any], section: bool
+) -> None:
+    """P-58: the options cannot be read (a control section whose write path this version does
+    not know, and a boiler class it does not know) and neither can the control state: with a
+    control section it is taken that the boiler was held, and the user is told, for good."""
+    entry_options = options(rig.zones) | {
+        "boiler": {"class": "no such class"},
+        "control": {"write_path": "carrier_pigeon"},
+    }
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=entry_options if section else without_control(entry_options),
+    )
+    entry.add_to_hass(rig.hass)
+    seed_main(hass_storage, entry)  # the marker, and no control store
+    assert not await rig.hass.config_entries.async_setup(entry.entry_id)
+    found = ir.async_get(rig.hass).async_get_issue(DOMAIN, f"hand_back_owed_{entry.entry_id}")
+    assert (found is not None) is section
+    if found is not None:
+        assert found.is_persistent
+    assert rig.gateway.calls == []
+
+
+@pytest.mark.parametrize("readable", [True, False], ids=["readable", "unreadable"])
+async def test_a_release_by_hand_writes_the_control_store(
+    rig: Rig, hass_storage: dict[str, Any], readable: bool
+) -> None:
+    """P-58: the entry is not running and the user confirms in the repair flow that the boiler
+    was returned: the control store and the entry store's copy owe nothing any more. One that
+    could not be read is written afresh from what could be (the copy's latch is kept)."""
+    from homeassistant.components.repairs import DOMAIN as REPAIRS
+    from homeassistant.config_entries import ConfigEntryDisabler
+    from homeassistant.setup import async_setup_component
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=options(rig.zones),
+        disabled_by=ConfigEntryDisabler.USER,
+    )
+    entry.add_to_hass(rig.hass)  # disabled: the integration runs, the entry does not
+    rig.entry = entry
+    owed = {"hand_back_pending": True, "controlling": True, "latched": True}
+    seed_main(hass_storage, entry, control=owed)
+    seed_control(hass_storage, entry, owed if readable else ["not", "a", "mapping"])
+    ir.async_create_issue(
+        rig.hass,
+        DOMAIN,
+        f"control_state_unreadable_{entry.entry_id}",
+        is_fixable=False,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key="control_state_unreadable",
+    )
+    control_module.report_owed_hand_back(rig.hass, entry.entry_id, persistent=True)
+    assert await async_setup_component(rig.hass, DOMAIN, {})
+    found = issue(rig, "hand_back_owed")
+    assert found is not None
+    assert await async_setup_component(rig.hass, REPAIRS, {})
+    manager = rig.hass.data[REPAIRS]["flow_manager"]
+    flow = await manager.async_init(DOMAIN, data={"issue_id": found.issue_id})
+    flow = await manager.async_configure(flow["flow_id"], {})
+    assert flow["type"] == "create_entry"
+    await rig.hass.async_block_till_done()
+    stored = hass_storage[control_key(entry)]["data"]
+    assert (stored["controlling"], stored["hand_back_pending"]) == (False, False)
+    assert stored["latched"] is True
+    main = hass_storage[main_key(entry)]["data"]
+    assert (main["control"]["controlling"], main["control"]["hand_back_pending"]) == (False, False)
+    assert main["control_store"] == 1
+    assert issue(rig, "control_state_unreadable") is None

@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from .const import CONTROL, DOMAIN, STORAGE_VERSION, owes_hand_back
+from .const import CONTROL, DOMAIN, UNREADABLE_ISSUE, has_control_section, owes_hand_back
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -130,12 +130,15 @@ async def _async_stop(coordinator: SmartBoilerCoordinator) -> None:
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """The entry is gone: a hand-back it still owed can no longer be retried, so the user is
-    told, with a repair issue that outlives the entry."""
+    told, with a repair issue that outlives the entry. A control state that cannot be read
+    counts as owed wherever control was configured."""
     from pathlib import Path
 
     from homeassistant.helpers import issue_registry as ir
-    from homeassistant.helpers.storage import Store
+    from homeassistant.helpers.importlib import async_import_module
 
+    await async_import_module(hass, f"{__package__}.coordinator")
+    from .coordinator import async_read_control_state, control_store, main_store
     from .forecasts import remove_partition_files
 
     for key in (
@@ -143,11 +146,15 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "control_options_invalid",
         "auto_tpi_blocked",
         "learning_not_paused",
+        UNREADABLE_ISSUE,
     ):
         ir.async_delete_issue(hass, DOMAIN, f"{key}_{entry.entry_id}")
-    store = Store[dict[str, Any]](hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}")
-    data = await store.async_load() or {}
-    if owes_hand_back(data.get("control")):
+    store = main_store(hass, entry.entry_id)
+    control = control_store(hass, entry.entry_id)
+    read = await async_read_control_state(
+        hass, entry.entry_id, entry.options, main=store, control=control
+    )
+    if read.owed:
         ir.async_create_issue(
             hass,
             DOMAIN,
@@ -157,7 +164,8 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
             severity=ir.IssueSeverity.ERROR,
             translation_key="hand_back_owed_after_removal",
         )
-    # Nothing of the entry stays behind: its store and its forecast weeks.
+    # Nothing of the entry stays behind: its stores and its forecast weeks.
+    await control.async_remove()
     await store.async_remove()
     await hass.async_add_executor_job(
         remove_partition_files, Path(hass.config.path(".storage")), entry.entry_id
@@ -189,18 +197,21 @@ def _report_control_problem(hass: HomeAssistant, entry: ConfigEntry, config: Ent
 
 async def _async_report_owed_from_store(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """The options cannot be read, so no unit can hand back: if the last run left the boiler
-    held, the user is told, for good, and can settle it by hand."""
-    from homeassistant.helpers.storage import Store
-
+    held — or its control state cannot be read while the options hold a control section — the
+    user is told, for good, and can settle it by hand."""
     from .control import report_owed_hand_back
+    from .coordinator import async_read_control_state
 
     try:
-        data = await Store[dict[str, Any]](
-            hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}"
-        ).async_load()
-    except Exception:  # an unreadable store: nothing more to tell
-        return
-    if owes_hand_back(data.get("control") if isinstance(data, dict) else None):
+        read = await async_read_control_state(hass, entry.entry_id, entry.options)
+    except Exception:  # an unexpected failure: the cautious answer
+        import logging
+
+        logging.getLogger(__name__).exception("Could not read the stored control state")
+        owed = has_control_section(entry.options)
+    else:
+        owed = read.owed
+    if owed:
         report_owed_hand_back(hass, entry.entry_id, persistent=True)
 
 

@@ -10,8 +10,9 @@ from homeassistant.components.repairs import ConfirmRepairFlow, RepairsFlow
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import issue_registry as ir
 
-from .const import DOMAIN
+from .const import CONTROL_STORE_MARKER, CONTROL_STORE_VERSION, DOMAIN, UNREADABLE_ISSUE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,10 +36,12 @@ class ReturnedByHandFlow(RepairsFlow):
 
 
 async def async_release(hass: HomeAssistant, entry_id: str) -> None:
-    """Forget an owed hand-back: in the running unit, or in the store the last run left."""
+    """Forget an owed hand-back: in the running unit, or in the stores the last run left."""
     entry = hass.config_entries.async_get_entry(entry_id)
     if entry is None:
         return
+    # The user stated that the boiler runs on its own: the notice of a lost memory is settled.
+    ir.async_delete_issue(hass, DOMAIN, f"{UNREADABLE_ISSUE}_{entry_id}")
     if entry.state is not ConfigEntryState.LOADED:
         await _async_release_stored(hass, entry_id)  # disabled, or its options unreadable
         return
@@ -54,21 +57,30 @@ async def async_release(hass: HomeAssistant, entry_id: str) -> None:
         "controlling": False,
         "hand_back_pending": False,
     }
-    await coordinator.async_save_now()
+    await coordinator.async_save_control_now()
 
 
 async def _async_release_stored(hass: HomeAssistant, entry_id: str) -> None:
-    from homeassistant.helpers.storage import Store
+    """The control store and the entry store's copy say nothing is owed any more. A control
+    store that cannot be read is written afresh from what could be read, as the user stated
+    that the boiler was returned."""
+    from homeassistant.helpers.importlib import async_import_module
 
-    from .const import STORAGE_VERSION
+    await async_import_module(hass, f"{__package__}.coordinator")
+    from .coordinator import async_read_control_state, control_store, main_store
 
-    store = Store[dict[str, Any]](hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}")
-    data = await store.async_load()
-    if not isinstance(data, dict) or not isinstance(data.get("control"), dict):
-        return
+    entry = hass.config_entries.async_get_entry(entry_id)
+    options = entry.options if entry is not None else {}
+    main = main_store(hass, entry_id)
+    control = control_store(hass, entry_id)
+    read = await async_read_control_state(hass, entry_id, options, main=main, control=control)
     _LOGGER.warning("The owed hand-back is settled by hand, as the user confirmed")
-    control = {**data["control"], "controlling": False, "hand_back_pending": False}
-    await store.async_save({**data, "control": control})
+    state = {**read.state, "controlling": False, "hand_back_pending": False}
+    await control.async_save(state)
+    if isinstance(read.main, dict):
+        await main.async_save(
+            {**read.main, "control": state, CONTROL_STORE_MARKER: CONTROL_STORE_VERSION}
+        )
 
 
 async def async_create_fix_flow(

@@ -36,11 +36,9 @@ from .const import (
     PARAMETERS,
     REFERENCE_ROOM,
     SIGNALS,
-    STORAGE_VERSION,
     VT_DOMAIN,
     WEATHER,
     ZONES,
-    owes_hand_back,
 )
 from .control_config import (
     CONTROL_DEFAULTS,
@@ -1204,15 +1202,16 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         return None
 
     async def _async_owed_in_store(self) -> bool:
-        """What the entry's store says; one that cannot be read tells nothing, as at setup."""
-        from homeassistant.helpers.storage import Store
+        """What the entry's stored control state says, read as at setup: one that cannot be
+        read owes a hand-back wherever control is configured."""
+        from homeassistant.helpers.importlib import async_import_module
 
-        key = f"{DOMAIN}.{self.config_entry.entry_id}"
-        try:
-            data = await Store[dict[str, Any]](self.hass, STORAGE_VERSION, key).async_load()
-        except Exception:  # unreadable: the setup ignores it too
-            return False
-        return owes_hand_back(data.get("control") if isinstance(data, dict) else None)
+        await async_import_module(self.hass, f"{__package__}.coordinator")
+        from .coordinator import async_read_control_state
+
+        entry = self.config_entry
+        read = await async_read_control_state(self.hass, entry.entry_id, entry.options)
+        return read.owed
 
     def _changes_gateway_read_back(self, user_input: dict[str, Any]) -> bool:
         """Whether the answer re-picks a built-in gateway's read-back, which tells whether a

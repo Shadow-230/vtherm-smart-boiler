@@ -1242,6 +1242,10 @@
       "title": "The control options cannot be used",
       "description": "The saved control options cannot be used, so control is off; the monitor keeps running. The log names the option; open the options and set control up again."
     },
+    "control_state_unreadable": {
+      "title": "The plugin's memory of the boiler could not be read",
+      "description": "The file in which the plugin remembers whether it holds the boiler could not be read: it is missing or damaged (Home Assistant may show its own notice about a damaged file). To be safe, the plugin assumed it held the boiler and handed it back first. Control then works as usual; check that the boiler and the control switch are as you expect."
+    },
     "hand_back_owed_after_removal": {
       "title": "The boiler may still hold a value from VTherm Smart Boiler",
       "description": "The integration was removed before its hand-back reached the boiler. Return the boiler to its own control by hand — reset the setpoint entity, or clear the gateway's overrides — and then ignore this issue."
