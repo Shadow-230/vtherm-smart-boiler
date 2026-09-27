@@ -172,15 +172,20 @@ Each topic lives only in its file; do not copy it here.
 - **HA forecasts**: only through `weather.get_forecasts`, not in entity state — the recorder
   does not keep them. HACS inclusion has no license requirement.
 - **Home Assistant 2026.9.3**: shutdown jobs (`hass.async_add_shutdown_job`) run before
-  `EVENT_HOMEASSISTANT_STOP`, on which MQTT disconnects — the plugin hands back in one, and a
-  job must not remove itself while they run (Home Assistant would skip the next one). MQTT
+  `EVENT_HOMEASSISTANT_STOP` — the plugin hands back in one, and a job must not remove itself
+  while they run (Home Assistant would skip the next one). All shutdown jobs run side by side
+  under one shared 20 s limit; at 20 s Home Assistant cancels those still running and goes on
+  (`core.py`). At the stop event MQTT stops reconnecting but keeps its connection until the
+  process ends (Q3.3, `research/2026-09-27-q3-3-hand-back-vs-ha-stop.md`). MQTT
   entities write their state only when a value changes (unless `force_update`), so a steady MQTT
   source keeps an old `last_reported`; `opentherm_gw` rewrites every entity on each report.
 - **Related plugins (no overlap)**: `vtherm_heating_failure_detection` (rooms),
   `vtherm_heating_optimizer` (chooses pellet/AC/electric source), `vtherm_adaptive_tpi`.
   `vtherm_pellet_stove` (MIT) drives a central heat source — a reference. No license, ideas
   only: `Virtual-VTherm-Simulator`, both `heating-simulator` repos (caiusseverus, Juans77).
-  OTGW-firmware is GPL-3.0; the OTGW equipment matrix (tclcode.com) has no license.
+  OTGW-firmware v1.7.5 is MIT (its LICENSE file and headers; earlier notes said GPL-3.0); the
+  OTGW PIC firmware source is under Schelte Bron's own license (no redistribution without
+  permission, Q3.8); the OTGW equipment matrix (tclcode.com) has no license.
 - **OTGW** (firmware reference, otgw.tclcode.com): `CS` / `C2` must be repeated at least once a
   minute or the gateway falls back to the thermostat's value — the plugin repeats every 30 s.
   `RT=` (ID 24) and `BS=` (ID 16) set room temperature and setpoint; without a thermostat they
