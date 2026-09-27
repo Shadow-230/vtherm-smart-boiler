@@ -26,7 +26,9 @@ Each topic lives only in its file; do not copy it here.
 ## Working rules
 
 - The user converses in Polish; everything written into the repository is in English, except
-  translation files for other languages (e.g. `translations/pl.json`).
+  translation files for other languages (e.g. `translations/pl.json`). Replies to the user are in
+  plain, less technical Polish: what was done, what it means for the house and the boiler, and
+  what needs the user's answer (the user's rule, 2026-09-26/27).
 - **We build a universal plugin, not a custom project for the author's HA.** Never write
   installation-specific data — entity IDs, device names, the author's boiler, house or zone
   values — into code, defaults, tests or docs. Every input comes from a config-flow field where
@@ -49,7 +51,9 @@ Each topic lives only in its file; do not copy it here.
   git-ignored `research/diy/` — one folder per solution, every file listed with its source, date
   and license in `research/diy/INDEX.md` — rather than left by a tool outside the project; read
   for interface facts only (the user's decision, 2026-09-24). The official license text only
-  with the user's consent at that step (`docs/plan-0.2.md` K1).
+  with the user's consent at that step (`docs/plan-0.2.md` K1). CI on GitHub's servers fetches VT
+  10.4.0 and SmartPI 0.4.0 from their tags for the real-VT tests; nothing is downloaded locally
+  (`docs/plan-0.2.2.md`, decision 14).
 - Nothing is created without the user's consent: no files or directories (temporary ones
   included), repositories, installs, environments, issues or pull requests.
   Exceptions: files and directories in the agreed layout (the "Layout" sections of
@@ -68,8 +72,10 @@ Each topic lives only in its file; do not copy it here.
   tool-configuration files may be changed without asking — history keeps every change.
   Documents (`*.md`) and the user's files still need a shown diff and consent — except a ✅ on a
   finished step and an addition to a plan's "Open after" list, which are committed at once, with
-  the diff shown in the step's report (the user, 2026-09-27). Anything not tracked by git is shown
-  and confirmed before it is deleted or overwritten.
+  the diff shown in the step's report (the user, 2026-09-27). A `*.md` change waiting for consent
+  stays uncommitted in the working tree; code and tests are committed by path
+  (`git commit -- <paths>`), so a pending document never enters a code commit. Anything not
+  tracked by git is shown and confirmed before it is deleted or overwritten.
 - Autonomous work: phases run in order without waiting; work stops at every 🔒 step; the user
   reviews before anything reaches a real boiler (`docs/plan-0.2.md`, K4); each finished step
   is marked ✅ in its plan and committed, so the next session knows where to continue; a step
@@ -82,7 +88,9 @@ Each topic lives only in its file; do not copy it here.
   WebSocket, MQTT, SSH, UI, add-ons). Sole exception: the dedicated test HA in its own Proxmox
   LXC. Its address and access data live only in the git-ignored `devenv/local.env`; never
   connect to an address that is not listed there, and connect only after the user has said to
-  start (`docs/plan-0.2.md`, J4).
+  start (`docs/plan-0.2.md`, J4). J4 may provoke an unclean restart (`docker kill` over SSH) and a
+  lost link in the test HA's own container only, after that start (`docs/plan-0.2.2.md`,
+  decision 15).
 - Use the Explore subagent for repository searches.
 - Read large files in parts (offset and limit, `sed -n`): the harness saves oversized tool
   output outside the project.
@@ -122,7 +130,10 @@ Each topic lives only in its file; do not copy it here.
   `refresh_state()` runs after the algorithm (one-cycle lag). The thermostat method
   `get_feature_manager(name)` exists from VT 10.5.0.beta1, not in 10.4.0. `get_vtherm_api`
   creates a bare API when VT has none yet — call it only once VT's instance exists. A factory is
-  picked up when a thermostat starts; a running one sees it only after VT's reload.
+  picked up when a thermostat starts; a running one sees it only after VT's reload. VT loads
+  external feature managers from 10.2.0 (with `vtherm_api` 0.4.0's factory registry); VT 10.0 and
+  10.1 depend on `vtherm_api` for control algorithms only, so there a registration succeeds and no
+  manager is ever created (Q3.1, `research/2026-09-27-q3-1-vt-feature-manager-version.md`).
 - **VT central configuration**: `select.central_mode` (Auto, Stopped, Heat only, Cool only, Frost
   protection); VT applies it only to thermostats that follow the central mode
   (`is_controlled_by_central_mode`, VT 10.4.0 `base_thermostat.py`), so the plugin sees it
@@ -132,7 +143,14 @@ Each topic lives only in its file; do not copy it here.
   `hass.is_running` is already true during start-up; each VT climate has `is_ready`. Reloading the
   central entry makes the central-boiler binary sensor unavailable, then `off` until VT's boiler
   state next changes; `select.central_mode` restores its last value (L3,
-  `research/2026-09-25-l3-device-facts.md`).
+  `research/2026-09-25-l3-device-facts.md`). VT 10.4.0's central boiler (`vendor/`,
+  `config_schema.py`, `const.py`, `feature_central_boiler_manager.py`): activation delay 0–600 s
+  in steps of 10, default 0 — a drop during the wait does not cancel it, and demand is checked
+  again at its end; repeat interval `keep_alive_boiler_delay_sec` 0–3600 s, default 0; its
+  commands are free-form actions; its power criterion uses each zone's `mean_cycle_power`
+  (`sensor.py`); it counts heating devices, not zones. Unticking it deletes its two commands
+  (`config_flow.py`); that its keep-alive keeps resending the old command until Home Assistant
+  restarts is inferred from the code, not seen.
 - **VT** uses current outdoor temperature only; forecast is on its "future improvements" list.
   Auto-TPI learns in sessions (≥ 50 cycles). `set_auto_tpi_mode` is not a pure pause: the
   `reinitialise` default is true (wipes the learning), the allow-flags are overwritten on every
@@ -182,6 +200,13 @@ Each topic lives only in its file; do not copy it here.
   `CS=0`; `TSet` carries `CS` whatever `CH`; a Data-Invalid or Unknown-DataID reply to ID 1
   clears the `CS` override without a message; stand-alone the PIC polls ID 18 itself, and a reset
   zeroes its stored values, so `opentherm_gw` shows water pressure 0.0 until a real reading.
+  `opentherm_gw` (HA 2026.9.3, `binary_sensor.py`, `sensor.py`, `__init__.py`): the boiler device
+  has "Low water pressure", "Gas fault", "Air pressure fault" and "Water overtemperature" problem
+  sensors and two "Central heating 1" entities (CH active, running; CH enabled); the thermostat
+  device has its own "Control setpoint 1"; it sends `CS=0` in its cleanup when it unloads.
+  pyotgw 2.2.3 passes on only ACK and DATA frames, so Data-Invalid and Unknown-DataID replies
+  are skipped (`research/diy/pyotgw/2.2.3/messageprocessor.py`). The OTGW firmware resets the PIC
+  when its ESP boots (`research/diy/otgw-firmware/v1.7.5/OTGW-firmware.ino`).
 - **DIY masters** (L3, `research/2026-09-25-l3-device-facts.md`): ESPHome `opentherm` sends CH
   enable only with `t_set` > 0 and its `ch_enable` switch on — a low setpoint leaves CH enabled,
   and its docs require the switch to turn heating off; the ESP resends its values itself (held)
