@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from .coordinator import SmartBoilerCoordinator
 
 PLATFORMS = ("sensor", "binary_sensor", "switch", "button")
+# The notice asking what is wired to the gateway's thermostat terminals (answer K, X6).
+KIND_ISSUE = "thermostat_kind_missing"
 
 
 # Loaded through Home Assistant's import executor before first use: importing them in the event
@@ -79,6 +81,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for unit in _units(coordinator):
             await unit.async_hand_back_owed(dt_util.utcnow().timestamp())
         _report_control_problem(hass, entry, config)
+        _report_thermostat_kind(hass, entry, config)
         await coordinator.async_start()
         await coordinator.async_config_entry_first_refresh()
         for unit in _units(coordinator):
@@ -137,6 +140,7 @@ def _units(coordinator: SmartBoilerCoordinator) -> list[ControlUnit]:
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Bring an entry stored by an earlier version to this one's options."""
     from .const import REMOVED_CONTROL_OPTIONS
+    from .control_config import MIGRATED_HARD_MIN
 
     if entry.version > 1:
         return False  # from a newer version: nothing here can read it
@@ -151,6 +155,19 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 key: value for key, value in control.items() if key not in REMOVED_CONTROL_OPTIONS
             }
         hass.config_entries.async_update_entry(entry, options=options, minor_version=2)
+    if entry.minor_version < 3:
+        # X6 (decision 2): the lowest water temperature's default became 20 °C; a control
+        # section stored without one keeps 0.2.1's 25 °C, so no floor drops silently
+        # (provisional, K4).
+        options = dict(entry.options)
+        control = options.get(CONTROL)
+        if (
+            has_control_section(options)
+            and isinstance(control, Mapping)
+            and control.get("hard_min") in (None, "")
+        ):
+            options[CONTROL] = {**control, "hard_min": MIGRATED_HARD_MIN}
+        hass.config_entries.async_update_entry(entry, options=options, minor_version=3)
     return True
 
 
@@ -188,6 +205,9 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "control_latched",  # the entry's one latch issue (V7)
         "no_zone_known",  # every zone unknown (decision 3, X3)
         "frost_zone_closed",  # a cold room VT keeps closed (decision 4, X4)
+        KIND_ISSUE,  # the thermostat-terminals question not answered (X6)
+        "wall_thermostat_fallback",  # the wall thermostat on a gateway set low (X6)
+        "lowest_water_suggestion",  # the lowest water temperature's suggestion (X6)
         "control_options_invalid",
         "auto_tpi_blocked",
         "learning_not_paused",
@@ -237,6 +257,28 @@ def _report_control_problem(hass: HomeAssistant, entry: ConfigEntry, config: Ent
         is_fixable=False,
         severity=ir.IssueSeverity.ERROR,
         translation_key="control_options_invalid",
+    )
+
+
+def _report_thermostat_kind(hass: HomeAssistant, entry: ConfigEntry, config: EntryConfig) -> None:
+    """Answer K: a gateway entry without an answer to the thermostat-terminals question keeps
+    control stopped (its blocker), and this repair issue asks for the answer; it goes at the
+    setup after the answer is stored (every options save sets the entry up again)."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from .control_config import thermostat_kind_missing
+
+    issue_id = f"{KIND_ISSUE}_{entry.entry_id}"
+    if not thermostat_kind_missing(config.control):
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=False,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key=KIND_ISSUE,
     )
 
 

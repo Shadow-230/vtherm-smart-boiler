@@ -85,3 +85,66 @@ async def test_only_forecasts_are_requested(
     await hass.async_block_till_done()
     assert forecasts.calls  # the one allowed service was used
     assert set(calls) <= ALLOWED, set(calls) - ALLOWED
+
+
+async def test_the_suggestion_calls_no_service(
+    hass: HomeAssistant, freezer, zones: FakeZones
+) -> None:
+    """X6 (decision 2, S-56): the monitor's evidence of short burns at the lowest water
+    temperature and the value it suggests — here where the boiler's own curve sets the water —
+    reach the user as a sensor and a repair issue only: no service is called, nothing written,
+    no setting changed."""
+    from homeassistant.helpers import entity_registry as er
+    from homeassistant.helpers import issue_registry as ir
+
+    calls: list[tuple[str, str]] = []
+
+    def record(event: Event) -> None:
+        calls.append((event.data["domain"], event.data["service"]))
+
+    hass.bus.async_listen(EVENT_CALL_SERVICE, record)
+    freezer.move_to(datetime(2026, 1, 10, 6, tzinfo=UTC))
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.CH_SETPOINT))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 22.0, Signal.CH_SETPOINT: 30.0})
+    living = zones.add("living", hvac_action="heating", valve_open_percent=100)
+    options = {
+        "signals": boiler.mapping(),
+        "boiler": {"class": "read_only", "dhw": "none"},
+        "zones": [{"entity_id": living}],
+    }
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", options=options)
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    for _ in range(30):  # 3-minute burns, each ended because the water reached its setpoint
+        freezer.tick(timedelta(minutes=5))
+        boiler.set(Signal.FLAME, True)
+        freezer.tick(timedelta(minutes=3) - timedelta(seconds=10))
+        boiler.set(Signal.FLOW, 30.5)
+        freezer.tick(timedelta(seconds=10))
+        boiler.set(Signal.FLAME, False)
+        await hass.async_block_till_done()
+        boiler.set(Signal.FLOW, 22.0)
+    await hass.async_block_till_done()
+    await entry.runtime_data.async_run_analysis()
+    await hass.async_block_till_done()
+    sensor = er.async_get(hass).async_get_entity_id(
+        "sensor", DOMAIN, f"{entry.entry_id}_lowest_water_suggestion"
+    )
+    assert sensor is not None
+    state = hass.states.get(sensor)
+    assert state is not None
+    assert float(state.state) == 32.0
+    assert state.attributes["state"] == "suggestion"
+    assert state.attributes["source"] == "ch_setpoint"
+    found = ir.async_get(hass).async_get_issue(DOMAIN, f"lowest_water_suggestion_{entry.entry_id}")
+    assert found is not None
+    assert found.translation_key == "lowest_water_suggestion_boiler"
+    assert entry.options == options  # no setting changed
+    assert set(calls) <= ALLOWED, set(calls) - ALLOWED
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, f"lowest_water_suggestion_{entry.entry_id}")
+        is None
+    )  # it goes with the entry's run

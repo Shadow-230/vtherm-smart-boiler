@@ -42,6 +42,11 @@ class ZoneSeries:
             reported_at=t,
         )
 
+    def calling_between(self, start: float, end: float) -> Series[bool]:
+        """True while the zone asks for heat: its "calling" flag, and its opening only where the
+        flag is not known (as ``History.zone_calling`` counts it)."""
+        return combine([self.calling, self.valve_open, self.on_percent], start, end, _zone_calls)
+
     def series(self) -> tuple[Series[Any], ...]:
         return (
             self.temperature,
@@ -61,6 +66,9 @@ class History:
     signals: dict[Signal, Series[Any]] = field(default_factory=dict)
     zones: dict[str, ZoneSeries] = field(default_factory=dict)
     weather: Series[float] = field(default_factory=Series)
+    # Under control without a CH setpoint signal: the control's setpoint read-back, the source
+    # of the lowest water temperature's evidence (X6). Empty elsewhere.
+    setpoint_read_back: Series[float] = field(default_factory=Series)
 
     def signal(self, signal: Signal) -> Series[Any]:
         """The series of a signal; empty (always unknown) when not mapped."""
@@ -107,7 +115,7 @@ class History:
         its cycle while its relay pulses, and the burns follow the relay (R6, A2).
         """
         per_zone = [
-            combine([z.calling, z.valve_open, z.on_percent], start, end, _zone_calls)
+            z.calling_between(start, end)
             for z in self.zones.values()
             if len(z.valve_open) or len(z.on_percent) or len(z.calling)
         ]
@@ -124,6 +132,7 @@ class History:
                 for zid, zone in self.zones.items()
             },
             weather=self.weather.window(start, end),
+            setpoint_read_back=self.setpoint_read_back.window(start, end),
         )
 
     def prepend(self, older: History) -> None:
@@ -138,6 +147,7 @@ class History:
                 ):
                     series.prepend(earlier)
         self.weather.prepend(older.weather)
+        self.setpoint_read_back.prepend(older.setpoint_read_back)
 
     def drop_before(self, t: float) -> None:
         for series in self.signals.values():
@@ -146,6 +156,7 @@ class History:
             for series in zone.series():
                 series.drop_before(t)
         self.weather.drop_before(t)
+        self.setpoint_read_back.drop_before(t)
 
 
 def _zone_wants_heat(values: Sequence[object]) -> bool | None:

@@ -656,6 +656,11 @@ class ControlUnit:
         return self._holding
 
     @property
+    def controlling(self) -> bool:
+        """The session holds the boiler: the plugin sets the water now."""
+        return self._session.loop.control.controlling
+
+    @property
     def stopping(self) -> bool:
         """The unit is stopping or stopped (unload, reload, Home Assistant stopping): its
         entities are unavailable from then on, and only then (P-02)."""

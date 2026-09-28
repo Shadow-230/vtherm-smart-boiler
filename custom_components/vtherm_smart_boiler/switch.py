@@ -14,7 +14,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .control_config import hand_back_effect
+from .control_config import hand_back_effect, wall_thermostat_applies
 from .coordinator import SmartBoilerCoordinator
 from .entity import ControlEntity
 
@@ -75,7 +75,22 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
             # setpoint may leave the boiler's CH pump running.
             "off_by": "heating_switch" if self.control.options.loop.ch_writes else "low_setpoint",
             "allowed_services": sorted(f"{d}.{s}" for d, s in self.control.allowed_services),
+            **self._wall_thermostat(),
         }
+
+    def _wall_thermostat(self) -> dict[str, Any]:
+        """With an OpenTherm thermostat on the gateway: the temperature it keeps after a
+        hand-back, from the optional signal, and the warning — not mapped, unknown, or below
+        15 °C (X6). Nothing where there is no such thermostat."""
+        if not wall_thermostat_applies(self.control.options):
+            return {}
+        data = self.coordinator.data
+        wall = None if data is None else data.wall_thermostat
+        if wall is None:
+            return {"wall_thermostat_setpoint": None, "wall_thermostat_warning": None}
+        setpoint = None if wall.setpoint is None else round(wall.setpoint, 1)
+        warning = None if wall.warning is None else wall.warning.value
+        return {"wall_thermostat_setpoint": setpoint, "wall_thermostat_warning": warning}
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

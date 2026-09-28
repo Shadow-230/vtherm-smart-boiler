@@ -59,6 +59,7 @@ from .const import (
 from .control_config import (
     CONTROL_DEFAULTS,
     CURVE_DEFAULTS,
+    GATEWAY_TOPOLOGIES,
     HAND_BACK_KEYS,
     INFO_ONLY_ALARMS,
     OTGW_PATHS,
@@ -67,6 +68,7 @@ from .control_config import (
     AlarmReaction,
     ControlOptions,
     HandBack,
+    ThermostatKind,
     Topology,
     ValueEffect,
     WritePath,
@@ -74,8 +76,10 @@ from .control_config import (
     curve_problems,
     hand_back_value_problems,
     heating_writes,
+    kind_contradicts_topology,
     off_too_close_to_lowest,
     own_room_controller_offered,
+    parse_thermostat_kind,
 )
 from .core.alarms import (
     CIRCUIT_ALARM_MIN,
@@ -591,6 +595,19 @@ _UNFED = {
 }
 
 
+THERMOSTAT_KIND = "thermostat_kind"
+
+
+def _thermostat_kind_field(control: Mapping[str, Any]) -> vol.Optional:
+    """Decision 1: what is wired to the gateway's thermostat terminals — no default: a gateway
+    topology needs an answer; one this version cannot read is offered to be answered again."""
+    kind = parse_thermostat_kind(control.get(THERMOSTAT_KIND))
+    return vol.Optional(
+        THERMOSTAT_KIND,
+        description={"suggested_value": kind.value} if kind is not None else None,
+    )
+
+
 def control_schema(options: dict[str, Any]) -> vol.Schema:
     control = options.get(CONTROL, {})
     paths = [NO_CONTROL, *(path.value for path in WritePath)]
@@ -600,6 +617,11 @@ def control_schema(options: dict[str, Any]) -> vol.Schema:
                 "write_path", paths
             ),
             _optional("topology", control): _select("topology", [t.value for t in Topology]),
+            # Asked with a gateway topology only; the form cannot hide it for the others, chosen
+            # on this same page (its text says so), and the save drops it for them.
+            _thermostat_kind_field(control): _select(
+                THERMOSTAT_KIND, [kind.value for kind in ThermostatKind]
+            ),
             _optional("confirmed_entity", control): _entity(_READ_BACK_ENTITY),
             _optional("ch_confirmed_entity", control): _entity(_ECHO_ENTITY),
             # With an OpenTherm thermostat on a gateway (its text says so): its own request,
@@ -797,6 +819,7 @@ def confirm_blocking_schema() -> vol.Schema:
 CONTROL_STEP_KEYS = (
     "write_path",
     "topology",
+    THERMOSTAT_KIND,
     "confirmed_entity",
     "ch_confirmed_entity",
     "thermostat_setpoint_entity",
@@ -805,7 +828,9 @@ CONTROL_STEP_KEYS = (
 
 
 def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    """The first control step: the write path, topology and read-backs; "none" removes control."""
+    """The first control step: the write path, topology, what is wired to the gateway's
+    thermostat terminals and read-backs; "none" removes control. A topology without thermostat
+    terminals keeps no answer about them."""
     if user_input["write_path"] == NO_CONTROL:
         options.pop(CONTROL, None)
         return
@@ -814,7 +839,16 @@ def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
         for key in TARGET_KEYS:
             control.pop(key, None)
     _set_or_drop(control, user_input, CONTROL_STEP_KEYS)
+    if not _gateway_topology(control.get("topology")):
+        control.pop(THERMOSTAT_KIND, None)
     options[CONTROL] = control
+
+
+def _gateway_topology(raw: object) -> bool:
+    try:
+        return Topology(str(raw)) in GATEWAY_TOPOLOGIES
+    except ValueError:
+        return False
 
 
 def apply_control_details(options: dict[str, Any], user_input: dict[str, Any]) -> None:
@@ -885,7 +919,8 @@ TARGET_ENTITY_FIELDS: Mapping[str, EntityFilter] = {
 def control_error(user_input: dict[str, Any]) -> dict[str, str]:
     """What the first control step needs: every write is checked against a read-back, and the
     topology decides what a hand-back does — both required, and suited to the write path (one
-    table with the blockers, P-44)."""
+    table with the blockers, P-44). A gateway topology needs the answer about its thermostat
+    terminals, one that fits it (decision 1)."""
     path = user_input.get("write_path")
     if path in (None, NO_CONTROL):
         return {}
@@ -898,6 +933,12 @@ def control_error(user_input: dict[str, Any]) -> dict[str, str]:
         return {"topology": "topology_no_control"}
     if Topology(topology) not in PATH_TOPOLOGIES[WritePath(path)]:
         return {"topology": "topology_not_for_path"}
+    if Topology(topology) in GATEWAY_TOPOLOGIES:
+        kind = parse_thermostat_kind(user_input.get(THERMOSTAT_KIND))
+        if kind is None:
+            return {THERMOSTAT_KIND: "thermostat_kind_missing"}
+        if kind_contradicts_topology(Topology(topology), kind):
+            return {THERMOSTAT_KIND: "thermostat_kind_contradicts_topology"}
     thermostat = user_input.get("thermostat_setpoint_entity")
     if thermostat and thermostat == user_input.get("confirmed_entity"):
         # The boiler's read-back shows the plugin's value, not the thermostat's own request.
@@ -1622,7 +1663,9 @@ class _Steps:
 
 class SmartBoilerConfigFlow(_Steps, ConfigFlow, domain=DOMAIN):
     VERSION = 1
-    MINOR_VERSION = 2  # 2: the options 0.2.1 removed are gone (see async_migrate_entry)
+    # 2: the options 0.2.1 removed are gone; 3: a control section without the lowest water
+    # temperature keeps 25 °C (see async_migrate_entry).
+    MINOR_VERSION = 3
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}

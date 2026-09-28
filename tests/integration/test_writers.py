@@ -32,7 +32,7 @@ from custom_components.vtherm_smart_boiler.transport.writers import (
 
 INSTALLATION = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
 READ_BACK = "sensor.gw_control_setpoint"
-LOWEST = 25.0  # the lowest water temperature set (the hard minimum's default)
+LOWEST = 20.0  # the lowest water temperature set: its default (decision 2)
 GATEWAYS = {
     "opentherm_gw": {"write_path": "opentherm_gw", "gateway_id": "gw1"},
     "otgw_mqtt": {"write_path": "otgw_mqtt", "mqtt_top": "OTGW", "mqtt_node": "otgw-1"},
@@ -125,7 +125,7 @@ async def test_mqtt_writer(hass: HomeAssistant) -> None:
     assert calls == [
         ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/ctrlsetpt", "payload": "38.3"}),
         ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/chenable", "payload": "1"}),
-        ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/ctrlsetpt", "payload": "25.0"}),
+        ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/ctrlsetpt", "payload": "20.0"}),
         ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/chenable", "payload": "1"}),
         ("mqtt", "publish", {"topic": "OTGW/set/otgw-1/ctrlsetpt", "payload": "0"}),
     ]
@@ -489,7 +489,8 @@ async def test_the_hand_back_value_goes_in_the_entitys_unit(hass: HomeAssistant)
         ),
     )
     [check] = await writer.hand_back()
-    assert [call[2]["value"] for call in calls] == [pytest.approx(77.0), pytest.approx(104.0)]
+    # The lowest water temperature (20 °C = 68 °F), then the hand-back value (40 °C = 104 °F).
+    assert [call[2]["value"] for call in calls] == [pytest.approx(68.0), pytest.approx(104.0)]
     assert check.expected == 40.0  # read back in °C
     assert check.kind is CheckKind.VALUE  # held
 
@@ -865,10 +866,10 @@ async def test_the_hand_back_puts_its_values_on_the_entitys_grid(hass: HomeAssis
         ),
     )
     checks = await writer.hand_back()
-    assert [call[2]["value"] for call in calls] == [25.25, 50.25]
+    assert [call[2]["value"] for call in calls] == [20.25, 50.25]
     (check,) = checks
     assert check.expected == pytest.approx(50.25)
-    assert check.lowest == pytest.approx(25.25)
+    assert check.lowest == pytest.approx(20.25)
 
 
 @pytest.mark.parametrize(

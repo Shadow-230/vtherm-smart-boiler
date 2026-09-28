@@ -25,6 +25,7 @@ from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.vtherm_smart_boiler.const import DOMAIN
+from custom_components.vtherm_smart_boiler.control_config import MIGRATED_HARD_MIN
 
 from .harness import VT_PLATFORM, FakeZones
 
@@ -45,6 +46,10 @@ SIGNALS = {
     "pump_running": "binary_sensor.boiler_sim_pump_running",
 }
 CONFIRMED = "sensor.boiler_sim_ch_setpoint"
+FITTING_KIND = {"gateway_with_thermostat": "opentherm", "gateway_standalone": "none"}
+# The lowest water temperature: a test's entry is stored as minor version 1, so the entry
+# migration keeps 0.2.1's 25 °C in its control section (X6).
+LOWEST = MIGRATED_HARD_MIN
 GATEWAY_CONTROL = {
     "write_path": "opentherm_gw",
     "gateway_id": "sim",
@@ -185,6 +190,12 @@ async def start(
     for zone in rig.sim.zones:
         rig.zones.add(zone.zone_id)
     rig.mirror_zones()
+    control_options = GATEWAY_CONTROL | control
+    # What is wired to the gateway's thermostat terminals (decision 1): the answer that fits the
+    # topology, unless the test gives its own.
+    kind = FITTING_KIND.get(control_options.get("topology", ""))
+    if kind is not None and "thermostat_kind" not in control_options:
+        control_options["thermostat_kind"] = kind
     options = {
         "signals": SIGNALS,
         "weather": "weather.boiler_sim_weather",
@@ -192,7 +203,7 @@ async def start(
         "parameters": {"boiler_min_power": 2.5, "boiler_max_power": 15.0},
         "zones": [{"entity_id": e} for e in rig.zones.entities.values()],
         "monitor": {"monitoring_days": 0} | (monitor or {}),
-        "control": GATEWAY_CONTROL | control,
+        "control": control_options,
     }
     # The simulated gateway's entry in the OpenTherm Gateway integration: control writes through
     # a gateway set up in Home Assistant (X5.5).
@@ -238,7 +249,7 @@ async def test_a_cold_day_under_control(rig: Rig) -> None:
     setpoints = rig.gateway("setpoint")
     assert setpoints
     values = [float(v) for _t, _k, v in setpoints]  # type: ignore[arg-type]
-    assert all(25.0 <= v <= 70.0 for v in values)
+    assert all(LOWEST <= v <= 70.0 for v in values)
     gaps = [b[0] - a[0] for a, b in pairwise(setpoints)]
     assert max(gaps) <= 45.0  # the gateway's one-minute limit is never reached
     for zone in rig.sim.zones:
@@ -535,7 +546,7 @@ async def test_an_outside_change_is_rewritten_once_then_alarmed(rig: Rig) -> Non
     assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
     assert rig.state("sensor", "control_state").state == "handed_back"
     assert [(kind, value) for _t, kind, value in rig.gateway()[-3:]] == [
-        ("setpoint", 25.0),
+        ("setpoint", LOWEST),
         ("ch", True),
         ("setpoint", 0.0),
     ]
@@ -602,9 +613,8 @@ async def test_a_hand_back_is_kept_and_retried_until_the_gateway_takes_it(rig: R
 # is judged against it after a crash (V4, R7). 55 °C is well away from the simulated boiler's own
 # curve at −2 °C (47 °C), which the simulator's read-back shows once the override is gone.
 LAST_COMMAND = {"heating": True, "setpoint": 55.0, "at": START.timestamp() - 600.0}
-# The safe hand-back on a gateway: the lowest water temperature (the hard minimum's default),
-# CH=1, then CS=0 (V5).
-SAFE_HAND_BACK = [("setpoint", 25.0), ("ch", True), ("setpoint", 0.0)]
+# The safe hand-back on a gateway: the lowest water temperature, CH=1, then CS=0 (V5).
+SAFE_HAND_BACK = [("setpoint", LOWEST), ("ch", True), ("setpoint", 0.0)]
 
 
 async def test_a_restart_without_a_clean_stop_hands_back_first(rig: Rig) -> None:
@@ -844,7 +854,7 @@ async def test_without_any_outdoor_reading_the_fallback_setpoint_heats(rig: Rig)
     assert "outdoor_held" in rig.state("sensor", "control_state").attributes["reasons"]
     await rig.advance(3 * 3600, step=60.0)
     assert "outdoor_unknown" in rig.state("sensor", "control_state").attributes["reasons"]
-    assert rig.setpoints()[-1] >= 25.0
+    assert rig.setpoints()[-1] >= LOWEST
     assert rig.gateway("ch")[-1][2] is True
     assert rig.sim.plant.override_active(rig.now())
 
@@ -882,7 +892,7 @@ async def test_a_home_assistant_in_fahrenheit(rig: Rig, write_path: str) -> None
     await rig.advance(1800, step=30.0)
     values = entity_setpoints(rig) if entity else rig.setpoints()
     assert values
-    assert all(25.0 <= v <= 70.0 for v in values), values  # °C at the boiler
+    assert all(LOWEST <= v <= 70.0 for v in values), values  # °C at the boiler
     assert rig.state("sensor", "control_state").state in ("heating", "idle")
     for alarm in ("alarm_write_ignored", "alarm_outside_change", "alarm_write_failed"):
         assert rig.state("binary_sensor", alarm).state == "off", alarm
@@ -917,7 +927,7 @@ async def test_an_entity_hand_back_waits_for_its_target_and_is_stored(rig: Rig) 
     rig.sim.failed.discard("flow_setpoint")
     rig.hub.refresh()
     await rig.advance(70)
-    assert entity_setpoints(rig)[-2:] == [25.0, 0.0]  # the lowest, then the hand-back value
+    assert entity_setpoints(rig)[-2:] == [LOWEST, 0.0]  # the lowest, then the hand-back value
     assert not rig.sim.plant.override_active(rig.now())  # the boiler is on its own curve
     count = len(entity_setpoints(rig))
     await rig.advance(130)
@@ -969,5 +979,5 @@ async def test_a_timeout_hand_back_lets_the_override_lapse(rig: Rig) -> None:
     await rig.switch(False)
     await rig.advance(90)  # past the simulated device's one-minute timeout
     # The lowest water temperature, then nothing: the device's own timeout releases it.
-    assert entity_setpoints(rig)[count:] == [25.0]
+    assert entity_setpoints(rig)[count:] == [LOWEST]
     assert not rig.sim.plant.override_active(rig.now())

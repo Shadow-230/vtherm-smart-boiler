@@ -8,6 +8,10 @@ summaries, verdict, trend warnings, report, outdoor check and building fit. Afte
 history is rebuilt from the recorder, which keeps these states anyway; the plugin's own storage
 holds only small things (monitoring start, held emitter factors, measured parameters).
 
+With the analysis it judges the lowest water temperature's evidence and shows a suggestion,
+never applied (X6, decision 2); the quick path shows what the wall thermostat on a gateway keeps
+after a hand-back. Each has its repair issue, raised here.
+
 The control state — whether the boiler may hold a value of ours, an owed hand-back, latches —
 lives in a store of its own, written at once and atomically; the entry's store keeps a copy.
 One function reads it for every place that asks (``async_read_control_state``): a state that
@@ -61,6 +65,7 @@ from .const import (
     owes_hand_back,
     stored_flag,
 )
+from .control_config import Topology, wall_thermostat_applies
 from .core.alarms import (
     Alarm,
     AlarmKind,
@@ -80,6 +85,22 @@ from .core.emitters import FactorResult, FactorStatus, update_factor
 from .core.foreign_heat import ForeignHeatState, update_foreign_heat
 from .core.history import History, ZoneSeries
 from .core.hot_water import HotWater, hot_water_available
+from .core.lowest_water import (
+    LowestWaterSuggestion,
+    SetpointSource,
+    SuggestionContext,
+    SuggestionState,
+    WallFallback,
+    WallWarning,
+    WaterSetBy,
+    design_load_kw,
+    entered_min_power,
+    estimate_from_power,
+    suggest_lowest_water,
+    wall_issue_due,
+    wall_thermostat_fallback,
+    wall_warning_since,
+)
 from .core.metrics import CH_KINDS
 from .core.monitor import dhw_inputs
 from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
@@ -117,6 +138,11 @@ DAY = 86400.0
 # monitor only included; its text follows what control does then (translation keys
 # ``no_zone_known_off``, ``_handed_back``, ``_monitor``).
 NO_ZONE_KNOWN_ISSUE = "no_zone_known"
+# X6: the wall thermostat on a gateway would keep the house cool after a hand-back (``_unknown``:
+# it reports no setpoint); the lowest water temperature's suggestion (``_boiler``: worded for the
+# device that sets the water). Warnings, not fixable.
+WALL_ISSUE = "wall_thermostat_fallback"
+LOWEST_WATER_ISSUE = "lowest_water_suggestion"
 ZONE_MAX_AGE_S: float | None = None  # one freshness rule: a steady room is not a stale one
 SAVE_DELAY_S = 120
 # An emitter factor is recomputed at every update while its zone heats: saved at this pace, so
@@ -153,6 +179,10 @@ class MonitorData:
     forecast_snapshots: int
     capabilities: VtCapabilities
     parameters: ParameterSet
+    # X6: the lowest water temperature's suggestion (the last analysis'), and what the wall
+    # thermostat on a gateway keeps after a hand-back (``None`` where there is none to show).
+    lowest_water: LowestWaterSuggestion | None = None
+    wall_thermostat: WallFallback | None = None
 
 
 class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
@@ -229,6 +259,12 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # raised now.
         self._zones_unknown_since: float | None = None
         self._no_zone_issue: str | None = None
+        # X6: the suggestion the last analysis gave; the wall thermostat's warning since, and
+        # the issues raised now (their translation key and placeholders).
+        self.lowest_water: LowestWaterSuggestion | None = None
+        self._wall_since: float | None = None
+        self._wall_issue: tuple[str, dict[str, str]] | None = None
+        self._lowest_water_issue: tuple[str, dict[str, str]] | None = None
 
     # --- lifecycle ------------------------------------------------------------------------
 
@@ -296,9 +332,16 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._stopped = True
         while self._unsubs:
             self._unsubs.pop()()
-        for key in ("auto_tpi_blocked", "learning_not_paused", NO_ZONE_KNOWN_ISSUE):
+        for key in (
+            "auto_tpi_blocked",
+            "learning_not_paused",
+            NO_ZONE_KNOWN_ISSUE,
+            WALL_ISSUE,
+            LOWEST_WATER_ISSUE,
+        ):
             ir.async_delete_issue(self.hass, DOMAIN, f"{key}_{self.config_entry.entry_id}")
         self._no_zone_issue = None
+        self._wall_issue = self._lowest_water_issue = None
         await self.async_shutdown()
         if self._loaded:
             await self._control_store.async_save(self._stored_control())
@@ -649,6 +692,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 _append(target, t, value)
         if entity_id == self.config.weather:
             _append(history.weather, t, weather_from_state(state).value)
+        if entity_id == self.config.setpoint_read_back:
+            # Read as the CH setpoint signal would be: the evidence's setpoint under control.
+            value = reading_from_state(Signal.CH_SETPOINT, state).value
+            _append(history.setpoint_read_back, t, value)
 
     # --- quick path -----------------------------------------------------------------------
 
@@ -805,6 +852,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         alarms = dict(self._alarms)
         if self.analysis is not None:
             alarms.update(self.analysis.trends)
+        wall = self._follow_wall_thermostat(snapshot, now)
         return MonitorData(
             now=now,
             snapshot=snapshot,
@@ -821,7 +869,68 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             forecast_snapshots=len(self.forecasts.store.snapshots()) if self.forecasts else 0,
             capabilities=self.link.capabilities(),
             parameters=self.parameters,
+            lowest_water=self.lowest_water,
+            wall_thermostat=wall,
         )
+
+    def _follow_wall_thermostat(self, snapshot: BoilerSnapshot, now: float) -> WallFallback | None:
+        """The wall thermostat on a gateway with an OpenTherm thermostat: what it keeps after a
+        hand-back, from the optional signal; its repair issue once low or unknown for 30
+        minutes, whether control is on or off — after a hand-back it heats the house anyway.
+        ``None`` (and no issue) without such a thermostat."""
+        if not wall_thermostat_applies(self.config.control):
+            self._wall_since = None
+            self._report_wall(None)
+            return None
+        fallback = wall_thermostat_fallback(
+            snapshot.is_mapped(Signal.ROOM_SETPOINT),
+            snapshot.number(Signal.ROOM_SETPOINT, self._max_age(Signal.ROOM_SETPOINT)),
+        )
+        self._wall_since = wall_warning_since(self._wall_since, fallback, now)
+        self._report_wall(fallback if wall_issue_due(self._wall_since, now) else None)
+        return fallback
+
+    def _report_wall(self, fallback: WallFallback | None) -> None:
+        """The wall thermostat's repair issue for ``fallback`` (low or unknown); ``None``
+        deletes it. Raised anew when its kind changes."""
+        wanted: tuple[str, dict[str, str]] | None = None
+        if fallback is not None and fallback.warning is WallWarning.UNKNOWN:
+            wanted = (f"{WALL_ISSUE}_unknown", {})
+        elif (
+            fallback is not None
+            and fallback.warning is WallWarning.LOW
+            and fallback.setpoint is not None
+        ):
+            wanted = (WALL_ISSUE, {"value": f"{fallback.setpoint:.1f}"})
+        self._wall_issue = self._set_issue(WALL_ISSUE, self._wall_issue, wanted)
+
+    def _set_issue(
+        self,
+        key: str,
+        raised: tuple[str, dict[str, str]] | None,
+        wanted: tuple[str, dict[str, str]] | None,
+    ) -> tuple[str, dict[str, str]] | None:
+        """A warning repair issue (not fixable) under ``key``: ``wanted`` — its translation
+        key and placeholders — or deleted with ``None``; written only when it changes, and
+        raised anew (deleted first) when its translation key does."""
+        if wanted == raised:
+            return raised
+        issue_id = f"{key}_{self.config_entry.entry_id}"
+        if wanted is None or (raised is not None and raised[0] != wanted[0]):
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+        if wanted is not None:
+            translation_key, placeholders = wanted
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                is_persistent=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=translation_key,
+                translation_placeholders=placeholders,
+            )
+        return wanted
 
     def dhw_now(self, snapshot: BoilerSnapshot) -> bool | None:
         """DHW running now: its own signal, else flame on without heating demand from the CH
@@ -1033,6 +1142,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     self.parameters = self.parameters.with_estimate(key, estimate)
                 if moved:  # a fit that has not moved is not written again every five minutes
                     self.schedule_save()
+            await self._async_suggest_lowest_water(copy, now)
             # Published as of now, not as of the analysis' start: the quick path may have
             # moved on meanwhile (a reading gone stale), and must not be set back. Through the
             # refresh itself, so a failure of it is counted and logged there, once (V6).
@@ -1043,6 +1153,98 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             self._job_works("The periodic analysis")
         finally:
             self._analysing = False
+
+    async def _async_suggest_lowest_water(self, history: History, now: float) -> None:
+        """X6 (decision 2): the lowest water temperature's evidence over the history, with the
+        estimate from the boiler's minimum power beside it; shown, and told by a repair issue
+        while it suggests a value — never applied, nothing written. A failure keeps the last
+        result and never holds up the analysis."""
+        try:
+            source, context = self._lowest_water_context()
+            suggestion = await self.hass.async_add_executor_job(
+                suggest_lowest_water,
+                history,
+                source,
+                now,
+                self.parameters,
+                self.config.monitor.monitor,
+                context,
+            )
+        except Exception:
+            self._job_failed("The lowest water temperature's evidence")
+            return
+        self._job_works("The lowest water temperature's evidence")
+        if self._stopped:
+            return
+        self.lowest_water = suggestion
+        self._report_lowest_water(suggestion)
+
+    def _lowest_water_context(self) -> tuple[SetpointSource | None, SuggestionContext]:
+        """Who sets the water now and what the evidence is judged against: under control the
+        lowest water temperature set, with the CH setpoint signal or, without it, the control's
+        read-back as the source; otherwise the boiler's own curve or its thermostat, with the
+        CH setpoint signal only. The caps known, and whether nothing heats (a stand-alone
+        gateway handed back)."""
+        config = self.config
+        control = config.control
+        unit = self.control
+        plugin = unit is not None and not unit.hand_back_only and unit.controlling
+        if Signal.CH_SETPOINT in config.signals:
+            source: SetpointSource | None = SetpointSource.CH_SETPOINT
+        elif plugin and config.setpoint_read_back:
+            source = SetpointSource.READ_BACK
+        else:
+            source = None
+        limits = control.loop.control
+        caps = [circuit.max_flow for circuit in config.installation.circuits if circuit.max_flow]
+        if control.configured:
+            caps.append(limits.limits.hard_max)
+        boiler_max = self.parameters.value(ParameterKey.MAX_CH_SETPOINT)
+        if boiler_max is not None:
+            caps.append(boiler_max)
+        curve = limits.curve if control.configured and control.curve_entered else None
+        estimate = estimate_from_power(
+            entered_min_power(self.parameters),
+            None if curve is None else design_load_kw(self.parameters, curve),
+            curve,
+            condensing=config.installation.boiler.condensing,
+        )
+        context = SuggestionContext(
+            set_by=WaterSetBy.PLUGIN if plugin else WaterSetBy.DEVICE,
+            lowest=limits.limits.hard_min if plugin else None,
+            caps=tuple(float(cap) for cap in caps if cap is not None),
+            nothing_heats=control.topology is Topology.GATEWAY_STANDALONE and not plugin,
+            estimate=estimate,
+        )
+        return source, context
+
+    def _report_lowest_water(self, suggestion: LowestWaterSuggestion) -> None:
+        """The suggestion's repair issue while it suggests a value: worded for the plugin's
+        option where the plugin sets the water, else for the device that sets it."""
+        wanted: tuple[str, dict[str, str]] | None = None
+        value, reference = suggestion.value, suggestion.reference
+        if (
+            suggestion.state is SuggestionState.SUGGESTION
+            and value is not None
+            and reference is not None
+        ):
+            key = LOWEST_WATER_ISSUE
+            if suggestion.set_by is WaterSetBy.DEVICE:
+                key = f"{LOWEST_WATER_ISSUE}_boiler"
+            wanted = (
+                key,
+                {
+                    "days": str(suggestion.window_days),
+                    "short": str(suggestion.short),
+                    "burns": str(suggestion.counted),
+                    "reference": f"{reference:.1f}",
+                    "limit": f"{suggestion.short_burn_s / 60.0:g}",
+                    "value": f"{value:.1f}",
+                },
+            )
+        self._lowest_water_issue = self._set_issue(
+            LOWEST_WATER_ISSUE, self._lowest_water_issue, wanted
+        )
 
     async def _async_forecast_tick(self, _now: datetime | None) -> None:
         if self.forecasts is None:

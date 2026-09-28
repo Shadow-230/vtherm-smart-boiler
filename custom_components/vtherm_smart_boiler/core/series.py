@@ -99,6 +99,12 @@ class Series[T]:
         index = bisect_right(self._times, t) - 1
         return self._values[index] if index >= 0 else None
 
+    def value_before(self, t: float) -> T | None:
+        """The value that held just before ``t`` — a sample at ``t`` itself left out;
+        ``None`` before the first sample."""
+        index = bisect_left(self._times, t) - 1
+        return self._values[index] if index >= 0 else None
+
     def segments(self, start: float, end: float) -> Iterator[Segment[T]]:
         """Stretches of constant value covering ``[start, end)``; before any sample: unknown."""
         if end <= start:

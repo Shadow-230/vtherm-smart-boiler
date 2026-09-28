@@ -46,7 +46,7 @@
           "pump_running": "Włączony, gdy pracuje pompa c.o. Umożliwia ostrzeżenie o małym przepływie: wszystkie zawory zamknięte przy pracującej pompie.",
           "flue_gas": "Włącza alarm spalin i wczesne ostrzeżenie o zabrudzonym wymienniku.",
           "gas_meter": "Licznik narastający gazu lub energii. Daje zmierzony gaz na stopniodzień zamiast szacunku.",
-          "room_setpoint": "Nastawa pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
+          "room_setpoint": "Nastawa pokojowa termostatu ściennego przy bramce, od strony termostatu — np. „Room setpoint 1” na urządzeniu termostatu bramki albo TrSet_thermostat firmware'u z włączonymi osobnymi źródłami; nie cel encji climate bramki. Pokazywana jako temperatura, którą termostat ścienny utrzyma po oddaniu sterowania.",
           "room_temperature": "Temperatura pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
           "weather": "Jej prognozy są zapisywane na potrzeby przyszłych funkcji prognoz, a jej temperatura zastępuje brakujący albo podejrzany czujnik zewnętrzny — w stopniodniach i krzywej sterowania. Żadne dane nie opuszczają Home Assistant."
         }
@@ -306,7 +306,7 @@
           "pump_running": "Włączony, gdy pracuje pompa c.o. Umożliwia ostrzeżenie o małym przepływie: wszystkie zawory zamknięte przy pracującej pompie.",
           "flue_gas": "Włącza alarm spalin i wczesne ostrzeżenie o zabrudzonym wymienniku.",
           "gas_meter": "Licznik narastający gazu lub energii. Daje zmierzony gaz na stopniodzień zamiast szacunku.",
-          "room_setpoint": "Nastawa pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
+          "room_setpoint": "Nastawa pokojowa termostatu ściennego przy bramce, od strony termostatu — np. „Room setpoint 1” na urządzeniu termostatu bramki albo TrSet_thermostat firmware'u z włączonymi osobnymi źródłami; nie cel encji climate bramki. Pokazywana jako temperatura, którą termostat ścienny utrzyma po oddaniu sterowania.",
           "room_temperature": "Temperatura pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
           "weather": "Jej prognozy są zapisywane na potrzeby przyszłych funkcji prognoz, a jej temperatura zastępuje brakujący albo podejrzany czujnik zewnętrzny — w stopniodniach i krzywej sterowania. Żadne dane nie opuszczają Home Assistant."
         }
@@ -494,6 +494,7 @@
         "data": {
           "write_path": "Ścieżka zapisu",
           "topology": "Podłączenie bramki",
+          "thermostat_kind": "Co jest podłączone do zacisków termostatu bramki",
           "confirmed_entity": "Odczyt zwrotny nastawy",
           "ch_confirmed_entity": "Odczyt zwrotny włączenia ogrzewania",
           "thermostat_setpoint_entity": "Nastawa wody zadana przez termostat",
@@ -501,7 +502,8 @@
         },
         "data_description": {
           "write_path": "Bez sterowania (domyślnie); wybrana przez ciebie encja do zapisu, np. liczba EMS-ESP albo ESPHome OpenTherm; bramka OpenTherm Gateway przez integrację OpenTherm Gateway w Home Assistant; albo polecenia MQTT firmware OTGW. Wybierz ścieżkę, którą naprawdę oferuje twój interfejs kotła: zła oznacza zapisy, które się nie udają albo trafiają donikąd.",
-          "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Tryb monitora: bramka tylko słucha i sterowanie jest niemożliwe. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki. Utrata danych kotła podnosi alarm i oddaje sterowanie w każdej topologii — bez termostatu grzanie ustaje, dopóki dane nie wrócą.",
+          "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Tryb monitora: bramka tylko słucha i sterowanie jest niemożliwe. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki. Utrata danych kotła podnosi alarm i oddaje sterowanie w każdej topologii — bez termostatu grzanie ustaje, dopóki dane nie wrócą. Z termostatem: gdy steruje wtyczka, nastawa ogrzewania termostatu ściennego i jego wyłącznik nic nie robią — ustawienia ciepłej wody nadal działają; po oddaniu sterowania albo gdy Home Assistant nie działa, termostat grzeje według własnej nastawy i programu, więc ustaw je tak, jak ma być w domu.",
+          "thermostat_kind": "Tylko dla bramki, z termostatem albo samodzielnej. Termostat OpenTherm: rozmawia z kotłem i może pokazywać temperaturę wody. Styk wł./wył.: prosty termostat lub włącznik na dwóch przewodach — bramka zamienia go w żądanie grzania, a „wyłączone ogrzewanie” wtyczki blokowałoby go po awarii Home Assistant, więc sterowanie nie jest dostępne. Nic: brak termostatu. Nie wiem: sterowanie nie jest dostępne, dopóki tego nie sprawdzisz. Z termostatem wybierz OpenTherm; bez termostatu wybierz Nic.",
           "confirmed_entity": "Encja, która pokazuje nastawę odebraną przez kocioł, np. „Control setpoint 1” urządzenia kotła w bramce — pokazuje ona, co bramka wysyła, więc nastawa jest pokazywana jako potwierdzona przez bramkę, nie przez kocioł. Wymagana: każdy zapis jest z nią porównywany, a zapis zignorowany przez kocioł albo nadpisany przez inny sterownik zostaje zgłoszony. Encja nastawy wtyczki pokazuje tylko potwierdzoną wartość, w przeciwnym razie stan nieznany. Wybranie encji, do której się pisze, niczego nie potwierdza: nastawa jest wtedy pokazywana jako niezweryfikowana.",
           "ch_confirmed_entity": "Opcjonalnie: encja, która pokazuje, czy kocioł dostaje włączone ogrzewanie — np. „Central heating 1” urządzenia kotła w bramce, pokazujące, co bramka wysyła do kotła. Z nią włączanie i wyłączanie ogrzewania jest sprawdzane jak nastawa: przełączenie zignorowane przez kocioł jest zgłaszane, a zmienione przez inny sterownik zapisywane jeszcze raz, po czym wszystkie zapisy ustają. Bez niej włączenie ogrzewania jest pokazywane jako niezweryfikowane, a przełączenie przez inny sterownik pozostaje niezauważone. Wybranie encji, do której się pisze, albo żądania termostatu zamiast tego, co dostaje kocioł, niczego nie potwierdza albo zatrzymuje sterowanie.",
           "thermostat_setpoint_entity": "Opcjonalnie, dla bramki z termostatem OpenTherm: temperatura wody, o którą prosi sam termostat (w opentherm_gw „Control setpoint 1” urządzenia termostatu), nie odczyt zwrotny kotła. Gdy kocioł wróci do niej po przerwie, wtyczka wyśle swoje polecenie ponownie, zamiast uznać to za inny sterownik. Puste (domyślnie): liczy się tylko wartość sprzed wtyczki.",
@@ -529,7 +531,7 @@
           "ch_entity": "Przełącznik, który włącza i wyłącza grzanie — potrzebny do sterowania w tej wersji: bez niego „wyłącz” byłoby niską nastawą, a nie wiadomo jeszcze, czy to zatrzymuje kocioł i jego pompę, więc sterowanie pozostaje zablokowane i działa tylko monitor. Jest włączany z powrotem przy oddaniu tam, gdzie kocioł wraca do własnego sterowania albo termostatu, a zostawiany bez zmian tam, gdzie oddanie zatrzymuje grzanie; poniżej trzeba podać jego typ zapisu. Nie może być przełącznikiem sterowania zewnętrznego. Nigdy nie wybieraj przełącznika zapisywanego w pamięci kotła (np. parametru kotła „grzanie aktywne”): każde przełączenie by ją zużywało. Włączony ma pozwalać grzać: flaga, która włączona zatrzymuje grzanie (jak „heating off” w EMS-ESP), odwraca każde polecenie i nie może być tu użyta.",
           "ch_write_type": "Potrzebny przy przełączniku grzania: co urządzenie robi z jego stanem. Wygasający: porzucany, jeśli nie jest powtarzany; powtarzany co 30 s. Trzymany: zapis przy zmianie oraz ponownie co 5 minut i po powrocie urządzenia. Wtyczka nigdy nie zapisuje trwałej pamięci kotła, więc przełącznik zadeklarowany jako trwały lub nieznany jest odrzucany. Trzymany: urządzenie zachowuje ostatnią podaną wartość (ESPHome, DIYLess i podobne). Nastawa zasilania EMS-ESP (selflowtemp) nie jest trzymana — wygasa po mniej więcej minucie — więc zadeklaruj ją jako wygasającą. Trzymany: ryzyka — parametr zapisywany w pamięci kotła, a zadeklarowany jako trzymany, jest zapisywany przy każdej zmianie i co 5 minut, i zużywa pamięć (np. parametr temperatury grzania w EMS-ESP); a ostatnia trzymana wartość, także „wyłączone”, zostaje w kotle, gdy Home Assistant nie działa.",
           "hand_back": "Jak sterowanie wraca do kotła przy każdym wyjściu. Każde oddanie najpierw zapisuje najniższą temperaturę wody, potem włącza z powrotem przełącznik grzania tam, gdzie kocioł wraca do własnego sterowania albo termostatu, a potem wykonuje wybrany tu sposób: zapis wartości oddania; zaprzestanie zapisów, po którym przejmuje własny limit czasu urządzenia (tylko dla zapisów wygasających); albo wyłączenie przełącznika, który włącza sterowanie zewnętrzne. Wymagany; bez niego sterowania nie da się włączyć.",
-          "hand_back_value": "Nastawa zapisywana przy oddaniu, w °C, dla metody wartości: wartość, która przywraca kotłowi własne sterowanie, albo ta, którą ma zachować. 0 na jednych urządzeniach znaczy „własne sterowanie”, na innych „bez grzania”. Wymagana przy metodzie wartości. Nie może przekraczać najwyższej nastawy zasilania ani maksimum obiegu i nigdy nie jest do nich przycinana; oddanie liczy się jako wykonane, gdy pokaże ją odczyt zwrotny.",
+          "hand_back_value": "Nastawa zapisywana przy oddaniu, w °C, dla metody wartości: wartość, która przywraca kotłowi własne sterowanie, albo ta, którą ma zachować. 0 na jednych urządzeniach znaczy „własne sterowanie”, na innych „bez grzania”. Wymagana przy metodzie wartości. Nie może przekraczać najwyższej temperatury wody ani maksimum obiegu i nigdy nie jest do nich przycinana; oddanie liczy się jako wykonane, gdy pokaże ją odczyt zwrotny.",
           "hand_back_value_effect": "Wymagane przy metodzie wartości: co urządzenie robi z wartością oddania — wraca jego własne sterowanie albo grzanie ustaje. Przełącznik sterowania pokazuje to jako skutek oddania.",
           "hand_back_entity": "Dla sposobu „przełącznik”: przełącznik, który włącza sterowanie zewnętrzne. Jest włączany na początku sterowania i wyłączany przy oddaniu — więc nigdy ustawienie, które urządzenie zapisuje w pamięci; poniżej trzeba podać jego typ zapisu.",
           "hand_back_entity_write_type": "Potrzebny przy metodzie przełącznika: co urządzenie robi ze stanem przełącznika. Wygasający: znika, jeśli nie jest powtarzany — włączany ponownie co 30 s, dopóki sterowanie trzyma kocioł. Trzymany: urządzenie go zachowuje — włączany za każdym razem, gdy sterowanie przejmuje kocioł, oraz ponownie co 5 minut i po powrocie urządzenia. Trwały albo nieznany (domyślnie): może być zapisywany w pamięci kotła, którą każde przełączenie zużywa, więc sterowanie z nim jest niedostępne.",
@@ -543,12 +545,12 @@
           "gateway_id": "Identyfikator bramki"
         },
         "data_description": {
-          "gateway_id": "Bramka skonfigurowana w integracji OpenTherm Gateway; proponowane są tylko bramki tam skonfigurowane i włączone. Nastawa sterowania jest powtarzana co 30 s; przy oddaniu sterowania ustawiana na 0, co oddaje sterowanie termostatowi, a bez termostatu kończy grzanie."
+          "gateway_id": "Bramka skonfigurowana w integracji OpenTherm Gateway; proponowane są tylko bramki tam skonfigurowane i włączone. Nastawa sterowania jest powtarzana co 30 s; przy oddaniu sterowania ustawiana na 0, co oddaje sterowanie termostatowi, a bez termostatu kończy grzanie. Włączenie ogrzewania (CH=) bramka trzyma, dopóki się nie zmieni albo bramka nie uruchomi się ponownie; wtyczka wysyła je znowu razem z nastawą sterowania, co 30 s, i po powrocie bramki."
         }
       },
       "control_mqtt": {
         "title": "Firmware OTGW przez MQTT",
-        "description": "Polecenia są publikowane w temacie prefiks/set/węzeł/polecenie, z prefiksem i nazwą węzła podanymi niżej. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Polecenia są publikowane w temacie prefiks/set/węzeł/polecenie, z prefiksem i nazwą węzła podanymi niżej. Włączenie ogrzewania (CH=) bramka trzyma, dopóki się nie zmieni albo bramka nie uruchomi się ponownie; wtyczka wysyła je znowu razem z nastawą sterowania, co 30 s, i po powrocie bramki. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "mqtt_top": "Prefiks tematu",
           "mqtt_node": "Nazwa węzła"
@@ -564,8 +566,8 @@
         "data": {
           "design_outdoor": "Projektowa temperatura zewnętrzna",
           "design_flow": "Projektowa temperatura zasilania",
-          "hard_min": "Najniższa nastawa zasilania",
-          "hard_max": "Najwyższa nastawa zasilania",
+          "hard_min": "Najniższa temperatura wody",
+          "hard_max": "Najwyższa temperatura wody",
           "activation_delay_s": "Opóźnienie włączenia",
           "room": "Temperatura pokojowa krzywej",
           "exponent": "Wykładnik krzywej",
@@ -579,7 +581,7 @@
         "data_description": {
           "design_outdoor": "Najzimniejsza temperatura zewnętrzna, na którą zaprojektowano ogrzewanie, w °C. Domyślnie: projektowa temperatura zewnętrzna budynku albo −15 °C. Zbyt zimna wartość daje za mało wody w mrozy.",
           "design_flow": "Temperatura zasilania potrzebna przy projektowej temperaturze zewnętrznej, w °C, np. wartość z krzywej ustawionej w kotle. Wymagana; nie ma wartości domyślnej. Za wysoka marnuje gaz i powoduje taktowanie palnika; za niska zostawia chłodne pokoje w silny mróz.",
-          "hard_min": "Żadnej nastawy poniżej tej wartości, w °C. Domyślnie 25 °C. Za wysoka grzeje pokoje przy łagodnej pogodzie i marnuje gaz; nastawa „wyłączone” musi być poniżej niej.",
+          "hard_min": "Najniższa temperatura wody, jaką ustawia wtyczka, w °C — ustawiana jak punkt krzywej. Domyślnie 20 °C. Za niska: przy łagodnej pogodzie kocioł raz po raz sam się wyłącza, a kocioł niekondensacyjny skrapla spaliny w przewodzie kominowym — weź wartość z jego instrukcji. Za wysoka: woda cieplejsza, niż potrzebują pokoje, i więcej gazu. Gdy kocioł wciąż się wyłącza przy tej temperaturze, wtyczka pokazuje dowody i proponowaną wartość; sama nigdy nie zmienia tego ustawienia.",
           "hard_max": "Żadna nastawa powyżej tej wartości, cokolwiek wyliczy krzywa lub korekta, w °C. Domyślnie 70 °C. Ogrzewanie podłogowe wymaga też maksymalnego zasilania swojego obiegu.",
           "activation_delay_s": "Sekundy, przez które grzanie czeka po pierwszym wezwaniu, aby wolne zawory (termoelektryczne, podłogówka) otworzyły się, zanim ruszą kocioł i pompa — jak w centralnym kotle Versatile Thermostat; wstępnie wypełnione ustawieniem VT, jeśli VT je zachował. Wyłączenie nigdy nie jest opóźniane. Domyślnie 0: od razu. Ryzyko: strefa z impulsem grzania krótszym niż opóźnienie nigdy nie uruchomi kotła, a impulsy niewiele dłuższe dają krótkie palenia; bez przełącznika grzania („wyłączone” jako niska nastawa) pompa i tak może pracować.",
           "room": "Temperatura pokoju, dla której zbudowano krzywą, w °C. Domyślnie 20 °C. Za wysoka podnosi całą krzywą i marnuje gaz.",
@@ -608,7 +610,7 @@
         "data_description": {
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
           "decision_interval_min": "Jak często temperatura wody jest wyznaczana na nowo, w minutach; domyślnie 5, domyślny cykl VT. Włączanie i wyłączanie ogrzewania nadąża za strefami co 10 s niezależnie od tej wartości; wtyczka nie odczytuje własnych cykli stref. Krócej: woda szybciej podąża za pogodą i pokojami, ale algorytmy stref częściej widzą jej zmiany; dłużej: spokojniejsza woda, która wolniej nadąża.",
-          "off_setpoint": "Nastawa zapisywana jako „wyłącz”, gdy nie ma przełącznika grzania, w °C. Domyślnie 10: dużo poniżej każdej wartości grzania i poniżej najniższej nastawy zasilania. Ryzyko: niska nastawa nie wyłącza grzania w kotle — mastery ESPHome i DIYLess zostawiają CH włączone, a kotły według zgłoszeń dalej pracują pompą CH; przełącznik grzania albo CH=0 bramki OpenTherm naprawdę wyłącza grzanie. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc ta nastawa nie jest jeszcze zapisywana.",
+          "off_setpoint": "Nastawa zapisywana jako „wyłącz”, gdy nie ma przełącznika grzania, w °C. Domyślnie 10: dużo poniżej każdej wartości grzania i poniżej najniższej temperatury wody. Ryzyko: niska nastawa nie wyłącza grzania w kotle — mastery ESPHome i DIYLess zostawiają CH włączone, a kotły według zgłoszeń dalej pracują pompą CH; przełącznik grzania albo CH=0 bramki OpenTherm naprawdę wyłącza grzanie. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc ta nastawa nie jest jeszcze zapisywana.",
           "count_threshold": "Ogrzewanie jest potrzebne, gdy co najmniej tyle stref zgłasza zapotrzebowanie. Domyślnie 1; najwyżej liczba stref. 0 wyłącza liczenie, zostawiając sam próg mocy albo otwarcia, jak w Versatile Thermostat. Wyższa zostawia pojedynczy wołający pokój bez ciepła.",
           "power_threshold_kw": "Opcjonalnie: grzanie jest potrzebne, gdy średnia moc stref w cyklu, liczona jak w Versatile Thermostat, osiągnie tę wartość, w kW — liczona tylko wtedy, gdy choć jedna z nich ma otwarty zawór albo włączone urządzenie. Za wysoki próg zostawia małe pokoje bez ciepła.",
           "opening_threshold": "Opcjonalnie: ogrzewanie jest potrzebne, gdy największe otwarcie zaworu wśród wołających stref osiąga tę wartość, w %. Za wysoka zostawia bez ciepła pokój, który otwiera zawór tylko trochę.",
@@ -677,7 +679,7 @@
       "reference_zone_unknown": "Wybierz jedną ze skonfigurowanych stref.",
       "hand_back_value_missing": "Sposób „wartość” wymaga wartości oddania.",
       "hand_back_entity_missing": "Sposób „przełącznik” wymaga przełącznika sterowania zewnętrznego.",
-      "hard_limits_out_of_order": "Najwyższa nastawa musi być wyższa od najniższej.",
+      "hard_limits_out_of_order": "Najwyższa temperatura wody musi być wyższa od najniższej.",
       "frost_release_not_above_limit": "Ochrona przed mrozem musi kończyć się powyżej temperatury, przy której się zaczyna.",
       "hand_back_timeout_not_expiring": "Limit czasu urządzenia oddaje sterowanie tylko przy zapisach wygasających; wybierz wartość albo przełącznik.",
       "hand_back_value_out_of_range": "Wartość oddania leży poza zakresem, który przyjmuje encja nastawy.",
@@ -740,7 +742,9 @@
       "design_flow_too_low": "Projektowa temperatura zasilania musi być co najmniej 5 K wyższa od temperatury pokojowej krzywej.",
       "design_flow_above_hard_max": "Projektowa temperatura zasilania jest wyższa od najwyższej temperatury wody, więc w mróz krzywa zostałaby obcięta. Podnieś najwyższą temperaturę wody albo obniż temperaturę projektową.",
       "design_outdoor_too_warm": "Projektowa temperatura zewnętrzna musi być co najmniej 10 K niższa od temperatury pokojowej krzywej.",
-      "hard_min_not_below_design_flow": "Najniższa temperatura wody musi być niższa od projektowej temperatury zasilania."
+      "hard_min_not_below_design_flow": "Najniższa temperatura wody musi być niższa od projektowej temperatury zasilania.",
+      "thermostat_kind_missing": "Podaj, co jest podłączone do zacisków termostatu bramki.",
+      "thermostat_kind_contradicts_topology": "Ta odpowiedź nie pasuje do podłączenia bramki: termostat OpenTherm oznacza „Bramka z termostatem”, brak termostatu oznacza pracę samodzielną. Wybierz drugie podłączenie."
     }
   },
   "selector": {
@@ -822,6 +826,14 @@
         "gateway_standalone": "Bramka bez termostatu (samodzielna)",
         "monitor_mode": "Bramka w trybie monitora",
         "virtual": "Wirtualnie: sterownik po stronie Home Assistant"
+      }
+    },
+    "thermostat_kind": {
+      "options": {
+        "opentherm": "Termostat OpenTherm",
+        "on_off": "Styk wł./wył. (dwa przewody)",
+        "none": "Nic",
+        "unknown": "Nie wiem"
       }
     },
     "write_type": {
@@ -941,6 +953,38 @@
           },
           "mismatch": {
             "name": "Wpisana i zmierzona się różnią"
+          }
+        }
+      },
+      "lowest_water_suggestion": {
+        "name": "Proponowana najniższa temperatura wody",
+        "state_attributes": {
+          "state": {
+            "name": "Dowody",
+            "state": {
+              "suggestion": "Kocioł wciąż się wyłącza: wartość do rozważenia",
+              "good_enough": "Wystarczy: większość cykli jest dość długa",
+              "no_data": "Jeszcze za mało cykli",
+              "inactive": "Brak potrzebnego sygnału",
+              "not_applicable": "Teraz nie ma czego proponować"
+            }
+          },
+          "source": {
+            "name": "Nastawa z",
+            "state": {
+              "ch_setpoint": "Nastawa c.o. kotła",
+              "read_back": "Odczyt zwrotny nastawy sterowania"
+            }
+          },
+          "estimate_gap": {
+            "name": "Brak oszacowania z mocy, bo",
+            "state": {
+              "boiler_min_power": "nie wpisano minimalnej mocy kotła",
+              "design_load": "nie wpisano ani pewnie nie zmierzono obciążenia projektowego",
+              "curve": "nie wpisano krzywej grzewczej",
+              "min_power_not_below_load": "minimalna moc nie jest niższa od obciążenia projektowego",
+              "not_condensing": "kocioł nie jest kondensacyjny: weź wartość z jego instrukcji"
+            }
           }
         }
       },
@@ -1312,6 +1356,17 @@
               "heating_switch": "Przełącznik ogrzewania",
               "low_setpoint": "Niską nastawę"
             }
+          },
+          "wall_thermostat_setpoint": {
+            "name": "Termostat ścienny po oddaniu sterowania"
+          },
+          "wall_thermostat_warning": {
+            "name": "Ostrzeżenie o termostacie ściennym",
+            "state": {
+              "not_mapped": "Nieznana: przypisz nastawę termostatu ściennego",
+              "unknown": "Termostat ścienny nie podaje nastawy",
+              "low": "Poniżej 15 °C: po oddaniu sterowania dom się wychłodzi"
+            }
           }
         }
       }
@@ -1454,6 +1509,15 @@
     },
     "blocked_hard_min_not_below_design_flow": {
       "message": "Najniższa temperatura wody musi być niższa od projektowej temperatury zasilania. Popraw to w opcjach. Inne powody: {others}."
+    },
+    "blocked_thermostat_on_off": {
+      "message": "Do zacisków termostatu bramki podłączony jest styk wł./wył.: „wyłączone ogrzewanie” bramki blokowałoby go po awarii Home Assistant, więc sterowanie nie jest dostępne. Monitor działa dalej. Inne powody: {others}."
+    },
+    "blocked_thermostat_kind_unknown": {
+      "message": "Sterowanie czeka, aż w opcjach sterowania podasz, co jest podłączone do zacisków termostatu bramki. Inne powody: {others}."
+    },
+    "blocked_thermostat_kind_contradicts_topology": {
+      "message": "Ta odpowiedź nie pasuje do podłączenia bramki: termostat OpenTherm oznacza „Bramka z termostatem”, brak termostatu oznacza pracę samodzielną. Wybierz drugie podłączenie. Inne powody: {others}."
     }
   },
   "issues": {
@@ -1535,6 +1599,26 @@
     "frost_zone_closed": {
       "title": "Pokój poniżej progu mrozu nie może dostać ciepła",
       "description": "{zones}: Versatile Thermostat trzyma zawór zamknięty (termostat wyłączony albo jego nastawa jest poniżej progu mrozu), więc wtyczka nie może go ogrzać i nie włącza dla niego kotła. Użyj presetu mrozowego VT zamiast wyłączenia; centralny tryb mrozowy VT wymaga ustawienia temperatury mrozowej w każdym termostacie."
+    },
+    "thermostat_kind_missing": {
+      "title": "Podaj, co jest podłączone do zacisków termostatu bramki",
+      "description": "Sterowanie kotłem czeka na odpowiedź na nowe pytanie w opcjach sterowania: co jest podłączone do zacisków termostatu bramki. Bez termostatu (praca samodzielna) kocioł do tego czasu nie grzeje."
+    },
+    "wall_thermostat_fallback": {
+      "title": "Termostat ścienny utrzymałby w domu chłód po oddaniu sterowania",
+      "description": "Termostat ścienny przy bramce ma nastawę {value} °C. Po oddaniu sterowania albo gdy Home Assistant nie działa, grzeje dom według tej nastawy i własnego programu. Ustaw ją tak, jak ma być w domu."
+    },
+    "wall_thermostat_fallback_unknown": {
+      "title": "Termostat ścienny nie podaje nastawy",
+      "description": "Termostat ścienny przy bramce nie podaje nastawy. Po oddaniu sterowania albo gdy Home Assistant nie działa, grzeje dom według własnej nastawy i programu. Sprawdź, czy są takie, jak ma być w domu, i czy nastawa termostatu ściennego wybrana wśród sygnałów jest podawana."
+    },
+    "lowest_water_suggestion": {
+      "title": "Kocioł wciąż się wyłącza przy najniższej temperaturze wody",
+      "description": "W ostatnich {days} dniach {short} z {burns} cykli grzania przy około {reference} °C trwało krócej niż {limit} min i skończyło się, bo woda była dość ciepła, choć pokoje wciąż prosiły o ciepło. Rozważ podniesienie najniższej temperatury wody do około {value} °C w opcjach sterowania. Dłuższe cykle są prawdopodobne; mniej uruchomień — nie na pewno. Nic się nie zmieni, dopóki tego nie zrobisz."
+    },
+    "lowest_water_suggestion_boiler": {
+      "title": "Kocioł wciąż się wyłącza przy swojej najniższej temperaturze wody",
+      "description": "W ostatnich {days} dniach {short} z {burns} cykli grzania przy około {reference} °C trwało krócej niż {limit} min i skończyło się, bo woda była dość ciepła, choć pokoje wciąż prosiły o ciepło. Rozważ podniesienie minimalnej temperatury zasilania albo punktu początkowego krzywej grzewczej w urządzeniu, które ustala temperaturę wody, do około {value} °C — nie równoległego przesunięcia krzywej, które podnosi też wodę w mróz. Dłuższe cykle są prawdopodobne; mniej uruchomień — nie na pewno. Wtyczka niczego tam nie zmienia."
     }
   }
 }

@@ -350,6 +350,7 @@ async def test_control_through_the_gateway_at_the_simple_level(
         {
             "write_path": "opentherm_gw",
             "topology": "gateway_with_thermostat",
+            "thermostat_kind": "opentherm",
             "confirmed_entity": "sensor.gw_control_setpoint",
             "ch_confirmed_entity": "binary_sensor.gw_central_heating",
         },
@@ -374,6 +375,7 @@ async def test_control_through_the_gateway_at_the_simple_level(
     assert control == {
         "write_path": "opentherm_gw",
         "topology": "gateway_with_thermostat",
+        "thermostat_kind": "opentherm",
         "confirmed_entity": "sensor.gw_control_setpoint",
         "ch_confirmed_entity": "binary_sensor.gw_central_heating",
         "gateway_id": "living_room_gw",
@@ -453,6 +455,7 @@ async def test_control_at_the_advanced_level_and_back(
         {
             "write_path": "otgw_mqtt",
             "topology": "gateway_standalone",
+            "thermostat_kind": "none",
             "confirmed_entity": "sensor.fake_boiler_ch_setpoint",
         },
     )
@@ -574,6 +577,7 @@ async def test_the_form_no_longer_offers_a_reaction_to_outside_changes(
 MQTT_CONTROL = {
     "write_path": "otgw_mqtt",
     "topology": "gateway_standalone",
+    "thermostat_kind": "none",
     "confirmed_entity": "sensor.fake_boiler_ch_setpoint",
 }
 ADVANCED_CURVE = {
@@ -653,7 +657,10 @@ async def test_the_thermostats_own_setpoint_is_not_the_read_back(
     hass.states.async_set("sensor.gateway_reboot_count", "3")
     entry_id = await create_entry(hass, entities, "simple", ("living",))
     result = await open_control(hass, entry_id)
-    control = MQTT_CONTROL | {"topology": "gateway_with_thermostat"}
+    control = MQTT_CONTROL | {
+        "topology": "gateway_with_thermostat",
+        "thermostat_kind": "opentherm",
+    }
     result = await options_step(
         hass, result, control | {"thermostat_setpoint_entity": control["confirmed_entity"]}
     )
@@ -1010,7 +1017,11 @@ async def test_the_gateway_and_the_mqtt_topics_are_checked(
     loaded_gateway(hass, "living_room_gw")
     hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
     entry_id = await create_entry(hass, entities, "simple", ("living",))
-    base = {"topology": "gateway_with_thermostat", "confirmed_entity": "sensor.gw_control_setpoint"}
+    base = {
+        "topology": "gateway_with_thermostat",
+        "thermostat_kind": "opentherm",
+        "confirmed_entity": "sensor.gw_control_setpoint",
+    }
     result = await open_control(hass, entry_id)
     result = await options_step(hass, result, {"write_path": "opentherm_gw"} | base)
     with pytest.raises(InvalidData):
@@ -1179,11 +1190,16 @@ async def test_the_own_room_controller_tick_is_offered_on_the_entity_and_relay_p
     for control in ({}, {"write_path": "entity"}, {"write_path": "relay?", "topology": "virtual"}):
         schema = control_entity_schema({"control": control})
         assert "own_room_controller" not in {str(marker) for marker in schema.schema}
-    for topology in ("gateway_standalone", "gateway_with_thermostat"):
-        shown = await fields({"write_path": "entity", "topology": topology} | read_back)
+    for topology, kind in (
+        ("gateway_standalone", "none"),
+        ("gateway_with_thermostat", "opentherm"),
+    ):
+        answer = {"topology": topology, "thermostat_kind": kind} | read_back
+        shown = await fields({"write_path": "entity"} | answer)
+        assert "setpoint_entity" in shown  # the writable-entity step, reached
         assert "own_room_controller" not in shown
         for path in ("opentherm_gw", "otgw_mqtt"):
-            shown = await fields({"write_path": path, "topology": topology} | read_back)
+            shown = await fields({"write_path": path} | answer)
             assert "own_room_controller" not in shown
 
 
@@ -1222,6 +1238,7 @@ async def test_the_tick_is_refused_with_a_hand_back_value_that_stops_heating(
         {
             "write_path": "entity",
             "topology": "gateway_with_thermostat",
+            "thermostat_kind": "opentherm",
             "confirmed_entity": "number.boiler_flow",
         },
     )
@@ -1258,6 +1275,7 @@ async def to_control_curve(hass: HomeAssistant, entry_id: str) -> dict[str, Any]
         {
             "write_path": "opentherm_gw",
             "topology": "gateway_with_thermostat",
+            "thermostat_kind": "opentherm",
             "confirmed_entity": "sensor.gw_control_setpoint",
         },
     )
@@ -1652,7 +1670,11 @@ async def test_a_disabled_gateway_is_not_offered_and_mqtt_must_be_set_up(
     ).add_to_hass(hass)
     hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
     entry_id = await create_entry(hass, entities, "simple", ("living",))
-    base = {"topology": "gateway_with_thermostat", "confirmed_entity": "sensor.gw_control_setpoint"}
+    base = {
+        "topology": "gateway_with_thermostat",
+        "thermostat_kind": "opentherm",
+        "confirmed_entity": "sensor.gw_control_setpoint",
+    }
     result = await open_control(hass, entry_id)
     result = await options_step(hass, result, {"write_path": "opentherm_gw"} | base)
     assert result["step_id"] == "control_gateway"
@@ -1867,6 +1889,7 @@ def controlled_options(entities: dict[str, str]) -> dict[str, Any]:
             "gateway_id": "living_room_gw",
             "confirmed_entity": "sensor.gw_control_setpoint",
             "topology": "gateway_with_thermostat",
+            "thermostat_kind": "opentherm",
             "curve": {"design_outdoor": -15, "design_flow": 55},
         },
     }
@@ -2162,3 +2185,115 @@ async def test_a_circuits_flow_sensor_is_checked_on_the_server(
     assert result["errors"] == {"flow_entity": "entity_not_suitable"}
     result = await options_step(hass, result, answer | {"flow_entity": entities["return"]})
     assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+# --- X6: what is wired to the gateway's thermostat terminals (decision 1) ------------------------
+
+NEXT_STEP = {
+    "opentherm_gw": "control_gateway",
+    "otgw_mqtt": "control_mqtt",
+    "entity": "control_entity",
+}
+
+
+@pytest.mark.parametrize("path", sorted(NEXT_STEP))
+async def test_the_thermostat_kind_is_asked_for_a_gateway(
+    hass: HomeAssistant, entities: dict[str, str], path: str
+) -> None:
+    """Decision 1: both gateway topologies ask what is wired to the gateway's thermostat
+    terminals, on every write path that takes them — no answer is a form error, an answer that
+    contradicts the topology is refused with the hint to pick the other connection. An on/off
+    contact and "I don't know" are taken: control is then blocked, the monitor runs."""
+    hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
+    first = {"write_path": path, "confirmed_entity": "sensor.gw_control_setpoint"}
+    missing = {"thermostat_kind": "thermostat_kind_missing"}
+    contradicts = {"thermostat_kind": "thermostat_kind_contradicts_topology"}
+    for answer, error in (
+        ({"topology": "gateway_with_thermostat"}, missing),
+        ({"topology": "gateway_standalone"}, missing),
+        ({"topology": "gateway_standalone", "thermostat_kind": "opentherm"}, contradicts),
+        ({"topology": "gateway_with_thermostat", "thermostat_kind": "none"}, contradicts),
+    ):
+        result = await open_control(hass, entry_id)
+        result = await options_step(hass, result, first | answer)
+        assert result["step_id"] == "control", answer
+        assert result["errors"] == error, answer
+    for topology, kind in (
+        ("gateway_with_thermostat", "opentherm"),
+        ("gateway_standalone", "none"),
+        ("gateway_with_thermostat", "on_off"),
+        ("gateway_standalone", "unknown"),
+    ):
+        result = await open_control(hass, entry_id)
+        answer = first | {"topology": topology, "thermostat_kind": kind}
+        result = await options_step(hass, result, answer)
+        assert result["step_id"] == NEXT_STEP[path], answer
+
+
+@pytest.mark.usefixtures("gateway")
+async def test_the_thermostat_kind_is_stored_with_a_gateway_and_offered_again(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """The answer is stored in the control section and offered again as it was; one this version
+    cannot read is not offered (it must be answered again)."""
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
+    result = await open_control(hass, entry_id)
+    first = {
+        "write_path": "opentherm_gw",
+        "topology": "gateway_with_thermostat",
+        "thermostat_kind": "opentherm",
+        "confirmed_entity": "sensor.gw_control_setpoint",
+    }
+    result = await options_step(hass, result, first)
+    result = await options_step(hass, result, {"gateway_id": "living_room_gw"})
+    result = await options_step(hass, result, CURVE_ANSWERS)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    assert entry.options["control"]["thermostat_kind"] == "opentherm"
+    result = await open_control(hass, entry_id)
+    assert form_default(result, "thermostat_kind") == "opentherm"
+    from custom_components.vtherm_smart_boiler.config_flow import control_schema
+
+    garbled = {"control": {**entry.options["control"], "thermostat_kind": "a newer answer"}}
+    marker = next(m for m in control_schema(garbled).schema if str(m) == "thermostat_kind")
+    assert not (marker.description or {}).get("suggested_value")
+
+
+@pytest.mark.parametrize(
+    ("topology", "kept"),
+    [
+        ("gateway_with_thermostat", True),
+        ("gateway_standalone", True),
+        ("virtual", False),
+        ("monitor_mode", False),
+        (None, False),  # left empty: no topology, no terminals
+        ("a topology this version does not know", False),
+    ],
+)
+def test_a_topology_without_thermostat_terminals_drops_the_kind(
+    topology: str | None, kept: bool
+) -> None:
+    """The virtual topology (and X8's relay path) has no thermostat terminals: an answer left
+    from a gateway topology is dropped when the step is saved."""
+    from custom_components.vtherm_smart_boiler.config_flow import apply_control
+
+    options: dict[str, Any] = {
+        "control": {
+            "write_path": "entity",
+            "topology": "gateway_standalone",
+            "thermostat_kind": "none",
+        }
+    }
+    apply_control(
+        options,
+        {
+            "write_path": "entity",
+            "topology": topology,
+            "thermostat_kind": "none",
+            "confirmed_entity": "sensor.x",
+        },
+    )
+    assert ("thermostat_kind" in options["control"]) is kept

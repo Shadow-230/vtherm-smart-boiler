@@ -313,6 +313,7 @@ def test_one_entity_for_two_signals_drops_the_later_one(stored: dict) -> None:
             "gateway_id": "gw",
             "confirmed_entity": "sensor.setpoint",
             "topology": "gateway_with_thermostat",
+            "thermostat_kind": "opentherm",
             "curve": {"design_outdoor": -15, "design_flow": 55},
         },
     }
@@ -324,7 +325,13 @@ def test_one_entity_for_two_signals_drops_the_later_one(stored: dict) -> None:
     assert condensing.missing == (Signal.RETURN,)
     blockers = config_blockers(config.control, config.installation, config.shared_signals)
     assert blockers == ["entity_for_two_signals"]
-    assert config.watched_entities == ("binary_sensor.flame", "sensor.flow", "climate.a")
+    # The control's setpoint read-back is watched too, without a CH setpoint signal (X6).
+    assert config.watched_entities == (
+        "binary_sensor.flame",
+        "sensor.flow",
+        "climate.a",
+        "sensor.setpoint",
+    )
 
 
 @pytest.mark.parametrize(
@@ -412,3 +419,29 @@ def test_unknown_stored_values_name_their_section(options: dict, code: str, subj
     with pytest.raises(ConfigError) as err:
         EntryConfig.from_options(options)
     assert (err.value.code, err.value.subject) == (code, subject)
+
+
+@pytest.mark.parametrize(
+    ("signals", "control", "recorded"),
+    [
+        ({}, {"write_path": "opentherm_gw", "confirmed_entity": "sensor.setpoint"}, True),
+        (
+            {"ch_setpoint": "sensor.ch"},
+            {"write_path": "opentherm_gw", "confirmed_entity": "s"},
+            False,
+        ),
+        ({}, {}, False),  # no control: no read-back
+        ({}, {"write_path": "opentherm_gw"}, False),  # control without a read-back
+    ],
+)
+def test_the_setpoint_read_back_is_recorded_without_a_setpoint_signal(
+    signals: dict, control: dict, recorded: bool
+) -> None:
+    """X6: the lowest water temperature's evidence needs the setpoint in force; without the
+    boiler's CH setpoint signal, the control's read-back is recorded into the history (and
+    watched); with the signal, or without control, nothing more is watched."""
+    options = MINIMAL | {"signals": MINIMAL["signals"] | signals, "control": control}
+    config = EntryConfig.from_options(options, strict_control=False)
+    read_back = control.get("confirmed_entity") if recorded else None
+    assert config.setpoint_read_back == read_back
+    assert (read_back in config.watched_entities) is recorded

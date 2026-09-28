@@ -32,8 +32,11 @@ OTGW = {
     "gateway_id": "otgw",
     "confirmed_entity": "sensor.otgw_control_setpoint",
     "topology": "gateway_standalone",
+    "thermostat_kind": "none",  # nothing on the gateway's thermostat terminals (decision 1)
     "curve": CURVE,
 }
+# A gateway with an OpenTherm thermostat on its terminals.
+WITH_THERMOSTAT = {"topology": "gateway_with_thermostat", "thermostat_kind": "opentherm"}
 
 
 def test_no_write_path_means_not_configured() -> None:
@@ -51,7 +54,7 @@ def test_otgw_defaults_are_cautious() -> None:
     assert control.curve.design_flow == 55.0
     assert control.curve.exponent == 1.3
     assert control.boiler_max == 65.0
-    assert control.limits.hard_min == 25.0
+    assert control.limits.hard_min == 20.0  # the lowest water temperature (decision 2)
     assert options.learning_pauses
     assert options.reaction("outside_change") is AlarmReaction.HAND_BACK
     assert options.reaction("pressure_low") is AlarmReaction.INFO
@@ -194,6 +197,10 @@ def test_every_blocker_is_listed() -> None:
         (OTGW | {"topology": "virtual"}, RADIATORS),
         (OTGW | {"curve": {"design_outdoor": 12, "design_flow": 24}, "hard_min": 25}, RADIATORS),
         (OTGW | {"curve": {"design_outdoor": -15, "design_flow": 75}}, RADIATORS),
+        # X6: what is wired to the gateway's thermostat terminals (decision 1).
+        (OTGW | {"thermostat_kind": "on_off"}, RADIATORS),
+        (OTGW | {"thermostat_kind": "unknown"}, RADIATORS),
+        (OTGW | {"thermostat_kind": "opentherm"}, RADIATORS),
     ]
     for data, installation in cases:
         found |= set(config_blockers(parse_control(data, RADIATORS, None), installation))
@@ -258,10 +265,94 @@ def test_a_timeout_hand_back_needs_writes_that_lapse(write_type: str, blocked: b
     assert ("timeout_needs_expiring_writes" in blockers) is blocked
 
 
-def test_an_expiring_heating_override_is_repeated_with_the_setpoint() -> None:
-    otgw = parse_control(OTGW, RADIATORS, None)
-    assert otgw.loop.switch_guard.write_type is WriteType.EXPIRING
-    assert otgw.loop.switch_guard.keepalive_s == otgw.loop.setpoint_guard.keepalive_s == 30.0
+@pytest.mark.parametrize("path", ["opentherm_gw", "otgw_mqtt"])
+def test_the_otgw_heating_override_is_held(path: str) -> None:
+    """The PIC keeps ``CH=`` until ``CH=1`` or a reset, so heating on/off is held — sent on a
+    change and when the gateway returns (X1's rule) — while ``CS`` lapses unless repeated within
+    a minute. Not persistent: nothing is stored, so the heating switch stays in use. It lives in
+    the PIC's RAM, so it is refreshed with every ``CS`` keep-alive (provisional, K4) rather than
+    every 5 minutes: a reset nothing traces loses "heating off" for 30 s at most."""
+    from custom_components.vtherm_smart_boiler.control_config import OTGW_CH_REFRESH_S
+
+    data = OTGW | {"write_path": path, "mqtt_top": "OTGW", "mqtt_node": "otgw"}
+    otgw = parse_control(data, RADIATORS, None)
+    assert otgw.write_type is WriteType.EXPIRING
+    assert otgw.loop.setpoint_guard.write_type is WriteType.EXPIRING
+    assert otgw.ch_write_type is WriteType.HELD
+    assert otgw.loop.switch_guard.write_type is WriteType.HELD
+    assert OTGW_CH_REFRESH_S == otgw.loop.setpoint_guard.keepalive_s == 30.0
+    assert otgw.loop.switch_guard.refresh_s == OTGW_CH_REFRESH_S
+    assert otgw.loop.switch_guard.writable
+    assert otgw.loop.ch_writes
+    # Stored write types are the entity path's: never taken on a gateway path.
+    stored = parse_control(data | {"ch_write_type": "expiring"}, RADIATORS, None)
+    assert stored.loop.switch_guard.write_type is WriteType.HELD
+    assert stored.loop.switch_guard.refresh_s == OTGW_CH_REFRESH_S
+
+
+def _run_off(data: dict, seconds: float) -> list[tuple[float, object, object]]:
+    """Control steps every 10 s with no zone asking for heat — "off" commanded — and no
+    read-back: what each step writes, as (time, setpoint write, heating write)."""
+    from dataclasses import replace
+
+    from custom_components.vtherm_smart_boiler.core.controller import ControlInputs
+    from custom_components.vtherm_smart_boiler.core.loop import LoopState, loop_step
+    from custom_components.vtherm_smart_boiler.core.readings import ZoneState
+
+    loop = parse_control(data, RADIATORS, None).loop
+    loop = replace(loop, control=replace(loop.control, ramp_k_per_min=None))  # a steady value
+    state, writes, t = LoopState(), [], 0.0
+    while t <= seconds:
+        zone = ZoneState("climate.a", 20.0, 21.0, True, reported_at=t, valve_open=0.0)
+        inputs = ControlInputs(
+            now=t, dhw=False, enabled=True, zones=(zone,), outdoor_sensor=5.0, flame=False
+        )
+        state, out = loop_step(state, inputs, None, loop)
+        writes.append((t, out.setpoint, out.heating))
+        t += 10.0
+    return writes
+
+
+@pytest.mark.parametrize("path", ["opentherm_gw", "otgw_mqtt"])
+def test_on_the_gateway_heating_off_goes_out_with_every_keep_alive(path: str) -> None:
+    """Follow-up to X6 (provisional, K4): with "off" commanded on either OTGW path, ``CH=0``
+    goes out with every ``CS`` keep-alive — every 30 s — not only every 5 minutes; nothing else
+    is written in between."""
+    from custom_components.vtherm_smart_boiler.core.guards import WriteKind
+
+    data = OTGW | {"write_path": path, "mqtt_top": "OTGW", "mqtt_node": "otgw"}
+    writes = _run_off(data, 600.0)
+    _t, first_setpoint, first_heating = writes[0]
+    assert first_setpoint is not None
+    assert first_setpoint.kind is WriteKind.CHANGE
+    assert first_heating is not None
+    assert first_heating.value == 0.0  # "off": CH=0
+    keep_alives = [(t, h) for t, sp, h in writes[1:] if sp is not None]
+    assert [t for t, _h in keep_alives] == [30.0 * k for k in range(1, 21)]  # CS every 30 s
+    for t, heating in keep_alives:
+        assert heating is not None, t
+        assert (heating.value, heating.kind) == (0.0, WriteKind.KEEPALIVE), t
+    assert all(h is None for t, sp, h in writes[1:] if sp is None)  # nothing in between
+
+
+def test_an_entity_paths_held_switch_still_refreshes_every_5_minutes() -> None:
+    """Negative: on the entity path a heating switch declared held keeps X1's refresh, every 5
+    minutes, even beside a setpoint entity kept alive every 30 s — only the OTGW's CH= goes with
+    the keep-alive."""
+    from custom_components.vtherm_smart_boiler.core.guards import HELD_REFRESH_S, WriteKind
+
+    data = ENTITY | {"write_type": "expiring", "ch_entity": "switch.ch", "ch_write_type": "held"}
+    entity = parse_control(data, RADIATORS, None)
+    assert entity.loop.switch_guard.refresh_s == HELD_REFRESH_S == 300.0
+    writes = _run_off(data, 600.0)
+    keep_alives = [t for t, sp, _h in writes[1:] if sp is not None]
+    assert keep_alives == [30.0 * k for k in range(1, 21)]  # the setpoint's, every 30 s
+    refreshes = [(t, h) for t, _sp, h in writes[1:] if h is not None]
+    assert [t for t, _h in refreshes] == [300.0, 600.0]
+    assert all((h.value, h.kind) == (0.0, WriteKind.KEEPALIVE) for _t, h in refreshes)
+
+
+def test_the_entity_paths_heating_switch_follows_its_declared_write_type() -> None:
     held = parse_control(
         ENTITY | {"ch_entity": "switch.ch", "ch_write_type": "held"}, RADIATORS, None
     )
@@ -640,14 +731,10 @@ def test_the_tick_on_the_relay_path_counts_only_with_rest_state_on() -> None:
 @pytest.mark.parametrize(
     ("data", "effect", "working"),
     [
-        (OTGW | {"topology": "gateway_with_thermostat"}, "thermostat_takes_over", True),
+        (OTGW | WITH_THERMOSTAT, "thermostat_takes_over", True),
         (OTGW, "heating_stops", False),  # stand-alone
-        (
-            OTGW | {"write_path": "otgw_mqtt", "topology": "gateway_with_thermostat"},
-            "thermostat_takes_over",
-            True,
-        ),
-        (TICKED | {"topology": "gateway_with_thermostat"}, "thermostat_takes_over", True),
+        (OTGW | WITH_THERMOSTAT | {"write_path": "otgw_mqtt"}, "thermostat_takes_over", True),
+        (TICKED | WITH_THERMOSTAT, "thermostat_takes_over", True),
         (TICKED | {"topology": "gateway_standalone"}, "heating_stops", False),
     ],
 )
@@ -933,3 +1020,175 @@ def test_heating_writes_are_read_from_the_stored_options(data: dict, writes: boo
     from custom_components.vtherm_smart_boiler.control_config import heating_writes
 
     assert heating_writes(data) is writes
+
+
+# --- X6: what is wired to the gateway's thermostat terminals (decision 1, S-01, answer K); the
+# lowest water temperature (decision 2, S-02); the wall thermostat on a gateway -------------------
+
+GATEWAY_TOPOLOGIES = ("gateway_with_thermostat", "gateway_standalone")
+# Every write path that takes a gateway topology asks the question.
+GATEWAY_PATHS = {
+    "opentherm_gw": OTGW,
+    "otgw_mqtt": OTGW | {"write_path": "otgw_mqtt", "mqtt_top": "OTGW", "mqtt_node": "otgw"},
+    "entity": ENTITY | {"ch_entity": "switch.ch", "ch_write_type": "held"},
+}
+KIND_BLOCKERS = {
+    "thermostat_on_off",
+    "thermostat_kind_unknown",
+    "thermostat_kind_contradicts_topology",
+}
+
+
+def _kind_blockers(data: dict) -> list[str]:
+    options = parse_control(data, RADIATORS, None)
+    return [b for b in config_blockers(options, RADIATORS) if b in KIND_BLOCKERS]
+
+
+def _without_kind(data: dict) -> dict:
+    return {key: value for key, value in data.items() if key != "thermostat_kind"}
+
+
+@pytest.mark.parametrize("path", sorted(GATEWAY_PATHS))
+@pytest.mark.parametrize("topology", GATEWAY_TOPOLOGIES)
+@pytest.mark.parametrize(
+    ("kind", "blocker"),
+    [
+        ("on_off", "thermostat_on_off"),
+        ("unknown", "thermostat_kind_unknown"),
+        ("missing", "thermostat_kind_unknown"),  # an entry from before 0.2.2 (answer K)
+        (None, "thermostat_kind_unknown"),
+        ("", "thermostat_kind_unknown"),
+        ("a kind this version does not know", "thermostat_kind_unknown"),
+        (7, "thermostat_kind_unknown"),
+    ],
+)
+def test_the_thermostat_kind_decides_whether_a_gateway_may_be_controlled(
+    path: str, topology: str, kind: object, blocker: str
+) -> None:
+    """Decision 1 (S-01; T-07's core part): an on/off contact on the gateway's thermostat
+    terminals would be masked by the gateway's ``CH=0`` after a crash while "off", so control is
+    blocked for it; "I don't know", a missing answer or one that cannot be read block too — the
+    parse never raises for it. The monitor is not concerned."""
+    data = GATEWAY_PATHS[path] | {"topology": topology}
+    data = _without_kind(data) if kind == "missing" else data | {"thermostat_kind": kind}
+    assert _kind_blockers(data) == [blocker]
+
+
+@pytest.mark.parametrize("path", sorted(GATEWAY_PATHS))
+@pytest.mark.parametrize(
+    ("topology", "kind"),
+    [("gateway_with_thermostat", "opentherm"), ("gateway_standalone", "none")],
+)
+def test_a_kind_that_fits_the_topology_allows_control(path: str, topology: str, kind: str) -> None:
+    """Negative: an OpenTherm thermostat with a thermostat, nothing stand-alone — no blocker of
+    the kind, and none at all on the gateway paths."""
+    data = GATEWAY_PATHS[path] | {"topology": topology, "thermostat_kind": kind}
+    assert _kind_blockers(data) == []
+    if path != "entity":
+        assert config_blockers(parse_control(data, RADIATORS, None), RADIATORS) == []
+
+
+@pytest.mark.parametrize("path", sorted(GATEWAY_PATHS))
+@pytest.mark.parametrize(
+    ("topology", "kind"),
+    [("gateway_standalone", "opentherm"), ("gateway_with_thermostat", "none")],
+)
+def test_a_kind_that_contradicts_the_topology_blocks(path: str, topology: str, kind: str) -> None:
+    """An OpenTherm thermostat with stand-alone, nothing with a thermostat: refused in the form,
+    and a blocker for options that reach the plugin without it."""
+    data = GATEWAY_PATHS[path] | {"topology": topology, "thermostat_kind": kind}
+    assert _kind_blockers(data) == ["thermostat_kind_contradicts_topology"]
+
+
+@pytest.mark.parametrize("kind", [None, "on_off", "unknown", "opentherm", "none", "garbage"])
+def test_no_kind_is_needed_without_a_gateway_topology(kind: str | None) -> None:
+    """The virtual topology (a controller on Home Assistant's side) has no thermostat terminals
+    to ask about: no blocker of the kind, whatever a hand edit stored; nor with the monitor mode
+    or no topology, which have their own blockers."""
+    data = _without_kind(ENTITY) | {"ch_entity": "switch.ch", "ch_write_type": "held"}
+    if kind is not None:
+        data["thermostat_kind"] = kind
+    assert _kind_blockers(data) == []
+    assert config_blockers(parse_control(data, RADIATORS, None), RADIATORS) == []
+    for topology, own in (("monitor_mode", "topology_no_control"), ("", "no_topology")):
+        blockers = config_blockers(
+            parse_control(OTGW | {"topology": topology, "thermostat_kind": kind}, RADIATORS, None),
+            RADIATORS,
+        )
+        assert own in blockers
+        assert not KIND_BLOCKERS & set(blockers)
+
+
+def test_the_kind_is_read_and_a_missing_answer_is_told() -> None:
+    """The kind as stored; missing or unreadable, no answer (``None``) — which, on a gateway
+    topology, raises the repair issue asking for it (answer K). An explicit "I don't know" is an
+    answer: blocked, no issue."""
+    from custom_components.vtherm_smart_boiler.control_config import (
+        ThermostatKind,
+        thermostat_kind_missing,
+    )
+
+    assert parse_control(OTGW, RADIATORS, None).thermostat_kind is ThermostatKind.NONE
+    for stored in (None, "", "garbage", 3):
+        options = parse_control(OTGW | {"thermostat_kind": stored}, RADIATORS, None)
+        assert options.thermostat_kind is None
+        assert thermostat_kind_missing(options)
+    options = parse_control(_without_kind(OTGW), RADIATORS, None)
+    assert thermostat_kind_missing(options)
+    unknown = parse_control(OTGW | {"thermostat_kind": "unknown"}, RADIATORS, None)
+    assert unknown.thermostat_kind is ThermostatKind.UNKNOWN
+    assert not thermostat_kind_missing(unknown)
+    assert not thermostat_kind_missing(parse_control(OTGW, RADIATORS, None))
+    virtual = parse_control(_without_kind(ENTITY), RADIATORS, None)
+    assert not thermostat_kind_missing(virtual)
+    assert not thermostat_kind_missing(parse_control({}, RADIATORS, None))  # no control
+
+
+@pytest.mark.parametrize(
+    ("kind", "working"),
+    [("opentherm", True), ("on_off", False), ("unknown", False), (None, False)],
+)
+def test_a_working_thermostat_on_a_gateway_is_a_declared_opentherm_one(
+    kind: str | None, working: bool
+) -> None:
+    """Decision 3 (answers F, M): with every zone unknown the boiler goes to a working
+    thermostat — on a gateway only an OpenTherm thermostat declared on its terminals."""
+    from custom_components.vtherm_smart_boiler.control_config import working_thermostat
+
+    data = OTGW | {"topology": "gateway_with_thermostat", "thermostat_kind": kind}
+    options = parse_control(data, RADIATORS, None)
+    assert working_thermostat(options) is working
+    assert options.loop.control.working_thermostat is working
+
+
+def test_the_lowest_water_temperature_defaults_to_20() -> None:
+    """Decision 2 (provisional, K4): one setting, the lowest water temperature (key ``hard_min``,
+    10–50 °C), default 20 °C; a value stored is kept."""
+    from custom_components.vtherm_smart_boiler.control_config import CONTROL_DEFAULTS
+
+    assert CONTROL_DEFAULTS["hard_min"] == 20.0
+    parsed = parse_control(_without_kind(OTGW) | {"thermostat_kind": "none"}, RADIATORS, None)
+    assert parsed.loop.control.limits.hard_min == 20.0
+    for stored, read in ((None, 20.0), (25, 25.0), (30.5, 30.5)):
+        options = parse_control(OTGW | {"hard_min": stored}, RADIATORS, None)
+        assert options.loop.control.limits.hard_min == read
+
+
+@pytest.mark.parametrize(
+    ("data", "applies"),
+    [
+        (OTGW | WITH_THERMOSTAT, True),
+        (GATEWAY_PATHS["entity"] | WITH_THERMOSTAT, True),
+        (OTGW | {"topology": "gateway_with_thermostat", "thermostat_kind": "on_off"}, False),
+        (OTGW | {"topology": "gateway_with_thermostat", "thermostat_kind": None}, False),
+        (OTGW, False),  # stand-alone
+        (ENTITY, False),  # virtual
+        ({}, False),
+    ],
+)
+def test_the_wall_thermostat_is_shown_only_for_an_opentherm_thermostat_on_a_gateway(
+    data: dict, applies: bool
+) -> None:
+    from custom_components.vtherm_smart_boiler.control_config import wall_thermostat_applies
+
+    assert wall_thermostat_applies(parse_control(data, RADIATORS, None)) is applies

@@ -345,9 +345,9 @@ def test_an_expiring_heating_override_is_repeated() -> None:
 
 
 def test_heating_on_off_follows_a_recovered_setpoint_at_once() -> None:
-    """After a lapse the gateway's heating override is gone with it: the recovery write carries
-    the heating state too, not only the next keep-alive. (The drop comes in the start phase: a
-    failed attempt, sent again — decision 6.)"""
+    """An expiring heating switch lapses with the setpoint (on the gateway both are lost at a
+    reset): the recovery write carries the heating state too, not only the next keep-alive. (The
+    drop comes in the start phase: a failed attempt, sent again — decision 6.)"""
     config = replace(CONFIG, switch_guard=EXPIRING_SWITCH)
     state, out = loop_step(LoopState(), inputs(0.0), None, config)
     state, _ = loop_step(state, inputs(10.0), out.setpoint.value, config)  # confirmed
@@ -355,6 +355,46 @@ def test_heating_on_off_follows_a_recovered_setpoint_at_once() -> None:
     assert out.setpoint is not None
     assert out.setpoint.kind is WriteKind.RESEND
     assert out.ch_enable is True
+
+
+HELD_SWITCH = GuardConfig(write_type=WriteType.HELD, read_back=False, two_valued=True)
+
+
+@pytest.mark.parametrize("heating", [True, False], ids=["on", "off"])
+@pytest.mark.parametrize("switch", [HELD_SWITCH, ECHOED_SWITCH], ids=["no_echo", "echo"])
+def test_a_recovered_setpoint_still_resends_the_heating_override(
+    heating: bool, switch: GuardConfig
+) -> None:
+    """X6: a held heating override — the OTGW's ``CH=``, kept until ``CH=1`` or a reset — is
+    lost together with the setpoint at a PIC reset: when the setpoint is back at its value from
+    before the session and is sent again, heating on/off is sent again with it, "off" above all
+    (after a reset the gateway would enable heating under the plugin's setpoint). Negative: with
+    X1's 5-minute held refresh, a plain keep-alive of the setpoint carries no heating write (the
+    OTGW's own refresh with every keep-alive is its guard's option: ``test_control_config``)."""
+    config = replace(CONFIG, switch_guard=switch)
+    opening = 0.6 if heating else 0.0
+    echo = heating if switch.read_back else None
+    state, out = loop_step(LoopState(), inputs(0.0, opening=opening), 0.0, config, echo)
+    assert out.ch_enable is heating
+    value = out.setpoint.value
+    state, outs = run(state, config, 10.0, 200.0, value, echo, opening=opening)
+    assert all(o.heating is None for _t, o in outs if o.setpoint is not None)  # keep-alives only
+    context = GuardContext(outage_at=205.0)  # the gateway reset, before the held refresh is due
+    reset_echo = True if switch.read_back else None  # a reset clears the PIC's CH=0 flag
+    state, out = loop_step(
+        state,
+        inputs(210.0, opening=opening),
+        0.0,
+        config,
+        reset_echo,
+        setpoint_context=context,
+        heating_context=context,
+    )
+    assert out.setpoint == WriteAction(value, WriteKind.RESEND)
+    assert out.heating is not None
+    assert out.heating.value == (1.0 if heating else 0.0)
+    assert out.heating.kind is WriteKind.RESEND
+    assert len(state.losses) == 1  # one gateway reset, one lost command
 
 
 def test_a_blocked_setpoint_stops_the_heating_writes_too() -> None:

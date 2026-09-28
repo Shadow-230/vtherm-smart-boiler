@@ -260,7 +260,8 @@ def loop_step(
         and heat.state.written is not None
         and not heat.state.ignored
     ):
-        # A setpoint override that had lapsed took the heating override with it: send both.
+        # A setpoint recovered is sent with heating on/off: a PIC reset loses CS and CH
+        # together (CH= is held, not lapsing — X6), and "off" above all must not stay lost.
         heating = WriteAction(heat.state.written, WriteKind.RESEND)
     if config.ch_writes:
         heating_on = None if heat.state.written is None else heat.state.written == ON

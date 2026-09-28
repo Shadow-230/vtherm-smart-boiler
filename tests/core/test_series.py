@@ -129,3 +129,12 @@ def test_the_window_matches_its_segments_on_random_series() -> None:
         assert got == _window_by_segments(series, start, end), (samples, start, end)
         between = series.times_between(start, end)
         assert between == [s for s, _v in samples if start < s < end and s in series._times]
+
+
+def test_the_value_before_a_moment_leaves_a_sample_at_it_out() -> None:
+    series = Series([(10.0, 1.0), (20.0, 2.0)])
+    assert series.value_before(20.0) == 1.0  # the sample at 20 left out
+    assert series.value_at(20.0) == 2.0
+    assert series.value_before(25.0) == 2.0
+    assert series.value_before(10.0) is None  # nothing before the first sample
+    assert Series().value_before(5.0) is None

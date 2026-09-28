@@ -278,3 +278,50 @@ def test_every_icon_belongs_to_an_entity() -> None:
     icons = json.loads(path.read_text())
     for domain, keys in icons["entity"].items():
         assert set(keys) <= set(SOURCE["entity"][domain]), domain
+
+
+def test_x6_texts_are_translated() -> None:
+    """X6: the thermostat-terminals question's errors and notice, the wall thermostat's
+    attributes and issues, and the lowest water temperature's sensor and issues — every coded
+    value with its text, every issue with the placeholders the code fills in."""
+    from custom_components.vtherm_smart_boiler.control_config import ThermostatKind
+    from custom_components.vtherm_smart_boiler.core.lowest_water import (
+        EstimateGap,
+        SetpointSource,
+        SuggestionState,
+        WallWarning,
+    )
+
+    assert set(SOURCE["selector"]["thermostat_kind"]["options"]) == {
+        k.value for k in ThermostatKind
+    }
+    for key in ("thermostat_kind_missing", "thermostat_kind_contradicts_topology"):
+        assert SOURCE["options"]["error"][key], key
+    kind = SOURCE["issues"]["thermostat_kind_missing"]
+    assert kind["title"]
+    assert not PLACEHOLDER.findall(kind["description"])
+    switch = SOURCE["entity"]["switch"]["control"]
+    assert switch["state_attributes"]["wall_thermostat_setpoint"]["name"]
+    assert _values(switch, "wall_thermostat_warning") == {w.value for w in WallWarning}
+    wall = SOURCE["issues"]["wall_thermostat_fallback"]
+    assert set(PLACEHOLDER.findall(wall["description"])) == {"value"}
+    unknown = SOURCE["issues"]["wall_thermostat_fallback_unknown"]
+    assert not PLACEHOLDER.findall(unknown["description"])
+    sensor = SOURCE["entity"]["sensor"]["lowest_water_suggestion"]
+    assert sensor["name"]
+    assert _values(sensor, "state") == {s.value for s in SuggestionState}
+    assert _values(sensor, "source") == {s.value for s in SetpointSource}
+    assert _values(sensor, "estimate_gap") == {g.value for g in EstimateGap}
+    placeholders = {"days", "short", "burns", "reference", "limit", "value"}
+    for key in ("lowest_water_suggestion", "lowest_water_suggestion_boiler"):
+        issue = SOURCE["issues"][key]
+        assert issue["title"], key
+        assert set(PLACEHOLDER.findall(issue["description"])) == placeholders, key
+    held = "the plugin sends it again with the control setpoint, every 30 s"  # the follow-up
+    assert held in SOURCE["options"]["step"]["control_gateway"]["data_description"]["gateway_id"]
+    assert held in SOURCE["options"]["step"]["control_mqtt"]["description"]
+    labels = SOURCE["options"]["step"]["control_curve"]["data"]
+    assert labels["hard_min"] == "Lowest water temperature"  # the carry-over from X5
+    assert labels["hard_max"] == "Highest water temperature"
+    flat = flatten(SOURCE)
+    assert not [key for key, text in flat.items() if "flow setpoint" in text and "hard_" in key]

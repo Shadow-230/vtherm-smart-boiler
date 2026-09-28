@@ -16,6 +16,13 @@ edit, an older version's options — X5): one entity in two roles (P-03), one en
 signals (P-16), a topology that does not suit the path (P-44), a curve whose values do not fit
 together (P-68), and — decision 11, until the user lifts it at K4 — control without a heating
 switch the boiler does not store, where "off" would be a low setpoint (S-39).
+
+Both gateway topologies ask what is wired to the gateway's thermostat terminals (decision 1,
+S-01): an OpenTherm thermostat, an on/off contact, nothing, or "I don't know". The gateway keeps
+a ``CH=0`` through ``CS=0`` and the override's lapse, so after a crash while "off" an on/off
+contact could not heat the house: control is blocked for it, for "I don't know", and for no
+answer — a gateway entry made before 0.2.2 keeps control stopped until the user answers, with a
+notice asking for it (answer K). An answer that contradicts the topology blocks too.
 """
 
 from __future__ import annotations
@@ -29,7 +36,7 @@ from typing import Any
 from .core.controller import ControlConfig
 from .core.curve import HeatingCurve
 from .core.demand import DemandConfig
-from .core.guards import GuardConfig, WriteType
+from .core.guards import HELD_REFRESH_S, GuardConfig, WriteType
 from .core.installation import BoilerClass, CircuitControl, EmitterType, Installation
 from .core.learning import LearningConfig
 from .core.limits import FlowLimits, FrostConfig
@@ -38,12 +45,19 @@ from .core.signals import Signal
 
 MINUTE = 60.0
 KEEPALIVE_S = 30.0
+# The OTGW's heating override CH= is held — the PIC keeps it in its RAM until CH=1 or a reset —
+# yet it goes out again with every CS keep-alive: no memory wears, and a PIC reset nothing traces
+# then loses "heating off" for one keep-alive at most, not X1's 5-minute held refresh
+# (provisional, K4). Entity paths keep the 5-minute refresh.
+OTGW_CH_REFRESH_S = KEEPALIVE_S
 
 # Every control option's default, in the unit the options store: the parser and the options
 # forms both read them here.
 CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
     {
-        "hard_min": 25.0,
+        # The lowest water temperature (decision 2): 20 °C, provisional until K4. An entry whose
+        # control section had none keeps 25 °C, written by the entry migration.
+        "hard_min": 20.0,
         "hard_max": 70.0,
         "ceiling_band": 10.0,
         "frost_limit": 5.0,
@@ -63,6 +77,10 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
 CURVE_DEFAULTS: Mapping[str, float] = MappingProxyType(
     {"design_outdoor": -15.0, "design_flow": 55.0, "room": 20.0, "offset": 0.0}
 )
+# The lowest water temperature written by the entry migration (minor version 3) into a control
+# section stored without one: 0.2.1's default, so no installation's floor drops silently
+# (provisional, K4).
+MIGRATED_HARD_MIN = 25.0
 
 
 class WritePath(StrEnum):
@@ -76,6 +94,15 @@ class Topology(StrEnum):
     GATEWAY_WITH_THERMOSTAT = "gateway_with_thermostat"  # hand-back: the thermostat takes over
     MONITOR_MODE = "monitor_mode"  # the gateway only listens: no control
     VIRTUAL = "virtual"  # a controller on the HA side (e.g. an ESPHome OpenTherm master)
+
+
+class ThermostatKind(StrEnum):
+    """What is wired to a gateway's thermostat terminals (decision 1)."""
+
+    OPENTHERM = "opentherm"  # an OpenTherm thermostat: it talks to the boiler
+    ON_OFF = "on_off"  # an on/off contact: the gateway turns it into a heating request
+    NONE = "none"  # nothing: the gateway is the master
+    UNKNOWN = "unknown"  # "I don't know"
 
 
 class HandBack(StrEnum):
@@ -137,12 +164,26 @@ CONFIG_BLOCKERS = (
     "design_outdoor_too_warm",
     "hard_min_not_below_design_flow",
     "no_heating_switch",
+    # X6: what is wired to the gateway's thermostat terminals (decision 1).
+    "thermostat_on_off",
+    "thermostat_kind_unknown",
+    "thermostat_kind_contradicts_topology",
 )
 OTGW_PATHS = frozenset({WritePath.OPENTHERM_GW, WritePath.OTGW_MQTT})
 # Write types control may use: nothing the boiler stores in its memory.
 WRITABLE_TYPES = frozenset({WriteType.EXPIRING, WriteType.HELD})
 CONTROLLABLE_TOPOLOGIES = frozenset(
     {Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT, Topology.VIRTUAL}
+)
+# The topologies with thermostat terminals: each asks what is wired to them (decision 1).
+GATEWAY_TOPOLOGIES = frozenset({Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT})
+# The kind each gateway topology cannot have: an OpenTherm thermostat means "with a thermostat",
+# nothing means stand-alone.
+_CONTRADICTING_KIND = MappingProxyType(
+    {
+        Topology.GATEWAY_STANDALONE: ThermostatKind.OPENTHERM,
+        Topology.GATEWAY_WITH_THERMOSTAT: ThermostatKind.NONE,
+    }
 )
 # The topologies each write path can control with (P-44): the paths through a built-in OTGW need
 # a gateway topology; "virtual" is a controller on the Home Assistant side, reached through an
@@ -228,6 +269,9 @@ class ControlOptions:
     confirmed_entity: str | None = None
     ch_confirmed_entity: str | None = None  # echoes heating on/off as the boiler gets it
     topology: Topology | None = None
+    # What is wired to the gateway's thermostat terminals (decision 1); ``None``: no answer
+    # stored, or one this version cannot read. Only a gateway topology reads it.
+    thermostat_kind: ThermostatKind | None = None
     curve_entered: bool = False
     loop: LoopConfig = field(default_factory=lambda: LoopConfig(ControlConfig(HeatingCurve())))
     learning: LearningConfig = field(default_factory=LearningConfig)
@@ -286,6 +330,17 @@ def _minutes(data: Mapping[str, Any], key: str, default_min: float) -> float:
     return (default_min if value is None else value) * MINUTE
 
 
+def parse_thermostat_kind(raw: object) -> ThermostatKind | None:
+    """A stored answer to the thermostat-terminals question; ``None`` for no answer or one this
+    version cannot read — never an exception: such an entry is blocked and asked again."""
+    if not isinstance(raw, str):
+        return None
+    try:
+        return ThermostatKind(raw)
+    except ValueError:
+        return None
+
+
 def parse_control(
     data: Mapping[str, Any] | None, installation: Installation, boiler_max: float | None
 ) -> ControlOptions:
@@ -308,7 +363,10 @@ def parse_control(
     )
     value = {**CONTROL_DEFAULTS, **{k: v for k, v in data.items() if v is not None}}
     if path in OTGW_PATHS:
-        write_type = ch_write_type = WriteType.EXPIRING  # CS and CH lapse unless repeated
+        # CS lapses unless repeated within a minute; the PIC keeps CH= until CH=1 or a reset —
+        # held, not stored, so the heating switch stays in use (X6).
+        write_type = WriteType.EXPIRING
+        ch_write_type = WriteType.HELD
     else:
         write_type = WriteType(data.get("write_type", WriteType.UNKNOWN))
         ch_write_type = WriteType(data.get("ch_write_type", WriteType.UNKNOWN))
@@ -361,12 +419,15 @@ def parse_control(
         control=control,
         setpoint_guard=GuardConfig(write_type=write_type, keepalive_s=KEEPALIVE_S),
         switch_guard=GuardConfig(
-            # An expiring heating override is repeated with the setpoint's keep-alive; without an
-            # echo, heating on/off is never judged, only shown unverified.
+            # An expiring heating switch is repeated with the setpoint's keep-alive; a held one is
+            # sent on a change, when it returns and every 5 minutes — the OTGW's CH= with every
+            # keep-alive instead. Without an echo, heating on/off is never judged, only shown
+            # unverified.
             write_type=ch_write_type,
             keepalive_s=KEEPALIVE_S,
             read_back=bool(data.get("ch_confirmed_entity")),
             two_valued=True,
+            refresh_s=OTGW_CH_REFRESH_S if path in OTGW_PATHS else HELD_REFRESH_S,
         ),
         # A heating switch the boiler may store is left alone: "off" is then a low setpoint.
         ch_writes=path in OTGW_PATHS
@@ -403,6 +464,7 @@ def parse_control(
         confirmed_entity=data.get("confirmed_entity") or None,
         ch_confirmed_entity=data.get("ch_confirmed_entity") or None,
         topology=Topology(data["topology"]) if data.get("topology") else None,
+        thermostat_kind=parse_thermostat_kind(data.get("thermostat_kind")),
         curve_entered=bool(curve_data.get("design_flow")),
         loop=loop,
         learning=LearningConfig(),
@@ -458,8 +520,56 @@ def working_thermostat(control: ControlOptions) -> bool:
     """Decision 3 (answers F, M): with every zone unknown, is there something to hand the boiler
     to that heats by the rooms? A gateway with an OpenTherm thermostat declared on its
     terminals, or the boiler's own room controller where the tick counts. Not a hand-back value
-    declared "own control" without the tick, nor "device decides", nor a stand-alone gateway."""
-    return hand_back_effect(control) in _WORKING_THERMOSTAT_EFFECTS
+    declared "own control" without the tick, nor "device decides", nor a stand-alone gateway,
+    nor a gateway whose terminals hold something else or were not answered for."""
+    effect = hand_back_effect(control)
+    if effect is HandBackEffect.THERMOSTAT_TAKES_OVER:
+        return control.thermostat_kind is ThermostatKind.OPENTHERM
+    return effect in _WORKING_THERMOSTAT_EFFECTS
+
+
+def thermostat_kind_blocker(control: ControlOptions) -> str | None:
+    """Decision 1 (S-01): what the answer about the gateway's thermostat terminals blocks, on a
+    gateway topology — an on/off contact (the gateway's ``CH=0`` would mask it after a crash),
+    "I don't know" or no answer (answer K), or an answer the topology contradicts. ``None``
+    where it allows control, or without a gateway topology."""
+    topology = control.topology
+    if topology is None or topology not in GATEWAY_TOPOLOGIES:
+        return None
+    kind = control.thermostat_kind
+    if kind is None or kind is ThermostatKind.UNKNOWN:
+        return "thermostat_kind_unknown"
+    if kind is ThermostatKind.ON_OFF:
+        return "thermostat_on_off"
+    if kind_contradicts_topology(topology, kind):
+        return "thermostat_kind_contradicts_topology"
+    return None
+
+
+def kind_contradicts_topology(topology: Topology, kind: ThermostatKind) -> bool:
+    """An OpenTherm thermostat with stand-alone, nothing with a thermostat (the form's check)."""
+    return _CONTRADICTING_KIND.get(topology) is kind
+
+
+def thermostat_kind_missing(control: ControlOptions) -> bool:
+    """A gateway entry without an answer to the thermostat-terminals question — made before
+    0.2.2, or holding one this version cannot read: control stays stopped, and a notice asks for
+    the answer (answer K). An explicit "I don't know" is an answer."""
+    return (
+        control.configured
+        and control.topology in GATEWAY_TOPOLOGIES
+        and control.thermostat_kind is None
+    )
+
+
+def wall_thermostat_applies(control: ControlOptions) -> bool:
+    """Whether the wall thermostat's fallback is shown: a gateway with an OpenTherm thermostat
+    declared on its terminals — after a hand-back it heats by its own setting."""
+    return (
+        control.configured
+        and control.topology is Topology.GATEWAY_WITH_THERMOSTAT
+        and control.thermostat_kind is ThermostatKind.OPENTHERM
+    )
 
 
 def hand_back_effect(control: ControlOptions) -> HandBackEffect | None:
@@ -675,6 +785,8 @@ def config_blockers(
         found.append("topology_no_control")
     elif path is not None and control.topology not in PATH_TOPOLOGIES[path]:
         found.append("topology_not_for_path")
+    if (kind := thermostat_kind_blocker(control)) is not None:
+        found.append(kind)  # decision 1: on every path that takes a gateway topology
     if not control.curve_entered:
         found.append("curve_not_entered")
     else:

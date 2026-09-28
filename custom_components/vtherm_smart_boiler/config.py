@@ -138,6 +138,15 @@ class EntryConfig:
         return tuple(z.entity_id for z in self.zones)
 
     @property
+    def setpoint_read_back(self) -> str | None:
+        """The control's setpoint read-back, recorded into the history where the boiler's CH
+        setpoint signal is not mapped: the lowest water temperature's evidence reads the setpoint
+        from it while the plugin sets the water (X6). ``None`` otherwise."""
+        if Signal.CH_SETPOINT in self.signals or not self.control.configured:
+            return None
+        return self.control.confirmed_entity
+
+    @property
     def watched_entities(self) -> tuple[str, ...]:
         """Every entity whose changes the plugin follows."""
         entities = [
@@ -148,6 +157,8 @@ class EntryConfig:
         entities += [source.source_id for zone in self.zones for source in zone.foreign_heat]
         if self.weather:
             entities.append(self.weather)
+        if self.setpoint_read_back:
+            entities.append(self.setpoint_read_back)
         return tuple(dict.fromkeys(entities))
 
     @classmethod

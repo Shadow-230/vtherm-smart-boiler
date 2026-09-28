@@ -36,6 +36,10 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.vtherm_smart_boiler import control as control_module
 from custom_components.vtherm_smart_boiler.const import DOMAIN
+from custom_components.vtherm_smart_boiler.control_config import (
+    CONTROL_DEFAULTS,
+    MIGRATED_HARD_MIN,
+)
 from custom_components.vtherm_smart_boiler.core.alarms import AlarmKind
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.signals import Signal
@@ -56,7 +60,12 @@ CONFIRMED = "sensor.fake_gateway_control_setpoint"
 CH_ECHO = "binary_sensor.fake_gateway_central_heating"
 OUTDOOR = 5.0
 EXPECTED = round(HeatingCurve().flow(OUTDOOR), 1)  # the curve's setpoint at 5 °C outside
-LOWEST = 25.0  # the lowest water temperature set: the hard minimum's default
+# The lowest water temperature set: a test's entry is stored as minor version 1, so the entry
+# migration keeps 0.2.1's 25 °C in its control section (X6; the new default is 20 °C).
+LOWEST = MIGRATED_HARD_MIN
+# Options stored with the control state ("taken with") are not migrated: without the lowest water
+# temperature, its default applies to their hand-back.
+DEFAULT_LOWEST = float(CONTROL_DEFAULTS["hard_min"])
 START = datetime(2026, 1, 12, 8, tzinfo=UTC)
 # Home Assistant's own store loader, taken before the test storage mock replaces it: a test that
 # needs a real file on disk (under its tmp_path) puts it back for its own body only (with
@@ -257,7 +266,15 @@ class Rig:
         return {(domain, service) for domain, service, _ in self.services if domain != "switch"}
 
 
+# What is wired to the gateway's thermostat terminals, as the form asks it (decision 1): the
+# answer that fits each gateway topology.
+FITTING_KIND = {"gateway_with_thermostat": "opentherm", "gateway_standalone": "none"}
+
+
 def options(zones: FakeZones, **control: Any) -> dict[str, Any]:
+    """An entry's options with control through the gateway; a gateway topology gets the kind
+    that fits it unless one is given — ``thermostat_kind=None``: no answer, as an entry from
+    before 0.2.2 (answer K)."""
     control_options = {
         "write_path": "opentherm_gw",
         "gateway_id": "gw",
@@ -265,6 +282,12 @@ def options(zones: FakeZones, **control: Any) -> dict[str, Any]:
         "topology": "gateway_with_thermostat",
         "curve": {"design_outdoor": -15, "design_flow": 55},
     } | control
+    if "thermostat_kind" not in control:
+        kind = FITTING_KIND.get(control_options["topology"])
+        if kind is not None:
+            control_options["thermostat_kind"] = kind
+    elif control_options["thermostat_kind"] is None:
+        del control_options["thermostat_kind"]
     return {
         "signals": {s.value: BOILER_ENTITIES[s] for s in SIGNALS},
         "boiler": {"class": "flow_setpoint", "dhw": "combi"},
@@ -1389,7 +1412,7 @@ async def test_a_broken_control_section_keeps_monitoring_and_handing_back(
     rig.entry = entry
     assert issue(rig, "control_options_invalid") is not None
     await rig.advance(20)
-    assert number.writes == [LOWEST, 50.0]  # handed back through what took the boiler
+    assert number.writes == [DEFAULT_LOWEST, 50.0]  # handed back through what took the boiler
     assert issue(rig, "hand_back_owed") is None
 
 
@@ -1408,6 +1431,7 @@ async def test_changing_the_write_path_is_refused_while_a_hand_back_is_owed(rig:
         {
             "write_path": "opentherm_gw",
             "topology": "gateway_with_thermostat",
+            "thermostat_kind": "opentherm",
             "confirmed_entity": CONFIRMED,
         },
     )
@@ -1423,7 +1447,11 @@ async def _first_control_step(rig: Rig, answer: dict[str, Any]) -> Any:
     return await rig.hass.config_entries.options.async_configure(flow["flow_id"], answer)
 
 
-GATEWAY_ANSWER = {"write_path": "opentherm_gw", "topology": "gateway_with_thermostat"}
+GATEWAY_ANSWER = {
+    "write_path": "opentherm_gw",
+    "topology": "gateway_with_thermostat",
+    "thermostat_kind": "opentherm",
+}
 
 
 async def test_the_gateways_read_back_cannot_change_while_a_hand_back_is_owed(rig: Rig) -> None:
@@ -1613,6 +1641,7 @@ async def test_an_owed_hand_back_can_be_settled_by_hand(rig: Rig) -> None:
         {
             "write_path": "opentherm_gw",
             "topology": "gateway_with_thermostat",
+            "thermostat_kind": "opentherm",
             "confirmed_entity": CONFIRMED,
         },
     )
@@ -2814,7 +2843,7 @@ async def test_a_lost_control_store_without_control_hands_back_what_the_copy_owe
     seed_main(hass_storage, entry, control={"hand_back_pending": True, "taken_with": taken_with})
     await set_up(rig, entry)
     await rig.advance(20)
-    assert number.writes == [LOWEST, 50.0]
+    assert number.writes == [DEFAULT_LOWEST, 50.0]
     assert issue(rig, "control_state_unreadable") is not None
 
 
@@ -4311,7 +4340,7 @@ async def test_mqtt_topics_cannot_change_while_control_holds_the_boiler(
     flow = await _first_control_step(
         rig,
         {"write_path": "otgw_mqtt", "topology": "gateway_with_thermostat"}
-        | {"confirmed_entity": CONFIRMED},
+        | {"thermostat_kind": "opentherm", "confirmed_entity": CONFIRMED},
     )
     assert flow["step_id"] == "control_mqtt"
     flow = await rig.hass.config_entries.options.async_configure(
@@ -7267,6 +7296,12 @@ async def test_hot_water_flags_count_by_their_own_limits(rig: Rig, limits: bool)
 RESTORED = 45.0  # the last command a run stored: heating on at 45 °C
 
 
+def taken_with(rig: Rig, **control: Any) -> dict[str, Any]:
+    """The control options a run took the boiler with, as the entry holds them after its
+    migration — which keeps the lowest water temperature (X6)."""
+    return options(rig.zones, **control)["control"] | {"hard_min": LOWEST}
+
+
 def restorable(rig: Rig, **changes: Any) -> dict[str, Any]:
     """The control store a run that held the boiler left — a crash, by default — with its last
     command, the user's wish on, and the options the boiler was taken with."""
@@ -7274,7 +7309,7 @@ def restorable(rig: Rig, **changes: Any) -> dict[str, Any]:
         "enabled": True,
         "controlling": True,
         "last_command": {"heating": True, "setpoint": RESTORED, "at": START.timestamp()},
-        "taken_with": options(rig.zones)["control"],
+        "taken_with": taken_with(rig),
     } | changes
 
 
@@ -7345,6 +7380,7 @@ OWED = "hand_back_owed"
         "internal_error",
         "options_differ",
         "blocker",
+        "thermostat_kind_missing",
         "store_lost",
     ],
 )
@@ -7354,7 +7390,9 @@ async def test_a_restore_whose_conditions_fail_hands_back_first(
     """Negatives, each: the owed hand-back comes first, as before — no stored command (or one
     without a setpoint), the wish off or the switch entity disabled (answer K), a stored latch
     or internal error, options other than those the boiler was taken with, a blocker other than
-    Home Assistant starting, a store that could not be read (answer K)."""
+    Home Assistant starting — VT's central boiler, or the thermostat-terminals question not
+    answered by an entry from before 0.2.2 (X6, answer K) — a store that could not be read
+    (answer K)."""
     from homeassistant.core import CoreState
 
     rig.hass.set_state(CoreState.starting)
@@ -7367,8 +7405,13 @@ async def test_a_restore_whose_conditions_fail_hands_back_first(
         "latch": {"latched": True, "latched_by": ["pressure_low"]},
         "internal_error": {"failed": True},
         "options_differ": {"taken_with": options(rig.zones, topology="gateway_standalone")},
+        # Taken with these very options, stored before the question existed.
+        "thermostat_kind_missing": {"taken_with": taken_with(rig, thermostat_kind=None)},
     }.get(case, {})
-    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    kind = {"thermostat_kind": None} if case == "thermostat_kind_missing" else {}
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones, **kind)
+    )
     entry.add_to_hass(rig.hass)
     if case == "store_lost":
         seed_main(hass_storage, entry)  # the entry store, its control store gone
@@ -7388,6 +7431,9 @@ async def test_a_restore_whose_conditions_fail_hands_back_first(
     calls = rig.gateway.calls
     assert calls[:3] == [("setpoint", LOWEST), ("ch", True), ("setpoint", 0.0)]
     assert ("setpoint", RESTORED) not in calls
+    if case == "thermostat_kind_missing":
+        blockers = rig.state("sensor", "control_state").attributes["blockers"]
+        assert "thermostat_kind_unknown" in blockers
 
 
 async def test_a_link_not_yet_reported_does_not_turn_a_restore_into_a_hand_back(
@@ -7469,9 +7515,8 @@ async def test_a_clean_restart_with_a_blocker_at_the_start_raises_the_stopped_he
         if installation == "standalone"
         else held_entity(number, hand_back_value_effect="heating_stops")
     )
-    taken = options(rig.zones, **extra)["control"]
     vt_central_boiler(rig, True)
-    stored = restorable(rig, controlling=False, taken_with=taken)
+    stored = restorable(rig, controlling=False, taken_with=taken_with(rig, **extra))
     await start_with_stored(rig, hass_storage, stored, "0.2.2", **extra)
     await rig.advance(50)
     assert stopped_heating(rig) is None
@@ -7486,7 +7531,7 @@ async def test_a_run_that_never_controlled_raises_no_stopped_heating_issue(
 ) -> None:
     vt_central_boiler(rig, True)
     stored = restorable(rig, controlling=False, last_command=None)
-    stored["taken_with"] = options(rig.zones, topology="gateway_standalone")["control"]
+    stored["taken_with"] = taken_with(rig, topology="gateway_standalone")
     await start_with_stored(rig, hass_storage, stored, "0.2.2", topology="gateway_standalone")
     await rig.advance(120)
     assert stopped_heating(rig) is None
@@ -7712,7 +7757,7 @@ async def test_a_restore_waits_for_its_setpoint_entity(
     number.set_available(False)
     not_started(rig)
     control = held_entity(number)
-    stored = restorable(rig, taken_with=options(rig.zones, **control)["control"])
+    stored = restorable(rig, taken_with=taken_with(rig, **control))
     await start_with_stored(rig, hass_storage, stored, "0.2.2", **control)
     await rig.advance(60)
     assert number.writes == []
@@ -7748,7 +7793,7 @@ async def test_a_blocker_while_the_restore_waits_hands_back_and_tells_where_heat
     configured — a blocker: the restore gives way to the owed hand-back, and as a hand-back stops
     heating here, the issue follows once the blocker has held a minute (S-10)."""
     extra = {"topology": "gateway_standalone"}
-    stored = restorable(rig, taken_with=options(rig.zones, **extra)["control"])
+    stored = restorable(rig, taken_with=taken_with(rig, **extra))
     not_started(rig)
     rig.flow = None
     rig.live()
@@ -8430,3 +8475,435 @@ async def test_an_entity_writer_refuses_one_switch_in_two_roles(
         "hand_back_switch_is_heating_switch"
         in (rig.state("switch", "control").attributes["blockers"])
     )
+
+
+# --- X6: the thermostat terminals, the OTGW's CH= held, the wall thermostat, the lowest water
+# temperature's suggestion ----------------------------------------------------------------------
+
+KIND_ISSUE = "thermostat_kind_missing"
+
+
+@pytest.mark.parametrize("topology", ["gateway_with_thermostat", "gateway_standalone"])
+async def test_a_gateway_entry_without_a_kind_is_blocked_and_told(
+    rig: Rig, hass_storage: dict[str, Any], topology: str
+) -> None:
+    """Answer K: stored gateway options without an answer to the thermostat-terminals question
+    (an entry from before 0.2.2) — at the start, the hand-back the last run left owed is still
+    made first (V5's safe hand-back: ``CS=<lowest>``, ``CH=1``, ``CS=0``); then control stays
+    stopped with the blocker ``thermostat_kind_unknown`` and switching on is refused; the repair
+    issue ``thermostat_kind_missing`` (an error, not fixable) asks for the answer, and goes once
+    it is stored."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=options(rig.zones, topology=topology, thermostat_kind=None),
+    )
+    entry.add_to_hass(rig.hass)
+    seed_stores(hass_storage, entry, {"controlling": True, "hand_back_pending": True}, "0.2.2")
+    await set_up(rig, entry)
+    await rig.advance(10)
+    assert rig.gateway.calls[:3] == HAND_BACK
+    assert "thermostat_kind_unknown" in rig.state("switch", "control").attributes["blockers"]
+    found = issue(rig, KIND_ISSUE)
+    assert found is not None
+    assert found.severity is ir.IssueSeverity.ERROR
+    assert not found.is_fixable
+    assert found.translation_key == KIND_ISSUE
+    with pytest.raises(ServiceValidationError):
+        await rig.switch(True)
+    await rig.advance(120)
+    assert rig.gateway.setpoints() == [LOWEST, 0.0]  # nothing more written
+    answered = options(rig.zones, topology=topology)  # the kind that fits the topology
+    rig.hass.config_entries.async_update_entry(entry, options=answered)
+    await rig.hass.async_block_till_done()
+    assert issue(rig, KIND_ISSUE) is None
+    await rig.switch(True)
+    await rig.advance(10)
+    assert rig.gateway.setpoints()[-1] == EXPECTED  # control runs
+
+
+@pytest.mark.parametrize(
+    ("changes", "raised"),
+    [
+        ({"thermostat_kind": "unknown"}, False),  # "I don't know" is an answer: blocked, no issue
+        ({"thermostat_kind": "on_off"}, False),
+        ({"thermostat_kind": "opentherm"}, False),
+        ({"topology": "virtual", "thermostat_kind": None}, False),  # no terminals to ask about
+        ({"thermostat_kind": "a kind this version does not know"}, True),  # answer it again
+    ],
+)
+async def test_the_kind_issue_is_raised_only_for_a_gateway_without_an_answer(
+    rig: Rig, changes: dict[str, Any], raised: bool
+) -> None:
+    number = FakeNumber(rig.hass)
+    number.register()
+    extra = held_entity(number, ch_entity="switch.ch", ch_write_type="held", **changes)
+    if changes.get("topology") != "virtual":
+        extra = changes
+    await start(rig, **extra)
+    await rig.advance(10)
+    assert (issue(rig, KIND_ISSUE) is not None) is raised
+    blockers = rig.state("switch", "control").attributes["blockers"]
+    blocked = {"unknown": "thermostat_kind_unknown", "on_off": "thermostat_on_off"}.get(
+        str(changes.get("thermostat_kind"))
+    )
+    if blocked is not None:
+        assert blocked in blockers
+
+
+def no_demand(rig: Rig) -> None:
+    """The zone stops asking for heat: control commands "off"."""
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+
+
+@pytest.mark.parametrize("path", ["opentherm_gw", "otgw_mqtt"])
+async def test_on_the_gateway_heating_off_goes_out_with_every_keep_alive(
+    rig: Rig, path: str
+) -> None:
+    """Follow-up to X6 (provisional, K4): the PIC keeps ``CH=`` in its RAM until ``CH=1`` or a
+    reset — held, sent at once when the gateway comes back — and, as a reset nothing traces
+    would lose it, on both OTGW paths it goes out again with every ``CS`` keep-alive, every
+    30 s: with "off" commanded, ``CH=0`` each time."""
+    published: list[tuple[str, str]] = []
+    if path == "otgw_mqtt":
+
+        async def publish(call: ServiceCall) -> None:
+            published.append((call.data["topic"], call.data["payload"]))
+            if call.data["topic"].endswith("/ctrlsetpt"):
+                value = float(call.data["payload"])
+                rig.gateway.override = None if value == 0 else value
+                rig.gateway.publish()
+
+        rig.hass.services.async_register("mqtt", "publish", publish)
+        await start(rig, write_path="otgw_mqtt", mqtt_top="OTGW", mqtt_node="otgw-1")
+    else:
+        await start(rig)
+
+    def sent() -> list[tuple[str, object]]:
+        """Setpoints and heating on/off as the gateway got them, in order."""
+        if path == "opentherm_gw":
+            return list(rig.gateway.calls)
+        commands = {"ctrlsetpt": "setpoint", "chenable": "ch"}
+        return [
+            (commands[topic.rsplit("/", 1)[1]], float(value) if "ctrl" in topic else value == "1")
+            for topic, value in published
+        ]
+
+    await rig.switch(True)
+    assert sent()[:2] == [("setpoint", EXPECTED), ("ch", True)]
+    no_demand(rig)
+    await rig.advance(10)
+    assert sent()[-1] == ("ch", False)  # "off" commanded
+    count = len(sent())
+    await rig.advance(300)
+    later = sent()[count:]
+    keep_alives = [c for c in later if c[0] == "setpoint"]
+    offs = [c for c in later if c == ("ch", False)]
+    assert len(keep_alives) >= 9  # CS every 30 s
+    assert len(offs) >= len(keep_alives)  # CH=0 with every one of them
+    assert ("ch", True) not in later
+    if path == "opentherm_gw":
+        before = rig.gateway.calls.count(("ch", False))
+        rig.gateway.connected = False  # the gateway drops: its entities unavailable
+        await rig.advance(20)
+        rig.gateway.connected = True
+        await rig.advance(10)
+        assert rig.gateway.calls[-1] == ("ch", False)  # held: sent again once it is back
+        assert rig.gateway.calls.count(("ch", False)) > before
+
+
+async def test_an_entity_paths_held_switch_still_refreshes_every_5_minutes(rig: Rig) -> None:
+    """Negative: on the entity path a heating switch declared held keeps X1's refresh — every
+    5 minutes, not with the setpoint entity's 30-s keep-alive."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    switch = FakeSwitch(rig.hass)
+    switch.register()
+    control = held_entity(
+        number, write_type="expiring", ch_entity=switch.entity_id, ch_write_type="held"
+    )
+    await start(rig, **control)
+    await rig.switch(True)
+    assert switch.writes == [True]
+    await rig.advance(290)
+    assert len(number.writes) >= 9  # the setpoint kept alive every 30 s
+    assert switch.writes == [True]  # the held switch: not with them
+    await rig.advance(10)
+    assert switch.writes == [True, True]  # its 5-minute refresh
+
+
+# The wall thermostat on a gateway: its setpoint as the thermostat device shows it.
+ROOM_SETPOINT = "sensor.fake_thermostat_setpoint"
+WALL_ISSUE = "wall_thermostat_fallback"
+
+
+def with_room_setpoint(rig: Rig, **control: Any) -> dict[str, Any]:
+    entry_options = options(rig.zones, **control)
+    entry_options["signals"] = entry_options["signals"] | {"room_setpoint": ROOM_SETPOINT}
+    return entry_options
+
+
+def wall_setpoint(rig: Rig, value: float | None) -> None:
+    shown = "unavailable" if value is None else str(value)
+    rig.hass.states.async_set(
+        ROOM_SETPOINT, shown, {"unit_of_measurement": "°C", "device_class": "temperature"}
+    )
+
+
+async def test_the_switch_shows_the_wall_thermostat_fallback(rig: Rig) -> None:
+    """With an OpenTherm thermostat on the gateway, the control switch shows the temperature the
+    wall thermostat keeps after a hand-back, from the optional signal, and warns when it is
+    below 15 °C or unknown; a repair issue follows after 30 minutes of either (a warning, not
+    fixable), and goes once the value is fine."""
+    wall_setpoint(rig, 20.0)
+    entry = add_entry(rig, with_room_setpoint(rig))
+    await set_up(rig, entry)
+    await rig.advance(10)
+    attributes = rig.state("switch", "control").attributes
+    assert attributes["wall_thermostat_setpoint"] == 20.0
+    assert attributes["wall_thermostat_warning"] is None
+    wall_setpoint(rig, 12.0)
+    await rig.advance(30)
+    attributes = rig.state("switch", "control").attributes
+    assert attributes["wall_thermostat_setpoint"] == 12.0
+    assert attributes["wall_thermostat_warning"] == "low"
+    await rig.advance(29 * 60)
+    assert issue(rig, WALL_ISSUE) is None  # not yet 30 minutes
+    await rig.advance(60)
+    found = issue(rig, WALL_ISSUE)
+    assert found is not None
+    assert found.translation_key == "wall_thermostat_fallback"
+    assert found.translation_placeholders == {"value": "12.0"}
+    assert found.severity is ir.IssueSeverity.WARNING
+    assert not found.is_fixable
+    wall_setpoint(rig, None)  # low, then unknown: one stretch
+    await rig.advance(30)
+    attributes = rig.state("switch", "control").attributes
+    assert attributes["wall_thermostat_setpoint"] is None
+    assert attributes["wall_thermostat_warning"] == "unknown"
+    found = issue(rig, WALL_ISSUE)
+    assert found is not None
+    assert found.translation_key == "wall_thermostat_fallback_unknown"
+    wall_setpoint(rig, 21.0)
+    await rig.advance(30)
+    assert issue(rig, WALL_ISSUE) is None
+    assert rig.state("switch", "control").attributes["wall_thermostat_warning"] is None
+
+
+async def test_an_unmapped_wall_thermostat_is_shown_as_not_known_without_an_issue(
+    rig: Rig,
+) -> None:
+    """The missing-data rule: the signal not mapped — the switch says so, and no issue is
+    raised, however long (nothing is known to warn about)."""
+    await start(rig)
+    await rig.advance(31 * 60)
+    attributes = rig.state("switch", "control").attributes
+    assert attributes["wall_thermostat_setpoint"] is None
+    assert attributes["wall_thermostat_warning"] == "not_mapped"
+    assert issue(rig, WALL_ISSUE) is None
+    from custom_components.vtherm_smart_boiler.switch import ControlSwitch
+
+    assert rig.entry is not None
+    coordinator = rig.entry.runtime_data
+    data, coordinator.data = coordinator.data, None  # no monitor data yet: nothing known
+    try:
+        shown = ControlSwitch(coordinator).extra_state_attributes
+    finally:
+        coordinator.data = data
+    assert shown["wall_thermostat_setpoint"] is None
+    assert shown["wall_thermostat_warning"] is None
+
+
+@pytest.mark.parametrize(
+    "control",
+    [
+        {"topology": "gateway_standalone"},
+        {"thermostat_kind": "on_off"},
+        {"thermostat_kind": None},
+        "virtual",
+    ],
+    ids=["standalone", "on_off", "no_answer", "virtual"],
+)
+async def test_no_wall_thermostat_is_shown_without_an_opentherm_one(
+    rig: Rig, control: dict[str, Any] | str
+) -> None:
+    """Stand-alone, the virtual topology, or another answer about the terminals: no wall
+    thermostat to show, nor an issue — whatever the signal holds."""
+    if control == "virtual":
+        number = FakeNumber(rig.hass)
+        number.register()
+        control = held_entity(number, ch_entity="switch.ch", ch_write_type="held")
+    assert isinstance(control, dict)
+    wall_setpoint(rig, 8.0)
+    entry = add_entry(rig, with_room_setpoint(rig, **control))
+    await set_up(rig, entry)
+    await rig.advance(31 * 60)
+    attributes = rig.state("switch", "control").attributes
+    assert "wall_thermostat_setpoint" not in attributes
+    assert "wall_thermostat_warning" not in attributes
+    assert issue(rig, WALL_ISSUE) is None
+
+
+SUGGESTION_ISSUE = "lowest_water_suggestion"
+
+
+def short_burns(coordinator: Any, now: float, setpoint: float, *, read_back: bool) -> None:
+    """Thirty 3-minute heating burns at ``setpoint`` over the last hours, each ended because the
+    water was warm enough while the room still called — put into the coordinator's history."""
+    from custom_components.vtherm_smart_boiler.core.series import Series
+
+    history = coordinator.history
+    flame: Series[bool] = Series([(now - 7 * 3600.0, False)])
+    flow: Series[float] = Series([(now - 7 * 3600.0, setpoint - 8.0)])
+    setpoints: Series[float] = Series([(now - 7 * 3600.0, setpoint)])
+    t = now - 6 * 3600.0
+    for _ in range(30):
+        flame.append(t, True)
+        flow.append(t + 170.0, setpoint + 0.5)
+        flame.append(t + 180.0, False)
+        flow.append(t + 240.0, setpoint - 8.0)
+        t += 600.0
+    history.signals[Signal.FLAME] = flame
+    history.signals[Signal.FLOW] = flow
+    if read_back:
+        history.setpoint_read_back = setpoints
+    else:
+        history.signals[Signal.CH_SETPOINT] = setpoints
+    zone = next(iter(history.zones.values()))
+    zone.calling = Series([(now - 7 * 3600.0, True)])
+    zone.valve_open = Series([(now - 7 * 3600.0, 1.0)])
+
+
+def suggestion_sensor(rig: Rig) -> State:
+    return rig.state("sensor", "lowest_water_suggestion")
+
+
+async def test_under_control_the_suggestion_is_the_settings_own(rig: Rig) -> None:
+    """While the plugin sets the water: the reference is the lowest water temperature set, the
+    source the control's setpoint read-back (the setpoint signal is not mapped), recorded into
+    the history as control writes; thirty short burns at it suggest it + 2 K, with the issue
+    worded for the plugin's option. Nothing is written for it."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.entry is not None
+    coordinator = rig.entry.runtime_data
+    recorded = [s.value for s in coordinator.history.setpoint_read_back]
+    assert EXPECTED in recorded  # the read-back, recorded live
+    written = list(rig.gateway.calls)
+    now = dt_util.utcnow().timestamp()
+    short_burns(coordinator, now, LOWEST, read_back=True)
+    await coordinator.async_run_analysis()
+    state = suggestion_sensor(rig)
+    assert float(state.state) == LOWEST + 2.0
+    attributes = state.attributes
+    assert attributes["state"] == "suggestion"
+    assert attributes["source"] == "read_back"
+    assert attributes["reference"] == LOWEST
+    assert attributes["counted_burns"] == 30
+    assert attributes["short_share"] == 100.0
+    assert attributes["window_days"] == 7
+    assert attributes["missing"] == []
+    found = issue(rig, SUGGESTION_ISSUE)
+    assert found is not None
+    assert found.translation_key == SUGGESTION_ISSUE
+    assert found.severity is ir.IssueSeverity.WARNING
+    assert not found.is_fixable
+    assert found.translation_placeholders == {
+        "days": "7",
+        "short": "30",
+        "burns": "30",
+        "reference": f"{LOWEST:.1f}",
+        "limit": "10",
+        "value": f"{LOWEST + 2.0:.1f}",
+    }
+    assert rig.gateway.calls == written  # the suggestion writes nothing
+    assert rig.entry.options["control"]["hard_min"] == LOWEST  # nor changes the setting
+
+
+async def test_with_control_off_the_read_back_is_no_source(rig: Rig) -> None:
+    """Control off: the boiler's own curve or its thermostat sets the water, and the control's
+    read-back counts only while the plugin sets it — without the CH setpoint signal the
+    suggestion is inactive, naming it, and nothing is told."""
+    await start(rig)
+    assert rig.entry is not None
+    coordinator = rig.entry.runtime_data
+    short_burns(coordinator, dt_util.utcnow().timestamp(), 30.0, read_back=True)
+    await coordinator.async_run_analysis()
+    state = suggestion_sensor(rig)
+    assert state.state == "unknown"
+    assert state.attributes["state"] == "inactive"
+    assert state.attributes["missing"] == ["ch_setpoint"]
+    assert issue(rig, SUGGESTION_ISSUE) is None
+
+
+async def test_with_control_off_the_suggestion_is_worded_for_the_device(rig: Rig) -> None:
+    """Control off, the CH setpoint signal mapped: the reference is the lowest setpoint the
+    boiler showed, and the issue is worded for the device that sets the water — never the
+    plugin's option, never a parallel shift of its curve."""
+    entry_options = options(rig.zones)
+    entry_options["signals"] = entry_options["signals"] | {
+        "ch_setpoint": BOILER_ENTITIES[Signal.CH_SETPOINT]
+    }
+    await set_up(rig, add_entry(rig, entry_options))
+    assert rig.entry is not None
+    coordinator = rig.entry.runtime_data
+    short_burns(coordinator, dt_util.utcnow().timestamp(), 30.0, read_back=False)
+    await coordinator.async_run_analysis()
+    state = suggestion_sensor(rig)
+    assert float(state.state) == 32.0
+    assert state.attributes["source"] == "ch_setpoint"
+    assert state.attributes["reference"] == 30.0
+    found = issue(rig, SUGGESTION_ISSUE)
+    assert found is not None
+    assert found.translation_key == "lowest_water_suggestion_boiler"
+    assert found.translation_placeholders is not None
+    assert found.translation_placeholders["value"] == "32.0"
+
+
+async def test_no_suggestion_while_a_standalone_gateway_is_handed_back(rig: Rig) -> None:
+    """Stand-alone and handed back, nothing heats: no suggestion, no issue."""
+    await start(rig, topology="gateway_standalone")
+    assert rig.entry is not None
+    coordinator = rig.entry.runtime_data
+    short_burns(coordinator, dt_util.utcnow().timestamp(), 30.0, read_back=False)
+    await coordinator.async_run_analysis()
+    state = suggestion_sensor(rig)
+    assert state.state == "unknown"
+    assert state.attributes["state"] == "not_applicable"
+    assert issue(rig, SUGGESTION_ISSUE) is None
+
+
+async def test_a_failing_evaluation_keeps_the_last_suggestion_and_the_analysis(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The evidence's evaluation failing (a bug): the last suggestion is kept, the analysis is
+    published all the same, the failure is logged once — and nothing is written."""
+    from custom_components.vtherm_smart_boiler import coordinator as coordinator_module
+
+    await start(rig)
+    assert rig.entry is not None
+    coordinator = rig.entry.runtime_data
+    short_burns(coordinator, dt_util.utcnow().timestamp(), 30.0, read_back=False)
+    await coordinator.async_run_analysis()
+    before = coordinator.lowest_water
+    assert before is not None
+    written = list(rig.gateway.calls)
+
+    def broken(*_args: Any) -> None:
+        raise RuntimeError("a bug in the evaluation")
+
+    monkeypatch.setattr(coordinator_module, "suggest_lowest_water", broken)
+    coordinator.analysis = None
+    await coordinator.async_run_analysis()
+    await coordinator.async_run_analysis()
+    assert coordinator.lowest_water is before
+    assert coordinator.analysis is not None  # the analysis itself went on
+    failures = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.WARNING and "lowest water temperature's evidence" in r.message
+    ]
+    assert len(failures) == 1  # logged once, not at every run
+    assert rig.gateway.calls == written

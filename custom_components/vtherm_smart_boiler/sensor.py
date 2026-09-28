@@ -1,5 +1,5 @@
-"""Sensors: boiler metrics, verdict, reference room, critical zones, emitter power factors, and
-the state and setpoint of control."""
+"""Sensors: boiler metrics, verdict, reference room, critical zones, emitter power factors, the
+lowest water temperature's suggestion, and the state and setpoint of control."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from homeassistant.util import dt as dt_util
 from .coordinator import MonitorData, SmartBoilerCoordinator
 from .core.controller import ControlMode
 from .core.emitters import FactorStatus
+from .core.lowest_water import SuggestionState
 from .core.monitor import MonitorSummary
 from .core.parameters import ParameterKey, Source
 from .core.signal_check import Feature, FeatureStatus, SignalStatus
@@ -201,6 +202,36 @@ def _loss_attributes(data: MonitorData) -> dict[str, Any]:
     }
 
 
+def _lowest_water(data: MonitorData) -> Value:
+    """X6 (decision 2): the lowest water temperature suggested, °C — unknown without a
+    suggestion; never applied."""
+    suggestion = data.lowest_water
+    if suggestion is None or suggestion.state is not SuggestionState.SUGGESTION:
+        return None
+    return suggestion.value
+
+
+def _lowest_water_attributes(data: MonitorData) -> dict[str, Any]:
+    """The evidence behind it: its state, the burns counted and the share of them short (%),
+    the reference, where the setpoint came from, the window, what is missing, and the "about"
+    estimate from the boiler's minimum power with the input it lacks."""
+    suggestion = data.lowest_water
+    if suggestion is None:
+        return {}
+    estimate = suggestion.estimate
+    return {
+        "state": suggestion.state.value,
+        "counted_burns": suggestion.counted,
+        "short_share": _percent(suggestion.short_share),
+        "reference": _round(suggestion.reference, 1),
+        "source": None if suggestion.source is None else suggestion.source.value,
+        "window_days": suggestion.window_days,
+        "missing": list(suggestion.missing),
+        "estimate_from_power": None if estimate is None else estimate.value,
+        "estimate_gap": None if estimate is None or estimate.gap is None else estimate.gap.value,
+    }
+
+
 def _round(value: float | None, digits: int) -> float | None:
     return None if value is None else round(value, digits)
 
@@ -307,6 +338,13 @@ BOILER_SENSORS: tuple[BoilerSensorDescription, ...] = (
         attributes_fn=_loss_attributes,
     ),
     BoilerSensorDescription(
+        key="lowest_water_suggestion",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        value_fn=_lowest_water,
+        attributes_fn=_lowest_water_attributes,
+    ),
+    BoilerSensorDescription(
         key="forecast_snapshots",
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
@@ -362,6 +400,13 @@ class BoilerSensor(SmartBoilerEntity, SensorEntity):
             "contributions",
             "not_judged",
             "confidence",
+            # The lowest water temperature's evidence, recomputed with every analysis.
+            "counted_burns",
+            "short_share",
+            "reference",
+            "missing",
+            "estimate_from_power",
+            "estimate_gap",
         }
     )
 

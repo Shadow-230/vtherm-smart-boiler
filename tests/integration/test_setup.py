@@ -527,8 +527,48 @@ async def test_an_entry_from_before_drops_the_options_that_are_gone(
         minor_version=1,
     )
     await setup(hass, entry)
-    assert entry.minor_version == 2
-    assert entry.options["control"] == {"write_path": "entity"}
+    assert entry.minor_version == 3
+    # Minor version 3 (X6): the lowest water temperature 0.2.1 used, kept.
+    assert entry.options["control"] == {"write_path": "entity", "hard_min": 25.0}
+
+
+@pytest.mark.parametrize(
+    ("control", "hard_min"),
+    [
+        ({"write_path": "opentherm_gw"}, 25.0),  # none stored: 0.2.1's floor, kept
+        ({"write_path": "opentherm_gw", "hard_min": None}, 25.0),
+        ({"write_path": "opentherm_gw", "hard_min": ""}, 25.0),
+        ({"write_path": "opentherm_gw", "hard_min": 30}, 30),  # the user's own: unchanged
+        ({"write_path": "opentherm_gw", "hard_min": 20.0}, 20.0),
+        (None, None),  # no control section: no key
+        ({}, None),  # an empty section: control not configured, nothing to keep
+    ],
+)
+async def test_migration_keeps_the_floor_of_a_control_section_without_it(
+    hass: HomeAssistant, control: dict[str, Any] | None, hard_min: float | None
+) -> None:
+    """Decision 2: the lowest water temperature's default becomes 20 °C; an entry of minor
+    version 2 whose control section has none gets 25.0 written by the migration, so no
+    installation's floor drops silently (provisional, K4). A value the user stored stays; an
+    entry without control gets no key."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    options = dict(entry_for(boiler).options)
+    if control is not None:
+        options["control"] = control
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=2
+    )
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.minor_version == 3
+    stored = entry.options.get("control")
+    if hard_min is None:
+        assert stored == control
+    else:
+        assert stored is not None
+        assert stored["hard_min"] == hard_min
 
 
 def _stored_days(start: float, count: int, settings: str) -> dict[str, dict[str, Any]]:
