@@ -18,8 +18,10 @@ Phases run in order: Q, V, X, Y, Z. Q4 waits for the user and does not hold up t
 user decides, each open decision follows the provisional option given below. Q1 and Q2 change
 documents, whose diffs wait for the user's consent; phase V may start meanwhile.
 
-Status on 2026-09-27: decisions recorded, nothing built; start at Q1 as
-`docs/plan-0.2.2-details.md` "Start here" says.
+Status on 2026-09-28: phases Q, V, X and Y and step Z1 are built and committed (the build reports
+in `research/2026-09-2x-*-build-report.md`; carry-over notes in `research/2026-09-28-carry-over.md`;
+the questions for K4 in `research/2026-09-27-k4-questions.md`); continue at Z2, then Z3 and Z4. Q4
+waits for K4 and K5.
 
 ## In short
 
@@ -583,9 +585,8 @@ Left on purpose for a later release:
     the boiler, never shows that value: each such hand-back alarms for 2 min and ends as "taken by
     another controller" with a repair issue (V5) — K4 decides whether the device's own value
     counts as the release.
-15. A clean restart after which a blocker already holds at the next start raises no "blocker
-    stopped heating" issue, as that run never controlled (V7) — X3's session carried across a
-    restart may cover it; otherwise 0.3.
+15. ~~A clean restart after which a blocker already holds at the next start raises no "blocker
+    stopped heating" issue (V7)~~ — covered by X3.
 16. A heating switch that takes "on" but stops taking "off" later in a session (not from its
     start) is sent "off" again every 2 min with "commands lost", but control is not blocked, as
     answer O covers "ignored from the start" only (X1) — K4 decides whether it blocks too.
