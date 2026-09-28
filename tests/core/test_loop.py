@@ -30,6 +30,7 @@ from custom_components.vtherm_smart_boiler.core.loop import (
     remember_command,
 )
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
+from custom_components.vtherm_smart_boiler.core.zone_watch import graced, in_recognition
 
 CONFIG = LoopConfig(
     control=ControlConfig(curve=HeatingCurve(), ramp_k_per_min=None),
@@ -159,6 +160,31 @@ def test_a_new_session_keeps_the_boiler_link_window() -> None:
     fresh, outs = run(fresh, CONFIG, 380.0, 380.0, None)
     assert not outs[0][1].decision.link_lost
     assert outs[0][1].setpoint is not None
+
+
+def test_a_new_session_keeps_the_zone_watch() -> None:
+    """Decision 3: the recognition period and each zone's grace are facts about the zones, not
+    the session — switching control off and on neither starts the recognition period again nor
+    drops the last answer of a zone in its grace (a dead zone would otherwise hold every new
+    decision back for up to ten minutes after control is switched on)."""
+    two = (
+        ZoneState("a", 20.0, 21.0, True, reported_at=0.0, valve_open=0.6),
+        ZoneState("b", 20.0, 21.0, True, reported_at=0.0, valve_open=0.6),
+    )
+    state, _ = loop_step(LoopState(), inputs(0.0, zones=two), None, CONFIG)
+    assert not in_recognition(state.control.zones)  # both reported at the first step
+    b_gone = (
+        ZoneState("a", 20.0, 21.0, True, reported_at=10.0, valve_open=0.6),
+        ZoneState("b"),  # unavailable: its mode is not known
+    )
+    state, _ = loop_step(state, inputs(10.0, zones=b_gone), None, CONFIG)
+    assert set(graced(state.control.zones)) == {"b"}  # b keeps its last answer
+    fresh = new_session(state, 20.0)
+    assert fresh.control.zones == state.control.zones
+    assert not in_recognition(fresh.control.zones)
+    assert set(graced(fresh.control.zones)) == {"b"}
+    fresh, out = loop_step(fresh, inputs(20.0, zones=b_gone), None, CONFIG)
+    assert out.setpoint is not None  # a decision at once, no new recognition period
 
 
 def test_ignored_from_the_start_keeps_the_other_target_and_frost() -> None:

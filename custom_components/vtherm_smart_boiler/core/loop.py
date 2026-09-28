@@ -113,12 +113,15 @@ def after_hand_back_loop(state: LoopState, control: ControlState) -> LoopState:
 
 
 def new_session(state: LoopState, now: float) -> LoopState:
-    """A new session: everything afresh but each guard's one rewrite, kept for its day, and the
-    boiler link's window — a fact about the link, not the session: switching control off and on
-    does not make a lost link fresh (X2)."""
+    """A new session: everything afresh but each guard's one rewrite, kept for its day, the
+    boiler link's window and the zones' watch — facts about the link and the zones, not the
+    session: switching control off and on does not make a lost link fresh (X2), nor start the
+    recognition period again or drop a zone's last answer in its grace (decision 3)."""
     control = state.control
     return LoopState(
-        control=ControlState(link=control.link, link_unreported=control.link_unreported),
+        control=ControlState(
+            link=control.link, link_unreported=control.link_unreported, zones=control.zones
+        ),
         setpoint=for_new_session(state.setpoint, now),
         switch=for_new_session(state.switch, now),
     )
