@@ -1742,10 +1742,8 @@ async def test_a_switch_that_stays_on_is_no_hand_back(rig: Rig) -> None:
     assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
 
 
-async def test_while_vt_reloads_its_central_entry_control_waits(rig: Rig) -> None:
-    """T6: VT's central boiler switched off, its sensor a stand-in. While VT sets its central
-    entry up again, its own central boiler cannot be ruled out: control gives the boiler back
-    and says why, then takes it again once VT is back without it."""
+def vt_central_entry(rig: Rig) -> MockConfigEntry:
+    """VT's central entry with its central boiler switched off, its sensor a stand-in (T6)."""
     from homeassistant.config_entries import ConfigEntryState
 
     from .harness import VT_PLATFORM
@@ -1761,6 +1759,20 @@ async def test_while_vt_reloads_its_central_entry_control_waits(rig: Rig) -> Non
         "binary_sensor", VT_PLATFORM, "central_boiler_state", config_entry=central
     )
     registry.async_get(sensor.entity_id).write_unavailable_state(rig.hass)
+    return central
+
+
+@pytest.mark.parametrize("minutes", [2, 11])
+async def test_a_vt_central_reload_does_not_hand_back_within_the_grace(
+    rig: Rig, minutes: int
+) -> None:
+    """P-105 (X3's part): VT's central boiler known off, then unknown while VT sets its central
+    entry up again: for ten minutes it does not count as a blocker — control goes on, the
+    status shows it waiting. Two minutes of it change nothing; after eleven it blocks and
+    hands back, and control takes the boiler again once VT is back without it."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    central = vt_central_entry(rig)
     await start(rig)
     await rig.switch(True)
     await rig.advance(20)
@@ -1768,15 +1780,39 @@ async def test_while_vt_reloads_its_central_entry_control_waits(rig: Rig) -> Non
     central.mock_state(rig.hass, ConfigEntryState.SETUP_IN_PROGRESS)
     await rig.advance(20)
     attributes = rig.state("sensor", "control_state").attributes
-    assert "vt_central_boiler_unknown" in attributes["blockers"]
-    assert rig.gateway.setpoints()[-1] == 0.0
+    assert attributes["blockers"] == []
+    assert attributes["blockers_waiting"] == ["vt_central_boiler_unknown (grace)"]
+    await rig.advance(minutes * 60 - 20)
+    attributes = rig.state("sensor", "control_state").attributes
+    if minutes < 10:
+        assert 0.0 not in rig.gateway.setpoints()  # never handed back
+        assert rig.state("sensor", "control_state").state == "heating"
+    else:
+        assert "vt_central_boiler_unknown" in attributes["blockers"]
+        assert attributes["blockers_waiting"] == []
+        assert rig.gateway.setpoints()[-1] == 0.0
     central.mock_state(rig.hass, ConfigEntryState.LOADED)
     await rig.advance(20)
-    assert (
-        "vt_central_boiler_unknown"
-        not in rig.state("sensor", "control_state").attributes["blockers"]
-    )
+    attributes = rig.state("sensor", "control_state").attributes
+    assert "vt_central_boiler_unknown" not in attributes["blockers"]
+    assert attributes["blockers_waiting"] == []
     assert rig.gateway.setpoints()[-1] == EXPECTED
+
+
+async def test_vt_central_boiler_unknown_from_the_start_blocks_without_a_grace(rig: Rig) -> None:
+    """Negative: never known off before — from the start of a unit with nothing to restore —
+    VT's central boiler unknown blocks as before."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    central = vt_central_entry(rig)
+    central.mock_state(rig.hass, ConfigEntryState.SETUP_IN_PROGRESS)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    attributes = rig.state("sensor", "control_state").attributes
+    assert "vt_central_boiler_unknown" in attributes["blockers"]
+    assert attributes["blockers_waiting"] == []
+    assert rig.gateway.setpoints() == []
 
 
 async def test_removing_the_entry_with_a_hand_back_owed_raises_a_repair_issue(rig: Rig) -> None:
@@ -2144,23 +2180,6 @@ async def test_control_waits_while_home_assistant_is_starting(rig: Rig) -> None:
     rig.hass.set_state(CoreState.running)
     await rig.advance(10)
     assert rig.gateway.setpoints() == [EXPECTED]
-
-
-async def test_a_zone_unknown_for_long_raises_an_alarm(rig: Rig) -> None:
-    """The known zones decide meanwhile; frost protection cannot see the unknown one, so after a
-    while the user is told."""
-    await start(rig)
-    await rig.switch(True)
-    rig.zones.set("living", "unavailable")
-    await rig.advance(20 * 60)
-    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "off"
-    await rig.advance(11 * 60)
-    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "on"
-    state = rig.state("sensor", "control_state")
-    assert state.attributes["unknown_zones"] == [rig.zones.entities["living"]]
-    rig.zones.set("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
-    await rig.advance(10)
-    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "off"
 
 
 async def test_frost_heating_that_does_not_warm_the_room_raises_an_alarm(rig: Rig) -> None:
@@ -4024,8 +4043,10 @@ async def test_stop_never_raises_when_the_hand_back_raises_unexpectedly(
     """T-06 (P-42, R1): ``writer.hand_back`` raises what no writer reports (a bug). Nothing
     escapes; the debt stays owed and stored — with the persistent issue when the entry unloads,
     and the issue shown with ``control_error`` after a failed step — and the next start makes a
-    full hand-back. Every attempt made while the debt exists is full (P-49); the first, made for
-    the session's end, is not."""
+    full hand-back after the failed step. After an unload or reload, control on and nothing else
+    in the way, decision 3 gives the last command again at once instead (X3): the debt is folded
+    into it, with no hand-back first. Every attempt made while the debt exists is full (P-49);
+    the first, made for the session's end, is not."""
     from custom_components.vtherm_smart_boiler.transport.writers import OpenthermGwWriter
 
     hass = rig.hass
@@ -4077,9 +4098,12 @@ async def test_stop_never_raises_when_the_hand_back_raises_unexpectedly(
         assert stored_control(hass_storage, rig)["hand_back_pending"] is True
         count = len(rig.gateway.calls)
         await set_up(rig, entry)  # the next start
-        assert rig.gateway.calls[count:][:3] == HAND_BACK
+        if ending == "step_error":  # an internal error stored: the hand-back first
+            assert rig.gateway.calls[count:][:3] == HAND_BACK
+        else:
+            assert rig.gateway.calls[count:][:2] == [("setpoint", EXPECTED), ("ch", True)]
     # Every attempt is the whole safe hand-back: nothing is left out (P-49, V5).
-    assert skipped == [set()] * (3 if ending == "step_error" else 2)
+    assert skipped == [set()] * (3 if ending == "step_error" else 1)
     assert not unit_of(rig).hand_back_owed
     assert issue(rig, "hand_back_owed") is None
 
@@ -7148,3 +7172,504 @@ async def test_hot_water_flags_count_by_their_own_limits(rig: Rig, limits: bool)
     assert dhw(dhw_active=(True, old), **inferred) is True
     assert dhw(flame=(True, old), ch_active=(False, new)) is stale
     assert dhw(flame=(True, new), ch_active=(False, old)) is stale
+
+
+# --- X3: demand, zones, decision 3 ---------------------------------------------------------------
+
+RESTORED = 45.0  # the last command a run stored: heating on at 45 °C
+
+
+def restorable(rig: Rig, **changes: Any) -> dict[str, Any]:
+    """The control store a run that held the boiler left — a crash, by default — with its last
+    command, the user's wish on, and the options the boiler was taken with."""
+    return {
+        "enabled": True,
+        "controlling": True,
+        "last_command": {"heating": True, "setpoint": RESTORED, "at": START.timestamp()},
+        "taken_with": options(rig.zones)["control"],
+    } | changes
+
+
+def not_started(rig: Rig, zone_id: str = "living") -> None:
+    """What VT shows before it has started a thermostat: "off", without its own attributes."""
+    rig.zones.set(zone_id, "off", is_ready=None, specific_states=None)
+
+
+def started(rig: Rig, zone_id: str = "living") -> None:
+    rig.zones.set(zone_id, hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+
+
+def no_zone_issue(rig: Rig) -> ir.IssueEntry | None:
+    return issue(rig, "no_zone_known")
+
+
+@pytest.mark.parametrize("stop", ["crash", "clean"])
+async def test_the_last_command_is_restored_at_once_after_a_restart(
+    rig: Rig, hass_storage: dict[str, Any], stop: str
+) -> None:
+    """Decision 3: the store of a run that held the boiler — a crash, or a clean stop whose
+    hand-back went through — its last command (on, 45 °C), the wish on and the options the
+    boiler was taken with: while Home Assistant starts and VT's zones are not there yet, the
+    first write is 45 with heating on — no hand-back first — kept with its keep-alives until
+    the recognition period ends; then control decides anew. The owed hand-back is folded in."""
+    from homeassistant.core import CoreState
+
+    rig.hass.set_state(CoreState.starting)
+    not_started(rig)
+    changes = {} if stop == "crash" else {"controlling": False}
+    await start_with_stored(rig, hass_storage, restorable(rig, **changes), "0.2.2")
+    await rig.advance(10)
+    assert rig.gateway.calls[:2] == [("setpoint", RESTORED), ("ch", True)]
+    assert rig.state("switch", "control").state == "on"
+    attributes = rig.state("sensor", "control_state").attributes
+    assert attributes["reasons"] == ["zones_recognition"]
+    assert "ha_starting" in attributes["blockers"]
+    await rig.advance(60)
+    assert set(rig.gateway.setpoints()) == {RESTORED}  # kept alive, nothing new decided
+    assert ("setpoint", 0.0) not in rig.gateway.calls  # never handed back first
+    assert rig.entry is not None
+    unit = rig.entry.runtime_data.control
+    assert not unit.hand_back_owed
+    rig.hass.set_state(CoreState.running)
+    started(rig)
+    await rig.advance(10)
+    attributes = rig.state("sensor", "control_state").attributes
+    assert "demand" in attributes["reasons"]  # decided anew: the curve, reached by the ramp
+    assert attributes["target"] == EXPECTED
+    await rig.advance(600)
+    assert rig.gateway.setpoints()[-1] == pytest.approx(EXPECTED, abs=0.5)
+    assert ("setpoint", 0.0) not in rig.gateway.calls
+    assert issue(rig, OWED) is None
+
+
+OWED = "hand_back_owed"
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "no_command",
+        "no_setpoint",
+        "no_options_stored",
+        "wish_off",
+        "switch_disabled",
+        "latch",
+        "internal_error",
+        "options_differ",
+        "blocker",
+        "store_lost",
+    ],
+)
+async def test_a_restore_whose_conditions_fail_hands_back_first(
+    rig: Rig, hass_storage: dict[str, Any], case: str
+) -> None:
+    """Negatives, each: the owed hand-back comes first, as before — no stored command (or one
+    without a setpoint), the wish off or the switch entity disabled (answer K), a stored latch
+    or internal error, options other than those the boiler was taken with, a blocker other than
+    Home Assistant starting, a store that could not be read (answer K)."""
+    from homeassistant.core import CoreState
+
+    rig.hass.set_state(CoreState.starting)
+    not_started(rig)
+    changes: dict[str, Any] = {
+        "no_command": {"last_command": None},
+        "no_setpoint": {"last_command": {"heating": True, "setpoint": None, "at": 0.0}},
+        "no_options_stored": {"taken_with": None},  # an earlier store: they cannot be compared
+        "wish_off": {"enabled": False},
+        "latch": {"latched": True, "latched_by": ["pressure_low"]},
+        "internal_error": {"failed": True},
+        "options_differ": {"taken_with": options(rig.zones, topology="gateway_standalone")},
+    }.get(case, {})
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.add_to_hass(rig.hass)
+    if case == "store_lost":
+        seed_main(hass_storage, entry)  # the entry store, its control store gone
+    else:
+        seed_stores(hass_storage, entry, restorable(rig, **changes), "0.2.2")
+    if case == "switch_disabled":
+        er.async_get(rig.hass).async_get_or_create(
+            "switch",
+            DOMAIN,
+            f"{entry.entry_id}_control",
+            disabled_by=er.RegistryEntryDisabler.USER,
+        )
+    if case == "blocker":
+        vt_central_boiler(rig, True)
+    await set_up(rig, entry)
+    await rig.advance(10)
+    calls = rig.gateway.calls
+    assert calls[:3] == [("setpoint", LOWEST), ("ch", True), ("setpoint", 0.0)]
+    assert ("setpoint", RESTORED) not in calls
+
+
+async def test_a_link_not_yet_reported_does_not_turn_a_restore_into_a_hand_back(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """The gateway's link reports three minutes after the start: nothing is written meanwhile,
+    no loss is declared, then the restore — no hand-back first."""
+    not_started(rig)
+    rig.flow = None
+    rig.live()
+    await start_with_stored(rig, hass_storage, restorable(rig), "0.2.2")
+    await rig.advance(170)
+    assert rig.gateway.calls == []
+    assert rig.state("binary_sensor", "alarm_boiler_link_lost").state == "off"
+    rig.flow = 35.0
+    await rig.advance(10)
+    assert rig.gateway.calls[:2] == [("setpoint", RESTORED), ("ch", True)]
+    await rig.advance(400)
+    assert ("setpoint", 0.0) not in rig.gateway.calls
+    assert rig.state("binary_sensor", "alarm_boiler_link_lost").state == "off"
+
+
+async def test_a_link_still_silent_when_the_recognition_ends_gives_way_to_the_hand_back(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """Negative: the link still silent at the end of the recognition period (ten minutes): the
+    owed hand-back is made, and the link, silent since the start, is lost at once (X2)."""
+    not_started(rig)
+    rig.flow = None
+    rig.live()
+    await start_with_stored(rig, hass_storage, restorable(rig), "0.2.2")
+    await rig.advance(590)
+    assert rig.gateway.calls == []
+    assert rig.state("binary_sensor", "alarm_boiler_link_lost").state == "off"
+    await rig.advance(20)
+    assert rig.gateway.calls[:3] == [("setpoint", LOWEST), ("ch", True), ("setpoint", 0.0)]
+    assert ("setpoint", RESTORED) not in rig.gateway.calls
+    assert rig.state("binary_sensor", "alarm_boiler_link_lost").state == "on"
+
+
+async def test_a_restore_passes_vt_central_boiler_unknown_within_the_grace(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """P-105 after a restart (provisional, K4): a restorable store stands for VT's central
+    boiler known off just before; unknown at the start, the restore goes on within the grace;
+    still unknown after ten minutes, it blocks and hands back."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    central = vt_central_entry(rig)
+    central.mock_state(rig.hass, ConfigEntryState.SETUP_IN_PROGRESS)
+    not_started(rig)
+    await start_with_stored(rig, hass_storage, restorable(rig), "0.2.2")
+    await rig.advance(10)
+    assert rig.gateway.calls[:2] == [("setpoint", RESTORED), ("ch", True)]
+    attributes = rig.state("sensor", "control_state").attributes
+    assert attributes["blockers_waiting"] == ["vt_central_boiler_unknown (grace)"]
+    started(rig)
+    await rig.advance(570)
+    assert ("setpoint", 0.0) not in rig.gateway.calls
+    await rig.advance(30)
+    assert (
+        "vt_central_boiler_unknown" in rig.state("sensor", "control_state").attributes["blockers"]
+    )
+    assert rig.gateway.setpoints()[-1] == 0.0
+
+
+@pytest.mark.parametrize("installation", ["standalone", "value_stops_heating"])
+async def test_a_clean_restart_with_a_blocker_at_the_start_raises_the_stopped_heating_issue(
+    rig: Rig, hass_storage: dict[str, Any], installation: str
+) -> None:
+    """Open after 0.2.2 #15 (V7's S-10 across a restart): the last run controlled and stopped
+    cleanly; at the next start a blocker keeps the restore from happening, where a hand-back
+    stops heating — the session carried over was ended by a blocker: the issue after a minute.
+    Negative: without a last command (the run did not control) there is no such issue."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    extra = (
+        {"topology": "gateway_standalone"}
+        if installation == "standalone"
+        else held_entity(number, hand_back_value_effect="heating_stops")
+    )
+    taken = options(rig.zones, **extra)["control"]
+    vt_central_boiler(rig, True)
+    stored = restorable(rig, controlling=False, taken_with=taken)
+    await start_with_stored(rig, hass_storage, stored, "0.2.2", **extra)
+    await rig.advance(50)
+    assert stopped_heating(rig) is None
+    await rig.advance(20)
+    found = stopped_heating(rig)
+    assert found is not None
+    assert found.severity is ir.IssueSeverity.ERROR
+
+
+async def test_a_run_that_never_controlled_raises_no_stopped_heating_issue(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    vt_central_boiler(rig, True)
+    stored = restorable(rig, controlling=False, last_command=None)
+    stored["taken_with"] = options(rig.zones, topology="gateway_standalone")["control"]
+    await start_with_stored(rig, hass_storage, stored, "0.2.2", topology="gateway_standalone")
+    await rig.advance(120)
+    assert stopped_heating(rig) is None
+
+
+async def test_no_zone_known_raises_an_alarm_and_a_repair_issue(rig: Rig) -> None:
+    """Control on, every zone unavailable from the start: after the recognition period (ten
+    minutes) nothing can ask for heat — the alarm and the repair issue, both at once; with the
+    thermostat on the gateway the boiler is its (it was never taken). Both go the step a zone
+    answers again."""
+    rig.zones.set("living", "unavailable")
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(590)
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"
+    assert no_zone_issue(rig) is None
+    assert rig.state("sensor", "control_state").attributes["reasons"] == ["zones_recognition"]
+    await rig.advance(10)
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "on"
+    found = no_zone_issue(rig)
+    assert found is not None
+    assert found.translation_key == "no_zone_known_handed_back"
+    assert found.severity is ir.IssueSeverity.WARNING
+    zone = rig.hass.states.get(rig.zones.entities["living"])
+    assert zone is not None
+    assert found.translation_placeholders == {"zones": zone.name}
+    state = rig.state("sensor", "control_state")
+    assert (state.state, state.attributes["reasons"]) == ("handed_back", ["zones_unknown"])
+    assert rig.gateway.calls == []  # never taken: nothing to hand back
+    started(rig)
+    await rig.advance(10)
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"
+    assert no_zone_issue(rig) is None
+    assert rig.gateway.setpoints() == [EXPECTED]  # control resumes by itself
+
+
+async def test_no_zone_known_without_a_thermostat_keeps_heating_off(rig: Rig) -> None:
+    """Stand-alone: the usual "off" — heating off, no hand-back — with the issue as an error.
+    It goes when the entry unloads."""
+    await start(rig, topology="gateway_standalone")
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.gateway.calls[-1] == ("ch", True)
+    rig.zones.set("living", "unavailable")
+    await rig.advance(590)
+    assert rig.gateway.calls[-1] == ("ch", True)  # the recognition period keeps the command
+    await rig.advance(30)
+    assert rig.gateway.calls[-1] == ("ch", False)
+    assert ("setpoint", 0.0) not in rig.gateway.calls
+    found = no_zone_issue(rig)
+    assert found is not None
+    assert found.translation_key == "no_zone_known_off"
+    assert found.severity is ir.IssueSeverity.ERROR
+    assert rig.state("sensor", "control_state").state == "idle"
+    assert rig.entry is not None
+    assert await rig.hass.config_entries.async_unload(rig.entry.entry_id)
+    await rig.hass.async_block_till_done()
+    assert no_zone_issue(rig) is None
+
+
+async def test_no_zone_known_raises_the_repair_issue_with_the_monitor_only(rig: Rig) -> None:
+    """No control configured: the monitor raises it after ten minutes of every zone unknown, as
+    a warning, and drops it when a zone answers; with control switched off, the unit says the
+    same. Negative: no zone configured, no issue."""
+    rig.zones.set("living", "unavailable")
+    entry = add_entry(rig, without_control(options(rig.zones)))
+    await set_up(rig, entry)
+    await rig.advance(570, step=30.0)
+    assert no_zone_issue(rig) is None
+    await rig.advance(60, step=30.0)
+    found = no_zone_issue(rig)
+    assert found is not None
+    assert found.translation_key == "no_zone_known_monitor"
+    assert found.severity is ir.IssueSeverity.WARNING
+    started(rig)
+    await rig.advance(30, step=30.0)
+    assert no_zone_issue(rig) is None
+
+
+async def test_no_zone_known_with_control_switched_off_is_the_monitors_issue(rig: Rig) -> None:
+    rig.zones.set("living", "unavailable")
+    await start(rig)
+    await rig.advance(610)
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"  # switched off
+    found = no_zone_issue(rig)
+    assert found is not None
+    assert found.translation_key == "no_zone_known_monitor"
+
+
+async def test_no_zones_configured_raises_no_issue_and_blocks_control(rig: Rig) -> None:
+    """S-04: control needs at least one zone — a blocker the switch names; nothing is unknown,
+    so no issue."""
+    entry = add_entry(rig, options(rig.zones) | {"zones": []})
+    await set_up(rig, entry)
+    await rig.advance(700, step=30.0)
+    assert no_zone_issue(rig) is None
+    assert "no_zones" in blockers(rig)
+    with pytest.raises(ServiceValidationError) as raised:
+        await rig.switch(True)
+    assert raised.value.translation_key == "blocked_no_zones"
+
+
+async def test_a_zone_unknown_for_long_raises_an_alarm(rig: Rig) -> None:
+    """One zone of two unavailable: after its grace the known zone decides; frost protection
+    cannot see the unknown one, so after half an hour the user is told."""
+    rig.zones.add("bedroom", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.gateway.calls[-1] == ("ch", True)  # the living room calls
+    rig.zones.set("living", "unavailable")
+    await rig.advance(590)
+    assert rig.gateway.calls[-1] == ("ch", True)  # its last answer holds for ten minutes
+    await rig.advance(20)
+    assert rig.gateway.calls[-1] == ("ch", False)  # dropped out: the bedroom decides
+    assert rig.state("sensor", "control_state").state == "idle"
+    await rig.advance(20 * 60)
+    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "on"
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"
+    state = rig.state("sensor", "control_state")
+    assert state.attributes["unknown_zones"] == [rig.zones.entities["living"]]
+    started(rig)
+    await rig.advance(10)
+    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "off"
+
+
+async def test_a_transient_loss_of_every_zone_does_not_start_the_boiler(rig: Rig) -> None:
+    """T-28 (S-03): summer, the only zone off; VT reloads it — unavailable for three steps,
+    then its placeholder, then off again: heating never goes on, nothing is handed back."""
+    rig.outdoor = 25.0
+    rig.zones.set("living", "off", hvac_action="off", valve_open_percent=0, on_percent=0.0)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    rig.zones.set("living", "unavailable")
+    await rig.advance(30)
+    not_started(rig)
+    await rig.advance(10)
+    rig.zones.set("living", "off", hvac_action="off", valve_open_percent=0, on_percent=0.0)
+    await rig.advance(30)
+    assert ("ch", True) not in rig.gateway.calls
+    assert ("setpoint", 0.0) not in rig.gateway.calls
+    assert rig.state("sensor", "control_state").state == "idle"
+
+
+@pytest.mark.parametrize("cause", ["not_started", "implausible"])
+async def test_a_zone_blind_to_frost_protection_for_long_raises_the_zone_alarm(
+    rig: Rig, cause: str
+) -> None:
+    """A zone VT has not started for half an hour, or one whose room temperature is implausible
+    (S-06: outside −30 to 45 °C) — frost protection cannot see it: the zone alarm after its
+    limit. Its demand still counts."""
+    rig.zones.add("bedroom", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await start(rig)
+    await rig.switch(True)
+    if cause == "not_started":
+        not_started(rig, "bedroom")
+    else:
+        rig.zones.set("bedroom", current_temperature=85.0)
+    await rig.advance(29 * 60)
+    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "off"
+    await rig.advance(70)
+    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "on"
+    assert rig.gateway.calls[-1] == ("ch", True)  # the living room still calls
+
+
+async def test_a_criterion_without_data_raises_its_alarm_and_ends_like_no_zone_known(
+    rig: Rig,
+) -> None:
+    """T-27 (P-14): a count of 0 and only a power threshold, and VT publishes no device power:
+    the criterion cannot be judged — its alarm names it, and with no other criterion decision
+    3's end state follows (the thermostat on the gateway takes the boiler)."""
+    rig.zones.set(
+        "living",
+        hvac_action="heating",
+        valve_open_percent=60,
+        on_percent=0.6,
+        power_manager={"device_power": 0.0, "mean_cycle_power": None, "power_unit": "kW"},
+    )
+    await start(rig, count_threshold=0, power_threshold_kw=1.0)
+    await rig.switch(True)
+    await rig.advance(20)
+    alarm = rig.state("binary_sensor", "alarm_demand_criterion_no_data")
+    assert alarm.state == "on"
+    assert alarm.attributes["criteria"] == ["power"]
+    state = rig.state("sensor", "control_state")
+    assert (state.state, state.attributes["reasons"]) == ("handed_back", ["zones_unknown"])
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"  # zones known
+    rig.zones.set(
+        "living",
+        hvac_action="heating",
+        valve_open_percent=60,
+        on_percent=0.6,
+        specific_states={"is_device_active": True},
+        power_manager={"device_power": 2.0, "mean_cycle_power": 1.2, "power_unit": "kW"},
+    )
+    await rig.advance(10)
+    assert rig.state("binary_sensor", "alarm_demand_criterion_no_data").state == "off"
+    assert rig.gateway.setpoints()[-1] == EXPECTED  # 1.2 kW ≥ 1.0: heating
+
+
+async def test_the_switch_shows_the_boilers_own_room_controller(rig: Rig) -> None:
+    """Answer F: with the tick on the entity path, every hand-back goes to the boiler's own
+    control, and the switch says so."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    control = held_entity(number, hand_back="timeout", write_type="expiring")
+    await start(rig, **control, own_room_controller=True)
+    attributes = rig.state("switch", "control").attributes
+    assert attributes["hand_back_effect"] == "own_control_resumes"
+    assert attributes["frost_protection_by"] == "device"
+
+
+async def test_a_restore_waits_for_its_setpoint_entity(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """The entity path: the setpoint entity not there yet after the restart — nothing is
+    written, the restore waits; once it is there, the last command goes out, no hand-back
+    first."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    number.set_available(False)
+    not_started(rig)
+    control = held_entity(number)
+    stored = restorable(rig, taken_with=options(rig.zones, **control)["control"])
+    await start_with_stored(rig, hass_storage, stored, "0.2.2", **control)
+    await rig.advance(60)
+    assert number.writes == []
+    number.set_available(True)
+    await rig.advance(10)
+    assert number.writes == [RESTORED]
+    assert rig.state("sensor", "control_state").attributes["reasons"] == ["zones_recognition"]
+
+
+async def test_a_restored_command_not_yet_through_keeps_the_debt(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """The restored command is given, but its write fails: the owed hand-back stays owed until a
+    write of it goes through, then it is folded in."""
+    rig.gateway.fail_after = True
+    not_started(rig)
+    await start_with_stored(rig, hass_storage, restorable(rig), "0.2.2")
+    await rig.advance(20)
+    assert ("setpoint", RESTORED) in rig.gateway.calls
+    unit = unit_of(rig)
+    assert unit.hand_back_owed
+    assert rig.state("binary_sensor", "alarm_write_failed").state == "on"
+    rig.gateway.fail_after = False
+    await rig.advance(40)
+    assert not unit.hand_back_owed
+    assert ("setpoint", 0.0) not in rig.gateway.calls
+
+
+async def test_a_blocker_while_the_restore_waits_hands_back_and_tells_where_heating_stops(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """Stand-alone: the restore waits for the boiler link; meanwhile VT's own central boiler is
+    configured — a blocker: the restore gives way to the owed hand-back, and as a hand-back stops
+    heating here, the issue follows once the blocker has held a minute (S-10)."""
+    extra = {"topology": "gateway_standalone"}
+    stored = restorable(rig, taken_with=options(rig.zones, **extra)["control"])
+    not_started(rig)
+    rig.flow = None
+    rig.live()
+    await start_with_stored(rig, hass_storage, stored, "0.2.2", **extra)
+    await rig.advance(30)
+    assert rig.gateway.calls == []
+    vt_central_boiler(rig, True)
+    await rig.advance(10)
+    assert rig.gateway.calls[:3] == [("setpoint", LOWEST), ("ch", True), ("setpoint", 0.0)]
+    rig.flow = 35.0
+    await rig.advance(70)
+    found = stopped_heating(rig)
+    assert found is not None

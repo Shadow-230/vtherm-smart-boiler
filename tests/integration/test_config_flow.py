@@ -329,7 +329,7 @@ async def test_control_through_the_gateway_at_the_simple_level(
     MockConfigEntry(domain="opentherm_gw", data={"id": "living_room_gw"}).add_to_hass(hass)
     hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
     hass.states.async_set("binary_sensor.gw_central_heating", "on")
-    entry_id = await create_entry(hass, entities, "simple")
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
     result = await open_control(hass, entry_id)
     assert result["step_id"] == "control"
     result = await options_step(
@@ -378,7 +378,7 @@ async def test_control_with_an_entity_checks_the_hand_back(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
     hass.states.async_set("number.boiler_flow", "45", {"unit_of_measurement": "°C"})
-    entry_id = await create_entry(hass, entities, "simple")
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
     result = await open_control(hass, entry_id)
     result = await options_step(
         hass,
@@ -638,7 +638,7 @@ async def test_the_thermostats_own_setpoint_is_not_the_read_back(
     setpoint read-back; the optional restart indicator is kept (Q3.7)."""
     hass.states.async_set("sensor.thermostat_ch_setpoint", "40", {"device_class": "temperature"})
     hass.states.async_set("sensor.gateway_reboot_count", "3")
-    entry_id = await create_entry(hass, entities, "simple")
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
     result = await open_control(hass, entry_id)
     control = MQTT_CONTROL | {"topology": "gateway_with_thermostat"}
     result = await options_step(
@@ -683,7 +683,7 @@ async def test_setpoint_step_over_1k_is_refused_in_the_form(
     """T-55 (P-15): a setpoint entity whose step is above 1 K (in its own unit: above 1.8 °F)
     is refused — a value rounded to it could read back beyond the tolerance, as ignored."""
     hass.states.async_set("number.boiler_flow", "40", attributes)
-    entry_id = await create_entry(hass, entities, "simple")
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
     result = await open_control(hass, entry_id)
     result = await options_step(
         hass,
@@ -805,7 +805,7 @@ async def test_a_setpoint_entity_must_be_in_a_temperature_unit(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
     hass.states.async_set("number.boiler_flow", "40", {"unit_of_measurement": "%"})
-    entry_id = await create_entry(hass, entities, "simple")
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
     result = await open_control(hass, entry_id)
     result = await options_step(
         hass,
@@ -971,7 +971,7 @@ async def test_control_needs_a_read_back_and_a_topology_that_suits_the_path(
 ) -> None:
     """P74, P85: an incomplete control configuration is refused where it is entered."""
     hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
-    entry_id = await create_entry(hass, entities, "simple")
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
     read_back = {"confirmed_entity": "sensor.gw_control_setpoint"}
     for answer, error in (
         ({"write_path": "opentherm_gw", "topology": "gateway_with_thermostat"},
@@ -997,7 +997,7 @@ async def test_the_gateway_and_the_mqtt_topics_are_checked(
 
     MockConfigEntry(domain="opentherm_gw", data={"id": "living_room_gw"}).add_to_hass(hass)
     hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
-    entry_id = await create_entry(hass, entities, "simple")
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
     base = {"topology": "gateway_with_thermostat", "confirmed_entity": "sensor.gw_control_setpoint"}
     result = await open_control(hass, entry_id)
     result = await options_step(hass, result, {"write_path": "opentherm_gw"} | base)
@@ -1076,3 +1076,150 @@ def test_a_temperature_sensor_as_foreign_heat_needs_the_advanced_level() -> None
     assert temperature not in simple
     assert temperature in advanced
     assert {"domain": ["sensor"], "device_class": ["power"]} in simple
+
+
+# --- X3: control needs a zone (S-04); criteria a zone must feed (P-14); the own room controller -
+
+
+async def test_control_needs_at_least_one_zone(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """S-04: without a VT zone nothing can ask for heat — the control form refuses; "no
+    control" stays possible."""
+    entry_id = await create_entry(hass, entities, "simple")
+    result = await open_control(hass, entry_id)
+    answer = {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.flow"}
+    result = await options_step(hass, result, answer)
+    assert result["errors"] == {"base": "no_zones"}
+    result = await options_step(hass, result, {"write_path": "none"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+async def to_behaviour_with(
+    hass: HomeAssistant, entities: dict[str, str], zones: tuple[str, ...]
+) -> dict[str, Any]:
+    entry_id = await create_entry(hass, entities, "advanced", zones)
+    return await to_control_behaviour(hass, entry_id)
+
+
+async def test_a_criterion_no_zone_can_feed_is_refused_in_the_form(
+    hass: HomeAssistant, entities: dict[str, str], zones: FakeZones
+) -> None:
+    """P-14: zones readable, and none publishes a device power (VT publishes 0 when none is set)
+    or an opening: that threshold could never be reached — refused. Every zone unavailable: it
+    cannot be told, so accepted."""
+    for zone_id in ("living", "bedroom"):
+        zones.set(zone_id, power_manager={"device_power": 0.0, "power_unit": "kW"})
+    result = await to_behaviour_with(hass, entities, ("living", "bedroom"))
+    result = await options_step(hass, result, {"count_threshold": 0, "power_threshold_kw": 1.0})
+    assert result["errors"] == {"power_threshold_kw": "power_criterion_no_zone"}
+    zones.set("bedroom", power_manager={"device_power": 1.5, "power_unit": "kW"})
+    result = await options_step(hass, result, {"count_threshold": 0, "power_threshold_kw": 1.0})
+    assert result["step_id"] == "control_alarms"
+
+
+async def test_an_opening_criterion_no_zone_can_feed_is_refused_in_the_form(
+    hass: HomeAssistant, entities: dict[str, str], zones: FakeZones
+) -> None:
+    for zone_id in ("living", "bedroom"):  # over_climate: no opening, no duty cycle
+        zones.set(zone_id, on_percent=None, power_percent=None)
+    result = await to_behaviour_with(hass, entities, ("living", "bedroom"))
+    result = await options_step(hass, result, {"count_threshold": 1, "opening_threshold": 50})
+    assert result["errors"] == {"opening_threshold": "opening_criterion_no_zone"}
+    zones.set("living", on_percent=0.0)
+    result = await options_step(hass, result, {"count_threshold": 1, "opening_threshold": 50})
+    assert result["step_id"] == "control_alarms"
+
+
+async def test_a_criterion_is_accepted_while_no_zone_can_be_read(
+    hass: HomeAssistant, entities: dict[str, str], zones: FakeZones
+) -> None:
+    """Negative: with every zone unavailable — or not started by VT yet — nothing can be told:
+    the threshold is kept, and the run-time alarm tells if no zone feeds it."""
+    result = await to_behaviour_with(hass, entities, ("living", "bedroom"))
+    zones.set("living", "unavailable")
+    zones.set("bedroom", "off", is_ready=None, specific_states=None)  # VT's placeholder
+    result = await options_step(
+        hass, result, {"count_threshold": 0, "power_threshold_kw": 1.0, "opening_threshold": 50}
+    )
+    assert result["step_id"] == "control_alarms"
+
+
+async def test_the_own_room_controller_tick_is_offered_on_the_entity_and_relay_paths_only(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Answers F and M: shown on the entity path with the virtual topology (X8 adds the relay
+    path); not on either gateway path, nor on the entity path with a gateway topology."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    MockConfigEntry(domain="opentherm_gw", data={"id": "gw"}).add_to_hass(hass)
+    hass.states.async_set("number.boiler_flow", "45", {"unit_of_measurement": "°C"})
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
+
+    async def fields(answer: dict[str, Any]) -> set[str]:
+        result = await open_control(hass, entry_id)
+        result = await options_step(hass, result, answer)
+        return {str(marker) for marker in result["data_schema"].schema}
+
+    read_back = {"confirmed_entity": "number.boiler_flow"}
+    entity = await fields({"write_path": "entity", "topology": "virtual"} | read_back)
+    assert "own_room_controller" in entity
+    from custom_components.vtherm_smart_boiler.config_flow import control_entity_schema
+
+    for control in ({}, {"write_path": "entity"}, {"write_path": "relay?", "topology": "virtual"}):
+        schema = control_entity_schema({"control": control})
+        assert "own_room_controller" not in {str(marker) for marker in schema.schema}
+    for topology in ("gateway_standalone", "gateway_with_thermostat"):
+        shown = await fields({"write_path": "entity", "topology": topology} | read_back)
+        assert "own_room_controller" not in shown
+        for path in ("opentherm_gw", "otgw_mqtt"):
+            shown = await fields({"write_path": path, "topology": topology} | read_back)
+            assert "own_room_controller" not in shown
+
+
+async def test_the_tick_is_refused_with_a_hand_back_value_that_stops_heating(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """A hand-back value that stops heating leaves nothing for the boiler's own room controller
+    to take over. Accepted with a hand-back that does not; left out, it is not ticked."""
+    hass.states.async_set("number.boiler_flow", "45", {"unit_of_measurement": "°C"})
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.boiler_flow"},
+    )
+    details = {"setpoint_entity": "number.boiler_flow", "write_type": "held"}
+    stops = {"hand_back": "value", "hand_back_value": 0, "hand_back_value_effect": "heating_stops"}
+    result = await options_step(hass, result, details | stops | {"own_room_controller": True})
+    assert result["errors"] == {"own_room_controller": "own_room_controller_but_heating_stops"}
+    own = stops | {"hand_back_value_effect": "own_control"}
+    result = await options_step(hass, result, details | own | {"own_room_controller": True})
+    assert result["step_id"] == "control_curve"
+    result = await options_step(
+        hass, result, {"design_outdoor": -15, "design_flow": 50, "hard_min": 25, "hard_max": 60}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert control["own_room_controller"] is True
+    # Another topology: the step no longer shows it, and saving it drops the tick.
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {
+            "write_path": "entity",
+            "topology": "gateway_with_thermostat",
+            "confirmed_entity": "number.boiler_flow",
+        },
+    )
+    result = await options_step(hass, result, details | own)
+    assert result["step_id"] == "control_curve"
+    result = await options_step(
+        hass, result, {"design_outdoor": -15, "design_flow": 50, "hard_min": 25, "hard_max": 60}
+    )
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert "own_room_controller" not in control

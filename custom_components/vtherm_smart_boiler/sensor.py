@@ -487,6 +487,8 @@ class ControlStateSensor(ControlEntity, SensorEntity):
         return {
             "reasons": list(status.reasons),
             "blockers": list(status.blockers),
+            # Blockers that do not count yet: VT's central boiler unknown in its grace (P-105).
+            "blockers_waiting": list(status.blockers_waiting),
             "target": _round(status.target, 1),
             "heating_on": status.heating_on,
             "heating_confirmation": status.heating_check,

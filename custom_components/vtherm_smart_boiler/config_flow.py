@@ -21,6 +21,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers import selector
+from homeassistant.util import dt as dt_util
 
 from .config import ConfigError, EntryConfig
 from .const import (
@@ -54,6 +55,7 @@ from .control_config import (
     WritePath,
     hand_back_value_problems,
     off_too_close_to_lowest,
+    own_room_controller_offered,
 )
 from .core.alarms import (
     DEFAULT_FREQUENT_STARTS_PER_HOUR,
@@ -64,13 +66,14 @@ from .core.alarms import (
     AlarmKind,
 )
 from .core.building import InsulationClass, ThermalMass
+from .core.demand import feeds_opening, feeds_power
 from .core.foreign_heat import SourceKind
 from .core.guards import WriteType
 from .core.installation import BoilerClass, CircuitControl, DhwType, EmitterType
 from .core.metrics import ModulationScale
 from .core.reference_room import Strategy
 from .transport.entities import read_bounds, read_grid, temperature_unit_of
-from .vtherm_link import zone_name
+from .vtherm_link import VThermLink, zone_name
 
 # --- field definitions ----------------------------------------------------------------------
 
@@ -453,8 +456,14 @@ _HAND_BACK_DEFAULTS = {"hand_back_entity_write_type": WriteType.UNKNOWN.value}
 ENTITY_STEP_KEYS = (
     "setpoint_entity", "write_type", "ch_entity", "ch_write_type", "hand_back",
     "hand_back_value", "hand_back_value_effect", "hand_back_entity", "hand_back_entity_write_type",
-    "gateway_id", "mqtt_top", "mqtt_node",
+    "gateway_id", "mqtt_top", "mqtt_node", "own_room_controller",
 )  # fmt: skip
+OWN_ROOM_CONTROLLER = "own_room_controller"
+# A demand threshold no zone can feed (P-14): the field, and what the form says.
+_UNFED = {
+    "power_threshold_kw": "power_criterion_no_zone",
+    "opening_threshold": "opening_criterion_no_zone",
+}
 
 
 def control_schema(options: dict[str, Any]) -> vol.Schema:
@@ -479,32 +488,47 @@ def control_schema(options: dict[str, Any]) -> vol.Schema:
 
 def control_entity_schema(options: dict[str, Any]) -> vol.Schema:
     control = options.get(CONTROL, {})
-    return vol.Schema(
-        {
-            vol.Required(
-                "setpoint_entity", default=control.get("setpoint_entity", vol.UNDEFINED)
-            ): _entity(_SETPOINT_ENTITY),
-            vol.Required(
-                "write_type", default=control.get("write_type", WriteType.UNKNOWN.value)
-            ): _select("write_type", [t.value for t in WriteType]),
-            _optional("ch_entity", control): _entity(_ON_OFF_ENTITY),
-            vol.Required(
-                "ch_write_type", default=control.get("ch_write_type", WriteType.UNKNOWN.value)
-            ): _select("write_type", [t.value for t in WriteType]),
-            vol.Required("hand_back", default=control.get("hand_back", vol.UNDEFINED)): _select(
-                "hand_back", [h.value for h in HandBack]
-            ),
-            _optional("hand_back_value", control): _number(0, 90, 0.5, "°C"),
-            _optional("hand_back_value_effect", control): _select(
-                "hand_back_value_effect", [e.value for e in ValueEffect]
-            ),
-            _optional("hand_back_entity", control): _entity(_ON_OFF_ENTITY),
-            vol.Required(
-                "hand_back_entity_write_type",
-                default=control.get("hand_back_entity_write_type", WriteType.UNKNOWN.value),
-            ): _select("write_type", [t.value for t in WriteType]),
-        }
-    )
+    fields: dict[Any, Any] = {
+        vol.Required(
+            "setpoint_entity", default=control.get("setpoint_entity", vol.UNDEFINED)
+        ): _entity(_SETPOINT_ENTITY),
+        vol.Required(
+            "write_type", default=control.get("write_type", WriteType.UNKNOWN.value)
+        ): _select("write_type", [t.value for t in WriteType]),
+        _optional("ch_entity", control): _entity(_ON_OFF_ENTITY),
+        vol.Required(
+            "ch_write_type", default=control.get("ch_write_type", WriteType.UNKNOWN.value)
+        ): _select("write_type", [t.value for t in WriteType]),
+        vol.Required("hand_back", default=control.get("hand_back", vol.UNDEFINED)): _select(
+            "hand_back", [h.value for h in HandBack]
+        ),
+        _optional("hand_back_value", control): _number(0, 90, 0.5, "°C"),
+        _optional("hand_back_value_effect", control): _select(
+            "hand_back_value_effect", [e.value for e in ValueEffect]
+        ),
+        _optional("hand_back_entity", control): _entity(_ON_OFF_ENTITY),
+        vol.Required(
+            "hand_back_entity_write_type",
+            default=control.get("hand_back_entity_write_type", WriteType.UNKNOWN.value),
+        ): _select("write_type", [t.value for t in WriteType]),
+    }
+    if _offers_own_room_controller(control):
+        # Next to the hand-back fields, at the simple level; off by default (answers F, M).
+        fields[
+            vol.Required(OWN_ROOM_CONTROLLER, default=control.get(OWN_ROOM_CONTROLLER) is True)
+        ] = selector.BooleanSelector()
+    return vol.Schema(fields)
+
+
+def _offers_own_room_controller(control: Mapping[str, Any]) -> bool:
+    """The tick "the boiler has its own room controller" is offered on the entity path with
+    the virtual topology — not with a gateway (answer M); X8 adds the relay path."""
+    try:
+        path = WritePath(str(control.get("write_path")))
+        topology = Topology(str(control.get("topology")))
+    except ValueError:
+        return False
+    return own_room_controller_offered(path, topology)
 
 
 def control_gateway_schema(options: dict[str, Any], gateways: list[str]) -> vol.Schema:
@@ -769,6 +793,13 @@ def control_details_error(
     if method == HandBack.TIMEOUT and user_input.get("write_type") != WriteType.EXPIRING:
         # Only a value that lapses goes back on its own; any other would stay for good.
         return {"hand_back": "hand_back_timeout_not_expiring"}
+    if (
+        user_input.get(OWN_ROOM_CONTROLLER) is True
+        and method == HandBack.VALUE
+        and user_input.get("hand_back_value_effect") == ValueEffect.HEATING_STOPS
+    ):
+        # Nothing would be left for the boiler's own room controller to take over.
+        return {OWN_ROOM_CONTROLLER: "own_room_controller_but_heating_stops"}
     return {}
 
 
@@ -1412,6 +1443,8 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             path = user_input["write_path"]
             current = self.config_entry.options.get(CONTROL, {}).get("write_path")
             errors = control_error(user_input)
+            if not errors and path != NO_CONTROL and not _zone_entities(self.options):
+                errors = {"base": "no_zones"}  # nothing could ever ask for heat (S-04)
             blocker = await self._async_hand_back_blocker()
             if not errors and path not in (NO_CONTROL, current) and blocker:
                 # "No control" stays possible: the hand-back goes through the old path, retried
@@ -1574,6 +1607,8 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 user_input.get("power_threshold_kw") or user_input.get("opening_threshold")
             ):
                 errors["count_threshold"] = "no_demand_criterion"
+            elif (unfed := self._criterion_no_zone_feeds(user_input)) is not None:
+                errors[unfed] = _UNFED[unfed]
             else:
                 apply_control_behaviour(self.options, user_input)
                 return await self.async_step_control_alarms()
@@ -1582,6 +1617,27 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             data_schema=control_behaviour_schema(self.options),
             errors=errors,
         )
+
+    def _criterion_no_zone_feeds(self, user_input: dict[str, Any]) -> str | None:
+        """P-14: a power or opening threshold no zone can feed could never be reached — VT
+        publishes a device power of 0 where none is set, and a zone of VT's over_climate type
+        no opening. Refused where at least one zone can be read and none feeds it; with none
+        readable (VT away, or not started yet) nothing can be told, and it is kept — at run time
+        the criterion then counts as without data, with an alarm. The field to fix, or ``None``."""
+        power = user_input.get("power_threshold_kw")
+        opening = user_input.get("opening_threshold")
+        if not power and not opening:
+            return None
+        now = dt_util.utcnow().timestamp()
+        link = VThermLink(self.hass, _zone_entities(self.options))
+        readable = [zone for zone in link.zones() if zone.has_reported(now, None)]
+        if not readable:
+            return None
+        if power and not any(feeds_power(zone) for zone in readable):
+            return "power_threshold_kw"
+        if opening and not any(feeds_opening(zone) for zone in readable):
+            return "opening_threshold"
+        return None
 
     def _off_near_hand_back_value(self, user_input: dict[str, Any]) -> bool:
         """S-49: "off" sent as a low setpoint next to a hand-back value that returns the boiler

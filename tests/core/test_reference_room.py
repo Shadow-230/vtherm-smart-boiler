@@ -36,8 +36,11 @@ def pick(zones, strategy=Strategy.LARGEST_DEFICIT, previous=None, chosen=None) -
         (zone("a", 20.0, 21.0), True),
         (zone("a", None, 21.0), False),
         (zone("a", 20.0, None), False),
-        (zone("a", 2.0, 21.0), False),  # implausible room temperature
+        (zone("a", 2.0, 21.0), True),  # a cold room is a room (S-06): frost sees it too
+        (zone("a", -40.0, 21.0), False),  # implausible room temperature: a broken sensor
+        (zone("a", 85.0, 21.0), False),
         (zone("a", 20.0, 50.0), False),  # implausible setpoint
+        (zone("a", 20.0, 4.0), False),
         (zone("a", 20.0, 21.0, reported_at=NOW - 2 * AGE), False),  # stale
         (zone("a", 20.0, 21.0, reported_at=None), False),
     ],
@@ -107,3 +110,50 @@ def test_average_of_valid_zones() -> None:
     assert result.temperature == pytest.approx(19.5)
     assert result.target == pytest.approx(21.5)
     assert result.zones == ("a", "b")
+
+
+# --- X3: one plausibility rule (S-06); lost and not-started zones skipped (P-18) ---------------
+
+
+def test_one_plausibility_rule_for_room_temperatures() -> None:
+    """S-06: −30 to 45 °C for every room reading — frost protection, the reference room and the
+    critical zone alike; setpoints keep 5 to 35 °C."""
+    from custom_components.vtherm_smart_boiler.core.critical_zone import critical_zone
+    from custom_components.vtherm_smart_boiler.core.limits import (
+        PLAUSIBLE_ROOM,
+        FrostConfig,
+        watched_temperatures,
+    )
+    from custom_components.vtherm_smart_boiler.core.zones import (
+        PLAUSIBLE_ROOM as ROOM_RULE,
+    )
+    from custom_components.vtherm_smart_boiler.core.zones import plausible_room
+
+    assert ROOM_RULE == PLAUSIBLE_ROOM == (-30.0, 45.0)
+    for temperature, plausible in ((2.0, True), (-30.0, True), (45.0, True), (85.0, False),
+                                   (-40.0, False)):  # fmt: skip
+        assert plausible_room(temperature) is plausible
+        cold = zone("a", temperature, 21.0, valve_open=0.5)
+        assert (pick([cold]).zone_id == "a") is plausible
+        assert (critical_zone("main", [cold], NOW, AGE).zone_id == "a") is plausible
+        assert (watched_temperatures([cold], NOW, AGE, FrostConfig()) == [temperature]) is (
+            plausible
+        )
+
+
+def test_reference_room_and_critical_zone_skip_lost_sensor_and_not_ready_zones() -> None:
+    """P-18: a zone whose room sensor is lost (or whose VT safety mode is on) keeps a frozen
+    temperature, and one VT has not started shows nothing it runs: neither is picked."""
+    from custom_components.vtherm_smart_boiler.core.critical_zone import critical_zone
+
+    lost = zone("a", 17.0, 21.0, valve_open=1.0, room_sensor_lost=True)
+    not_ready = zone("b", 16.0, 21.0, valve_open=1.0, ready=False)
+    not_reported = zone("c", 16.0, 21.0, valve_open=1.0, reported=False)
+    good = zone("d", 20.0, 21.0, valve_open=0.3)
+    for skipped in (lost, not_ready, not_reported):
+        assert pick([skipped, good]).zone_id == "d"
+        assert critical_zone("main", [skipped, good], NOW, AGE).zone_id == "d"
+        assert pick([skipped]) == ReferenceRoom(SelectionStatus.NO_VALID_MEASUREMENT)
+    assert pick([good], Strategy.CHOSEN_ZONE, chosen="d").zone_id == "d"
+    chosen = pick([lost, good], Strategy.CHOSEN_ZONE, chosen="a")
+    assert chosen == ReferenceRoom(SelectionStatus.NO_VALID_MEASUREMENT)

@@ -15,7 +15,7 @@ be entered, never silently defaulted; VT's central boiler must not run alongside
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
@@ -47,6 +47,8 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         "off_setpoint": DEFAULT_OFF_SETPOINT,
         "learning_pauses": True,
         "comfort_correction": True,
+        # Without the tick, VT giving no answer at all means no heating and an alarm (answer F).
+        "own_room_controller": False,
     }
 )
 CURVE_DEFAULTS: Mapping[str, float] = MappingProxyType(
@@ -86,6 +88,8 @@ class HandBackEffect(StrEnum):
     THERMOSTAT_TAKES_OVER = "thermostat_takes_over"
     HEATING_STOPS = "heating_stops"  # a gateway without a thermostat: no heat until control
     DEVICE_DECIDES = "device_decides"  # a controller on the HA side: its own fallback applies
+    # The user ticked "the boiler has its own room controller" (answer F): it takes over.
+    OWN_CONTROL_RESUMES = "own_control_resumes"
 
 
 class AlarmReaction(StrEnum):
@@ -109,6 +113,7 @@ CONFIG_BLOCKERS = (
     "curve_not_entered",
     "one_direct_circuit_only",
     "underfloor_without_max_flow",
+    "no_zones",
     "count_threshold_above_zones",
     "off_setpoint_not_below_hard_min",
     "hand_back_switch_not_writable",
@@ -179,6 +184,9 @@ class ControlOptions:
     # A sensor that shows the gateway's or device's restarts — an uptime starting again, a restart
     # counter going up, a boot time moving — a trace of an outage (Q3.7; none by default).
     restart_entity: str | None = None
+    # "The boiler has its own room controller" (answers F, M): with every zone unknown, the
+    # boiler is handed back to it; not ticked by default. It counts only where it is offered.
+    own_room_controller: bool = False
 
     @property
     def configured(self) -> bool:
@@ -307,7 +315,7 @@ def parse_control(
         # holds (0.2.1's form offered "information" for an outside change, S-11).
         if str(alarm) not in ALWAYS_HAND_BACK_ALARMS
     }
-    return ControlOptions(
+    options = ControlOptions(
         write_path=path,
         setpoint_entity=data.get("setpoint_entity") or None,
         ch_entity=data.get("ch_entity") or None,
@@ -338,12 +346,63 @@ def parse_control(
         return_after_outside_change=data.get("return_after_outside_change") is True,
         thermostat_setpoint_entity=data.get("thermostat_setpoint_entity") or None,
         restart_entity=data.get("restart_entity") or None,
+        own_room_controller=data.get("own_room_controller") is True,
+    )
+    working = replace(loop.control, working_thermostat=working_thermostat(options))
+    return replace(options, loop=replace(loop, control=working))
+
+
+def own_room_controller_offered(path: WritePath | None, topology: Topology | None) -> bool:
+    """Where the tick "the boiler has its own room controller" is offered (answers F, M): the
+    entity path with the virtual topology — with a gateway the thermostat on its terminals
+    already counts, and with nothing on them a hand-back stops heating anyway. X8 adds the
+    relay path, where the tick counts only with the rest state "on"
+    (``relay_working_thermostat``)."""
+    return path is WritePath.ENTITY and topology is Topology.VIRTUAL
+
+
+def own_room_controller_counts(control: ControlOptions) -> bool:
+    """The tick counts: stored where it is offered, and with a hand-back that leaves the boiler
+    heating — with a hand-back value declared "heating stops" (refused in the form) there is
+    nothing for the controller to take over. A tick stored anywhere else is ignored."""
+    if not control.own_room_controller:
+        return False
+    if not own_room_controller_offered(control.write_path, control.topology):
+        return False
+    return not (
+        control.hand_back is HandBack.VALUE
+        and control.hand_back_value_effect is ValueEffect.HEATING_STOPS
     )
 
 
+def relay_working_thermostat(*, ticked: bool, rests_on: bool) -> bool:
+    """Answer M, for the relay path (X8): the tick counts as a working thermostat only where
+    the relay rests "on" — the relay is the boiler's heat-demand contact, so the boiler's own
+    room controller then heats; with the rest state "off" nothing would. A relay resting "on"
+    without the tick is no working thermostat either."""
+    return ticked and rests_on
+
+
+# Hand-back effects that leave a working thermostat heating the house (decision 3).
+_WORKING_THERMOSTAT_EFFECTS = frozenset(
+    {HandBackEffect.THERMOSTAT_TAKES_OVER, HandBackEffect.OWN_CONTROL_RESUMES}
+)
+
+
+def working_thermostat(control: ControlOptions) -> bool:
+    """Decision 3 (answers F, M): with every zone unknown, is there something to hand the boiler
+    to that heats by the rooms? A gateway with an OpenTherm thermostat declared on its
+    terminals, or the boiler's own room controller where the tick counts. Not a hand-back value
+    declared "own control" without the tick, nor "device decides", nor a stand-alone gateway."""
+    return hand_back_effect(control) in _WORKING_THERMOSTAT_EFFECTS
+
+
 def hand_back_effect(control: ControlOptions) -> HandBackEffect | None:
-    """The effect of a hand-back: for a hand-back value, what the user declared it does; else
-    what the declared topology leads to. ``None`` where control cannot run."""
+    """The effect of a hand-back: the boiler's own room controller where the user ticked it (and
+    it counts); for a hand-back value, what the user declared it does; else what the declared
+    topology leads to. ``None`` where control cannot run."""
+    if own_room_controller_counts(control):
+        return HandBackEffect.OWN_CONTROL_RESUMES
     if control.hand_back is HandBack.VALUE and control.hand_back_value_effect is not None:
         if control.hand_back_value_effect is ValueEffect.HEATING_STOPS:
             return HandBackEffect.HEATING_STOPS
@@ -372,6 +431,7 @@ _FROST_PROTECTION_AFTER = {
     HandBackEffect.THERMOSTAT_TAKES_OVER: FrostProtection.THERMOSTAT,
     HandBackEffect.HEATING_STOPS: FrostProtection.BOILER,
     HandBackEffect.DEVICE_DECIDES: FrostProtection.DEVICE,
+    HandBackEffect.OWN_CONTROL_RESUMES: FrostProtection.DEVICE,
 }
 
 
@@ -387,8 +447,9 @@ def frost_protection_by(control: ControlOptions, controlling: bool) -> FrostProt
 def hand_back_heating_on(control: ControlOptions) -> bool:
     """The safe hand-back's heating part (S-27): a heating switch goes back on where the boiler
     returns to a thermostat or its own control ("thermostat takes over", "device decides", and
-    Y1's "own control resumes"), and is left as it is where the hand-back stops heating. An
-    effect not known turns it on: missing data never switches heating off by itself."""
+    "own control resumes", the user's tick), and is left as it is where the hand-back stops
+    heating. An effect not known turns it on: missing data never switches heating off by
+    itself."""
     return hand_back_effect(control) not in _HEATING_LEFT_AS_IT_IS
 
 
@@ -492,7 +553,9 @@ def config_blockers(control: ControlOptions, installation: Installation) -> list
             and circuit.max_flow is None
         ):
             found.append("underfloor_without_max_flow")
-    if control.loop.control.demand.count_threshold > len(installation.zones):
+    if not installation.zones:
+        found.append("no_zones")  # nothing could ever ask for heat (S-04)
+    elif control.loop.control.demand.count_threshold > len(installation.zones):
         found.append("count_threshold_above_zones")  # heating would never be asked for
     if not control.loop.ch_writes and off_too_close_to_lowest(
         control.loop.off_setpoint, control.loop.control.limits.hard_min

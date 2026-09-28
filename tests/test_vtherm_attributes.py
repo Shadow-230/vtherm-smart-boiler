@@ -126,3 +126,89 @@ def test_vt_readiness_device_activity_and_temperature_age() -> None:
 def test_vt_cap_on_the_duty_cycle(raw: object, cap: float | None) -> None:
     values = zone_values("heat", {"configuration": {"max_on_percent": raw}})
     assert values.max_on_percent == (None if cap is None else pytest.approx(cap))
+
+
+# --- X3: power 0 is no data (P-14), VT's safety and shedding, the mean power, "reported" -------
+
+
+@pytest.mark.parametrize("device_power", [0, 0.0, -1.0, "0"])
+def test_a_device_power_of_zero_is_no_data(device_power: object) -> None:
+    """P-14: VT 10.4.0 publishes ``device_power`` 0 when no power is configured (observed)."""
+    values = zone_values(
+        "heat", {"power_manager": {"device_power": device_power, "power_unit": "kW"}}
+    )
+    assert values.power is None
+
+
+@pytest.mark.parametrize(
+    ("manager", "safety"),
+    [
+        ({"safety_state": "on", "safety_delay_min": 5}, True),
+        ({"safety_state": "off"}, False),
+        ({"safety_state": "unknown"}, False),
+        ({"safety_state": None}, False),
+        ({}, False),
+        (None, False),  # safety not configured: VT publishes no safety_manager
+        ("on", False),  # not VT's shape
+    ],
+)
+def test_vt_safety_state_on_is_read(manager: object, safety: bool) -> None:
+    """S-35: VT 10.4.0 publishes ``safety_manager.safety_state`` where safety is configured."""
+    attributes = {} if manager is None else {"safety_manager": manager}
+    assert zone_values("heat", attributes).safety_on is safety
+
+
+@pytest.mark.parametrize(
+    ("state", "shedding"),
+    [("on", True), ("off", False), ("unknown", False), (None, False), (True, False)],
+)
+def test_overpowering_state_on_is_read(state: object, shedding: bool) -> None:
+    """T-45: VT's power shedding holds the zone off: ``power_manager.overpowering_state``."""
+    manager = {"device_power": 1.0, "power_unit": "kW", "overpowering_state": state}
+    assert zone_values("heat", {"power_manager": manager}).shedding is shedding
+    assert zone_values("heat", {}).shedding is False  # missing: not shedding
+
+
+@pytest.mark.parametrize(
+    ("mean", "unit", "kw"),
+    [
+        (600.0, "W", 0.6),
+        (0.6, "kW", 0.6),
+        (0.0, "kW", 0.0),  # nothing over this cycle: known, none
+        (None, "kW", None),  # VT 10.4.0 without a device power: None
+        (-1.0, "W", None),
+        ("bogus", "W", None),
+        (1500.0, None, 1.5),  # no unit: read as VT's legacy rule reads a power
+    ],
+)
+def test_mean_cycle_power_is_read_in_its_unit(
+    mean: object, unit: str | None, kw: float | None
+) -> None:
+    manager: dict[str, object] = {"device_power": 2.0, "mean_cycle_power": mean}
+    if unit is not None:
+        manager["power_unit"] = unit
+    values = zone_values("heat", {"power_manager": manager})
+    assert values.mean_power == (None if kw is None else pytest.approx(kw))
+
+
+@pytest.mark.parametrize(
+    ("state", "attributes", "reported"),
+    [
+        ("heat", {"is_ready": True, "specific_states": {}}, True),
+        ("off", {"is_ready": True}, True),
+        ("off", {"is_ready": False, "specific_states": {}}, False),  # VT has not started it
+        ("heat", {"is_ready": False, "specific_states": {}}, False),
+        # VT 10.4.0 before its first refresh: its placeholder "off", nothing more (observed).
+        ("off", {}, False),
+        ("heat", {"current_temperature": 20.0}, False),
+        # An older VT without ``is_ready`` (assumed): its state, with its mode known.
+        ("heat", {"specific_states": {"is_device_active": False}}, True),
+        ("sleep", {"specific_states": {}}, False),  # a mode not known
+        ("unavailable", {"is_ready": True}, False),
+        ("heat", {"is_ready": "yes", "specific_states": {}}, False),  # not VT's shape
+    ],
+)
+def test_a_zone_without_vt_attributes_has_not_reported(
+    state: str, attributes: dict[str, object], reported: bool
+) -> None:
+    assert zone_values(state, attributes).reported is reported

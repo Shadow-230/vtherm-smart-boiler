@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -180,3 +181,284 @@ async def test_a_steady_room_under_real_vt_stays_known(hass: HomeAssistant, free
     assert zone.temperature_at is not None
     assert now - zone.temperature_at >= 3 * 3600 - 60  # the sensor has not changed
     assert zone.is_known(now, ZONE_MAX_AGE_S)
+
+
+# --- X3: what a VT zone shows before its start, during a reload and after (decision 3) ----------
+
+OFFICE = "climate.office"
+
+
+def vt_over_climate() -> MockConfigEntry:
+    """A VT over_climate thermostat over a climate of its own (Home Assistant's generic one)."""
+    from custom_components.versatile_thermostat import const as vt
+
+    return MockConfigEntry(
+        domain=vt.DOMAIN,
+        title="Office",
+        unique_id="office",
+        data={
+            vt.CONF_THERMOSTAT_TYPE: vt.CONF_THERMOSTAT_CLIMATE,
+            vt.CONF_NAME: "Office",
+            vt.CONF_TEMP_SENSOR: "sensor.office_temperature",
+            vt.CONF_EXTERNAL_TEMP_SENSOR: "sensor.outdoor_temperature",
+            vt.CONF_CYCLE_MIN: 5,
+            vt.CONF_TEMP_MIN: 7.0,
+            vt.CONF_TEMP_MAX: 30.0,
+            vt.CONF_STEP_TEMPERATURE: 0.1,
+            vt.CONF_UNDERLYING_LIST: ["climate.office_trv"],
+            vt.CONF_AC_MODE: False,
+        },
+    )
+
+
+def vt_central() -> MockConfigEntry:
+    """VT's central configuration, without its central boiler."""
+    from custom_components.versatile_thermostat import const as vt
+
+    return MockConfigEntry(
+        domain=vt.DOMAIN,
+        title="Central",
+        unique_id="central",
+        data={
+            vt.CONF_NAME: "Central",
+            vt.CONF_THERMOSTAT_TYPE: vt.CONF_THERMOSTAT_CENTRAL_CONFIG,
+            vt.CONF_EXTERNAL_TEMP_SENSOR: "sensor.outdoor_temperature",
+            vt.CONF_TEMP_MIN: 7.0,
+            vt.CONF_TEMP_MAX: 30.0,
+            vt.CONF_STEP_TEMPERATURE: 0.1,
+            vt.CONF_TPI_COEF_INT: 0.3,
+            vt.CONF_TPI_COEF_EXT: 0.01,
+            vt.CONF_USE_CENTRAL_BOILER_FEATURE: False,
+        },
+    )
+
+
+@dataclass(frozen=True)
+class Shown:
+    """One state a VT climate published, as recorded, and as the plugin reads it."""
+
+    phase: str
+    entity_id: str
+    state: str
+    is_ready: object  # the attribute, or "absent"
+    specific_states: bool  # published at all
+    reported: bool  # the plugin: VT shows it started, with its mode known
+
+
+async def test_what_a_vt_zone_shows_before_its_start_during_a_reload_and_after(
+    hass: HomeAssistant,
+) -> None:
+    """Decision 3's rules are written against this (VT 10.4.0, over_switch and over_climate):
+
+    - before Home Assistant has started, a thermostat shows the placeholder "off": at first with
+      neither ``is_ready`` nor ``specific_states`` (before VT's first refresh), later — once an
+      underlying device reports — with ``is_ready`` false; never "reported";
+    - once started, ``is_ready`` true with its ``specific_states``: reported;
+    - a thermostat's reload: unavailable, the placeholder "off" with neither, then its restored
+      mode with ``is_ready`` true — the placeholder is VT's, not the user's "off";
+    - a reload of VT's central entry changes no thermostat's state.
+    """
+    from homeassistant.const import EVENT_STATE_CHANGED
+    from homeassistant.core import Event
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import VThermLink
+
+    celsius = {"unit_of_measurement": "°C", "device_class": "temperature"}
+    for sensor in ("living", "office", "outdoor"):
+        hass.states.async_set(f"sensor.{sensor}_temperature", "19.0", celsius)
+    assert await async_setup_component(
+        hass, "input_boolean", {"input_boolean": {"living_valve": {}, "office_heater": {}}}
+    )
+    trv = {
+        "platform": "generic_thermostat",
+        "name": "office_trv",
+        "heater": "input_boolean.office_heater",
+        "target_sensor": "sensor.office_temperature",
+    }
+    assert await async_setup_component(hass, "climate", {"climate": trv})
+    await hass.async_block_till_done()
+    link = VThermLink(hass, (LIVING, OFFICE))
+    seen: list[Shown] = []
+    phase = ["before_start"]
+
+    def note(event: Event) -> None:
+        entity_id = event.data["entity_id"]
+        new = event.data["new_state"]
+        if entity_id not in (LIVING, OFFICE) or new is None:
+            return
+        attributes = new.attributes
+        seen.append(
+            Shown(
+                phase[0],
+                entity_id,
+                new.state,
+                attributes.get("is_ready", "absent"),
+                "specific_states" in attributes,
+                link.zone_from_state(entity_id, new).reported is True,
+            )
+        )
+
+    hass.bus.async_listen(EVENT_STATE_CHANGED, note)
+    hass.set_state(CoreState.starting)
+    central = vt_central()
+    await setup(hass, central)
+    living = vt_thermostat()
+    await setup(hass, living)
+    await setup(hass, vt_over_climate())
+    for service in ("turn_on", "turn_off"):  # an underlying device reports before the start
+        await hass.services.async_call(
+            "input_boolean", service, {"entity_id": "input_boolean.living_valve"}, blocking=True
+        )
+    await hass.async_block_till_done()
+    phase[0] = "after_start"
+    hass.set_state(CoreState.running)
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done()
+    await heat_to(hass, 21.0)
+    phase[0] = "thermostat_reload"
+    assert await hass.config_entries.async_reload(living.entry_id)
+    await hass.async_block_till_done()
+    phase[0] = "central_reload"
+    assert await hass.config_entries.async_reload(central.entry_id)
+    await hass.async_block_till_done()
+
+    def shown(stage: str, entity_id: str) -> list[Shown]:
+        return [s for s in seen if s.phase == stage and s.entity_id == entity_id]
+
+    for entity_id in (LIVING, OFFICE):
+        before = shown("before_start", entity_id)
+        assert before, entity_id
+        assert all(s.state == "off" and not s.reported for s in before)
+        assert (before[0].is_ready, before[0].specific_states) == ("absent", False)
+        assert all(s.is_ready is False and s.specific_states for s in before[1:])
+        assert len(before) > 1, entity_id  # an underlying device reported: not ready yet
+        after = shown("after_start", entity_id)
+        assert after
+        assert all(s.is_ready is True and s.specific_states and s.reported for s in after)
+    reload = [(s.state, s.is_ready, s.specific_states) for s in shown("thermostat_reload", LIVING)]
+    assert reload[:2] == [("unavailable", "absent", False), ("off", "absent", False)]
+    assert reload[2:]
+    assert all(item == ("heat", True, True) for item in reload[2:])
+    assert shown("thermostat_reload", OFFICE) == []
+    assert [s for s in seen if s.phase == "central_reload"] == []
+    for entity_id in (LIVING, OFFICE):  # the plugin reads each zone as VT shows it now
+        zone = link.zone(entity_id)
+        assert zone.reported is True
+        assert zone.started
+
+
+async def started_with_the_plugin(hass: HomeAssistant, *thermostats: MockConfigEntry) -> Any:
+    """VT's entries and the plugin's, set up through Home Assistant's start, the zone heating
+    towards 21 °C: the plugin's entry."""
+    entry = await room_and_boiler(hass)
+    hass.set_state(CoreState.starting)
+    for thermostat in thermostats:
+        await setup(hass, thermostat)
+    await setup(hass, entry)
+    hass.set_state(CoreState.running)
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done()
+    await heat_to(hass, 21.0)
+    return entry
+
+
+async def later(hass: HomeAssistant, freezer: Any, seconds: float) -> None:
+    from datetime import timedelta
+
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    freezer.tick(timedelta(seconds=seconds))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+
+async def test_a_vt_safety_mode_zone_follows_vt_and_is_flagged(
+    hass: HomeAssistant, freezer: Any
+) -> None:
+    """T-44 (S-35): the room sensor goes quiet; VT enters its safety mode and runs the zone on
+    its safety duty cycle. The plugin follows VT's pulses — the zone stays known and its demand
+    counts — and flags it as a lost sensor, which the zone alarm reports after its limit."""
+    entry = await started_with_the_plugin(hass, vt_thermostat())
+    link = entry.runtime_data.link
+    assert link.zone(LIVING).safety_on is False
+    for _ in range(11):  # the sensor quiet: VT checks at its cycle, every five minutes
+        await later(hass, freezer, 60.0)
+    attributes = hass.states.get(LIVING).attributes
+    assert attributes["safety_manager"]["safety_state"] == "on"
+    zone = link.zone(LIVING)
+    assert zone.safety_on
+    assert zone.room_sensor_lost  # flagged: the zone alarm follows after its limit
+    now = zone.reported_at or 0.0
+    assert zone.is_known(now, None)  # VT runs it: its demand still counts
+    assert zone.on_percent == pytest.approx(0.3)  # VT's safety duty cycle
+    hass.states.async_set(
+        "sensor.living_temperature",
+        "19.1",
+        {"unit_of_measurement": "°C", "device_class": "temperature"},
+    )
+    hass.states.async_set(
+        "sensor.outdoor_temperature",
+        "5.1",
+        {"unit_of_measurement": "°C", "device_class": "temperature"},
+    )
+    await later(hass, freezer, 300.0)
+    assert not link.zone(LIVING).safety_on  # the sensor back: VT ends its safety mode
+
+
+async def test_vt_power_shedding_removes_demand(hass: HomeAssistant, freezer: Any) -> None:
+    """T-45: VT's power shedding holds the zone off: the zone stays known, with no demand and no
+    power; once shedding ends, its demand is back. (A test first; the plugin reads VT's own
+    ``overpowering_state``.)"""
+    from custom_components.versatile_thermostat import const as vt
+
+    from custom_components.vtherm_smart_boiler.core.demand import DemandConfig, boiler_demand
+
+    watts = {"unit_of_measurement": "W", "device_class": "power"}
+    hass.states.async_set("sensor.house_power", "1000", watts)
+    hass.states.async_set("sensor.house_max_power", "6000", watts)
+    central = vt_central()
+    powered = {
+        vt.CONF_USE_POWER_FEATURE: True,
+        vt.CONF_POWER_SENSOR: "sensor.house_power",
+        vt.CONF_MAX_POWER_SENSOR: "sensor.house_max_power",
+        vt.CONF_PRESET_POWER: 12,
+        vt.CONF_POWER_UNIT: "W",
+    }
+    central = MockConfigEntry(
+        domain=vt.DOMAIN, title="Central", unique_id="central", data={**central.data, **powered}
+    )
+    living = vt_thermostat()
+    own = {
+        vt.CONF_USE_POWER_FEATURE: True,
+        vt.CONF_DEVICE_POWER: 2000,
+        vt.CONF_POWER_UNIT: "W",
+        vt.CONF_USE_POWER_CENTRAL_CONFIG: True,
+    }
+    living = MockConfigEntry(
+        domain=vt.DOMAIN, title="Living", unique_id="living", data={**living.data, **own}
+    )
+    entry = await started_with_the_plugin(hass, central, living)
+    link = entry.runtime_data.link
+    config = DemandConfig(count_threshold=1, power_threshold_kw=1.0)
+
+    def demand() -> Any:
+        zone = link.zone(LIVING)
+        return zone, boiler_demand([zone], zone.reported_at or 0.0, None, config)
+
+    zone, before = demand()
+    assert (zone.shedding, zone.mean_power) == (False, pytest.approx(1.52))  # 0.76 of 2 kW
+    assert before.wanted is True
+    assert before.power_kw == pytest.approx(1.52)
+    hass.states.async_set("sensor.house_power", "7000", watts)
+    await later(hass, freezer, 30.0)
+    zone, shed = demand()
+    assert zone.shedding
+    assert zone.is_known(zone.reported_at or 0.0, None)
+    assert shed.wanted is False
+    assert shed.zones_wanting == 0
+    assert shed.power_kw == 0.0
+    hass.states.async_set("sensor.house_power", "500", watts)
+    await later(hass, freezer, 30.0)
+    zone, after = demand()
+    assert not zone.shedding
+    assert after.wanted is True

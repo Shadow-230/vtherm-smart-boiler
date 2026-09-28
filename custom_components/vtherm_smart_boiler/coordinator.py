@@ -94,6 +94,7 @@ from .core.signal_check import (
 )
 from .core.signals import Signal
 from .core.supply import circuit_return, circuit_supply
+from .core.zone_watch import every_zone_unknown_since, issue_due
 from .forecasts import ForecastRecorder
 from .transport.entities import (
     EntityTransport,
@@ -110,6 +111,10 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 DAY = 86400.0
+# Decision 3: every configured zone unknown for ten minutes — a repair issue in every mode, the
+# monitor only included; its text follows what control does then (translation keys
+# ``no_zone_known_off``, ``_handed_back``, ``_monitor``).
+NO_ZONE_KNOWN_ISSUE = "no_zone_known"
 ZONE_MAX_AGE_S: float | None = None  # one freshness rule: a steady room is not a stale one
 SAVE_DELAY_S = 120
 # An emitter factor is recomputed at every update while its zone heats: saved at this pace, so
@@ -213,7 +218,14 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # Control left the options while a hand-back was still owed: this unit only hands back.
         self.hand_back_unit: ControlUnit | None = None
         self.stored_control: dict[str, Any] = {}
+        # Whether the stored control state could be read: a lost or damaged store gives no
+        # last command to restore (decision 3, answer K).
+        self.control_readable = True
         self._control_provider: Callable[[], dict[str, Any]] | None = None
+        # Decision 3's repair issue: every zone unknown since, for the monitor only; the kind
+        # raised now.
+        self._zones_unknown_since: float | None = None
+        self._no_zone_issue: str | None = None
 
     # --- lifecycle ------------------------------------------------------------------------
 
@@ -281,8 +293,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._stopped = True
         while self._unsubs:
             self._unsubs.pop()()
-        for key in ("auto_tpi_blocked", "learning_not_paused"):
+        for key in ("auto_tpi_blocked", "learning_not_paused", NO_ZONE_KNOWN_ISSUE):
             ir.async_delete_issue(self.hass, DOMAIN, f"{key}_{self.config_entry.entry_id}")
+        self._no_zone_issue = None
         await self.async_shutdown()
         if self._loaded:
             await self._control_store.async_save(self._stored_control())
@@ -304,6 +317,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         stored = _mapping(read.main)
         self.monitoring_since = self._monitoring_start(stored, now)
         self.stored_control = dict(read.state)
+        self.control_readable = read.readable
         self._main_owed = _owed_flags(stored.get("control"))
         if read.owed and not read.readable:
             ir.async_create_issue(
@@ -778,6 +792,13 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             )
 
         self._alarms = self._current_alarms(snapshot, now, list(zone_states.values()))
+        self._zones_unknown_since = every_zone_unknown_since(
+            self._zones_unknown_since, list(zone_states.values()), now, ZONE_MAX_AGE_S
+        )
+        if self.control is None:
+            # No control unit (monitor only, or one that only hands back): the monitor tells.
+            due = issue_due(self._zones_unknown_since, now)
+            self.report_no_zone_known("monitor" if due else None)
         alarms = dict(self._alarms)
         if self.analysis is not None:
             alarms.update(self.analysis.trends)
@@ -890,6 +911,35 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 unpaused.append(self.link.zone_name(zone_id))
         self._issue("auto_tpi_blocked", blocked)
         self._issue("learning_not_paused", unpaused)
+
+    def report_no_zone_known(self, kind: str | None) -> None:
+        """Decision 3's repair issue: ``kind`` — "off", "handed_back" or "monitor" — while every
+        configured zone has been unknown for ten minutes; ``None`` deletes it. An error where
+        heating stops, else a warning (provisional, K4). Raised anew when its kind changes."""
+        if kind == self._no_zone_issue:
+            return
+        issue_id = f"{NO_ZONE_KNOWN_ISSUE}_{self.config_entry.entry_id}"
+        ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+        self._no_zone_issue = kind
+        if kind is None:
+            return
+        _LOGGER.warning(
+            "No Versatile Thermostat zone has answered for ten minutes (%s)",
+            {"off": "heating is off", "handed_back": "the boiler is handed back"}.get(
+                kind, "the monitor cannot judge them"
+            ),
+        )
+        zones = ", ".join(self.link.zone_name(zone) for zone in self.config.zone_entities)
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.ERROR if kind == "off" else ir.IssueSeverity.WARNING,
+            translation_key=f"{NO_ZONE_KNOWN_ISSUE}_{kind}",
+            translation_placeholders={"zones": zones},
+        )
 
     def _issue(self, key: str, zones: list[str]) -> None:
         issue_id = f"{key}_{self.config_entry.entry_id}"

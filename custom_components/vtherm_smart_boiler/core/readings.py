@@ -95,10 +95,16 @@ class ZoneState:
     whether it heats. ``calling``: its heater or valve is active now (VT's action).
     ``device_active``: VT's own view of its devices (what its central boiler counts).
     ``on_percent`` and ``valve_open`` are fractions from 0 to 1. ``power`` is the device power
-    as configured in VT, in kW. ``ready``: VT has finished starting the thermostat.
+    as configured in VT, in kW — above 0, or unknown; ``mean_power`` VT's mean power over the
+    zone's cycle, in kW (live only). ``ready``: VT's ``is_ready``, it has finished starting the
+    thermostat. ``reported``: VT shows it started — ``is_ready`` true, or an older VT's state
+    without that key — and ``False`` while it does not (before VT's first refresh a thermostat
+    shows a placeholder "off" with neither); ``None``: not said, ``ready`` alone decides.
     ``temperature_at``: when the room temperature was last measured; the zone is fresh by it,
     else by the entity's report. ``room_sensor_lost``: the room sensor VT reads is gone,
-    unavailable or unknown now — VT keeps the last temperature it had (live only).
+    unavailable or unknown now, or VT's own safety mode is on — VT keeps the last temperature it
+    had (live only). ``safety_on``: VT's safety mode; ``shedding``: VT's power shedding holds
+    the zone off (live only).
     """
 
     zone_id: str
@@ -116,6 +122,27 @@ class ZoneState:
     temperature_at: float | None = None
     max_on_percent: float | None = None  # VT's cap on the duty cycle, 0 to 1
     room_sensor_lost: bool = False
+    mean_power: float | None = None
+    safety_on: bool = False
+    shedding: bool = False
+    reported: bool | None = None
+
+    @property
+    def started(self) -> bool:
+        """VT shows it has started the thermostat (``reported``; without it, ``ready``)."""
+        return self.reported if self.reported is not None else self.ready is not False
+
+    @property
+    def cycle_power(self) -> float | None:
+        """The zone's mean power over its cycle, in kW, as VT counts it: VT's own where it
+        publishes it, else the device power times the duty cycle (an older VT; the valve's
+        opening without one); ``None`` without them."""
+        if self.mean_power is not None:
+            return self.mean_power
+        ratio = self.on_percent if self.on_percent is not None else self.valve_open
+        if self.power is not None and ratio is not None:
+            return self.power * ratio
+        return None
 
     @property
     def deficit(self) -> float | None:
@@ -148,13 +175,20 @@ class ZoneState:
             return False
         return max_age is None or now - at <= max_age
 
-    def is_known(self, now: float, max_age: float | None) -> bool:
-        """Its mode is known, VT has started it, and its data is fresh."""
-        return (
-            self.heating_enabled is not None
-            and self.ready is not False
-            and self.is_fresh(now, max_age)
-        )
+    def is_known(self, now: float, max_age: float | None, recognition: bool = False) -> bool:
+        """Its mode is known and its data fresh, and VT has started it — or, once the
+        recognition period is over, it is in a mode that does not heat: such a zone has no
+        demand whether VT runs it or not (S-34). A heating mode VT does not run is unknown."""
+        if self.heating_enabled is None or not self.is_fresh(now, max_age):
+            return False
+        if self.started:
+            return True
+        return not self.heating_enabled and not recognition
+
+    def has_reported(self, now: float, max_age: float | None) -> bool:
+        """VT shows it started, and its mode and data are known: what the recognition period
+        waits for (decision 3)."""
+        return self.started and self.heating_enabled is not None and self.is_fresh(now, max_age)
 
 
 @dataclass(frozen=True, slots=True)

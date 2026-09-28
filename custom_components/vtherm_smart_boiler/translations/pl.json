@@ -494,7 +494,8 @@
           "hand_back_value": "Wartość oddania",
           "hand_back_value_effect": "Co robi wartość oddania",
           "hand_back_entity": "Przełącznik sterowania zewnętrznego",
-          "hand_back_entity_write_type": "Typ zapisu przełącznika sterowania zewnętrznego"
+          "hand_back_entity_write_type": "Typ zapisu przełącznika sterowania zewnętrznego",
+          "own_room_controller": "Kocioł ma własny regulator pokojowy"
         },
         "data_description": {
           "setpoint_entity": "Liczba (number albo input_number), która ustawia temperaturę zasilania kotła.",
@@ -505,7 +506,8 @@
           "hand_back_value": "Nastawa zapisywana przy oddaniu, w °C, dla metody wartości: wartość, która przywraca kotłowi własne sterowanie, albo ta, którą ma zachować. 0 na jednych urządzeniach znaczy „własne sterowanie”, na innych „bez grzania”. Wymagana przy metodzie wartości. Nie może przekraczać najwyższej nastawy zasilania ani maksimum obiegu i nigdy nie jest do nich przycinana; oddanie liczy się jako wykonane, gdy pokaże ją odczyt zwrotny.",
           "hand_back_value_effect": "Wymagane przy metodzie wartości: co urządzenie robi z wartością oddania — wraca jego własne sterowanie albo grzanie ustaje. Przełącznik sterowania pokazuje to jako skutek oddania.",
           "hand_back_entity": "Dla sposobu „przełącznik”: przełącznik, który włącza sterowanie zewnętrzne. Jest włączany na początku sterowania i wyłączany przy oddaniu — więc nigdy ustawienie, które urządzenie zapisuje w pamięci; poniżej trzeba podać jego typ zapisu.",
-          "hand_back_entity_write_type": "Potrzebny przy metodzie przełącznika: co urządzenie robi ze stanem przełącznika. Wygasający: znika, jeśli nie jest powtarzany — włączany ponownie co 30 s, dopóki sterowanie trzyma kocioł. Trzymany: urządzenie go zachowuje — włączany raz za każdym razem, gdy sterowanie przejmuje kocioł. Trwały albo nieznany (domyślnie): może być zapisywany w pamięci kotła, którą każde przełączenie zużywa, więc sterowanie z nim jest niedostępne."
+          "hand_back_entity_write_type": "Potrzebny przy metodzie przełącznika: co urządzenie robi ze stanem przełącznika. Wygasający: znika, jeśli nie jest powtarzany — włączany ponownie co 30 s, dopóki sterowanie trzyma kocioł. Trzymany: urządzenie go zachowuje — włączany raz za każdym razem, gdy sterowanie przejmuje kocioł. Trwały albo nieznany (domyślnie): może być zapisywany w pamięci kotła, którą każde przełączenie zużywa, więc sterowanie z nim jest niedostępne.",
+          "own_room_controller": "Zaznacz tylko wtedy, gdy kocioł ma własny regulator pokojowy, który sam prosi o ciepło, gdy wtyczka odda sterowanie — na przykład panel pokojowy na magistrali kotła (EMS). Jeśli Versatile Thermostat w ogóle nie odpowiada, wtyczka odda mu wtedy kocioł; bez zaznaczenia kocioł nie grzeje, a alarm i zgłoszenie do naprawy powiedzą dlaczego. Każde inne oddanie sterowania też trafia do tego regulatora. Przy przekaźniku liczy się to tylko wtedy, gdy stan przekaźnika po oddaniu sterowania to „włączony”; przy „wyłączony” kocioł nie grzeje, gdy Versatile Thermostat nie odpowiada. Domyślnie wyłączone. Ryzyko: bez takiego regulatora kocioł zostałby na własnym pokrętle i grzałby bez kontroli temperatury w pokojach."
         }
       },
       "control_gateway": {
@@ -580,7 +582,7 @@
           "decision_interval_min": "Jak często temperatura wody jest wyznaczana na nowo, w minutach; domyślnie 5, domyślny cykl VT. Włączanie i wyłączanie ogrzewania nadąża za strefami co 10 s niezależnie od tej wartości; wtyczka nie odczytuje własnych cykli stref. Krócej: woda szybciej podąża za pogodą i pokojami, ale algorytmy stref częściej widzą jej zmiany; dłużej: spokojniejsza woda, która wolniej nadąża.",
           "off_setpoint": "Nastawa zapisywana jako „wyłącz”, gdy nie ma przełącznika grzania, w °C. Domyślnie 10: dużo poniżej każdej wartości grzania i poniżej najniższej nastawy zasilania. Ryzyko: niska nastawa nie wyłącza grzania w kotle — mastery ESPHome i DIYLess zostawiają CH włączone, a kotły według zgłoszeń dalej pracują pompą CH; przełącznik grzania albo CH=0 bramki OpenTherm naprawdę wyłącza grzanie.",
           "count_threshold": "Ogrzewanie jest potrzebne, gdy co najmniej tyle stref zgłasza zapotrzebowanie. Domyślnie 1; najwyżej liczba stref. 0 wyłącza liczenie, zostawiając sam próg mocy albo otwarcia, jak w Versatile Thermostat. Wyższa zostawia pojedynczy wołający pokój bez ciepła.",
-          "power_threshold_kw": "Opcjonalnie: ogrzewanie jest potrzebne, gdy moc wołających stref, każda ważona otwarciem jej zaworu, sumuje się do tej wartości, w kW. Za wysoka zostawia małe pokoje bez ciepła.",
+          "power_threshold_kw": "Opcjonalnie: grzanie jest potrzebne, gdy średnia moc stref w cyklu, liczona jak w Versatile Thermostat, osiągnie tę wartość, w kW — liczona tylko wtedy, gdy choć jedna z nich ma otwarty zawór albo włączone urządzenie. Za wysoki próg zostawia małe pokoje bez ciepła.",
           "opening_threshold": "Opcjonalnie: ogrzewanie jest potrzebne, gdy największe otwarcie zaworu wśród wołających stref osiąga tę wartość, w %. Za wysoka zostawia bez ciepła pokój, który otwiera zawór tylko trochę.",
           "learning_pauses": "Wstrzymuj naukę SmartPI podczas grzania ciepłej wody, gdy strefę grzeje obce źródło i przy dużych wahaniach temperatury wody, żeby nie uczyła się tego, co zrobił kocioł; każde wstrzymanie i wznowienie jest sprawdzane w SmartPI. Domyślnie włączone. Auto-TPI nie da się wstrzymać bez skasowania tego, czego się nauczyło, więc strefy z nim są tylko zgłaszane. Wyłączone: SmartPI uczy się także w tych chwilach, co może zafałszować jego model.",
           "comfort_correction": "Włączona (domyślnie): gdy zawór strefy jest całkiem otwarty, a pomieszczenie nadal nie dochodzi do nastawy, woda rośnie do 3 K ponad krzywą — 1 K na 30 minut, tylko gdy płynie ciepło — i spada dwa razy szybciej; nie rośnie, gdy inna strefa jest o ponad 1 K za ciepła, zeruje się przy oddaniu sterowania, a po trzech godzinach na 3 K informuje, że krzywa jest pewnie za niska. Działa szeregowo z regulatorami PI stref (SmartPI, TPI): jej wolne tempo pozwala im najpierw się ustalić. Człon zewnętrzny algorytmu strefy (współczynnik zewnętrzny TPI) liczy pogodę drugi raz: trzymaj go mały, gdy wtyczka ustala wodę. Wyłączona: sama krzywa."
@@ -646,10 +648,14 @@
       "write_type_not_supported": "Wtyczka nigdy nie zapisuje trwałej pamięci kotła: zadeklaruj encję nastawy jako wygasającą lub trzymaną albo wybierz „Bez sterowania”.",
       "ch_write_type_not_supported": "Zadeklaruj przełącznik grzania jako wygasający lub trzymany albo zostaw przełącznik pusty: wtyczka nigdy nie zapisuje trwałej pamięci kotła.",
       "hand_back_value_effect_missing": "Metoda wartości wymaga skutku: co urządzenie robi z wartością oddania.",
+      "own_room_controller_but_heating_stops": "Wartość przy oddaniu, która zatrzymuje grzanie, nie zostawia nic do przejęcia własnemu regulatorowi kotła: odznacz pole albo zmień działanie wartości przy oddaniu.",
       "hand_back_pending": "Oddanie sterowania jeszcze nie dotarło do kotła: ścieżka zapisu, to, do czego sterowanie pisze, i odczyt zwrotny bramki nie mogą się zmienić, dopóki nie dotrze. Przywróć cel albo wybierz „Bez sterowania”: oddanie jest nadal ponawiane.",
       "control_holds_boiler": "Sterowanie ma kocioł: najpierw wyłącz sterowanie, żeby kocioł został oddany przez urządzenie, które go trzyma; potem zmień, do czego sterowanie pisze, albo odczyt zwrotny bramki.",
       "count_threshold_above_zones": "Więcej stref, niż jest skonfigurowanych: grzanie nigdy nie zostałoby wezwane.",
       "no_demand_criterion": "Ustaw co najmniej jedno kryterium: liczba stref 0 wymaga progu mocy albo otwarcia.",
+      "no_zones": "Przed konfiguracją sterowania dodaj co najmniej jedną strefę Versatile Thermostat.",
+      "power_criterion_no_zone": "Żadna strefa nie podaje mocy urządzenia w Versatile Thermostat, więc tego progu nie da się osiągnąć: ustaw moc w VT albo zostaw puste.",
+      "opening_criterion_no_zone": "Żadna strefa nie podaje otwarcia zaworu ani wypełnienia, więc tego progu nie da się osiągnąć.",
       "off_setpoint_not_below_hard_min": "„Wyłączone” musi być co najmniej 1 °C poniżej najniższej temperatury wody, inaczej kocioł nie zauważy zmiany.",
       "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury (°C, °F lub K): zapisana wartość znaczyłaby dla niej coś innego. Wybierz encję nastawy temperatury zasilania kotła.",
       "missing_signal": "Brakuje wymaganego sygnału.",
@@ -1181,6 +1187,17 @@
             "name": "Cele"
           }
         }
+      },
+      "alarm_no_zone_known": {
+        "name": "Sterowanie: żadna strefa nie odpowiada"
+      },
+      "alarm_demand_criterion_no_data": {
+        "name": "Sterowanie: kryterium zapotrzebowania bez danych",
+        "state_attributes": {
+          "criteria": {
+            "name": "Kryteria"
+          }
+        }
       }
     },
     "switch": {
@@ -1192,7 +1209,8 @@
             "state": {
               "thermostat_takes_over": "Przejmuje termostat",
               "heating_stops": "Grzanie staje do powrotu sterowania",
-              "device_decides": "Działa własne zabezpieczenie urządzenia"
+              "device_decides": "Działa własne zabezpieczenie urządzenia",
+              "own_control_resumes": "Przejmuje własne sterowanie kotła"
             }
           },
           "frost_protection_by": {
@@ -1260,6 +1278,9 @@
     },
     "blocked_count_threshold_above_zones": {
       "message": "Próg zapotrzebowania wymaga więcej stref, niż jest skonfigurowanych, więc grzanie nigdy nie zostałoby wezwane: obniż go w opcjach. Inne powody: {others}."
+    },
+    "blocked_no_zones": {
+      "message": "Sterowanie wymaga co najmniej jednej strefy Versatile Thermostat: dodaj je w opcjach. Inne powody: {others}."
     },
     "blocked_ha_starting": {
       "message": "Home Assistant jeszcze się uruchamia. Inne powody: {others}."
@@ -1373,6 +1394,18 @@
     "control_latched_heating_off_ignored": {
       "title": "Sterowanie zatrzymane: kocioł nie przyjmuje „wyłącz grzanie”",
       "description": "Od początku sesji kocioł nie przyjął polecenia wtyczki „wyłącz grzanie”, więc wtyczka nie mogła wyłączyć ogrzewania. Sterowanie się zatrzymało i bezpiecznie oddało kocioł: najpierw najniższa temperatura wody, potem włączone grzanie tam, gdzie przejmuje termostat albo własne sterowanie kotła, potem zwolnienie. Sprawdź przełącznik ogrzewania wybrany w opcjach i ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej."
+    },
+    "no_zone_known_off": {
+      "title": "Versatile Thermostat nie odpowiada: kocioł nie grzeje",
+      "description": "Żadna strefa nie odpowiada ({zones}), więc nic nie może poprosić o ciepło. Wtyczka trzyma grzanie kotła wyłączone i wznowi je, gdy tylko któraś strefa odpowie. Sprawdź, czy Versatile Thermostat jest załadowany, jego termostaty są włączone, a ich identyfikatory encji zgadzają się z opcjami wtyczki."
+    },
+    "no_zone_known_handed_back": {
+      "title": "Versatile Thermostat nie odpowiada: kocioł wrócił do termostatu albo własnego regulatora pokojowego",
+      "description": "Żadna strefa nie odpowiada ({zones}), więc nic nie może poprosić o ciepło. Wtyczka oddała kocioł termostatowi na bramce albo własnemu regulatorowi pokojowemu kotła i przejmie go znów, gdy tylko strefa odpowie. Sprawdź, czy Versatile Thermostat jest załadowany, jego termostaty są włączone, a ich identyfikatory encji zgadzają się z opcjami wtyczki."
+    },
+    "no_zone_known_monitor": {
+      "title": "Versatile Thermostat nie odpowiada",
+      "description": "Żadna strefa nie odpowiada ({zones}); monitor nie może ich ocenić. Sprawdź, czy Versatile Thermostat jest załadowany, jego termostaty są włączone, a ich identyfikatory encji zgadzają się z opcjami wtyczki."
     }
   }
 }

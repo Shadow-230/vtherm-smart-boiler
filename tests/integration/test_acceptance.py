@@ -91,7 +91,8 @@ class Rig:
                 self.hass.states.async_set(entity_id, "unavailable", {})
                 continue
             if zone.zone_id in self.over_climate:
-                # It drives a device with its own regulation: no opening, only whether it heats.
+                # It drives a device with its own regulation: no opening, only whether it heats
+                # — and, as VT 10.4.0 shows every started thermostat, that it has started.
                 self.hass.states.async_set(
                     entity_id,
                     mode,
@@ -99,6 +100,8 @@ class Rig:
                         "current_temperature": self.degrees(self.sim.room(zone.zone_id)),
                         "temperature": self.degrees(self.sim.plant.targets[index]),
                         "hvac_action": "heating" if opening > 0.05 else "idle",
+                        "is_ready": True,
+                        "specific_states": {"is_device_active": opening > 0.05},
                     },
                 )
                 continue
@@ -655,24 +658,58 @@ async def test_reloads_leave_exactly_one_control_loop(rig: Rig) -> None:
 # --- VT's zones as VT has them ------------------------------------------------------------
 
 
-async def test_zones_that_cannot_be_read_mean_heat_not_cold(rig: Rig) -> None:
-    """Every VT zone unavailable: whether to heat is unknown, so the boiler heats on the curve's
-    water — never a cold house for want of data — and after half an hour the alarm says so."""
-    await start(rig)
+@pytest.mark.parametrize(
+    ("topology", "handed_back"),
+    [("gateway_with_thermostat", True), ("gateway_standalone", False)],
+)
+async def test_zones_that_cannot_be_read_end_in_decision_3s_end_state(
+    rig: Rig, topology: str, handed_back: bool
+) -> None:
+    """Every VT zone unavailable at once (VT reloading, then gone): the recognition period keeps
+    the command held for ten minutes; then nothing can ask for heat — with the thermostat on the
+    gateway, the boiler is handed back to it; stand-alone, the usual "off" — never heating on
+    the curve with no zone known. The alarm and the repair issue come at once; control resumes
+    by itself when the zones answer again."""
+    from homeassistant.helpers import issue_registry as ir
+
+    await start(rig, topology=topology)
     await rig.switch(True)
     await rig.advance(60)
+    assert rig.gateway("ch")[-1][2] is True
     rig.vt_mode = "unavailable"
     rig.mirror_zones()
-    await rig.advance(600, step=30.0)
+    await rig.advance(540, step=30.0)
     attributes = rig.state("sensor", "control_state").attributes
-    assert "zones_unknown" in attributes["reasons"]
+    assert attributes["reasons"] == ["zones_recognition"]  # the command held meanwhile
     assert len(attributes["unknown_zones"]) == len(rig.sim.zones)
     assert rig.gateway("ch")[-1][2] is True
-    assert rig.setpoints()[-1] > 0.0
-    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "off"
-    await rig.advance(1260, step=30.0)
-    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "on"
-    assert rig.gateway("ch")[-1][2] is True
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"
+    await rig.advance(90, step=30.0)
+    state = rig.state("sensor", "control_state")
+    assert "zones_unknown" in state.attributes["reasons"]
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "on"
+    assert rig.entry is not None
+    issue = ir.async_get(rig.hass).async_get_issue(DOMAIN, f"no_zone_known_{rig.entry.entry_id}")
+    assert issue is not None
+    assert issue.translation_key == (
+        "no_zone_known_handed_back" if handed_back else "no_zone_known_off"
+    )
+    if handed_back:
+        assert state.state == "handed_back"
+        assert rig.setpoints()[-1] == 0.0  # the thermostat has the boiler
+    else:
+        assert state.state == "idle"
+        assert rig.gateway("ch")[-1][2] is False  # heating off, no hand-back
+        assert rig.setpoints()[-1] > 0.0
+    rig.vt_mode = "heat"
+    rig.mirror_zones()
+    await rig.advance(30, step=10.0)
+    assert rig.state("sensor", "control_state").state in ("heating", "idle")
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"
+    assert (
+        ir.async_get(rig.hass).async_get_issue(DOMAIN, f"no_zone_known_{rig.entry.entry_id}")
+        is None
+    )
 
 
 @pytest.mark.parametrize("kind", ["auto", "over_climate"])

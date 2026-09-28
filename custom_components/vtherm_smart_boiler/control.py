@@ -40,7 +40,21 @@ How control resumes after it stopped (``SCOPE.md`` §7):
 - the plugin's own monitor failing for five minutes: on its own, once it has worked for a minute
   without a failure, with an information note (the user's answer I);
 - a blocker: on its own, once it is gone. Where a hand-back stops heating, a blocker that ended
-  a session holding the boiler and still holds a minute later raises a repair issue (S-10).
+  a session holding the boiler and still holds a minute later raises a repair issue (S-10) — a
+  session a clean restart carried over included: one whose restore a blocker stopped;
+- every zone unknown (decision 3): on its own, the step a zone answers again.
+
+Decision 3 at a start: where control held the boiler before — a clean restart that handed it
+back included — its last command is given again at once, with its keep-alives, instead of the
+owed hand-back first, when every condition holds: V3 stored a last command, the stored wish is
+"control on" and the control switch entity is not disabled, no latch or internal error holds, the
+control options are those the boiler was taken with, the store could be read, and no blocker
+but Home Assistant starting holds (VT's central boiler unknown only within its grace, P-105).
+Until the write target and the boiler link are there nothing is written and the restore waits,
+within the recognition period; a link not yet reported declares no loss meanwhile (X2). A
+restore still waiting when the recognition period ends, or whose conditions fail meanwhile,
+gives way to the owed hand-back. With every zone unknown, the alarm "no zone known" and a repair
+issue (the monitor's too) tell the user; a demand criterion no zone can feed has its own alarm.
 
 Control never stops heating silently: where a hand-back stops heating, the control switch says
 that frost protection rests on the boiler's own, and a room near freezing while control does
@@ -91,8 +105,11 @@ from .control_config import (
     frost_protection_by,
     hand_back_effect,
     highest_water_temperature,
+    working_thermostat,
 )
 from .core.controller import (
+    HA_STARTING,
+    BoilerCommand,
     ControlInputs,
     ControlMode,
     ControlState,
@@ -158,6 +175,8 @@ from .core.loop import (
 from .core.readings import BoilerSnapshot, ZoneState
 from .core.signal_check import OutdoorStatus, curve_sensor
 from .core.signals import Signal
+from .core.zone_watch import in_recognition, no_zone_issue_due
+from .core.zones import plausible_room
 from .transport.entities import (
     read_bounds,
     read_grid,
@@ -221,6 +240,10 @@ RETURN_QUIET_S = 3600.0
 MONITOR_ISSUE = "monitor_failed"
 MONITOR_NOTE = "monitor_recovered"
 ZONE_UNKNOWN_ALARM_S = 30 * 60.0  # a zone unknown this long is reported
+# VT's central boiler unknown — its central entry reloading — does not block control for this long
+# where it was known to be off at the step before (P-105; provisional, K4). A restorable store
+# after a restart stands for "known off just before": a session cannot run while it is on.
+VT_BOILER_GRACE_S = 600.0
 RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control counts as off
 SMARTPI_DOMAIN = "vtherm_smartpi"
 SMARTPI_SERVICE = "set_smartpi_learning"
@@ -355,6 +378,10 @@ class ControlAlarm(StrEnum):
     HANDED_BACK_IN_FROST = "handed_back_in_frost"
     COMMANDS_LOST = "commands_lost"  # three lost commands within a day: information only
     CONFIRMATION_MISSING = "confirmation_missing"  # the read-back unknown for five minutes
+    # Decision 3: every zone unknown after the recognition period and the graces — nothing can
+    # ask for heat; and a demand criterion no known zone can feed (P-14). Neither has a reaction.
+    NO_ZONE_KNOWN = "no_zone_known"
+    DEMAND_CRITERION_NO_DATA = "demand_criterion_no_data"
 
 
 _EVENT_ALARM = {
@@ -396,6 +423,9 @@ class ControlStatus:
     frost_protection_by: str | None = None  # who keeps frost protection now (FrostProtection)
     ignored_targets: tuple[str, ...] = ()  # targets ignored from the start ("write ignored")
     unconfirmed_targets: tuple[str, ...] = ()  # targets whose confirmation is missing
+    # Blockers that do not count yet: VT's central boiler unknown within its grace (P-105).
+    blockers_waiting: tuple[str, ...] = ()
+    criteria_without_data: tuple[str, ...] = ()  # demand criteria no known zone can feed
 
     @property
     def confirmed_setpoint(self) -> float | None:
@@ -545,6 +575,18 @@ class ControlUnit:
         self._external_renew = False
         self._external_returned = False
         self._quiet_since: float | None = None
+        # Decision 3: the last command given again at once after a restart, pending until a
+        # write of it goes through or the owed hand-back takes its place; the options the boiler
+        # was taken with, as the last run stored them; and whether the boiler link has reported
+        # since the start (a restore waits for it without declaring a loss, X2).
+        self._restore_command: BoilerCommand | None = None
+        self._restore_pending = False
+        self._taken_with: object = None
+        self._link_seen = False
+        # P-105: VT's central boiler was known to be off at the last step, and since when it has
+        # been unknown after that.
+        self._vt_boiler_off = False
+        self._vt_boiler_unknown_since: float | None = None
 
     # --- status, listeners, storage -----------------------------------------------------
 
@@ -611,11 +653,14 @@ class ControlUnit:
             enabled = self._stored_enabled  # kept until the switch restores it
         # Control not in the options has no command to give again.
         command = None if self.hand_back_only else self._last_command
+        # The options the boiler was taken with: for the owed hand-back, and for a last command
+        # to be given again only through the same options (decision 3).
+        kept = owed or command is not None
         return {
             "enabled": enabled,
             "last_command": None if command is None else command.as_dict(),
             "controlling": self._holding,
-            "taken_with": dict(self._raw) if owed and self._raw else None,
+            "taken_with": dict(self._raw) if kept and self._raw else None,
             "paused": dict(session.learning.paused),
             "resuming": dict(session.learning.resuming),
             "resume_since": dict(session.learning.resume_since),
@@ -719,11 +764,55 @@ class ControlUnit:
         self._stored_enabled = wish
         self._last_command = field("last_command", parse_last_command, None)
         self._command_stored = self._last_command
+        self._taken_with = data.get("taken_with")
         # Read cautiously too: the issue follows only while a blocker holds (S-10).
         self._stopped_by_blocker = _flag(data.get("stopped_heating")) and not self.hand_back_only
+        self._plan_restore(dt_util.utcnow().timestamp())
         # From now on the stores get this unit's state: a save made before its start must not
         # write the state loaded earlier over a hand-back made since.
         self._coordinator.provide_stored_control(self.stored)
+
+    def _plan_restore(self, now: float) -> None:
+        """Decision 3 at the start: the last command is given again at once — instead of the
+        owed hand-back first — where every condition holds (the module's docstring). A store
+        that could not be read makes the plugin assume it held the boiler: the hand-back first
+        (answer K). A blocker stopping it, where a hand-back stops heating, raises S-10's issue
+        as for a session a blocker ended (V7)."""
+        command = self._last_command
+        if self.hand_back_only or command is None or command.setpoint is None:
+            return
+        control = self._session.loop.control
+        refused = (
+            not self._coordinator.control_readable
+            or self._stored_enabled is not True
+            or self._switch_disabled()
+            or control.latched
+            or self._session.failed
+            or self._taken_with != self._raw
+        )
+        if refused:
+            _LOGGER.debug("The last command is not given again after the restart")
+            return
+        self._vt_boiler_off = True  # a session cannot run while VT's central boiler is on
+        blockers = [blocker for blocker in self.blockers(now) if blocker != HA_STARTING]
+        if blockers:
+            self._vt_boiler_off = False
+            _LOGGER.info(
+                "The last command is not given again after the restart: %s", ", ".join(blockers)
+            )
+            if any(b not in _QUIET_BLOCKERS for b in blockers) and self._stops_heating():
+                self._stopped_by_blocker = True  # the session carried over, ended by a blocker
+            return
+        self._restore_command = BoilerCommand(command.heating, command.setpoint)
+        self._restore_pending = True
+
+    def _switch_disabled(self) -> bool:
+        """The control switch entity is disabled in Home Assistant: control is off (answer K)."""
+        registry = er.async_get(self._hass)
+        unique_id = f"{self._coordinator.config_entry.entry_id}_control"
+        entity_id = registry.async_get_entity_id("switch", DOMAIN, unique_id)
+        entry = registry.async_get(entity_id) if entity_id is not None else None
+        return entry is not None and entry.disabled
 
     # --- lifecycle ------------------------------------------------------------------------
 
@@ -735,6 +824,10 @@ class ControlUnit:
             return
         async with self._lock:
             if self._stopped or self._stopping or not self._hand_back_pending:
+                return
+            if self._restore_pending:
+                # Decision 3: the last command is given again instead; the owed hand-back is
+                # folded into it, or made once the restore gives way.
                 return
             try:
                 await self._async_try_hand_back(now)
@@ -904,7 +997,8 @@ class ControlUnit:
             found.append("monitoring_period")
         vt_boiler = self._coordinator.link.vt_central_boiler_configured()
         if vt_boiler is None:
-            found.append("vt_central_boiler_unknown")  # cannot be ruled out: wait
+            if not self._vt_boiler_in_grace(now):
+                found.append("vt_central_boiler_unknown")  # cannot be ruled out: wait
         elif vt_boiler:
             found.append("vt_central_boiler_active")
         if self._unit_not_supported():
@@ -927,6 +1021,25 @@ class ControlUnit:
             # blocked until the user switches control off and on after fixing it (X5.21).
             found.append(HEATING_OFF_IGNORED)
         return tuple(found)
+
+    def _vt_boiler_in_grace(self, now: float) -> bool:
+        """P-105: VT's central boiler unknown — its central entry reloading — does not count as
+        a blocker for ``VT_BOILER_GRACE_S`` where it was known to be off at the step before."""
+        if not self._vt_boiler_off:
+            return False
+        since = self._vt_boiler_unknown_since
+        return since is None or now - clock_start(since, now) < VT_BOILER_GRACE_S
+
+    def _follow_vt_boiler(self, now: float) -> tuple[str, ...]:
+        """VT's central boiler at this step, for P-105's grace; the blockers that wait in it."""
+        configured = self._coordinator.link.vt_central_boiler_configured()
+        if configured is not None:
+            self._vt_boiler_off = configured is False
+            self._vt_boiler_unknown_since = None
+            return ()
+        if self._vt_boiler_off and self._vt_boiler_unknown_since is None:
+            self._vt_boiler_unknown_since = now
+        return ("vt_central_boiler_unknown (grace)",) if self._vt_boiler_in_grace(now) else ()
 
     def _grid(self) -> Grid | None:
         """The setpoint entity's grid (P-15), on the entity path; ``None`` elsewhere or without
@@ -1081,6 +1194,7 @@ class ControlUnit:
             self._hand_back_pending
             and not session.loop.control.controlling
             and self.options.configured
+            and not self._restore_pending  # decision 3: the restore comes first
         ):
             await self._async_follow_hand_back(now)
         if self.hand_back_only:
@@ -1099,9 +1213,11 @@ class ControlUnit:
         if self._follow_return(now):
             await self._coordinator.async_save_control_now()  # the latch is gone
             session = self._session
+        waiting = self._follow_vt_boiler(now)
         blockers = self.blockers(now)
         monitor_failed = "monitor_failed" in blockers
-        if self.enabled and not blockers and self._writer is None:
+        # Home Assistant starting alone does not stop a command kept or restored (decision 3).
+        if self.enabled and set(blockers) <= {HA_STARTING} and self._writer is None:
             self._writer = self._writer_factory(self._hass, self.options)
         zones = self._coordinator.link.zones()
         snapshot = self._coordinator.transport.snapshot(now)
@@ -1135,6 +1251,7 @@ class ControlUnit:
             await self._async_hand_back_writes(now)
         else:
             await self._async_writes(out, now)
+        await self._follow_restore(now, blockers, out.hand_back)
         controlling = session.loop.control.controlling
         if out.hand_back and monitor_failed:
             self._report_monitor_failed(now)  # the session held the boiler
@@ -1143,7 +1260,16 @@ class ControlUnit:
         self._follow_stopped_heating(now, blockers)
         self._follow_frost(now, zones)
         unknown = self._follow_unknown_zones(now, zones)
+        self._follow_no_zone_known(now, out.decision.reasons)
+        decision = out.decision
         for flagged, alarm in (
+            # Decision 3: nothing can ask for heat — every zone unknown after the recognition
+            # period and the graces; or a criterion no known zone can feed (P-14).
+            (self.enabled and decision.zones_unknown, ControlAlarm.NO_ZONE_KNOWN),
+            (
+                self.enabled and bool(decision.criteria_without_data),
+                ControlAlarm.DEMAND_CRITERION_NO_DATA,
+            ),
             # Every topology, whenever the switch is on and the link is lost — whatever a
             # blocker, a latch or a restart shows (P-08): control hands back if it held the
             # boiler; stand-alone that stops heating, so the user is told.
@@ -1213,16 +1339,89 @@ class ControlUnit:
             frost_protection_by=self._frost_protection_shown(),
             ignored_targets=ignored,
             unconfirmed_targets=out.unconfirmed,
+            blockers_waiting=waiting,
+            criteria_without_data=decision.criteria_without_data,
         )
+
+    async def _follow_restore(self, now: float, blockers: Sequence[str], handed_back: bool) -> None:
+        """Decision 3: a restore still pending once the recognition period is over, or whose
+        conditions failed — control switched off, a latch, an internal error, a blocker other
+        than Home Assistant starting — gives way: the owed hand-back goes first (the core wrote
+        nothing new in that step), and the next step decides. A blocker that stops it, where a
+        hand-back stops heating, raises S-10's issue as for a session a blocker ended."""
+        if not self._restore_pending:
+            return
+        control = self._session.loop.control
+        blocked = [blocker for blocker in blockers if blocker != HA_STARTING]
+        failed = not self.enabled or control.latched or self._session.failed or bool(blocked)
+        if control.controlling and not failed:
+            return  # the core holds it: the first write that goes through completes it
+        if not failed and in_recognition(control.zones):
+            return  # it waits for its write target or the boiler link
+        self._restore_pending = False
+        _LOGGER.info(
+            "The last command could not be given again after the restart; the owed hand-back "
+            "goes first"
+        )
+        counting = [blocker for blocker in blocked if blocker not in _QUIET_BLOCKERS]
+        if self.enabled and counting and self._stops_heating():
+            self._stopped_by_blocker = True  # the session a restart carried over, ended (S-10)
+        if self._hand_back_pending and not handed_back and not control.controlling:
+            await self._async_try_hand_back(now)
+        self._coordinator.schedule_control_save()
+
+    def _follow_no_zone_known(self, now: float, reasons: Sequence[Reason]) -> None:
+        """Decision 3's repair issue once every configured zone has been unknown for ten
+        minutes, whatever control does: what it says follows what control does then — the
+        usual "off", the hand-back to a working thermostat, or only the monitor."""
+        kind: str | None = None
+        if no_zone_issue_due(self._session.loop.control.zones, now):
+            kind = "monitor"
+            if Reason.ZONES_UNKNOWN in reasons:
+                kind = "handed_back" if working_thermostat(self.options) else "off"
+        self._coordinator.report_no_zone_known(kind)
+
+    def _target_ready(self) -> bool:
+        """The write target can take a command: on the entity path each entity written to is
+        there with a value (a gateway's read-back tells for the gateway paths, P-21)."""
+        options = self.options
+        if options.write_path is not WritePath.ENTITY:
+            return True
+        targets = [options.setpoint_entity]
+        if options.loop.ch_writes:
+            targets.append(options.ch_entity)
+        if options.hand_back is HandBack.SWITCH:
+            targets.append(options.hand_back_entity)
+        for entity in filter(None, targets):
+            state = self._hass.states.get(entity)
+            if state is None or state.state in UNAVAILABLE_STATES:
+                return False
+        return True
 
     def _follow_unknown_zones(self, now: float, zones: Sequence[ZoneState]) -> tuple[str, ...]:
         """Zones whose state is not known: the known ones decide meanwhile; one unknown for long
         raises an alarm, as frost protection cannot see it. So does one whose room sensor is
-        lost for long (R6, T2): VT keeps the last temperature and still runs the zone, so its
-        demand counts."""
-        max_age = self.options.loop.control.zone_max_age_s
+        lost for long, or whose VT safety mode is on (R6, T2, S-35): VT keeps the last
+        temperature and still runs the zone, so its demand counts; one VT has not started; and
+        one frost protection watches whose room temperature is implausible (S-06)."""
+        control = self.options.loop.control
+        max_age = control.zone_max_age_s
+        watched = control.frost.zone
         unknown = tuple(z.zone_id for z in zones if not z.is_known(now, max_age))
-        blind = {*unknown, *(z.zone_id for z in zones if z.room_sensor_lost)}
+        blind = {
+            *unknown,
+            *(
+                z.zone_id
+                for z in zones
+                if z.room_sensor_lost
+                or not z.started
+                or (
+                    (watched is None or z.zone_id == watched)
+                    and z.temperature is not None
+                    and not plausible_room(z.temperature)
+                )
+            ),
+        }
         self._unknown_since = {z: self._unknown_since.get(z, now) for z in sorted(blind)}
         long_unknown = any(now - t >= ZONE_UNKNOWN_ALARM_S for t in self._unknown_since.values())
         if self.enabled and long_unknown:
@@ -1443,12 +1642,20 @@ class ControlUnit:
                 weather = float(reading.value) if reading.value is not None else None
         check = getattr(self._coordinator.analysis, "outdoor", None)
         sensor = curve_sensor(check, snapshot.number(Signal.OUTDOOR, outdoor_age), weather)
+        link = self._boiler_link(snapshot)
+        self._link_seen = self._link_seen or link
+        restoring = self._restore_pending
         return ControlInputs(
             now=now,
             enabled=self.enabled,
             blockers=blockers,
             hand_back_alarms=self._hand_back_alarms(),
-            boiler_link=self._boiler_link(snapshot),
+            boiler_link=link,
+            # Decision 3's restore waits, within the recognition period, for a link that has
+            # not reported since the start: no loss is declared meanwhile (X2).
+            link_unreported=restoring and not self._link_seen,
+            restored_command=self._restore_command if restoring else None,
+            target_ready=self._target_ready(),
             read_back_known=self._read_back_known(),
             flame=snapshot.flag(Signal.FLAME, config.freshness.get(Signal.FLAME)),
             dhw=coordinator.dhw_now(snapshot),
@@ -1490,8 +1697,12 @@ class ControlUnit:
                 ControlAlarm.OUTDOOR_SENSOR_SUSPECT,
                 ControlAlarm.MONITOR_FAILED,
                 ControlAlarm.HANDED_BACK_IN_FROST,
+                ControlAlarm.NO_ZONE_KNOWN,
+                ControlAlarm.DEMAND_CRITERION_NO_DATA,
             ):
-                continue  # a blocker, a retry of its own, a hand-back already made, information
+                # A blocker, a retry of its own, a hand-back already made, information, or
+                # decision 3's own end state.
+                continue
             if self.options.reaction(alarm.value) is AlarmReaction.HAND_BACK:
                 active.append(alarm.value)
         return tuple(active)
@@ -1640,6 +1851,8 @@ class ControlUnit:
         session.failing.discard(kind)
         if not session.failing:  # each kind of write clears only its own failure
             session.alarms.discard(ControlAlarm.WRITE_FAILED)
+        # A restored command went through (decision 3): the restore is done.
+        self._restore_pending = False
         if self._hand_back_pending:
             # Control has the boiler again: the earlier hand-back is folded into this session's,
             # which gives back whatever the earlier one left — every hand-back is whole.

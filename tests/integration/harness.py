@@ -97,13 +97,23 @@ class FakeZones:
         return entry.entity_id
 
     def set(self, zone_id: str, state: str = "heat", **attributes: Any) -> None:
-        values = {
+        """A VT climate's state. In a mode, it shows what VT 10.4.0 shows once it has started
+        the thermostat — ``is_ready`` true and its ``specific_states``; a test sets a zone VT
+        has not started explicitly (``is_ready=False``), or gives ``None`` to leave either out,
+        as VT does before its first refresh."""
+        values: dict[str, Any] = {
             "current_temperature": 20.0,
             "temperature": 21.0,
             "hvac_action": "idle",
             "on_percent": 0.0,
             "power_percent": 0,
-        } | attributes
+        }
+        if state not in ("unavailable", "unknown"):
+            values |= {"is_ready": True, "specific_states": {}}
+        values |= attributes
+        for key in ("is_ready", "specific_states"):
+            if values.get(key, False) is None:
+                del values[key]
         self.hass.states.async_set(self.entities[zone_id], state, values)
 
 

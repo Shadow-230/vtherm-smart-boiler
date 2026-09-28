@@ -8,7 +8,9 @@ Order of precedence, checked on every tick:
    until a new session: the user switching control off and on again (the control unit starts
    it). An alarm latches whatever blockers show at the same step (P-48); the status still lists
    them.
-3. A precondition missing (a blocker) → no command; hand back once if we were controlling.
+3. A precondition missing (a blocker) → no command; hand back once if we were controlling. Home
+   Assistant starting (``HA_STARTING``) does not stop a command kept or restored in the
+   recognition period (point 5), but nothing new is decided before it runs.
 4. The boiler link lost, or the boiler's signals not fresh at this step → no command (nothing
    is written without fresh data). The link is judged over a window, at every step and before
    anything above (X2): lost once stale steps cover five minutes within ten — a link fresh one
@@ -22,8 +24,20 @@ Order of precedence, checked on every tick:
    nothing counted or timed holds heating against VT; and the
    water temperature, decided every decision interval (and at once after any of the above ends):
    the curve on the effective outdoor temperature, limits and ramp. Without an outdoor
-   temperature the fallback setpoint applies; without fresh zone data heating is assumed to be
-   needed — never zero heat on missing data.
+   temperature the fallback setpoint applies, with zones known. Decision 3 (``core.zone_watch``)
+   decides what missing zone data means:
+   - in the recognition period (after a start, or when every zone went away at once: VT
+     reloading) nothing new is decided: the command held before — this session's, or the last
+     one V3 stored, given again at once after a restart where the control unit found every
+     condition for it — is kept with its keep-alives; without one nothing is written. Frost
+     protection, which only adds heat, still acts for the zones already known;
+   - a zone that went away keeps its last answer for ten minutes (its grace);
+   - with every zone unknown after that, or no configured demand criterion that can be judged,
+     nothing can ask for heat: a working thermostat — a gateway with an OpenTherm thermostat,
+     or the boiler's own room controller where the user ticked it — is handed the boiler at
+     once, without a latch; otherwise heating is off, with the water at the lowest temperature
+     where no outdoor temperature is known — never the design flow. Either way control resumes
+     by itself the step a zone answers again.
 
 Zone signals only correct the curve (weather is counted once). The comfort correction follows the
 rules of bounded learning: while a zone's valve is fully open (or at VT's cap) and its room is
@@ -51,7 +65,7 @@ from .curve import (
     OutdoorState,
     update_outdoor,
 )
-from .demand import DemandConfig, boiler_demand
+from .demand import Demand, DemandConfig, boiler_demand
 from .limits import (
     FlowLimits,
     FrostConfig,
@@ -61,6 +75,7 @@ from .limits import (
     watched_temperatures,
 )
 from .readings import ZoneState
+from .zone_watch import ZoneWatch, follow_zones, graced, in_recognition
 
 HOUR = 3600.0
 CORRECTION_MAX_K = 3.0  # the firm band of the comfort correction
@@ -77,6 +92,9 @@ FROST_WARMING_K = 0.5  # the watched room must have warmed by this much
 OUTAGE_LOST_S = 300.0  # decided: five minutes (the user's answer I; decision 7)
 OUTAGE_WINDOW_S = 600.0  # provisional, K4
 OUTAGE_BACK_S = 60.0  # provisional, K4
+# The blocker "Home Assistant is starting": it does not stop a command kept or restored in the
+# recognition period, which it keeps from ending (decision 3).
+HA_STARTING = "ha_starting"
 
 
 class ControlMode(StrEnum):
@@ -103,6 +121,7 @@ class Reason(StrEnum):
     DEMAND = "demand"
     NO_DEMAND = "no_demand"
     ZONES_UNKNOWN = "zones_unknown"
+    ZONES_RECOGNITION = "zones_recognition"  # the zones are still reporting: nothing new decided
     FROST = "frost"
     RAMP = "ramp"
     LIMIT_HARD_MIN = "limit_hard_min"
@@ -163,6 +182,10 @@ class ControlConfig:
     stale_hand_back_s: float | None = OUTAGE_LOST_S
     outdoor_time_constant_s: float = DEFAULT_TIME_CONSTANT_S
     outdoor_hold_s: float = DEFAULT_HOLD_S
+    # Decision 3: with every zone unknown, a working thermostat is handed the boiler — a gateway
+    # with an OpenTherm thermostat, or the boiler's own room controller where the user ticked
+    # it (answers F, M); without one, the usual "off".
+    working_thermostat: bool = False
 
     def __post_init__(self) -> None:
         if self.decision_interval_s <= 0:
@@ -191,8 +214,14 @@ class ControlInputs:
     dhw: bool | None = None
     outdoor_sensor: float | None = None
     outdoor_weather: float | None = None
-    zones: Sequence[ZoneState] = ()
+    zones: Sequence[ZoneState] = ()  # every configured zone
     clipped: bool = False  # the boiler holds the water lower than asked: its own limit
+    # Decision 3: the last command V3 stored, given again at once after a restart where the
+    # control unit found every condition for it; kept with its keep-alives while the
+    # recognition period runs. ``target_ready``: the write target can take it — until it can,
+    # nothing is written.
+    restored_command: BoilerCommand | None = None
+    target_ready: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +255,9 @@ class ControlState:
     # about the link, not the session); empty after a restart.
     link: OutageWindow = field(default_factory=OutageWindow)
     link_unreported: bool = False  # the last step's restore waited for a link not yet reported
+    # The zones' recognition period and graces (decision 3): a fact about the zones, kept
+    # through a hand-back and a new session; empty after a restart.
+    zones: ZoneWatch = field(default_factory=ZoneWatch)
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,6 +271,10 @@ class ControlDecision:
     frost_stuck: bool = False  # frost heating for long without the room warming: tell the user
     correction_at_limit: bool = False  # the correction at its band's edge for hours: tell the user
     link_lost: bool = False  # the boiler link is lost (X2): stale for five minutes within ten
+    # Decision 3: every configured zone unknown after the recognition period and the graces;
+    # the configured demand criteria no known zone can feed (both outside the recognition).
+    zones_unknown: bool = False
+    criteria_without_data: tuple[str, ...] = ()
 
 
 def clock_start(since: float | None, now: float) -> float:
@@ -355,24 +391,49 @@ def follow_link(state: ControlState, inputs: ControlInputs, config: ControlConfi
 def decide(
     state: ControlState, inputs: ControlInputs, config: ControlConfig
 ) -> tuple[ControlState, ControlDecision]:
-    """One tick of the controller. The boiler link is followed first, at every step — switched
-    off, latched or blocked alike — and every decision says whether it is lost (X2)."""
+    """One tick of the controller. The boiler link and the zones are followed first, at every
+    step — switched off, latched or blocked alike — and every decision says whether the link is
+    lost (X2) and whether every zone is unknown or a criterion has no data (decision 3)."""
+    now = inputs.now
     outdoor = update_outdoor(
         state.outdoor,
         inputs.outdoor_sensor,
         inputs.outdoor_weather,
-        inputs.now,
+        now,
         config.outdoor_time_constant_s,
         config.outdoor_hold_s,
     )
     link = follow_link(state, inputs, config)
-    state = replace(state, outdoor=outdoor, link=link, link_unreported=inputs.link_unreported)
-    state, decision = _decide(state, inputs, config)
-    return state, replace(decision, link_lost=link.lost)
+    watch = follow_zones(
+        state.zones,
+        inputs.zones,
+        now,
+        config.zone_max_age_s,
+        starting=HA_STARTING in inputs.blockers,
+    )
+    state = replace(
+        state, outdoor=outdoor, link=link, link_unreported=inputs.link_unreported, zones=watch
+    )
+    recognition = in_recognition(watch)
+    demand = boiler_demand(
+        inputs.zones,
+        now,
+        config.zone_max_age_s,
+        config.demand,
+        memory=graced(watch),
+        recognition=recognition,
+    )
+    state, decision = _decide(state, inputs, config, demand)
+    return state, replace(
+        decision,
+        link_lost=link.lost,
+        zones_unknown=not recognition and bool(inputs.zones) and demand.fresh_zones == 0,
+        criteria_without_data=() if recognition else demand.criteria_without_data,
+    )
 
 
 def _decide(
-    state: ControlState, inputs: ControlInputs, config: ControlConfig
+    state: ControlState, inputs: ControlInputs, config: ControlConfig, demand: Demand
 ) -> tuple[ControlState, ControlDecision]:
     now = inputs.now
     if not inputs.enabled:
@@ -382,7 +443,11 @@ def _decide(
         latched_by = state.latched_by if state.latched else tuple(inputs.hand_back_alarms)
         state = replace(state, latched=True, latched_by=latched_by)
         return _release(state, ControlMode.HANDED_BACK, Reason.ALARM_HAND_BACK)
-    if inputs.blockers:
+    recognition = in_recognition(state.zones)
+    held = state.command if state.controlling else inputs.restored_command
+    # Home Assistant starting alone does not stop a command kept or restored meanwhile.
+    keeps = recognition and held is not None and set(inputs.blockers) <= {HA_STARTING}
+    if inputs.blockers and not keeps:
         return _release(state, ControlMode.NOT_ALLOWED, Reason.PRECONDITION)
     if state.link.lost and state.controlling:
         # Stale for five minutes within ten, a flapping link included (P-08): hand back once;
@@ -406,12 +471,61 @@ def _decide(
         waiting = replace(state, mode=ControlMode.WAITING_DATA, reasons=reasons, decided_at=None)
         return waiting, ControlDecision(ControlMode.WAITING_DATA, None, reasons=reasons)
 
-    frost = frost_needed(inputs.zones, now, config.zone_max_age_s, state.frost, config.frost)
-    return _heating_decision(state, inputs, config, frost)
+    max_age = config.zone_max_age_s
+    watched = [z for z in inputs.zones if not recognition or z.is_known(now, max_age, True)]
+    frost = frost_needed(watched, now, max_age, state.frost, config.frost)
+    if not frost:
+        if recognition:
+            if not state.controlling and not inputs.target_ready:
+                held = None  # the restored command waits for its write target
+            return _keep(state, now, held)
+        if (
+            inputs.restored_command is not None
+            and not state.controlling
+            and not inputs.target_ready
+        ):
+            # The recognition period ended while the restored command still waited for its write
+            # target: nothing new this step — the owed hand-back goes first; the next step
+            # decides. (Everything there, control simply decides anew.)
+            return _keep(state, now, None)
+        if demand.wanted is None and config.working_thermostat:
+            # Nothing can ask for heat: the working thermostat takes the boiler — no latch.
+            return _release(state, ControlMode.HANDED_BACK, Reason.ZONES_UNKNOWN)
+    return _heating_decision(state, inputs, config, frost, demand)
+
+
+def _keep(
+    state: ControlState, now: float, held: BoilerCommand | None
+) -> tuple[ControlState, ControlDecision]:
+    """The recognition period: nothing new is decided. The command held before goes on, with
+    its keep-alives; without one nothing is written."""
+    reasons = (Reason.ZONES_RECOGNITION,)
+    if held is None:
+        waiting = replace(state, mode=ControlMode.WAITING_DATA, reasons=reasons, decided_at=None)
+        return waiting, ControlDecision(ControlMode.WAITING_DATA, None, reasons=reasons)
+    mode = ControlMode.HEATING if held.ch_enable else ControlMode.IDLE
+    target = state.target if state.controlling else held.setpoint
+    kept = replace(
+        state,
+        mode=mode,
+        controlling=True,
+        frost=False,
+        frost_since=None,
+        frost_from=None,
+        command=held,
+        target=target,
+        reasons=reasons,
+        last_step_at=now,
+    )
+    return kept, ControlDecision(mode, held, reasons=reasons, target=target)
 
 
 def _heating_decision(
-    state: ControlState, inputs: ControlInputs, config: ControlConfig, frost: bool
+    state: ControlState,
+    inputs: ControlInputs,
+    config: ControlConfig,
+    frost: bool,
+    demand: Demand,
 ) -> tuple[ControlState, ControlDecision]:
     """Heating on or off at every step; the water temperature every decision interval."""
     now = inputs.now
@@ -424,7 +538,11 @@ def _heating_decision(
     elif not frost:
         state = replace(state, frost_since=None, frost_from=None)
     step_s = 0.0 if state.last_step_at is None else max(0.0, now - state.last_step_at)
-    if want_heat_now(inputs, config, frost) and not inputs.dhw:
+    want_heat, heat_reason = _want_heat(demand, frost)
+    # Decision 3's "off": every zone unknown, or no criterion that can be judged, and no working
+    # thermostat to hand the boiler to — nothing asks for heat.
+    nobody_asks = not frost and demand.wanted is None
+    if want_heat and not inputs.dhw:
         # Heat flow counts a minute a step at most: a wall clock jumping forward must not count
         # an hour of it, which would raise the comfort correction past its rate at once.
         state = replace(state, heat_s=state.heat_s + min(MAX_STEP_S, step_s))
@@ -438,7 +556,6 @@ def _heating_decision(
         and state.frost_from is not None
         and coldest < state.frost_from + FROST_WARMING_K
     )
-    want_heat, heat_reason = _want_heat(inputs, config, frost)
 
     prior_target, prior_upper = state.target, state.upper
     due = (
@@ -449,6 +566,9 @@ def _heating_decision(
         or state.decided_at > now  # the wall clock was set back: decided again now (C9)
         or now - state.decided_at >= config.decision_interval_s
         or frost != state.frost
+        # Nothing asks for heat and no outdoor temperature: the lowest water temperature at
+        # once — never a fallback decided before (decision 3).
+        or (nobody_asks and outdoor.effective is None)
     )
     if due:
         water: list[Reason] = [_OUTDOOR_REASON[outdoor.source]]
@@ -459,10 +579,12 @@ def _heating_decision(
         state = replace(state, heat_s=0.0, correction_limit_since=limit_since)
         if correction > 0:
             water.append(Reason.COMFORT_CORRECTION)
-        if outdoor.effective is None:
-            curve_value = fallback_setpoint(config)
-        else:
+        if outdoor.effective is not None:
             curve_value = config.curve.flow(outdoor.effective)
+        elif nobody_asks:
+            curve_value = config.limits.hard_min  # the fallback serves only with zones known
+        else:
+            curve_value = fallback_setpoint(config)
         limited = limit_flow(
             curve_value + correction, curve_value, config.limits, config.circuit_max,
             config.boiler_max, config.circuit_floor,
@@ -485,6 +607,8 @@ def _heating_decision(
 
     if frost:
         mode = ControlMode.FROST
+    elif nobody_asks:
+        mode = ControlMode.IDLE
     elif outdoor.effective is None:
         mode = ControlMode.FALLBACK
     elif want_heat:
@@ -523,18 +647,14 @@ def _heating_decision(
     )
 
 
-def want_heat_now(inputs: ControlInputs, config: ControlConfig, frost: bool) -> bool:
-    return _want_heat(inputs, config, frost)[0]
-
-
-def _want_heat(inputs: ControlInputs, config: ControlConfig, frost: bool) -> tuple[bool, Reason]:
+def _want_heat(demand: Demand, frost: bool) -> tuple[bool, Reason]:
     """Whether to heat now and why: frost protection, else the zones' demand — VT's central mode
-    and summer or winter act on the zones themselves."""
+    and summer or winter act on the zones themselves. Demand unknown asks for nothing (decision
+    3): heating off, or the working thermostat's, before this."""
     if frost:
         return True, Reason.FROST
-    demand = boiler_demand(inputs.zones, inputs.now, config.zone_max_age_s, config.demand)
     if demand.wanted is None:
-        return True, Reason.ZONES_UNKNOWN
+        return False, Reason.ZONES_UNKNOWN
     return demand.wanted, Reason.DEMAND if demand.wanted else Reason.NO_DEMAND
 
 

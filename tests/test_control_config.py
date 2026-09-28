@@ -178,9 +178,11 @@ def test_every_blocker_is_listed() -> None:
         (Circuit("main"),),
         (Zone("climate.a", "main", EmitterType.UNDERFLOOR),),
     )
+    no_zones = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
     cases += [
         (OTGW, two),
         (OTGW, floor),
+        (OTGW, no_zones),
         (OTGW | {"count_threshold": 5}, RADIATORS),
         (ENTITY | {"off_setpoint": 30}, RADIATORS),
         (ENTITY | {"hand_back": "switch", "hand_back_entity": "switch.external"}, RADIATORS),
@@ -545,3 +547,125 @@ def test_the_switch_says_who_keeps_frost_protection_after_a_hand_back(
     assert frost_protection_by(options, controlling=True) is FrostProtection.PLUGIN
     shown = frost_protection_by(options, controlling=False)
     assert (None if shown is None else shown.value) == after_hand_back
+
+
+# --- X3: control needs a zone (S-04); the boiler's own room controller (answers F, M) -----------
+
+
+def test_control_needs_at_least_one_zone() -> None:
+    """S-04: without a VT zone nothing can ask for heat — a blocker that names it alone."""
+    none = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
+    assert config_blockers(parse_control(OTGW, none, None), none) == ["no_zones"]
+    assert "no_zones" not in config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS)
+
+
+TICKED = ENTITY | {"hand_back": "timeout", "write_type": "expiring", "own_room_controller": True}
+
+
+def test_the_own_room_controller_tick_makes_a_working_thermostat() -> None:
+    """Answer F: the entity path with the virtual topology and the tick — every hand-back goes
+    to the boiler's own control, and with every zone unknown the boiler is handed to it."""
+    from custom_components.vtherm_smart_boiler.control_config import (
+        FrostProtection,
+        HandBackEffect,
+        frost_protection_by,
+        hand_back_effect,
+        hand_back_heating_on,
+        working_thermostat,
+    )
+
+    for data in (TICKED, ENTITY | {"own_room_controller": True}):
+        options = parse_control(data, RADIATORS, None)
+        assert options.own_room_controller
+        assert hand_back_effect(options) is HandBackEffect.OWN_CONTROL_RESUMES
+        assert working_thermostat(options)
+        assert options.loop.control.working_thermostat
+        assert hand_back_heating_on(options)  # like "device decides": the heating switch on
+        assert frost_protection_by(options, controlling=False) is FrostProtection.DEVICE
+        assert config_blockers(options, RADIATORS) == []
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        ENTITY,  # a hand-back value declared "own control", without the tick
+        ENTITY | {"hand_back": "timeout", "write_type": "expiring"},  # "device decides"
+        TICKED | {"own_room_controller": False},
+        TICKED | {"own_room_controller": "yes"},  # only a stored true ticks it
+        TICKED | {"own_room_controller": None},
+        {k: v for k, v in TICKED.items() if k != "own_room_controller"},  # missing: not ticked
+    ],
+)
+def test_an_own_control_hand_back_value_without_the_tick_is_not_a_working_thermostat(
+    data: dict,
+) -> None:
+    from custom_components.vtherm_smart_boiler.control_config import (
+        HandBackEffect,
+        hand_back_effect,
+        working_thermostat,
+    )
+
+    options = parse_control(data, RADIATORS, None)
+    assert hand_back_effect(options) is HandBackEffect.DEVICE_DECIDES
+    assert not working_thermostat(options)
+    assert not options.loop.control.working_thermostat
+
+
+def test_the_tick_on_the_relay_path_counts_only_with_rest_state_on() -> None:
+    """Answer M, the rule X8 wires to the relay path: the tick counts as a working thermostat
+    only where the relay rests "on" (the boiler's heat-demand contact); a relay resting "on"
+    without the tick does not count, nor the tick with the rest state "off"."""
+    from custom_components.vtherm_smart_boiler.control_config import relay_working_thermostat
+
+    assert relay_working_thermostat(ticked=True, rests_on=True)
+    assert not relay_working_thermostat(ticked=True, rests_on=False)
+    assert not relay_working_thermostat(ticked=False, rests_on=True)
+    assert not relay_working_thermostat(ticked=False, rests_on=False)
+
+
+@pytest.mark.parametrize(
+    ("data", "effect", "working"),
+    [
+        (OTGW | {"topology": "gateway_with_thermostat"}, "thermostat_takes_over", True),
+        (OTGW, "heating_stops", False),  # stand-alone
+        (
+            OTGW | {"write_path": "otgw_mqtt", "topology": "gateway_with_thermostat"},
+            "thermostat_takes_over",
+            True,
+        ),
+        (TICKED | {"topology": "gateway_with_thermostat"}, "thermostat_takes_over", True),
+        (TICKED | {"topology": "gateway_standalone"}, "heating_stops", False),
+    ],
+)
+def test_a_tick_stored_with_a_gateway_is_ignored(data: dict, effect: str, working: bool) -> None:
+    """Answer M: the tick is not offered with a gateway — the thermostat on its terminals
+    already counts, and with nothing on them a hand-back stops heating anyway. A tick stored
+    there (hand-edited, left from another path or topology) changes nothing."""
+    from custom_components.vtherm_smart_boiler.control_config import (
+        hand_back_effect,
+        working_thermostat,
+    )
+
+    ticked = parse_control(data | {"own_room_controller": True}, RADIATORS, None)
+    plain = parse_control(data, RADIATORS, None)
+    for options in (ticked, plain):
+        shown = hand_back_effect(options)
+        assert shown is not None
+        assert shown.value == effect
+        assert working_thermostat(options) is working
+        assert options.loop.control.working_thermostat is working
+
+
+def test_a_tick_with_a_hand_back_value_that_stops_heating_is_ignored() -> None:
+    """Refused in the form; hand-edited, the cautious reading: heating stops, no working
+    thermostat."""
+    from custom_components.vtherm_smart_boiler.control_config import (
+        HandBackEffect,
+        hand_back_effect,
+        working_thermostat,
+    )
+
+    data = ENTITY | {"hand_back_value_effect": "heating_stops", "own_room_controller": True}
+    options = parse_control(data, RADIATORS, None)
+    assert hand_back_effect(options) is HandBackEffect.HEATING_STOPS
+    assert not working_thermostat(options)

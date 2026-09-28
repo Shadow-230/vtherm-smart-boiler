@@ -494,7 +494,8 @@
           "hand_back_value": "Hand-back value",
           "hand_back_value_effect": "What the hand-back value does",
           "hand_back_entity": "External control switch",
-          "hand_back_entity_write_type": "External control switch write type"
+          "hand_back_entity_write_type": "External control switch write type",
+          "own_room_controller": "The boiler has its own room controller"
         },
         "data_description": {
           "setpoint_entity": "A number or input_number that sets the boiler's flow temperature.",
@@ -505,7 +506,8 @@
           "hand_back_value": "The setpoint written on hand-back, in °C, for the value method: the value that returns the boiler to its own control, or the one it should keep. 0 means \"own control\" on some devices and \"no heat\" on others. Required for the value method. It must not exceed the highest flow setpoint or the circuit's maximum, and is never cut down to them; it counts as done once the read-back shows it.",
           "hand_back_value_effect": "Required with the value method: what the device does with the hand-back value — its own control resumes, or heating stops. The control switch shows it as what hand-back leads to.",
           "hand_back_entity": "For the switch method: the switch that enables external control. It is turned on when control starts and off on hand-back — so never a setting the device stores in its memory; its write type is needed below.",
-          "hand_back_entity_write_type": "Needed with the switch method: what the device does with the switch's state. Expiring: dropped unless repeated — turned on again every 30 s while control holds the boiler. Held: the device keeps it — turned on once each time control takes the boiler. Persistent or unknown (default): it may be stored in the boiler's memory, which every switching would wear, so control is not available with it."
+          "hand_back_entity_write_type": "Needed with the switch method: what the device does with the switch's state. Expiring: dropped unless repeated — turned on again every 30 s while control holds the boiler. Held: the device keeps it — turned on once each time control takes the boiler. Persistent or unknown (default): it may be stored in the boiler's memory, which every switching would wear, so control is not available with it.",
+          "own_room_controller": "Tick only if the boiler has a room controller of its own that asks for heat by itself once the plugin lets go — for example a room unit on the boiler's bus (EMS). If Versatile Thermostat gives no answer at all, the plugin then hands the boiler back to it; without the tick the boiler does not heat, and an alarm and a repair notice tell you why. Every other hand-back also goes to that controller. With a relay it counts only when the relay's state after hand-back is \"on\"; with \"off\", the boiler does not heat when Versatile Thermostat gives no answer. Off by default. Risk: without such a controller, the boiler would be left on its own dial, heating with no room in charge."
         }
       },
       "control_gateway": {
@@ -580,7 +582,7 @@
           "decision_interval_min": "How often the water temperature is decided anew, in minutes; default 5, VT's default cycle. Heating on and off follows the zones at every 10 s step, whatever this is; the plugin does not read the zones' own cycles. Shorter: the water follows the weather and the rooms sooner, but the zones' algorithms see it move more often; longer: steadier water that follows more slowly.",
           "off_setpoint": "The setpoint written for \"off\" when there is no heating switch, in °C. Default 10: far below any heating value, and below the lowest flow setpoint. Risk: a low setpoint does not switch the boiler's heating off — ESPHome and DIYLess masters keep CH enabled, and boilers are reported to keep their CH pump running; a heating switch, or an OpenTherm Gateway's CH=0, really turns heating off.",
           "count_threshold": "Heating is needed when at least this many zones call for heat. Default 1; at most the number of zones. 0 turns the count off, leaving the power or opening threshold alone, as in Versatile Thermostat. Higher leaves a single calling room without heat.",
-          "power_threshold_kw": "Optional: heating is needed when the calling zones' power, each weighted by its valve opening, adds up to this, in kW. Too high leaves small rooms without heat.",
+          "power_threshold_kw": "Optional: heating is needed when the zones' mean power over their cycle, as Versatile Thermostat counts it, reaches this, in kW — counted only while at least one of them has its valve open or its device on. Too high leaves small rooms without heat.",
           "opening_threshold": "Optional: heating is needed when the widest valve opening among the calling zones reaches this, in %. Too high leaves a room that opens a little without heat.",
           "learning_pauses": "Pause SmartPI learning while hot water runs, while foreign heat warms a zone and while the water temperature swings, so it does not learn what the boiler did; each pause and resume is read back from SmartPI. Default on. Auto-TPI cannot be paused without resetting what it learned, so zones running it are reported instead. Off: SmartPI learns through those moments too, which can skew its model.",
           "comfort_correction": "On (default): while a zone's valve is fully open and its room stays short of its setpoint, the water goes up to 3 K above the curve — 1 K per 30 minutes, only while heat flows — and falls twice as fast; it never rises while another zone is more than 1 K too warm, resets at hand-back, and after three hours at 3 K tells you the curve is probably too low. It acts in series with the zones' own PI (SmartPI, TPI): its slow rate lets them settle first. A zone algorithm's outdoor term (TPI's external coefficient) counts the weather a second time: keep it small while the plugin sets the water. Off: the curve alone."
@@ -646,10 +648,14 @@
       "write_type_not_supported": "The plugin never writes to the boiler's persistent memory: declare the setpoint entity expiring or held, or choose \"No control\".",
       "ch_write_type_not_supported": "Declare the heating switch expiring or held, or leave the switch empty: the plugin never writes to the boiler's persistent memory.",
       "hand_back_value_effect_missing": "The value method needs its effect: what the device does with the hand-back value.",
+      "own_room_controller_but_heating_stops": "A hand-back value that stops heating leaves nothing for the boiler's own room controller to take over: untick the box or change what the hand-back value does.",
       "hand_back_pending": "A hand-back has not reached the boiler yet: the write path, what control writes to and the gateway's read-back cannot change until it does. Bring the target back, or choose \"No control\": the hand-back is still retried.",
       "control_holds_boiler": "Control has the boiler: switch control off first, so the boiler is given back through the device that has it; then change what control writes to or the gateway's read-back.",
       "count_threshold_above_zones": "More zones than are configured: heating would never be asked for.",
       "no_demand_criterion": "Set at least one criterion: a zone count of 0 needs a power or an opening threshold.",
+      "no_zones": "Add at least one Versatile Thermostat zone before setting up control.",
+      "power_criterion_no_zone": "No zone reports a device power in Versatile Thermostat, so this threshold could never be reached: set the power in VT or leave it empty.",
+      "opening_criterion_no_zone": "No zone reports a valve opening or duty cycle, so this threshold could never be reached.",
       "off_setpoint_not_below_hard_min": "\"Off\" must be at least 1 °C below the lowest water temperature, or the boiler would not see a change.",
       "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit (°C, °F or K): a value written would mean something else to it. Pick the boiler's flow setpoint entity.",
       "missing_signal": "A required signal is missing.",
@@ -1181,6 +1187,17 @@
             "name": "Targets"
           }
         }
+      },
+      "alarm_no_zone_known": {
+        "name": "Control: no zone answers"
+      },
+      "alarm_demand_criterion_no_data": {
+        "name": "Control: a demand criterion has no data",
+        "state_attributes": {
+          "criteria": {
+            "name": "Criteria"
+          }
+        }
       }
     },
     "switch": {
@@ -1192,7 +1209,8 @@
             "state": {
               "thermostat_takes_over": "The thermostat takes over",
               "heating_stops": "Heating stops until control resumes",
-              "device_decides": "The device's own fallback applies"
+              "device_decides": "The device's own fallback applies",
+              "own_control_resumes": "The boiler's own control takes over"
             }
           },
           "frost_protection_by": {
@@ -1260,6 +1278,9 @@
     },
     "blocked_count_threshold_above_zones": {
       "message": "The demand threshold asks for more zones than are configured, so heating would never be asked for: lower it in the options. Other reasons: {others}."
+    },
+    "blocked_no_zones": {
+      "message": "Control needs at least one Versatile Thermostat zone: add them in the options. Other reasons: {others}."
     },
     "blocked_ha_starting": {
       "message": "Home Assistant is still starting. Other reasons: {others}."
@@ -1373,6 +1394,18 @@
     "control_latched_heating_off_ignored": {
       "title": "Control stopped: the boiler does not take \"heating off\"",
       "description": "From the start of the session the boiler did not take the plugin's \"heating off\", so the plugin could not switch heating off. Control stopped and handed the boiler back safely: first the lowest water temperature, then heating on where a thermostat or the boiler's own control takes over, then the release. Check the heating switch picked in the options and the boiler's settings, then switch control off and on. The monitor keeps running."
+    },
+    "no_zone_known_off": {
+      "title": "Versatile Thermostat gives no answer: the boiler is not heating",
+      "description": "None of the zones answers ({zones}), so nothing can ask for heat. The plugin keeps the boiler's heating off and resumes as soon as a zone answers. Check that Versatile Thermostat is loaded, its thermostats are enabled and their entity IDs are the ones in the plugin's options."
+    },
+    "no_zone_known_handed_back": {
+      "title": "Versatile Thermostat gives no answer: the boiler is back on its thermostat or its own room controller",
+      "description": "None of the zones answers ({zones}), so nothing can ask for heat. The plugin handed the boiler back to the thermostat on the gateway, or to the boiler's own room controller, and takes it again as soon as a zone answers. Check that Versatile Thermostat is loaded, its thermostats are enabled and their entity IDs are the ones in the plugin's options."
+    },
+    "no_zone_known_monitor": {
+      "title": "Versatile Thermostat gives no answer",
+      "description": "None of the zones answers ({zones}); the monitor cannot judge them. Check that Versatile Thermostat is loaded, its thermostats are enabled and their entity IDs are the ones in the plugin's options."
     }
   }
 }

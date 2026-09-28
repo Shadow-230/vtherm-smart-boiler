@@ -89,12 +89,14 @@ def test_stale_zones_do_not_count_and_no_fresh_zone_is_unknown() -> None:
     "unknown",
     [
         zone("a", heating_enabled=None, valve_open=0.9),  # `unavailable`, or a mode not known
-        zone("a", ready=False, valve_open=0.9),  # VT has not finished starting it
+        zone("a", ready=False, valve_open=0.9),  # heating, but VT has not finished starting it
+        zone("a", reported=False, valve_open=0.9),  # heating, VT's first refresh still to come
         zone("a", valve_open=0.9, temperature_at=NOW - 2 * AGE),  # its room sensor went quiet
     ],
 )
 def test_a_zone_that_is_not_known_never_means_no_demand(unknown: ZoneState) -> None:
-    """Alone it makes demand unknown (the curve heats); with others, the known ones decide."""
+    """Alone it makes demand unknown (decision 3 then decides); with others, the known ones
+    decide."""
     assert boiler_demand([unknown], NOW, AGE, DemandConfig()) == Demand(None, unknown=("a",))
     other = boiler_demand([unknown, zone("b", valve_open=0.0)], NOW, AGE, DemandConfig())
     assert other.wanted is False
@@ -135,3 +137,150 @@ def test_the_count_never_asks_for_more_zones_than_are_known() -> None:
 def test_invalid_config(kwargs: dict) -> None:
     with pytest.raises(ValueError, match="must"):
         DemandConfig(**kwargs)
+
+
+# --- X3: calling zones only, the power over the cycle, criteria without data, S-34, shedding ----
+
+
+def test_the_opening_threshold_follows_calling_zones_only() -> None:
+    """T-46 (P-13): an over_switch zone keeps its duty cycle through its off phase; VT's device
+    is off, so the zone does not call, and its duty cycle is no opening of a calling zone."""
+    switch = zone("a", on_percent=0.6, device_active=False)
+    config = DemandConfig(count_threshold=0, opening_threshold=0.5)
+    result = boiler_demand([switch], NOW, AGE, config)
+    assert result.wanted is False
+    assert result.widest_opening is None
+    assert result.criteria_without_data == ()  # the zone publishes an opening: data, no call
+
+
+def test_the_power_criterion_counts_a_switch_zone_through_its_off_phase() -> None:
+    """VT counts a zone's mean power over its cycle — 0.6 of 2 kW for a switch zone in its off
+    phase — while heat can flow: another zone's valve is open."""
+    switch = zone("a", on_percent=0.6, power=2.0, device_active=False)
+    valve = zone("b", valve_open=0.5)
+    config = DemandConfig(count_threshold=0, power_threshold_kw=1.0)
+    result = boiler_demand([switch, valve], NOW, AGE, config)
+    assert result.power_kw == pytest.approx(1.2)
+    assert result.wanted is True
+    published = zone("a", on_percent=0.6, power=2.0, mean_power=1.2, device_active=False)
+    assert boiler_demand([published, valve], NOW, AGE, config).power_kw == pytest.approx(1.2)
+
+
+def test_the_power_criterion_needs_an_open_valve_or_an_active_device() -> None:
+    """Mean power of 3 kW, but no zone has its valve open or its device on: no heat can flow,
+    so the power criterion asks for nothing — and it still has data."""
+    zones = [
+        zone("a", on_percent=0.6, power=2.5, device_active=False),
+        zone("b", on_percent=0.6, mean_power=1.5, power=2.5, device_active=False),
+    ]
+    config = DemandConfig(count_threshold=0, power_threshold_kw=1.0)
+    result = boiler_demand(zones, NOW, AGE, config)
+    assert result.wanted is False
+    assert result.criteria_without_data == ()
+    active = [*zones[:1], zone("b", on_percent=0.6, power=2.5, device_active=True)]
+    assert boiler_demand(active, NOW, AGE, config).wanted is True
+
+
+def test_a_criterion_without_data_is_not_no_demand() -> None:
+    """T-27 (P-14): a count of 0 and only a power threshold, while no zone has a device power
+    (VT publishes 0 when none is set): whether to heat is not known — never a silent "no"."""
+    zones = [zone("a", valve_open=0.6, device_active=True), zone("b", valve_open=0.3)]
+    config = DemandConfig(count_threshold=0, power_threshold_kw=1.0)
+    result = boiler_demand(zones, NOW, AGE, config)
+    assert result.wanted is None
+    assert result.criteria_without_data == ("power",)
+    assert result.power_kw is None
+
+
+def test_an_opening_criterion_without_data_is_not_no_demand() -> None:
+    """No zone publishes an opening or a duty cycle (VT's over_climate): the opening
+    criterion cannot be judged."""
+    zones = [zone("a", calling=True), zone("b", calling=False)]
+    config = DemandConfig(count_threshold=0, opening_threshold=0.5)
+    result = boiler_demand(zones, NOW, AGE, config)
+    assert result.wanted is None
+    assert result.criteria_without_data == ("opening",)
+
+
+@pytest.mark.parametrize(("calling", "wanted"), [(True, True), (False, False)])
+def test_only_the_criterion_without_data_is_left_out(calling: bool, wanted: bool) -> None:
+    """A count of 1 and a power threshold without data: the count decides."""
+    zones = [zone("a", valve_open=0.6 if calling else 0.0)]
+    config = DemandConfig(count_threshold=1, power_threshold_kw=1.0)
+    result = boiler_demand(zones, NOW, AGE, config)
+    assert result.wanted is wanted
+    assert result.criteria_without_data == ("power",)
+
+
+def test_a_device_power_of_zero_is_no_data_but_a_mean_power_of_zero_is_none_now() -> None:
+    """A zone with its device power known and nothing flowing now feeds the criterion with 0."""
+    zones = [zone("a", valve_open=0.6, power=2.0, mean_power=0.0)]
+    config = DemandConfig(count_threshold=0, power_threshold_kw=1.0)
+    result = boiler_demand(zones, NOW, AGE, config)
+    assert result.criteria_without_data == ()
+    assert result.power_kw == 0.0
+    assert result.wanted is False
+
+
+def test_an_off_zone_not_ready_is_known_without_demand() -> None:
+    """T-17 (S-34): "off" has no demand whatever VT's start shows, once the recognition period
+    is over; during it, the zone is not known yet."""
+    off = zone("a", heating_enabled=False, ready=False, reported=False, temperature=19.0)
+    result = boiler_demand([off], NOW, AGE, DemandConfig())
+    assert result.wanted is False
+    assert result.unknown == ()
+    during = boiler_demand([off], NOW, AGE, DemandConfig(), recognition=True)
+    assert during.wanted is None
+    assert during.unknown == ("a",)
+
+
+@pytest.mark.parametrize("ready", [False, None])
+def test_a_heating_zone_not_ready_is_unknown(ready: bool | None) -> None:
+    heating = zone("a", ready=ready, reported=False, valve_open=0.6)
+    result = boiler_demand([heating], NOW, AGE, DemandConfig())
+    assert result.wanted is None
+    assert result.unknown == ("a",)
+
+
+def test_a_shed_zone_has_no_demand_and_no_power() -> None:
+    """T-45's core: VT's power shedding holds the zone off — whatever its duty cycle or its
+    device showed last."""
+    shed = zone("a", valve_open=0.6, device_active=True, power=2.0, on_percent=0.6, shedding=True)
+    assert zone_wants_heat(shed, 0.05) is False
+    config = DemandConfig(count_threshold=1, power_threshold_kw=0.5, opening_threshold=0.3)
+    result = boiler_demand([shed], NOW, AGE, config)
+    assert result.wanted is False
+    assert result.zones_wanting == 0
+    assert result.power_kw == 0.0
+    assert result.widest_opening is None
+
+
+def test_a_remembered_zone_keeps_its_last_answer() -> None:
+    """The grace (decision 3): a zone that stopped answering keeps its last known state in
+    demand, as a known zone — the count's cap included."""
+    last = zone("a", valve_open=0.6, device_active=True, power=2.0, on_percent=0.6)
+    gone = ZoneState("a")  # unavailable now
+    other = zone("b", valve_open=0.0)
+    result = boiler_demand([gone, other], NOW, AGE, DemandConfig(), memory={"a": last})
+    assert result.wanted is True
+    assert result.fresh_zones == 2
+    assert result.unknown == ()
+    two = DemandConfig(count_threshold=2)
+    assert boiler_demand([gone], NOW, AGE, two, memory={"a": last}).wanted is True  # capped
+    assert boiler_demand([gone, other], NOW, AGE, DemandConfig()).wanted is False  # no memory
+
+
+@pytest.mark.parametrize(
+    "zones",
+    [
+        [],
+        [ZoneState("a")],
+        [zone("a", heating_enabled=None, power=None, mean_power=None, valve_open=None)],
+    ],
+)
+def test_no_zone_known_names_no_criterion(zones: list[ZoneState]) -> None:
+    """Every zone unknown is decision 3's own case, not a criterion without data."""
+    config = DemandConfig(count_threshold=0, power_threshold_kw=1.0, opening_threshold=0.5)
+    result = boiler_demand(zones, NOW, AGE, config)
+    assert result.wanted is None
+    assert result.criteria_without_data == ()

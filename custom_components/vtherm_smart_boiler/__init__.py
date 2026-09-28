@@ -186,6 +186,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "monitor_failed",  # the monitor's issue, or its note (V6)
         "control_stopped_heating",  # a blocker stopped heating (V7)
         "control_latched",  # the entry's one latch issue (V7)
+        "no_zone_known",  # every zone unknown (decision 3, X3)
         "control_options_invalid",
         "auto_tpi_blocked",
         "learning_not_paused",

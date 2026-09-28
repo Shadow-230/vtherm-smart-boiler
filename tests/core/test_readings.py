@@ -90,3 +90,93 @@ def test_zone_freshness() -> None:
     assert zone.is_fresh(150.0, 60.0)
     assert not zone.is_fresh(200.0, 60.0)
     assert not ZoneState("z").is_fresh(0.0, None)
+
+
+# --- X3: which zones are known, which have reported, and their mean power ----------------------
+
+NOW = 1000.0
+
+
+@pytest.mark.parametrize(
+    ("reported", "ready", "started"),
+    [
+        (True, True, True),
+        (False, False, False),
+        (False, None, False),  # VT 10.4.0 before its first refresh: neither is_ready nor more
+        (None, None, True),  # not said (a caller without VT's attributes): as before
+        (None, False, False),
+        (None, True, True),
+    ],
+)
+def test_a_zone_is_started_as_vt_shows_it(
+    reported: bool | None, ready: bool | None, started: bool
+) -> None:
+    assert ZoneState("z", reported=reported, ready=ready).started is started
+
+
+def zone(**kw) -> ZoneState:
+    kw.setdefault("reported_at", NOW)
+    return ZoneState("z", **kw)
+
+
+@pytest.mark.parametrize(
+    ("state", "known", "known_in_recognition"),
+    [
+        (zone(), False, False),  # no mode: unavailable, unknown, a mode not listed
+        (zone(heating_enabled=True, reported=True), True, True),
+        (zone(heating_enabled=False, reported=True), True, True),
+        # Heat or auto that VT does not run yet: unknown.
+        (zone(heating_enabled=True, reported=False, ready=False), False, False),
+        (zone(heating_enabled=True, reported=False), False, False),
+        # "Off" that VT has not started: no demand once the recognition period is over (S-34).
+        (zone(heating_enabled=False, reported=False, ready=False), True, False),
+        (zone(heating_enabled=False, reported=False), True, False),
+        (zone(heating_enabled=True), True, True),  # nothing said about the start: as before
+        (zone(heating_enabled=True, ready=False), False, False),
+        (zone(heating_enabled=True, reported=True, reported_at=None), False, False),  # never
+    ],
+)
+def test_which_zones_are_known(state: ZoneState, known: bool, known_in_recognition: bool) -> None:
+    assert state.is_known(NOW, None) is known
+    assert state.is_known(NOW, None, recognition=True) is known_in_recognition
+
+
+def test_a_zone_beyond_its_age_limit_is_unknown() -> None:
+    state = zone(heating_enabled=True, reported=True, reported_at=NOW - 700.0)
+    assert state.is_known(NOW, None)
+    assert not state.is_known(NOW, 600.0)
+    assert not state.has_reported(NOW, 600.0)
+
+
+@pytest.mark.parametrize(
+    ("state", "reported"),
+    [
+        (zone(heating_enabled=True, reported=True), True),
+        (zone(heating_enabled=False, reported=True), True),
+        (zone(heating_enabled=False, reported=False), False),  # VT's placeholder "off"
+        (zone(heating_enabled=True, reported=False, ready=False), False),
+        (zone(reported=True), False),  # a mode must be known too
+        (zone(heating_enabled=True), True),  # nothing said about the start: as before
+    ],
+)
+def test_a_zone_has_reported_when_vt_shows_it_started_with_its_mode(
+    state: ZoneState, reported: bool
+) -> None:
+    assert state.has_reported(NOW, None) is reported
+
+
+@pytest.mark.parametrize(
+    ("state", "power"),
+    [
+        (ZoneState("z", mean_power=1.2, power=2.0, on_percent=0.3), 1.2),  # VT's own mean
+        (ZoneState("z", mean_power=0.0, power=2.0, on_percent=0.3), 0.0),  # VT says none now
+        (ZoneState("z", power=2.0, on_percent=0.6), 1.2),  # an older VT: power times duty
+        (ZoneState("z", power=2.0, valve_open=0.5), 1.0),  # or times the valve's opening
+        (ZoneState("z", power=2.0, on_percent=0.6, valve_open=0.5), 1.2),  # the duty first
+        (ZoneState("z", power=2.0), None),  # no duty cycle: not known here
+        (ZoneState("z", on_percent=0.6), None),  # no power: not known
+        (ZoneState("z"), None),
+    ],
+)
+def test_a_zones_mean_power_over_its_cycle(state: ZoneState, power: float | None) -> None:
+    assert state.cycle_power == (None if power is None else pytest.approx(power))

@@ -6,7 +6,15 @@ thermostat_climate*.py): the state is the HVAC mode ("sleep" is reported as "off
 ``hvac_action`` is "heating" while the zone's device is active; ``on_percent`` is a fraction
 0–1 (over_switch, over_valve, over_climate_valve); ``valve_open_percent`` is the commanded
 opening 0–100 (valve types). These top-level keys are also kept by the recorder. Nested
-dictionaries such as ``power_manager`` are live only.
+dictionaries such as ``power_manager`` are live only: in VT 10.4.0 it is published whether or
+not power management is configured, with ``device_power`` 0 when no power is set,
+``mean_cycle_power`` (the device power times the cycle's duty) in ``power_unit``, and
+``overpowering_state`` only while shedding is configured; ``safety_manager`` with its
+``safety_state`` only where the safety feature is configured.
+
+Before VT's first refresh of a thermostat (at a start, or during its reload) the climate shows a
+placeholder "off" with neither ``is_ready`` nor ``specific_states``; then, before its start,
+``is_ready`` false — observed with VT 10.4.0 (``tests/integration/test_vendor.py``).
 
 No Home Assistant imports: the history importer uses this module too.
 """
@@ -42,6 +50,10 @@ class ZoneValues:
     ready: bool | None = None
     temperature_at: float | None = None  # epoch seconds, live only
     max_on_percent: float | None = None  # 0 to 1, live only
+    mean_power: float | None = None  # kW, VT's mean power over the cycle, live only
+    safety_on: bool = False  # VT's safety mode, live only
+    shedding: bool = False  # VT's power shedding holds the zone off, live only
+    reported: bool = False  # VT shows it started, with its mode known
 
 
 def zone_values(
@@ -54,19 +66,33 @@ def zone_values(
     configuration = configuration if isinstance(configuration, Mapping) else {}
     active = specific.get("is_device_active")
     ready = attributes.get("is_ready")
+    manager = attributes.get("power_manager")
+    manager = manager if isinstance(manager, Mapping) else {}
+    safety = attributes.get("safety_manager")
+    safety = safety if isinstance(safety, Mapping) else {}
+    heating_enabled = _heating_enabled(state)
+    # VT shows it started: ``is_ready`` true, or — an older VT without the key (assumed) — its
+    # state with ``specific_states``. Neither: VT's placeholder before its first refresh.
+    started = ready is True or (
+        isinstance(attributes.get("specific_states"), Mapping) and "is_ready" not in attributes
+    )
     return ZoneValues(
         temperature=_temperature(attributes.get("current_temperature"), temperature_unit),
         target=_temperature(attributes.get("temperature"), temperature_unit),
-        heating_enabled=_heating_enabled(state),
+        heating_enabled=heating_enabled,
         calling=_calling(attributes.get("hvac_action")),
         on_percent=_fraction(attributes.get("on_percent"), 1.0),
         valve_open=_fraction(attributes.get("valve_open_percent"), 100.0),
-        power=_device_power(attributes.get("power_manager")),
+        power=_device_power(manager),
         auto_mode=state in AUTO_MODES,
         device_active=active if isinstance(active, bool) else None,
         ready=ready if isinstance(ready, bool) else None,
         temperature_at=_moment(specific.get("last_temperature_datetime")),
         max_on_percent=_cap(configuration.get("max_on_percent")),
+        mean_power=_power(manager, "mean_cycle_power", positive=False),
+        safety_on=safety.get("safety_state") == "on",
+        shedding=manager.get("overpowering_state") == "on",
+        reported=started and heating_enabled is not None,
     )
 
 
@@ -123,13 +149,18 @@ def _fraction(raw: object, full_scale: float) -> float | None:
 _VT_LEGACY_KILOWATT_MAX = 100.0
 
 
-def _device_power(manager: object) -> float | None:
-    """The zone's device power in kW. VT 10.4.0 publishes its unit ("W" or "kW"); older versions
-    publish none, and the power means what VT's legacy rule made of it."""
-    if not isinstance(manager, Mapping):
-        return None
-    number = parse_number(manager.get("device_power"))
-    if number is None or number < 0:
+def _device_power(manager: Mapping[str, Any]) -> float | None:
+    """The zone's device power in kW; 0 or less is no data — VT 10.4.0 publishes 0 when no power
+    is configured (P-14)."""
+    return _power(manager, "device_power", positive=True)
+
+
+def _power(manager: Mapping[str, Any], key: str, *, positive: bool) -> float | None:
+    """A power of VT's power manager in kW. VT 10.4.0 publishes its unit ("W" or "kW"); older
+    versions publish none, and the power means what VT's legacy rule made of it. Negative, or
+    with ``positive`` 0, is no data."""
+    number = parse_number(manager.get(key))
+    if number is None or number < 0 or (positive and number == 0):
         return None
     unit = manager.get("power_unit")
     if not isinstance(unit, str):

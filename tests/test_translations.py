@@ -89,7 +89,9 @@ def test_every_form_field_and_select_option_is_translated() -> None:
             | {"signals": dict.fromkeys(flow.SIGNAL_FIELDS, "sensor.x"), "weather": "weather.x"}
         ),
         "control": flow.control_schema(options),
-        "control_entity": flow.control_entity_schema(options),
+        "control_entity": flow.control_entity_schema(
+            options | {"control": {"write_path": "entity", "topology": "virtual"}}
+        ),  # with the "own room controller" tick (answers F, M)
         "control_gateway": flow.control_gateway_schema(options, ["gw"]),
         "control_mqtt": flow.control_mqtt_schema(options),
         "control_curve": flow.control_curve_schema(options),
@@ -169,6 +171,10 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
     for key in ("control_stopped_heating", "control_latched"):  # V7's two repair issues
         assert SOURCE["issues"][key]["title"], key
         assert SOURCE["issues"][key]["description"], key
+    for kind in ("off", "handed_back", "monitor"):  # decision 3's repair issue (X3)
+        no_zone = SOURCE["issues"][f"no_zone_known_{kind}"]
+        assert no_zone["title"], kind
+        assert set(PLACEHOLDER.findall(no_zone["description"])) == {"zones"}, kind
 
 
 def _values(entity: dict, attribute: str) -> set[str]:
@@ -209,10 +215,16 @@ def test_coded_states_and_attributes_are_translated() -> None:
         "heating_switch",
         "low_setpoint",
     }
-    from custom_components.vtherm_smart_boiler.control_config import FrostProtection
+    from custom_components.vtherm_smart_boiler.control_config import (
+        FrostProtection,
+        HandBackEffect,
+    )
 
     assert _values(SOURCE["entity"]["switch"]["control"], "frost_protection_by") == {
         who.value for who in FrostProtection
+    }
+    assert _values(SOURCE["entity"]["switch"]["control"], "hand_back_effect") == {
+        effect.value for effect in HandBackEffect
     }
 
 

@@ -47,7 +47,9 @@
       "alarm_monitor_failed": { "default": "mdi:eye-off" },
       "alarm_handed_back_in_frost": { "default": "mdi:snowflake-thermometer" },
       "alarm_commands_lost": { "default": "mdi:message-alert-outline" },
-      "alarm_confirmation_missing": { "default": "mdi:help-rhombus-outline" }
+      "alarm_confirmation_missing": { "default": "mdi:help-rhombus-outline" },
+      "alarm_no_zone_known": { "default": "mdi:home-alert-outline" },
+      "alarm_demand_criterion_no_data": { "default": "mdi:database-alert-outline" }
     },
     "switch": {
       "control": { "default": "mdi:radiator", "state": { "off": "mdi:radiator-off" } }

@@ -97,12 +97,14 @@ class VThermLink:
 
     def zone(self, entity_id: str) -> ZoneState:
         zone = self.zone_from_state(entity_id, self._hass.states.get(entity_id))
-        return replace(zone, room_sensor_lost=self._room_sensor_lost(entity_id))
+        lost = zone.safety_on or self._room_sensor_lost(entity_id)
+        return replace(zone, room_sensor_lost=lost)
 
     def _room_sensor_lost(self, entity_id: str) -> bool:
         """The room sensor VT reads is gone, unavailable or unknown: VT keeps its last
         temperature, and its own safety check sleeps while the zone is off (R6, T2). A steady
-        sensor is fine, however long ago it changed."""
+        sensor is fine, however long ago it changed. VT's own safety mode on counts the same
+        (S-35): VT has seen the sensor go quiet, and runs the zone on its safety duty."""
         sensor = room_sensor(self._hass, entity_id)
         if sensor is None:
             return False
@@ -112,7 +114,7 @@ class VThermLink:
     def zone_from_state(self, entity_id: str, state: State | None) -> ZoneState:
         """A zone from a given state of its climate entity (current or recorded)."""
         if state is None:
-            return ZoneState(entity_id)
+            return ZoneState(entity_id, reported=False)
         unit = str(self._hass.config.units.temperature_unit)
         values = zone_values(state.state, state.attributes, unit)
         return ZoneState(
@@ -130,6 +132,10 @@ class VThermLink:
             ready=values.ready,
             temperature_at=values.temperature_at,
             max_on_percent=values.max_on_percent,
+            mean_power=values.mean_power,
+            safety_on=values.safety_on,
+            shedding=values.shedding,
+            reported=values.reported,
         )
 
     def zones(self) -> list[ZoneState]:

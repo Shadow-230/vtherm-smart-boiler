@@ -9,6 +9,7 @@ import pytest
 
 from custom_components.vtherm_smart_boiler.core.controller import (
     _LIMIT_REASON,
+    HA_STARTING,
     MAX_STEP_S,
     OUTAGE_BACK_S,
     OUTAGE_LOST_S,
@@ -28,8 +29,10 @@ from custom_components.vtherm_smart_boiler.core.controller import (
     follow_outage,
 )
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
+from custom_components.vtherm_smart_boiler.core.demand import DemandConfig
 from custom_components.vtherm_smart_boiler.core.limits import FlowLimits, LimitCode
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
+from custom_components.vtherm_smart_boiler.core.zone_watch import GRACE_S, RECOGNITION_S
 
 MIN = 60.0
 CURVE = HeatingCurve(design_outdoor=-15.0, design_flow=55.0, room=20.0, exponent=1.0)
@@ -226,19 +229,6 @@ def test_no_demand_is_idle() -> None:
     assert decision.command is not None
     assert not decision.command.ch_enable
     assert Reason.NO_DEMAND in decision.reasons
-
-
-def test_unknown_zones_mean_heat() -> None:
-    unavailable = zone(0.0, heating_enabled=None, valve_open=None)  # VT's state not known
-    _state, [decision] = run([inputs(0.0, zones=(unavailable,))])
-    assert decision.mode is ControlMode.HEATING
-    assert Reason.ZONES_UNKNOWN in decision.reasons
-    _state, [none] = run([inputs(0.0, zones=())])
-    assert Reason.ZONES_UNKNOWN in none.reasons
-    # Age counts only against a limit that is set: then a zone not heard of longer is unknown.
-    stale = zone(-10 * 3600.0)
-    _state, [aged] = run([inputs(0.0, zones=(stale,))], replace(CONFIG, zone_max_age_s=7200.0))
-    assert Reason.ZONES_UNKNOWN in aged.reasons
 
 
 def test_summer_and_winter_come_from_vt() -> None:
@@ -927,3 +917,448 @@ def test_the_stale_hand_back_time_is_the_link_threshold() -> None:
     steps = [inputs(0.0), *linked(10.0, 200.0, lambda _t: False)]
     _state, decisions = run(steps, replace(CONFIG, stale_hand_back_s=120.0))
     assert [step.now for step, d in zip(steps, decisions, strict=True) if d.hand_back] == [130.0]
+
+
+# --- decision 3: the recognition period, each zone's grace, every zone unknown (X3) -----------
+
+THERMOSTAT = replace(CONFIG, working_thermostat=True)
+KEPT = BoilerCommand(True, 45.0)
+
+
+def started(zone_id: str, t: float, **kw) -> ZoneState:
+    """A zone VT has started (``is_ready`` true): heating and calling unless told otherwise."""
+    kw.setdefault("heating_enabled", True)
+    kw.setdefault("temperature", 20.0)
+    kw.setdefault("target", 21.0)
+    kw.setdefault("valve_open", 0.6)
+    kw.setdefault("reported", True)
+    return ZoneState(zone_id, reported_at=t, **kw)
+
+
+def placeholder(zone_id: str, t: float, **kw) -> ZoneState:
+    """What VT shows before it has started a thermostat: "off", not reported."""
+    return ZoneState(zone_id, heating_enabled=False, reported=False, reported_at=t, **kw)
+
+
+def away(zone_id: str) -> ZoneState:
+    """Unavailable: no mode, nothing reported."""
+    return ZoneState(zone_id)
+
+
+def during(
+    start: float, stop: float, zones: Callable[[float], tuple[ZoneState, ...]], **kw
+) -> list[ControlInputs]:
+    return [inputs(t, zones=zones(t), **kw) for t in stepped(start, stop)]
+
+
+def test_no_new_decision_during_recognition_without_a_last_command() -> None:
+    """At the start, the zones not reported yet and nothing held before: nothing is written."""
+    for zones in (lambda t: (placeholder("a", t),), lambda _t: (away("a"),)):
+        _state, decisions = run(during(0.0, 120.0, zones))
+        assert all(d.mode is ControlMode.WAITING_DATA for d in decisions)
+        assert all(d.command is None and not d.hand_back for d in decisions)
+        assert all(d.reasons == (Reason.ZONES_RECOGNITION,) for d in decisions)
+
+
+@pytest.mark.parametrize(
+    ("kept", "mode"), [(KEPT, ControlMode.HEATING), (BoilerCommand(False, 45.0), ControlMode.IDLE)]
+)
+def test_a_kept_command_goes_on_during_recognition(kept: BoilerCommand, mode: ControlMode) -> None:
+    """A command restored after a restart (on, 45 °C) is given at every step, with its
+    keep-alives, until the recognition period ends; then control decides anew."""
+    steps = [
+        *during(0.0, 120.0, lambda t: (placeholder("a", t),), restored_command=kept),
+        inputs(120.0, zones=(started("a", 120.0),), restored_command=kept),
+    ]
+    state, decisions = run(steps)
+    assert all(d.command == kept for d in decisions[:-1])
+    assert all(d.mode is mode for d in decisions[:-1])
+    assert all(d.reasons == (Reason.ZONES_RECOGNITION,) for d in decisions[:-1])
+    assert not any(d.hand_back for d in decisions)
+    assert decisions[-1].command == BoilerCommand(True, pytest.approx(CURVE.flow(5.0)))
+    assert Reason.DEMAND in decisions[-1].reasons
+    assert state.controlling
+
+
+def test_recognition_ends_when_every_zone_reported_or_after_ten_minutes() -> None:
+    def reporting(t: float) -> tuple[ZoneState, ...]:
+        first = started("a", t) if t >= 30.0 else placeholder("a", t)
+        second = started("b", t) if t >= 90.0 else placeholder("b", t)
+        return first, second
+
+    steps = during(0.0, 100.0, reporting)
+    _state, decisions = run(steps)
+    first = next(s.now for s, d in zip(steps, decisions, strict=True) if d.command is not None)
+    assert first == 90.0
+
+    def one_never(t: float) -> tuple[ZoneState, ...]:
+        return started("a", t), placeholder("b", t, temperature=20.0)
+
+    steps = during(0.0, RECOGNITION_S + 10.0, one_never)
+    _state, decisions = run(steps)
+    first = next(s.now for s, d in zip(steps, decisions, strict=True) if d.command is not None)
+    assert first == RECOGNITION_S
+    assert decisions[-1].mode is ControlMode.HEATING  # "a" calls; "b" is "off"
+
+
+def test_a_vt_reload_starts_a_recognition_period() -> None:
+    """Every zone unknown at once after having been reported: the command held before is kept,
+    nothing new is decided until they have reported again."""
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        if 100.0 <= t < 130.0:
+            return away("a"), away("b")
+        if 130.0 <= t < 150.0:
+            return placeholder("a", t), started("b", t, valve_open=0.0)
+        return started("a", t), started("b", t, valve_open=0.0)
+
+    steps = during(0.0, 170.0, zones, outdoor_sensor=5.0)
+    steps[12:] = [replace(step, outdoor_sensor=-5.0) for step in steps[12:]]  # colder at 120 s
+    _state, decisions = run(steps, replace(CONFIG, decision_interval_s=10.0))
+    at = {step.now: d for step, d in zip(steps, decisions, strict=True)}
+    held = at[90.0].command
+    assert held == BoilerCommand(True, pytest.approx(CURVE.flow(5.0)))
+    for t in (100.0, 120.0, 140.0):
+        assert at[t].command == held  # kept: the colder outdoor temperature is not decided on
+        assert at[t].reasons == (Reason.ZONES_RECOGNITION,)
+    assert at[150.0].command == BoilerCommand(True, pytest.approx(CURVE.flow(-5.0)))
+    assert not any(d.hand_back for d in decisions)
+
+
+def test_a_zone_unknown_for_less_than_ten_minutes_keeps_its_last_answer() -> None:
+    """ "a" called, then went unavailable: it still calls 9 min 50 s later and drops out at
+    10 min, when the known zone, not calling, decides."""
+    lost = 10.0
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        first = started("a", t) if t < lost else away("a")
+        return first, started("b", t, valve_open=0.0)
+
+    steps = during(0.0, lost + GRACE_S + 10.0, zones)
+    _state, decisions = run(steps)
+    at = {step.now: d for step, d in zip(steps, decisions, strict=True)}
+    assert at[lost + GRACE_S - 10.0].command.ch_enable
+    assert at[lost + GRACE_S - 10.0].mode is ControlMode.HEATING
+    assert not at[lost + GRACE_S].command.ch_enable
+    assert Reason.NO_DEMAND in at[lost + GRACE_S].reasons
+
+
+def test_a_zone_never_known_this_session_gets_no_grace() -> None:
+    """ "a" never answered since the start: once the recognition period is over it counts for
+    nothing, and the known zone decides at once."""
+    steps = during(0.0, RECOGNITION_S + 10.0, lambda t: (away("a"), started("b", t, valve_open=0)))
+    _state, decisions = run(steps)
+    assert decisions[-1].mode is ControlMode.IDLE
+    assert Reason.NO_DEMAND in decisions[-1].reasons
+
+
+def gone_after(lost: float) -> Callable[[float], tuple[ZoneState, ...]]:
+    """Two zones calling that go away one after the other, from ``lost``: each gets its grace."""
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        return (
+            started("a", t) if t < lost else away("a"),
+            started("b", t) if t < lost + 10.0 else away("b"),
+        )
+
+    return zones
+
+
+def test_every_zone_unknown_after_the_grace_hands_back_to_a_thermostat() -> None:
+    """A working thermostat (a gateway with an OpenTherm thermostat declared): once every zone
+    has dropped out, a safe hand-back at once, once, without a latch; the decision says every
+    zone is unknown."""
+    steps = during(0.0, 10.0 + 10.0 + GRACE_S + 30.0, gone_after(10.0))
+    state, decisions = run(steps, THERMOSTAT)
+    backs = [s.now for s, d in zip(steps, decisions, strict=True) if d.hand_back]
+    assert backs == [20.0 + GRACE_S]
+    after = [d for s, d in zip(steps, decisions, strict=True) if s.now >= 20.0 + GRACE_S]
+    assert all(d.mode is ControlMode.HANDED_BACK and d.command is None for d in after)
+    assert all(d.reasons == (Reason.ZONES_UNKNOWN,) for d in after)
+    assert all(d.zones_unknown for d in after)
+    assert not any(d.zones_unknown for d in decisions if d not in after)
+    assert not state.latched
+
+
+def test_every_zone_unknown_hands_back_to_the_boilers_own_room_controller_where_ticked() -> None:
+    """The entity path with the tick "the boiler has its own room controller" (answer F): the
+    same hand-back, to the boiler's own control. The recognition period at a VT reload leads
+    there too: the command held meanwhile, the hand-back when it ends."""
+    from custom_components.vtherm_smart_boiler.control_config import parse_control
+    from custom_components.vtherm_smart_boiler.core.installation import (
+        Boiler,
+        BoilerClass,
+        Circuit,
+        CircuitControl,
+        EmitterType,
+        Installation,
+        Zone,
+    )
+
+    installation = Installation(
+        Boiler(BoilerClass.FLOW_SETPOINT),
+        (Circuit("main", CircuitControl.UNMIXED_SHARED),),
+        (Zone("a", "main", EmitterType.RADIATOR),),
+    )
+    options = parse_control(
+        {
+            "write_path": "entity",
+            "setpoint_entity": "number.flow",
+            "write_type": "expiring",
+            "topology": "virtual",
+            "hand_back": "timeout",
+            "confirmed_entity": "sensor.flow_setpoint",
+            "curve": {"design_flow": 55},
+            "own_room_controller": True,
+        },
+        installation,
+        None,
+    )
+    config = replace(options.loop.control, ramp_k_per_min=None)
+    assert config.working_thermostat
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        return (started("a", t) if t < 10.0 else away("a"),)
+
+    steps = during(0.0, 10.0 + RECOGNITION_S + 20.0, zones)
+    state, decisions = run(steps, config)
+    at = {step.now: d for step, d in zip(steps, decisions, strict=True)}
+    assert at[10.0 + RECOGNITION_S - 10.0].reasons == (Reason.ZONES_RECOGNITION,)
+    assert at[10.0 + RECOGNITION_S - 10.0].command == at[0.0].command  # held meanwhile
+    assert [s.now for s, d in zip(steps, decisions, strict=True) if d.hand_back] == [
+        10.0 + RECOGNITION_S
+    ]
+    assert at[10.0 + RECOGNITION_S].mode is ControlMode.HANDED_BACK
+    assert at[10.0 + RECOGNITION_S].reasons == (Reason.ZONES_UNKNOWN,)
+    assert not state.latched
+
+
+def test_every_zone_unknown_without_a_thermostat_means_the_usual_off() -> None:
+    """No working thermostat (stand-alone; "device decides"; a value declared "own control"
+    without the tick): the usual "off" — heating off, no hand-back — while every zone is unknown."""
+    steps = during(0.0, 10.0 + 10.0 + GRACE_S + 30.0, gone_after(10.0))
+    _state, decisions = run(steps, CONFIG)
+    assert not any(d.hand_back for d in decisions)
+    after = [d for s, d in zip(steps, decisions, strict=True) if s.now >= 20.0 + GRACE_S]
+    assert all(d.mode is ControlMode.IDLE for d in after)
+    assert all(d.command is not None and not d.command.ch_enable for d in after)
+    assert all(Reason.ZONES_UNKNOWN in d.reasons for d in after)
+    assert all(d.zones_unknown for d in after)
+
+
+@pytest.mark.parametrize("config", [CONFIG, THERMOSTAT], ids=["off", "handed_back"])
+def test_heating_resumes_when_a_zone_answers_again(config: ControlConfig) -> None:
+    """Not a latch: the step a zone answers again, control decides on it once more."""
+    back = 20.0 + GRACE_S + 60.0
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        if t >= back:
+            return started("a", t), away("b")
+        return gone_after(10.0)(t)
+
+    steps = during(0.0, back + 20.0, zones)
+    state, decisions = run(steps, config)
+    at = {step.now: d for step, d in zip(steps, decisions, strict=True)}
+    assert Reason.ZONES_UNKNOWN in at[back - 10.0].reasons
+    assert at[back].mode is ControlMode.HEATING
+    assert at[back].command.ch_enable
+    assert not at[back].zones_unknown
+    assert state.controlling
+
+
+def test_no_design_flow_heating_with_every_zone_and_the_outdoor_temperature_unknown() -> None:
+    """The outdoor temperature gone for four hours and every zone unknown: no heat — never the
+    design flow (the fallback serves only with zones known), and never FALLBACK."""
+    config = replace(CONFIG, decision_interval_s=60.0)
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        return (started("a", t) if t < 10.0 else away("a"),)
+
+    steps = [
+        inputs(0.0, zones=zones(0.0)),
+        *(
+            inputs(t, zones=zones(t), outdoor_sensor=None)
+            for t in [*stepped(10.0, 700.0), *range(700, 4 * 3600 + 1, 60)]
+        ),
+    ]
+    _state, decisions = run(steps, config)
+    later = decisions[70:]  # after the recognition period
+    assert all(d.command is not None and not d.command.ch_enable for d in later)
+    assert all(d.mode is ControlMode.IDLE for d in later)
+    assert all(d.command.setpoint != pytest.approx(CURVE.design_flow) for d in decisions)
+    assert later[-1].command.setpoint == pytest.approx(config.limits.hard_min)
+    assert not any(d.mode is ControlMode.FALLBACK for d in decisions)
+
+
+def test_a_fallback_decided_with_zones_known_ends_with_them() -> None:
+    """The outdoor temperature long gone, the zones known and calling: the fallback heats at the
+    design flow (decision 9). Every zone gone at once: the recognition period keeps that command;
+    the step it ends, heating goes off with the water at the lowest temperature at once — the
+    design flow is not kept a moment longer."""
+    config = replace(CONFIG, decision_interval_s=300.0)
+    lost = 4 * 3600.0
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        return (started("a", t) if t < lost else away("a"),)
+
+    steps = [
+        inputs(0.0, zones=zones(0.0)),
+        *(inputs(t, zones=zones(t), outdoor_sensor=None) for t in range(60, int(lost), 60)),
+        *(
+            inputs(t, zones=zones(t), outdoor_sensor=None)
+            for t in stepped(lost, lost + RECOGNITION_S + 20.0)
+        ),
+    ]
+    _state, decisions = run(steps, config)
+    at = {step.now: d for step, d in zip(steps, decisions, strict=True)}
+    assert at[lost - 60.0].mode is ControlMode.FALLBACK
+    assert at[lost - 60.0].command == BoilerCommand(True, pytest.approx(CURVE.design_flow))
+    assert at[lost + 10.0].reasons == (Reason.ZONES_RECOGNITION,)  # held meanwhile
+    end = at[lost + RECOGNITION_S]
+    assert end.mode is ControlMode.IDLE
+    assert end.command == BoilerCommand(False, pytest.approx(config.limits.hard_min))
+    assert Reason.ZONES_UNKNOWN in end.reasons
+
+
+def test_a_transient_loss_of_every_zone_does_not_start_the_boiler() -> None:
+    """T-28 (S-03): summer, the only zone off; VT reloads it — unavailable for three steps, then
+    its placeholder: the recognition period keeps "off", and no step switches heating on."""
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        if 30.0 <= t < 60.0:
+            return (away("a"),)
+        if 60.0 <= t < 70.0:
+            return (placeholder("a", t),)
+        return (started("a", t, heating_enabled=False, valve_open=0.0),)
+
+    steps = during(0.0, 120.0, zones, outdoor_sensor=25.0)
+    _state, decisions = run(steps)
+    assert all(d.command is not None and not d.command.ch_enable for d in decisions)
+    assert not any(d.hand_back for d in decisions)
+    assert decisions[-1].mode is ControlMode.IDLE
+
+
+def test_an_off_zone_not_ready_means_no_demand() -> None:
+    """T-17 (S-34): the only zone "off", VT not having started it, its temperature fresh: no
+    demand once the recognition period is over — IDLE with ``NO_DEMAND``, not unknown."""
+    steps = during(
+        0.0, RECOGNITION_S + 10.0, lambda t: (placeholder("a", t, ready=False, temperature=19.0),)
+    )
+    _state, decisions = run(steps)
+    assert decisions[0].mode is ControlMode.WAITING_DATA  # not known during the recognition
+    assert decisions[-1].mode is ControlMode.IDLE
+    assert Reason.NO_DEMAND in decisions[-1].reasons
+    assert not decisions[-1].zones_unknown
+
+
+def test_home_assistant_starting_keeps_a_restored_command_but_decides_nothing_new() -> None:
+    """``ha_starting`` does not stop a command being kept or restored; the recognition period
+    cannot end before Home Assistant runs. Without a command held, it blocks as before; another
+    blocker stops the restore."""
+    starting = (HA_STARTING,)
+    steps = [
+        *during(0.0, 700.0, lambda t: (started("a", t),), blockers=starting, restored_command=KEPT),
+        inputs(700.0, zones=(started("a", 700.0),), restored_command=KEPT),
+    ]
+    _state, decisions = run(steps)
+    assert all(d.command == KEPT for d in decisions[:-1])
+    assert all(d.reasons == (Reason.ZONES_RECOGNITION,) for d in decisions[:-1])
+    assert decisions[-1].command == BoilerCommand(True, pytest.approx(CURVE.flow(5.0)))
+    _state, decisions = run(during(0.0, 60.0, lambda t: (started("a", t),), blockers=starting))
+    assert all(d.mode is ControlMode.NOT_ALLOWED and d.command is None for d in decisions)
+    other = (HA_STARTING, "monitoring_period")
+    _state, decisions = run(
+        during(0.0, 60.0, lambda t: (started("a", t),), blockers=other, restored_command=KEPT)
+    )
+    assert all(d.mode is ControlMode.NOT_ALLOWED and d.command is None for d in decisions)
+    assert not any(d.hand_back for d in decisions)
+
+
+def test_a_restore_waits_for_its_target_and_the_link_writing_nothing() -> None:
+    """Until the write target and the boiler link are there, the restore waits and nothing is
+    written; a link not yet reported declares no loss (X2's hook). Once both are there, the
+    restored command goes out at once."""
+    zones = (placeholder("a", 0.0),)
+    steps = [
+        inputs(0.0, zones=zones, restored_command=KEPT, target_ready=False),
+        inputs(10.0, zones=zones, restored_command=KEPT, boiler_link=False, link_unreported=True),
+        inputs(20.0, zones=zones, restored_command=KEPT),
+    ]
+    state, decisions = run(steps)
+    assert [d.command for d in decisions] == [None, None, KEPT]
+    assert not any(d.hand_back or d.link_lost for d in decisions)
+    assert state.controlling
+
+
+def test_a_restore_not_given_by_the_end_of_the_recognition_writes_nothing_then() -> None:
+    """The restore still waiting when the recognition period ends: that step writes nothing new
+    — the owed hand-back goes first (the control unit); the step after decides."""
+    steps = [
+        *during(
+            0.0,
+            RECOGNITION_S + 10.0,
+            lambda t: (placeholder("a", t),),
+            restored_command=KEPT,
+            target_ready=False,
+        ),
+        inputs(RECOGNITION_S + 10.0, zones=(started("a", RECOGNITION_S + 10.0),)),
+    ]
+    state, decisions = run(steps)
+    assert all(d.command is None and not d.hand_back for d in decisions[:-1])
+    assert decisions[-2].reasons == (Reason.ZONES_RECOGNITION,)
+    assert decisions[-1].command == BoilerCommand(True, pytest.approx(CURVE.flow(5.0)))
+    assert state.controlling
+
+
+def test_a_restore_whose_zones_all_report_at_once_decides_anew_at_once() -> None:
+    """Every zone reported at the first step: the recognition period is over at once, and
+    control decides anew — no step is lost waiting, nothing handed back first."""
+    steps = [inputs(0.0, zones=(started("a", 0.0),), restored_command=KEPT)]
+    state, [decision] = run(steps)
+    assert decision.command == BoilerCommand(True, pytest.approx(CURVE.flow(5.0)))
+    assert not decision.hand_back
+    assert state.controlling
+
+
+def test_frost_heats_during_the_recognition_for_zones_already_known() -> None:
+    """Frost protection only adds heat, so it acts in the recognition period — for a zone VT
+    has started; one it has not started does not count yet (provisional, K4)."""
+    cold_known = during(
+        0.0, 30.0, lambda t: (started("a", t, temperature=3.0), placeholder("b", t))
+    )
+    _state, decisions = run(cold_known)
+    assert all(d.mode is ControlMode.FROST and d.command.ch_enable for d in decisions)
+    cold_unknown = during(0.0, 30.0, lambda t: (placeholder("a", t, temperature=3.0),))
+    _state, decisions = run(cold_unknown)
+    assert all(d.command is None for d in decisions)
+
+
+def test_every_criterion_without_data_ends_like_every_zone_unknown() -> None:
+    """T-27 (P-14): a count of 0 and only a power threshold no zone can feed: after the
+    recognition period, decision 3's end state — with a thermostat, the hand-back; without,
+    the usual "off" — and the decision names the criterion. Every zone is known meanwhile."""
+    demand = DemandConfig(count_threshold=0, power_threshold_kw=1.0)
+    steps = during(0.0, 30.0, lambda t: (started("a", t),))
+    for config, handed_back in ((CONFIG, False), (THERMOSTAT, True)):
+        _state, decisions = run(steps, replace(config, demand=demand))
+        last = decisions[-1]
+        assert last.criteria_without_data == ("power",)
+        assert not last.zones_unknown
+        assert Reason.ZONES_UNKNOWN in last.reasons
+        if handed_back:
+            assert last.mode is ControlMode.HANDED_BACK
+        else:
+            assert last.mode is ControlMode.IDLE
+            assert not last.command.ch_enable
+
+
+def test_a_steady_unknown_zone_with_an_age_limit_set_counts_as_unknown() -> None:
+    """Age counts only against a limit that is set: then a zone not heard of longer is unknown,
+    and alone it leads to decision 3's end state."""
+    stale = started("a", -10 * 3600.0)
+    config = replace(CONFIG, zone_max_age_s=7200.0)
+    steps = [inputs(t, zones=(stale,)) for t in stepped(0.0, RECOGNITION_S + 10.0)]
+    _state, decisions = run(steps, config)
+    assert decisions[0].reasons == (Reason.ZONES_RECOGNITION,)
+    assert Reason.ZONES_UNKNOWN in decisions[-1].reasons
+    assert decisions[-1].zones_unknown
