@@ -9,7 +9,6 @@ import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from itertools import pairwise
 
 from .cycles import Burn, BurnKind, ClassifiedBurn
 from .series import Series, known_duration
@@ -68,15 +67,20 @@ def cycle_stats(
     """Starts and burn-time distribution of the burns of ``kinds``.
 
     ``observed_s`` is the time with the flame state known, e.g. from ``known_duration``.
-    Burn times use complete burns only; a burn cut by the window or a gap is too short.
+    Burn times use complete burns only; a burn cut by the window or a gap is too short. With
+    ``window``, a burn counts — its start, its length — in the window that holds its start,
+    and its burn time only within the window: a burn across midnight found whole is one burn of
+    the day it started in, its time split at midnight (P-83).
     """
+    low, high = window if window is not None else (-math.inf, math.inf)
     selected = [b.burn for b in burns if b.kind in kinds]
-    durations = sorted(b.duration for b in selected if b.complete)
+    own = [b for b in selected if low <= b.start < high]
+    durations = sorted(b.duration for b in own if b.complete)
     return CycleStats(
         observed_s=observed_s,
-        starts=sum(1 for b in selected if b.start_seen),
+        starts=sum(1 for b in own if b.start_seen),
         complete_burns=len(durations),
-        burn_s=sum(b.duration for b in selected),
+        burn_s=sum(max(0.0, min(b.end, high) - max(b.start, low)) for b in selected),
         median_burn_s=_percentile(durations, 0.5) if durations else None,
         p10_burn_s=_percentile(durations, 0.1) if durations else None,
         p90_burn_s=_percentile(durations, 0.9) if durations else None,
@@ -109,15 +113,18 @@ def condensing_share(
     burns: Iterable[ClassifiedBurn],
     threshold: float = DEFAULT_CONDENSING_RETURN,
     kinds: frozenset[BurnKind] = CH_KINDS,
+    window: tuple[float, float] | None = None,
 ) -> Share:
-    """Share of burn time with the return below ``threshold`` (where the return is known)."""
+    """Share of burn time with the return below ``threshold`` (where the return is known);
+    with ``window``, only the burn time within it (P-83)."""
+    low, high = window if window is not None else (-math.inf, math.inf)
     basis = 0.0
     below = 0.0
     for classified in burns:
         if classified.kind not in kinds:
             continue
         burn = classified.burn
-        for segment in return_temp.segments(burn.start, burn.end):
+        for segment in return_temp.segments(max(burn.start, low), min(burn.end, high)):
             if segment.value is None:
                 continue
             basis += segment.duration
@@ -169,10 +176,26 @@ class Consumption:
 METER_RESET_FRACTION = 0.1
 
 
+def meter_rise(high: float | None, value: float) -> tuple[float, float]:
+    """What a new reading of a cumulative meter adds, and the highest reading since (P-97): one
+    rule for the consumption and its split alike. Above the highest reading so far (``high``;
+    ``None`` before the first), the difference counts; a small step back — rounding, a
+    correction — counts nothing, and neither does the way back up to the mark (it was counted
+    once already); a reading below a tenth of the mark is a meter restarted from zero, counted
+    from zero."""
+    if high is None:
+        return 0.0, value
+    if high > 0 and value < METER_RESET_FRACTION * high:
+        return max(0.0, value), value  # counted from zero since the reset
+    if value > high:
+        return value - high, value
+    return 0.0, high
+
+
 def meter_consumption(meter: Series[float], start: float, end: float) -> Consumption | None:
-    """Consumption from a cumulative meter in ``[start, end)``. A drop to under a tenth of the
-    last reading is a reset to zero; a smaller step back counts nothing and the count goes on
-    from there (adding a whole reading would count years of gas at once).
+    """Consumption from a cumulative meter in ``[start, end)``, reading by reading
+    (``meter_rise``: only a rise above the highest reading counts; a drop to under a tenth of
+    it is a reset to zero — adding a whole reading would count years of gas at once).
 
     The meter keeps counting through a gap in the data, so known values on both sides of a gap
     still give the consumption in between. Complete when the meter is known at both ends of the
@@ -183,11 +206,10 @@ def meter_consumption(meter: Series[float], start: float, end: float) -> Consump
     if not known:
         return None
     amount = 0.0
-    for before, after in pairwise(known):
-        if after >= before:
-            amount += after - before
-        elif after < METER_RESET_FRACTION * before:
-            amount += after  # counted from zero since the reset
+    high: float | None = None
+    for value in known:
+        rise, high = meter_rise(high, value)
+        amount += rise
     complete = segments[0].value is not None and segments[-1].value is not None
     return Consumption(amount, complete)
 

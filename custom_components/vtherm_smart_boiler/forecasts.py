@@ -172,6 +172,8 @@ class ForecastRecorder:
         self.store.prune(now)
         cutoff = partition_of(now - DEFAULT_RETENTION_S - PARTITION_S)
         for partition in [p for p in self._stores if p < cutoff]:
+            # P-56: removed for good — the flush at unload must not write it back, empty.
+            self._dirty.discard(partition)
             await self._stores.pop(partition).async_remove()
 
     async def async_flush(self) -> None:

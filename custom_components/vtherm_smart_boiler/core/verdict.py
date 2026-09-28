@@ -79,6 +79,9 @@ class VerdictOptions:
 class VerdictResult:
     verdict: Verdict
     reasons: tuple[Reason, ...] = field(default_factory=tuple)
+    # P-96: days with data left out because the plugin controlled the boiler for an hour or
+    # more of them — the verdict is the installation's own, without control.
+    days_left_out: int = 0
 
 
 def load_below_min_share(

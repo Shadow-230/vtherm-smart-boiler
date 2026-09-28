@@ -49,7 +49,7 @@
           "ch_active": "Włączone, gdy kocioł grzeje pomieszczenia. Pomaga odróżnić c.w.u. od c.o., gdy nie ma sygnału c.w.u.",
           "pump_running": "Włączony, gdy pracuje pompa c.o. Umożliwia ostrzeżenie o małym przepływie: wszystkie zawory zamknięte przy pracującej pompie.",
           "flue_gas": "Włącza alarm spalin i wczesne ostrzeżenie o zabrudzonym wymienniku.",
-          "gas_meter": "Licznik narastający gazu lub energii. Daje zmierzony gaz na stopniodzień zamiast szacunku.",
+          "gas_meter": "Licznik narastający gazu lub energii. Daje zmierzony gaz na stopniodzień zamiast szacunku. Gaz naliczony przez licznik, gdy palnik nie pracuje (kuchenka, inne urządzenie), jest pokazywany osobno; gazu zużytego przez nie w czasie pracy palnika nie da się oddzielić i liczy się go jako ogrzewanie.",
           "room_setpoint": "Nastawa pokojowa termostatu ściennego przy bramce, od strony termostatu — np. „Room setpoint 1” na urządzeniu termostatu bramki albo TrSet_thermostat firmware'u z włączonymi osobnymi źródłami; nie cel encji climate bramki. Pokazywana jako temperatura, którą termostat ścienny utrzyma po oddaniu sterowania.",
           "room_temperature": "Temperatura pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
           "weather": "Jej prognozy są zapisywane na potrzeby przyszłych funkcji prognoz, a jej temperatura zastępuje brakujący albo podejrzany czujnik zewnętrzny — w stopniodniach i krzywej sterowania. Żadne dane nie opuszczają Home Assistant.",
@@ -315,7 +315,7 @@
           "ch_active": "Włączone, gdy kocioł grzeje pomieszczenia. Pomaga odróżnić c.w.u. od c.o., gdy nie ma sygnału c.w.u.",
           "pump_running": "Włączony, gdy pracuje pompa c.o. Umożliwia ostrzeżenie o małym przepływie: wszystkie zawory zamknięte przy pracującej pompie.",
           "flue_gas": "Włącza alarm spalin i wczesne ostrzeżenie o zabrudzonym wymienniku.",
-          "gas_meter": "Licznik narastający gazu lub energii. Daje zmierzony gaz na stopniodzień zamiast szacunku.",
+          "gas_meter": "Licznik narastający gazu lub energii. Daje zmierzony gaz na stopniodzień zamiast szacunku. Gaz naliczony przez licznik, gdy palnik nie pracuje (kuchenka, inne urządzenie), jest pokazywany osobno; gazu zużytego przez nie w czasie pracy palnika nie da się oddzielić i liczy się go jako ogrzewanie.",
           "room_setpoint": "Nastawa pokojowa termostatu ściennego przy bramce, od strony termostatu — np. „Room setpoint 1” na urządzeniu termostatu bramki albo TrSet_thermostat firmware'u z włączonymi osobnymi źródłami; nie cel encji climate bramki. Pokazywana jako temperatura, którą termostat ścienny utrzyma po oddaniu sterowania.",
           "room_temperature": "Temperatura pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
           "weather": "Jej prognozy są zapisywane na potrzeby przyszłych funkcji prognoz, a jej temperatura zastępuje brakujący albo podejrzany czujnik zewnętrzny — w stopniodniach i krzywej sterowania. Żadne dane nie opuszczają Home Assistant.",
@@ -1006,7 +1006,12 @@
         "name": "Stopniodni (7 dni)"
       },
       "gas_per_degree_day": {
-        "name": "Gaz na stopniodzień"
+        "name": "Gaz na stopniodzień",
+        "state_attributes": {
+          "other_gas": {
+            "name": "Gaz przy wyłączonym palniku (7 dni)"
+          }
+        }
       },
       "verdict": {
         "name": "Werdykt sterowania",
@@ -1014,6 +1019,11 @@
           "worth_it": "Warto włączyć",
           "not_worth_it": "Nie warto włączać",
           "not_enough_data": "Jeszcze za mało danych"
+        },
+        "state_attributes": {
+          "days_left_out": {
+            "name": "Dni pominięte (pod sterowaniem)"
+          }
         }
       },
       "signal_problems": {

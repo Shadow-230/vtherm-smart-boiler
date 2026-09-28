@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from custom_components.vtherm_smart_boiler.core.daily import fit_points
+from custom_components.vtherm_smart_boiler.core.history import History
 from custom_components.vtherm_smart_boiler.core.parameters import ParameterKey
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 from tools.import_history import (
@@ -262,3 +264,114 @@ def test_the_example_mapping_is_valid_with_every_line_in_use() -> None:
     assert set(mapping.signals) == set(Signal)
     assert mapping.weather is not None
     assert mapping.zones
+
+
+def _steady_heat(start: float, end: float) -> History:
+    """A burner on all the time at 50 % modulation (12 kW with the mapping's 4–20 kW boiler),
+    5 °C outside."""
+    from custom_components.vtherm_smart_boiler.core.series import Series
+
+    return History(
+        signals={
+            Signal.FLAME: Series([(start, True)]),
+            Signal.FLOW: Series([(start, 45.0)]),
+            Signal.MODULATION: Series([(start, 50.0)]),
+            Signal.DHW_ACTIVE: Series([(start, False)]),
+        },
+        weather=Series([(start, 5.0)]),
+    )
+
+
+def test_23_and_25_hour_days_are_normalised() -> None:
+    """P-93: the importer fitted the building on raw day totals, so the day the clocks go
+    forward (23 h) looked colder-weathered and the day they go back (25 h) warmer. Each day is
+    summarised as the plugin does and fitted as a whole day."""
+    from tools.import_history import day_summaries
+
+    mapping = parse_mapping(MAPPING)
+    tz = ZoneInfo("America/New_York")
+    for first, hours in (((2026, 3, 7), [24, 23, 24]), ((2026, 10, 31), [24, 25, 24])):
+        start = datetime(*first, tzinfo=tz).timestamp()
+        end = start + 3 * DAY + HOUR
+        days = day_summaries(_steady_heat(start - DAY, end + DAY), mapping, start, end, tz)
+        assert [round((d.end - d.start) / HOUR) for d in days] == hours
+        assert [d.heat_kwh for d in days] == [pytest.approx(12.0 * h) for h in hours]
+        points = fit_points(days)
+        assert [p.energy_kwh for p in points] == [pytest.approx(12.0 * 24)] * 3
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--start", "2030-01-01"], "window"),  # after the last state: reversed
+        (["--end", "2020-01-01"], "window"),  # before the first state: reversed
+    ],
+)
+def test_a_zero_or_reversed_window_is_refused(
+    recorder: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], args: list, message: str
+) -> None:
+    """P-111: a window that ends where it starts divided by zero; one that ends before it
+    starts gave a negative report. Both are refused with a message and exit code 2."""
+    mapping = _mapping_file(tmp_path)
+    assert main(["--db", str(recorder), "--mapping", str(mapping), *args]) == 2
+    err = capsys.readouterr().err
+    assert message in err
+    assert "Traceback" not in err
+
+
+def test_the_report_refuses_an_empty_window(recorder: Path) -> None:
+    """P-111: the report itself divides by the window's length: an empty or reversed one is an
+    error, not a division by zero or a negative report."""
+    mapping = parse_mapping(MAPPING)
+    with RecorderDatabase(recorder) as db:
+        history = read_history(db, mapping, T0, T0 + DAY)
+    for end in (T0, T0 - HOUR):
+        with pytest.raises(ValueError, match="empty or reversed"):
+            report(history, mapping, T0, end, ZoneInfo("UTC"))
+
+
+def test_a_database_of_one_moment_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """P-111: every state at one moment gives a window of zero length: refused, exit code 2."""
+    single = RecorderWriter(tmp_path / "single.db")
+    single.add("binary_sensor.test_flame", T0, "off")
+    single.add("sensor.test_flow", T0, "30.0", {"unit_of_measurement": "°C"})
+    db = single.close()
+    assert main(["--db", str(db), "--mapping", str(_mapping_file(tmp_path))]) == 2
+    err = capsys.readouterr().err
+    assert "window" in err
+    assert "Traceback" not in err
+
+
+def test_each_day_is_summarised_from_its_own_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A13: every day was summarised over the whole imported history, so the work grew with
+    the square of the days. Each day now sees only its own samples, plus twelve hours on each
+    side for the burns across midnight."""
+    import tools.import_history as importer
+    from custom_components.vtherm_smart_boiler.core.daily import summarize_day
+
+    seen: list[tuple[float, float, list[float]]] = []
+
+    def spy(history: History, parameters, start: float, end: float, *args, **kwargs):
+        times = [s.t for series in history.signals.values() for s in series]
+        times += [s.t for s in history.weather]
+        seen.append((start, end, times))
+        return summarize_day(history, parameters, start, end, *args, **kwargs)
+
+    monkeypatch.setattr(importer, "summarize_day", spy)
+    mapping = parse_mapping(MAPPING)
+    tz = ZoneInfo("UTC")
+    start = datetime(2026, 1, 10, tzinfo=tz).timestamp()
+    end = start + 10 * DAY
+    history = _steady_heat(start - DAY, end + DAY)
+    flame = history.signals[Signal.FLAME]
+    for k in range(int(12 * DAY // HOUR)):  # a change every hour over twelve days
+        flame.append(start - DAY + k * HOUR + 1, k % 2 == 0)
+    importer.day_summaries(history, mapping, start, end, tz)
+    assert len(seen) == 10
+    for day_start, day_end, times in seen:
+        assert times
+        assert min(times) >= day_start - 12 * HOUR
+        assert max(times) < day_end + 12 * HOUR
+        assert len(times) <= 2 * (day_end - day_start + 24 * HOUR) / HOUR

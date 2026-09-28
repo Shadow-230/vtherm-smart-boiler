@@ -102,6 +102,7 @@ async def async_get_config_entry_diagnostics(
             "at": analysis.at,
             "verdict": analysis.verdict.verdict.value,
             "reasons": [asdict(reason) for reason in analysis.verdict.reasons],
+            "days_left_out": analysis.verdict.days_left_out,
             "day": {
                 "heating": asdict(day.heating),
                 "dhw": asdict(day.dhw),
@@ -111,6 +112,7 @@ async def async_get_config_entry_diagnostics(
                 "heating": asdict(week.heating),
                 "degree_days": None if week.degree_days is None else asdict(week.degree_days),
                 "gas_per_degree_day": week.gas_per_degree_day,
+                "other_gas": week.other_gas,
                 "load_below_min": None
                 if week.load_below_min is None
                 else asdict(week.load_below_min),
@@ -126,6 +128,8 @@ async def async_get_config_entry_diagnostics(
             "vt_feature_manager": _feature_manager(hass),
             "central_mode": None if data.central_mode is None else data.central_mode.value,
             "monitoring_since": data.monitoring_since,
+            # P-95: when the plugin was not running, unknown in what is read back.
+            "downtimes": [[since, until] for since, until in coordinator.down],
             "history_samples": {
                 signal.value: len(series) for signal, series in coordinator.history.signals.items()
             }

@@ -101,11 +101,15 @@ async def test_removing_the_entry_removes_its_files(
     names = [f"{DOMAIN}.gone.forecast_{partition_of(NOW)}"]
     await hass.async_add_executor_job(_write, storage, names)
     hass_storage[f"{DOMAIN}.gone"] = {"version": 1, "key": f"{DOMAIN}.gone", "data": {}}
+    # P-95: the last-run record goes with the other stores.
+    alive = f"{DOMAIN}.gone.alive"
+    hass_storage[alive] = {"version": 1, "key": alive, "data": {"alive_at": NOW, "down": []}}
     entry = MockConfigEntry(domain=DOMAIN, entry_id="gone", options={})
     await async_remove_entry(hass, entry)
     await hass.async_block_till_done()
     assert await hass.async_add_executor_job(_present, storage, names) == [False]
     assert f"{DOMAIN}.gone" not in hass_storage
+    assert alive not in hass_storage
 
 
 async def test_an_odd_forecast_answer_costs_a_snapshot_not_the_job(
@@ -142,3 +146,34 @@ async def test_an_odd_forecast_answer_costs_a_snapshot_not_the_job(
     await recorder.async_flush()
     (snapshot,) = hass_storage[_key(partition_of(NOW))]["data"]["snapshots"]
     assert snapshot["dt"] == [24 * 3600 - 1800]  # the one readable point, a day after NOW
+
+
+async def test_pruned_forecast_partitions_are_not_recreated(
+    hass: HomeAssistant, hass_storage: dict[str, Any], forecasts: FakeForecasts
+) -> None:
+    """P-56: a week pruned past the retention was left marked as changed, so the flush at
+    unload wrote it back — an empty file, recreated at every unload. Pruned, it stays gone."""
+    recorder = ForecastRecorder(hass, "entry", WEATHER_ENTITY)
+    old = NOW - DEFAULT_RETENTION_S - 3 * PARTITION_S
+    await recorder.async_take(old)  # a week with a save pending
+    await recorder.async_flush()
+    assert _key(partition_of(old)) in hass_storage
+    await recorder.async_take(old + 3600)  # changed again: its save pending once more
+    await recorder.async_take(NOW)  # past the retention now: pruned and removed
+    assert _key(partition_of(old)) not in hass_storage
+    await recorder.async_flush()
+    assert _key(partition_of(old)) not in hass_storage  # not written back
+    assert _key(partition_of(NOW)) in hass_storage
+
+
+async def test_a_flush_without_pruning_writes_the_changed_weeks(
+    hass: HomeAssistant, hass_storage: dict[str, Any], forecasts: FakeForecasts
+) -> None:
+    """P-56's negative: a week within the retention, changed since the last save, is written
+    at unload as before."""
+    recorder = ForecastRecorder(hass, "entry", WEATHER_ENTITY)
+    await recorder.async_take(NOW - PARTITION_S)
+    await recorder.async_take(NOW)
+    await recorder.async_flush()
+    assert _key(partition_of(NOW - PARTITION_S)) in hass_storage
+    assert _key(partition_of(NOW)) in hass_storage

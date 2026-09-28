@@ -981,7 +981,8 @@ async def test_short_hot_water_draws_are_no_ignition_problem(
         freezer.tick(timedelta(seconds=40))
         boiler.set_many({Signal.FLAME: False, Signal.DHW_ACTIVE: False})
         await hass.async_block_till_done()
-    await entry.runtime_data.async_refresh()
+    # P-80: the count comes from the analysis' burns, as of its last run.
+    await entry.runtime_data.async_run_analysis()
     await hass.async_block_till_done()
     ignition = hass.states.get(entity_id(hass, entry, "binary_sensor", "alarm_unstable_ignition"))
     assert ignition.state == alarm
@@ -1019,7 +1020,8 @@ async def test_a_tpi_zones_short_pulses_are_no_ignition_problem(
             boiler.set(Signal.FLAME, False)  # out once the relay has opened
         await hass.async_block_till_done()
         freezer.tick(timedelta(seconds=268))
-    await entry.runtime_data.async_refresh()
+    # P-80: the count comes from the analysis' burns, as of its last run.
+    await entry.runtime_data.async_run_analysis()
     await hass.async_block_till_done()
     ignition = hass.states.get(entity_id(hass, entry, "binary_sensor", "alarm_unstable_ignition"))
     assert ignition.state == alarm
@@ -1335,3 +1337,447 @@ async def test_the_connection_follows_the_relay(
     assert connection is not None
     assert connection.state == on
     assert connection.attributes["problems"] == ([] if on == "on" else ["relay"])
+
+
+# --- Y2: cycles, gas and days ----------------------------------------------------------------
+
+
+def _fake_recorder(hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, rows) -> list[dict]:
+    """Home Assistant's recorder answered from ``rows(start, end, entity_ids)``: what each read
+    asked is returned."""
+    from custom_components.vtherm_smart_boiler import coordinator as coordinator_module
+
+    asked: list[dict] = []
+
+    def significant_states(hass, start_time, *, end_time=None, entity_ids=None, **_kwargs):
+        asked.append({"start": start_time, "end": end_time, "entity_ids": list(entity_ids)})
+        return rows(start_time, end_time, entity_ids)
+
+    class Recorder:
+        async def async_add_executor_job(self, target, *args):
+            return await hass.async_add_executor_job(target, *args)
+
+    monkeypatch.setattr(coordinator_module, "_recorder", lambda hass: Recorder())
+    monkeypatch.setattr(coordinator_module, "_significant_states", lambda: significant_states)
+    hass.config.components.add("recorder")
+    return asked
+
+
+# The restart the downtime tests share: the plugin last ran at 10:00 (``STOPPED``), Home
+# Assistant starts again at 16:00 (``RESTART``); the recorder holds the flame off from 20:00 the
+# day before and on from 09:50, and the flow at 40 °C.
+RESTART = datetime(2026, 1, 10, 16, tzinfo=UTC)
+STOPPED = RESTART.timestamp() - 6 * 3600.0
+MIDNIGHT = datetime(2026, 1, 10, tzinfo=UTC).timestamp()
+
+
+def _alive_key(entry: MockConfigEntry) -> str:
+    return f"{DOMAIN}.{entry.entry_id}.alive"
+
+
+async def _restart(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    freezer,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    alive: dict[str, Any] | None = None,
+    main: dict[str, Any] | None = None,
+    created: datetime | None = None,
+) -> MockConfigEntry:
+    """Set up an entry at ``RESTART`` over the recorded rows, with the last-run record ``alive``
+    (``{"data": ...}``; ``None``: none) and the main store's ``main`` data (``None``: none)."""
+    from homeassistant.core import State
+
+    freezer.move_to(RESTART)
+    now = RESTART.timestamp()
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    flame, flow = boiler.entity(Signal.FLAME), boiler.entity(Signal.FLOW)
+
+    def at(t: float) -> datetime:
+        return datetime.fromtimestamp(t, UTC)
+
+    def rows(start_time, end_time, entity_ids):
+        unit = {"unit_of_measurement": "°C"}
+        return {
+            flame: [
+                State(flame, "off", {}, last_updated=at(now - 20 * 3600.0)),
+                State(flame, "on", {}, last_updated=at(STOPPED - 600.0)),
+            ],
+            flow: [State(flow, "40.0", unit, last_updated=at(now - 20 * 3600.0))],
+        }
+
+    _fake_recorder(hass, monkeypatch, rows)
+    boiler.set_many({Signal.FLAME: True, Signal.FLOW: 40.0})  # burning again at the start
+    entry = entry_for(boiler)
+    # An entry that has run for a month, unless told otherwise.
+    entry.created_at = RESTART - timedelta(days=30) if created is None else created
+    key = f"{DOMAIN}.{entry.entry_id}"
+    if main is not None:
+        hass_storage[key] = {"version": 1, "key": key, "data": main}
+    if alive is not None:
+        hass_storage[_alive_key(entry)] = {"version": 1, "key": _alive_key(entry)} | alive
+    await setup(hass, entry)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    return entry
+
+
+async def test_home_assistants_downtime_is_unknown_after_a_restart(
+    hass: HomeAssistant, hass_storage: dict[str, Any], freezer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P-95 (A11): the plugin's last-run record — a small store of its own — says when it last
+    ran: at a clean stop, the stop. Read back from the recorder, the history is unknown from
+    then until the first state after the start: a burn that was on when Home Assistant stopped
+    does not burn through the six hours it was down. The record goes on: the stop writes it,
+    the entry's main store keeps only a copy of the downtimes, and no ``alive_at``."""
+    entry = await _restart(
+        hass,
+        hass_storage,
+        freezer,
+        monkeypatch,
+        alive={"data": {"alive_at": STOPPED, "down": []}},
+        main={"monitoring_since": STOPPED - 30 * DAY},
+    )
+    now = RESTART.timestamp()
+    coordinator = entry.runtime_data
+    series = coordinator.history.signals[Signal.FLAME]
+    water = coordinator.history.signals[Signal.FLOW]
+    assert coordinator.down == [(STOPPED, now)]
+    assert series.value_at(STOPPED - 60) is True
+    assert water.value_at(STOPPED - 60) == 40.0
+    assert series.value_at(STOPPED + 60) is None
+    assert series.value_at(now - 60) is None
+    assert water.value_at(now - 60) is None
+    assert series.value_at(now) is True  # known again from the start
+    freezer.tick(60)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    record = hass_storage[_alive_key(entry)]["data"]
+    assert record == {"alive_at": pytest.approx(now + 60), "down": [[STOPPED, now]]}
+    main = hass_storage[f"{DOMAIN}.{entry.entry_id}"]["data"]
+    assert "alive_at" not in main
+    assert main["down"] == [[STOPPED, now]]
+
+
+async def test_a_dev_builds_alive_at_is_read_once(
+    hass: HomeAssistant, hass_storage: dict[str, Any], freezer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P-95's migration: a build that kept ``alive_at`` in the entry's main store has no
+    last-run record; its ``alive_at`` and downtimes are read from the main store once — the
+    record is written from then on, the main store no longer carries it."""
+    entry = await _restart(
+        hass,
+        hass_storage,
+        freezer,
+        monkeypatch,
+        main={
+            "monitoring_since": STOPPED - 30 * DAY,
+            "alive_at": STOPPED,
+            "down": [[STOPPED - 2 * DAY, STOPPED - 2 * DAY + 600]],
+        },
+    )
+    now = RESTART.timestamp()
+    coordinator = entry.runtime_data
+    assert coordinator.down == [(STOPPED - 2 * DAY, STOPPED - 2 * DAY + 600), (STOPPED, now)]
+    assert coordinator.history.signals[Signal.FLAME].value_at(STOPPED + 60) is None
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert hass_storage[_alive_key(entry)]["data"]["alive_at"] == pytest.approx(now)
+    assert "alive_at" not in hass_storage[f"{DOMAIN}.{entry.entry_id}"]["data"]
+
+
+@pytest.mark.parametrize(
+    "alive",
+    [None, {"data": None}, {"data": {"alive_at": "yesterday", "down": []}}, {"data": [1, 2]}],
+    ids=["missing", "corrupt", "non_numeric", "not_a_mapping"],
+)
+async def test_an_unreadable_last_run_record_is_never_no_downtime(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    freezer,
+    monkeypatch: pytest.MonkeyPatch,
+    alive: dict[str, Any] | None,
+) -> None:
+    """P-95's negative: without a readable last-run record the downtime is not taken as none —
+    it is unknown back to the latest moment the main store shows the plugin running, here the
+    end of the day it summarised last (midnight). The recorder's rows since are dropped, the
+    way a crash's are: unknown rather than wrong."""
+    first = {"monitoring_since": STOPPED - 30 * DAY}
+    entry = await _restart(hass, hass_storage, freezer, monkeypatch, alive=alive, main=first)
+    coordinator = entry.runtime_data
+    kept = _stored_days(MIDNIGHT - DAY, 1, _settings_of(entry))
+    now = RESTART.timestamp()
+    # The main store holds no day here: its only sign of running is the monitoring start, a
+    # month back, so the whole rolling history is unknown — never "no downtime".
+    assert coordinator.down == [(now - 8 * DAY, now)]
+    assert coordinator.history.signals[Signal.FLAME].value_at(STOPPED - 60) is None
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    # With a day summarised up to midnight in the main store, the downtime starts there.
+    hass_storage.pop(_alive_key(entry), None)
+    if alive is not None:
+        hass_storage[_alive_key(entry)] = {"version": 1, "key": _alive_key(entry)} | alive
+    main = hass_storage[f"{DOMAIN}.{entry.entry_id}"]["data"]
+    main["daily"] = kept
+    main.pop("down", None)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    coordinator = entry.runtime_data
+    now = datetime.now(UTC).timestamp()
+    assert coordinator.down == [(MIDNIGHT, now)]
+    series = coordinator.history.signals[Signal.FLAME]
+    assert series.value_at(MIDNIGHT - 60) is False  # before it: known
+    assert series.value_at(STOPPED - 60) is None  # the rows after it: dropped
+
+
+@pytest.mark.parametrize(("created_days_ago", "unknown_s"), [(0.001, 86.4), (30, 8 * DAY)])
+async def test_without_any_store_the_downtime_counts_from_the_entrys_creation(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    freezer,
+    monkeypatch: pytest.MonkeyPatch,
+    created_days_ago: float,
+    unknown_s: float,
+) -> None:
+    """P-95's negative: neither the last-run record nor the main store — a first run, or both
+    lost. The downtime counts from the entry's creation, never further back than the rolling
+    history: a new entry marks only the moments since it was created, and the recorder's
+    history from before stays whole; an old one whose stores are lost has the whole rolling
+    history unknown."""
+    created = RESTART - timedelta(days=created_days_ago)
+    entry = await _restart(hass, hass_storage, freezer, monkeypatch, created=created)
+    now = RESTART.timestamp()
+    coordinator = entry.runtime_data
+    assert coordinator.down == [(pytest.approx(now - unknown_s), now)]
+    series = coordinator.history.signals[Signal.FLAME]
+    assert series.value_at(STOPPED - 60) is (True if created_days_ago < 1 else None)
+
+
+async def test_the_last_run_record_has_a_store_of_its_own(
+    hass: HomeAssistant, hass_storage: dict[str, Any], freezer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P-95: after a crash the downtime starts at the last-run record's last write, so it is
+    written every ten minutes (provisional, K4) — to a small store of its own. Sixty minutes of
+    running with nothing else changing write it six times, and the entry's main store, a year
+    of day summaries in it, not at all: many installations run on SD cards or eMMC."""
+    start = datetime(2026, 1, 10, 12, tzinfo=UTC)
+    freezer.move_to(start)
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    coordinator = entry.runtime_data
+    assert coordinator._alive_store.key == _alive_key(entry)
+    assert coordinator._alive_store._atomic_writes
+    assert _alive_key(entry) not in hass_storage  # nothing yet: written every ten minutes
+    for _ in range(5):  # the start's own save of the main store goes out first, as before
+        freezer.tick(60)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    writes = {"main": 0, "alive": 0}
+
+    def spy(store: Any, name: str) -> None:
+        write = type(store)._async_write_data
+
+        async def counted(data: Any) -> None:
+            writes[name] += 1
+            await write(store, data)
+
+        store._async_write_data = counted
+
+    spy(coordinator._store, "main")
+    spy(coordinator._alive_store, "alive")
+    for _ in range(60):
+        freezer.tick(60)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    assert writes == {"main": 0, "alive": 6}
+    record = hass_storage[_alive_key(entry)]["data"]
+    assert record["alive_at"] == pytest.approx(start.timestamp() + 60 * 60)
+
+
+async def test_analysis_during_backfill_keeps_no_partial_days(
+    hass: HomeAssistant, freezer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P-53: an analysis copies the history while the recorder is still being read; the
+    backfill ends while it runs. Its copy holds only the hours since setup: its days are not
+    kept, for a year, as whole ones. The next analysis, with the history back, keeps them."""
+    from custom_components.vtherm_smart_boiler import coordinator as coordinator_module
+
+    freezer.move_to(datetime(2026, 1, 10, 12, tzinfo=UTC))
+    release = asyncio.Event()
+
+    async def slow_backfill(self: Any, now: float) -> None:
+        await release.wait()
+
+    monkeypatch.setattr(coordinator_module.SmartBoilerCoordinator, "_async_backfill", slow_backfill)
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    freezer.tick(timedelta(days=1))  # a whole day since setup: a day to summarise
+    boiler.set(Signal.FLAME, True)
+    await hass.async_block_till_done()
+    real = coordinator_module.analyse
+
+    def backfill_ends_meanwhile(*args: Any, **kwargs: Any) -> Any:
+        coordinator._history_back = True  # the recorder's history arrives while this runs
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(coordinator_module, "analyse", backfill_ends_meanwhile)
+    await coordinator.async_run_analysis()
+    assert coordinator.analysis is not None
+    assert coordinator.analysis.new_days  # it did summarise the day …
+    assert coordinator.daily == {}  # … and kept none of it
+    monkeypatch.setattr(coordinator_module, "analyse", real)
+    await coordinator.async_run_analysis()
+    assert coordinator.daily  # the history was back when this one copied it
+    release.set()
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+
+@pytest.mark.parametrize(
+    ("change", "kept"),
+    [
+        ({"parameters": {"boiler_min_power": 4.0, "boiler_max_power": 25.0,
+                         "water_volume": 120.0}}, True),
+        ({"signals": "add pressure"}, True),
+        ({"monitor": {"short_burn_min": 5}}, False),
+    ],
+)  # fmt: skip
+async def test_an_unrelated_option_keeps_the_stored_days(
+    hass: HomeAssistant, hass_storage: dict[str, Any], freezer, change: dict, kept: bool
+) -> None:
+    """P-87: any option change made every stored day stop counting — the verdict shrank to what
+    the recorder still held. Only what a day's summary depends on does that now: the water
+    volume or a pressure signal keep the days; the short-burn limit does not."""
+    freezer.move_to(datetime(2026, 2, 1, tzinfo=UTC))
+    now = datetime(2026, 2, 1, tzinfo=UTC).timestamp()
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.RETURN))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0, Signal.RETURN: 28.0})
+    boiler.set(Signal.PRESSURE, 1.5)
+    entry = entry_for(boiler)
+    key = f"{DOMAIN}.{entry.entry_id}"
+    hass_storage[key] = {
+        "version": 1,
+        "key": key,
+        "data": {
+            "monitoring_since": now - 30 * DAY,
+            "daily": _stored_days(now - 20 * DAY, 20, _settings_of(entry)),
+        },
+    }
+    await setup(hass, entry)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert entry.runtime_data.analysis.verdict.verdict.value == "worth_it"
+    if change.get("signals") == "add pressure":
+        signals = dict(entry.options["signals"]) | {"pressure": boiler.entity(Signal.PRESSURE)}
+        change = {"signals": signals}
+    before = entry.runtime_data
+    hass.config_entries.async_update_entry(entry, options={**entry.options, **change})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    coordinator = entry.runtime_data
+    assert coordinator is not before  # reloaded
+    assert (coordinator.settings_key == before.settings_key) is kept
+    assert len(coordinator.daily) == 20  # kept in the store either way
+    verdict = coordinator.analysis.verdict.verdict.value
+    assert verdict == ("worth_it" if kept else "not_enough_data")
+
+
+async def test_burns_are_classified_per_analysis(
+    hass: HomeAssistant, freezer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P-80: the quick path classified the last day's burns at every refresh — every few
+    seconds, a day of burns each time. The starts and ignition alarms use the analysis' burns
+    now (up to five minutes old); before the first analysis they cannot be judged."""
+    from dataclasses import replace
+
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.vtherm_smart_boiler import coordinator as coordinator_module
+    from custom_components.vtherm_smart_boiler.core import cycles
+    from custom_components.vtherm_smart_boiler.core.alarms import HELD, UNKNOWN_INPUT, AlarmKind
+
+    freezer.move_to(datetime(2026, 1, 10, 6, tzinfo=UTC))
+    release = asyncio.Event()
+
+    async def slow_backfill(self: Any, now: float) -> None:
+        await release.wait()
+
+    monkeypatch.setattr(coordinator_module.SmartBoilerCoordinator, "_async_backfill", slow_backfill)
+    calls: list[int] = []
+    real = cycles.classify_burn
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(cycles, "classify_burn", counted)
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    # Declared without hot water: every burn heats.
+    declared = {**entry_for(boiler).options, "boiler": {"class": "read_only", "dhw": "none"}}
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=declared)
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    for _ in range(20):  # three-minute burns, one every four minutes: fifteen an hour
+        freezer.tick(60)
+        boiler.set(Signal.FLAME, True)
+        await hass.async_block_till_done()
+        freezer.tick(180)
+        boiler.set(Signal.FLAME, False)
+        await hass.async_block_till_done()
+    coordinator.analysis = None  # as before the first analysis
+    coordinator._alarms = {}
+    calls.clear()
+    await coordinator.async_refresh()
+    assert calls == []  # the quick path classifies nothing
+    starts = coordinator.data.alarms[AlarmKind.FREQUENT_STARTS]
+    assert starts.active is None  # no analysis yet: not judged
+    assert starts.reason == UNKNOWN_INPUT
+    await coordinator.async_run_analysis()
+    assert calls  # the analysis did
+    count = len(calls)
+    await coordinator.async_refresh()
+    assert len(calls) == count
+    starts = coordinator.data.alarms[AlarmKind.FREQUENT_STARTS]
+    assert starts.active is True
+    assert starts.value == 15  # the starts of the last hour, from the analysis' burns
+    # An analysis that has stopped for three runs judges nothing: the alarm holds (S-16).
+    now = dt_util.utcnow().timestamp()
+    coordinator.analysis = replace(coordinator.analysis, at=now - 3 * 300 - 1)
+    await coordinator.async_refresh()
+    starts = coordinator.data.alarms[AlarmKind.FREQUENT_STARTS]
+    assert (starts.active, starts.reason) == (True, HELD)
+    release.set()
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+
+@pytest.mark.parametrize("reported", [True, False])
+async def test_gas_used_with_the_burner_off_is_shown_apart(
+    hass: HomeAssistant, freezer, reported: bool
+) -> None:
+    """S-31: the meter counts another consumer too (a cooker). What it counted while the burner
+    was known off is left out of heating gas and shown apart, on gas per degree-day; with no
+    meter reading there is nothing to show, and the attribute is absent."""
+    freezer.move_to(datetime(2026, 1, 10, 12, tzinfo=UTC))
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.GAS_METER))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    meter = boiler.entity(Signal.GAS_METER)
+    unit = {"unit_of_measurement": "m³", "device_class": "gas", "state_class": "total_increasing"}
+    hass.states.async_set(meter, "100.0" if reported else "unavailable", unit)
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    freezer.tick(timedelta(hours=1))
+    hass.states.async_set(meter, "100.4" if reported else "unavailable", unit)  # the cooker
+    await hass.async_block_till_done()
+    freezer.tick(timedelta(minutes=5))
+    await entry.runtime_data.async_run_analysis()
+    await hass.async_block_till_done()
+    sensor = hass.states.get(entity_id(hass, entry, "sensor", "gas_per_degree_day"))
+    assert sensor is not None
+    if reported:
+        assert sensor.attributes["other_gas"] == pytest.approx(0.4)
+        week = entry.runtime_data.analysis.week
+        assert week.gas is not None
+        assert week.gas.amount == pytest.approx(0.0)  # none of it heating gas
+    else:
+        assert "other_gas" not in sensor.attributes

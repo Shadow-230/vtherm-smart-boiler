@@ -3,7 +3,8 @@
 A burn is a stretch with the flame on. Its start (or end) is *seen* only when the flame was
 known to be off right before (or after) it; an edge hidden by unknown data or cut by the window
 is not a start. DHW is taken from its own signal when mapped, else from a CH-active signal, else
-inferred from flow temperature against the CH setpoint and from zone demand, with a confidence.
+inferred from flow temperature against the CH setpoint and from zone demand, with a confidence;
+inferred evidence that points both ways without a clear balance decides nothing (P-28).
 """
 
 from __future__ import annotations
@@ -71,6 +72,10 @@ _DHW_PROBABILITY: dict[Evidence, float] = {
 }
 SIGNAL_COVERAGE = 0.5  # a signal decides when known for at least half of the burn
 CH_SIGNAL_CONFIDENCE = 0.9
+# P-28: inferred evidence pointing both ways (an observation above 0.5 and one below) whose
+# combined probability lies within this band decides nothing: the burn is of unknown kind,
+# counted apart (provisional, K4).
+CONFLICT_BAND = (0.35, 0.65)
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,8 +162,15 @@ def _infer(burn: Burn, inputs: DhwInputs) -> ClassifiedBurn:
     if not found:
         return ClassifiedBurn(burn, BurnKind.UNKNOWN, 0.0)
     # Independent observations add up in log-odds from an even prior.
-    log_odds = sum(math.log(p / (1.0 - p)) for p in (_DHW_PROBABILITY[e] for e in found))
+    chances = [_DHW_PROBABILITY[e] for e in found]
+    log_odds = sum(math.log(p / (1.0 - p)) for p in chances)
     probability = 1.0 / (1.0 + math.exp(-log_odds))
+    low, high = CONFLICT_BAND
+    conflicting = any(p > 0.5 for p in chances) and any(p < 0.5 for p in chances)
+    if conflicting and low <= probability <= high:
+        # P-28: no zone demand with the flow within the setpoint is a heating burn as often as
+        # a hot-water one; a weak balance of conflicting evidence is no answer.
+        return ClassifiedBurn(burn, BurnKind.UNKNOWN, 0.0, tuple(found))
     if probability > 0.5:
         return ClassifiedBurn(burn, BurnKind.DHW, probability, tuple(found))
     return ClassifiedBurn(burn, BurnKind.CH, 1.0 - probability, tuple(found))

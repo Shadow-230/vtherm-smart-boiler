@@ -182,17 +182,21 @@ def forecast_errors(
     snapshots: Iterable[ForecastSnapshot],
     observed: Series[float],
     horizons_h: Sequence[int] = (1, 3, 6, 12, 24, 48),
+    *,
+    observed_until: float,
 ) -> dict[int, ErrorStats]:
     """Error of hourly forecast temperatures per horizon (hours ahead, nearest listed one).
 
-    The observed value is the mean outdoor temperature over the forecast step.
+    The observed value is the mean outdoor temperature over the forecast step. A series holds
+    its last value for ever, so a step ending after ``observed_until`` — the moment the
+    observation reaches, the caller's now — is skipped: it has not been observed yet (P-88).
     """
     errors: dict[int, list[float]] = {h: [] for h in horizons_h}
     for snapshot in snapshots:
         if snapshot.kind is not ForecastKind.HOURLY:
             continue
         for point in snapshot.points:
-            if point.temperature is None:
+            if point.temperature is None or point.t + HOUR > observed_until:
                 continue
             ahead = (point.t - snapshot.taken_at) / HOUR
             if ahead < 0:

@@ -98,10 +98,23 @@ def test_forecast_errors_by_horizon() -> None:
         hourly(T0, [1.0, 1.0, 1.0, 2.0]),  # 0 h, 1 h, 2 h, 3 h ahead
         hourly(T0, [None, -1.0, 0.0, 4.0]),
     ]
-    errors = forecast_errors(snapshots, observed, horizons_h=(1, 3))
+    errors = forecast_errors(snapshots, observed, horizons_h=(1, 3), observed_until=T0 + 4 * HOUR)
     assert errors[1] == ErrorStats(2, pytest.approx(0.0), pytest.approx(1.0))
     assert errors[3] == ErrorStats(2, pytest.approx(3.0), pytest.approx(3.0))
 
 
 def test_forecast_errors_need_observations() -> None:
-    assert forecast_errors([hourly(T0, [1.0, 1.0])], Series[float]()) == {}
+    observed = Series[float]()
+    assert forecast_errors([hourly(T0, [1.0, 1.0])], observed, observed_until=T0 + DAY) == {}
+
+
+def test_forecast_errors_skip_hours_not_yet_observed() -> None:
+    """T-40 (P-88): a series with one observation at T0 holds that value for ever, so every
+    hour of a 48-hour forecast taken at T0 looked observed. Knowing the observation ends at T0,
+    no horizon has statistics; an hour counts once it has ended by ``observed_until``."""
+    observed = Series([(T0, 0.0)])
+    snapshot = hourly(T0, [1.0] * 48)
+    assert forecast_errors([snapshot], observed, observed_until=T0) == {}
+    errors = forecast_errors([snapshot], observed, observed_until=T0 + 7 * HOUR)
+    assert set(errors) == {1, 3, 6}  # the hours ending by T0 + 7 h
+    assert errors[6] == ErrorStats(1, pytest.approx(1.0), pytest.approx(1.0))

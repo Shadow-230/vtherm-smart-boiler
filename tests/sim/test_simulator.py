@@ -9,7 +9,8 @@ from custom_components.boiler_sim.profiles import BOILERS, HOUSES, radiator_zone
 
 from custom_components.vtherm_smart_boiler.core.building import fit_daily_load
 from custom_components.vtherm_smart_boiler.core.cycles import BurnKind
-from custom_components.vtherm_smart_boiler.core.monitor import daily_points, summarize, verdict
+from custom_components.vtherm_smart_boiler.core.daily import fit_points, summarize_day
+from custom_components.vtherm_smart_boiler.core.monitor import summarize, verdict
 from custom_components.vtherm_smart_boiler.core.parameters import Estimate, ParameterKey, Source
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 from custom_components.vtherm_smart_boiler.core.verdict import ReasonCode, Verdict
@@ -95,6 +96,9 @@ def test_simulated_week_gives_a_verdict_and_counts_dhw() -> None:
 
 
 def test_dhw_is_inferred_without_dhw_or_ch_signal() -> None:
+    """Without a DHW or CH signal, hot-water burns never count as heating. Here the zones ask
+    for heat while the water runs hot: evidence both ways (flow above the setpoint, zone
+    demand) without a clear balance — of unknown kind, counted apart (P-28)."""
     signals = DEFAULT_SIGNALS - {Signal.DHW_ACTIVE, Signal.CH_ACTIVE}
     result = simulate(scenario([8.0, 8.0], dhw=DhwSchedule(), signals=signals))
     params = entered_parameters(BOILERS["condensing_large"])
@@ -102,7 +106,7 @@ def test_dhw_is_inferred_without_dhw_or_ch_signal() -> None:
     schedule = DhwSchedule()
     during_dhw = [b for b in summary.burns if schedule.active(b.burn.start + 60.0)]
     assert during_dhw
-    assert all(b.kind is BurnKind.DHW for b in during_dhw)
+    assert all(b.kind in (BurnKind.DHW, BurnKind.UNKNOWN) for b in during_dhw)
     heating = [b for b in summary.burns if b not in during_dhw]
     correct = sum(1 for b in heating if b.kind is BurnKind.CH)
     assert correct / len(heating) > 0.9
@@ -114,7 +118,7 @@ def test_building_fit_recovers_the_simulated_house() -> None:
     result = simulate(scenario(means))
     params = entered_parameters(BOILERS["condensing_large"])
     days = [(d * DAY, (d + 1) * DAY) for d in range(1, len(means))]  # skip the start-up day
-    points = daily_points(result.history, params, days)
+    points = fit_points([summarize_day(result.history, params, a, b) for a, b in days])
     assert len(points) == len(days)
     fit = fit_daily_load(points, threshold=18.0)
     assert fit is not None

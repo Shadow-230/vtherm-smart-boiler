@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
+from typing import Any
+
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.cycles import BurnKind
@@ -10,7 +13,6 @@ from custom_components.vtherm_smart_boiler.core.metrics import ModulationScale
 from custom_components.vtherm_smart_boiler.core.monitor import (
     GasSource,
     MonitorOptions,
-    daily_points,
     summarize,
     verdict,
 )
@@ -183,15 +185,19 @@ def test_capacity_scale_changes_the_estimate() -> None:
     assert summary.heat_output_kwh.amount == pytest.approx(8 * 12.0)
 
 
-def test_daily_points_need_known_outdoor_and_output() -> None:
+def test_fit_points_need_known_outdoor_and_output() -> None:
+    """The building fit's days come from the day summaries (P-93: one path, 23- and 25-hour
+    days normalised), each with its outdoor temperature and heat output known."""
+    from custom_components.vtherm_smart_boiler.core.daily import fit_points, summarize_day
+
     history = cycling_history(days=3)
     parameters = params(boiler_min_power=4.0, boiler_max_power=24.0)
     days = [(d * DAY, (d + 1) * DAY) for d in range(3)]
-    points = daily_points(history, parameters, days)
+    points = fit_points([summarize_day(history, parameters, a, b) for a, b in days])
     assert len(points) == 3
     assert points[0].outdoor_mean == pytest.approx(8.0)
     assert points[0].energy_kwh == pytest.approx(8 * 14.0)
-    assert daily_points(history, ParameterSet(), days) == []
+    assert fit_points([summarize_day(history, ParameterSet(), a, b) for a, b in days]) == []
 
 
 def test_copy_window_is_independent() -> None:
@@ -287,3 +293,149 @@ def test_gas_from_modulation_survives_a_moment_without_the_flame() -> None:
     assert summary.gas is not None
     assert summary.gas.complete
     assert summary.gas_per_degree_day is not None
+
+
+def _metered_history(days: int = 2) -> tuple[History, int, int]:
+    """A burn of 10 minutes every 30 (every third one hot water), a meter reporting every
+    7 minutes that counts only while the burner burns; returns it with the number of meter
+    readings and burns."""
+    flame = Series[bool]([(0, False)])
+    dhw = Series[bool]([(0, False)])
+    burns = int(days * DAY // (30 * MIN))
+    for k in range(burns):
+        t = k * 30 * MIN
+        flame.append(t + 5 * MIN, True)
+        flame.append(t + 15 * MIN, False)
+        if k % 3 == 0:
+            dhw.append(t + 5 * MIN, True)
+            dhw.append(t + 15 * MIN, False)
+    meter = Series[float]()
+    readings = 0
+    t = 0.0
+    while t < days * DAY:
+        burnt = sum(
+            max(0.0, min(k * 30 * MIN + 15 * MIN, t) - (k * 30 * MIN + 5 * MIN))
+            for k in range(burns)
+        )
+        meter.append(t, 1000.0 + burnt / HOUR)
+        readings += 1
+        t += 7 * MIN
+    signals = {Signal.FLAME: flame, Signal.DHW_ACTIVE: dhw, Signal.GAS_METER: meter}
+    return History(signals=signals), readings, burns
+
+
+def _split_as_before(history: History, start: float, end: float) -> float:
+    """0.2.1's split, pair by pair against every burn: the hot water's share of each rise by
+    the burner time between its readings."""
+    summary = summarize(history, ParameterSet(), start, end)
+    meter = history.signal(Signal.GAS_METER)
+    readings = [(s.start, s.value) for s in meter.segments(start, end) if s.value is not None]
+    dhw = 0.0
+    for (since, before), (at, after) in pairwise(readings):
+        rise = after - before
+        parts = [
+            (b, max(0.0, min(b.burn.end, at) - max(b.burn.start, since))) for b in summary.burns
+        ]
+        total = sum(s for _b, s in parts)
+        if rise > 0 and total > 0:
+            dhw += rise * sum(s for b, s in parts if b.kind is BurnKind.DHW) / total
+    return dhw
+
+
+def test_metered_gas_is_split_in_one_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    """P-84: the hot water's part of a meter's gas was found pair of readings by pair against
+    every burn — readings times burns. It is one walk over both, in time order: the same
+    result, with work that grows with readings plus burns."""
+    from custom_components.vtherm_smart_boiler.core import monitor
+
+    history, readings, burns = _metered_history()
+    end = 2 * DAY
+    summary = summarize(history, ParameterSet(), 0, end)
+    total = summary.gas
+    assert total is not None
+    heating_before = (history.signal(Signal.GAS_METER).value_at(end - 1) - 1000.0) - (
+        _split_as_before(history, 0, end)
+    )
+    assert total.amount == pytest.approx(heating_before)
+    assert summary.other_gas == 0.0  # the meter counts only while the burner burns
+    visits = 0
+    overlap = monitor._overlap
+
+    def counted(*args: Any) -> float:
+        nonlocal visits
+        visits += 1
+        return overlap(*args)
+
+    monkeypatch.setattr(monitor, "_overlap", counted)
+    summarize(history, ParameterSet(), 0, end)
+    assert 0 < visits <= 2 * (readings + burns)
+    assert readings * burns > 50 * (readings + burns)  # the old walk would be far above
+
+
+def test_a_meter_bounce_counts_once() -> None:
+    """P-97: readings 100.0, 99.9, 100.0, 100.2 — a small step back and forth, as a meter's
+    rounding or a correction gives — are a rise of 0.2, not 0.3: a rise counts only above the
+    highest reading so far, in the consumption and in the split alike."""
+    from custom_components.vtherm_smart_boiler.core.metrics import meter_consumption
+
+    meter = Series([(0.0, 100.0), (10 * MIN, 99.9), (20 * MIN, 100.0), (30 * MIN, 100.2)])
+    consumption = meter_consumption(meter, 0, 40 * MIN)
+    assert consumption is not None
+    assert consumption.amount == pytest.approx(0.2)
+    flame = Series([(0.0, True)])  # burning throughout: every rise is the burner's
+    history = History(
+        signals={
+            Signal.FLAME: flame,
+            Signal.DHW_ACTIVE: Series([(0.0, False)]),
+            Signal.GAS_METER: meter,
+        }
+    )
+    summary = summarize(history, ParameterSet(), 0, 40 * MIN)
+    assert summary.gas is not None
+    assert summary.gas.amount == pytest.approx(0.2)
+    assert summary.other_gas == pytest.approx(0.0)
+
+
+def test_gas_without_burner_is_reported_apart() -> None:
+    """S-31: a rise over an interval with the flame known off throughout is another consumer's
+    gas (a cooker): left out of heating gas and shown apart, never silently subtracted. A rise
+    over an interval with burner time is split as before — another consumer's gas during a
+    burn cannot be told apart and counts as heating."""
+    flame = Series([(0.0, False), (HOUR, True), (HOUR + 10 * MIN, False)])
+    meter = Series([(0.0, 100.0), (30 * MIN, 100.3), (80 * MIN, 100.8)])
+    history = History(
+        signals={
+            Signal.FLAME: flame,
+            Signal.DHW_ACTIVE: Series([(0.0, False)]),
+            Signal.GAS_METER: meter,
+        }
+    )
+    summary = summarize(history, ParameterSet(), 0, 2 * HOUR)
+    assert summary.gas is not None
+    assert summary.gas.amount == pytest.approx(0.5)
+    assert summary.other_gas == pytest.approx(0.3)
+
+
+def test_gas_with_the_flame_unknown_counts_as_before() -> None:
+    """S-31's negative: with the flame unknown over an interval, its rise cannot be told to be
+    another consumer's — it is split as before (heating, without burner time); without a gas
+    meter there is no other gas to show."""
+    flame = Series([(0.0, None), (30 * MIN, False), (HOUR, True), (HOUR + 10 * MIN, False)])
+    meter = Series([(0.0, 100.0), (30 * MIN, 100.3), (80 * MIN, 100.8)])
+    history = History(
+        signals={
+            Signal.FLAME: flame,
+            Signal.DHW_ACTIVE: Series([(0.0, False)]),
+            Signal.GAS_METER: meter,
+        }
+    )
+    summary = summarize(history, ParameterSet(), 0, 2 * HOUR)
+    assert summary.gas is not None
+    assert summary.gas.amount == pytest.approx(0.8)
+    assert summary.other_gas == pytest.approx(0.0)
+    del history.signals[Signal.GAS_METER]
+    history.signals[Signal.MODULATION] = Series([(0.0, 50.0)])
+    rates = params(gas_at_min_power=0.4, gas_at_max_power=2.4)
+    estimated = summarize(history, rates, 0, 2 * HOUR)
+    assert estimated.gas_source is GasSource.MODULATION
+    assert estimated.other_gas is None

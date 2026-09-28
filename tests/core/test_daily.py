@@ -173,3 +173,193 @@ def test_today_does_not_take_a_place_in_the_verdict_window() -> None:
     options = VerdictOptions(min_days=7.0)
     result = verdict_over_days(days, options, window_days=7, current=today)
     assert result.verdict is not Verdict.NOT_ENOUGH_DATA
+
+
+def midnight_burn(end_min: float | None = 20.0) -> History:
+    """A heating burn from 23:50 to ``end_min`` minutes past midnight (``None``: still burning),
+    at 50 % modulation with the return at 45 °C."""
+    flame = Series[bool]([(0, False), (DAY - 10 * MIN, True)])
+    if end_min is not None:
+        flame.append(DAY + end_min * MIN, False)
+    return History(
+        signals={
+            Signal.FLAME: flame,
+            Signal.RETURN: Series([(0, 45.0)]),
+            Signal.MODULATION: Series([(0, 50.0)]),
+            Signal.DHW_ACTIVE: Series([(0, False)]),
+        },
+        weather=Series([(0, 8.0)]),
+    )
+
+
+POWER = PARAMETERS.with_estimate(
+    ParameterKey.BOILER_MIN_POWER, Estimate(4.0, Source.ENTERED)
+).with_estimate(ParameterKey.BOILER_MAX_POWER, Estimate(24.0, Source.ENTERED))
+
+
+def test_a_burn_across_midnight_is_complete_in_its_start_day() -> None:
+    """P-83: a burn from 23:50 to 00:20 is one whole burn of 30 minutes, counted in the day it
+    started; its time is split at midnight — 10 minutes in the first day, 20 in the next,
+    which has no start."""
+    from custom_components.vtherm_smart_boiler.core.monitor import MonitorOptions
+
+    history = midnight_burn()
+    first = summarize_day(history, POWER, 0, DAY, known_until=2 * DAY)
+    assert (first.starts, first.complete_burns) == (1, 1)
+    assert first.burn_s == pytest.approx(10 * MIN)
+    assert first.condensing_basis_s == pytest.approx(10 * MIN)
+    assert first.heat_kwh == pytest.approx(14.0 * 10 / 60)  # 14 kW at 50 %, 10 minutes
+    # Its length is the whole burn's: short below 31 minutes, not below 29.
+    longer = MonitorOptions(short_burn_s=31 * MIN)
+    assert summarize_day(history, POWER, 0, DAY, longer, known_until=2 * DAY).short_burns == 1
+    shorter = MonitorOptions(short_burn_s=29 * MIN)
+    assert summarize_day(history, POWER, 0, DAY, shorter, known_until=2 * DAY).short_burns == 0
+    second = summarize_day(history, POWER, DAY, 2 * DAY, known_until=2 * DAY)
+    assert (second.starts, second.complete_burns, second.short_burns) == (0, 0, 0)
+    assert second.burn_s == pytest.approx(20 * MIN)
+    assert second.condensing_basis_s == pytest.approx(20 * MIN)
+    assert second.heat_kwh == pytest.approx(14.0 * 20 / 60)
+
+
+def test_a_burn_is_not_followed_past_what_the_history_knows() -> None:
+    """P-83's margin stops where the history does: a burn still running when the analysis runs
+    is not taken to last twelve more hours."""
+    history = midnight_burn(end_min=None)
+    day = summarize_day(history, POWER, 0, DAY, known_until=DAY + 3 * MIN)
+    assert (day.starts, day.complete_burns) == (1, 0)  # its end is not seen yet
+    assert day.burn_s == pytest.approx(10 * MIN)
+    today = summarize_day(history, POWER, DAY, DAY + 3 * MIN, known_until=DAY + 3 * MIN)
+    assert today.burn_s == pytest.approx(3 * MIN)
+
+
+def test_a_day_waits_for_a_burn_still_running() -> None:
+    """P-83: a burn running at 00:03 that started the day before: that day is not summarised
+    until the flame goes off, or six hours after its end — whichever comes first."""
+    from custom_components.vtherm_smart_boiler.core.analysis import analyse
+    from custom_components.vtherm_smart_boiler.core.daily import day_settled
+    from custom_components.vtherm_smart_boiler.core.monitor import MonitorOptions
+
+    running = midnight_burn(end_min=None)
+    assert not day_settled(running, 0, DAY, DAY + 3 * MIN)
+    assert not day_settled(running, 0, DAY, DAY + 6 * HOUR - 1)
+    assert day_settled(running, 0, DAY, DAY + 6 * HOUR)  # six hours: summarised all the same
+    result = analyse(running, POWER, MonitorOptions(), DAY + 3 * MIN, [(0, DAY)])
+    assert result.new_days == ()  # not kept yet …
+    [monitored] = [r for r in result.verdict.reasons if r.code.value == "monitored_days"]
+    assert monitored.value == pytest.approx(1.0 + 3 / 1440)  # … but counted as it stands
+    ended = midnight_burn(end_min=20.0)
+    assert day_settled(ended, 0, DAY, DAY + 25 * MIN)
+    result = analyse(ended, POWER, MonitorOptions(), DAY + 25 * MIN, [(0, DAY)])
+    [day] = result.new_days
+    assert (day.starts, day.complete_burns) == (1, 1)
+
+
+def test_a_day_does_not_wait_for_a_flame_it_cannot_see() -> None:
+    """The negative: a flame gone unknown before the analysis leaves nothing running to wait
+    for (the burn ended unseen), and a day without a flame signal has no burns at all."""
+    from custom_components.vtherm_smart_boiler.core.daily import day_settled
+
+    history = midnight_burn(end_min=None)
+    history.signals[Signal.FLAME].append(DAY - 5 * MIN, None)
+    assert day_settled(history, 0, DAY, DAY + 3 * MIN)
+    assert day_settled(History(), 0, DAY, DAY + 3 * MIN)
+
+
+def test_days_under_control_carry_controlled_s() -> None:
+    """P-96 (A12): each day keeps its time under control — the control state heating, idle,
+    frost, fallback or the boiler's own fault — from the plugin's own control-state history.
+    The verdict leaves out days with an hour of it or more, and says how many."""
+    history = cycling(1)
+    history.control_state = Series(
+        [
+            (0, "heating"),
+            (3 * HOUR, "idle"),
+            (5 * HOUR, "handed_back"),
+            (6 * HOUR, "frost"),
+            (6.5 * HOUR, "fallback"),
+            (7 * HOUR, "boiler_fault"),
+            (7.5 * HOUR, None),
+            (8 * HOUR, "disabled"),
+            (9 * HOUR, "waiting_data"),
+            (10 * HOUR, "not_allowed"),
+        ]
+    )
+    day = summarize_day(history, PARAMETERS, 0, DAY)
+    assert day.controlled_s == pytest.approx(6.5 * HOUR)
+    assert day.under_control
+    assert DaySummary.from_dict(day.to_dict()) == day
+    # A day with less than an hour of it counts as uncontrolled.
+    short = cycling(1)
+    short.control_state = Series([(0, "heating"), (59 * MIN, "handed_back")])
+    brief = summarize_day(short, PARAMETERS, 0, DAY)
+    assert brief.controlled_s == pytest.approx(59 * MIN)
+    assert not brief.under_control
+
+
+def test_days_without_a_control_history_are_uncontrolled() -> None:
+    """The negative: control never configured leaves no control-state history — 0 s; a day
+    stored before the field existed reads ``None`` and counts as uncontrolled, as no release
+    ever controlled."""
+    day = summarize_day(cycling(1), PARAMETERS, 0, DAY)
+    assert day.controlled_s == 0.0
+    assert not day.under_control
+    legacy = {k: v for k, v in day.to_dict().items() if k != "controlled_s"}
+    stored = DaySummary.from_dict(legacy)
+    assert stored.controlled_s is None
+    assert not stored.under_control
+
+
+def test_the_verdict_leaves_out_days_under_control() -> None:
+    """P-96: the verdict is the installation's own, without control: days with an hour of
+    control or more are left out — today's too — and their number is given."""
+    from dataclasses import replace
+
+    options = VerdictOptions(min_days=7.0)
+    baseline = days_of(cycling(7, every_min=12.0), 7)  # five starts an hour: worth it
+    controlled = [
+        replace(day, start=day.start + 7 * DAY, end=day.end + 7 * DAY, controlled_s=2 * HOUR)
+        for day in days_of(cycling(3, every_min=60.0), 3)
+    ]
+    today = replace(controlled[0], start=10 * DAY, end=10 * DAY + HOUR)
+    result = verdict_over_days([*baseline, *controlled], options, window_days=7, current=today)
+    assert result.verdict is Verdict.WORTH_IT
+    assert result.days_left_out == 4
+    codes = {r.code.value: r.value for r in result.reasons}
+    assert codes["frequent_starts"] == pytest.approx(5.0)
+    # Without the tag the calm controlled days would take the window's place.
+    untagged = [replace(day, controlled_s=None) for day in controlled]
+    mixed = verdict_over_days([*baseline, *untagged], options, window_days=7)
+    assert mixed.days_left_out == 0
+    mixed_codes = {r.code.value: r.value for r in mixed.reasons}
+    assert mixed_codes["frequent_starts"] == pytest.approx((4 * 120 + 3 * 24) / (7 * 24))
+
+
+def test_a_stuck_outdoor_sensor_gives_way_to_the_weather_in_a_day() -> None:
+    """P-86: a day checks the boiler's outdoor sensor against the weather over that day; a
+    sensor found stuck is left out, and the weather gives the day's outdoor temperature and
+    degree-days."""
+    history = cycling(1)
+    history.signals[Signal.OUTDOOR] = Series([(0, 8.0)])  # stuck at 8 °C all day
+    history.weather = Series([(k * HOUR, 2.0 + (k % 12)) for k in range(24)])  # 2 to 13 °C
+    day = summarize_day(history, PARAMETERS, 0, DAY)
+    assert day.outdoor_mean == pytest.approx(7.5)
+    assert day.degree_days == pytest.approx(7.5)  # base 15 °C
+    # A sensor that moves with the weather is kept.
+    history.signals[Signal.OUTDOOR] = Series([(k * HOUR, 1.0 + (k % 12)) for k in range(24)])
+    assert summarize_day(history, PARAMETERS, 0, DAY).outdoor_mean == pytest.approx(6.5)
+
+
+def test_a_stuck_sensor_without_the_weather_leaves_the_day_unknown() -> None:
+    """P-86's negative: the sensor found stuck while the weather was there, then the weather
+    lost for most of the day — the day's outdoor temperature and degree-days are unknown,
+    not the stuck value; with no weather entity at all the sensor cannot be judged and is
+    used as before."""
+    history = cycling(1)
+    history.signals[Signal.OUTDOOR] = Series([(0, 8.0)])
+    history.weather = Series([*((k * HOUR, 2.0 + k / 2) for k in range(13)), (13 * HOUR, None)])
+    day = summarize_day(history, PARAMETERS, 0, DAY)
+    assert day.outdoor_mean is None
+    assert day.degree_days is None
+    history.weather = Series()
+    alone = summarize_day(history, PARAMETERS, 0, DAY)
+    assert alone.outdoor_mean == pytest.approx(8.0)

@@ -25,7 +25,14 @@ from .alarms import (
 )
 from .building import LoadFit, fit_daily_load
 from .cycles import ClassifiedBurn
-from .daily import DaySummary, fit_points, summarize_day, verdict_over_days
+from .daily import (
+    DaySummary,
+    day_settled,
+    fit_points,
+    keep_known_control,
+    summarize_day,
+    verdict_over_days,
+)
 from .history import History
 from .monitor import MonitorOptions, MonitorSummary, summarize
 from .parameters import ParameterKey, ParameterSet
@@ -71,18 +78,28 @@ def analyse(
     """``days``: the complete local days of the history; ``kept``: the day summaries kept from
     earlier. The verdict covers the kept days, the history's days not kept yet and today. Only
     days summarised with ``settings`` count (the key of the current settings); the history's
-    days summarised with others are summarised again. ``previous``: the trends of the last
-    analysis — a trend that cannot be judged now keeps its state for an hour (S-16)."""
+    days summarised with others are summarised again, keeping the time under control they
+    found. A day with a burn that started in it still running is not kept yet (P-83): it counts
+    in this verdict as it stands, and is summarised whole once the burn ends. ``previous``: the
+    trends of the last analysis — a trend that cannot be judged now keeps its state for an hour
+    (S-16)."""
     full = summarize(history, parameters, now - HISTORY_DAYS * DAY, now, options)
+    earlier = {day.start: day for day in kept}
     kept = [day for day in kept if day.settings == settings]
     known = {day.start for day in kept}
-    new_days = tuple(
-        summarize_day(history, parameters, start, end, options, settings)
-        for start, end in days
-        if start not in known
-    )
+    settled: list[DaySummary] = []
+    waiting: list[DaySummary] = []
+    for start, end in days:
+        if start in known:
+            continue
+        summary = keep_known_control(
+            summarize_day(history, parameters, start, end, options, settings, known_until=now),
+            earlier.get(start),
+        )
+        (settled if day_settled(history, start, end, now) else waiting).append(summary)
+    new_days = tuple(settled)
     today_start = max((end for _start, end in days), default=now - DAY)
-    today = summarize_day(history, parameters, today_start, now, options, settings)
+    today = summarize_day(history, parameters, today_start, now, options, settings, known_until=now)
     week = summarize(history, parameters, now - 7 * DAY, now, options)
     day = summarize(history, parameters, now - DAY, now, options)
     threshold = parameters.value(ParameterKey.HEATING_THRESHOLD)
@@ -96,7 +113,7 @@ def analyse(
         day=day,
         week=week,
         verdict=verdict_over_days(
-            [*kept, *new_days], options.verdict, options.verdict_window_days, today
+            [*kept, *new_days, *waiting], options.verdict, options.verdict_window_days, today
         ),
         trends=_trends(history, full, now, options.verdict.condensing_boiler, previous or {}),
         report=report,

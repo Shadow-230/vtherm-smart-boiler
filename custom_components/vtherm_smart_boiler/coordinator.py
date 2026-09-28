@@ -6,7 +6,13 @@ signal check, hot water, emitter factors, foreign heat, reference room, critical
 alarms. The analysis runs every few minutes on a copy of the history, off the event loop:
 summaries, verdict, trend warnings, report, outdoor check and building fit. After a restart the
 history is rebuilt from the recorder, which keeps these states anyway; the plugin's own storage
-holds only small things (monitoring start, held emitter factors, measured parameters).
+holds only small things (monitoring start, held emitter factors, measured parameters, the day
+summaries). A small store of its own, the last-run record, keeps when the plugin last ran —
+written every ten minutes and at a clean stop, so the entry's store is written only when its own
+data changes: the time the plugin was down — a stop, a crash, a reload — is unknown in what is
+read back (P-95). The control state goes into the history as well, live from the control unit
+and back from the recorder's copy of its sensor, so each day knows its time under control
+(P-96).
 
 With the analysis it judges the lowest water temperature's evidence and shows a suggestion,
 never applied (X6, decision 2); the quick path shows what the wall thermostat on a gateway keeps
@@ -43,6 +49,7 @@ from homeassistant.core import (
     State,
     callback,
 )
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
@@ -53,6 +60,7 @@ from homeassistant.util import dt as dt_util
 from . import feature_manager
 from .config import EntryConfig
 from .const import (
+    ALIVE_STORE_VERSION,
     CONTROL_STORE_MARKER,
     CONTROL_STORE_VERSION,
     DOMAIN,
@@ -63,6 +71,7 @@ from .const import (
     SUMMARY_SECONDS,
     TICK_SECONDS,
     UNREADABLE_ISSUE,
+    alive_store_key,
     assumed_owed_state,
     control_state_owed,
     control_store_key,
@@ -93,11 +102,17 @@ from .core.alarms import (
 from .core.analysis import Analysis, analyse
 from .core.controller import OutageWindow, follow_outage
 from .core.critical_zone import CriticalZone, critical_zone
-from .core.cycles import classify_burns, find_burns
-from .core.daily import KEEP_DAYS, DaySummary, settings_key, summarize_day
+from .core.daily import (
+    DAY_MARGIN_S,
+    KEEP_DAYS,
+    DaySummary,
+    keep_known_control,
+    settings_key,
+    summarize_day,
+)
 from .core.emitters import FactorResult, FactorStatus, update_factor
 from .core.foreign_heat import ForeignHeatState, update_foreign_heat
-from .core.history import History, ZoneSeries
+from .core.history import History, ZoneSeries, with_downtime
 from .core.hot_water import HotWater, hot_water_available
 from .core.lowest_water import (
     LowestWaterSuggestion,
@@ -116,7 +131,6 @@ from .core.lowest_water import (
     wall_warning_since,
 )
 from .core.metrics import CH_KINDS
-from .core.monitor import dhw_inputs
 from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
 from .core.readings import BoilerSnapshot, ZoneState
 from .core.reference_room import ReferenceRoom, select_reference
@@ -187,6 +201,16 @@ _NOTICE_DEFAULTS: dict[str, dict[str, str]] = {
     BOILER_FAULT_ISSUE: {"entity": "-"},
 }
 SAVE_DELAY_S = 120
+# P-80: the starts and ignition alarms count the burns the analysis classified; an analysis
+# older than this (three missed runs) has stopped, and its burns judge nothing (provisional,
+# K4): the alarms hold their state for an hour, then show unknown (S-16).
+ANALYSIS_BURNS_MAX_AGE_S = 3 * SUMMARY_SECONDS
+# P-95 (A11): the last-run record says when the plugin was last known to run (``alive_at``),
+# written this often (provisional, K4) and at a clean stop — to a small store of its own, not the
+# entry's store with a year of days in it (SD cards, eMMC). After a crash the downtime starts at
+# its last write. Downtimes are kept as long as the rolling history.
+ALIVE_SAVE_S = 10 * 60
+UNAVAILABLE_STATES = ("unavailable", "unknown")
 
 
 def _bar(value: float | None) -> str:
@@ -311,6 +335,14 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # Day summaries for the verdict, kept for up to a year (SCOPE.md §10).
         self.daily: dict[float, DaySummary] = {}
         self._history_back = False  # the recorder's history has been read (or cannot be)
+        # P-95 (A11): the ``[from, to)`` intervals the plugin was not running, kept as long as the
+        # rolling history: unknown time in what is read back from the recorder. The last-run
+        # record keeps them, with the moment the plugin last ran; the entry's store a copy.
+        self.down: list[tuple[float, float]] = []
+        self._alive_store = alive_store(hass, entry.entry_id)
+        # P-96: the plugin's own control-state sensor, as the registry names it; its recorded
+        # states tell the days under control.
+        self._control_entity: str | None = None
         self._stopped = False
         # The entities the platforms create now (disabled ones too): the rest are stale.
         self.expected_unique_ids: set[str] = set()
@@ -361,6 +393,12 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 state = self.hass.states.get(entity_id)
             if state is not None:
                 self._record(entity_id, state, state.last_updated.timestamp())
+        if self.control is not None:
+            # P-96: the time under control, as the unit shows it on its control-state sensor —
+            # from the unit itself, so a first setup (the sensor not yet in the registry) or a
+            # disabled sensor does not lose it; the recorder's copy fills what came before.
+            self._record_control_state()
+            self._unsubs.append(self.control.async_add_listener(self._record_control_state))
         self._unsubs.append(
             async_track_state_change_event(
                 self.hass, list(self.config.watched_entities), self._handle_state_event
@@ -369,6 +407,11 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._unsubs.append(
             async_track_time_interval(
                 self.hass, self._async_analysis_tick, timedelta(seconds=SUMMARY_SECONDS)
+            )
+        )
+        self._unsubs.append(
+            async_track_time_interval(
+                self.hass, self._async_alive_tick, timedelta(seconds=ALIVE_SAVE_S)
             )
         )
         if self.forecasts is not None:
@@ -413,6 +456,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         await self.async_shutdown()
         if self._loaded:
             await self._control_store.async_save(self._stored_control())
+            # A clean stop: the downtime from here on (P-95).
+            await self._async_save_alive()
             await self._store.async_save(self._stored_data())
         if self.forecasts is not None:
             await self.forecasts.async_flush()
@@ -430,6 +475,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         )
         stored = _mapping(read.main)
         self.monitoring_since = self._monitoring_start(stored, now)
+        self.down = _downtimes(
+            await _async_try_load(self._alive_store), read.main, now, _created_at(entry)
+        )
         self.stored_control = dict(read.state)
         self.control_readable = read.readable
         self._main_owed = _owed_flags(stored.get("control"))
@@ -489,12 +537,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     def _monitoring_start(self, stored: dict[str, Any], now: float) -> float:
         """The entry's creation; for an entry without one (migrated from Home Assistant's old
         storage, epoch 0), the stored start, else now."""
-        created = getattr(self.config_entry, "created_at", None)
-        try:
-            at = created.timestamp() if isinstance(created, datetime) else 0.0
-        except OverflowError, OSError, ValueError:
-            at = 0.0
-        if math.isfinite(at) and at > 0:
+        at = _created_at(self.config_entry)
+        if at is not None:
             return at
         raw = stored.get("monitoring_since")
         if raw is None:
@@ -523,6 +567,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._main_owed = _owed_flags(control)
         return {
             "monitoring_since": self.monitoring_since,
+            # A copy of the downtimes (P-95), written only with this store's own saves: what is
+            # left of them should the last-run record be lost.
+            "down": [[since, until] for since, until in self.down],
             "factors": {
                 zone: {"value": f.value, "at": f.at, "output_w": f.output_w}
                 for zone, f in self._factors.items()
@@ -572,10 +619,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         await self._store.async_save(self._stored_data())
 
     def _keep_days(self, days: Sequence[DaySummary], now: float) -> None:
-        """Keep newly summarised days, over one summarised with other settings; drop those
-        older than a year."""
+        """Keep newly summarised days, over one summarised with other settings (keeping the
+        time under control that one found, P-96); drop those older than a year."""
         added = [
-            day
+            keep_known_control(day, kept)
             for day in days
             if (kept := self.daily.get(day.start)) is None or kept.settings != day.settings
         ]
@@ -637,7 +684,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         rolling = local_days(now - HISTORY_DAYS * DAY, now)
         fill_end = rolling[0][0] if rolling else now - HISTORY_DAYS * DAY
         windows = local_days(now - KEEP_DAYS * DAY, fill_end)
-        entity_ids = list(self.config.watched_entities)
+        entity_ids = self._recorded_entities()
+        down = list(self.down)
         flame = self.config.signals.get(Signal.FLAME)
         while windows and flame is not None and not self._stopped:
             chunk, windows = windows[-7:], windows[:-7]
@@ -648,7 +696,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             ]
             if not missing:
                 continue
-            start, end = chunk[0][0], chunk[-1][1]
+            # Twelve hours on each side: a burn across a midnight of the chunk is whole (P-83).
+            start, end = chunk[0][0] - DAY_MARGIN_S, chunk[-1][1] + DAY_MARGIN_S
 
             def read(start: float = start, end: float = end, days: Any = missing) -> Any:
                 states = significant_states(
@@ -663,11 +712,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 )
                 if not states.get(flame):
                     return None  # the recorder reaches no further back
-                history = self._empty_history()
-                for entity_id, rows in states.items():
-                    for state in rows:
-                        if isinstance(state, State):
-                            self._record(entity_id, state, state.last_updated.timestamp(), history)
+                history = self._rebuild(states, start, end, down)
                 return [
                     summarize_day(
                         history,
@@ -676,6 +721,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                         b,
                         self.config.monitor.monitor,
                         self.settings_key,
+                        known_until=end,
                     )
                     for a, b in days
                 ]
@@ -700,7 +746,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         except ImportError:
             return
         start = dt_util.utc_from_timestamp(now - HISTORY_DAYS * DAY)
-        entity_ids = list(self.config.watched_entities)
+        entity_ids = self._recorded_entities()
+        down = list(self.down)
 
         def read() -> History:
             states = significant_states(
@@ -713,12 +760,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 minimal_response=False,
                 no_attributes=False,  # zones need their attributes
             )
-            history = self._empty_history()
-            for entity_id, rows in states.items():
-                for state in rows:
-                    if isinstance(state, State):
-                        self._record(entity_id, state, state.last_updated.timestamp(), history)
-            return history
+            # The downtime is marked up to now: the samples recorded live since setup follow.
+            return self._rebuild(states, start.timestamp(), math.inf, down)
 
         try:
             older = await recorder.async_add_executor_job(read)
@@ -726,6 +769,42 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             _LOGGER.warning("Could not read the recorder history", exc_info=True)
             return
         self.history.prepend(older)
+
+    def _recorded_entities(self) -> list[str]:
+        """What is read back from the recorder: the watched entities and, where there is one,
+        the plugin's own control-state sensor (P-96) — as the registry names it now, so a
+        rename is followed. Called in the event loop."""
+        entity_ids = list(self.config.watched_entities)
+        self._control_entity = er.async_get(self.hass).async_get_entity_id(
+            "sensor", DOMAIN, f"{self.config_entry.entry_id}_control_state"
+        )
+        if self._control_entity is not None:
+            entity_ids.append(self._control_entity)
+        return entity_ids
+
+    def _rebuild(
+        self,
+        states: dict[str, list[Any]],
+        start: float,
+        end: float,
+        down: Sequence[tuple[float, float]],
+    ) -> History:
+        """Recorded states as a history, off the event loop (nothing here writes to Home
+        Assistant): each entity's rows in time order, the plugin's downtime within
+        ``[start, end)`` unknown (P-95)."""
+        history = self._empty_history()
+        for entity_id, rows in states.items():
+            timed = [(row.last_updated.timestamp(), row) for row in rows if isinstance(row, State)]
+            for t, state in with_downtime(timed, down, start, end):
+                self._record(entity_id, state, t, history)
+        return history
+
+    @callback
+    def _record_control_state(self) -> None:
+        """P-96: the control unit's state now, into the live history."""
+        if self.control is not None:
+            mode = self.control.status.mode.value
+            _append(self.history.control_state, dt_util.utcnow().timestamp(), mode)
 
     @callback
     def _handle_state_event(self, event: Event[EventStateChangedData]) -> None:
@@ -770,6 +849,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             # Read as the CH setpoint signal would be: the evidence's setpoint under control.
             value = reading_from_state(Signal.CH_SETPOINT, state).value
             _append(history.setpoint_read_back, t, value)
+        if entity_id == self._control_entity:
+            # P-96: the control state as its sensor showed it; unavailable is unknown.
+            shown = None if state is None or state.state in UNAVAILABLE_STATES else state.state
+            _append(history.control_state, t, shown)
 
     # --- quick path -----------------------------------------------------------------------
 
@@ -1064,22 +1147,27 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             kind = AlarmKind.FLUE_GAS_HIGH
             alarms[kind] = banded_alarm(kind, flue, limits.flue_gas, previous.get(kind), now)
         # Heating burns only: a combi's short hot-water draws are no ignition problem, and a
-        # burn of unknown kind is counted apart (P47).
+        # burn of unknown kind is counted apart (P47). P-80: the burns of the last day as the
+        # analysis classified them, every five minutes — not again at every refresh; they lag
+        # by up to one analysis, which is enough for information. Before the first analysis,
+        # or once it has stopped, there are none to judge by: unknown.
         options = self.config.monitor.monitor
-        inputs = dhw_inputs(self.history, self.parameters, now - DAY, now, options)
+        analysed = self.analysis
+        if analysed is not None and now - analysed.at > ANALYSIS_BURNS_MAX_AGE_S:
+            analysed = None  # the analysis has stopped: its burns are too old to judge by
         flame = self.history.signal(Signal.FLAME)
-        burns = [
-            burn
-            for burn in classify_burns(find_burns(flame, now - DAY, now), inputs)
-            if burn.kind in CH_KINDS
-        ]
+        burns = (
+            [burn for burn in analysed.day.burns if burn.kind in CH_KINDS]
+            if analysed is not None
+            else []
+        )
         kind = AlarmKind.FREQUENT_STARTS
         alarms[kind] = frequent_starts(
             burns,
             now,
             limits.starts_per_hour,
             previous.get(kind),
-            known_s=known_duration(flame, now - HOUR, now),
+            known_s=known_duration(flame, now - HOUR, now) if analysed is not None else 0.0,
         )
         kind = AlarmKind.UNSTABLE_IGNITION
         alarms[kind] = unstable_ignition(
@@ -1091,7 +1179,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             flow=self.history.signals.get(Signal.FLOW),
             setpoint=self.history.signals.get(Signal.CH_SETPOINT),
             previous=previous.get(kind),
-            known_s=known_duration(flame, now - DAY, now),
+            known_s=known_duration(flame, now - DAY, now) if analysed is not None else 0.0,
         )
         too_hot = self._circuit_too_hot(snapshot, now)
         if too_hot is not None:
@@ -1342,6 +1430,26 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self.check_learning()
         await self.async_run_analysis()
 
+    async def _async_alive_tick(self, _now: datetime) -> None:
+        if not self._stopped:
+            await self._async_save_alive()
+
+    async def _async_save_alive(self) -> None:
+        """P-95: the last-run record — the plugin runs now, and its downtimes still within the
+        rolling history — written to its own small store, every ``ALIVE_SAVE_S`` and at a clean
+        stop; nothing before the stores were read (P-04). A write that fails is logged: the next
+        start then counts the downtime from the last record, earlier — unknown, never less."""
+        if not self._loaded:
+            return
+        now = dt_util.utcnow().timestamp()
+        floor = now - HISTORY_DAYS * DAY
+        self.down = [(since, until) for since, until in self.down if until >= floor]
+        record = {"alive_at": now, "down": [[since, until] for since, until in self.down]}
+        try:
+            await self._alive_store.async_save(record)
+        except Exception:  # a full disk, say: the stop and the monitor go on
+            _LOGGER.warning("Could not write when the plugin last ran", exc_info=True)
+
     def check_learning(self) -> None:
         """Warn about zone learning the plugin affects but cannot protect, each warning with
         what its advice costs: Auto-TPI that cannot learn — flagged as used by VT's central
@@ -1423,6 +1531,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         try:
             now = dt_util.utcnow().timestamp()
             self.history.drop_before(now - HISTORY_DAYS * DAY)
+            # P-53: whether the recorder's history is back, read with the copy: a backfill that
+            # ends while this analysis runs does not make its copy whole.
+            back = self._history_back
             copy = self.history.copy_window(now - HISTORY_DAYS * DAY, now)
             days = local_days(now - HISTORY_DAYS * DAY, now)
             analysis = await self.hass.async_add_executor_job(
@@ -1440,7 +1551,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             if self._stopped:
                 return  # a reload came meanwhile: the new installation analyses for itself
             self.analysis = analysis
-            if self._history_back:
+            if back:
                 self._keep_days(analysis.new_days, now)
             fit = self.analysis.fit
             if fit is not None:
@@ -1591,6 +1702,12 @@ def control_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
     return Store(hass, CONTROL_STORE_VERSION, control_store_key(entry_id), atomic_writes=True)
 
 
+def alive_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
+    """The last-run record (P-95): when the plugin last ran and its downtimes — small, written
+    every ten minutes and at a clean stop, atomically."""
+    return Store(hass, ALIVE_STORE_VERSION, alive_store_key(entry_id), atomic_writes=True)
+
+
 @dataclass(frozen=True, slots=True)
 class ControlRead:
     """The control state as read, with the cautious answer to whether a hand-back is owed."""
@@ -1681,6 +1798,81 @@ def _append(series: Series[Any], t: float, value: object) -> None:
     series.append(max(t, last.t) if last is not None else t, value)
 
 
+def _downtimes(
+    record: object, main: object, now: float, created: float | None
+) -> list[tuple[float, float]]:
+    """P-95 (A11): the downtimes still within the rolling history, and the one that ends now.
+
+    The last-run record says when the plugin last ran — its clean stop, or its last write before
+    a crash — and keeps the earlier downtimes. Without a readable one (missing, damaged, of
+    another shape) the downtime is never taken as none: the main store's copy of the downtimes
+    is taken, and the one ending now is unknown back to the latest moment the main store shows
+    the plugin running (``_last_seen``: a build that kept ``alive_at`` there is read once so).
+    Without the main store either — a first run, or both lost — it counts from the entry's
+    creation: a new entry marks only the moments since. Never further back than the rolling
+    history (what the recorder gives back)."""
+    floor = now - HISTORY_DAYS * DAY
+    found = record if isinstance(record, dict) else None
+    since = _timestamp(found.get("alive_at")) if found is not None else None
+    kept: object = found.get("down") if found is not None else None
+    stored = main if isinstance(main, dict) else None
+    if since is None:
+        if record is not None:
+            _LOGGER.warning("The record of when the plugin last ran cannot be read")
+        kept = stored.get("down") if stored is not None else None
+        seen = _last_seen(stored, now) if stored is not None else created
+        since = floor if seen is None else max(seen, floor)
+        _LOGGER.info(
+            "No record of when the plugin last ran: the time since %s is taken as unknown",
+            dt_util.utc_from_timestamp(since).isoformat(),
+        )
+    down: list[tuple[float, float]] = []
+    for item in kept if isinstance(kept, list) else ():
+        try:
+            begin, end = (float(value) for value in item)
+        except TypeError, ValueError:
+            continue
+        if math.isfinite(begin) and begin < end <= now and end >= floor:
+            down.append((begin, end))
+    if since < now:
+        down.append((since, now))
+    return sorted(down)
+
+
+def _timestamp(raw: object) -> float | None:
+    """A stored moment, or ``None`` for anything that is not a finite number."""
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return None
+    value = float(raw)
+    return value if math.isfinite(value) else None
+
+
+def _last_seen(stored: dict[str, Any], now: float) -> float | None:
+    """The latest moment the entry's main store shows the plugin running: an ``alive_at`` a
+    build kept there, the end of a day it summarised, an emitter factor or a measured value it
+    computed, its monitoring start; ``None`` without any. A moment after ``now`` (a clock set
+    back) says nothing."""
+    moments = [stored.get("alive_at"), stored.get("monitoring_since")]
+    for key, field_name in (("daily", "end"), ("factors", "at"), ("measured", "at")):
+        section = stored.get(key)
+        for item in section.values() if isinstance(section, dict) else ():
+            if isinstance(item, dict):
+                moments.append(item.get(field_name))
+    known = [t for t in map(_timestamp, moments) if t is not None and t <= now]
+    return max(known, default=None)
+
+
+def _created_at(entry: ConfigEntry) -> float | None:
+    """The entry's creation, ``None`` where it is not known (epoch 0: migrated from Home
+    Assistant's old storage)."""
+    created = getattr(entry, "created_at", None)
+    try:
+        at = created.timestamp() if isinstance(created, datetime) else 0.0
+    except OverflowError, OSError, ValueError:
+        return None
+    return at if math.isfinite(at) and at > 0 else None
+
+
 FIT_MOVED = 0.01  # a relative change in a fitted value worth saving
 FIT_CONFIDENCE_MOVED = 0.02
 
@@ -1695,9 +1887,34 @@ def _moved(before: Estimate | None, after: Estimate) -> bool:
     )
 
 
+# P-87: what a day's summary depends on. Any other option — the water volume, the pressure
+# signal, the alarms, control — leaves the stored days as they are. The load model's parameters
+# are not here either: the load share is to be recomputed from each day (Y3, P-91).
+SUMMARY_PARAMETERS = (
+    ParameterKey.BOILER_MIN_POWER,
+    ParameterKey.BOILER_MAX_POWER,
+    ParameterKey.GAS_AT_MIN_POWER,
+    ParameterKey.GAS_AT_MAX_POWER,
+    ParameterKey.MAX_CH_SETPOINT,
+    ParameterKey.HEATING_THRESHOLD,
+)
+SUMMARY_SIGNALS = (
+    Signal.FLAME,
+    Signal.FLOW,
+    Signal.RETURN,
+    Signal.MODULATION,
+    Signal.CH_SETPOINT,
+    Signal.DHW_ACTIVE,
+    Signal.CH_ACTIVE,
+    Signal.GAS_METER,
+    Signal.OUTDOOR,
+)
+
+
 def summary_settings(config: EntryConfig) -> dict[str, Any]:
-    """What shapes a day's summary: the monitor's options, the parameters as the user entered
-    them, the entities feeding the signals, the weather entity and the zones."""
+    """What shapes a day's summary, and only that (P-87): the monitor's options, the parameters
+    it uses as the user entered them, the entities feeding the signals it reads, the weather
+    entity and the zones."""
     options = config.monitor.monitor
     return {
         "options": {
@@ -1707,8 +1924,8 @@ def summary_settings(config: EntryConfig) -> dict[str, Any]:
             "has_dhw": options.has_dhw,
             "setpoint_margin": options.setpoint_margin,
         },
-        "parameters": {key.value: config.parameters.value(key) for key in ParameterKey},
-        "signals": {signal.value: entity for signal, entity in config.signals.items()},
+        "parameters": {key.value: config.parameters.value(key) for key in SUMMARY_PARAMETERS},
+        "signals": {signal.value: config.signals.get(signal) for signal in SUMMARY_SIGNALS},
         "weather": config.weather,
         "zones": sorted(config.zone_entities),
     }

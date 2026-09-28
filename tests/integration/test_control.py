@@ -3767,8 +3767,9 @@ async def test_a_store_read_that_fails_writes_nothing_and_still_reports_the_debt
     assert not await rig.hass.config_entries.async_setup(entry.entry_id)
     await rig.hass.async_block_till_done()
     assert entry.state is ConfigEntryState.SETUP_ERROR
-    await rig.advance(150)  # past the delayed save
+    await rig.advance(700)  # past the delayed save and the last-run record's ten minutes
     assert {key: hass_storage[key] for key in before} == before
+    assert f"{DOMAIN}.{entry.entry_id}.alive" not in hass_storage  # nor that one (P-95)
     assert rig.gateway.calls == []
     found = issue(rig, "hand_back_owed")
     assert found is not None
@@ -10030,3 +10031,80 @@ async def test_unreadable_relay_memory_in_the_store_is_skipped(
     loop = rig.entry.runtime_data.control._session.loop
     assert loop.relay.restarts == ()
     assert loop.relay.rewritten_at is None
+
+
+# --- Y2: the days under control (P-96, A12) --------------------------------------------------
+
+
+async def test_the_time_under_control_is_recorded_for_the_verdict(rig: Rig) -> None:
+    """P-96 (A12): the control state goes into the history from the unit itself, as its
+    control-state sensor shows it — from the first start on, before the sensor is in the
+    registry. A day with an hour of control or more is left out of the verdict, and the verdict
+    says how many days it left out."""
+    await start(rig)
+    assert rig.entry is not None
+    coordinator = rig.entry.runtime_data
+    assert [s.value for s in coordinator.history.control_state] == ["disabled"]
+    await coordinator.async_run_analysis()
+    assert rig.state("sensor", "verdict").attributes["days_left_out"] == 0
+    await rig.switch(True)
+    await rig.advance(3700, step=60.0)
+    modes = {s.value for s in coordinator.history.control_state}
+    assert modes & {"heating", "idle"}
+    await coordinator.async_run_analysis()
+    # Today — under control for more than an hour — is left out.
+    assert rig.state("sensor", "verdict").attributes["days_left_out"] == 1
+
+
+async def test_days_under_control_are_read_back_from_the_control_state_sensor(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P-96: after a restart the rolling history is read back from the recorder with the
+    plugin's own control-state sensor, as the registry names it: a past day is tagged with the
+    time under control it had before the restart."""
+    from custom_components.vtherm_smart_boiler import coordinator as coordinator_module
+
+    now = dt_util.utcnow()
+    asked: list[list[str]] = []
+
+    def significant_states(hass, start_time, *, end_time=None, entity_ids=None, **_kwargs):
+        asked.append(list(entity_ids))
+        if end_time is not None:
+            return {}  # older days: the recorder reaches no further back
+        flame = BOILER_ENTITIES[Signal.FLAME]
+        rows: dict[str, list[State]] = {
+            flame: [State(flame, "off", {}, last_updated=now - timedelta(days=3))]
+        }
+        for entity in entity_ids:
+            if entity.endswith("control_state"):
+                rows[entity] = [
+                    State(entity, "disabled", {}, last_updated=now - timedelta(days=3)),
+                    State(entity, "heating", {}, last_updated=now - timedelta(hours=30)),
+                    State(entity, "unavailable", {}, last_updated=now - timedelta(hours=28)),
+                    State(entity, "idle", {}, last_updated=now - timedelta(hours=27, minutes=30)),
+                    State(entity, "handed_back", {}, last_updated=now - timedelta(hours=26)),
+                ]
+        return rows
+
+    class Recorder:
+        async def async_add_executor_job(self, target: Any, *args: Any) -> Any:
+            return await rig.hass.async_add_executor_job(target, *args)
+
+    monkeypatch.setattr(coordinator_module, "_recorder", lambda hass: Recorder())
+    monkeypatch.setattr(coordinator_module, "_significant_states", lambda: significant_states)
+    rig.hass.config.components.add("recorder")
+    await start(rig)
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    assert rig.entry is not None
+    coordinator = rig.entry.runtime_data
+    sensor = rig.entity("sensor", "control_state")
+    assert sensor in asked[0]
+    series = coordinator.history.control_state
+    moment = (now - timedelta(hours=29)).timestamp()
+    assert series.value_at(moment) == "heating"
+    assert series.value_at((now - timedelta(hours=27, minutes=45)).timestamp()) is None
+    [day] = [
+        d for d in coordinator.daily.values() if d.start <= moment < d.end
+    ]  # the day before yesterday
+    assert day.controlled_s == pytest.approx(2 * 3600.0 + 1.5 * 3600.0)
+    assert day.under_control

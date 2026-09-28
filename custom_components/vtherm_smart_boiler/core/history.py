@@ -6,7 +6,7 @@ same core code analyses all three.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -69,6 +69,9 @@ class History:
     # Under control without a CH setpoint signal: the control's setpoint read-back, the source
     # of the lowest water temperature's evidence (X6). Empty elsewhere.
     setpoint_read_back: Series[float] = field(default_factory=Series)
+    # The plugin's own control state (its control-state sensor's states): the time under
+    # control each day is told from it (P-96). Empty where control never ran.
+    control_state: Series[str] = field(default_factory=Series)
 
     def signal(self, signal: Signal) -> Series[Any]:
         """The series of a signal; empty (always unknown) when not mapped."""
@@ -133,6 +136,7 @@ class History:
             },
             weather=self.weather.window(start, end),
             setpoint_read_back=self.setpoint_read_back.window(start, end),
+            control_state=self.control_state.window(start, end),
         )
 
     def prepend(self, older: History) -> None:
@@ -148,6 +152,7 @@ class History:
                     series.prepend(earlier)
         self.weather.prepend(older.weather)
         self.setpoint_read_back.prepend(older.setpoint_read_back)
+        self.control_state.prepend(older.control_state)
 
     def drop_before(self, t: float) -> None:
         for series in self.signals.values():
@@ -157,6 +162,48 @@ class History:
                 series.drop_before(t)
         self.weather.drop_before(t)
         self.setpoint_read_back.drop_before(t)
+        self.control_state.drop_before(t)
+
+
+def with_downtime[X](
+    rows: Iterable[tuple[float, X]],
+    down: Sequence[tuple[float, float]],
+    start: float,
+    end: float,
+) -> Iterator[tuple[float, X | None]]:
+    """One entity's recorded rows, in time order, with its downtime unknown (P-95, A11).
+
+    ``down`` holds the ``[from, to)`` intervals the plugin was not running — Home Assistant
+    stopped, crashed or reloading the entry. Over each one that overlaps ``[start, end)``, the
+    value is unknown from ``from`` on: a ``None`` row there, and the rows inside dropped — one
+    may be from before a crash the last sign of life (``from``) came minutes earlier than, and
+    none says how long its value held. The first row from ``to`` on makes it known again. An
+    interval that began before ``start`` makes ``start`` itself unknown, as the recorder's
+    state for it is the one from before."""
+    marks: list[tuple[float, float]] = []
+    for low, high in sorted((max(a, start), b) for a, b in down if a < b and b > start and a < end):
+        if marks and low <= marks[-1][1]:
+            marks[-1] = (marks[-1][0], max(marks[-1][1], high))  # overlapping: one downtime
+        else:
+            marks.append((low, high))
+    index = 0
+    marked = False  # the current interval's ``None`` is out
+    for t, value in rows:
+        while index < len(marks) and marks[index][1] <= t:
+            if not marked:
+                yield marks[index][0], None
+            index += 1
+            marked = False
+        if index < len(marks) and marks[index][0] <= t:
+            if not marked:
+                yield marks[index][0], None
+                marked = True
+            continue  # inside the downtime: its value is not known to hold
+        yield t, value
+    for low, _high in marks[index:]:
+        if not marked:
+            yield low, None
+        marked = False
 
 
 def _zone_wants_heat(values: Sequence[object]) -> bool | None:

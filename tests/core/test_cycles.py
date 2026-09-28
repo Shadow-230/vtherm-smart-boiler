@@ -153,3 +153,54 @@ def test_a_boiler_without_hot_water_burns_for_heating() -> None:
     inputs = DhwInputs(zone_demand=Series([(0, False)]), has_dhw=False)
     result = classify_burn(BURN, inputs)
     assert (result.kind, result.confidence) == (BurnKind.CH, 1.0)
+
+
+def test_conflicting_inferred_evidence_is_unknown() -> None:
+    """P-28: without a DHW or CH signal, a heating burn with no zone demand at that moment and
+    the flow within the setpoint scored as hot water (0.6 against 0.45) and left the cycling
+    statistics. Evidence that points both ways with a combined probability within 0.35–0.65
+    decides nothing: the burn is of unknown kind, counted apart."""
+    inputs = DhwInputs(
+        flow=Series([(0, 44.0)]),
+        ch_setpoint=Series([(0, 45.0)]),
+        zone_demand=Series([(0, False)]),
+    )
+    result = classify_burn(BURN, inputs)
+    assert result.kind is BurnKind.UNKNOWN
+    assert set(result.evidence) == {Evidence.NO_ZONE_DEMAND, Evidence.FLOW_WITHIN_SETPOINT}
+    # Flow above the setpoint while a zone asks: 0.7 against 0.4, about 0.61 — no decision.
+    above = DhwInputs(
+        flow=Series([(0, 70.0)]),
+        ch_setpoint=Series([(0, 45.0)]),
+        zone_demand=Series([(0, True)]),
+    )
+    assert classify_burn(BURN, above).kind is BurnKind.UNKNOWN
+    # A conflict whose combined evidence is strong still decides (flow above the maximum).
+    strong = DhwInputs(
+        flow=Series([(0, 78.0)]), max_ch_setpoint=65.0, zone_demand=Series([(0, True)])
+    )
+    assert classify_burn(BURN, strong).kind is BurnKind.DHW
+
+
+def test_single_inferred_evidence_is_unchanged() -> None:
+    """P-28's rule needs evidence both ways: one observation decides as before, and one that
+    is unknown over the burn is no evidence at all."""
+    no_demand = classify_burn(BURN, DhwInputs(zone_demand=Series([(0, False)])))
+    assert (no_demand.kind, no_demand.confidence) == (BurnKind.DHW, pytest.approx(0.6))
+    flow_only = DhwInputs(flow=Series([(0, 44.0)]), ch_setpoint=Series([(0, 45.0)]))
+    within = classify_burn(BURN, flow_only)
+    assert (within.kind, within.confidence) == (BurnKind.CH, pytest.approx(0.55))
+    # The zones' demand unknown over the burn: only the flow counts, and it decides.
+    unknown_demand = DhwInputs(
+        flow=Series([(0, 44.0)]),
+        ch_setpoint=Series([(0, 45.0)]),
+        zone_demand=Series([(0, None)]),
+    )
+    result = classify_burn(BURN, unknown_demand)
+    assert (result.kind, result.evidence) == (BurnKind.CH, (Evidence.FLOW_WITHIN_SETPOINT,))
+    # Evidence the same way twice is no conflict: heating.
+    both = DhwInputs(
+        flow=Series([(0, 44.0)]), ch_setpoint=Series([(0, 45.0)]), zone_demand=Series([(0, True)])
+    )
+    assert classify_burn(BURN, both).kind is BurnKind.CH
+    assert classify_burn(BURN, DhwInputs(zone_demand=None)).kind is BurnKind.UNKNOWN

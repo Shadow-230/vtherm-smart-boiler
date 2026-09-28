@@ -13,6 +13,9 @@ MQTT_DOMAIN = "mqtt"
 STORAGE_VERSION = 1  # the entry's store, ``<DOMAIN>.<entry_id>``
 # The control store, ``<DOMAIN>.<entry_id>.control``: the control state alone, written at once.
 CONTROL_STORE_VERSION = 1
+# The last-run record, ``<DOMAIN>.<entry_id>.alive``: when the plugin last ran and its downtimes
+# (P-95), small and written often, so the entry's store is not.
+ALIVE_STORE_VERSION = 1
 # In the entry's store: the control state lives in its own store (0.2.2 on). Without it, the
 # entry's store is 0.2.1's, whose "control" copy is the state.
 CONTROL_STORE_MARKER = "control_store"
@@ -67,6 +70,10 @@ def main_store_key(entry_id: str) -> str:
 
 def control_store_key(entry_id: str) -> str:
     return f"{DOMAIN}.{entry_id}.control"
+
+
+def alive_store_key(entry_id: str) -> str:
+    return f"{DOMAIN}.{entry_id}.alive"
 
 
 def stored_flag(raw: object) -> bool:

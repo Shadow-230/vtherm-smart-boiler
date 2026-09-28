@@ -98,18 +98,30 @@ def _gas_per_degree_day(data: MonitorData) -> Value:
     return None if week is None else _round(week.gas_per_degree_day, 3)
 
 
+def _gas_attributes(data: MonitorData) -> dict[str, Any]:
+    """S-31: the gas the meter counted over the week while the burner was known off — another
+    consumer's, left out of heating gas and shown here; absent without a meter reading."""
+    week = _week(data)
+    if week is None or week.other_gas is None:
+        return {}
+    return {"other_gas": _round(week.other_gas, 3)}
+
+
 def _verdict(data: MonitorData) -> Value:
     return None if data.analysis is None else data.analysis.verdict.verdict.value
 
 
 def _verdict_attributes(data: MonitorData) -> dict[str, Any]:
-    reasons = [] if data.analysis is None else data.analysis.verdict.reasons
+    verdict = None if data.analysis is None else data.analysis.verdict
+    reasons = [] if verdict is None else verdict.reasons
     return {
         "reasons": [
             {"code": r.code.value, "kind": r.kind.value, "value": r.value, "limit": r.limit}
             for r in reasons
         ],
         "monitoring_since": data.monitoring_since,
+        # P-96: days left out because the plugin controlled the boiler in them.
+        "days_left_out": None if verdict is None else verdict.days_left_out,
     }
 
 
@@ -290,6 +302,7 @@ BOILER_SENSORS: tuple[BoilerSensorDescription, ...] = (
         key="gas_per_degree_day",
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=_gas_per_degree_day,
+        attributes_fn=_gas_attributes,
         needs=Feature.GAS,
     ),
     BoilerSensorDescription(
@@ -411,6 +424,8 @@ class BoilerSensor(SmartBoilerEntity, SensorEntity):
             "missing",
             "estimate_from_power",
             "estimate_gap",
+            # The week's gas without the burner, recomputed with every analysis (S-31).
+            "other_gas",
         }
     )
 

@@ -24,6 +24,7 @@ from custom_components.vtherm_smart_boiler.core.metrics import (
     degree_days,
     integrate_rate,
     meter_consumption,
+    meter_rise,
     outdoor_bins,
     per_degree_day,
     rate_at,
@@ -175,8 +176,22 @@ def test_starts_per_hour_count_the_hours_with_heating() -> None:
 
 def test_a_small_meter_drop_is_no_reset() -> None:
     """P45: a meter that steps back a little (a correction, rounding) did not restart from zero:
-    adding its whole reading would count years of gas at once."""
+    adding its whole reading would count years of gas at once. P-97: nor does its way back up
+    count again — only a rise above the highest reading does."""
     meter = Series([(0, 1000.0), (10, 999.9), (20, 1001.0)])
-    assert meter_consumption(meter, 0, 30) == Consumption(pytest.approx(1.1), True)
+    assert meter_consumption(meter, 0, 30) == Consumption(pytest.approx(1.0), True)
     reset = Series([(0, 1000.0), (10, 5.0), (20, 7.0)])
     assert meter_consumption(reset, 0, 30) == Consumption(pytest.approx(7.0), True)
+
+
+def test_one_rule_for_a_meter_rise() -> None:
+    """P-97: one function says what a new reading adds — above the highest reading so far, the
+    difference; a small step back, nothing (the mark stays); below a tenth of the mark, a reset:
+    counted from zero. The first reading adds nothing."""
+    assert meter_rise(None, 100.0) == (0.0, 100.0)
+    assert meter_rise(100.0, 99.9) == (0.0, 100.0)
+    assert meter_rise(100.0, 100.0) == (0.0, 100.0)
+    rise, high = meter_rise(100.0, 100.2)
+    assert (rise, high) == (pytest.approx(0.2), 100.2)
+    assert meter_rise(100.0, 5.0) == (5.0, 5.0)  # restarted from zero
+    assert meter_rise(100.0, 10.0) == (0.0, 100.0)  # a tenth exactly: a step back

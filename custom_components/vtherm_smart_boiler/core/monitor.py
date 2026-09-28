@@ -1,14 +1,13 @@
-"""The monitor: from recorded history to burns, metrics, daily points and the verdict."""
+"""The monitor: from recorded history to burns, metrics and the verdict."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from itertools import pairwise
 from typing import Any
 
-from .building import DayPoint, LoadModel
+from .building import LoadModel
 from .cycles import Burn, BurnKind, ClassifiedBurn, DhwInputs, classify_burns, find_burns
 from .history import History
 from .metrics import (
@@ -16,7 +15,6 @@ from .metrics import (
     DEFAULT_CONDENSING_RETURN,
     DEFAULT_SHORT_BURN_S,
     DHW_KINDS,
-    METER_RESET_FRACTION,
     NOT_DHW_KINDS,
     UNKNOWN_KINDS,
     Consumption,
@@ -30,10 +28,11 @@ from .metrics import (
     degree_days,
     integrate_rate,
     meter_consumption,
+    meter_rise,
     per_degree_day,
 )
 from .parameters import ParameterKey, ParameterSet
-from .series import Series, known_duration, time_weighted_mean
+from .series import Series, known_duration
 from .signals import Signal
 from .verdict import VerdictOptions, VerdictResult, assess, load_below_min_share
 
@@ -76,6 +75,9 @@ class MonitorSummary:
     dhw_output_kwh: Consumption | None  # DHW only, estimated from modulation
     by_outdoor: dict[float, CycleStats]
     load_below_min: Share | None
+    # S-31: gas the meter counted while the burner was known off throughout — another consumer
+    # (a cooker) — left out of ``gas`` and shown apart; ``None`` without a meter reading.
+    other_gas: float | None = None
 
 
 def dhw_inputs(
@@ -103,8 +105,11 @@ def _heat_output(
     parameters: ParameterSet,
     burns: Sequence[ClassifiedBurn],
     scale: ModulationScale,
+    window: tuple[float, float],
     kinds: frozenset[BurnKind] = NOT_DHW_KINDS,
 ) -> Consumption | None:
+    """Heat output of the burns of ``kinds`` within ``window`` (a burn across its edge counts
+    only its part inside, P-83), estimated from modulation."""
     low = parameters.value(ParameterKey.BOILER_MIN_POWER)
     high = parameters.value(ParameterKey.BOILER_MAX_POWER)
     if low is None or high is None or not history.is_mapped(Signal.MODULATION):
@@ -116,11 +121,16 @@ def _heat_output(
     for classified in burns:
         if classified.kind not in kinds:
             continue
-        burn = classified.burn
-        part = integrate_rate(flame, modulation, low, high, scale, burn.start, burn.end)
+        part = integrate_rate(flame, modulation, low, high, scale, *_inside(classified, window))
         total += part.amount
         complete = complete and part.complete
     return Consumption(total, complete)
+
+
+def _inside(classified: ClassifiedBurn, window: tuple[float, float]) -> tuple[float, float]:
+    """The part of a burn within ``window``."""
+    burn = classified.burn
+    return max(burn.start, window[0]), min(burn.end, window[1])
 
 
 def _gas(
@@ -130,19 +140,21 @@ def _gas(
     end: float,
     scale: ModulationScale,
     burns: Sequence[ClassifiedBurn],
-) -> tuple[Consumption | None, GasSource | None]:
-    """Heating gas: the gas of the burns known as hot water is left out."""
+) -> tuple[Consumption | None, GasSource | None, float | None]:
+    """Heating gas, its source and, from a meter, the gas other consumers used while the burner
+    was off (S-31, shown apart). The gas of the burns known as hot water is left out."""
     if history.is_mapped(Signal.GAS_METER):
         meter = history.signal(Signal.GAS_METER)
         total = meter_consumption(meter, start, end)
         if total is None:
-            return None, GasSource.METER
-        dhw = _metered_hot_water(meter, burns, start, end)
-        return Consumption(max(0.0, total.amount - dhw), total.complete), GasSource.METER
+            return None, GasSource.METER, None
+        dhw, other = _metered_split(meter, history.signal(Signal.FLAME), burns, start, end)
+        heating = max(0.0, total.amount - dhw - other)
+        return Consumption(heating, total.complete), GasSource.METER, other
     low = parameters.value(ParameterKey.GAS_AT_MIN_POWER)
     high = parameters.value(ParameterKey.GAS_AT_MAX_POWER)
     if low is None or high is None or not history.is_mapped(Signal.MODULATION):
-        return None, None
+        return None, None, None
     # Burn by burn, hot water left out; complete while the flame is known nearly all the time
     # (a restart's seconds without it must not void a week) and the modulation in every burn.
     flame, modulation = history.signal(Signal.FLAME), history.signal(Signal.MODULATION)
@@ -151,35 +163,59 @@ def _gas(
     for classified in burns:
         if classified.kind in DHW_KINDS:
             continue
-        burn = classified.burn
-        part = integrate_rate(flame, modulation, low, high, scale, burn.start, burn.end)
+        part = integrate_rate(
+            flame, modulation, low, high, scale, *_inside(classified, (start, end))
+        )
         amount += part.amount
         complete = complete and part.complete
-    return Consumption(amount, complete), GasSource.MODULATION
+    return Consumption(amount, complete), GasSource.MODULATION, None
 
 
-def _metered_hot_water(
-    meter: Series[float], burns: Sequence[ClassifiedBurn], start: float, end: float
-) -> float:
-    """The hot water's part of a meter's gas. A meter shows a burn's gas when it next reports —
-    during the burn, or minutes or an hour later — so each rise is split by the burner time
-    between its two readings: the hot water's share of that time is left out. Exact for a
-    meter that reports within each burn, fair for one that reports every hour."""
+def _metered_split(
+    meter: Series[float],
+    flame: Series[bool],
+    burns: Sequence[ClassifiedBurn],
+    start: float,
+    end: float,
+) -> tuple[float, float]:
+    """The hot water's part and other consumers' part of a meter's gas in ``[start, end)``.
+
+    A meter shows a burn's gas when it next reports — during the burn, or minutes or an hour
+    later — so each rise (``meter_rise``: above the highest reading only, P-97) is split by the
+    burner time between its two readings: the hot water's share of that time is left out. Exact
+    for a meter that reports within each burn, fair for one that reports every hour. A rise
+    between two readings with the flame known off throughout is another consumer's — a cooker,
+    another appliance — shown apart (S-31); one with neither burner time nor the flame known
+    throughout counts as heating, as before. Readings and time-sorted burns are walked once,
+    side by side (P-84)."""
     readings = [(s.start, s.value) for s in meter.segments(start, end) if s.value is not None]
-    dhw = 0.0
-    for (since, before), (at, after) in pairwise(readings):
-        if after >= before:
-            rise = after - before
-        elif after < METER_RESET_FRACTION * before:
-            rise = after  # counted from zero since a reset
-        else:
+    ordered = sorted(burns, key=lambda classified: classified.burn.start)
+    dhw = other = 0.0
+    high: float | None = None
+    first = 0  # the first burn that may reach into the current interval
+    since: float | None = None
+    for at, value in readings:
+        rise, high = meter_rise(high, value)
+        if since is None:
+            since = at
             continue
-        burning = [(b, _overlap(b.burn, since, at)) for b in burns]
-        total = sum(seconds for _b, seconds in burning)
-        if rise <= 0 or total <= 0:
-            continue
-        dhw += rise * sum(s for b, s in burning if b.kind in DHW_KINDS) / total
-    return dhw
+        # Burns are disjoint and in time order: one ended by ``since`` touches no later interval.
+        while first < len(ordered) and ordered[first].burn.end <= since:
+            first += 1
+        burning = hot = 0.0
+        index = first
+        while index < len(ordered) and ordered[index].burn.start < at:
+            seconds = _overlap(ordered[index].burn, since, at)
+            burning += seconds
+            if ordered[index].kind in DHW_KINDS:
+                hot += seconds
+            index += 1
+        if rise > 0 and burning > 0:
+            dhw += rise * hot / burning
+        elif rise > 0 and all(part.value is False for part in flame.segments(since, at)):
+            other += rise  # the flame known off throughout: not the boiler's gas
+        since = at
+    return dhw, other
 
 
 def _overlap(burn: Burn, start: float, end: float) -> float:
@@ -192,17 +228,27 @@ def summarize(
     start: float,
     end: float,
     options: MonitorOptions | None = None,
+    *,
+    search: tuple[float, float] | None = None,
+    outdoor: Series[float] | None = None,
 ) -> MonitorSummary:
-    """Everything the monitor reports for ``[start, end)``."""
+    """Everything the monitor reports for ``[start, end)``.
+
+    ``search``: a wider window the burns are found in, so a burn across an edge of the window is
+    whole — it counts (its start, its length) in the window that holds its start, and its time
+    only within each (P-83); by default the window itself. ``outdoor``: the outdoor temperature
+    to use, by default the history's (P-86: a day summary may leave a stuck sensor out)."""
     opts = options or MonitorOptions()
     flame = history.signal(Signal.FLAME)
-    burns = tuple(
-        classify_burns(
-            find_burns(flame, start, end), dhw_inputs(history, parameters, start, end, opts)
-        )
+    low, high = search if search is not None else (start, end)
+    low, high = min(low, start), max(high, end)
+    found = classify_burns(
+        find_burns(flame, low, high), dhw_inputs(history, parameters, low, high, opts)
     )
+    burns = tuple(b for b in found if b.burn.end > start and b.burn.start < end)
+    window = (start, end)
     observed = known_duration(flame, start, end)
-    outdoor = history.outdoor()
+    outdoor = history.outdoor() if outdoor is None else outdoor
     threshold = parameters.value(ParameterKey.HEATING_THRESHOLD)
     days = (
         degree_days(outdoor, threshold, start, end)
@@ -210,11 +256,13 @@ def summarize(
         else None
     )
     condensing = (
-        condensing_share(history.signal(Signal.RETURN), burns, opts.condensing_return)
+        condensing_share(
+            history.signal(Signal.RETURN), burns, opts.condensing_return, window=window
+        )
         if history.is_mapped(Signal.RETURN)
         else None
     )
-    gas, source = _gas(history, parameters, start, end, opts.modulation_scale, burns)
+    gas, source, other_gas = _gas(history, parameters, start, end, opts.modulation_scale, burns)
     # Gas known for part of the window over degree-days for all of it would be too little.
     gas_per_dd = (
         per_degree_day(gas.amount, days)
@@ -233,16 +281,18 @@ def summarize(
         end=end,
         burns=burns,
         observed_s=observed,
-        heating=cycle_stats(burns, observed, CH_KINDS, opts.short_burn_s, (start, end)),
-        dhw=cycle_stats(burns, observed, DHW_KINDS, opts.short_burn_s, (start, end)),
-        unknown=cycle_stats(burns, observed, UNKNOWN_KINDS, opts.short_burn_s, (start, end)),
+        heating=cycle_stats(burns, observed, CH_KINDS, opts.short_burn_s, window),
+        dhw=cycle_stats(burns, observed, DHW_KINDS, opts.short_burn_s, window),
+        unknown=cycle_stats(burns, observed, UNKNOWN_KINDS, opts.short_burn_s, window),
         condensing=condensing,
         degree_days=days,
         gas=gas,
         gas_source=source,
         gas_per_degree_day=gas_per_dd,
-        heat_output_kwh=_heat_output(history, parameters, burns, opts.modulation_scale),
-        dhw_output_kwh=_heat_output(history, parameters, burns, opts.modulation_scale, DHW_KINDS),
+        heat_output_kwh=_heat_output(history, parameters, burns, opts.modulation_scale, window),
+        dhw_output_kwh=_heat_output(
+            history, parameters, burns, opts.modulation_scale, window, DHW_KINDS
+        ),
         by_outdoor=(
             binned_cycle_stats(
                 burns, flame, outdoor, start, end, opts.bin_width, CH_KINDS, opts.short_burn_s
@@ -251,6 +301,7 @@ def summarize(
             else {}
         ),
         load_below_min=load_below,
+        other_gas=other_gas,
     )
 
 
@@ -263,32 +314,3 @@ def verdict(summary: MonitorSummary, options: MonitorOptions | None = None) -> V
         summary.load_below_min,
         opts.verdict,
     )
-
-
-def daily_points(
-    history: History,
-    parameters: ParameterSet,
-    days: Sequence[tuple[float, float]],
-    options: MonitorOptions | None = None,
-    min_coverage: float = 0.9,
-) -> list[DayPoint]:
-    """Mean outdoor temperature and heating output per day, for the building load fit.
-
-    ``days`` are the day windows (local midnight to midnight, computed by the caller). A day
-    counts when the outdoor temperature and the heat output are known for most of it.
-    """
-    opts = options or MonitorOptions()
-    outdoor = history.outdoor()
-    points: list[DayPoint] = []
-    for start, end in days:
-        mean = time_weighted_mean(outdoor, start, end)
-        if mean.value is None or mean.known_s < min_coverage * (end - start):
-            continue
-        summary = summarize(history, parameters, start, end, opts)
-        heat = summary.heat_output_kwh
-        if heat is None or not heat.complete:
-            continue
-        if summary.observed_s < min_coverage * (end - start):
-            continue
-        points.append(DayPoint(mean.value, heat.amount))
-    return points

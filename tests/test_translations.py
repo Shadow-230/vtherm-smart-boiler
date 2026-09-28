@@ -475,3 +475,22 @@ def test_y1_texts_are_translated() -> None:
         monitor = steps["monitor"]
         assert "Empty by default" in monitor["data_description"]["add_water_below"]
         assert "pressure_low_warning" not in monitor["data"]
+
+
+def test_y2_texts_are_translated() -> None:
+    """Y2: the gas meter's text says that gas used with the burner off is shown apart and that
+    gas used while it runs counts as heating (S-31); the attributes that show it and the days
+    the verdict leaves out under control (P-96) have their names, in every language."""
+    for flow in ("config", "options"):
+        text = SOURCE[flow]["step"]["signals"]["data_description"]["gas_meter"]
+        assert "while the burner is off" in text
+        assert "is shown apart" in text
+        assert "counts as heating" in text
+    sensors = SOURCE["entity"]["sensor"]
+    assert sensors["gas_per_degree_day"]["state_attributes"]["other_gas"]["name"]
+    assert sensors["verdict"]["state_attributes"]["days_left_out"]["name"]
+    for language in LANGUAGES:
+        other = json.loads((TRANSLATIONS / language).read_text(encoding="utf-8"))
+        names = other["entity"]["sensor"]
+        assert names["gas_per_degree_day"]["state_attributes"]["other_gas"]["name"], language
+        assert names["verdict"]["state_attributes"]["days_left_out"]["name"], language

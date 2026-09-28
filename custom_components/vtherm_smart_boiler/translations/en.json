@@ -49,7 +49,7 @@
           "ch_active": "On while the boiler heats the rooms. Helps tell DHW from heating when there is no DHW signal.",
           "pump_running": "On while the heating pump runs. Enables the low-flow warning: every valve closed while the pump runs.",
           "flue_gas": "Enables the flue gas alarm and the early warning of a fouling heat exchanger.",
-          "gas_meter": "A cumulative gas or energy meter. Gives measured gas per degree-day instead of an estimate.",
+          "gas_meter": "A cumulative gas or energy meter. Gives measured gas per degree-day instead of an estimate. Gas the meter counts while the burner is off (a cooker, another appliance) is shown apart; gas they use while the burner runs cannot be told apart and counts as heating.",
           "room_setpoint": "The room setpoint of a wall thermostat on the gateway, from the thermostat's side — e.g. \"Room setpoint 1\" on the gateway's thermostat device, or the firmware's TrSet_thermostat with separate sources on; not the gateway's climate target. Shown as the temperature the wall thermostat keeps after a hand-back.",
           "room_temperature": "The room temperature a wired thermostat sends to the boiler, if there is one. Recorded for the assessment.",
           "weather": "Its forecasts are recorded for later forecast features, and its temperature stands in for a missing or suspect outdoor sensor — for degree-days and control's curve. No data leaves your Home Assistant.",
@@ -315,7 +315,7 @@
           "ch_active": "On while the boiler heats the rooms. Helps tell DHW from heating when there is no DHW signal.",
           "pump_running": "On while the heating pump runs. Enables the low-flow warning: every valve closed while the pump runs.",
           "flue_gas": "Enables the flue gas alarm and the early warning of a fouling heat exchanger.",
-          "gas_meter": "A cumulative gas or energy meter. Gives measured gas per degree-day instead of an estimate.",
+          "gas_meter": "A cumulative gas or energy meter. Gives measured gas per degree-day instead of an estimate. Gas the meter counts while the burner is off (a cooker, another appliance) is shown apart; gas they use while the burner runs cannot be told apart and counts as heating.",
           "room_setpoint": "The room setpoint of a wall thermostat on the gateway, from the thermostat's side — e.g. \"Room setpoint 1\" on the gateway's thermostat device, or the firmware's TrSet_thermostat with separate sources on; not the gateway's climate target. Shown as the temperature the wall thermostat keeps after a hand-back.",
           "room_temperature": "The room temperature a wired thermostat sends to the boiler, if there is one. Recorded for the assessment.",
           "weather": "Its forecasts are recorded for later forecast features, and its temperature stands in for a missing or suspect outdoor sensor — for degree-days and control's curve. No data leaves your Home Assistant.",
@@ -1006,7 +1006,12 @@
         "name": "Degree-days (7 days)"
       },
       "gas_per_degree_day": {
-        "name": "Gas per degree-day"
+        "name": "Gas per degree-day",
+        "state_attributes": {
+          "other_gas": {
+            "name": "Gas with the burner off (7 days)"
+          }
+        }
       },
       "verdict": {
         "name": "Control verdict",
@@ -1014,6 +1019,11 @@
           "worth_it": "Worth enabling",
           "not_worth_it": "Not worth enabling",
           "not_enough_data": "Not enough data yet"
+        },
+        "state_attributes": {
+          "days_left_out": {
+            "name": "Days left out (under control)"
+          }
         }
       },
       "signal_problems": {

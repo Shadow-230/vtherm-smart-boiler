@@ -22,14 +22,15 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from custom_components.vtherm_smart_boiler.core.building import fit_daily_load
+from custom_components.vtherm_smart_boiler.core.daily import (
+    DAY_MARGIN_S,
+    DaySummary,
+    fit_points,
+    summarize_day,
+)
 from custom_components.vtherm_smart_boiler.core.history import History, ZoneSeries
 from custom_components.vtherm_smart_boiler.core.metrics import HOUR, ModulationScale
-from custom_components.vtherm_smart_boiler.core.monitor import (
-    MonitorOptions,
-    daily_points,
-    summarize,
-    verdict,
-)
+from custom_components.vtherm_smart_boiler.core.monitor import MonitorOptions, summarize, verdict
 from custom_components.vtherm_smart_boiler.core.parameters import (
     Estimate,
     ParameterKey,
@@ -190,7 +191,44 @@ def local_days(start: float, end: float, tz: ZoneInfo) -> list[tuple[float, floa
     return days
 
 
-def report(history: History, mapping: EntityMapping, start: float, end: float, tz: ZoneInfo) -> str:
+def day_summaries(
+    history: History,
+    mapping: EntityMapping,
+    start: float,
+    end: float,
+    tz: ZoneInfo,
+    known_until: float | None = None,
+) -> list[DaySummary]:
+    """Each whole local day of ``[start, end)`` summarised as the plugin does (P-93: a day of 23
+    or 25 hours is fitted as a whole day), each from its own window — the day and twelve hours
+    on each side, for the burns across midnight — so the work grows with the days, not with
+    their square (A13). ``known_until``: where the history ends."""
+    days = []
+    for begin, finish in local_days(start, end, tz):
+        own = history.copy_window(begin - DAY_MARGIN_S, finish + DAY_MARGIN_S)
+        days.append(
+            summarize_day(
+                own,
+                mapping.parameters,
+                begin,
+                finish,
+                mapping.options,
+                known_until=finish + DAY_MARGIN_S if known_until is None else known_until,
+            )
+        )
+    return days
+
+
+def report(
+    history: History,
+    mapping: EntityMapping,
+    start: float,
+    end: float,
+    tz: ZoneInfo,
+    known_until: float | None = None,
+) -> str:
+    if end <= start:
+        raise ValueError("the window is empty or reversed")  # P-111: the CLI refuses it first
     lines: list[str] = []
     span = end - start
     lines.append(
@@ -246,11 +284,9 @@ def report(history: History, mapping: EntityMapping, start: float, end: float, t
             f"  - {reason.code.value} ({reason.kind.value}): {_fmt(reason.value)} "
             f"against {_fmt(reason.limit)}"
         )
-    days = local_days(start, end, tz)
     threshold = mapping.parameters.value(ParameterKey.HEATING_THRESHOLD) or 15.0
-    fit = fit_daily_load(
-        daily_points(history, mapping.parameters, days, mapping.options), threshold
-    )
+    days = day_summaries(history, mapping, start, end, tz, known_until)
+    fit = fit_daily_load(fit_points(days), threshold)
     if fit is not None:
         fitted = "" if fit.threshold is None else f", threshold {fit.threshold.value:.1f} °C"
         lines.append(
@@ -324,12 +360,24 @@ def _run(args: argparse.Namespace) -> int:
             return 1
         start = requested.get("start", span[0])
         end = requested.get("end", span[1])
+        if end <= start:
+            # P-111: zero long, the report would divide by zero; reversed, it would be negative.
+            raise _UsageError(
+                f"the window {_moment(start, tz)} – {_moment(end, tz)} is empty or reversed; "
+                f"the database holds {_moment(span[0], tz)} – {_moment(span[1], tz)}"
+            )
         unknown = [e for e in mapping.signals.values() if e not in db.entity_ids()]
         if unknown:
             print(f"warning: not in the database: {', '.join(unknown)}", file=sys.stderr)
-        history = read_history(db, mapping, start, end)
-    print(report(history, mapping, start, end, tz))
+        # Twelve hours on each side: the burns across the window's midnights are whole (P-83).
+        known_until = min(end + DAY_MARGIN_S, max(span[1], end))
+        history = read_history(db, mapping, start - DAY_MARGIN_S, known_until)
+    print(report(history, mapping, start, end, tz, known_until))
     return 0
+
+
+def _moment(t: float, tz: ZoneInfo) -> str:
+    return f"{datetime.fromtimestamp(t, tz):%Y-%m-%d %H:%M}"
 
 
 if __name__ == "__main__":
