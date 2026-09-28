@@ -2236,3 +2236,222 @@ def test_switched_on_with_the_link_lost_control_shows_handed_back_at_once() -> N
     assert not state.latched
     _state, [short] = run([inputs(0.0, boiler_link=False)])
     assert short.mode is ControlMode.WAITING_DATA
+
+
+# --- P-115: the controller's precedence, as a table ---------------------------------------------
+# Several conditions at once, and which one the decision follows: switched off, then a latch or
+# an alarm set to hand back, then the blockers, then the boiler link, then the read-back, then a
+# boiler fault, the recognition period and decision 3's end state, then the heating decision —
+# where a fault beats frost, and frost beats demand, no demand and the fallback. The table the
+# splits of ``_decide`` and ``_heating_decision`` must keep green: the last step's mode,
+# reasons, command and whether it hands back.
+
+_TAKEN = [inputs(0.0)]
+_STALE = [inputs(t, boiler_link=False) for t in stepped(10.0, 320.0)]
+_R = Reason
+_ON, _OFF = BoilerCommand(True, 35.0), BoilerCommand(False, 35.0)
+_COLD_OFF = {"temperature": 3.0, "heating_enabled": False}  # below the frost limit, VT off
+
+
+def _cold(t: float, **kw) -> ZoneState:
+    return zone(t, **(_COLD_OFF | kw))
+
+
+CONTROLLER_PRECEDENCE = [
+    (
+        "switched off beats a latch, blockers and a lost link",
+        [
+            *_TAKEN,
+            inputs(10.0, hand_back_alarms=("outside_change",)),
+            inputs(
+                20.0,
+                enabled=False,
+                blockers=("no_hand_back",),
+                boiler_link=False,
+                hand_back_alarms=("outside_change",),
+            ),
+        ],
+        CONFIG,
+        (ControlMode.DISABLED, (_R.CONTROL_OFF,), None, False),
+    ),
+    (
+        "an alarm set to hand back latches before the blockers and the link",
+        [
+            *_TAKEN,
+            inputs(
+                10.0,
+                hand_back_alarms=("outside_change",),
+                blockers=("no_hand_back",),
+                boiler_link=False,
+            ),
+        ],
+        CONFIG,
+        (ControlMode.HANDED_BACK, (_R.ALARM_HAND_BACK,), None, True),
+    ),
+    (
+        "a latch holds through a blocker",
+        [
+            *_TAKEN,
+            inputs(10.0, hand_back_alarms=("outside_change",)),
+            inputs(20.0, blockers=("no_hand_back",)),
+        ],
+        CONFIG,
+        (ControlMode.HANDED_BACK, (_R.ALARM_HAND_BACK,), None, False),
+    ),
+    (
+        "the blockers before a lost link",
+        [*_TAKEN, *_STALE, inputs(320.0, boiler_link=False, blockers=("no_hand_back",))],
+        CONFIG,
+        (ControlMode.NOT_ALLOWED, (_R.PRECONDITION,), None, False),
+    ),
+    (
+        "a link lost while controlling hands back",
+        [*_TAKEN, *_STALE, inputs(320.0, boiler_link=False)],
+        CONFIG,
+        (ControlMode.HANDED_BACK, (_R.BOILER_LINK_STALE,), None, False),
+    ),
+    (
+        "a stale link short of a loss waits, writing nothing",
+        [*_TAKEN, inputs(10.0, boiler_link=False)],
+        CONFIG,
+        (ControlMode.WAITING_DATA, (_R.BOILER_LINK_STALE,), None, False),
+    ),
+    (
+        "a read-back unknown before the take waits",
+        [inputs(0.0, read_back_known=False)],
+        CONFIG,
+        (ControlMode.WAITING_DATA, (_R.READ_BACK_UNKNOWN,), None, False),
+    ),
+    (
+        "a read-back unknown once controlling decides on",
+        [*_TAKEN, inputs(10.0, read_back_known=False)],
+        CONFIG,
+        (ControlMode.HEATING, (_R.OUTDOOR_SENSOR, _R.DEMAND), _ON, False),
+    ),
+    (
+        "Home Assistant starting alone keeps the restored command",
+        during(
+            0.0,
+            20.0,
+            lambda t: (placeholder("a", t),),
+            blockers=(HA_STARTING,),
+            restored_command=KEPT,
+        ),
+        CONFIG,
+        (ControlMode.HEATING, (_R.ZONES_RECOGNITION,), KEPT, False),
+    ),
+    (
+        "Home Assistant starting with another blocker",
+        during(
+            0.0,
+            20.0,
+            lambda t: (placeholder("a", t),),
+            blockers=(HA_STARTING, "no_hand_back"),
+            restored_command=KEPT,
+        ),
+        CONFIG,
+        (ControlMode.NOT_ALLOWED, (_R.PRECONDITION,), None, False),
+    ),
+    (
+        "a boiler fault in the recognition period keeps the command, as off",
+        during(
+            0.0, 20.0, lambda t: (placeholder("a", t),), restored_command=KEPT, boiler_fault=True
+        ),
+        CONFIG,
+        (
+            ControlMode.BOILER_FAULT,
+            (_R.ZONES_RECOGNITION, _R.BOILER_FAULT),
+            BoilerCommand(False, 45.0),
+            False,
+        ),
+    ),
+    (
+        "a boiler fault beats frost",
+        [inputs(0.0, zones=(_cold(0.0),), boiler_fault=True)],
+        CONFIG,
+        (ControlMode.BOILER_FAULT, (_R.OUTDOOR_SENSOR, _R.BOILER_FAULT), _OFF, False),
+    ),
+    (
+        "the recognition period keeps the command held",
+        during(0.0, 20.0, lambda t: (placeholder("a", t),), restored_command=KEPT),
+        CONFIG,
+        (ControlMode.HEATING, (_R.ZONES_RECOGNITION,), KEPT, False),
+    ),
+    (
+        "the recognition period decides nothing new",
+        during(0.0, 20.0, lambda t: (placeholder("a", t),)),
+        CONFIG,
+        (ControlMode.WAITING_DATA, (_R.ZONES_RECOGNITION,), None, False),
+    ),
+    (
+        "every zone unknown with a working thermostat: handed back",
+        [inputs(t, zones=(away("a"),)) for t in stepped(0.0, RECOGNITION_S + 20.0)],
+        THERMOSTAT,
+        (ControlMode.HANDED_BACK, (_R.ZONES_UNKNOWN,), None, False),
+    ),
+    (
+        "every zone unknown without one: off",
+        [inputs(t, zones=(away("a"),)) for t in stepped(0.0, RECOGNITION_S + 20.0)],
+        CONFIG,
+        (ControlMode.IDLE, (_R.OUTDOOR_SENSOR, _R.ZONES_UNKNOWN), _OFF, False),
+    ),
+    (
+        "frost beats no demand",
+        [inputs(0.0, zones=(_cold(0.0),))],
+        CONFIG,
+        (ControlMode.FROST, (_R.OUTDOOR_SENSOR, _R.FROST), _ON, False),
+    ),
+    (
+        "frost beats demand",
+        [inputs(0.0, zones=(zone(0.0, temperature=3.0),))],
+        CONFIG,
+        (ControlMode.FROST, (_R.OUTDOOR_SENSOR, _R.FROST), _ON, False),
+    ),
+    (
+        "frost beats the fallback",
+        [inputs(0.0, zones=(_cold(0.0),), outdoor_sensor=None)],
+        CONFIG,
+        (ControlMode.FROST, (_R.OUTDOOR_UNKNOWN, _R.FROST), BoilerCommand(True, 55.0), False),
+    ),
+    (
+        "the fallback while heating is wanted without an outdoor temperature",
+        [inputs(0.0, outdoor_sensor=None)],
+        CONFIG,
+        (ControlMode.FALLBACK, (_R.OUTDOOR_UNKNOWN, _R.DEMAND), BoilerCommand(True, 55.0), False),
+    ),
+    (
+        "VT's activation delay before a fresh take",
+        [inputs(0.0)],
+        replace(CONFIG, activation_delay_s=60.0),
+        (ControlMode.IDLE, (_R.OUTDOOR_SENSOR, _R.DEMAND, _R.ACTIVATION_DELAY), None, False),
+    ),
+    (
+        "no demand",
+        [inputs(0.0, zones=(zone(0.0, valve_open=0.0),))],
+        CONFIG,
+        (ControlMode.IDLE, (_R.OUTDOOR_SENSOR, _R.NO_DEMAND), _OFF, False),
+    ),
+    (
+        "heating on the curve",
+        [inputs(0.0)],
+        CONFIG,
+        (ControlMode.HEATING, (_R.OUTDOOR_SENSOR, _R.DEMAND), _ON, False),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("steps", "config", "expected"),
+    [row[1:] for row in CONTROLLER_PRECEDENCE],
+    ids=[row[0] for row in CONTROLLER_PRECEDENCE],
+)
+def test_the_precedence_of_the_controller(
+    steps: list[ControlInputs],
+    config: ControlConfig,
+    expected: tuple[ControlMode, tuple[Reason, ...], BoilerCommand | None, bool],
+) -> None:
+    """P-115: the last step's mode, reasons, command and hand-back, for each set of conditions
+    at once."""
+    _state, decisions = run(steps, config)
+    last = decisions[-1]
+    assert (last.mode, last.reasons, last.command, last.hand_back) == expected

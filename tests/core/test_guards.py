@@ -4,6 +4,7 @@ another controller), with the user's answers E, H and O of 2026-09-27."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 
 import pytest
@@ -491,17 +492,20 @@ def test_a_fall_back_whose_resend_is_never_read_back_stays_a_lost_command() -> N
     the plugin's latest send was read back — is sent again as a lost command, counted, never
     another controller: frequent losses warn."""
     state = held(HELD)
-    losses = 0
-    t = 400.0
-    while t <= 800.0:
-        result = result_of(state, 45.0, 0.0, t, HELD)
+    seen = []
+    for t in range(400, 810, 10):  # it keeps dropping: the boiler does not take it (P-121)
+        result = result_of(state, 45.0, 0.0, float(t), HELD)
         state = result.state
-        losses += result.lost
-        assert result.events == ()
-        assert result.judged is not ChangeClass.ANOTHER_CONTROLLER
-        t += 10.0
-    assert losses == 4  # at 400, 520, 640 and 760: its timeout after each send
+        seen.append((t, result.judged, result.action, result.lost, result.events))
+    resent = (400, 520, 640, 760)  # at once, then its timeout after each send
+    assert seen == [
+        (t, ChangeClass.LOST_COMMAND, WriteAction(45.0, WriteKind.RESEND), True, ())
+        if t in resent
+        else (t, ChangeClass.NOT_JUDGED, None, False, ())
+        for t in range(400, 810, 10)
+    ]
     assert state.rewritten_at is None
+    assert state.blocked is None
 
 
 def test_the_thermostats_own_value_after_an_outage_is_a_lost_command() -> None:
@@ -1048,3 +1052,195 @@ def test_frequent_losses_raise_a_warning_never_a_hold() -> None:
     assert losses_warning(losses, 7200.0 + DAY - 1.0, True)  # stays on
     assert not losses_warning(losses, 7200.0 + DAY, True)  # a day without a loss
     assert not losses_warning(add_loss((), 0.0, "setpoint"), 1.0, False)
+
+
+# --- P-115: what ``plan_write`` does when several things hold at once, as a table -------------
+# A target the plugin may not write, then a block, "ignored from the start" or nothing desired,
+# then the plugin's own failed write, then decision 6's class and its reaction, then the
+# ordinary plan (a change, a keep-alive, nothing). Each row: the step's action, events, class,
+# whether it counts a loss, and the block it leaves.
+
+_PERSISTENT = GuardConfig(write_type=WriteType.PERSISTENT)
+_UNDECLARED = GuardConfig(write_type=WriteType.UNKNOWN)
+
+
+def _after_foreign_step() -> GuardState:
+    """Held, then one step of another value read back, then the plugin's own write failing."""
+    state, _, _ = step(held(HELD), 45.0, 60.0, 400.0, HELD)
+    return write_failed(state)
+
+
+def _second_fall_back() -> GuardState:
+    """A first fall-back, sent again and read back: the next within the hour is another
+    controller."""
+    state, _, _ = step(held(HELD), 45.0, 0.0, 400.0, HELD)
+    state, _, _ = step(state, 45.0, 45.0, 410.0, HELD)
+    return state
+
+
+def _rewritten() -> GuardState:
+    """The one rewrite made and read back."""
+    state = plan_write(_second_fall_back(), 45.0, 0.0, 1600.0, HELD).state
+    state, _, _ = step(state, 45.0, 45.0, 1610.0, HELD)
+    return state
+
+
+def _switched_on_without_echo() -> GuardState:
+    state, _, _ = step(GuardState(), 1.0, None, 0.0, SWITCH)
+    return state
+
+
+_OUTSIDE = GuardEvent.OUTSIDE_CHANGE
+PLAN_PRECEDENCE = [
+    # (what the row shows, state, desired, read-back, now, config, expected)
+    (
+        "a target declared persistent: nothing, whatever else holds",
+        lambda: write_failed(held(HELD)),
+        50.0,
+        0.0,
+        400.0,
+        _PERSISTENT,
+        (None, (), ChangeClass.NOT_JUDGED, False, None),
+    ),
+    (
+        "a target of unknown write type: nothing",
+        lambda: write_failed(held(HELD)),
+        50.0,
+        0.0,
+        400.0,
+        _UNDECLARED,
+        (None, (), ChangeClass.NOT_JUDGED, False, None),
+    ),
+    (
+        "a block beats a failed write and a new value",
+        lambda: write_failed(replace(held(HELD), blocked=_OUTSIDE)),
+        50.0,
+        60.0,
+        400.0,
+        HELD,
+        (None, (), ChangeClass.NOT_JUDGED, False, _OUTSIDE),
+    ),
+    (
+        '"ignored from the start" beats a failed write and a new value',
+        lambda: write_failed(replace(held(HELD), ignored=True)),
+        50.0,
+        60.0,
+        400.0,
+        HELD,
+        (None, (), ChangeClass.NOT_JUDGED, False, None),
+    ),
+    (
+        "nothing desired beats a failed write",
+        lambda: write_failed(held(HELD)),
+        None,
+        60.0,
+        400.0,
+        HELD,
+        (None, (), ChangeClass.NOT_JUDGED, False, None),
+    ),
+    (
+        "the plugin's own failed write is sent again before anything is judged",
+        _after_foreign_step,
+        45.0,
+        60.0,
+        410.0,
+        HELD,
+        (WriteAction(45.0, WriteKind.RESEND), (), ChangeClass.NOT_JUDGED, False, None),
+    ),
+    (
+        "a lost command: sent again, counted",
+        lambda: held(HELD),
+        45.0,
+        0.0,
+        400.0,
+        HELD,
+        (WriteAction(45.0, WriteKind.RESEND), (), ChangeClass.LOST_COMMAND, True, None),
+    ),
+    (
+        "another controller: the one rewrite",
+        _second_fall_back,
+        45.0,
+        0.0,
+        1600.0,
+        HELD,
+        (WriteAction(45.0, WriteKind.REWRITE), (), ChangeClass.ANOTHER_CONTROLLER, False, None),
+    ),
+    (
+        "another controller again within the day: blocked, nothing written",
+        _rewritten,
+        45.0,
+        0.0,
+        2200.0,
+        HELD,
+        (None, (_OUTSIDE,), ChangeClass.ANOTHER_CONTROLLER, False, _OUTSIDE),
+    ),
+    (
+        "a new value of the plugin's own",
+        lambda: held(HELD),
+        50.0,
+        45.0,
+        160.0,
+        HELD,
+        (WriteAction(50.0, WriteKind.CHANGE), (), ChangeClass.CONFIRMED, False, None),
+    ),
+    (
+        "nothing new, nothing due",
+        lambda: held(HELD),
+        45.0,
+        45.0,
+        160.0,
+        HELD,
+        (None, (), ChangeClass.CONFIRMED, False, None),
+    ),
+    (
+        "a held value's refresh",
+        lambda: keep(held(HELD), HELD, 160.0, 290.0),
+        45.0,
+        45.0,
+        300.0,
+        HELD,
+        (WriteAction(45.0, WriteKind.KEEPALIVE), (), ChangeClass.CONFIRMED, False, None),
+    ),
+    (
+        "without an echo, another value is never judged",
+        _switched_on_without_echo,
+        1.0,
+        0.0,
+        20.0,
+        SWITCH,
+        (None, (), ChangeClass.NOT_JUDGED, False, None),
+    ),
+    (
+        "without an echo, the refresh still goes out",
+        _switched_on_without_echo,
+        1.0,
+        0.0,
+        300.0,
+        SWITCH,
+        (WriteAction(1.0, WriteKind.KEEPALIVE), (), ChangeClass.NOT_JUDGED, False, None),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("given", "desired", "read_back", "now", "config", "expected"),
+    [row[1:] for row in PLAN_PRECEDENCE],
+    ids=[row[0] for row in PLAN_PRECEDENCE],
+)
+def test_the_precedence_of_a_write_plan(
+    given: Callable[[], GuardState],
+    desired: float | None,
+    read_back: float | None,
+    now: float,
+    config: GuardConfig,
+    expected: tuple,
+) -> None:
+    """P-115: exactly this action, these events, this class, this loss and this block."""
+    result = plan_write(given(), desired, read_back, now, config)
+    assert (
+        result.action,
+        result.events,
+        result.judged,
+        result.lost,
+        result.state.blocked,
+    ) == expected

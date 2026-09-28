@@ -1,33 +1,56 @@
-"""Read-only by construction: the monitor calls no service except weather.get_forecasts."""
+"""Read-only by construction: the monitor calls no service except weather.get_forecasts.
+
+Every service call is seen — a switch's included, and one to a service nobody registered — by a
+spy on ``hass.services.async_call`` itself (P-118), not by a listener on the call event, which
+Home Assistant fires only for a service that exists."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from homeassistant.const import EVENT_CALL_SERVICE
-from homeassistant.core import Event, HomeAssistant
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceNotFound
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 
-from .harness import WEATHER_ENTITY, FakeBoiler, FakeForecasts, FakeZones
+from .harness import WEATHER_ENTITY, FakeBoiler, FakeForecasts, FakeZones, ServiceSpy, analyse_now
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 ALLOWED = {("weather", "get_forecasts")}
 
 
-async def test_only_forecasts_are_requested(
-    hass: HomeAssistant, freezer, zones: FakeZones, forecasts: FakeForecasts
+@pytest.fixture
+def spy(hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) -> ServiceSpy:
+    found = ServiceSpy(hass)
+    found.install(monkeypatch)
+    return found
+
+
+async def test_the_spy_sees_a_call_to_a_service_nobody_registered(
+    hass: HomeAssistant, spy: ServiceSpy
 ) -> None:
-    calls: list[tuple[str, str]] = []
+    """P-118: a call to a service that does not exist — here a switch, with no switch
+    integration loaded — fails, and the check still sees it; the test's own calls are left
+    out."""
+    with pytest.raises(ServiceNotFound):
+        await hass.services.async_call("switch", "turn_off", {"entity_id": "switch.boiler"})
+    with pytest.raises(ServiceNotFound):
+        await hass.services.async_call("switch", "turn_on", {}, context=spy.own)
+    assert spy.calls == [
+        ("switch", "turn_off", {"entity_id": "switch.boiler"}),
+        ("switch", "turn_on", {}),
+    ]
+    assert spy.plugin_services() == {("switch", "turn_off")}
+    assert not spy.plugin_services() <= ALLOWED
 
-    def record(event: Event) -> None:
-        calls.append((event.data["domain"], event.data["service"]))
 
-    hass.bus.async_listen(EVENT_CALL_SERVICE, record)
+async def test_only_forecasts_are_requested(
+    hass: HomeAssistant, freezer, zones: FakeZones, forecasts: FakeForecasts, spy: ServiceSpy
+) -> None:
     freezer.move_to(datetime(2026, 1, 10, 6, tzinfo=UTC))
     boiler = FakeBoiler(hass)
     boiler.set_many(
@@ -70,7 +93,9 @@ async def test_only_forecasts_are_requested(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    # The first analysis, started in the background at setup, done: one that is still running
+    # when the test asks for its own would make the test skip it (Z1).
+    await hass.async_block_till_done(wait_background_tasks=True)
     for minute in range(0, 90, 5):
         freezer.tick(timedelta(minutes=5))
         boiler.set(Signal.FLAME, minute % 10 == 0)
@@ -78,17 +103,17 @@ async def test_only_forecasts_are_requested(
         zones.set("living", hvac_action="heating", valve_open_percent=50 + minute % 3)
         async_fire_time_changed(hass)
         await hass.async_block_till_done()
-    await entry.runtime_data.async_run_analysis()
+    await analyse_now(entry.runtime_data)
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     assert forecasts.calls  # the one allowed service was used
-    assert set(calls) <= ALLOWED, set(calls) - ALLOWED
+    assert spy.plugin_services() == ALLOWED, spy.plugin_services() - ALLOWED
 
 
 async def test_the_suggestion_calls_no_service(
-    hass: HomeAssistant, freezer, zones: FakeZones
+    hass: HomeAssistant, freezer, zones: FakeZones, spy: ServiceSpy
 ) -> None:
     """X6 (decision 2, S-56): the monitor's evidence of short burns at the lowest water
     temperature and the value it suggests — here where the boiler's own curve sets the water —
@@ -97,12 +122,6 @@ async def test_the_suggestion_calls_no_service(
     from homeassistant.helpers import entity_registry as er
     from homeassistant.helpers import issue_registry as ir
 
-    calls: list[tuple[str, str]] = []
-
-    def record(event: Event) -> None:
-        calls.append((event.data["domain"], event.data["service"]))
-
-    hass.bus.async_listen(EVENT_CALL_SERVICE, record)
     freezer.move_to(datetime(2026, 1, 10, 6, tzinfo=UTC))
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.CH_SETPOINT))
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 22.0, Signal.CH_SETPOINT: 30.0})
@@ -115,7 +134,9 @@ async def test_the_suggestion_calls_no_service(
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", options=options)
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    # The first analysis, started in the background at setup, done: one that is still running
+    # when the test asks for its own would make the test skip it (Z1).
+    await hass.async_block_till_done(wait_background_tasks=True)
     for _ in range(30):  # 3-minute burns, each ended because the water reached its setpoint
         freezer.tick(timedelta(minutes=5))
         boiler.set(Signal.FLAME, True)
@@ -126,7 +147,7 @@ async def test_the_suggestion_calls_no_service(
         await hass.async_block_till_done()
         boiler.set(Signal.FLOW, 22.0)
     await hass.async_block_till_done()
-    await entry.runtime_data.async_run_analysis()
+    await analyse_now(entry.runtime_data)
     await hass.async_block_till_done()
     sensor = er.async_get(hass).async_get_entity_id(
         "sensor", DOMAIN, f"{entry.entry_id}_lowest_water_suggestion"
@@ -141,7 +162,7 @@ async def test_the_suggestion_calls_no_service(
     assert found is not None
     assert found.translation_key == "lowest_water_suggestion_boiler"
     assert entry.options == options  # no setting changed
-    assert set(calls) <= ALLOWED, set(calls) - ALLOWED
+    assert spy.plugin_calls() == []  # no weather entity: not even a forecast
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     assert (

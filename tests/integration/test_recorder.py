@@ -15,7 +15,7 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
 from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 
-from .harness import FakeBoiler
+from .harness import FakeBoiler, analyse_now
 
 # The recorder is set up before Home Assistant's test instance, which it needs to be.
 pytestmark = pytest.mark.usefixtures("recorder_mock", "enable_custom_integrations")
@@ -61,7 +61,7 @@ async def test_the_history_is_rebuilt_from_home_assistants_own_recorder(
     ons = [s.t for s in flame if s.value is True]
     assert len(ons) == 3 * 24 * 2
     assert [s.value for s in flow].count(None) == 1  # the hour without a reading
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     day = coordinator.data.analysis.day
     burns = day.heating.starts + day.unknown.starts + day.dhw.starts
     assert burns == pytest.approx(48, abs=1)

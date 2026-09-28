@@ -212,97 +212,14 @@ def assess(
 
     reasons: list[Reason] = []
     judged = 0  # S-32: criteria whose input was known, found fine, a problem or in between
-    starts = heating.starts_per_hour
-    if starts is not None:
-        judged += 1
-    if starts is not None and starts > opts.frequent_starts_per_hour:
-        reasons.append(
-            Reason(
-                ReasonCode.FREQUENT_STARTS,
-                ReasonKind.PROBLEM,
-                starts,
-                opts.frequent_starts_per_hour,
-                changed_by_control=False,  # anti-cycling: 0.3 at the earliest (decision 13)
-            )
-        )
-    elif starts is not None and starts <= opts.few_starts_per_hour:
-        reasons.append(
-            Reason(ReasonCode.FEW_STARTS, ReasonKind.FINE, starts, opts.few_starts_per_hour)
-        )
-
-    short = heating.short_burn_share
-    if short is not None:
-        judged += 1
-    if short is not None and short > opts.short_burn_share:
-        reasons.append(
-            Reason(
-                ReasonCode.SHORT_BURNS,
-                ReasonKind.PROBLEM,
-                short,
-                opts.short_burn_share,
-                changed_by_control=False,
-            )
-        )
-    elif short is not None:
-        reasons.append(Reason(ReasonCode.LONG_BURNS, ReasonKind.FINE, short, opts.short_burn_share))
-
-    if opts.condensing_boiler:  # a boiler not built to condense is not judged on it
-        if condensing is None or condensing.value is None:
-            reasons.append(Reason(ReasonCode.CONDENSING_UNKNOWN, ReasonKind.MISSING))
-        else:
-            judged += 1
-            if condensing.value < opts.low_condensing_share:
-                reasons.append(
-                    Reason(
-                        ReasonCode.LOW_CONDENSING,
-                        ReasonKind.PROBLEM,
-                        condensing.value,
-                        opts.low_condensing_share,
-                        # Lower water from the curve: only where control sets the water.
-                        changed_by_control=opts.control_sets_water,
-                        detail=None if opts.control_sets_water else WATER_NOT_CONTROLLED,
-                    )
-                )
-            elif condensing.value >= opts.good_condensing_share:
-                reasons.append(
-                    Reason(
-                        ReasonCode.GOOD_CONDENSING,
-                        ReasonKind.FINE,
-                        condensing.value,
-                        opts.good_condensing_share,
-                    )
-                )
-
-    if load_below_min is None or load_below_min.value is None:
-        reasons.append(
-            Reason(
-                ReasonCode.LOAD_UNKNOWN,
-                ReasonKind.MISSING,
-                detail=ESTIMATE_ONLY if load_estimate_only else None,
-            )
-        )
-    else:
-        judged += 1
-        if load_below_min.value >= opts.below_min_power_share:
-            reasons.append(
-                Reason(
-                    ReasonCode.LOAD_OFTEN_BELOW_MIN_POWER,
-                    ReasonKind.PROBLEM,
-                    load_below_min.value,
-                    opts.below_min_power_share,
-                    changed_by_control=False,  # the boiler's minimum power: not control's
-                )
-            )
-        elif load_below_min.value < opts.rarely_below_min_power_share:
-            reasons.append(
-                Reason(
-                    ReasonCode.LOAD_RARELY_BELOW_MIN_POWER,
-                    ReasonKind.FINE,
-                    load_below_min.value,
-                    opts.rarely_below_min_power_share,
-                )
-            )
-
+    for counted, found in (
+        _starts_criterion(heating.starts_per_hour, opts),
+        _burns_criterion(heating.short_burn_share, opts),
+        _condensing_criterion(condensing, opts),
+        _load_criterion(load_below_min, opts, load_estimate_only),
+    ):
+        judged += counted
+        reasons += found
     # Answer K: "worth it" only from a problem control changes; the others stay as reasons.
     if any(r.kind is ReasonKind.PROBLEM and r.changed_by_control for r in reasons):
         return VerdictResult(Verdict.WORTH_IT, tuple(reasons))
@@ -310,6 +227,107 @@ def assess(
         CRITERIA_JUDGED_CONDENSING if opts.condensing_boiler else CRITERIA_JUDGED_NON_CONDENSING
     )
     if judged < needed:
-        counted = Reason(ReasonCode.CRITERIA_JUDGED, ReasonKind.DATA, judged, needed)
-        return VerdictResult(Verdict.NOT_ENOUGH_DATA, (counted, *reasons))
+        counted_reason = Reason(ReasonCode.CRITERIA_JUDGED, ReasonKind.DATA, judged, needed)
+        return VerdictResult(Verdict.NOT_ENOUGH_DATA, (counted_reason, *reasons))
     return VerdictResult(Verdict.NOT_WORTH_IT, tuple(reasons))
+
+
+def _starts_criterion(starts: float | None, opts: VerdictOptions) -> tuple[int, list[Reason]]:
+    """Heating starts per hour: judged when known; frequent is a problem control does not
+    change (anti-cycling: 0.3 at the earliest, decision 13), few is fine, in between neither."""
+    if starts is None:
+        return 0, []
+    if starts > opts.frequent_starts_per_hour:
+        problem = Reason(
+            ReasonCode.FREQUENT_STARTS,
+            ReasonKind.PROBLEM,
+            starts,
+            opts.frequent_starts_per_hour,
+            changed_by_control=False,
+        )
+        return 1, [problem]
+    if starts <= opts.few_starts_per_hour:
+        return 1, [Reason(ReasonCode.FEW_STARTS, ReasonKind.FINE, starts, opts.few_starts_per_hour)]
+    return 1, []
+
+
+def _burns_criterion(short: float | None, opts: VerdictOptions) -> tuple[int, list[Reason]]:
+    """The share of short heating burns: judged when known; above its limit a problem control
+    does not change, else fine."""
+    if short is None:
+        return 0, []
+    if short > opts.short_burn_share:
+        problem = Reason(
+            ReasonCode.SHORT_BURNS,
+            ReasonKind.PROBLEM,
+            short,
+            opts.short_burn_share,
+            changed_by_control=False,
+        )
+        return 1, [problem]
+    return 1, [Reason(ReasonCode.LONG_BURNS, ReasonKind.FINE, short, opts.short_burn_share)]
+
+
+def _condensing_criterion(
+    condensing: Share | None, opts: VerdictOptions
+) -> tuple[int, list[Reason]]:
+    """The condensing share, for a boiler built to condense only: unknown is named; low is a
+    problem control changes only where it sets the water; good is fine."""
+    if not opts.condensing_boiler:  # a boiler not built to condense is not judged on it
+        return 0, []
+    if condensing is None or condensing.value is None:
+        return 0, [Reason(ReasonCode.CONDENSING_UNKNOWN, ReasonKind.MISSING)]
+    if condensing.value < opts.low_condensing_share:
+        problem = Reason(
+            ReasonCode.LOW_CONDENSING,
+            ReasonKind.PROBLEM,
+            condensing.value,
+            opts.low_condensing_share,
+            # Lower water from the curve: only where control sets the water.
+            changed_by_control=opts.control_sets_water,
+            detail=None if opts.control_sets_water else WATER_NOT_CONTROLLED,
+        )
+        return 1, [problem]
+    if condensing.value >= opts.good_condensing_share:
+        fine = Reason(
+            ReasonCode.GOOD_CONDENSING,
+            ReasonKind.FINE,
+            condensing.value,
+            opts.good_condensing_share,
+        )
+        return 1, [fine]
+    return 1, []
+
+
+def _load_criterion(
+    load_below_min: Share | None, opts: VerdictOptions, estimate_only: bool
+) -> tuple[int, list[Reason]]:
+    """The share of heating time with the load below the boiler's minimum power: unknown is
+    named (a rule-of-thumb model saying so, S-17); often below is a problem control does not
+    change — the boiler's minimum power is not control's; rarely is fine."""
+    if load_below_min is None or load_below_min.value is None:
+        missing = Reason(
+            ReasonCode.LOAD_UNKNOWN,
+            ReasonKind.MISSING,
+            detail=ESTIMATE_ONLY if estimate_only else None,
+        )
+        return 0, [missing]
+    value = load_below_min.value
+    if value >= opts.below_min_power_share:
+        problem = Reason(
+            ReasonCode.LOAD_OFTEN_BELOW_MIN_POWER,
+            ReasonKind.PROBLEM,
+            value,
+            opts.below_min_power_share,
+            changed_by_control=False,
+        )
+        return 1, [problem]
+    if value < opts.rarely_below_min_power_share:
+        fine = Reason(
+            ReasonCode.LOAD_RARELY_BELOW_MIN_POWER,
+            ReasonKind.FINE,
+            value,
+            opts.rarely_below_min_power_share,
+        )
+        return 1, [fine]
+    return 1, []

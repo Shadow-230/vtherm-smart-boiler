@@ -5,12 +5,22 @@ Everything runs inside the test's Home Assistant; nothing connects anywhere.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
+import pytest
+from homeassistant.core import (
+    Context,
+    HomeAssistant,
+    ServiceCall,
+    ServiceRegistry,
+    ServiceResponse,
+    SupportsResponse,
+)
 from homeassistant.helpers import entity_registry as er
 
 from custom_components.vtherm_smart_boiler.core.history import History
@@ -115,6 +125,70 @@ class FakeZones:
             if values.get(key, False) is None:
                 del values[key]
         self.hass.states.async_set(self.entities[zone_id], state, values)
+
+
+async def analysis_idle(coordinator: Any) -> None:
+    """Until no analysis runs. Setup's first analysis and the clock's periodic one run as
+    background tasks, which ``async_block_till_done`` does not wait for — nor can a test that
+    holds another background task on purpose wait for them all (Z1)."""
+    for _ in range(10_000_000):
+        if not coordinator._analysing:
+            return
+        await asyncio.sleep(0)  # the loop's clock may be frozen: never a timed sleep
+    raise AssertionError("an analysis never finished")
+
+
+async def analyse_now(coordinator: Any) -> None:
+    """The analysis a test asks for, once any analysis already running has finished: a call
+    while one runs is skipped — only one runs at a time — so without the wait a test would
+    depend on the machine's speed (Z1)."""
+    await analysis_idle(coordinator)
+    await coordinator.async_run_analysis()
+
+
+_ASYNC_CALL = inspect.signature(ServiceRegistry.async_call)
+
+
+@dataclass
+class ServiceSpy:
+    """Every service call made in the test's Home Assistant, as ``(domain, service, data)``,
+    whether a service of that name is registered or not (P-118): Home Assistant fires
+    ``EVENT_CALL_SERVICE`` only for services that exist, so a listener on it would miss a call
+    that went nowhere. ``ServiceRegistry.async_call`` is patched for the test with a wrapper that
+    records, then calls the real one. The test's own calls carry ``own`` as their context and
+    are left out of ``plugin_calls``."""
+
+    hass: HomeAssistant
+    calls: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
+    contexts: list[Context | None] = field(default_factory=list)
+    own: Context = field(default_factory=Context)
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        original = ServiceRegistry.async_call
+        spy = self
+
+        async def async_call(registry: ServiceRegistry, *args: Any, **kwargs: Any) -> Any:
+            if registry is spy.hass.services:
+                bound = _ASYNC_CALL.bind(registry, *args, **kwargs)
+                bound.apply_defaults()
+                given = bound.arguments
+                data = given["service_data"]
+                spy.calls.append((given["domain"], given["service"], dict(data or {})))
+                spy.contexts.append(given["context"])
+            return await original(registry, *args, **kwargs)
+
+        monkeypatch.setattr(ServiceRegistry, "async_call", async_call)
+
+    def plugin_calls(self) -> list[tuple[str, str, dict[str, Any]]]:
+        """The calls not made by the test itself."""
+        return [
+            call
+            for call, context in zip(self.calls, self.contexts, strict=True)
+            if context is not self.own
+        ]
+
+    def plugin_services(self) -> set[tuple[str, str]]:
+        return {(domain, service) for domain, service, _ in self.plugin_calls()}
 
 
 def canned_forecast(kind: str, start: datetime, count: int, temperature: float) -> list[dict]:

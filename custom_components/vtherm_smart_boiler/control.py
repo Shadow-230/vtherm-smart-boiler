@@ -1584,32 +1584,12 @@ class ControlUnit:
                     _LOGGER.info("The control step works again")
 
     async def _async_step(self, now: float) -> None:
-        session = self._session
-        if (
-            self._hand_back_pending
-            and not session.loop.control.controlling
-            and self.options.configured
-            and not self._restore_pending  # decision 3: the restore comes first
-            # R9: a relay's owed hand-back waits for the step's command, which folds it.
-            and not (self._relay_path and not self.hand_back_only)
-        ):
-            await self._async_follow_hand_back(now)
-        if self.hand_back_only:
-            # Resumes the last run left are followed until SmartPI's flag reads on (C15).
-            await self._async_release_learning(now)
-            self._report_owed()
+        """One control step, in this order (the table in ``tests/integration/test_control.py``
+        pins it, P-115): what the last run left owed and what may stop the step before any
+        decision; then the decision and its writes — a hand-back's alone, or the command's —
+        the restore, the relay; then the issues and alarms that follow, and the status."""
+        if not await self._async_ready_to_decide(now):
             return
-        if not self._restored and not self._enabled_now():
-            if now - self._started_at < RESTORE_WAIT_S:
-                return  # the switch has not restored the user's choice yet: decide nothing
-            # The switch never came (disabled in Home Assistant): control counts as off, and
-            # so does the wish from now on (answer K).
-            _LOGGER.info("The control switch did not restore its state: control is off")
-            self._restored = True
-            self._coordinator.schedule_control_save()
-        if self._follow_return(now):
-            await self._coordinator.async_save_control_now()  # the latch is gone
-            session = self._session
         waiting = self._follow_vt_boiler(now)
         blockers = self.blockers(now)
         monitor_failed = "monitor_failed" in blockers
@@ -1622,30 +1602,9 @@ class ControlUnit:
         if dhw:
             self._dhw_seen_at = now  # a draw keeps a third value from being judged (W6)
         self._watch_external(now)  # another controller switching it off steps aside at once
-        inputs = self._inputs(now, snapshot, zones, blockers)
-        confirmed = self._confirmed()
-        if session.loop.setpoint.baseline is not None:
-            # Noted before the step: a timeout hand-back is released back to this value.
-            self._baseline = session.loop.setpoint.baseline
-        was_latched = session.loop.control.latched
+        session = self._session
         before = session.loop
-        setpoint_context, heating_context = self._contexts(now, dhw)
-        session.loop, out = loop_step(
-            session.loop,
-            inputs,
-            confirmed,
-            self.options.loop,
-            self._confirmed_heating(),
-            setpoint_context=setpoint_context,
-            heating_context=heating_context,
-            grid=self._grid(),
-            relay_seen=self._relay_seen(now) if self._relay_path else None,
-        )
-        if GuardEvent.OUTSIDE_CHANGE in out.events:
-            self._note_step_aside(before, session.loop, confirmed)  # named by the latch issue
-        if session.loop.control.latched and not was_latched:
-            self._latched_now()
-            blockers = self.blockers(now)  # a latch may name a blocker of its own (answer O)
+        out, blockers, confirmed = self._decide(now, snapshot, zones, blockers, dhw)
         if out.hand_back:
             self._note_blocker_release(out, blockers)  # stored with the hand-back, at once
             await self._async_hand_back_writes(now)
@@ -1654,63 +1613,14 @@ class ControlUnit:
         await self._follow_restore(now, blockers, out.hand_back)
         if self._relay_path:
             await self._async_follow_relay(now, out)
-        controlling = session.loop.control.controlling
-        if out.hand_back and monitor_failed:
-            self._report_monitor_failed(now)  # the session held the boiler
-        elif self._monitor_issue_since is not None and controlling and not monitor_failed:
-            self._note_monitor_recovered(now)  # control holds the boiler again
-        if out.hand_back and Reason.BOILER_LINK_STALE in out.decision.reasons:
-            self._report_hand_back_issue(HAND_BACK_LINK)  # decision 7 (Y1): the lost link's
-        if controlling:
-            for cause in tuple(self._hand_back_issues):
-                self._delete_hand_back_issue(cause)  # control resumed
+        self._follow_step_issues(now, out, monitor_failed)
         self._follow_stopped_heating(now, blockers)
         self._follow_frost(now, zones)
         self._follow_frost_closed(out.decision.frost_closed, zones)
         unknown = self._follow_unknown_zones(now, zones)
         self._follow_no_zone_known(now, out.decision.reasons)
-        decision = out.decision
-        for flagged, alarm in (
-            # Decision 3: nothing can ask for heat — every zone unknown after the recognition
-            # period and the graces; or a criterion no known zone can feed (P-14).
-            (self.enabled and decision.zones_unknown, ControlAlarm.NO_ZONE_KNOWN),
-            (
-                self.enabled and bool(decision.criteria_without_data),
-                ControlAlarm.DEMAND_CRITERION_NO_DATA,
-            ),
-            # Every topology, whenever the switch is on and the link is lost — whatever a
-            # blocker, a latch or a restart shows (P-08): control hands back if it held the
-            # boiler; stand-alone that stops heating, so the user is told.
-            (self.enabled and out.decision.link_lost, ControlAlarm.BOILER_LINK_LOST),
-            # The relay out of reach for five minutes while the switch is on (R6): no hand-back.
-            (self.enabled and out.relay_unreachable, ControlAlarm.RELAY_UNREACHABLE),
-            (out.decision.frost_stuck, ControlAlarm.FROST_NOT_WARMING),  # heating goes on
-            (out.decision.correction_at_limit, ControlAlarm.CORRECTION_AT_LIMIT),  # information
-            (self._outdoor_suspect(), ControlAlarm.OUTDOOR_SENSOR_SUSPECT),  # left out
-            (monitor_failed, ControlAlarm.MONITOR_FAILED),  # a blocker: control is handed back
-        ):
-            if flagged:
-                session.alarms.add(alarm)
-            else:
-                session.alarms.discard(alarm)
-        for event in out.events:
-            session.alarms.add(_EVENT_ALARM[event])
-        # Per target (P-09): on while a guard is ignored from the start, whichever it is — and
-        # while the latch for heating off ignored from the start holds, a restart included.
-        ignored = out.ignored
-        latch = session.loop.control
-        target = RELAY if self._relay_path else HEATING
-        if latch.latched and HEATING_OFF_IGNORED in latch.latched_by and target not in ignored:
-            ignored = (*ignored, target)
-        for flagged, alarm in (
-            (bool(ignored), ControlAlarm.WRITE_IGNORED),
-            (out.commands_lost, ControlAlarm.COMMANDS_LOST),  # information: sent again
-            (bool(out.unconfirmed), ControlAlarm.CONFIRMATION_MISSING),  # information only
-        ):
-            if flagged:
-                session.alarms.add(alarm)
-            else:
-                session.alarms.discard(alarm)
+        self._follow_decision_alarms(out, monitor_failed)
+        ignored = self._follow_target_alarms(out)
         if out.events or _memory_moved(before, session.loop):
             # The alarm behind a latch; the values from before the plugin and the fall-backs
             # without a trace a later judgement rests on.
@@ -1753,9 +1663,9 @@ class ControlUnit:
             ignored_targets=ignored,
             unconfirmed_targets=out.unconfirmed,
             blockers_waiting=waiting,
-            criteria_without_data=decision.criteria_without_data,
-            correction=decision.correction,
-            activation_at=decision.activation_at,
+            criteria_without_data=out.decision.criteria_without_data,
+            correction=out.decision.correction,
+            activation_at=out.decision.activation_at,
             frost_closed_zones=tuple(self._frost_issue_shown),
             relay_state=relay_state,
             relay_check=relay_shown,
@@ -1765,6 +1675,141 @@ class ControlUnit:
             unknown_alarms=self._unknown_alarms(),
             learning_not_resumed=tuple(sorted(session.learning.given_up)),
         )
+
+    async def _async_ready_to_decide(self, now: float) -> bool:
+        """Before any decision: a hand-back the last run left owed is followed first — unless
+        decision 3's restore comes first, or a relay's waits for the step's command (R9); a unit
+        left only to hand back does nothing more; and until the switch restores the user's
+        choice, nothing is decided (answer K). Whether the step goes on to decide."""
+        if (
+            self._hand_back_pending
+            and not self._session.loop.control.controlling
+            and self.options.configured
+            and not self._restore_pending  # decision 3: the restore comes first
+            # R9: a relay's owed hand-back waits for the step's command, which folds it.
+            and not (self._relay_path and not self.hand_back_only)
+        ):
+            await self._async_follow_hand_back(now)
+        if self.hand_back_only:
+            # Resumes the last run left are followed until SmartPI's flag reads on (C15).
+            await self._async_release_learning(now)
+            self._report_owed()
+            return False
+        if not self._restored and not self._enabled_now():
+            if now - self._started_at < RESTORE_WAIT_S:
+                return False  # the switch has not restored the user's choice yet: decide nothing
+            # The switch never came (disabled in Home Assistant): control counts as off, and
+            # so does the wish from now on (answer K).
+            _LOGGER.info("The control switch did not restore its state: control is off")
+            self._restored = True
+            self._coordinator.schedule_control_save()
+        if self._follow_return(now):
+            await self._coordinator.async_save_control_now()  # the latch is gone
+        return True
+
+    def _decide(
+        self,
+        now: float,
+        snapshot: BoilerSnapshot,
+        zones: Sequence[ZoneState],
+        blockers: tuple[str, ...],
+        dhw: bool | None,
+    ) -> tuple[LoopOutput, tuple[str, ...], float | None]:
+        """The step's decision through the write guards, noting a step aside and a new latch —
+        which may name a blocker of its own (answer O). The output, the blockers as they stand
+        after it, and the read-back it saw."""
+        session = self._session
+        inputs = self._inputs(now, snapshot, zones, blockers)
+        confirmed = self._confirmed()
+        if session.loop.setpoint.baseline is not None:
+            # Noted before the step: a timeout hand-back is released back to this value.
+            self._baseline = session.loop.setpoint.baseline
+        was_latched = session.loop.control.latched
+        before = session.loop
+        setpoint_context, heating_context = self._contexts(now, dhw)
+        session.loop, out = loop_step(
+            session.loop,
+            inputs,
+            confirmed,
+            self.options.loop,
+            self._confirmed_heating(),
+            setpoint_context=setpoint_context,
+            heating_context=heating_context,
+            grid=self._grid(),
+            relay_seen=self._relay_seen(now) if self._relay_path else None,
+        )
+        if GuardEvent.OUTSIDE_CHANGE in out.events:
+            self._note_step_aside(before, session.loop, confirmed)  # named by the latch issue
+        if session.loop.control.latched and not was_latched:
+            self._latched_now()
+            blockers = self.blockers(now)  # a latch may name a blocker of its own (answer O)
+        return out, blockers, confirmed
+
+    def _follow_step_issues(self, now: float, out: LoopOutput, monitor_failed: bool) -> None:
+        """The issues a step's hand-back raises or control resuming clears: the monitor's own
+        (V6), the lost link's (decision 7, Y1), and every hand-back issue once control holds the
+        boiler again."""
+        controlling = self._session.loop.control.controlling
+        if out.hand_back and monitor_failed:
+            self._report_monitor_failed(now)  # the session held the boiler
+        elif self._monitor_issue_since is not None and controlling and not monitor_failed:
+            self._note_monitor_recovered(now)  # control holds the boiler again
+        if out.hand_back and Reason.BOILER_LINK_STALE in out.decision.reasons:
+            self._report_hand_back_issue(HAND_BACK_LINK)  # decision 7 (Y1): the lost link's
+        if controlling:
+            for cause in tuple(self._hand_back_issues):
+                self._delete_hand_back_issue(cause)  # control resumed
+
+    def _follow_decision_alarms(self, out: LoopOutput, monitor_failed: bool) -> None:
+        """The alarms the decision sets or clears, and those its guard events raise."""
+        session = self._session
+        decision = out.decision
+        for flagged, alarm in (
+            # Decision 3: nothing can ask for heat — every zone unknown after the recognition
+            # period and the graces; or a criterion no known zone can feed (P-14).
+            (self.enabled and decision.zones_unknown, ControlAlarm.NO_ZONE_KNOWN),
+            (
+                self.enabled and bool(decision.criteria_without_data),
+                ControlAlarm.DEMAND_CRITERION_NO_DATA,
+            ),
+            # Every topology, whenever the switch is on and the link is lost — whatever a
+            # blocker, a latch or a restart shows (P-08): control hands back if it held the
+            # boiler; stand-alone that stops heating, so the user is told.
+            (self.enabled and out.decision.link_lost, ControlAlarm.BOILER_LINK_LOST),
+            # The relay out of reach for five minutes while the switch is on (R6): no hand-back.
+            (self.enabled and out.relay_unreachable, ControlAlarm.RELAY_UNREACHABLE),
+            (out.decision.frost_stuck, ControlAlarm.FROST_NOT_WARMING),  # heating goes on
+            (out.decision.correction_at_limit, ControlAlarm.CORRECTION_AT_LIMIT),  # information
+            (self._outdoor_suspect(), ControlAlarm.OUTDOOR_SENSOR_SUSPECT),  # left out
+            (monitor_failed, ControlAlarm.MONITOR_FAILED),  # a blocker: control is handed back
+        ):
+            if flagged:
+                session.alarms.add(alarm)
+            else:
+                session.alarms.discard(alarm)
+        for event in out.events:
+            session.alarms.add(_EVENT_ALARM[event])
+
+    def _follow_target_alarms(self, out: LoopOutput) -> tuple[str, ...]:
+        """The alarms of each write target (P-09): ignored from the start — and while the latch
+        for heating off ignored from the start holds, a restart included — commands lost, and
+        a confirmation missing. The targets shown as ignored."""
+        session = self._session
+        ignored = out.ignored
+        latch = session.loop.control
+        target = RELAY if self._relay_path else HEATING
+        if latch.latched and HEATING_OFF_IGNORED in latch.latched_by and target not in ignored:
+            ignored = (*ignored, target)
+        for flagged, alarm in (
+            (bool(ignored), ControlAlarm.WRITE_IGNORED),
+            (out.commands_lost, ControlAlarm.COMMANDS_LOST),  # information: sent again
+            (bool(out.unconfirmed), ControlAlarm.CONFIRMATION_MISSING),  # information only
+        ):
+            if flagged:
+                session.alarms.add(alarm)
+            else:
+                session.alarms.discard(alarm)
+        return ignored
 
     async def async_reset_correction(self) -> None:
         """The "Reset comfort correction" button (answer J): the running session's correction to

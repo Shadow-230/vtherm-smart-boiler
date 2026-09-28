@@ -39,12 +39,14 @@ def vt_is_set_up(hass: HomeAssistant) -> VThermAPI:
     return VThermAPI.get_vtherm_api(hass)
 
 
-async def setup(hass: HomeAssistant, zones: FakeZones, title: str = "Boiler") -> MockConfigEntry:
+async def setup(hass: HomeAssistant, zones: FakeZones) -> MockConfigEntry:
+    """The one entry of this single-entry integration (P-125, T11)."""
+    assert hass.config_entries.async_entries(DOMAIN) == []
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0})
     entry = MockConfigEntry(
         domain=DOMAIN,
-        title=title,
+        title="Boiler",
         data={},
         options={
             "signals": boiler.mapping(),
@@ -99,16 +101,20 @@ async def test_registers_once_vt_is_loaded_later(hass: HomeAssistant, zones: Fak
     assert api.list_feature_managers() == [DOMAIN]
 
 
-async def test_two_installations_share_one_registration(
+async def test_the_one_installation_registers_once_and_its_unload_unregisters(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:
+    """P-125, T11: the integration allows one entry, and a test sets up one. Its setup registers
+    the factory; a reload gives it back to VT's API, registered once; its unload — the last
+    installation's — unregisters it."""
     api = vt_is_set_up(hass)
-    first = await setup(hass, zones, "First")
-    second = await setup(hass, zones, "Second")
+    entry = await setup(hass, zones)
     assert api.list_feature_managers() == [DOMAIN]
-    assert await hass.config_entries.async_unload(first.entry_id)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
     assert api.list_feature_managers() == [DOMAIN]
-    assert await hass.config_entries.async_unload(second.entry_id)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
     assert api.list_feature_managers() == []
 
 

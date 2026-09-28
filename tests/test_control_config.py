@@ -22,6 +22,7 @@ from custom_components.vtherm_smart_boiler.core.installation import (
     Installation,
     Zone,
 )
+from custom_components.vtherm_smart_boiler.core.signals import Signal
 
 RADIATORS = Installation(
     Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),), (Zone("climate.a", "main"),)
@@ -1672,3 +1673,268 @@ def test_a_relay_not_picked_has_no_other_role() -> None:
 
     options = parse_control({"write_path": "relay"}, ON_OFF, None)
     assert not relay_in_another_role(options, {})
+
+
+# --- P-115: the precedence of the configuration blockers, as a table ---------------------------
+# Several lacks at once, and which of them the list names, in its order: the table the split of
+# ``config_blockers`` must keep green.
+
+_NO_ZONES = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
+_READ_ONLY = Installation(Boiler(BoilerClass.READ_ONLY), ())
+_TWO_CIRCUITS = Installation(
+    Boiler(BoilerClass.FLOW_SETPOINT),
+    (Circuit("a"), Circuit("b", CircuitControl.SEPARATE)),
+    (Zone("climate.a", "a"),),
+)
+_FLOOR = Installation(
+    Boiler(BoilerClass.FLOW_SETPOINT),
+    (Circuit("main"),),
+    (Zone("climate.a", "main", EmitterType.UNDERFLOOR),),
+)
+_ON_OFF_NO_ZONES = Installation(Boiler(BoilerClass.ON_OFF), (Circuit("main"),))
+_HEATING_SWITCH = {"ch_entity": "switch.heat", "ch_write_type": "held"}
+_ALL_SIGNALS = None  # not given: flame and flow are not checked
+_NO_SIGNALS: tuple = ()
+
+BLOCKER_PRECEDENCE = [
+    # (what the row shows, control section, installation, shared signals, signals, blockers)
+    ("not configured beats every other lack", {}, _READ_ONLY, None, _NO_SIGNALS, ["no_write_path"]),
+    (
+        "a monitor-only class, the rest judged as usual",
+        OTGW,
+        _READ_ONLY,
+        None,
+        _ALL_SIGNALS,
+        ["boiler_class_no_control", "one_direct_circuit_only", "no_zones"],
+    ),
+    (
+        "the relay on a flow-setpoint boiler",
+        RELAY,
+        RADIATORS,
+        None,
+        _ALL_SIGNALS,
+        ["path_not_for_boiler_class"],
+    ),
+    (
+        "a gateway on an on/off boiler",
+        OTGW,
+        ON_OFF,
+        None,
+        _ALL_SIGNALS,
+        ["path_not_for_boiler_class"],
+    ),
+    (
+        "the relay: its own lacks and the zones', nothing about water",
+        {"write_path": "relay"},
+        _ON_OFF_NO_ZONES,
+        {"flow": "flame"},
+        _NO_SIGNALS,
+        ["entity_for_two_signals", "no_relay_entity", "relay_contact_not_confirmed", "no_zones"],
+    ),
+    (
+        "the entity path with everything missing, in the list's order",
+        {"write_path": "entity"},
+        _NO_ZONES,
+        None,
+        _NO_SIGNALS,
+        [
+            "no_flame_signal",
+            "no_flow_signal",
+            "no_setpoint_entity",
+            "write_type_not_supported",
+            "no_heating_switch",
+            "no_hand_back",
+            "no_confirmed_setpoint",
+            "no_topology",
+            "curve_not_entered",
+            "no_zones",
+        ],
+    ),
+    (
+        "no hand-back before anything about its kind",
+        ENTITY | {"hand_back": None, "write_type": "held"},
+        RADIATORS,
+        None,
+        _ALL_SIGNALS,
+        ["no_heating_switch", "no_hand_back"],
+    ),
+    (
+        "a timeout hand-back with held writes",
+        ENTITY | {"hand_back": "timeout", "write_type": "held"},
+        RADIATORS,
+        None,
+        _ALL_SIGNALS,
+        ["no_heating_switch", "timeout_needs_expiring_writes"],
+    ),
+    (
+        "a switch hand-back the boiler may store",
+        ENTITY | {"hand_back": "switch", "hand_back_entity": "switch.ext"} | _HEATING_SWITCH,
+        RADIATORS,
+        None,
+        _ALL_SIGNALS,
+        ["hand_back_switch_not_writable"],
+    ),
+    (
+        "one entity as the hand-back and the heating switch",
+        ENTITY
+        | {"hand_back": "switch", "hand_back_entity": "switch.heat"}
+        | {"hand_back_entity_write_type": "held"}
+        | _HEATING_SWITCH,
+        RADIATORS,
+        None,
+        _ALL_SIGNALS,
+        ["hand_back_switch_is_heating_switch"],
+    ),
+    (
+        "a hand-back value above the highest water temperature",
+        ENTITY | {"hand_back_value": 75} | _HEATING_SWITCH,
+        RADIATORS,
+        None,
+        _ALL_SIGNALS,
+        ["hand_back_value_above_max"],
+    ),
+    (
+        "a gateway lacking its id, read-back, topology and curve",
+        {"write_path": "opentherm_gw"},
+        RADIATORS,
+        None,
+        (Signal.FLAME, Signal.FLOW),
+        ["no_gateway", "no_confirmed_setpoint", "no_topology", "curve_not_entered"],
+    ),
+    (
+        "the firmware's topics missing, a monitor-mode topology",
+        {
+            "write_path": "otgw_mqtt",
+            "topology": "monitor_mode",
+            "confirmed_entity": "sensor.x",
+            "curve": CURVE,
+        },
+        RADIATORS,
+        None,
+        _ALL_SIGNALS,
+        ["no_mqtt_topic", "topology_no_control"],
+    ),
+    (
+        "a topology the path does not suit",
+        OTGW | {"topology": "virtual"},
+        RADIATORS,
+        None,
+        _ALL_SIGNALS,
+        ["topology_not_for_path"],
+    ),
+    (
+        "an on/off contact on the terminals",
+        OTGW | WITH_THERMOSTAT | {"thermostat_kind": "on_off"},
+        RADIATORS,
+        None,
+        _ALL_SIGNALS,
+        ["thermostat_on_off"],
+    ),
+    (
+        "the terminals' answer contradicting the topology",
+        OTGW | {"thermostat_kind": "opentherm"},
+        RADIATORS,
+        None,
+        _ALL_SIGNALS,
+        ["thermostat_kind_contradicts_topology"],
+    ),
+    (
+        '"I don\'t know" on the terminals',
+        OTGW | {"thermostat_kind": "unknown"},
+        RADIATORS,
+        None,
+        _ALL_SIGNALS,
+        ["thermostat_kind_unknown"],
+    ),
+    (
+        "the curve's own problems only once it is entered",
+        OTGW | {"curve": {"design_outdoor": -15, "design_flow": 22}},
+        RADIATORS,
+        None,
+        _ALL_SIGNALS,
+        ["design_flow_too_low"],
+    ),
+    (
+        "two circuits before the underfloor rule",
+        OTGW,
+        _TWO_CIRCUITS,
+        None,
+        _ALL_SIGNALS,
+        ["one_direct_circuit_only"],
+    ),
+    (
+        "underfloor without its maximum",
+        OTGW,
+        _FLOOR,
+        None,
+        _ALL_SIGNALS,
+        ["underfloor_without_max_flow"],
+    ),
+    (
+        "no zone before the count",
+        OTGW | {"count_threshold": 3},
+        _NO_ZONES,
+        None,
+        _ALL_SIGNALS,
+        ["no_zones"],
+    ),
+    (
+        "a count above the zones",
+        OTGW | {"count_threshold": 3},
+        RADIATORS,
+        None,
+        _ALL_SIGNALS,
+        ["count_threshold_above_zones"],
+    ),
+    (
+        '"off" next to the lowest water temperature, without heating writes',
+        ENTITY | {"off_setpoint": 19.5, "hard_min": 20},
+        RADIATORS,
+        None,
+        _ALL_SIGNALS,
+        ["no_heating_switch", "off_setpoint_not_below_hard_min"],
+    ),
+    (
+        '"off" is no setpoint with heating writes',
+        ENTITY | {"off_setpoint": 19.5, "hard_min": 20} | _HEATING_SWITCH,
+        RADIATORS,
+        None,
+        _ALL_SIGNALS,
+        [],
+    ),
+    (
+        "flame and flow not mapped",
+        OTGW,
+        RADIATORS,
+        None,
+        _NO_SIGNALS,
+        ["no_flame_signal", "no_flow_signal"],
+    ),
+    (
+        "one entity for two signals",
+        OTGW,
+        RADIATORS,
+        {"flow": "flame"},
+        _ALL_SIGNALS,
+        ["entity_for_two_signals"],
+    ),
+    ("nothing lacking", OTGW, RADIATORS, None, (Signal.FLAME, Signal.FLOW), []),
+]
+
+
+@pytest.mark.parametrize(
+    ("section", "installation", "shared", "signals", "expected"),
+    [row[1:] for row in BLOCKER_PRECEDENCE],
+    ids=[row[0] for row in BLOCKER_PRECEDENCE],
+)
+def test_the_precedence_of_the_configuration_blockers(
+    section: dict,
+    installation: Installation,
+    shared: dict[str, str] | None,
+    signals: tuple | None,
+    expected: list[str],
+) -> None:
+    """P-115: exactly these blockers, in this order, for each set of lacks at once."""
+    control = parse_control(section, installation, None)
+    pairs = None if shared is None else {Signal(k): Signal(v) for k, v in shared.items()}
+    assert config_blockers(control, installation, pairs, signals=signals) == expected

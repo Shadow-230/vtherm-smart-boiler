@@ -43,6 +43,16 @@ def _present(storage: Path, names: list[str]) -> list[bool]:
     return [(storage / name).exists() for name in names]
 
 
+async def test_the_files_a_test_writes_stay_in_its_own_directory(
+    hass: HomeAssistant, tmp_path: Path
+) -> None:
+    """Z1 (the V1 report): Home Assistant's configuration directory is each test's own, under
+    its ``tmp_path`` in ``.tmp/`` — the files these tests write, and those the plugin removes,
+    never touch the shared test configuration inside ``.venv``."""
+    assert Path(hass.config.config_dir).is_relative_to(tmp_path)
+    assert Path(hass.config.path(".storage")).is_relative_to(tmp_path)
+
+
 async def test_a_save_writes_only_the_current_week(
     hass: HomeAssistant, hass_storage: dict[str, Any], forecasts: FakeForecasts
 ) -> None:

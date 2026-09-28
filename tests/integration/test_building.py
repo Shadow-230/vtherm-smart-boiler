@@ -27,7 +27,7 @@ from custom_components.vtherm_smart_boiler.core.daily import DaySummary
 from custom_components.vtherm_smart_boiler.core.parameters import ParameterKey, Source
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 
-from .harness import FakeBoiler, FakeZones
+from .harness import FakeBoiler, FakeZones, analyse_now
 from .test_control import (  # the rig fixture comes with them
     SIGNALS,
     START,
@@ -166,7 +166,7 @@ async def test_reset_buttons_forget_measured_values_and_refit_from_new_days_only
     now = START.timestamp()
     # Twenty days of the house before: 0.25 kW/K, heating up to 18 °C outside.
     coordinator.daily = house_days(now - 25 * DAY, 0.25, 18.0, coordinator.settings_key)
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     assert measured_value(entry, ParameterKey.LOSS_COEFFICIENT) == pytest.approx(0.25)
     assert measured_value(entry, ParameterKey.HEATING_THRESHOLD) == pytest.approx(18.0)
     await rig.switch(True)
@@ -186,7 +186,7 @@ async def test_reset_buttons_forget_measured_values_and_refit_from_new_days_only
     shown = rig.state("sensor", "heating_threshold")
     assert (float(shown.state), shown.attributes["measured"]) == (15.0, None)  # at once
     await hass.async_block_till_done(wait_background_tasks=True)  # the analysis it starts
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     # The old days fit the loss as before, but never the threshold again.
     assert measured_value(entry, ParameterKey.HEATING_THRESHOLD) is None
     assert measured_value(entry, ParameterKey.LOSS_COEFFICIENT) == pytest.approx(0.25)
@@ -210,7 +210,7 @@ async def test_reset_buttons_forget_measured_values_and_refit_from_new_days_only
     await rig.switch(False)
     rig.freezer.move_to(START + timedelta(days=22))
     coordinator.daily |= house_days(reset_at + HOUR, 0.2, 16.0, coordinator.settings_key)
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     assert measured_value(entry, ParameterKey.LOSS_COEFFICIENT) == pytest.approx(0.2)
     assert measured_value(entry, ParameterKey.HEATING_THRESHOLD) == pytest.approx(16.0)
 
@@ -320,7 +320,7 @@ async def test_an_entered_design_load_always_wins(
     await hass.async_block_till_done(wait_background_tasks=True)
     coordinator = entry.runtime_data
     coordinator.daily = house_days(NOW.timestamp() - 25 * DAY, 0.35, 16.0, coordinator.settings_key)
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     assert measured_value(entry, ParameterKey.LOSS_COEFFICIENT) == pytest.approx(0.35)
     state = hass.states.get(entity_id(hass, entry, "sensor", "loss_coefficient"))
     assert state is not None
@@ -402,7 +402,6 @@ async def test_the_switch_says_control_starts_without_a_verdict(rig: Rig) -> Non
     Once they have passed, control may start without a verdict — off-season there may be too
     little data for one — and the switch shows the verdict, "not enough data", whose text says
     so. Before they have passed, switching on is refused."""
-    from homeassistant.exceptions import ServiceValidationError
 
     hass = rig.hass
     monitored = options(rig.zones) | {"monitor": {"monitoring_days": 7}}
@@ -434,18 +433,26 @@ async def test_the_switch_says_control_starts_without_a_verdict(rig: Rig) -> Non
     control_step = SOURCE_EN["options"]["step"]["control"]["description"]
     assert "counted in days from when this integration was added" in control_step
     assert "even without a verdict" in control_step
-    # A second entry created three days ago: still in its monitoring period.
-    young = MockConfigEntry(domain=DOMAIN, title="Young", data={}, options=monitored)
+
+
+async def test_switching_on_is_refused_before_the_monitoring_days_have_passed(rig: Rig) -> None:
+    """S-43, the negative: the entry created three days ago is still in its monitoring period;
+    switching on is refused with the reason. One entry per test of this single-entry integration
+    (P-125, T11)."""
+    from homeassistant.exceptions import ServiceValidationError
+
+    hass = rig.hass
+    monitored = options(rig.zones) | {"monitor": {"monitoring_days": 7}}
+    young = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=monitored)
     young.created_at = START - timedelta(days=3)
     young.add_to_hass(hass)
     ran_before(rig, young)
     await setup(hass, young)
-    switch_id = er.async_get(hass).async_get_entity_id(
-        "switch", DOMAIN, f"{young.entry_id}_control"
-    )
+    rig.entry = young
     with pytest.raises(ServiceValidationError) as err:
-        await hass.services.async_call("switch", "turn_on", {"entity_id": switch_id}, blocking=True)
+        await rig.switch(True)
     assert err.value.translation_key == "blocked_monitoring_period"
+    assert rig.state("switch", "control").state == "off"
 
 
 async def test_without_a_flame_signal_the_verdict_names_it(rig: Rig) -> None:

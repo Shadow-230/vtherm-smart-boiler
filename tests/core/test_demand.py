@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.demand import (
@@ -284,3 +286,98 @@ def test_no_zone_known_names_no_criterion(zones: list[ZoneState]) -> None:
     result = boiler_demand(zones, NOW, AGE, config)
     assert result.wanted is None
     assert result.criteria_without_data == ()
+
+
+# --- P-126: VT's own states as scenarios, zone by zone and step by step -----------------------
+# What each zone shows is what the plugin reads from VT 10.4.0 (``vtherm_attributes``): its HVAC
+# mode (``heating_enabled``), whether VT has started it (``ready``/``reported``), its devices
+# (``device_active``), its duty cycle, and the safety and power managers' states. The
+# vendored-VT versions of the first two are X3's T-44 and T-45.
+
+
+ONE_ZONE = DemandConfig()
+
+
+def demand_over(
+    steps: list[list[ZoneState]], config: DemandConfig = ONE_ZONE, **kwargs
+) -> list[tuple[bool | None, int, tuple[str, ...]]]:
+    """Demand at each step: wanted, the zones known, the zones unknown."""
+    results = [boiler_demand(zones, NOW, AGE, config, **kwargs) for zones in steps]
+    return [(r.wanted, r.fresh_zones, r.unknown) for r in results]
+
+
+def test_a_zone_in_vts_safety_mode_is_followed_as_vt_runs_it() -> None:
+    """VT's safety mode (the room sensor gone quiet): VT keeps running the zone on its safety
+    duty cycle, its device pulsing on and off. The zone stays known and demand follows VT's
+    pulses — never unknown, never "no demand" for the whole mode; the lost sensor only raises
+    the zone's alarm (S-35)."""
+    normal = zone("a", on_percent=0.6, device_active=True, temperature=19.0)
+    pulse_on = replace(
+        normal, on_percent=0.1, device_active=True, safety_on=True, room_sensor_lost=True
+    )
+    pulse_off = replace(pulse_on, device_active=False)
+    other = zone("b", on_percent=0.0, device_active=False)
+    assert demand_over(
+        [[normal, other], [pulse_on, other], [pulse_off, other], [pulse_on, other]]
+    ) == [(True, 2, ()), (True, 2, ()), (False, 2, ()), (True, 2, ())]
+    power = DemandConfig(count_threshold=0, power_threshold_kw=0.5)
+    safety = boiler_demand([replace(pulse_on, power=2.0, mean_power=0.2)], NOW, AGE, power)
+    assert (safety.wanted, safety.power_kw) == (False, 0.2)  # its safety duty's power
+
+
+def test_vts_power_shedding_takes_a_zone_out_of_demand_until_it_ends() -> None:
+    """VT's power manager sheds a zone (overpowering on): the zone is known and wants nothing,
+    its power counts nothing — whatever its duty cycle or device showed last — while the other
+    zones decide; demand comes back with the zone once the shedding ends."""
+    calling = zone("a", on_percent=0.6, device_active=True, power=2.0)
+    shed = replace(calling, shedding=True)
+    quiet = zone("b", on_percent=0.0, device_active=False, power=1.0)
+    warm = replace(quiet, on_percent=0.5, device_active=True)
+    config = DemandConfig(count_threshold=1, power_threshold_kw=1.5)
+    results = [
+        boiler_demand(zones, NOW, AGE, config)
+        for zones in ([calling, quiet], [shed, quiet], [shed, warm], [calling, quiet])
+    ]
+    assert [(r.wanted, r.zones_wanting, r.power_kw, r.fresh_zones) for r in results] == [
+        (True, 1, 1.2, 2),
+        (False, 0, 0.0, 2),  # a shed zone known, not unknown: no end state
+        (True, 1, 0.5, 2),
+        (True, 1, 1.2, 2),
+    ]
+
+
+def test_an_open_window_switching_a_zone_off_leaves_it_known_without_demand() -> None:
+    """VT's window detection with its "turn off" action: the zone goes to "off" while VT keeps
+    it started — known, no demand, so the others decide and no "no zone known" end state
+    follows; its "frost" or "eco" action keeps the mode and lowers the target, and the valve
+    closing ends the demand. The window closed, the zone heats again."""
+    heating = zone("a", valve_open=0.7, calling=True, ready=True, reported=True)
+    window_off = replace(heating, heating_enabled=False, valve_open=0.0, calling=False)
+    window_frost = replace(heating, target=7.0, valve_open=0.0, calling=False)
+    assert demand_over([[heating], [window_off], [window_frost], [heating]]) == [
+        (True, 1, ()),
+        (False, 1, ()),
+        (False, 1, ()),
+        (True, 1, ()),
+    ]
+    other = zone("b", valve_open=0.4)
+    assert demand_over([[window_off, other]], DemandConfig(count_threshold=2)) == [
+        (False, 2, ())  # the window's zone counts as known: two zones, one wants heat
+    ]
+
+
+def test_a_vt_restart_off_and_not_ready_then_started() -> None:
+    """VT reloads: before its first refresh each thermostat shows a placeholder "off", not
+    ready. During the recognition period such a zone is not known yet; after it, "off" is
+    known without demand (S-34), while a heating mode VT has not started stays unknown. Once
+    VT has started the zone, it counts as it shows."""
+    placeholder = zone("a", heating_enabled=False, ready=False, reported=False, temperature=None)
+    heat_unstarted = zone("a", valve_open=0.6, ready=False, reported=False)
+    started = zone("a", valve_open=0.6, ready=True, reported=True)
+    assert demand_over([[placeholder]], recognition=True) == [(None, 0, ("a",))]
+    assert demand_over([[placeholder], [heat_unstarted], [started]]) == [
+        (False, 1, ()),
+        (None, 0, ("a",)),
+        (True, 1, ()),
+    ]
+    assert demand_over([[heat_unstarted]], recognition=True) == [(None, 0, ("a",))]

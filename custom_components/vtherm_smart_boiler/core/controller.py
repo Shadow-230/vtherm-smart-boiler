@@ -555,20 +555,62 @@ def decide(
 def _decide(
     state: ControlState, inputs: ControlInputs, config: ControlConfig, demand: Demand
 ) -> tuple[ControlState, ControlDecision]:
+    """Whether control may decide at all — switched off, a latch, the blockers, the boiler
+    link, the read-back, in that order — then a boiler fault, the recognition period and
+    decision 3's end state, then the heating decision (the table in
+    ``tests/core/test_controller.py`` pins the order, P-115)."""
+    stopped = _stopped(state, inputs)
+    if stopped is not None:
+        return stopped
+    waiting = _waiting_for_data(state, inputs)
+    if waiting is not None:
+        return waiting
     now = inputs.now
+    recognition = in_recognition(state.zones)
+    max_age = config.zone_max_age_s
+    watched = [z for z in inputs.zones if not recognition or z.is_known(now, max_age, True)]
+    frost = frost_needed(watched, now, max_age, state.frost, config.frost)
+    if inputs.boiler_fault:
+        # Boiler protection (Y1): the usual "off" while the boiler reports its own fault — frost
+        # heating waits too, as the boiler cannot heat; no hand-back, no latch.
+        if recognition:
+            held = _held(state, inputs)
+            off = None if held is None else replace(held, ch_enable=False)
+            return _keep(state, now, off, fault=True)
+        return _heating_decision(state, inputs, config, frost, demand, fault=True)
+    if not frost:
+        nothing_new = _nothing_new(state, inputs, config, demand, recognition)
+        if nothing_new is not None:
+            return nothing_new
+    return _heating_decision(state, inputs, config, frost, demand)
+
+
+def _stopped(
+    state: ControlState, inputs: ControlInputs
+) -> tuple[ControlState, ControlDecision] | None:
+    """Switched off; a latch, or an alarm set to hand back — before the blockers (P-48); the
+    blockers, but for Home Assistant starting alone while a command is kept or restored. ``None``
+    where none of them stops control."""
     if not inputs.enabled:
         return _release(state, ControlMode.DISABLED, Reason.CONTROL_OFF)
     if state.latched or inputs.hand_back_alarms:
-        # Before the blockers (P-48): an alarm set to hand back latches whatever they show.
+        # An alarm set to hand back latches whatever the blockers show.
         latched_by = state.latched_by if state.latched else tuple(inputs.hand_back_alarms)
         state = replace(state, latched=True, latched_by=latched_by)
         return _release(state, ControlMode.HANDED_BACK, Reason.ALARM_HAND_BACK)
-    recognition = in_recognition(state.zones)
-    held = state.command if state.controlling else inputs.restored_command
     # Home Assistant starting alone does not stop a command kept or restored meanwhile.
-    keeps = recognition and held is not None and set(inputs.blockers) <= {HA_STARTING}
-    if inputs.blockers and not keeps:
+    held = state.command if state.controlling else inputs.restored_command
+    keeps = in_recognition(state.zones) and held is not None
+    if inputs.blockers and not (keeps and set(inputs.blockers) <= {HA_STARTING}):
         return _release(state, ControlMode.NOT_ALLOWED, Reason.PRECONDITION)
+    return None
+
+
+def _waiting_for_data(
+    state: ControlState, inputs: ControlInputs
+) -> tuple[ControlState, ControlDecision] | None:
+    """The boiler link lost while controlling hands back; a stale link, or a read-back unknown
+    before the take, writes nothing yet. ``None`` with fresh data."""
     if state.link.lost and state.controlling:
         # Stale for five minutes within ten, a flapping link included (P-08): hand back once;
         # control resumes by itself once the link has been fresh for a minute.
@@ -593,37 +635,40 @@ def _decide(
         reasons = (Reason.READ_BACK_UNKNOWN,)
         waiting = replace(state, mode=ControlMode.WAITING_DATA, reasons=reasons, decided_at=None)
         return waiting, ControlDecision(ControlMode.WAITING_DATA, None, reasons=reasons)
+    return None
 
-    max_age = config.zone_max_age_s
-    watched = [z for z in inputs.zones if not recognition or z.is_known(now, max_age, True)]
-    frost = frost_needed(watched, now, max_age, state.frost, config.frost)
-    if inputs.boiler_fault:
-        # Boiler protection (Y1): the usual "off" while the boiler reports its own fault — frost
-        # heating waits too, as the boiler cannot heat; no hand-back, no latch.
-        if recognition:
-            if not state.controlling and not inputs.target_ready:
-                held = None
-            off = None if held is None else replace(held, ch_enable=False)
-            return _keep(state, now, off, fault=True)
-        return _heating_decision(state, inputs, config, frost, demand, fault=True)
-    if not frost:
-        if recognition:
-            if not state.controlling and not inputs.target_ready:
-                held = None  # the restored command waits for its write target
-            return _keep(state, now, held)
-        if (
-            inputs.restored_command is not None
-            and not state.controlling
-            and not inputs.target_ready
-        ):
-            # The recognition period ended while the restored command still waited for its write
-            # target: nothing new this step — the owed hand-back goes first; the next step
-            # decides. (Everything there, control simply decides anew.)
-            return _keep(state, now, None)
-        if demand.wanted is None and config.working_thermostat:
-            # Nothing can ask for heat: the working thermostat takes the boiler — no latch.
-            return _release(state, ControlMode.HANDED_BACK, Reason.ZONES_UNKNOWN)
-    return _heating_decision(state, inputs, config, frost, demand)
+
+def _held(state: ControlState, inputs: ControlInputs) -> BoilerCommand | None:
+    """The command held: this session's, else the one restored — which waits for its write
+    target."""
+    if state.controlling:
+        return state.command
+    return inputs.restored_command if inputs.target_ready else None
+
+
+def _nothing_new(
+    state: ControlState,
+    inputs: ControlInputs,
+    config: ControlConfig,
+    demand: Demand,
+    recognition: bool,
+) -> tuple[ControlState, ControlDecision] | None:
+    """Without frost: the recognition period keeps what is held and decides nothing new; a
+    restored command still waiting for its write target when it ends gives way this step; and
+    nothing that can ask for heat hands the boiler to a working thermostat (decision 3).
+    ``None``: the heating decision follows."""
+    now = inputs.now
+    if recognition:
+        return _keep(state, now, _held(state, inputs))
+    if inputs.restored_command is not None and not state.controlling and not inputs.target_ready:
+        # The recognition period ended while the restored command still waited for its write
+        # target: nothing new this step — the owed hand-back goes first; the next step
+        # decides. (Everything there, control simply decides anew.)
+        return _keep(state, now, None)
+    if demand.wanted is None and config.working_thermostat:
+        # Nothing can ask for heat: the working thermostat takes the boiler — no latch.
+        return _release(state, ControlMode.HANDED_BACK, Reason.ZONES_UNKNOWN)
+    return None
 
 
 def _keep(
@@ -655,6 +700,52 @@ def _keep(
         last_step_at=now,
     )
     return kept, ControlDecision(mode, held, reasons=reasons, target=target)
+
+
+def _frost_stuck(state: ControlState, now: float, coldest: float | None) -> bool:
+    """Frost heating for ``FROST_ALARM_S`` without the coldest watched room warming by
+    ``FROST_WARMING_K`` since it began: reported, never stopped."""
+    return (
+        state.frost_since is not None
+        and now - state.frost_since >= FROST_ALARM_S
+        and coldest is not None
+        and state.frost_from is not None
+        and coldest < state.frost_from + FROST_WARMING_K
+    )
+
+
+def _water_due(
+    state: ControlState, now: float, config: ControlConfig, frost: bool, lowest_now: bool
+) -> bool:
+    """Whether the water temperature is decided anew this step: nothing decided yet, the
+    decision interval passed — or the wall clock set back (C9) — frost starting or ending, or
+    (``lowest_now``) nothing asking for heat without an outdoor temperature, which takes the
+    lowest water temperature at once, never a fallback decided before (decision 3)."""
+    decided_at = state.decided_at
+    return (
+        decided_at is None
+        or state.command is None
+        or state.target is None
+        or state.upper is None
+        or decided_at > now
+        or now - decided_at >= config.decision_interval_s
+        or frost != state.frost
+        or lowest_now
+    )
+
+
+def _heating_mode(
+    fault: bool, frost_on: bool, want_heat: bool, outdoor_unknown: bool
+) -> ControlMode:
+    """A boiler fault before frost, frost before heating; FALLBACK only while heating is wanted
+    without an outdoor temperature (P-47)."""
+    if fault:
+        return ControlMode.BOILER_FAULT
+    if frost_on:
+        return ControlMode.FROST
+    if want_heat:
+        return ControlMode.FALLBACK if outdoor_unknown else ControlMode.HEATING
+    return ControlMode.IDLE
 
 
 def _heating_decision(
@@ -728,29 +819,10 @@ def _heating_decision(
         last_step_at=now,
     )
     # Frost heating is never stopped; heating that does not warm the room is reported.
-    frost_stuck = (
-        frost_on
-        and state.frost_since is not None
-        and now - state.frost_since >= FROST_ALARM_S
-        and coldest is not None
-        and state.frost_from is not None
-        and coldest < state.frost_from + FROST_WARMING_K
-    )
+    frost_stuck = frost_on and _frost_stuck(state, now, coldest)
 
     prior_target, prior_upper = state.target, state.upper
-    due = (
-        state.decided_at is None
-        or state.command is None
-        or prior_target is None
-        or prior_upper is None
-        or state.decided_at > now  # the wall clock was set back: decided again now (C9)
-        or now - state.decided_at >= config.decision_interval_s
-        or frost != state.frost
-        # Nothing asks for heat and no outdoor temperature: the lowest water temperature at
-        # once — never a fallback decided before (decision 3).
-        or (nobody_asks and outdoor.effective is None)
-    )
-    if due:
+    if _water_due(state, now, config, frost, nobody_asks and outdoor.effective is None):
         water: list[Reason] = [_OUTDOOR_REASON[outdoor.source]]
         if outdoor.effective is not None:
             curve_value = config.curve.flow(outdoor.effective)
@@ -792,16 +864,7 @@ def _heating_decision(
     cap = install_cap(config.limits, config.circuit_max, config.boiler_max)
     setpoint, ramping = _ramp(previous, target, cap, step_s, config.ramp_k_per_min)
 
-    if fault:
-        mode = ControlMode.BOILER_FAULT
-    elif frost_on:
-        mode = ControlMode.FROST
-    elif want_heat:
-        # FALLBACK only while heating is wanted without an outdoor temperature (P-47).
-        mode = ControlMode.FALLBACK if outdoor.effective is None else ControlMode.HEATING
-    else:
-        mode = ControlMode.IDLE
-
+    mode = _heating_mode(fault, frost_on, want_heat, outdoor.effective is None)
     reasons = (*water_reasons[:1], heat_reason, *water_reasons[1:])
     if waiting:
         reasons = (*reasons, Reason.ACTIVATION_DELAY)

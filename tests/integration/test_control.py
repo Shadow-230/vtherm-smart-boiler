@@ -22,8 +22,7 @@ from unittest.mock import patch
 import pytest
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import EVENT_CALL_SERVICE
-from homeassistant.core import Context, Event, HomeAssistant, ServiceCall, State
+from homeassistant.core import Context, HomeAssistant, ServiceCall, State, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
@@ -31,6 +30,7 @@ from homeassistant.helpers import storage as ha_storage
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
+    async_fire_mqtt_message,
     async_fire_time_changed,
     mock_restore_cache,
 )
@@ -53,6 +53,8 @@ from .harness import (
     FakeBoiler,
     FakeForecasts,
     FakeZones,
+    ServiceSpy,
+    analyse_now,
 )
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -214,8 +216,14 @@ class Rig:
     outdoor_reported: bool = True  # the same for the outdoor temperature
     flame: bool | None = False  # None: the flame's entity unavailable
     flame_reported: bool = True  # the same for the flame
-    services: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
     storage: dict[str, Any] = field(default_factory=dict)  # the test's stores (hass_storage)
+    spy: ServiceSpy | None = None  # every service call (P-118)
+
+    @property
+    def services(self) -> list[tuple[str, str, dict[str, Any]]]:
+        """Every service call made in the test's Home Assistant, the test's own included."""
+        assert self.spy is not None
+        return self.spy.calls
 
     def live(self) -> None:
         """The gateway's periodic reports: fresh boiler signals and setpoint echo; without its
@@ -255,17 +263,23 @@ class Rig:
         return state
 
     async def switch(self, on: bool) -> None:
+        """The user's switch, as the test's own call: tagged, so it is not taken for the
+        plugin's (P-118)."""
+        assert self.spy is not None
         await self.hass.services.async_call(
             "switch",
             "turn_on" if on else "turn_off",
             {"entity_id": self.entity("switch", "control")},
             blocking=True,
+            context=self.spy.own,
         )
         await self.hass.async_block_till_done()
 
     def plugin_calls(self) -> set[tuple[str, str]]:
-        """Service calls made by the plugin (the test's own switch calls left out)."""
-        return {(domain, service) for domain, service, _ in self.services if domain != "switch"}
+        """Service calls made by the plugin — a switch's included (P-118); the test's own calls
+        are left out by their tag, not by their domain."""
+        assert self.spy is not None
+        return self.spy.plugin_services()
 
 
 # What is wired to the gateway's thermostat terminals, as the form asks it (decision 1): the
@@ -316,30 +330,157 @@ def integrations_running(rig: Rig) -> None:
             entry.mock_state(rig.hass, ConfigEntryState.LOADED)
 
 
-@pytest.fixture
-async def rig(hass: HomeAssistant, freezer, zones: FakeZones, hass_storage: dict[str, Any]):
+def new_rig(
+    hass: HomeAssistant,
+    freezer: Any,
+    zones: FakeZones,
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    mqtt_entry: bool = True,
+) -> Rig:
+    """The rig: the gateway's fakes, one zone, and a spy on every service call. ``mqtt_entry``:
+    MQTT's entry marked as set up — ``False`` where Home Assistant's own MQTT integration runs
+    instead (``mqtt_rig``)."""
     freezer.move_to(START)
     # The integrations the gateway paths write through, set up (X5.5): the gateway's entry and
     # MQTT's. Control needs them there and enabled.
     MockConfigEntry(domain="opentherm_gw", data={"id": "gw"}).add_to_hass(hass)
-    MockConfigEntry(domain="mqtt").add_to_hass(hass)
+    if mqtt_entry:
+        MockConfigEntry(domain="mqtt").add_to_hass(hass)
     boiler = FakeBoiler(hass, SIGNALS)
     gateway = FakeGateway(hass)
     gateway.register()
     zones.add("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
-    rig = Rig(hass, freezer, boiler, zones, gateway, storage=hass_storage)
+    rig = Rig(hass, freezer, boiler, zones, gateway, storage=hass_storage, spy=ServiceSpy(hass))
+    assert rig.spy is not None
+    rig.spy.install(monkeypatch)
     rig.live()
+    return rig
 
-    def record(event: Event) -> None:
-        data = event.data
-        rig.services.append((data["domain"], data["service"], dict(data["service_data"])))
 
-    hass.bus.async_listen(EVENT_CALL_SERVICE, record)
-    yield rig
+def marks_stop_unloaded(hass: HomeAssistant, domains: tuple[str, ...]) -> None:
+    """Entries only marked as set up are not running when Home Assistant stops, so it does not
+    unload them."""
     for entry in hass.config_entries.async_entries():
-        # Marks only: not running when Home Assistant stops, so it does not unload them.
-        if entry.domain in ("opentherm_gw", "mqtt") and entry.state is ConfigEntryState.LOADED:
+        if entry.domain in domains and entry.state is ConfigEntryState.LOADED:
             entry.mock_state(hass, ConfigEntryState.NOT_LOADED)
+
+
+@pytest.fixture
+async def rig(
+    hass: HomeAssistant,
+    freezer,
+    zones: FakeZones,
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    rig = new_rig(hass, freezer, zones, hass_storage, monkeypatch)
+    yield rig
+    await hass.async_block_till_done()  # a reload an options flow started, done before teardown
+    marks_stop_unloaded(hass, ("opentherm_gw", "mqtt"))
+
+
+# The OTGW firmware's MQTT names in the tests: its top topic and its node.
+OTGW_TOP, OTGW_NODE = "OTGW", "otgw-1"
+# Control through the OTGW firmware over MQTT (no opentherm_gw gateway).
+MQTT_PATH = {"write_path": "otgw_mqtt", "mqtt_top": OTGW_TOP, "mqtt_node": OTGW_NODE}
+
+
+@dataclass
+class OtgwFirmware:
+    """The OTGW firmware as MQTT carries it (P-122, T-22): a command on
+    ``<top>/set/<node>/<command>`` takes effect in the gateway, which then reports the control
+    setpoint it sends the boiler on ``<top>/value/<node>/TSet`` — the thermostat's own value
+    without an override. An MQTT sensor, made by Home Assistant's MQTT discovery, reads it.
+    ``answers=False``: the firmware is offline — the broker takes every command, nothing
+    answers."""
+
+    hass: HomeAssistant
+    thermostat: float = 40.0
+    answers: bool = True
+    override: float | None = None
+    commands: list[tuple[str, str]] = field(default_factory=list)
+
+    async def start(self) -> str:
+        """Listen for commands, make the read-back entity and report once: its entity ID."""
+        from homeassistant.components import mqtt
+
+        await mqtt.async_subscribe(self.hass, f"{OTGW_TOP}/set/{OTGW_NODE}/+", self._command)
+        config = {
+            "name": "Control setpoint",
+            "state_topic": f"{OTGW_TOP}/value/{OTGW_NODE}/TSet",
+            "unique_id": f"{OTGW_NODE}-TSet",
+            "unit_of_measurement": "°C",
+            "device_class": "temperature",
+        }
+        async_fire_mqtt_message(
+            self.hass, f"homeassistant/sensor/{OTGW_NODE}/TSet/config", json.dumps(config)
+        )
+        await self.hass.async_block_till_done()
+        self.report()
+        await self.hass.async_block_till_done()
+        entity = er.async_get(self.hass).async_get_entity_id("sensor", "mqtt", f"{OTGW_NODE}-TSet")
+        assert entity is not None
+        return entity
+
+    @callback
+    def _command(self, message: Any) -> None:
+        payload = message.payload
+        text = payload.decode() if isinstance(payload, bytes) else str(payload)
+        command = message.topic.rsplit("/", 1)[-1]
+        self.commands.append((command, text))
+        if not self.answers:
+            return
+        if command == "ctrlsetpt":
+            value = float(text)
+            self.override = None if value == 0 else value
+        # Reported a moment later, as the gateway does, not inside the broker's delivery.
+        self.hass.loop.call_soon(self.report)
+
+    def report(self) -> None:
+        value = self.thermostat if self.override is None else self.override
+        async_fire_mqtt_message(self.hass, f"{OTGW_TOP}/value/{OTGW_NODE}/TSet", f"{value:.2f}")
+
+
+@pytest.fixture
+async def mqtt_rig(
+    hass: HomeAssistant,
+    freezer,
+    zones: FakeZones,
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    mock_hass_config: None,
+    mqtt_mock_entry: Callable[[], Any],
+):
+    """The rig with Home Assistant's own MQTT integration — its paho client mocked, no broker,
+    no configuration.yaml — where ``rig`` marks a stand-in entry (P-122): the plugin's commands
+    go through ``mqtt.publish`` and MQTT's client."""
+    rig = new_rig(hass, freezer, zones, hass_storage, monkeypatch, mqtt_entry=False)
+    await mqtt_mock_entry()
+    yield rig
+    await hass.async_block_till_done()
+    marks_stop_unloaded(hass, ("opentherm_gw",))
+
+
+def published(client: Any) -> list[tuple[str, str]]:
+    """What MQTT's client was given to publish on the firmware's command topics, in order."""
+    found = []
+    for call in client.publish.call_args_list:
+        topic, payload = call.args[0], call.args[1]
+        if topic.startswith(f"{OTGW_TOP}/set/"):
+            found.append((topic, payload.decode() if isinstance(payload, bytes) else str(payload)))
+    return found
+
+
+def mqtt_hand_back(lowest: float) -> list[tuple[str, str]]:
+    """V5's safe hand-back on the firmware's topics: the lowest water temperature, CH=1, CS=0."""
+    base = f"{OTGW_TOP}/set/{OTGW_NODE}"
+    return [
+        (f"{base}/ctrlsetpt", f"{lowest:.1f}"),
+        (f"{base}/chenable", "1"),
+        (f"{base}/ctrlsetpt", "0"),
+    ]
 
 
 def control_key(entry: MockConfigEntry) -> str:
@@ -363,10 +504,7 @@ def add_entry(rig: Rig, entry_options: dict[str, Any]) -> MockConfigEntry:
 
 
 async def start(rig: Rig, **control: Any) -> None:
-    entry = add_entry(rig, options(rig.zones, **control))
-    assert await rig.hass.config_entries.async_setup(entry.entry_id)
-    await rig.hass.async_block_till_done()
-    rig.entry = entry
+    await set_up(rig, add_entry(rig, options(rig.zones, **control)))
 
 
 async def test_a_setup_that_fails_late_leaves_nothing_running(
@@ -400,27 +538,22 @@ async def test_a_setup_that_fails_late_leaves_nothing_running(
     assert len(rig.gateway.calls) == count  # no control clock left running
 
 
-async def test_control_is_off_by_default_and_refused_during_monitoring(rig: Rig) -> None:
+async def test_control_is_off_by_default(rig: Rig) -> None:
     await start(rig)
     assert rig.state("switch", "control").state == "off"
     await rig.advance(60)
     assert rig.gateway.calls == []
-    hass = rig.hass
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Second",
-        data={},
-        options=options(rig.zones) | {"monitor": {"monitoring_days": 7}},
-    )
-    entry.add_to_hass(hass)
-    ran_before(rig, entry)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    switch = er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_control")
+
+
+async def test_control_is_refused_during_monitoring(rig: Rig) -> None:
+    """One entry per test of this single-entry integration (P-125, T11): the monitoring period
+    is its own entry's, not a second one set up beside another."""
+    await set_up(rig, add_entry(rig, options(rig.zones) | {"monitor": {"monitoring_days": 7}}))
     with pytest.raises(ServiceValidationError) as err:
-        await hass.services.async_call("switch", "turn_on", {"entity_id": switch}, blocking=True)
+        await rig.switch(True)
     assert err.value.translation_key == "blocked_monitoring_period"
-    assert hass.states.get(switch).state == "off"
+    assert rig.state("switch", "control").state == "off"
+    await rig.advance(60)
     assert rig.gateway.calls == []
 
 
@@ -993,22 +1126,20 @@ async def test_auto_tpi_issue_is_left_as_it_is_while_vt_boiler_is_unknown(
         ({"proportional_function": "smartpi"}, {}),  # SmartPI without its learning flag
     ],
 )
+@pytest.mark.parametrize("pauses", [True, False], ids=["pauses_on", "pauses_off"])
 async def test_learning_the_plugin_cannot_pause_raises_a_repair_issue(
-    rig: Rig, configuration: dict[str, Any], specific_states: dict[str, Any]
+    rig: Rig, configuration: dict[str, Any], specific_states: dict[str, Any], pauses: bool
 ) -> None:
-    """S19: a learning algorithm without a pause service gets an explicit warning."""
+    """S19: a learning algorithm without a pause service gets an explicit warning. Negative:
+    with the learning pauses off, nothing is promised — no warning. One entry per test of this
+    single-entry integration (P-125, T11)."""
     rig.zones.set("living", configuration=configuration, specific_states=specific_states)
-    await start(rig)
+    await start(rig, learning_pauses=pauses)
     assert rig.entry is not None
     issue = ir.async_get(rig.hass).async_get_issue(
         DOMAIN, f"learning_not_paused_{rig.entry.entry_id}"
     )
-    assert issue is not None
-    await start(rig, learning_pauses=False)  # a second entry, without pauses: nothing promised
-    assert (
-        ir.async_get(rig.hass).async_get_issue(DOMAIN, f"learning_not_paused_{rig.entry.entry_id}")
-        is None
-    )
+    assert (issue is not None) is pauses
 
 
 @dataclass
@@ -1146,25 +1277,98 @@ async def test_a_held_setpoint_is_written_on_change_only(rig: Rig) -> None:
     assert "writes" not in rig.entry.runtime_data.control.stored()  # no daily cap to keep
 
 
-async def test_mqtt_path_calls_only_its_publish(rig: Rig) -> None:
-    published: list[tuple[str, str]] = []
-
-    async def publish(call: ServiceCall) -> None:
-        published.append((call.data["topic"], call.data["payload"]))
-        if call.data["topic"].endswith("/ctrlsetpt"):
-            value = float(call.data["payload"])
-            rig.gateway.override = None if value == 0 else value
-            rig.gateway.publish()
-
-    rig.hass.services.async_register("mqtt", "publish", publish)
-    await start(rig, write_path="otgw_mqtt", mqtt_top="OTGW", mqtt_node="otgw-1")
+async def test_mqtt_path_calls_only_its_publish(mqtt_rig: Rig, mqtt_client_mock: Any) -> None:
+    """P-122: through Home Assistant's own MQTT integration, its client mocked — not a service
+    registered in its place: the setpoint and heating on go out on the firmware's command topics
+    in that order, switching off sends the safe hand-back, and ``mqtt.publish`` is the only
+    service the plugin calls."""
+    rig = mqtt_rig
+    firmware = OtgwFirmware(rig.hass)
+    read_back = await firmware.start()
+    await start(rig, **MQTT_PATH, gateway_id=None, confirmed_entity=read_back)
     await rig.switch(True)
     await rig.advance(60)
+    assert rig.hass.states.get(read_back).state == f"{EXPECTED:.2f}"  # the firmware took it
     await rig.switch(False)
-    assert published[0] == ("OTGW/set/otgw-1/ctrlsetpt", f"{EXPECTED:.1f}")
-    assert published[1] == ("OTGW/set/otgw-1/chenable", "1")
-    assert published[-1] == ("OTGW/set/otgw-1/ctrlsetpt", "0")
-    assert rig.plugin_calls() <= {("mqtt", "publish"), ("weather", "get_forecasts")}
+    sent = published(mqtt_client_mock)
+    base = f"{OTGW_TOP}/set/{OTGW_NODE}"
+    assert sent[:2] == [(f"{base}/ctrlsetpt", f"{EXPECTED:.1f}"), (f"{base}/chenable", "1")]
+    assert sent[-3:] == mqtt_hand_back(LOWEST)
+    assert firmware.commands[-3:] == [(t.rsplit("/", 1)[-1], v) for t, v in sent[-3:]]
+    assert rig.plugin_calls() == {("mqtt", "publish")}
+    assert not unit_of(rig).hand_back_owed
+
+
+@pytest.mark.parametrize(
+    ("answers", "first_refused"),
+    [(True, False), (False, False), (True, True)],
+    ids=["released", "firmware_offline", "first_part_refused"],
+)
+async def test_mqtt_hand_back_is_published_before_mqtt_stops(
+    mqtt_rig: Rig,
+    mqtt_client_mock: Any,
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    answers: bool,
+    first_refused: bool,
+) -> None:
+    """T-22: control through the OTGW firmware over Home Assistant's own MQTT, read back from an
+    MQTT entity. When Home Assistant stops, V5's safe hand-back — the lowest water temperature,
+    CH=1, then CS=0, one after another at once, none waiting for a read-back — reaches MQTT's
+    client before the stop event, at which MQTT stops; its release, read back, leaves no
+    hand-back owed. Negatives: the firmware offline — the broker takes the commands, nothing
+    answers: the same three go out, and the hand-back stays owed for the next start; MQTT's
+    client refusing the first part — the other two go out all the same, each whatever the others
+    do, and the whole stays owed."""
+    from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+
+    rig = mqtt_rig
+    hass = rig.hass
+    firmware = OtgwFirmware(hass)
+    read_back = await firmware.start()
+    await start(rig, **MQTT_PATH, gateway_id=None, confirmed_entity=read_back)
+    await rig.switch(True)
+    await rig.advance(30)
+    assert unit_of(rig).holding
+    order: list[tuple[str, ...]] = []
+    publish = mqtt_client_mock.publish.side_effect
+    refuse = [f"{LOWEST:.1f}"] if first_refused else []
+
+    def recorded(topic: str, payload: Any, *args: Any, **kwargs: Any) -> Any:
+        text = payload.decode() if isinstance(payload, bytes) else str(payload)
+        order.append(("publish", topic, text))
+        if refuse and text == refuse[0]:
+            refuse.clear()  # the client refuses this one message: no connection for it
+            return type("Refused", (), {"mid": None, "rc": 4})()
+        return publish(topic, payload, *args, **kwargs)
+
+    mqtt_client_mock.publish.side_effect = recorded
+    mqtt_client_mock.disconnect.side_effect = lambda *args, **kwargs: order.append(("disconnect",))
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, lambda _event: order.append(("stop",)))
+    firmware.answers = answers
+    if not answers:
+        # The stop's short wait for a late report ends at once: nothing is going to answer.
+        monkeypatch.setattr(control_module, "STOP_REPORT_WAIT_S", 0.0)
+    await hass.async_stop()
+    stop = order.index(("stop",))
+    before = order[:stop]
+    assert before[-3:] == [("publish", topic, payload) for topic, payload in mqtt_hand_back(LOWEST)]
+    assert ("disconnect",) not in before
+    assert [entry for entry in order[stop:] if entry[0] == "publish"] == []  # none after it
+    owed = not answers or first_refused  # a part refused: the whole goes again next start
+    assert stored_control(hass_storage, rig)["hand_back_pending"] is owed
+    commands = [(f"{OTGW_TOP}/set/{OTGW_NODE}/{name}", value) for name, value in firmware.commands]
+    if first_refused:
+        assert commands[-2:] == mqtt_hand_back(LOWEST)[1:]  # the other two arrived
+    else:
+        assert commands[-3:] == mqtt_hand_back(LOWEST)
+    if owed:
+        found = issue(rig, "hand_back_owed")
+        assert found is not None
+        assert found.is_persistent
+    else:
+        assert hass.states.get(read_back).state == f"{firmware.thermostat:.2f}"
+        assert issue(rig, "hand_back_owed") is None
 
 
 async def test_a_failed_hand_back_is_retried_and_stays_shown(rig: Rig) -> None:
@@ -2248,6 +2452,42 @@ async def test_a_step_waiting_behind_a_slow_one_does_not_run_before_the_stop(rig
     assert rig.gateway.calls[before:] == HAND_BACK  # the hand-back only
 
 
+async def test_an_outer_cancellation_propagates_and_cancels_the_step(rig: Rig) -> None:
+    """T-51: a step waits on a slow write service — the gateway hangs on the keep-alive — and
+    the task that runs it, the control clock's, is cancelled from outside (Home Assistant cutting
+    it short): the ``CancelledError`` reaches that task, and the inner step is cancelled with it,
+    not left running on its own. The lock is free again and no step task is left; not being a
+    stop, the unit writes again at its next step. Negative: the cancelled write is no failed
+    write — nothing raises the write alarm, and nothing is handed back."""
+    await start(rig)
+    await rig.switch(True)
+    unit = unit_of(rig)
+    rig.gateway.block = asyncio.Event()
+    rig.freezer.tick(30)
+    rig.live()
+    outer = asyncio.ensure_future(unit._async_timer(datetime.now(UTC)))
+    await settle(rounds=50)
+    step = unit._step_task
+    assert step is not None
+    assert not step.done()
+    assert rig.gateway.setpoints()[-1] == EXPECTED  # the keep-alive's call hangs
+    calls = len(rig.gateway.calls)
+    outer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await outer
+    assert step.cancelled()
+    assert unit._step_task is None
+    assert not unit._lock.locked()
+    assert not unit._tick_waiting
+    assert not unit.stopping
+    assert len(rig.gateway.calls) == calls  # no hand-back
+    rig.gateway.block = None  # the gateway answers again
+    await rig.advance(30)
+    assert rig.gateway.calls[calls:] == [("setpoint", EXPECTED), ("ch", True)]
+    assert rig.state("binary_sensor", "alarm_write_failed").state == "off"
+    assert rig.state("switch", "control").state == "on"
+
+
 async def test_a_slow_smartpi_call_does_not_hold_up_control(rig: Rig) -> None:
     hass = rig.hass
     learning: list[tuple[str, bool]] = []
@@ -2557,7 +2797,7 @@ async def test_a_stuck_outdoor_sensor_leaves_the_curve(
 
     coordinator = rig.entry.runtime_data
     await rig.hass.async_block_till_done(wait_background_tasks=True)  # the first analysis
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     real = coordinator.analysis
     assert real is not None
 
@@ -2613,7 +2853,7 @@ async def test_a_deviating_outdoor_sensor_gives_way_only_to_colder_weather(
     rig.entry = entry
     await rig.switch(True)
     coordinator = entry.runtime_data
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     real = coordinator.analysis
     assert real is not None
 
@@ -2968,8 +3208,11 @@ def seed_control(hass_storage: dict[str, Any], entry: MockConfigEntry, data: Any
 
 
 async def set_up(rig: Rig, entry: MockConfigEntry) -> None:
+    """Set the entry up, and let the first analysis setup starts in the background finish: a
+    test's own analysis asked for while it still runs would be skipped — only one runs at a
+    time — and what the test then reads would depend on the machine's speed (Z1)."""
     assert await rig.hass.config_entries.async_setup(entry.entry_id)
-    await rig.hass.async_block_till_done()
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
     rig.entry = entry
 
 
@@ -4665,6 +4908,71 @@ async def test_mqtt_topics_cannot_change_while_control_holds_the_boiler(
     assert rig.entry.options["control"]["mqtt_node"] == "otgw-1"
 
 
+async def test_the_gateway_step_refuses_another_gateway_while_control_holds_the_boiler(
+    rig: Rig,
+) -> None:
+    """P-34 (T-13 at its own step): control holds the boiler through gw when the options reach
+    the gateway step — another gateway is refused there, with the reason; the same gateway
+    passes on to the curve. Negative: control off, holding nothing — gw2 passes."""
+    MockConfigEntry(domain="opentherm_gw", data={"id": "gw2"}).add_to_hass(rig.hass)
+    integrations_running(rig)
+    await start(rig)
+    assert rig.entry is not None
+    await rig.switch(True)
+    await rig.advance(20)
+    assert unit_of(rig).holding
+    configure = rig.hass.config_entries.options.async_configure
+    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": CONFIRMED})
+    assert flow["step_id"] == "control_gateway"
+    refused = await configure(flow["flow_id"], {"gateway_id": "gw2"})
+    assert (refused["step_id"], refused["errors"]) == (
+        "control_gateway",
+        {"base": "control_holds_boiler"},
+    )
+    passed = await configure(flow["flow_id"], {"gateway_id": "gw"})
+    assert passed["step_id"] == "control_curve"
+    await rig.switch(False)
+    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": CONFIRMED})
+    passed = await configure(flow["flow_id"], {"gateway_id": "gw2"})
+    assert passed["step_id"] == "control_curve"
+    assert rig.entry.options["control"]["gateway_id"] == "gw"  # nothing saved by the steps
+
+
+async def test_the_mqtt_step_refuses_other_topics_while_a_hand_back_is_owed(rig: Rig) -> None:
+    """P-34 (T-14 at its own step): a hand-back owed through the firmware's topics when the
+    options reach the MQTT step — another node is refused there, with the reason; the same
+    topics, spaces around them dropped, pass on to the curve."""
+
+    async def publish(call: ServiceCall) -> None:
+        if call.data["topic"].endswith("/ctrlsetpt"):
+            value = float(call.data["payload"])
+            rig.gateway.override = None if value == 0 else value
+            rig.gateway.publish()
+
+    rig.hass.services.async_register("mqtt", "publish", publish)
+    integrations_running(rig)
+    await start(rig, **MQTT_PATH, gateway_id=None)
+    await rig.switch(True)
+    await rig.advance(20)
+    rig.gateway.connected = False  # the release will not show: the hand-back stays owed
+    rig.live()
+    await rig.switch(False)
+    assert unit_of(rig).hand_back_owed
+    configure = rig.hass.config_entries.options.async_configure
+    answer = {"write_path": "otgw_mqtt", "topology": "gateway_with_thermostat"}
+    flow = await _first_control_step(
+        rig, answer | {"thermostat_kind": "opentherm", "confirmed_entity": CONFIRMED}
+    )
+    assert flow["step_id"] == "control_mqtt"
+    refused = await configure(flow["flow_id"], {"mqtt_top": OTGW_TOP, "mqtt_node": "otgw-2"})
+    assert (refused["step_id"], refused["errors"]) == (
+        "control_mqtt",
+        {"base": "hand_back_pending"},
+    )
+    passed = await configure(flow["flow_id"], {"mqtt_top": OTGW_TOP, "mqtt_node": " otgw-1 "})
+    assert passed["step_id"] == "control_curve"
+
+
 async def test_the_gateways_read_back_cannot_change_at_the_save(rig: Rig) -> None:
     """R4: the gateway's read-back, which judges its release, re-picked while nothing was owed;
     owed before the save: refused there. Negative, a missing control section: "no control"
@@ -6294,6 +6602,10 @@ async def test_one_failed_refresh_every_five_minutes_never_hands_back(
     breaker = break_monitor(monkeypatch)
     count = len(rig.gateway.calls)
     for _ in range(6):
+        # The clock's analysis runs in the background and ends with a refresh of its own: let
+        # one still running finish first, so the one failed refresh is the test's alone — none
+        # can start before the clock moves again (Z1).
+        await rig.hass.async_block_till_done(wait_background_tasks=True)
         breaker.failing = True
         await refresh(rig)
         breaker.failing = False
@@ -9206,7 +9518,7 @@ async def test_under_control_the_suggestion_is_the_settings_own(rig: Rig) -> Non
     written = list(rig.gateway.calls)
     now = dt_util.utcnow().timestamp()
     short_burns(coordinator, now, LOWEST, read_back=True)
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     state = suggestion_sensor(rig)
     assert float(state.state) == LOWEST + 2.0
     attributes = state.attributes
@@ -9242,7 +9554,7 @@ async def test_with_control_off_the_read_back_is_no_source(rig: Rig) -> None:
     assert rig.entry is not None
     coordinator = rig.entry.runtime_data
     short_burns(coordinator, dt_util.utcnow().timestamp(), 30.0, read_back=True)
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     state = suggestion_sensor(rig)
     assert state.state == "unknown"
     assert state.attributes["state"] == "inactive"
@@ -9262,7 +9574,7 @@ async def test_with_control_off_the_suggestion_is_worded_for_the_device(rig: Rig
     assert rig.entry is not None
     coordinator = rig.entry.runtime_data
     short_burns(coordinator, dt_util.utcnow().timestamp(), 30.0, read_back=False)
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     state = suggestion_sensor(rig)
     assert float(state.state) == 32.0
     assert state.attributes["source"] == "ch_setpoint"
@@ -9280,7 +9592,7 @@ async def test_no_suggestion_while_a_standalone_gateway_is_handed_back(rig: Rig)
     assert rig.entry is not None
     coordinator = rig.entry.runtime_data
     short_burns(coordinator, dt_util.utcnow().timestamp(), 30.0, read_back=False)
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     state = suggestion_sensor(rig)
     assert state.state == "unknown"
     assert state.attributes["state"] == "not_applicable"
@@ -9298,7 +9610,7 @@ async def test_a_failing_evaluation_keeps_the_last_suggestion_and_the_analysis(
     assert rig.entry is not None
     coordinator = rig.entry.runtime_data
     short_burns(coordinator, dt_util.utcnow().timestamp(), 30.0, read_back=False)
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     before = coordinator.lowest_water
     assert before is not None
     written = list(rig.gateway.calls)
@@ -9308,8 +9620,8 @@ async def test_a_failing_evaluation_keeps_the_last_suggestion_and_the_analysis(
 
     monkeypatch.setattr(coordinator_module, "suggest_lowest_water", broken)
     coordinator.analysis = None
-    await coordinator.async_run_analysis()
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
+    await analyse_now(coordinator)
     assert coordinator.lowest_water is before
     assert coordinator.analysis is not None  # the analysis itself went on
     failures = [
@@ -10113,13 +10425,13 @@ async def test_the_time_under_control_is_recorded_for_the_verdict(rig: Rig) -> N
     assert rig.entry is not None
     coordinator = rig.entry.runtime_data
     assert [s.value for s in coordinator.history.control_state] == ["disabled"]
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     assert rig.state("sensor", "verdict").attributes["days_left_out"] == 0
     await rig.switch(True)
     await rig.advance(3700, step=60.0)
     modes = {s.value for s in coordinator.history.control_state}
     assert modes & {"heating", "idle"}
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     # Today — under control for more than an hour — is left out.
     assert rig.state("sensor", "verdict").attributes["days_left_out"] == 1
 
@@ -10271,7 +10583,7 @@ async def test_the_verdict_reasons_come_with_their_text(
     assert rig.entry is not None
     coordinator = rig.entry.runtime_data
     await rig.hass.async_block_till_done(wait_background_tasks=True)  # the first analysis
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     analysis = coordinator.analysis
     assert analysis is not None
 
@@ -10300,3 +10612,145 @@ async def test_the_verdict_reasons_come_with_their_text(
     water = _attribute_text("sensor", "verdict", "detail", WATER_NOT_CONTROLLED)
     assert text == f"{starts} ({not_yet}), {low} ({water})"
     assert "anti-cycling" not in text.split(", ", 1)[1]
+
+
+# --- P-115: the precedence of a control step, as a table -----------------------------------------
+# What ``_async_step`` does first when several things are due at once: the last command restored
+# before an owed hand-back (decision 3); an owed hand-back before the step's own command; the
+# switch not yet restored deciding nothing (answer K); a unit left only to hand back doing
+# nothing else; a hand-back decided in a step writing nothing else in it. The table the split of
+# ``_async_step`` must keep green: the gateway's calls, and the control state shown.
+
+
+async def _restorable_first(rig: Rig, hass_storage: dict[str, Any]) -> None:
+    from homeassistant.core import CoreState
+
+    rig.hass.set_state(CoreState.starting)
+    not_started(rig)
+    await start_with_stored(rig, hass_storage, restorable(rig), "0.2.2")
+    await rig.advance(30)
+
+
+async def _owed_then_command(rig: Rig, hass_storage: dict[str, Any]) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.add_to_hass(rig.hass)
+    seed_stores(hass_storage, entry, {"controlling": True, "enabled": True}, "0.2.2")
+    await set_up(rig, entry)
+    await rig.advance(10)
+
+
+async def _switch_never_restored(rig: Rig, hass_storage: dict[str, Any]) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.add_to_hass(rig.hass)
+    er.async_get(rig.hass).async_get_or_create(
+        "switch",
+        DOMAIN,
+        f"{entry.entry_id}_control",
+        config_entry=entry,
+        disabled_by=er.RegistryEntryDisabler.USER,
+    )
+    seed_stores(hass_storage, entry, {"controlling": True, "enabled": True}, "0.2.2")
+    await set_up(rig, entry)
+    await rig.advance(120)
+
+
+async def _hand_back_only(rig: Rig, hass_storage: dict[str, Any]) -> None:
+    """Control taken out of the options while the boiler was held: the unit that remains only
+    hands back."""
+    entry_options = options(rig.zones)
+    stored = {"controlling": True, "enabled": True, "taken_with": entry_options["control"]}
+    del entry_options["control"]
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=entry_options)
+    entry.add_to_hass(rig.hass)
+    seed_stores(hass_storage, entry, stored, "0.2.2")
+    await set_up(rig, entry)
+    await rig.advance(120)
+
+
+async def _switched_off(rig: Rig, hass_storage: dict[str, Any]) -> None:
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    rig.gateway.calls.clear()
+    await rig.switch(False)
+    await rig.advance(30)
+
+
+async def _latched_by_another_controller(rig: Rig, hass_storage: dict[str, Any]) -> None:
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(30)
+    rig.gateway.calls.clear()
+    rig.gateway.forced = 60.0  # another controller holds the setpoint
+    await rig.advance(180)
+
+
+STEP_PRECEDENCE = [
+    (
+        "the last command restored before the owed hand-back",
+        _restorable_first,
+        [("setpoint", RESTORED), ("ch", True), ("setpoint", RESTORED), ("ch", True)],
+        "heating",
+    ),
+    (
+        "the owed hand-back before the step's own command",
+        _owed_then_command,
+        [*HAND_BACK, ("setpoint", EXPECTED), ("ch", True)],
+        "heating",
+    ),
+    (
+        "the switch never restored: nothing decided, then off",
+        _switch_never_restored,
+        HAND_BACK,
+        "disabled",
+    ),
+    (
+        "a unit left only to hand back does nothing else",
+        _hand_back_only,
+        # The options it was taken with are not migrated: the lowest water temperature's default.
+        [("setpoint", DEFAULT_LOWEST), ("ch", True), ("setpoint", 0.0)],
+        None,
+    ),
+    ("switched off: the hand-back and nothing else", _switched_off, HAND_BACK, "disabled"),
+    (
+        "another controller: the hand-back and nothing else",
+        _latched_by_another_controller,
+        None,
+        "handed_back",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("scenario", "calls", "shown"),
+    [row[1:] for row in STEP_PRECEDENCE],
+    ids=[row[0] for row in STEP_PRECEDENCE],
+)
+async def test_the_precedence_of_a_control_step(
+    rig: Rig,
+    hass_storage: dict[str, Any],
+    scenario: Callable[[Rig, dict[str, Any]], Any],
+    calls: list[tuple[str, Any]] | None,
+    shown: str | None,
+) -> None:
+    """P-115: the gateway's calls, in order, and the control state shown, for each set of
+    things due at once. ``calls`` ``None``: whatever the latch's one rewrite sent, it ends with
+    the hand-back and nothing after it."""
+    await scenario(rig, hass_storage)
+    if calls is None:
+        assert rig.gateway.calls[-3:] == HAND_BACK
+        assert ("setpoint", EXPECTED) not in rig.gateway.calls[
+            rig.gateway.calls.index(HAND_BACK[0]) :
+        ]
+    else:
+        assert rig.gateway.calls[: len(calls)] == calls
+        if shown != "heating":
+            assert rig.gateway.calls == calls  # nothing else
+    assert rig.entry is not None
+    control_state = er.async_get(rig.hass).async_get_entity_id(
+        "sensor", DOMAIN, f"{rig.entry.entry_id}_control_state"
+    )
+    if shown is None:  # no control configured: no control state to show
+        assert control_state is None
+    else:
+        assert rig.state("sensor", "control_state").state == shown

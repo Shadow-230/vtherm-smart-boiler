@@ -22,8 +22,12 @@ pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 @pytest.fixture(autouse=True)
 async def _mocked_integrations_stop_unloaded(hass: HomeAssistant):
     """The MQTT and OpenTherm Gateway entries a test marks as running are only marks: they are
-    not running when Home Assistant stops, so it does not try to unload them."""
+    not running when Home Assistant stops, so it does not try to unload them. First, the reload
+    a saved options flow starts is let finish: one still running when Home Assistant's own
+    teardown unloads the entries would set the entry up again behind it, and its control clock
+    would outlive the test — how fast the machine is would decide (Z1)."""
     yield
+    await hass.async_block_till_done()
     for entry in hass.config_entries.async_entries():
         if entry.domain in ("mqtt", "opentherm_gw") and entry.state is ConfigEntryState.LOADED:
             entry.mock_state(hass, ConfigEntryState.NOT_LOADED)
@@ -3064,3 +3068,268 @@ def test_a_reaction_stored_at_the_simple_level_is_not_hidden() -> None:
     }
     assert "write_ignored" in {str(m) for m in flow.control_alarms_schema(options).schema}
     assert not flow.has_hidden_advanced(options)
+
+
+# --- Z1: the config and options flows at 100 % with branches (P-34, Appendix D) -----------------
+
+
+def test_the_form_helpers_refuse_what_they_cannot_read() -> None:
+    """Negatives for the helpers: a topic that is not a text is no topic; a missing value is
+    inside any range (the form fills every field it shows, so only a hand edit lacks one); a
+    control section that cannot be read names no entity of its own; the steps' base has no
+    next step of its own."""
+    from custom_components.vtherm_smart_boiler import config_flow as flow
+
+    assert not flow.mqtt_topic_valid(None)
+    assert not flow.mqtt_topic_valid(7)
+    assert flow.mqtt_topic_valid(" OTGW/ ")
+    assert not flow._outside(None, (20.0, 60.0))
+    assert not flow._outside("", (20.0, 60.0))
+    assert flow._outside(10.0, (20.0, 60.0))
+    signals = {"signals": {"flame": "binary_sensor.flame"}}
+    assert flow.boiler_side_entities(signals | {"control": "garbled"}) == ["binary_sensor.flame"]
+    assert flow.boiler_side_entities(signals | {"control": {"confirmed_entity": "sensor.x"}}) == [
+        "binary_sensor.flame",
+        "sensor.x",
+    ]
+    with pytest.raises(NotImplementedError):
+        flow._Steps._next_after(flow.SmartBoilerConfigFlow(), "zones")
+
+
+async def test_a_timeout_hand_back_needs_expiring_writes(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Appendix D (``hand_back_timeout_not_expiring``): only a value that lapses goes back on
+    its own — a held one would stay for good; declared expiring, the step passes."""
+    hass.states.async_set("number.boiler_flow", "45", {"unit_of_measurement": "°C"})
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.boiler_flow"},
+    )
+    details = {"setpoint_entity": "number.boiler_flow", "hand_back": "timeout"}
+    result = await options_step(hass, result, details | {"write_type": "held"})
+    assert (result["step_id"], result["errors"]) == (
+        "control_entity",
+        {"hand_back": "hand_back_timeout_not_expiring"},
+    )
+    result = await options_step(hass, result, details | {"write_type": "expiring"})
+    assert result["step_id"] == "control_curve"
+
+
+async def test_the_entity_steps_targets_are_checked_on_the_server(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """P-79 on the entity path: a setpoint target outside the field's filter — here the boiler's
+    flow sensor, which takes no value — is refused before anything about it is judged."""
+    hass.states.async_set("number.boiler_flow", "45", {"unit_of_measurement": "°C"})
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.boiler_flow"},
+    )
+    answer = {
+        "write_type": "expiring",
+        "hand_back": "value",
+        "hand_back_value": 30,
+        "hand_back_value_effect": "own_control",
+    }
+    result = await options_step(hass, result, answer | {"setpoint_entity": entities["flow"]})
+    assert (result["step_id"], result["errors"]) == (
+        "control_entity",
+        {"setpoint_entity": "entity_not_suitable"},
+    )
+    result = await options_step(hass, result, answer | {"setpoint_entity": "number.boiler_flow"})
+    assert result["step_id"] == "control_curve"
+
+
+async def test_foreign_heat_sources_of_every_kind_and_the_zones_emitter_size(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Appendix D: the kinds a foreign heat source can be — a switch, a binary sensor, a power
+    sensor, a temperature sensor — each stored with its kind; a temperature sensor needs its
+    threshold (``temperature_threshold_missing``); at the advanced level the zone's emitter size
+    and exponent are stored as entered."""
+    hass.states.async_set("binary_sensor.stove", "off")
+    hass.states.async_set(
+        "sensor.stove_temperature",
+        "22",
+        {"device_class": "temperature", "unit_of_measurement": "°C"},
+    )
+    entry_id = await create_entry(hass, entities, "advanced", ("living",))
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "zones"})
+    assert result["step_id"] == "zones"
+    result = await options_step(hass, result, {"zones": [entities["living"]]})
+    assert result["step_id"] == "zone"
+    sources = [
+        "switch.fireplace",
+        "binary_sensor.stove",
+        "sensor.heater_power",
+        "sensor.stove_temperature",
+    ]
+    zone = {"emitter": "radiator", "reference_output_w": 1500, "exponent": 1.25}
+    result = await options_step(hass, result, zone | {"foreign_heat": sources})
+    assert (result["step_id"], result["errors"]) == (
+        "zone",
+        {"foreign_heat": "temperature_threshold_missing"},
+    )
+    result = await options_step(
+        hass, result, zone | {"foreign_heat": sources, "temperature_threshold": 30}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY  # the section saves at once
+    await hass.async_block_till_done()
+    (stored,) = hass.config_entries.async_get_entry(entry_id).options["zones"]
+    assert stored["reference_output_w"] == 1500
+    assert stored["exponent"] == 1.25
+    assert stored["foreign_heat"] == [
+        {"entity_id": "switch.fireplace", "kind": "switch"},
+        {"entity_id": "binary_sensor.stove", "kind": "binary"},
+        {"entity_id": "sensor.heater_power", "kind": "power"},
+        {"entity_id": "sensor.stove_temperature", "kind": "temperature", "threshold": 30},
+    ]
+
+
+async def test_a_blocker_text_without_a_count_is_given_whole(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The confirmation takes a blocker's text as the switch gives it; one with no sentence
+    counting the other reasons — a language whose text lacks it — is given whole."""
+    from custom_components.vtherm_smart_boiler import config_flow as flow_module
+
+    texts = {f"component.{DOMAIN}.exceptions.blocked_no_zones.message": "No zone at all."}
+
+    async def translations(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+        return texts
+
+    monkeypatch.setattr(flow_module, "async_get_translations", translations)
+    flow = flow_module.SmartBoilerOptionsFlow()
+    flow.hass = hass
+    assert await flow._async_blocker_text("no_zones") == "No zone at all."
+
+
+async def test_the_relay_path_follows_the_allow_list_to_the_alarm_step(
+    hass: HomeAssistant, entities: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The relay's behaviour step goes where the allow-list says: straight to the save today
+    (decision 7 offers a relay no reaction), and to the alarm step should it ever offer one —
+    the routing reads the allow-list, not the path."""
+    from custom_components.vtherm_smart_boiler import config_flow as flow_module
+
+    monkeypatch.setattr(flow_module, "alarm_step_offered", lambda _options: True)
+    entry_id = await create_entry(hass, entities, "simple", ("living",), "on_off")
+    result = await to_relay_step(hass, entry_id)
+    result = await options_step(hass, result, RELAY_ANSWERS)
+    assert result["step_id"] == "control_relay_behaviour"
+    result = await options_step(hass, result, {"activation_delay_s": 0})
+    assert result["step_id"] == "control_alarms"
+
+
+async def test_a_frost_zone_must_be_a_configured_vt_zone(
+    hass: HomeAssistant, entities: dict[str, str], zones: FakeZones
+) -> None:
+    """P-79 for the frost zone. The form's own selector offers the configured zones only, and
+    Home Assistant refuses anything else before the step sees it; the step checks again on its
+    own, on the curve step and on the relay's behaviour step, for an answer that reaches it
+    unchecked (a stale form): a VT zone the options do not hold is not suitable, a climate that
+    is not VT's is no zone at all, and a configured zone passes."""
+    from homeassistant.data_entry_flow import InvalidData
+
+    from custom_components.vtherm_smart_boiler.config_flow import SmartBoilerOptionsFlow
+
+    other_vt = zones.add("attic")
+    hass.states.async_set("climate.not_vt", "heat")
+    loaded_gateway(hass, "living_room_gw")
+    entry_id = await create_entry(hass, entities, "advanced", ("living",))
+    result = await to_control_curve(hass, entry_id)
+    with pytest.raises(InvalidData):
+        await options_step(hass, result, ADVANCED_CURVE | {"frost_zone": other_vt})
+    result = await options_step(hass, result, ADVANCED_CURVE | {"frost_zone": entities["living"]})
+    assert result["step_id"] == "control_behaviour"
+
+    flow = SmartBoilerOptionsFlow()
+    flow.hass = hass
+    flow.handler = entry_id
+    flow.flow_id = "unchecked"
+    flow._options = {
+        **hass.config_entries.async_get_entry(entry_id).options,
+        "control": {"write_path": "opentherm_gw", "gateway_id": "living_room_gw"},
+    }
+    for zone, error in ((other_vt, "entity_not_suitable"), ("climate.not_vt", "zone_not_vt")):
+        shown = await flow.async_step_control_curve(ADVANCED_CURVE | {"frost_zone": zone})
+        assert (shown["step_id"], shown["errors"]) == ("control_curve", {"frost_zone": error})
+    flow._options["control"] = {"write_path": "relay"}
+    answer = {"activation_delay_s": 0, "count_threshold": 1, "frost_limit": 5, "frost_release": 7}
+    shown = await flow.async_step_control_relay_behaviour(answer | {"frost_zone": "climate.not_vt"})
+    assert (shown["step_id"], shown["errors"]) == (
+        "control_relay_behaviour",
+        {"frost_zone": "zone_not_vt"},
+    )
+    assert flow._frost_zone_error({"frost_zone": entities["living"]}) == {}
+
+
+async def test_the_lowest_water_temperature_must_suit_the_setpoint_entity(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Appendix D (``limits_outside_entity_range``, the lowest): below what the setpoint entity
+    accepts, refused on the curve step; within it, it passes."""
+    hass.states.async_set(
+        "number.boiler_flow", "45", {"unit_of_measurement": "°C", "min": 30, "max": 80}
+    )
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.boiler_flow"},
+    )
+    result = await options_step(
+        hass,
+        result,
+        {
+            "setpoint_entity": "number.boiler_flow",
+            "write_type": "expiring",
+            "hand_back": "value",
+            "hand_back_value": 30,
+            "hand_back_value_effect": "own_control",
+        },
+    )
+    curve = {"design_outdoor": -15, "design_flow": 55, "hard_max": 70}
+    result = await options_step(hass, result, curve | {"hard_min": 25})
+    assert (result["step_id"], result["errors"]) == (
+        "control_curve",
+        {"hard_min": "limits_outside_entity_range"},
+    )
+    result = await options_step(hass, result, curve | {"hard_min": 30})
+    assert result["step_id"] == "control_alarms"  # a value declared "own control" (Y1)
+
+
+@pytest.mark.usefixtures("gateway")
+async def test_the_behaviour_step_follows_the_allow_list_to_the_save(
+    hass: HomeAssistant, entities: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The behaviour step (advanced level) goes where the alarm step's content says: to the
+    alarm step today, as the return by itself is offered at the advanced level on every path
+    but the relay's; straight to the save should nothing be offered there — the routing reads
+    the allow-list, not the level."""
+    from custom_components.vtherm_smart_boiler import config_flow as flow_module
+
+    entry_id = await create_entry(hass, entities, "advanced", ("living",))
+    result = await to_control_curve(hass, entry_id)
+    result = await options_step(hass, result, ADVANCED_CURVE)
+    assert result["step_id"] == "control_behaviour"
+    behaviour = {"off_setpoint": 10, "count_threshold": 1}
+    shown = await options_step(hass, result, behaviour)
+    assert shown["step_id"] == "control_alarms"
+    monkeypatch.setattr(flow_module, "alarm_step_offered", lambda _options: False)
+    result = await to_control_curve(hass, entry_id)
+    result = await options_step(hass, result, ADVANCED_CURVE)
+    result = await options_step(hass, result, behaviour)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert (control["topology"], control["off_setpoint"]) == ("gateway_standalone", 10)

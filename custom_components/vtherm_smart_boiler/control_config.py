@@ -1045,61 +1045,111 @@ def config_blockers(
     """What the configuration still lacks for control (translation keys). ``shared_signals``:
     signals dropped because their entity feeds an earlier one (``EntryConfig.shared_signals``,
     X5.2). ``signals``: the mapped signals (``EntryConfig.signals``) — water-temperature control
-    needs flame and flow among them (X8); ``None``: not given here, not checked."""
+    needs flame and flow among them (X8); ``None``: not given here, not checked. The order is
+    the one the table in ``tests/test_control_config.py`` pins (P-115)."""
     if not control.configured:
         return ["no_write_path"]
-    found: list[str] = []
-    path = control.write_path
-    boiler_class = installation.boiler.boiler_class
-    if boiler_class in _MONITOR_ONLY_CLASSES:
-        found.append("boiler_class_no_control")
-    elif (path is WritePath.RELAY) != (boiler_class is BoilerClass.ON_OFF):
-        found.append("path_not_for_boiler_class")
-    if shared_signals:
-        found.append("entity_for_two_signals")
-    if path is WritePath.RELAY:
+    found = _class_blockers(control, installation, shared_signals)
+    if control.write_path is WritePath.RELAY:
         # The relay sets no water temperature: the setpoint, topology, read-back, curve and
         # circuit rules do not apply; the demand thresholds do (R1).
         return [*found, *relay_blockers(control, signals), *_zone_blockers(control, installation)]
-    if signals is not None:
-        if Signal.FLAME not in signals:
-            found.append("no_flame_signal")
-        if Signal.FLOW not in signals:
-            found.append("no_flow_signal")
+    return [
+        *found,
+        *_signal_blockers(signals),
+        *_target_blockers(control),
+        *_topology_blockers(control),
+        *_curve_blockers(control),
+        *_circuit_blockers(installation),
+        *_zone_blockers(control, installation),
+        *_off_blockers(control),
+    ]
+
+
+def _class_blockers(
+    control: ControlOptions,
+    installation: Installation,
+    shared_signals: Mapping[Signal, Signal] | None,
+) -> list[str]:
+    """A boiler class the path cannot control, and one entity feeding two signals."""
+    found: list[str] = []
+    boiler_class = installation.boiler.boiler_class
+    if boiler_class in _MONITOR_ONLY_CLASSES:
+        found.append("boiler_class_no_control")
+    elif (control.write_path is WritePath.RELAY) != (boiler_class is BoilerClass.ON_OFF):
+        found.append("path_not_for_boiler_class")
+    if shared_signals:
+        found.append("entity_for_two_signals")
+    return found
+
+
+def _signal_blockers(signals: Collection[Signal] | Mapping[Signal, str] | None) -> list[str]:
+    """Water-temperature control needs flame and flow mapped (X8); not checked without them."""
+    if signals is None:
+        return []
+    found: list[str] = []
+    if Signal.FLAME not in signals:
+        found.append("no_flame_signal")
+    if Signal.FLOW not in signals:
+        found.append("no_flow_signal")
+    return found
+
+
+def _target_blockers(control: ControlOptions) -> list[str]:
+    """What the writes go to and what reads them back: one entity in two roles, the path's own
+    target — the entity path's setpoint entity, heating switch and hand-back, the gateway, the
+    firmware's topics — and the confirmed setpoint."""
+    found: list[str] = []
     if one_entity_in_two_roles(control):
         found.append("hand_back_switch_is_heating_switch")
+    path = control.write_path
     if path is WritePath.ENTITY:
-        if not control.setpoint_entity:
-            found.append("no_setpoint_entity")
-        if control.write_type not in WRITABLE_TYPES:
-            found.append("write_type_not_supported")
-        if not control.loop.ch_writes and not OFF_AS_LOW_SETPOINT_ALLOWED:
-            found.append("no_heating_switch")  # decision 11: the monitor only, until K4
-        if (
-            control.hand_back is None
-            or (control.hand_back is HandBack.SWITCH and not control.hand_back_entity)
-            or (
-                control.hand_back is HandBack.VALUE
-                and (control.hand_back_value is None or control.hand_back_value_effect is None)
-            )
-        ):
-            found.append("no_hand_back")
-        elif control.hand_back is HandBack.TIMEOUT and control.write_type is not WriteType.EXPIRING:
-            # Only a lapsing value goes back on its own; any other would stay for good.
-            found.append("timeout_needs_expiring_writes")
-        elif (
-            control.hand_back is HandBack.SWITCH
-            and control.hand_back_entity_write_type not in WRITABLE_TYPES
-        ):
-            # A switch the boiler may store would be worn by every take and hand-back (P-40).
-            found.append("hand_back_switch_not_writable")
-        found += hand_back_value_problems(control)
+        found += _entity_path_blockers(control)
     elif path is WritePath.OPENTHERM_GW and not control.gateway_id:
         found.append("no_gateway")
     elif path is WritePath.OTGW_MQTT and not (control.mqtt_top and control.mqtt_node):
         found.append("no_mqtt_topic")
     if not control.confirmed_entity:
         found.append("no_confirmed_setpoint")
+    return found
+
+
+def _entity_path_blockers(control: ControlOptions) -> list[str]:
+    """The entity path: its setpoint entity and write type, a heating switch (decision 11) and
+    a hand-back that is known and does not wear the boiler's memory."""
+    found: list[str] = []
+    if not control.setpoint_entity:
+        found.append("no_setpoint_entity")
+    if control.write_type not in WRITABLE_TYPES:
+        found.append("write_type_not_supported")
+    if not control.loop.ch_writes and not OFF_AS_LOW_SETPOINT_ALLOWED:
+        found.append("no_heating_switch")  # decision 11: the monitor only, until K4
+    if (
+        control.hand_back is None
+        or (control.hand_back is HandBack.SWITCH and not control.hand_back_entity)
+        or (
+            control.hand_back is HandBack.VALUE
+            and (control.hand_back_value is None or control.hand_back_value_effect is None)
+        )
+    ):
+        found.append("no_hand_back")
+    elif control.hand_back is HandBack.TIMEOUT and control.write_type is not WriteType.EXPIRING:
+        # Only a lapsing value goes back on its own; any other would stay for good.
+        found.append("timeout_needs_expiring_writes")
+    elif (
+        control.hand_back is HandBack.SWITCH
+        and control.hand_back_entity_write_type not in WRITABLE_TYPES
+    ):
+        # A switch the boiler may store would be worn by every take and hand-back (P-40).
+        found.append("hand_back_switch_not_writable")
+    return found + hand_back_value_problems(control)
+
+
+def _topology_blockers(control: ControlOptions) -> list[str]:
+    """A topology that allows control and suits the path, and — on a gateway topology — the
+    answer about the thermostat terminals (decision 1, on every path that takes one)."""
+    found: list[str] = []
+    path = control.write_path
     if control.topology is None:
         found.append("no_topology")
     elif control.topology not in CONTROLLABLE_TOPOLOGIES:
@@ -1107,35 +1157,48 @@ def config_blockers(
     elif path is not None and control.topology not in PATH_TOPOLOGIES[path]:
         found.append("topology_not_for_path")
     if (kind := thermostat_kind_blocker(control)) is not None:
-        found.append(kind)  # decision 1: on every path that takes a gateway topology
+        found.append(kind)
+    return found
+
+
+def _curve_blockers(control: ControlOptions) -> list[str]:
+    """The curve entered, never silently defaulted, and its values fitting together (P-68)."""
     if not control.curve_entered:
-        found.append("curve_not_entered")
-    else:
-        curve, limits = control.loop.control.curve, control.loop.control.limits
-        problems = curve_problems(
-            curve.design_flow, curve.design_outdoor, curve.room, limits.hard_min, limits.hard_max
-        )
-        found += [key for _field, key in problems]
+        return ["curve_not_entered"]
+    curve, limits = control.loop.control.curve, control.loop.control.limits
+    problems = curve_problems(
+        curve.design_flow, curve.design_outdoor, curve.room, limits.hard_min, limits.hard_max
+    )
+    return [key for _field, key in problems]
+
+
+def _circuit_blockers(installation: Installation) -> list[str]:
+    """One circuit fed straight by the boiler flow (unmixed, or passive fixed); underfloor on
+    an unmixed one needs its maximum flow."""
     circuits = installation.circuits
     if len(circuits) != 1 or circuits[0].control not in (
         CircuitControl.UNMIXED_SHARED,
         CircuitControl.PASSIVE_FIXED,
     ):
-        found.append("one_direct_circuit_only")
-    else:
-        circuit = circuits[0]
-        if (
-            circuit.control is CircuitControl.UNMIXED_SHARED
-            and EmitterType.UNDERFLOOR in installation.emitters_in(circuit.circuit_id)
-            and circuit.max_flow is None
-        ):
-            found.append("underfloor_without_max_flow")
-    found += _zone_blockers(control, installation)
+        return ["one_direct_circuit_only"]
+    circuit = circuits[0]
+    if (
+        circuit.control is CircuitControl.UNMIXED_SHARED
+        and EmitterType.UNDERFLOOR in installation.emitters_in(circuit.circuit_id)
+        and circuit.max_flow is None
+    ):
+        return ["underfloor_without_max_flow"]
+    return []
+
+
+def _off_blockers(control: ControlOptions) -> list[str]:
+    """Without heating writes, "off" is a low setpoint: it must stay clear of the lowest water
+    temperature, or it would heat, or not show (P-43)."""
     if not control.loop.ch_writes and off_too_close_to_lowest(
         control.loop.off_setpoint, control.loop.control.limits.hard_min
     ):
-        found.append("off_setpoint_not_below_hard_min")  # "off" would heat, or not show
-    return found
+        return ["off_setpoint_not_below_hard_min"]
+    return []
 
 
 def off_too_close_to_lowest(off_setpoint: float, lowest: float) -> bool:

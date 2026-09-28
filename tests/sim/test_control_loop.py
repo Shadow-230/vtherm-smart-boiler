@@ -189,8 +189,20 @@ def test_hand_back_returns_the_boiler_to_its_own_control() -> None:
     assert own.min_setpoint <= later <= own.max_setpoint  # the boiler's own curve again
 
 
-def test_summer_keeps_heating_off() -> None:
+def test_summer_heating_follows_vt_at_the_minimum_water_temperature() -> None:
+    """Summer and winter come from VT (plan 0.2.1, decisions of 2026-09-25): there is no summer
+    switch of the plugin's own. A day at 24 °C outside: heating is on at exactly the steps a
+    zone calls — every call gives "on", nothing else does — at the lowest water temperature
+    the curve allows, and the warm water that brings is enough: after the first hour the burner
+    never lights (P-121: the name said "heating off", the test only counted ignitions)."""
     controller = LoopController(LOOP)
     result = simulate(scenario([24.0], controller, without_override=WithoutOverride.OWN_CURVE))
+    assert [on for _t, on, _called in controller.heating] == [
+        called for _t, _on, called in controller.heating
+    ]
+    assert any(called for _t, _on, called in controller.heating)  # the zones do call
+    hard_min = LOOP.control.limits.hard_min
+    assert {value for _t, value in controller.setpoints} == {hard_min}
+    assert controller.hand_backs == []
     flame = result.history.signal(Signal.FLAME)
     assert not [b for b in find_burns(flame, HOUR, DAY) if b.start_seen]

@@ -167,6 +167,27 @@ def test_hacs_manifest() -> None:
     AwesomeVersion(hacs["homeassistant"], ensure_strategy=[AwesomeVersionStrategy.CALVER])
 
 
+def test_ci_runs_the_core_tests_on_their_own_then_the_rest() -> None:
+    """P-120: CI runs the core tests without Home Assistant's pytest plugin — layer 1, "no Home
+    Assistant" — then every other test with it, coverage with branches over both, its floor
+    judged once at the end; no step runs them all in one go."""
+    import yaml
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8"))
+    runs = [step.get("run", "") for step in workflow["jobs"]["tests"]["steps"]]
+    tests = [run for run in runs if "pytest" in run]
+    assert len(tests) == 2
+    core, rest = tests
+    assert "-p no:homeassistant" in core
+    assert core.rstrip().endswith("tests/core")
+    assert "--disable-socket" in core  # no network, as Home Assistant's plugin ensures
+    assert "--cov-fail-under=0" in core  # a partial run: the floor is judged after both
+    assert "--ignore=tests/core" in rest
+    assert "--cov-append" in rest
+    assert "--cov-fail-under" not in rest  # pyproject's floor applies
+    assert all("--cov --cov-branch" in run for run in tests)
+
+
 def test_hacs_checks_the_brand() -> None:
     """P93: since Home Assistant 2026.3 the brand ships in the integration's ``brand/`` folder,
     which the HACS action checks — no longer ignored (the icon itself is R2)."""
@@ -240,8 +261,13 @@ class _Checker:
         for field in fields:
             if not field.isidentifier():
                 self.problems.append(f"{where}: placeholder {field!r} is not an identifier")
-        if ("[%" in value or "%]" in value) and not REFERENCE.fullmatch(value):
-            self.problems.append(f"{where}: a reference mixed with text")
+        if "[%" in value or "%]" in value:
+            # P-128: Home Assistant resolves ``[%key:…%]`` references only in a core
+            # integration's strings.json, when it builds its translations; a custom
+            # integration's translation files are read as they are, so any reference — even a
+            # whole value — would reach the user as its raw text.
+            kind = "a whole-value reference" if REFERENCE.fullmatch(value) else "a reference"
+            self.problems.append(f"{where}: {kind}, which Home Assistant leaves unresolved here")
         if URL.search(value):
             self.problems.append(f"{where}: a URL (use a placeholder)")
 
@@ -349,7 +375,10 @@ def test_the_checker_catches_what_hassfest_rejects() -> None:
             }
         },
         "exceptions": {"e": {"message": "Unmatched { brace"}},
-        "issues": {"i": {"title": "Mixed [%key:common::x%] text", "description": "ok"}},
+        "issues": {
+            "i": {"title": "Mixed [%key:common::x%] text", "description": "ok"},
+            "j": {"title": "[%key:common::state::on%]", "description": "ok"},
+        },
     }
     problems = "\n".join(_Checker().strings(broken))
     for expected in (
@@ -361,7 +390,8 @@ def test_the_checker_catches_what_hassfest_rejects() -> None:
         "key 'Bad-Key' is not in translation-key form",
         "state.on: placeholders are not allowed here",
         "message: an unmatched brace",
-        "i.title: a reference mixed with text",
+        "i.title: a reference, which Home Assistant leaves unresolved here",
+        "j.title: a whole-value reference, which Home Assistant leaves unresolved here",
     ):
         assert expected in problems, expected
 

@@ -357,3 +357,174 @@ def test_low_condensing_not_changed_says_why_for_the_path() -> None:
     assert (water.changed_by_control, water.detail) == (True, None)
     cycling = assess(10 * DAY, stats(4.5, 0.7), Share(0.9, DAY), Share(0.05, DAY), RELAY)
     assert reason(cycling, ReasonCode.FREQUENT_STARTS).detail is None
+
+
+# --- P-115: the verdict's precedence, as a table -------------------------------------------------
+# Several findings at once, and what wins: no flame signal, then too little data, then a problem
+# control changes, then too few criteria judged, then "not worth it". The table the split of
+# ``assess`` must keep green; each reason as (code, kind, changed by control, detail), in order.
+
+_NON_CONDENSING = VerdictOptions(condensing_boiler=False, control_sets_water=True)
+P, F, M, D = ReasonKind.PROBLEM, ReasonKind.FINE, ReasonKind.MISSING, ReasonKind.DATA
+C = ReasonCode
+
+VERDICT_PRECEDENCE = [
+    (
+        "no flame signal beats short monitoring and problems",
+        {
+            "days": 2,
+            "heating": stats(5.0, 0.9, burns=3),
+            "condensing": 0.1,
+            "load": 0.9,
+            "burner": False,
+        },
+        Verdict.NOT_ENOUGH_DATA,
+        [(C.NO_BURNER_SIGNAL, D, None, None)],
+    ),
+    (
+        "too few days beat a problem control changes",
+        {"days": 3, "heating": stats(5.0, 0.9), "condensing": 0.1, "load": 0.9},
+        Verdict.NOT_ENOUGH_DATA,
+        [(C.MONITORED_DAYS, D, None, None), (C.HEATING_BURNS, D, None, None)],
+    ),
+    (
+        "too few burns, the days enough",
+        {"days": 10, "heating": stats(5.0, 0.9, burns=5), "condensing": 0.1},
+        Verdict.NOT_ENOUGH_DATA,
+        [(C.MONITORED_DAYS, D, None, None), (C.HEATING_BURNS, D, None, None)],
+    ),
+    (
+        "a problem control changes beats too few criteria judged",
+        {"days": 10, "heating": stats(2.0, 0.3), "condensing": 0.1},
+        Verdict.WORTH_IT,
+        [
+            (C.LONG_BURNS, F, None, None),
+            (C.LOW_CONDENSING, P, True, None),
+            (C.LOAD_UNKNOWN, M, None, None),
+        ],
+    ),
+    (
+        "problems control does not change, enough criteria judged",
+        {"days": 10, "heating": stats(5.0, 0.9), "condensing": 0.9, "load": 0.5},
+        Verdict.NOT_WORTH_IT,
+        [
+            (C.FREQUENT_STARTS, P, False, None),
+            (C.SHORT_BURNS, P, False, None),
+            (C.GOOD_CONDENSING, F, None, None),
+            (C.LOAD_OFTEN_BELOW_MIN_POWER, P, False, None),
+        ],
+    ),
+    (
+        "low condensing on the relay path is not control's to change",
+        {"days": 10, "heating": stats(1.0, 0.1), "condensing": 0.1, "load": 0.05, "options": RELAY},
+        Verdict.NOT_WORTH_IT,
+        [
+            (C.FEW_STARTS, F, None, None),
+            (C.LONG_BURNS, F, None, None),
+            (C.LOW_CONDENSING, P, False, WATER_NOT_CONTROLLED),
+            (C.LOAD_RARELY_BELOW_MIN_POWER, F, None, None),
+        ],
+    ),
+    (
+        "too few criteria judged: named first",
+        {"days": 10, "heating": stats(2.0, 0.3)},
+        Verdict.NOT_ENOUGH_DATA,
+        [
+            (C.CRITERIA_JUDGED, D, None, None),
+            (C.LONG_BURNS, F, None, None),
+            (C.CONDENSING_UNKNOWN, M, None, None),
+            (C.LOAD_UNKNOWN, M, None, None),
+        ],
+    ),
+    (
+        "a boiler not built to condense: two of three criteria",
+        {"days": 10, "heating": stats(2.0, 0.3), "condensing": 0.1, "options": _NON_CONDENSING},
+        Verdict.NOT_WORTH_IT,
+        [(C.LONG_BURNS, F, None, None), (C.LOAD_UNKNOWN, M, None, None)],
+    ),
+    (
+        "minutes of a known return decide nothing",
+        {
+            "days": 10,
+            "heating": stats(2.0, 0.3),
+            "condensing": 0.1,
+            "condensing_s": 600.0,
+            "load": 0.5,
+        },
+        Verdict.NOT_WORTH_IT,
+        [
+            (C.LONG_BURNS, F, None, None),
+            (C.CONDENSING_UNKNOWN, M, None, None),
+            (C.LOAD_OFTEN_BELOW_MIN_POWER, P, False, None),
+        ],
+    ),
+    (
+        "a load model from rule-of-thumb values only is named",
+        {"days": 10, "heating": stats(1.0, 0.1), "condensing": 0.9, "estimate_only": True},
+        Verdict.NOT_WORTH_IT,
+        [
+            (C.FEW_STARTS, F, None, None),
+            (C.LONG_BURNS, F, None, None),
+            (C.GOOD_CONDENSING, F, None, None),
+            (C.LOAD_UNKNOWN, M, None, ESTIMATE_ONLY),
+        ],
+    ),
+    (
+        "a load between rarely and often: judged, no reason",
+        {"days": 10, "heating": stats(1.0, 0.1), "condensing": 0.9, "load": 0.2},
+        Verdict.NOT_WORTH_IT,
+        [
+            (C.FEW_STARTS, F, None, None),
+            (C.LONG_BURNS, F, None, None),
+            (C.GOOD_CONDENSING, F, None, None),
+        ],
+    ),
+    (
+        "the starts unknown: not judged, three of four enough",
+        {
+            "days": 10,
+            "heating": replace(stats(1.0, 0.1), active_s=0.0),
+            "condensing": 0.9,
+            "load": 0.05,
+        },
+        Verdict.NOT_WORTH_IT,
+        [
+            (C.LONG_BURNS, F, None, None),
+            (C.GOOD_CONDENSING, F, None, None),
+            (C.LOAD_RARELY_BELOW_MIN_POWER, F, None, None),
+        ],
+    ),
+    (
+        "all fine",
+        {"days": 10, "heating": stats(1.0, 0.1), "condensing": 0.9, "load": 0.05},
+        Verdict.NOT_WORTH_IT,
+        [
+            (C.FEW_STARTS, F, None, None),
+            (C.LONG_BURNS, F, None, None),
+            (C.GOOD_CONDENSING, F, None, None),
+            (C.LOAD_RARELY_BELOW_MIN_POWER, F, None, None),
+        ],
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("given", "verdict", "reasons"),
+    [row[1:] for row in VERDICT_PRECEDENCE],
+    ids=[row[0] for row in VERDICT_PRECEDENCE],
+)
+def test_the_precedence_of_the_verdict(given: dict, verdict: Verdict, reasons: list[tuple]) -> None:
+    """P-115: the verdict and exactly these reasons, in this order, for each set of findings."""
+    condensing = given.get("condensing")
+    load = given.get("load")
+    result = assess(
+        given["days"] * DAY,
+        given["heating"],
+        None if condensing is None else Share(condensing, given.get("condensing_s", DAY)),
+        None if load is None else Share(load, DAY),
+        given.get("options", FLOW_SETPOINT),
+        load_estimate_only=given.get("estimate_only", False),
+        burner_signal=given.get("burner", True),
+    )
+    assert result.verdict is verdict
+    assert [(r.code, r.kind, r.changed_by_control, r.detail) for r in result.reasons] == reasons

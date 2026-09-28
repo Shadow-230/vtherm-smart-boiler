@@ -24,6 +24,8 @@ from .harness import (
     FakeBoiler,
     FakeForecasts,
     FakeZones,
+    analyse_now,
+    analysis_idle,
     apply_event,
     replay_events,
 )
@@ -49,10 +51,14 @@ def entry_for(boiler: FakeBoiler, zones: FakeZones | None = None, **extra) -> Mo
     return MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
 
 
-async def setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+async def setup(hass: HomeAssistant, entry: MockConfigEntry, *, background: bool = True) -> None:
+    """Set the entry up and, by default, let the recorder read and the first analysis that
+    setup starts in the background finish: an analysis the test asks for while that one runs
+    would be skipped — only one runs at a time — and the test would depend on the machine's
+    speed (Z1). ``background=False``: a test that holds that work on purpose."""
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=background)
 
 
 def entity_id(
@@ -159,6 +165,63 @@ async def test_unload_and_reload(hass: HomeAssistant) -> None:
     assert entry.state is ConfigEntryState.NOT_LOADED
     boiler.set(Signal.FLOW, 40.0)  # no listener left to react
     await hass.async_block_till_done()
+
+
+async def test_an_unload_leaves_no_listener_on_the_bus(
+    hass: HomeAssistant, freezer, zones: FakeZones
+) -> None:
+    """P-123: after a setup, a reload and an unload, Home Assistant's bus holds exactly the
+    listeners it held before the setup — per event type, none left behind by the plugin (its
+    state trackers, its start and stop hooks, its entities'). The platforms' own components are
+    set up first: Home Assistant keeps their listeners for good, whoever loaded them. A store's
+    save still pending at the unload — the plugin's, or Home Assistant's own for its entries
+    and entities — holds Home Assistant's final-write hook until it is written: the clock is
+    moved past every such delay first."""
+    from homeassistant.setup import async_setup_component
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.vtherm_smart_boiler import PLATFORMS
+
+    async def saves_written() -> None:
+        for _ in range(2):  # the delayed saves, then what their writing leaves
+            freezer.tick(timedelta(hours=1))
+            async_fire_time_changed(hass, dt_util.utcnow())
+            await hass.async_block_till_done()
+
+    for platform in PLATFORMS:
+        assert await async_setup_component(hass, platform, {})
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    zones.add("living", hvac_action="heating", valve_open_percent=60)
+    await saves_written()
+    before = dict(hass.bus.async_listeners())
+    entry = entry_for(boiler, zones)
+    await setup(hass, entry)
+    assert dict(hass.bus.async_listeners()) != before  # the plugin listens while it runs
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await saves_written()
+    assert dict(hass.bus.async_listeners()) == before
+
+
+async def test_a_second_entry_beside_a_running_one_fails_the_test(hass: HomeAssistant) -> None:
+    """P-125, T11: the tests' guard (``tests/integration/conftest.py``) stops a test that sets
+    up a second entry of this single-entry integration beside one that runs; once the first is
+    unloaded, the second sets up."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    first = entry_for(boiler)
+    await setup(hass, first)
+    second = entry_for(boiler)
+    second.add_to_hass(hass)
+    with pytest.raises(AssertionError, match="single-entry"):
+        await hass.config_entries.async_setup(second.entry_id)
+    assert await hass.config_entries.async_unload(first.entry_id)
+    assert await hass.config_entries.async_setup(second.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert second.state is ConfigEntryState.LOADED
 
 
 async def test_only_an_options_change_reloads_the_entry(hass: HomeAssistant) -> None:
@@ -287,7 +350,7 @@ async def test_the_recorder_backfill_runs_after_setup_and_goes_before_live_sampl
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0})
     entry = entry_for(boiler)
-    await setup(hass, entry)  # does not wait for the recorder
+    await setup(hass, entry, background=False)  # does not wait for the recorder
     assert entry.state is ConfigEntryState.LOADED
     history = entry.runtime_data.history.signals[Signal.FLOW]
     assert [s.value for s in history] == [45.0]
@@ -299,6 +362,71 @@ async def test_the_recorder_backfill_runs_after_setup_and_goes_before_live_sampl
     # there: it stops at once).
     assert asked[0] == {"entity_ids": watched, "significant": False}
     assert len(asked) == 2
+
+
+async def test_the_backfill_puts_a_zones_recorded_states_before_its_live_ones(
+    hass: HomeAssistant, freezer, zones: FakeZones, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P-117: a VT zone's recorded states, read back with their attributes, go before the
+    zone's states recorded live since setup — series by series, only what is older, as the
+    boiler's signals do. Negative: a zone the recorder has nothing for keeps its live states
+    alone."""
+    import asyncio
+
+    from homeassistant.core import State
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.vtherm_smart_boiler import coordinator as coordinator_module
+
+    freezer.move_to(datetime(2026, 1, 10, 12, tzinfo=UTC))
+    now = dt_util.utcnow()
+    release = asyncio.Event()
+    living = zones.add(
+        "living",
+        current_temperature=20.5,
+        temperature=21.0,
+        hvac_action="heating",
+        valve_open_percent=70,
+    )
+    bedroom = zones.add("bedroom", current_temperature=19.0, valve_open_percent=10)
+
+    def recorded(temperature: float, action: str, opening: int, days: int) -> State:
+        attributes = {
+            "current_temperature": temperature,
+            "temperature": 21.0,
+            "hvac_action": action,
+            "valve_open_percent": opening,
+            "is_ready": True,
+            "specific_states": {},
+        }
+        return State(living, "heat", attributes, last_updated=now - timedelta(days=days))
+
+    def significant_states(hass, start_time, **kwargs):
+        return {living: [recorded(18.0, "heating", 40, 2), recorded(19.0, "idle", 0, 1)]}
+
+    class Recorder:
+        async def async_add_executor_job(self, target, *args):
+            await release.wait()
+            return await hass.async_add_executor_job(target, *args)
+
+    monkeypatch.setattr(coordinator_module, "_recorder", lambda hass: Recorder())
+    monkeypatch.setattr(coordinator_module, "_significant_states", lambda: significant_states)
+    hass.config.components.add("recorder")
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0})
+    entry = entry_for(boiler, zones)
+    await setup(hass, entry, background=False)  # does not wait for the recorder
+    zone = entry.runtime_data.history.zones[living]
+    assert [s.value for s in zone.temperature] == [20.5]
+    release.set()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert [s.value for s in zone.temperature] == [18.0, 19.0, 20.5]
+    assert [s.value for s in zone.valve_open] == [0.4, 0.0, 0.7]
+    assert [s.value for s in zone.calling] == [True, False, True]
+    assert [s.value for s in zone.target] == [21.0]  # unchanged throughout: one sample
+    assert zone.temperature.first_time == (now - timedelta(days=2)).timestamp()
+    other = entry.runtime_data.history.zones[bedroom]
+    assert [s.value for s in other.temperature] == [19.0]
 
 
 async def test_no_day_is_kept_before_the_history_is_back(
@@ -320,17 +448,17 @@ async def test_no_day_is_kept_before_the_history_is_back(
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
     entry = entry_for(boiler)
-    await setup(hass, entry)
+    await setup(hass, entry, background=False)
     coordinator = entry.runtime_data
     freezer.tick(timedelta(days=1))  # a whole day since setup: a day to summarise
     boiler.set(Signal.FLAME, True)
     await hass.async_block_till_done()
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     assert coordinator.analysis is not None
     assert coordinator.daily == {}  # nothing kept while the history is not back
     release.set()
     await hass.async_block_till_done(wait_background_tasks=True)
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     assert coordinator.daily  # kept once it is
 
 
@@ -633,7 +761,7 @@ async def test_a_stopped_installation_writes_nothing_more(
     await hass.async_block_till_done()
     old.monitoring_since = 0.0  # what the old one would write
     old.schedule_save()
-    await old.async_run_analysis()
+    await analyse_now(old)
     async_fire_time_changed(hass, datetime.now(UTC) + timedelta(minutes=20))  # past any delay
     await hass.async_block_till_done()
     assert hass_storage[f"{DOMAIN}.{entry.entry_id}"]["data"]["monitoring_since"] != 0.0
@@ -794,6 +922,118 @@ async def test_migration_keeps_the_floor_of_a_control_section_without_it(
         assert stored["hard_min"] == hard_min
 
 
+# P-124: one entry as each minor version stored it — 0.2.0's (1), then what each migration step
+# made of it — and the options this version holds for all of them.
+_GATEWAY = {
+    "write_path": "opentherm_gw",
+    "gateway_id": "gw",
+    "topology": "gateway_with_thermostat",
+    "thermostat_kind": "opentherm",
+}
+_REACTIONS = {"pressure_low": "hand_back", "write_ignored": "hand_back", "outside_change": "info"}
+_OLD_MONITOR = {"monitoring_days": 7, "pressure_low_warning": 0.8, "pressure_low_alarm": 0.5}
+STORED_BY_MINOR: dict[int, dict[str, Any]] = {
+    1: {
+        "boiler": {"class": "flow_setpoint", "dhw": "combi", "shared_return": True},
+        "control": _GATEWAY | {"min_burn_min": 5, "daily_cap": 100, "alarm_reactions": _REACTIONS},
+        "monitor": _OLD_MONITOR,
+    },
+    2: {  # 0.2.1's removed options gone (shared_return among them)
+        "boiler": {"class": "flow_setpoint", "dhw": "combi"},
+        "control": _GATEWAY | {"alarm_reactions": _REACTIONS},
+        "monitor": _OLD_MONITOR,
+    },
+    3: {  # X6: 0.2.1's lowest water temperature kept
+        "boiler": {"class": "flow_setpoint", "dhw": "combi"},
+        "control": _GATEWAY | {"alarm_reactions": _REACTIONS, "hard_min": 25.0},
+        "monitor": _OLD_MONITOR,
+    },
+}
+CURRENT_OPTIONS = {  # Y1: the "add water" threshold; the one reaction still offered
+    "boiler": {"class": "flow_setpoint", "dhw": "combi"},
+    "control": _GATEWAY | {"alarm_reactions": {"write_ignored": "hand_back"}, "hard_min": 25.0},
+    "monitor": {"monitoring_days": 7, "add_water_below": 0.8},
+}
+STORED_BY_MINOR[4] = CURRENT_OPTIONS
+
+
+@pytest.mark.parametrize("minor", sorted(STORED_BY_MINOR))
+async def test_an_entry_of_any_earlier_minor_version_migrates_to_this_ones_options(
+    hass: HomeAssistant, minor: int
+) -> None:
+    """P-124: from minor version 1 through 2 and 3 to this one (4), each step applied once and in
+    order from where the entry stands — ``boiler.shared_return`` and 0.2.1's removed control
+    options go (2), the lowest water temperature 0.2.1 used is kept (3, X6), the low-pressure
+    limits become the "add water" threshold and the reactions decision 7 no longer offers go,
+    with their warning (4, Y1). Every starting point ends with the same options; an entry
+    already current is left as it is, and warns of nothing."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.vtherm_smart_boiler.config_flow import SmartBoilerConfigFlow
+
+    assert max(STORED_BY_MINOR) == SmartBoilerConfigFlow.MINOR_VERSION
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    base = dict(entry_for(boiler).options)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=base | STORED_BY_MINOR[minor],
+        version=1,
+        minor_version=minor,
+    )
+    await setup(hass, entry)
+    assert entry.state is ConfigEntryState.LOADED
+    assert (entry.version, entry.minor_version) == (1, SmartBoilerConfigFlow.MINOR_VERSION)
+    assert dict(entry.options) == base | CURRENT_OPTIONS
+    found = ir.async_get(hass).async_get_issue(DOMAIN, f"reactions_removed_{entry.entry_id}")
+    if minor < 4:
+        assert found is not None
+        assert found.translation_placeholders == {"alarms": "pressure_low"}
+    else:
+        assert found is None
+
+
+@pytest.mark.parametrize(
+    ("version", "minor", "refused"),
+    [(2, 1, True), (3, 4, True), (1, 9, False)],
+    ids=["version_2", "version_3", "newer_minor_of_version_1"],
+)
+async def test_a_newer_entry_is_refused(
+    hass: HomeAssistant, version: int, minor: int, refused: bool
+) -> None:
+    """P-124: an entry a newer version stored (version 2 and up) is not set up — nothing here can
+    read it: migration error, its options untouched, nothing of the plugin created. Negative: a
+    newer minor version of version 1 is, as Home Assistant counts it, one this version can read:
+    set up as it is, its minor version kept."""
+    from homeassistant.helpers import entity_registry as er
+
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    options = dict(entry_for(boiler).options) | {"a_later_option": {"x": 1}}
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=options,
+        version=version,
+        minor_version=minor,
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id) is not refused
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert (entry.version, entry.minor_version) == (version, minor)
+    assert dict(entry.options) == options
+    created = er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
+    if refused:
+        assert entry.state is ConfigEntryState.MIGRATION_ERROR
+        assert created == []
+    else:
+        assert entry.state is ConfigEntryState.LOADED
+        assert created
+
+
 def _stored_days(start: float, count: int, settings: str) -> dict[str, dict[str, Any]]:
     """Days of a boiler cycling twice an hour, as the plugin stores them."""
     from custom_components.vtherm_smart_boiler.core.daily import DaySummary
@@ -886,7 +1126,7 @@ async def test_an_unchanged_building_fit_is_not_saved_again(
     saves: list[float] = []
     monkeypatch.setattr(coordinator, "schedule_save", lambda delay=0.0: saves.append(delay))
     freezer.tick(300)
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     assert coordinator.analysis.fit is not None
     assert saves == []  # the same fit: nothing to write
 
@@ -989,7 +1229,7 @@ async def test_short_hot_water_draws_are_no_ignition_problem(
         boiler.set_many({Signal.FLAME: False, Signal.DHW_ACTIVE: False})
         await hass.async_block_till_done()
     # P-80: the count comes from the analysis' burns, as of its last run.
-    await entry.runtime_data.async_run_analysis()
+    await analyse_now(entry.runtime_data)
     await hass.async_block_till_done()
     ignition = hass.states.get(entity_id(hass, entry, "binary_sensor", "alarm_unstable_ignition"))
     assert ignition.state == alarm
@@ -1028,7 +1268,7 @@ async def test_a_tpi_zones_short_pulses_are_no_ignition_problem(
         await hass.async_block_till_done()
         freezer.tick(timedelta(seconds=268))
     # P-80: the count comes from the analysis' burns, as of its last run.
-    await entry.runtime_data.async_run_analysis()
+    await analyse_now(entry.runtime_data)
     await hass.async_block_till_done()
     ignition = hass.states.get(entity_id(hass, entry, "binary_sensor", "alarm_unstable_ignition"))
     assert ignition.state == alarm
@@ -1170,7 +1410,7 @@ async def test_replayed_history_reaches_the_verdict(
     # once — so wait for it before running one over the whole history.
     await hass.async_block_till_done(wait_background_tasks=True)
     coordinator = entry.runtime_data
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     await hass.async_block_till_done()
     verdict = hass.states.get(entity_id(hass, entry, "sensor", "verdict"))
     assert verdict is not None
@@ -1624,7 +1864,7 @@ async def test_analysis_during_backfill_keeps_no_partial_days(
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
     entry = entry_for(boiler)
-    await setup(hass, entry)
+    await setup(hass, entry, background=False)
     coordinator = entry.runtime_data
     freezer.tick(timedelta(days=1))  # a whole day since setup: a day to summarise
     boiler.set(Signal.FLAME, True)
@@ -1636,12 +1876,12 @@ async def test_analysis_during_backfill_keeps_no_partial_days(
         return real(*args, **kwargs)
 
     monkeypatch.setattr(coordinator_module, "analyse", backfill_ends_meanwhile)
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     assert coordinator.analysis is not None
     assert coordinator.analysis.new_days  # it did summarise the day …
     assert coordinator.daily == {}  # … and kept none of it
     monkeypatch.setattr(coordinator_module, "analyse", real)
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     assert coordinator.daily  # the history was back when this one copied it
     release.set()
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -1729,7 +1969,7 @@ async def test_burns_are_classified_per_analysis(
     # Declared without hot water: every burn heats.
     declared = {**entry_for(boiler).options, "boiler": {"class": "read_only", "dhw": "none"}}
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=declared)
-    await setup(hass, entry)
+    await setup(hass, entry, background=False)
     coordinator = entry.runtime_data
     for _ in range(20):  # three-minute burns, one every four minutes: fifteen an hour
         freezer.tick(60)
@@ -1738,6 +1978,9 @@ async def test_burns_are_classified_per_analysis(
         freezer.tick(180)
         boiler.set(Signal.FLAME, False)
         await hass.async_block_till_done()
+    # The clock's analysis may still run in the background (it classifies burns too): done
+    # before the test takes its own count (Z1).
+    await analysis_idle(coordinator)
     coordinator.analysis = None  # as before the first analysis
     coordinator._alarms = {}
     calls.clear()
@@ -1746,7 +1989,7 @@ async def test_burns_are_classified_per_analysis(
     starts = coordinator.data.alarms[AlarmKind.FREQUENT_STARTS]
     assert starts.active is None  # no analysis yet: not judged
     assert starts.reason == UNKNOWN_INPUT
-    await coordinator.async_run_analysis()
+    await analyse_now(coordinator)
     assert calls  # the analysis did
     count = len(calls)
     await coordinator.async_refresh()
@@ -1783,7 +2026,7 @@ async def test_gas_used_with_the_burner_off_is_shown_apart(
     hass.states.async_set(meter, "100.4" if reported else "unavailable", unit)  # the cooker
     await hass.async_block_till_done()
     freezer.tick(timedelta(minutes=5))
-    await entry.runtime_data.async_run_analysis()
+    await analyse_now(entry.runtime_data)
     await hass.async_block_till_done()
     sensor = hass.states.get(entity_id(hass, entry, "sensor", "gas_per_degree_day"))
     assert sensor is not None
@@ -1834,7 +2077,7 @@ async def test_gas_per_degree_day_has_no_unit_until_the_meter_has_one(
     hass.states.async_set(meter, "1234.5", {})  # no unit reported yet
     entry = entry_for(boiler)
     await setup(hass, entry)
-    await entry.runtime_data.async_run_analysis()
+    await analyse_now(entry.runtime_data)
     sensor_id = entity_id(hass, entry, "sensor", "gas_per_degree_day")
     sensor = hass.states.get(sensor_id)
     assert sensor is not None

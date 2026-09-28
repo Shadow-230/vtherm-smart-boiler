@@ -359,11 +359,20 @@ def test_heating_on_off_follows_a_recovered_setpoint_at_once() -> None:
     drop comes in the start phase: a failed attempt, sent again — decision 6.)"""
     config = replace(CONFIG, switch_guard=EXPIRING_SWITCH)
     state, out = loop_step(LoopState(), inputs(0.0), None, config)
-    state, _ = loop_step(state, inputs(10.0), out.setpoint.value, config)  # confirmed
-    state, out = loop_step(state, inputs(20.0), 30.0, config)  # the gateway dropped it
     assert out.setpoint is not None
-    assert out.setpoint.kind is WriteKind.RESEND
+    sent = out.setpoint.value
+    assert out.heating == WriteAction(1.0, WriteKind.CHANGE)
+    state, confirmed = loop_step(state, inputs(10.0), sent, config)
+    assert (confirmed.setpoint, confirmed.heating) == (None, None)  # nothing due yet
+    state, out = loop_step(state, inputs(20.0), 30.0, config)  # the gateway dropped it
+    # P-121: exactly the same value and heating on, both sent again at once — no rewrite, no
+    # event, the one rewrite of the day kept.
+    assert out.setpoint == WriteAction(sent, WriteKind.RESEND)
+    assert out.heating == WriteAction(1.0, WriteKind.RESEND)
     assert out.ch_enable is True
+    assert out.events == ()
+    assert not out.hand_back
+    assert state.setpoint.rewritten_at is None
 
 
 HELD_SWITCH = GuardConfig(write_type=WriteType.HELD, read_back=False, two_valued=True)

@@ -13,7 +13,7 @@ from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 from custom_components.vtherm_smart_boiler.diagnostics import async_get_config_entry_diagnostics
 
-from .harness import WEATHER_ENTITY, FakeBoiler, FakeForecasts, FakeZones
+from .harness import WEATHER_ENTITY, FakeBoiler, FakeForecasts, FakeZones, analyse_now
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -37,7 +37,7 @@ async def test_diagnostics_are_redacted(
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)  # the first analysis
-    await entry.runtime_data.async_run_analysis()
+    await analyse_now(entry.runtime_data)
     result = await async_get_config_entry_diagnostics(hass, entry)
     text = json.dumps(result)
     for entity in (*boiler.mapping().values(), living, WEATHER_ENTITY):
@@ -49,6 +49,42 @@ async def test_diagnostics_are_redacted(
     assert result["analysis"]["verdict"] == "not_enough_data"
     assert len(result["zones"]) == 1
     assert result["forecasts"]["snapshots"] >= 1
+
+
+async def test_diagnostics_before_the_first_analysis_leave_its_summary_out(
+    hass: HomeAssistant, zones: FakeZones, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While the first analysis has not run — the recorder still being read — the diagnostics
+    give no analysis summary rather than an empty or invented one; once it has run, its summary
+    is there. (Before Z1 this was reached only when a test's timing happened to allow it.)"""
+    import asyncio
+
+    from custom_components.vtherm_smart_boiler import coordinator as coordinator_module
+
+    release = asyncio.Event()
+
+    async def slow_backfill(self: Any, now: float) -> None:
+        await release.wait()
+
+    monkeypatch.setattr(coordinator_module.SmartBoilerCoordinator, "_async_backfill", slow_backfill)
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0})
+    living = zones.add("living", hvac_action="heating", valve_open_percent=40)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        options={"signals": boiler.mapping(), "zones": [{"entity_id": living}]},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.runtime_data.analysis is None
+    result = await async_get_config_entry_diagnostics(hass, entry)
+    assert result["analysis"] is None
+    release.set()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    result = await async_get_config_entry_diagnostics(hass, entry)
+    assert result["analysis"]["verdict"] == "not_enough_data"
 
 
 async def test_the_control_section_keeps_what_is_not_personal(

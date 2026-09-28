@@ -8,6 +8,7 @@ their thermostatic valves; the test HA runs real VT instead. Nothing connects an
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import pairwise
@@ -16,7 +17,6 @@ from typing import Any
 import pytest
 from custom_components.boiler_sim import SimHub
 from custom_components.boiler_sim.plant import PlantOutput
-from homeassistant.const import EVENT_CALL_SERVICE
 from homeassistant.core import Event, HomeAssistant, State
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
@@ -27,7 +27,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, async_
 from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.control_config import MIGRATED_HARD_MIN
 
-from .harness import VT_PLATFORM, FakeZones
+from .harness import VT_PLATFORM, FakeZones, ServiceSpy, analyse_now
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -71,7 +71,7 @@ class Rig:
     over_climate: set[str] = field(default_factory=set)  # zones of VT's over_climate type
     modes: dict[str, str] = field(default_factory=dict)  # a zone's own mode, over ``vt_mode``
     fahrenheit: bool = False  # Home Assistant in US customary units: VT reports in °F
-    calls: list[tuple[float, str, str, dict[str, Any]]] = field(default_factory=list)
+    spy: ServiceSpy | None = None  # every service call (P-118)
 
     @property
     def sim(self):
@@ -155,13 +155,21 @@ class Rig:
         return state
 
     async def switch(self, on: bool) -> None:
+        """The user's switch, as the test's own call: tagged, not taken for the plugin's."""
+        assert self.spy is not None
         await self.hass.services.async_call(
             "switch",
             "turn_on" if on else "turn_off",
             {"entity_id": self.entity("switch", "control")},
             blocking=True,
+            context=self.spy.own,
         )
         await self.hass.async_block_till_done()
+
+    async def scenario(self, service: str, **data: Any) -> None:
+        """One of the simulator's scenario services, as the test's own call."""
+        assert self.spy is not None
+        await self.hass.services.async_call(SIM, service, data, blocking=True, context=self.spy.own)
 
     def gateway(self, kind: str | None = None) -> list[tuple[float, str, object]]:
         return [c for c in self.sim.commands.gateway if kind is None or c[1] == kind]
@@ -170,7 +178,10 @@ class Rig:
         return [float(value) for _t, _kind, value in self.gateway("setpoint")]  # type: ignore[arg-type]
 
     def plugin_services(self) -> set[tuple[str, str]]:
-        return {(d, s) for _t, d, s, _data in self.calls if d not in ("switch", SIM)}
+        """The services the plugin called — a switch's or the simulator's included (P-118); the
+        test's own calls are left out by their tag, not by their domain."""
+        assert self.spy is not None
+        return self.spy.plugin_services()
 
 
 async def start(
@@ -223,15 +234,17 @@ async def start(
 
 
 @pytest.fixture
-async def rig(hass: HomeAssistant, freezer, zones: FakeZones, hass_storage: dict[str, Any]) -> Rig:
+async def rig(
+    hass: HomeAssistant,
+    freezer,
+    zones: FakeZones,
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> Rig:
     freezer.move_to(START)
-    rig = Rig(hass, freezer, zones, hass_storage)
-
-    def record(event: Event) -> None:
-        data = event.data
-        rig.calls.append((rig.now(), data["domain"], data["service"], dict(data["service_data"])))
-
-    hass.bus.async_listen(EVENT_CALL_SERVICE, record)
+    rig = Rig(hass, freezer, zones, hass_storage, spy=ServiceSpy(hass))
+    assert rig.spy is not None
+    rig.spy.install(monkeypatch)
     return rig
 
 
@@ -265,13 +278,74 @@ async def test_a_cold_day_under_control(rig: Rig) -> None:
     assert not rig.sim.plant.override_active(rig.now())  # handed back at once
 
 
-async def test_the_monitor_works_on_the_simulated_boiler(rig: Rig) -> None:
-    await start(rig)
+def burns_seen(changes: list[tuple[float, bool]], until: float) -> list[tuple[float, float, bool]]:
+    """The flame's burns as its entity reported them — ``(start, end, start seen)``, the last
+    one cut at ``until`` — worked out apart from the plugin (P-121)."""
+    burns: list[tuple[float, float, bool]] = []
+    started: float | None = None
+    seen = False
+    for index, (t, on) in enumerate(changes):
+        if t >= until:
+            break
+        if on and started is None:
+            started, seen = t, index > 0  # a flame on at the first report: its start not seen
+        elif not on and started is not None:
+            burns.append((started, t, seen))
+            started = None
+    if started is not None:
+        burns.append((started, until, seen))
+    return burns
+
+
+@pytest.mark.parametrize(
+    ("outdoor", "cycles"), [(-2.0, False), (12.0, True)], ids=["cold_day", "mild_day"]
+)
+async def test_the_monitor_works_on_the_simulated_boiler(
+    rig: Rig, outdoor: float, cycles: bool
+) -> None:
+    """T10, P-121: the monitor's numbers are the simulated boiler's own. Three hours of the
+    boiler on its own curve — on a cold day one burn from the start, whose start nobody saw; on
+    a mild day it cycles. The burns, taken apart from the plugin from every report of the
+    flame's entity, give the starts, the starts per hour of heating (per clock hour that holds a
+    burn) and the burner hours the monitor shows — exactly, not merely "a number"."""
+    from homeassistant.const import EVENT_STATE_CHANGED
+
+    changes: list[tuple[float, bool]] = []
+
+    def flame(event: Event) -> None:
+        state = event.data["new_state"]
+        if event.data["entity_id"] != SIGNALS["flame"] or state is None:
+            return
+        if state.state in ("on", "off") and (
+            not changes or changes[-1][1] != (state.state == "on")
+        ):
+            changes.append((state.last_updated.timestamp(), state.state == "on"))
+
+    rig.hass.bus.async_listen(EVENT_STATE_CHANGED, flame)
+    await start(rig, sim={"outdoor": outdoor})
     await rig.advance(3 * 3600, step=30.0)
     assert rig.state("binary_sensor", "connection").state == "on"
-    # T10: numbers the monitor worked out from the simulated burns, not merely "available".
-    assert float(rig.state("sensor", "starts_per_hour").state) >= 0.0
-    assert float(rig.state("sensor", "burner_hours").state) > 0.0
+    assert rig.entry is not None
+    # The clock's own analysis runs in the background: one to its end, published, so the
+    # analysis read here and the sensors come from the same run.
+    await analyse_now(rig.entry.runtime_data)
+    analysis = rig.entry.runtime_data.analysis
+    assert analysis is not None
+    burns = burns_seen(changes, analysis.at)
+    starts = sum(1 for _start, _end, seen in burns if seen)
+    assert (starts >= 3) is cycles  # cold: the one burn from the start, its start not seen
+    assert burns  # it burned
+    hours = {
+        h
+        for start_t, end_t, _ in burns
+        for h in range(int(start_t // 3600), math.ceil(end_t / 3600))
+    }
+    active = sum(min((h + 1) * 3600.0, analysis.at) - h * 3600.0 for h in hours)
+    shown = rig.state("sensor", "starts_per_hour")
+    assert shown.attributes["starts"] == starts
+    assert float(shown.state) == round(starts / (active / 3600.0), 2)
+    burned = sum(end_t - start_t for start_t, end_t, _ in burns)
+    assert float(rig.state("sensor", "burner_hours").state) == round(burned / 3600.0, 2)
     assert rig.gateway() == []  # control is off: nothing written
 
 
@@ -362,7 +436,7 @@ async def test_hard_limits_hold_in_hard_frost(rig: Rig) -> None:
     # Below the design outdoor temperature the curve asks for more than its design flow, which
     # the hard maximum cuts (a design flow above the maximum itself is refused, P-68).
     await start(rig, hard_max=48, curve={"design_outdoor": -15, "design_flow": 48})
-    await rig.hass.services.async_call(SIM, "set_outdoor", {"temperature": -25}, blocking=True)
+    await rig.scenario("set_outdoor", temperature=-25)
     await rig.switch(True)
     await rig.advance(1800, step=30.0)
     assert max(rig.setpoints()) <= 48.0
@@ -373,7 +447,7 @@ async def test_stale_data_hands_back(rig: Rig) -> None:
     await start(rig)
     await rig.switch(True)
     await rig.advance(60)
-    await rig.hass.services.async_call(SIM, "fail_signal", {"signal": "flow"}, blocking=True)
+    await rig.scenario("fail_signal", signal="flow")
     count = len(rig.gateway())
     await rig.advance(240)
     assert len(rig.gateway()) == count  # nothing written without fresh data
@@ -385,7 +459,7 @@ async def test_stale_data_hands_back(rig: Rig) -> None:
 async def test_a_failed_outdoor_sensor_falls_back_to_the_weather(rig: Rig) -> None:
     await start(rig)
     await rig.switch(True)
-    await rig.hass.services.async_call(SIM, "fail_signal", {"signal": "outdoor"}, blocking=True)
+    await rig.scenario("fail_signal", signal="outdoor")
     await rig.advance(400)
     reasons = rig.state("sensor", "control_state").attributes["reasons"]
     assert "outdoor_weather" in reasons
@@ -399,7 +473,7 @@ async def test_a_command_never_taken_is_detected_and_not_fought(rig: Rig) -> Non
     unanswered: reported, not sent again this session, never another controller; control stays
     on and nothing is handed back."""
     await start(rig)
-    await rig.hass.services.async_call(SIM, "ignore_writes", {"enabled": True}, blocking=True)
+    await rig.scenario("ignore_writes", enabled=True)
     await rig.switch(True)
     await rig.advance(700)
     assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"
@@ -476,7 +550,7 @@ async def test_frost_protection_heats_while_vt_is_off(rig: Rig) -> None:
     freezing whose valve VT holds open — VT's SLEEP shows "off" with the valve at 100 % — still
     gets heat (decision 4)."""
     await start(rig)
-    await rig.hass.services.async_call(SIM, "set_outdoor", {"temperature": 24}, blocking=True)
+    await rig.scenario("set_outdoor", temperature=24)
     rig.vt_mode = "sleep"
     await rig.switch(True)
     await rig.advance(600)
@@ -541,7 +615,7 @@ async def test_an_outside_change_is_rewritten_once_then_alarmed(rig: Rig) -> Non
     await start(rig)
     await rig.switch(True)
     await rig.advance(60)
-    await rig.hass.services.async_call(SIM, "force_setpoint", {"value": 62}, blocking=True)
+    await rig.scenario("force_setpoint", value=62)
     await rig.advance(180)
     assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
     assert rig.state("sensor", "control_state").state == "handed_back"
@@ -857,7 +931,7 @@ async def test_without_any_outdoor_reading_the_fallback_setpoint_heats(rig: Rig)
     await rig.switch(True)
     await rig.advance(60)
     for signal in ("outdoor", "weather"):
-        await rig.hass.services.async_call(SIM, "fail_signal", {"signal": signal}, blocking=True)
+        await rig.scenario("fail_signal", signal=signal)
     await rig.advance(900, step=30.0)
     assert "outdoor_held" in rig.state("sensor", "control_state").attributes["reasons"]
     await rig.advance(3 * 3600, step=60.0)

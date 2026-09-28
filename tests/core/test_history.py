@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.daily import summarize_day
-from custom_components.vtherm_smart_boiler.core.history import History, with_downtime
+from custom_components.vtherm_smart_boiler.core.history import History, ZoneSeries, with_downtime
 from custom_components.vtherm_smart_boiler.core.parameters import (
     Estimate,
     ParameterKey,
@@ -97,3 +97,55 @@ def test_states_inside_a_downtime_do_not_hold() -> None:
     marked = list(with_downtime(rows, [(0.5 * HOUR, 0.7 * HOUR), (3.5 * HOUR, 2 * DAY)], 0.0, DAY))
     assert marked == [(0.0, False), (0.5 * HOUR, None), (HOUR, True), (1.5 * HOUR, False),
                       (3 * HOUR, True), (3.5 * HOUR, None)]  # fmt: skip
+
+
+# --- the backfill (P-117) ----------------------------------------------------------------------
+
+
+def _samples(series: Series) -> list[tuple[float, object]]:
+    return [(s.t, s.value) for s in series]
+
+
+def test_a_backfill_puts_each_zones_older_states_before_its_live_ones() -> None:
+    """P-117: the recorder's history goes before what was recorded live since setup, zone by zone
+    and series by series, as for the boiler's signals: only what is older than a series' first
+    live sample. A zone the older history lacks keeps what it has; a zone only the older history
+    has — no longer configured — is not added."""
+    live = History(
+        signals={Signal.FLOW: Series([(100.0, 45.0)])},
+        zones={"a": ZoneSeries("a"), "b": ZoneSeries("b")},
+    )
+    live.zones["a"].temperature.append(100.0, 20.0)
+    live.zones["a"].calling.append(100.0, True)
+    live.zones["b"].valve_open.append(100.0, 0.3)
+    older = History(
+        signals={Signal.FLOW: Series([(0.0, 30.0), (150.0, 99.0)])},
+        zones={"a": ZoneSeries("a"), "c": ZoneSeries("c")},
+    )
+    for t, value in ((0.0, 18.0), (50.0, 19.0), (150.0, 99.0)):
+        older.zones["a"].temperature.append(t, value)
+    older.zones["a"].calling.append(0.0, False)
+    older.zones["a"].valve_open.append(10.0, 0.6)  # a series with nothing live yet
+    older.zones["c"].temperature.append(0.0, 17.0)
+
+    live.prepend(older)
+
+    zone = live.zones["a"]
+    assert _samples(zone.temperature) == [(0.0, 18.0), (50.0, 19.0), (100.0, 20.0)]
+    assert _samples(zone.calling) == [(0.0, False), (100.0, True)]
+    assert _samples(zone.valve_open) == [(10.0, 0.6)]
+    assert _samples(zone.target) == []
+    assert _samples(live.zones["b"].valve_open) == [(100.0, 0.3)]
+    assert set(live.zones) == {"a", "b"}
+    assert _samples(live.signals[Signal.FLOW]) == [(0.0, 30.0), (100.0, 45.0)]
+
+
+def test_an_empty_backfill_changes_no_zone() -> None:
+    """Negative: nothing recorded (the recorder reaches no further back): every zone's series
+    stays as it was."""
+    live = History(zones={"a": ZoneSeries("a")})
+    live.zones["a"].temperature.append(100.0, 20.0)
+    live.prepend(History(zones={"a": ZoneSeries("a")}))
+    live.prepend(History())
+    assert _samples(live.zones["a"].temperature) == [(100.0, 20.0)]
+    assert all(not len(series) for series in live.zones["a"].series()[1:])

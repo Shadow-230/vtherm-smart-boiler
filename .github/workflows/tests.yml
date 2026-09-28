@@ -49,7 +49,13 @@ jobs:
         run: ruff format --check .
       - name: Types
         run: mypy
-      - name: Tests with coverage
+      # Two runs (P-120): the core tests on their own, without Home Assistant's pytest plugin
+      # (layer 1 of PLAN.md's "Test environment"; sockets stay closed, as that plugin keeps them),
+      # then every other test with it; coverage adds up over both, and its floor is checked once,
+      # at the end of the second run.
+      - name: Core tests, without Home Assistant
         run: |
           mkdir -p .tmp
-          python -m pytest -q --cov --cov-report=term
+          python -m pytest -q -p no:homeassistant --disable-socket --allow-unix-socket --cov --cov-branch --cov-report= --cov-fail-under=0 tests/core
+      - name: The other tests, with coverage of both runs
+        run: python -m pytest -q --cov --cov-branch --cov-append --cov-report=term --ignore=tests/core
