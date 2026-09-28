@@ -94,8 +94,11 @@ Each topic lives only in its file; do not copy it here.
 - Use the Explore subagent for repository searches.
 - Read large files in parts (offset and limit, `sed -n`): the harness saves oversized tool
   output outside the project.
-- Once code exists: start changes in `core/` with a test; before a commit run
-  `python -m pytest -q` and `ruff check .` through `scripts/env.sh`.
+- Once code exists: start changes in `core/` with a test; before a commit run through
+  `scripts/env.sh`, as CI does: the core tests without Home Assistant
+  (`python -m pytest -q -p no:homeassistant --disable-socket --allow-unix-socket tests/core`),
+  then the others (`python -m pytest -q --ignore=tests/core`), `ruff check .`,
+  `ruff format --check .` and `mypy`.
 
 ## Code conventions (for when code starts)
 
