@@ -372,9 +372,9 @@ takes the emitter types of its zones (S-33); the burner is shared.
 - A learning algorithm without a pause service gets an explicit warning, which states what its
   advice costs.
 - Per zone the plugin publishes two values, as entities and feature-manager properties
-  (feature manager from 0.2): **hot water available** (heat is reaching the zone — no while DHW
-  is active or while the flow has fallen near room temperature; unknown while the flow signal is
-  unknown or stale)
+  (feature manager from 0.2): **heat available** (`heat_available`; named "hot water available"
+  before 0.2.2, P-61) (heat is reaching the zone — no while DHW is active or while the flow has
+  fallen near room temperature; unknown while the flow signal is unknown or stale)
   and **emitter power factor** (emitter output now versus reference, from emitter type and size,
   valve opening, water and room temperature). The factor is computed only for zones that are
   heating; otherwise the last value is held; it is unavailable, with a reason, when data is
@@ -613,8 +613,10 @@ How control decides (principle 12):
   boiler reports as stopping it" (advanced) — on `opentherm_gw` the boiler's "Low water pressure"
   and its other fault sensors, on ESPHome its fault binary sensors, on EMS-ESP no standard one
   (model-specific service codes) (Q3.9). On OTGW such a flag counts only while the boiler's "Fault
-  indication" is on, as the gateway reads the fault details once per new fault and never again after
-  it clears (provisional, K4). While either reads a known "on" for 5 min (provisional, K4), control
+  indication" — a third optional signal the user maps, none by default — is on, as the gateway reads
+  the fault details once per new fault and never again after it clears; without it mapped, a
+  gateway's fault flag stops nothing and the feature names what it lacks (provisional, K4). While
+  either reads a known "on" for 5 min (provisional, K4), control
   sends its usual "off" — frost heating included — with no hand-back and no latch, and heats again
   by itself in the step where every mapped fault reads off, unknown or unavailable (an unknown fault
   counts as no fault). Without a mapped fault, low pressure raises only an "add water" notification,
@@ -658,14 +660,16 @@ room values and a relay:
   plausible room bounds.
 - Nothing is written to the boiler's persistent memory: control writes only to targets declared
   expiring (repeated every 30 s) or held (the device keeps the value; the plugin sends it on a
-  change, after the device returns and every 5 min, with no echo required — provisional, K4 —
-  which replaces "written on change only"). A setpoint target declared persistent, or of unknown
-  write type, keeps control off, with the reason shown; a heating switch declared so is not used
-  (the user's decision, 2026-09-25), and without a usable heating switch control is blocked
-  (decision 11). The OTGW's `CH=` is held: the PIC keeps it until `CH=1` or a reset. The risks of
-  "held" (S-12): a parameter the boiler keeps in its memory (for example EMS-ESP's `heatingtemp`)
-  but declared held is written at every change and every 5 min — about 288 writes a day; the last
-  held command, "off" included, stays while Home Assistant is down.
+  change, after the device returns and every 5 min, with no echo required — provisional, K4 — which
+  replaces "written on change only"). A setpoint target declared persistent, or of unknown write
+  type, keeps control off, with the reason shown; a heating switch declared so is not used (the
+  user's decision, 2026-09-25), and without a usable heating switch control is blocked (decision
+  11). The OTGW's `CH=` is held: the PIC keeps it until `CH=1` or a reset; the plugin sends it again
+  with every `CS` keep-alive (30 s; provisional, K4), as it lives in the PIC's memory, not the
+  boiler's, and an untraced PIC reset would otherwise lose "off" for up to 5 min where no heating
+  read-back is mapped. The risks of "held" (S-12): a parameter the boiler keeps in its memory (for
+  example EMS-ESP's `heatingtemp`) but declared held is written at every change and every 5 min —
+  about 288 writes a day; the last held command, "off" included, stays while Home Assistant is down.
 - Temperatures are in °C and differences in K; the form shows the unit (S-44). A value goes to an
   entity in the entity's own unit (°C, °F or K), rounded to its step inside the limits and
   compared after rounding; its range is checked in the same unit; an entity in any other unit, or
@@ -848,7 +852,8 @@ in K):
   after the device returns and every 5 min (risks: see "Nothing is written to the boiler's
   persistent memory" above); **persistent**, or **unknown** (default) — not written: control
   stays off for a setpoint target, and a heating switch is left unused, which blocks control
-  (decision 11). Built-in OTGW repeats `CS` every 30 s; its `CH=` is held.
+  (decision 11). Built-in OTGW repeats `CS` every 30 s; its `CH=` is held and sent with each
+  `CS` keep-alive.
 - A heating on/off read-back: none by default — heating on/off is then shown unconfirmed (risk:
   another controller switching it goes unnoticed). With "gateway with thermostat", the optional
   field "the OpenTherm thermostat's requested control setpoint" tells a lost command from another
@@ -861,7 +866,8 @@ in K):
 - Comfort correction on (default) or off; its bounds are fixed (principle 13).
 - Learning pauses on (default) or off.
 - The reactions decision 7 allows.
-- The two boiler-fault signals, and the "add water" threshold (none by default).
+- The two boiler-fault signals, the gateway's "Fault indication", and the "add water" threshold
+  (none by default).
 - The return by itself after another controller (off by default, confirmed twice; not on the
   relay path).
 - What is wired to a gateway's thermostat terminals (decision 1).
@@ -941,7 +947,7 @@ yet; the user reviews every provisional value at K4.
 | Activation delay 0–600 s in steps of 10 | options | decided (decision 5) |
 | "Off" at least 1 K below the lowest water temperature; refused within 0.5 K of an "own control" hand-back value | limits | decided (P-43, S-49) |
 | Relay check 5 min; blind repeats every repeat interval; timer lapse at or after max(timer − 60 s, timer ÷ 2), renewal every min(timer ÷ 2, repeat interval) | control | provisional, K4 |
-| Held values resent every 5 min | control | provisional, K4 |
+| Held values resent every 5 min; the OTGW's `CH=` with every `CS` keep-alive (30 s) | control | provisional, K4; `CH=` lives in the PIC's memory, and an untraced PIC reset would otherwise lose "off" for up to 5 min |
 | "Commands lost" at 3 within 24 h, cleared after 24 h without a loss; trace window 5 min | guards | provisional, K4 |
 | A difference judged after 2 steps (20 s) | guards | provisional, K4 |
 | Ignored from the start: never shown for more than 120 s after each of the first 3 sends | guards | provisional, K4 |
@@ -955,7 +961,7 @@ yet; the user reviews every provisional value at K4.
 | A passive fixed circuit's margin 5 K | limits | provisional, K4 (reason to confirm) |
 | A timeout hand-back released within 0.5 K of the baseline; "hand-back failed" after 3 min | hand-back | provisional, K4 (S-20) |
 | A relay's proof-of-heat window 30 min after "on" | control | longer than a common 20-min restart lockout; provisional, K4 |
-| "Not worth it" only with at least 2 criteria judged | verdict | provisional, K4 (S-32) |
+| "Not worth it" only with at least 3 of 4 criteria judged (2 of 3 for a non-condensing boiler) | verdict | provisional, K4 (S-32) |
 | "Handed back in frost" below the frost limit, cleared at the release | alarms | provisional, K4 (S-57) |
 | The lowest-water-temperature suggestion: the reference + 2 K, rounded up to 0.5 °C, below the caps | monitor | provisional, K4 |
 | J4's starts criterion: at most the boiler's own regulation's starts per hour × 1.10 | acceptance | provisional, K4 (S-15) |
@@ -975,7 +981,7 @@ yet; the user reviews every provisional value at K4.
 | Relay timer tolerance 60 s; a flow rise of 5 K as proof of heat; 20 remembered contexts | control (X8) | provisional, K4 (reason to confirm) |
 | Alarm holds 5 min; an unknown input held 1 h; 50 % known flame; the limit − 2; 2 K; a 10-K slope span; 0.05 bar/K; 40 °C; 0.1 bar | alarms (Y1) | provisional, K4 (reason to confirm) |
 | Hot-water inference 0.35–0.65; 12 h; 6 h; 10 min; 1 h | monitor (Y2) | provisional, K4 (reason to confirm) |
-| Building model: 8 K; 12 K; 2 K; 3 of 4; 2 of 3 | monitor (Y3) | provisional, K4 (reason to confirm) |
+| Building model: 8 K; 12 K; 2 K; 3 of 4; 2 of 3; outdoor readings within −30…+30 °C | monitor (Y3) | provisional, K4 (reason to confirm) |
 | Forecast call timeout 30 s | forecasts (Y4) | provisional, K4 (reason to confirm) |
 
 The steps of `docs/plan-0.2.2.md` that build these values record their reasons; a value a step
@@ -1079,8 +1085,8 @@ The verdict rests on what was measured and on what the released control changes:
   confidently measured building model (confidence at least 0.5); an estimate from rule-of-thumb
   defaults is marked as such and decides nothing (S-17). An entered design load always wins over
   a measured one, and the texts say so.
-- "Not worth it" only with at least 2 criteria judged (provisional, K4); otherwise "not enough
-  data" (S-32).
+- "Not worth it" only with at least 3 of 4 criteria judged — 2 of 3 for a non-condensing boiler
+  (provisional, K4); otherwise "not enough data" (S-32).
 - Gas measured while the burner is off — other consumers on the meter — is reported apart, not
   counted as heating gas (S-31; provisional, K4).
 - The building model feeds the monitor only; it is visible and resettable. Bounded learning
