@@ -1,5 +1,6 @@
 """Sensors: boiler metrics, verdict, reference room, critical zones, emitter power factors, the
-lowest water temperature's suggestion, and the state and setpoint of control."""
+building model's heat loss and heating threshold, the lowest water temperature's suggestion, and
+the state and setpoint of control."""
 
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ from .core.monitor import MonitorSummary
 from .core.parameters import ParameterKey, Source
 from .core.signal_check import Feature, FeatureStatus, SignalStatus
 from .core.signals import Signal
-from .core.verdict import Verdict
+from .core.verdict import Reason, Verdict
 from .core.zones import SelectionStatus
 from .entity import ControlEntity, SmartBoilerEntity
 
@@ -111,14 +112,28 @@ def _verdict(data: MonitorData) -> Value:
     return None if data.analysis is None else data.analysis.verdict.verdict.value
 
 
+def _reason(reason: Reason) -> dict[str, Any]:
+    """A verdict reason: its code, kind, value and limit; for a problem whether 0.2.2's control
+    changes it (S-22) — false is "not changed yet"; where one says more, why it was not judged
+    (S-17: the building model an estimate only)."""
+    shown: dict[str, Any] = {
+        "code": reason.code.value,
+        "kind": reason.kind.value,
+        "value": reason.value,
+        "limit": reason.limit,
+    }
+    if reason.changed_by_control is not None:
+        shown["changed_by_control"] = reason.changed_by_control
+    if reason.detail is not None:
+        shown["detail"] = reason.detail
+    return shown
+
+
 def _verdict_attributes(data: MonitorData) -> dict[str, Any]:
     verdict = None if data.analysis is None else data.analysis.verdict
     reasons = [] if verdict is None else verdict.reasons
     return {
-        "reasons": [
-            {"code": r.code.value, "kind": r.kind.value, "value": r.value, "limit": r.limit}
-            for r in reasons
-        ],
+        "reasons": [_reason(r) for r in reasons],
         "monitoring_since": data.monitoring_since,
         # P-96: days left out because the plugin controlled the boiler in them.
         "days_left_out": None if verdict is None else verdict.days_left_out,
@@ -191,28 +206,41 @@ def _report_attributes(data: MonitorData) -> dict[str, Any]:
     }
 
 
-def _loss_value(data: MonitorData) -> Value:
-    effective = data.parameters.get(ParameterKey.LOSS_COEFFICIENT).effective()
-    return None if effective is None else round(effective.value, 3)
+def _parameter_value(key: ParameterKey, digits: int) -> Callable[[MonitorData], Value]:
+    """The building value in use: the user's entry, else the measured one with the confidence
+    the plugin counts, else the class default — its source shown beside it."""
+
+    def value(data: MonitorData) -> Value:
+        effective = data.parameters.get(key).effective()
+        return None if effective is None else round(effective.value, digits)
+
+    return value
 
 
-def _loss_attributes(data: MonitorData) -> dict[str, Any]:
+def _parameter_attributes(
+    key: ParameterKey, digits: int
+) -> Callable[[MonitorData], dict[str, Any]]:
     """Where the value comes from; and the value entered beside the one measured, with whether
-    they disagree beyond the tolerance (P77)."""
-    parameter = data.parameters.get(ParameterKey.LOSS_COEFFICIENT)
-    effective = parameter.effective()
-    if effective is None:
-        return {}
-    entered = parameter.estimate(Source.ENTERED)
-    measured = parameter.estimate(Source.MEASURED)
-    return {
-        "source": effective.source.value,
-        "confidence": round(effective.confidence, 2),
-        "entered": None if entered is None else round(entered.value, 3),
-        "measured": None if measured is None else round(measured.value, 3),
-        "measured_confidence": None if measured is None else round(measured.confidence, 2),
-        "mismatch": parameter.mismatch() is not None,
-    }
+    they disagree beyond the tolerance (P77, P-90). An entered value always wins (P-92): the
+    measured one never replaces it, it shows a mismatch."""
+
+    def attributes(data: MonitorData) -> dict[str, Any]:
+        parameter = data.parameters.get(key)
+        effective = parameter.effective()
+        if effective is None:
+            return {}
+        entered = parameter.estimate(Source.ENTERED)
+        measured = parameter.estimate(Source.MEASURED)
+        return {
+            "source": effective.source.value,
+            "confidence": round(effective.confidence, 2),
+            "entered": None if entered is None else round(entered.value, digits),
+            "measured": None if measured is None else round(measured.value, digits),
+            "measured_confidence": None if measured is None else round(measured.confidence, 2),
+            "mismatch": parameter.mismatch() is not None,
+        }
+
+    return attributes
 
 
 def _lowest_water(data: MonitorData) -> Value:
@@ -348,8 +376,18 @@ BOILER_SENSORS: tuple[BoilerSensorDescription, ...] = (
         key="loss_coefficient",
         native_unit_of_measurement="kW/K",
         entity_registry_visible_default=False,
-        value_fn=_loss_value,
-        attributes_fn=_loss_attributes,
+        value_fn=_parameter_value(ParameterKey.LOSS_COEFFICIENT, 3),
+        attributes_fn=_parameter_attributes(ParameterKey.LOSS_COEFFICIENT, 3),
+    ),
+    BoilerSensorDescription(
+        # P-90: the heating threshold in use — also the degree-days' base — with its source,
+        # and the measured one beside an entered one; its reset button forgets the measured.
+        key="heating_threshold",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        entity_registry_visible_default=False,
+        value_fn=_parameter_value(ParameterKey.HEATING_THRESHOLD, 1),
+        attributes_fn=_parameter_attributes(ParameterKey.HEATING_THRESHOLD, 1),
     ),
     BoilerSensorDescription(
         key="lowest_water_suggestion",

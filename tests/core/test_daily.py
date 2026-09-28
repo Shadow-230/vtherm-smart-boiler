@@ -121,7 +121,7 @@ def test_a_day_of_twenty_three_hours_is_fitted_as_a_whole_day() -> None:
     """P63: the day the clocks go forward has 23 hours; its heat counts as a day's."""
     day = DaySummary(
         0.0, 23 * HOUR, 23 * HOUR, 10, 10, 0, HOUR, 10 * HOUR,
-        0.0, 0.0, 0.0, 0.0, False, 7.0, None, outdoor_mean=5.0, heat_kwh=46.0,
+        0.0, 0.0, 7.0, None, outdoor_mean=5.0, heat_kwh=46.0,
     )  # fmt: skip
     [point] = fit_points([day])
     assert point.energy_kwh == pytest.approx(48.0)
@@ -315,14 +315,15 @@ def test_the_verdict_leaves_out_days_under_control() -> None:
     from dataclasses import replace
 
     options = VerdictOptions(min_days=7.0)
-    baseline = days_of(cycling(7, every_min=12.0), 7)  # five starts an hour: worth it
+    baseline = days_of(cycling(7, every_min=12.0), 7)  # five starts an hour
     controlled = [
         replace(day, start=day.start + 7 * DAY, end=day.end + 7 * DAY, controlled_s=2 * HOUR)
         for day in days_of(cycling(3, every_min=60.0), 3)
     ]
     today = replace(controlled[0], start=10 * DAY, end=10 * DAY + HOUR)
     result = verdict_over_days([*baseline, *controlled], options, window_days=7, current=today)
-    assert result.verdict is Verdict.WORTH_IT
+    # Frequent starts found: a problem 0.2.2's control does not change (answer K).
+    assert result.verdict is Verdict.NOT_WORTH_IT
     assert result.days_left_out == 4
     codes = {r.code.value: r.value for r in result.reasons}
     assert codes["frequent_starts"] == pytest.approx(5.0)
@@ -363,3 +364,77 @@ def test_a_stuck_sensor_without_the_weather_leaves_the_day_unknown() -> None:
     history.weather = Series()
     alone = summarize_day(history, PARAMETERS, 0, DAY)
     assert alone.outdoor_mean == pytest.approx(8.0)
+
+
+def test_a_reset_value_is_fitted_from_later_days_only() -> None:
+    """P-90: the user reset a measured value at ``t0``; it is fitted again from the days that
+    start from then on only, the other value from every kept day — each reset forgets only its
+    own value. Here the house changed at ``t0`` (insulated: threshold 18 → 16 °C, loss 0.25 →
+    0.2 kW/K)."""
+    from custom_components.vtherm_smart_boiler.core.daily import fit_building
+    from custom_components.vtherm_smart_boiler.core.parameters import DEFAULT_CONFIDENCE
+
+    def kept(first: int, loss: float, threshold: float) -> list[DaySummary]:
+        days = []
+        for index in range(20):
+            outdoor = -5.0 + 15.0 * index / 19
+            start = (first + index) * DAY
+            day = DaySummary(
+                start, start + DAY, DAY, 10, 10, 0, HOUR, 10 * HOUR, 0.0, 0.0, None, None,
+                outdoor_mean=outdoor, heat_kwh=24 * loss * (threshold - outdoor),
+            )  # fmt: skip
+            days.append(day)
+        return days
+
+    t0 = 20 * DAY
+    days = [*kept(0, 0.25, 18.0), *kept(20, 0.2, 16.0)]
+    threshold = Estimate(20.0, Source.DEFAULT, DEFAULT_CONFIDENCE)
+    both = fit_building(days, threshold, 50 * DAY)  # no reset: every day, a blend
+    assert both is not None
+    assert both.loss is not None
+    assert both.threshold is not None
+    assert both.loss.value == pytest.approx(0.225)
+    assert both.threshold.value == pytest.approx(17.1, abs=0.1)
+    reset_threshold = fit_building(days, threshold, 50 * DAY, {ParameterKey.HEATING_THRESHOLD: t0})
+    assert reset_threshold is not None
+    assert reset_threshold.threshold is not None
+    assert reset_threshold.threshold.value == pytest.approx(16.0)  # the later days only
+    assert reset_threshold.loss == both.loss  # every day, as without a reset
+    reset_loss = fit_building(days, threshold, 50 * DAY, {ParameterKey.LOSS_COEFFICIENT: t0})
+    assert reset_loss is not None
+    assert reset_loss.loss is not None
+    assert reset_loss.loss.value == pytest.approx(0.2)
+    assert reset_loss.threshold == both.threshold
+    after = {ParameterKey.LOSS_COEFFICIENT: t0, ParameterKey.HEATING_THRESHOLD: t0}
+    reset_both = fit_building(days, threshold, 50 * DAY, after)
+    assert reset_both is not None
+    assert reset_both.loss is not None
+    assert reset_both.threshold is not None
+    assert (reset_both.loss.value, reset_both.threshold.value) == (
+        pytest.approx(0.2),
+        pytest.approx(16.0),
+    )
+    # Reset just now: no later day yet — nothing measured for it, the other still fitted.
+    now = {ParameterKey.HEATING_THRESHOLD: 40 * DAY}
+    fresh = fit_building(days, threshold, 50 * DAY, now)
+    assert fresh is not None
+    assert fresh.threshold is None
+    assert fresh.loss == both.loss
+    both_now = {ParameterKey.HEATING_THRESHOLD: 40 * DAY, ParameterKey.LOSS_COEFFICIENT: 40 * DAY}
+    assert fit_building(days, threshold, 50 * DAY, both_now) is None
+
+
+def test_the_analysis_gives_no_verdict_without_a_flame_signal() -> None:
+    """S-43: a history with no flame signal mapped — a relay without one, say — gets "not
+    enough data" with the reason ``no_burner_signal``, whatever else it holds."""
+    from custom_components.vtherm_smart_boiler.core.analysis import analyse
+    from custom_components.vtherm_smart_boiler.core.monitor import MonitorOptions
+    from custom_components.vtherm_smart_boiler.core.verdict import Reason, ReasonCode, ReasonKind
+
+    history = History(signals={Signal.FLOW: Series([(0, 40.0)])}, weather=Series([(0, 5.0)]))
+    days = [(d * DAY, (d + 1) * DAY) for d in range(8)]
+    result = analyse(history, PARAMETERS, MonitorOptions(), 8 * DAY, days)
+    assert result.verdict.verdict is Verdict.NOT_ENOUGH_DATA
+    assert result.verdict.reasons == (Reason(ReasonCode.NO_BURNER_SIGNAL, ReasonKind.DATA),)
+    mapped = analyse(cycling(8), PARAMETERS, MonitorOptions(), 8 * DAY, days)
+    assert ReasonCode.NO_BURNER_SIGNAL not in {r.code for r in mapped.verdict.reasons}

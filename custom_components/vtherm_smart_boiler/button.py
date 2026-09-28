@@ -1,5 +1,10 @@
-"""The "Reset comfort correction" button (answer J of 2026-09-27): the comfort correction, a
-value the running session learns, set to 0 by the user — nothing saved, reloaded or handed back."""
+"""Buttons that reset what the plugin learned or measured, nothing saved, reloaded or handed
+back: the "Reset comfort correction" button (answer J of 2026-09-27) — a value the running
+session learns, set to 0 — and the two building-model resets (P-90, Y3), which forget the
+measured heat loss or heating threshold so that it is fitted again from later days only. The
+building model feeds the monitor only (review question 11): its buttons exist with or without
+control.
+"""
 
 from __future__ import annotations
 
@@ -10,9 +15,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import SmartBoilerCoordinator
-from .entity import ControlEntity
+from .core.parameters import ParameterKey
+from .entity import ControlEntity, SmartBoilerEntity
 
 PARALLEL_UPDATES = 1  # one press at a time
+
+# P-90: each reset button and the measured value it forgets.
+RESET_BUTTONS = (
+    ("reset_loss_coefficient", ParameterKey.LOSS_COEFFICIENT),
+    ("reset_heating_threshold", ParameterKey.HEATING_THRESHOLD),
+)
 
 
 async def async_setup_entry(
@@ -21,10 +33,13 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     coordinator: SmartBoilerCoordinator = entry.runtime_data
+    entities: list[ButtonEntity] = [
+        ResetMeasuredButton(coordinator, key, parameter) for key, parameter in RESET_BUTTONS
+    ]
     if coordinator.control is not None:
-        entities = [ResetCorrectionButton(coordinator)]
-        coordinator.expect_entities(entities)
-        async_add_entities(entities)
+        entities.append(ResetCorrectionButton(coordinator))
+    coordinator.expect_entities(entities)
+    async_add_entities(entities)
 
 
 class ResetCorrectionButton(ControlEntity, ButtonEntity):
@@ -40,3 +55,20 @@ class ResetCorrectionButton(ControlEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         await self.control.async_reset_correction()
+
+
+class ResetMeasuredButton(SmartBoilerEntity, ButtonEntity):
+    """Forgets one measured building value — the heat loss or the heating threshold — which is
+    then fitted again from the days that start after the press only (P-90). An entered value
+    stays, and wins as before; no option changes, so nothing is reloaded or handed back."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self, coordinator: SmartBoilerCoordinator, key: str, parameter: ParameterKey
+    ) -> None:
+        super().__init__(coordinator, key)
+        self._parameter = parameter
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_reset_measured(self._parameter)

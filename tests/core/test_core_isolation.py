@@ -80,3 +80,53 @@ def test_core_imports_without_home_assistant_in_a_fresh_process() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+# Review question 11: bounded learning (principle 13) covers what control uses — the comfort
+# correction; the building model feeds the monitor only. These core modules hold it or feed on
+# it; control's core must reach none of them, directly or through another module.
+BUILDING_MODEL = frozenset({"building", "analysis", "daily", "verdict", "monitor"})
+CONTROL_CORE = ("controller", "loop", "limits", "demand")
+
+
+def _core_modules_imported(name: str) -> set[str]:
+    """The core modules ``core/<name>.py`` imports directly, by their short names (core imports
+    its own modules with ``from``)."""
+    path = CORE_DIR / f"{name}.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    package = _module_package(path)
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.level:
+            module = _resolve_relative(package, node.level, node.module)
+        else:
+            module = node.module or ""
+        if module == CORE_PACKAGE:  # ``from . import x``
+            found.update(alias.name for alias in node.names)
+        elif module.startswith(CORE_PACKAGE + "."):
+            found.add(module.removeprefix(CORE_PACKAGE + ".").split(".")[0])
+    return {module for module in found if (CORE_DIR / f"{module}.py").is_file()}
+
+
+def test_control_uses_no_building_model() -> None:
+    """Question 11: the controller, the loop, the limits and the demand reach no module of the
+    building model, through any chain of imports; and the Home Assistant side of control reads
+    none of its values."""
+    for start in CONTROL_CORE:
+        reached: set[str] = set()
+        todo = [start]
+        while todo:
+            module = todo.pop()
+            for imported in _core_modules_imported(module) - reached:
+                reached.add(imported)
+                todo.append(imported)
+        assert not reached & BUILDING_MODEL, (start, sorted(reached & BUILDING_MODEL))
+    package = CORE_DIR.parent
+    for name in ("control.py", "control_config.py"):
+        text = (package / name).read_text(encoding="utf-8")
+        for word in ("core.building", "LoadModel", "LOSS_COEFFICIENT", "HEATING_THRESHOLD"):
+            assert word not in text, (name, word)
+    # The check itself sees a chain: the analysis reaches the building model.
+    assert "building" in _core_modules_imported("analysis")

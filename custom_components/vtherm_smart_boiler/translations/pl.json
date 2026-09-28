@@ -145,7 +145,7 @@
       },
       "building": {
         "title": "Budynek",
-        "description": "Pierwszy szacunek strat ciepła domu; zapisane dni grzania go poprawiają. Czego nie wiesz, zostaw puste.",
+        "description": "Pierwszy szacunek strat ciepła domu; zapisane dni grzania poprawiają szacunek ze zgrubnych odpowiedzi. Wartość, którą wpiszesz, zawsze wygrywa — dane nigdy jej nie zastępują, pokazują tylko rozbieżność. Czego nie wiesz, zostaw puste.",
         "data": {
           "floor_area": "Powierzchnia ogrzewana",
           "insulation": "Izolacja",
@@ -156,12 +156,12 @@
           "design_outdoor": "Projektowa temperatura zewnętrzna"
         },
         "data_description": {
-          "floor_area": "W m². Z klasą izolacji daje zgrubny pierwszy szacunek, zastępowany w miarę napływu danych; zła powierzchnia wypacza pierwsze dni werdyktu.",
+          "floor_area": "W m². Z klasą izolacji daje zgrubny pierwszy szacunek, pokazywany, dopóki nie zastąpią go zapisane dni; zgrubny szacunek nigdy nie rozstrzyga werdyktu.",
           "insulation": "Słaba, średnia, dobra albo bardzo dobra. Część zgrubnego pierwszego szacunku.",
           "thermal_mass": "Jak wolno dom się wychładza. Zapisywane na potrzeby przyszłych funkcji prognoz.",
-          "design_load_kw": "Twoje własne obliczenie strat ciepła, w kW przy projektowej temperaturze zewnętrznej. Wygrywa ze zgrubnym szacunkiem; wartość, jakiej nie ma żaden dom, jest odrzucana.",
-          "loss_coefficient": "Strata ciepła na kelwin, w kW/K, jeśli ją znasz. Wygrywa z każdym szacunkiem, także zmierzonym: zła wartość zostaje zła.",
-          "heating_threshold": "Temperatura zewnętrzna, powyżej której dom nie potrzebuje ogrzewania, w °C; także podstawa stopniodni. Domyślnie 15 °C. Zła wypacza stopniodnie i gaz na stopniodzień.",
+          "design_load_kw": "Twoje własne obliczenie strat ciepła, w kW przy projektowej temperaturze zewnętrznej. Zawsze wygrywa: zapisane dni nigdy go nie zastępują, pokazują tylko rozbieżność. Wartość, jakiej nie ma żaden dom, jest odrzucana.",
+          "loss_coefficient": "Strata ciepła na kelwin, w kW/K, jeśli ją znasz. Zawsze wygrywa, także ze zmierzoną: zapisane dni nigdy jej nie zastępują, pokazują tylko rozbieżność — zła wartość zostaje zła.",
+          "heating_threshold": "Temperatura zewnętrzna, powyżej której dom nie potrzebuje ogrzewania, w °C; także podstawa stopniodni. Domyślnie 15 °C, dopóki nie zmierzą go zapisane dni z dość szerokiego zakresu temperatur zewnętrznych. Wpisany zawsze wygrywa; zmierzony jest pokazywany obok, z ewentualną rozbieżnością. Zły wypacza stopniodnie i gaz na stopniodzień.",
           "design_outdoor": "Najzimniejsza temperatura zewnętrzna, do której odnosi się Twoje obciążenie projektowe, w °C. Domyślnie −15 °C. Zła wypacza szacunek z obciążenia projektowego."
         }
       },
@@ -200,7 +200,7 @@
         "data_description": {
           "condensing_return": "Powrót poniżej tej wartości liczy się jako kondensacja, w °C. Domyślnie 55 °C. Za wysoka zawyża udział kondensacji.",
           "short_burn_min": "Palenia krótsze niż ta wartość liczą się jako krótkie, w minutach. Domyślnie 10. Dłuższa czyni więcej paleń krótkimi, a werdykt surowszym.",
-          "monitoring_days": "Dni danych przed werdyktem, a później przed możliwością włączenia sterowania. Domyślnie 7; krócej nie można.",
+          "monitoring_days": "Dni od dodania tej integracji, zanim można włączyć sterowanie; werdykt potrzebuje tylu dni danych. Gdy miną, sterowanie może ruszyć nawet bez werdyktu — poza sezonem grzewczym danych może być na niego za mało. Domyślnie 7; krócej nie można.",
           "near_room_k": "Woda w tej odległości od temperatury pokoju liczy się jako brak ciepłej wody, w K. Domyślnie 3. Większa szybciej mówi „brak ciepłej wody”.",
           "foreign_heat_hold_min": "Jak długo pokój liczy się jako ogrzany po wyłączeniu źródła, w minutach. Domyślnie 60. Dłużej trzyma naukę wstrzymaną dłużej po kominku.",
           "add_water_below": "Opcjonalnie: poniżej tego ciśnienia dostaniesz powiadomienie, by dolać wody, w barach — weź wartość z instrukcji kotła (jego minimalne ciśnienie robocze). Domyślnie puste: bez powiadomienia. Tylko informuje; grzanie wyłącza się wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Za nisko — dowiesz się za późno; za wysoko — powiadomienie przyjdzie, choć ciśnienie jest w porządku.",
@@ -436,7 +436,7 @@
       },
       "building": {
         "title": "Budynek",
-        "description": "Pierwszy szacunek strat ciepła domu; zapisane dni grzania go poprawiają. Czego nie wiesz, zostaw puste. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Pierwszy szacunek strat ciepła domu; zapisane dni grzania poprawiają szacunek ze zgrubnych odpowiedzi. Wartość, którą wpiszesz, zawsze wygrywa — dane nigdy jej nie zastępują, pokazują tylko rozbieżność. Czego nie wiesz, zostaw puste. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "floor_area": "Powierzchnia ogrzewana",
           "insulation": "Izolacja",
@@ -447,12 +447,12 @@
           "design_outdoor": "Projektowa temperatura zewnętrzna"
         },
         "data_description": {
-          "floor_area": "W m². Z klasą izolacji daje zgrubny pierwszy szacunek, zastępowany w miarę napływu danych; zła powierzchnia wypacza pierwsze dni werdyktu.",
+          "floor_area": "W m². Z klasą izolacji daje zgrubny pierwszy szacunek, pokazywany, dopóki nie zastąpią go zapisane dni; zgrubny szacunek nigdy nie rozstrzyga werdyktu.",
           "insulation": "Słaba, średnia, dobra albo bardzo dobra. Część zgrubnego pierwszego szacunku.",
           "thermal_mass": "Jak wolno dom się wychładza. Zapisywane na potrzeby przyszłych funkcji prognoz.",
-          "design_load_kw": "Twoje własne obliczenie strat ciepła, w kW przy projektowej temperaturze zewnętrznej. Wygrywa ze zgrubnym szacunkiem; wartość, jakiej nie ma żaden dom, jest odrzucana.",
-          "loss_coefficient": "Strata ciepła na kelwin, w kW/K, jeśli ją znasz. Wygrywa z każdym szacunkiem, także zmierzonym: zła wartość zostaje zła.",
-          "heating_threshold": "Temperatura zewnętrzna, powyżej której dom nie potrzebuje ogrzewania, w °C; także podstawa stopniodni. Domyślnie 15 °C. Zła wypacza stopniodnie i gaz na stopniodzień.",
+          "design_load_kw": "Twoje własne obliczenie strat ciepła, w kW przy projektowej temperaturze zewnętrznej. Zawsze wygrywa: zapisane dni nigdy go nie zastępują, pokazują tylko rozbieżność. Wartość, jakiej nie ma żaden dom, jest odrzucana.",
+          "loss_coefficient": "Strata ciepła na kelwin, w kW/K, jeśli ją znasz. Zawsze wygrywa, także ze zmierzoną: zapisane dni nigdy jej nie zastępują, pokazują tylko rozbieżność — zła wartość zostaje zła.",
+          "heating_threshold": "Temperatura zewnętrzna, powyżej której dom nie potrzebuje ogrzewania, w °C; także podstawa stopniodni. Domyślnie 15 °C, dopóki nie zmierzą go zapisane dni z dość szerokiego zakresu temperatur zewnętrznych. Wpisany zawsze wygrywa; zmierzony jest pokazywany obok, z ewentualną rozbieżnością. Zły wypacza stopniodnie i gaz na stopniodzień.",
           "design_outdoor": "Najzimniejsza temperatura zewnętrzna, do której odnosi się Twoje obciążenie projektowe, w °C. Domyślnie −15 °C. Zła wypacza szacunek z obciążenia projektowego."
         }
       },
@@ -491,7 +491,7 @@
         "data_description": {
           "condensing_return": "Powrót poniżej tej wartości liczy się jako kondensacja, w °C. Domyślnie 55 °C. Za wysoka zawyża udział kondensacji.",
           "short_burn_min": "Palenia krótsze niż ta wartość liczą się jako krótkie, w minutach. Domyślnie 10. Dłuższa czyni więcej paleń krótkimi, a werdykt surowszym.",
-          "monitoring_days": "Dni danych przed werdyktem, a później przed możliwością włączenia sterowania. Domyślnie 7; krócej nie można.",
+          "monitoring_days": "Dni od dodania tej integracji, zanim można włączyć sterowanie; werdykt potrzebuje tylu dni danych. Gdy miną, sterowanie może ruszyć nawet bez werdyktu — poza sezonem grzewczym danych może być na niego za mało. Domyślnie 7; krócej nie można.",
           "near_room_k": "Woda w tej odległości od temperatury pokoju liczy się jako brak ciepłej wody, w K. Domyślnie 3. Większa szybciej mówi „brak ciepłej wody”.",
           "foreign_heat_hold_min": "Jak długo pokój liczy się jako ogrzany po wyłączeniu źródła, w minutach. Domyślnie 60. Dłużej trzyma naukę wstrzymaną dłużej po kominku.",
           "add_water_below": "Opcjonalnie: poniżej tego ciśnienia dostaniesz powiadomienie, by dolać wody, w barach — weź wartość z instrukcji kotła (jego minimalne ciśnienie robocze). Domyślnie puste: bez powiadomienia. Tylko informuje; grzanie wyłącza się wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Za nisko — dowiesz się za późno; za wysoko — powiadomienie przyjdzie, choć ciśnienie jest w porządku.",
@@ -506,7 +506,7 @@
       },
       "control": {
         "title": "Sterowanie (eksperymentalne)",
-        "description": "Jak wtyczka steruje kotłem: zapisując nastawę zasilania albo włączając i wyłączając go przekaźnikiem. Sterowanie pozostaje wyłączone, dopóki go nie włączysz, i działa dopiero po okresie monitorowania. Wybierz „Bez sterowania”, żeby tylko monitorować. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Jak wtyczka steruje kotłem: zapisując nastawę zasilania albo włączając i wyłączając go przekaźnikiem. Sterowanie pozostaje wyłączone, dopóki go nie włączysz, i działa dopiero po okresie monitorowania, liczonym w dniach od dodania tej integracji. Potem sterowanie może ruszyć nawet bez werdyktu — poza sezonem grzewczym monitor może mieć na niego za mało danych; przełącznik sterowania pokazuje werdykt. Wybierz „Bez sterowania”, żeby tylko monitorować. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "write_path": "Ścieżka zapisu",
           "topology": "Podłączenie bramki",
@@ -1023,6 +1023,26 @@
         "state_attributes": {
           "days_left_out": {
             "name": "Dni pominięte (pod sterowaniem)"
+          },
+          "reasons": {
+            "name": "Powody",
+            "state": {
+              "criteria_judged": "Za mało kryteriów udało się ocenić, by uznać, że sterowania nie warto włączać",
+              "no_burner_signal": "Nie wskazano sygnału palnika (płomienia): bez niego nie ma werdyktu"
+            }
+          },
+          "changed_by_control": {
+            "name": "Zmienia to sterowanie",
+            "state": {
+              "true": "Zmienia to sterowanie w 0.2.2",
+              "false": "Jeszcze bez zmian: sterowanie w 0.2.2 tego nie zmienia; ochrona przed częstym taktowaniem jest planowana na 0.3, jeszcze do decyzji (PLAN.md)"
+            }
+          },
+          "detail": {
+            "name": "Dlaczego nieoceniony",
+            "state": {
+              "estimate_only": "Tylko szacunek: model budynku opiera się na zgrubnych wartościach domyślnych, a nie na wpisanych lub pewnie zmierzonych"
+            }
           }
         }
       },
@@ -1060,7 +1080,14 @@
         "name": "Współczynnik strat budynku",
         "state_attributes": {
           "source": {
-            "name": "Źródło"
+            "name": "Źródło",
+            "state": {
+              "default": "Domyślna (reguła kciuka)",
+              "suggested": "Proponowana, niepotwierdzona",
+              "entered": "Wpisana przez Ciebie",
+              "measured": "Zmierzona",
+              "learned": "Wyuczona"
+            }
           },
           "confidence": {
             "name": "Pewność"
@@ -1076,6 +1103,36 @@
           },
           "mismatch": {
             "name": "Wpisana i zmierzona się różnią"
+          }
+        }
+      },
+      "heating_threshold": {
+        "name": "Próg grzania budynku",
+        "state_attributes": {
+          "source": {
+            "name": "Źródło",
+            "state": {
+              "default": "Domyślna (reguła kciuka)",
+              "suggested": "Proponowana, niepotwierdzona",
+              "entered": "Wpisana przez Ciebie",
+              "measured": "Zmierzona",
+              "learned": "Wyuczona"
+            }
+          },
+          "confidence": {
+            "name": "Pewność"
+          },
+          "entered": {
+            "name": "Wpisany"
+          },
+          "measured": {
+            "name": "Zmierzony"
+          },
+          "measured_confidence": {
+            "name": "Pewność pomiaru"
+          },
+          "mismatch": {
+            "name": "Wpisany i zmierzony się różnią"
           }
         }
       },
@@ -1601,6 +1658,14 @@
             "state": {
               "boiler_link_lost": "Utracono łączność z kotłem: sterowanie czeka, aż wróci na minutę"
             }
+          },
+          "verdict": {
+            "name": "Werdykt",
+            "state": {
+              "worth_it": "Warto włączyć",
+              "not_worth_it": "Nie warto włączać: sterowanie wciąż można włączyć",
+              "not_enough_data": "Za mało danych: sterowanie może ruszyć bez werdyktu"
+            }
           }
         }
       }
@@ -1608,6 +1673,12 @@
     "button": {
       "reset_comfort_correction": {
         "name": "Wyzeruj korektę komfortu"
+      },
+      "reset_loss_coefficient": {
+        "name": "Wyzeruj zmierzone straty ciepła"
+      },
+      "reset_heating_threshold": {
+        "name": "Wyzeruj zmierzony próg grzania"
       }
     }
   },
@@ -1971,6 +2042,14 @@
     "reactions_removed": {
       "title": "Reakcje na alarmy nie są już dostępne",
       "description": "Te reakcje na alarmy nie są już dostępne i teraz tylko informują: {alarms}. Wtyczka wyłącza grzanie wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje; pozostałe alarmy mówią, co zrobić."
+    },
+    "installation_empty_circuit": {
+      "title": "Obieg grzewczy nie ma pomieszczeń",
+      "description": "Do tych obiegów nie przypisano żadnej strefy Versatile Thermostat: {circuits}. Wtyczka nie wie, kiedy potrzebują ciepła, i nie pokazuje dla nich krytycznego pomieszczenia. Dodaj ich pomieszczenia w opcjach integracji albo usuń te obiegi."
+    },
+    "installation_underfloor_without_max_flow": {
+      "title": "Ogrzewanie podłogowe bez limitu temperatury wody",
+      "description": "Te obiegi zasilają ogrzewanie podłogowe prosto z kotła, bez zaworu mieszającego, i nie mają maksymalnej temperatury zasilania: {circuits}. Zbyt gorąca woda może uszkodzić podłogę. Wpisz maksymalną temperaturę zasilania każdego z nich — limit podłogi od instalatora lub z instrukcji — w opcjach integracji; do tego czasu sterowanie pozostaje zablokowane."
     }
   }
 }

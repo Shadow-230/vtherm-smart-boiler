@@ -137,6 +137,8 @@ async def async_get_config_entry_diagnostics(
             "signals": {s.value: asdict(h) for s, h in data.health.items()},
             "features": {f.value: asdict(state) for f, state in data.features.items()},
             "parameters": _parameters(coordinator),
+            # P-90: where the user reset a measured building value, the moment it happened.
+            "fit_since": {key.value: at for key, at in coordinator.fit_since.items()},
             "zones": {
                 zone_id: {
                     "circuit": view.circuit_id,

@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from .building import LoadModel
 from .cycles import Burn, BurnKind, ClassifiedBurn, DhwInputs, classify_burns, find_burns
 from .history import History
 from .metrics import (
@@ -34,7 +33,7 @@ from .metrics import (
 from .parameters import ParameterKey, ParameterSet
 from .series import Series, known_duration
 from .signals import Signal
-from .verdict import VerdictOptions, VerdictResult, assess, load_below_min_share
+from .verdict import LoadBasis, VerdictOptions, VerdictResult, assess, load_below_min_share
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +77,10 @@ class MonitorSummary:
     # S-31: gas the meter counted while the burner was known off throughout — another consumer
     # (a cooker) — left out of ``gas`` and shown apart; ``None`` without a meter reading.
     other_gas: float | None = None
+    # S-17: ``load_below_min`` is missing only because the building model is an estimate.
+    load_estimate_only: bool = False
+    # S-43: a flame signal is mapped at all.
+    burner_signal: bool = True
 
 
 def dhw_inputs(
@@ -269,11 +272,12 @@ def summarize(
         if gas is not None and gas.complete and days is not None
         else None
     )
-    model = LoadModel.from_parameters(parameters)
-    min_power = parameters.value(ParameterKey.BOILER_MIN_POWER)
+    # S-17: the load is judged only with a trusted building model — entered, or measured with
+    # confidence; a model from rule-of-thumb defaults decides nothing.
+    load = LoadBasis.from_parameters(parameters)
     load_below = (
-        load_below_min_share(outdoor, model, min_power, start, end)
-        if model is not None and min_power is not None and len(outdoor)
+        load_below_min_share(outdoor, load.model, load.min_power_kw, start, end)
+        if load.model is not None and load.min_power_kw is not None and len(outdoor)
         else None
     )
     return MonitorSummary(
@@ -302,6 +306,8 @@ def summarize(
         ),
         load_below_min=load_below,
         other_gas=other_gas,
+        load_estimate_only=load.estimate_only and len(outdoor) > 0,
+        burner_signal=history.is_mapped(Signal.FLAME),
     )
 
 
@@ -313,4 +319,6 @@ def verdict(summary: MonitorSummary, options: MonitorOptions | None = None) -> V
         summary.condensing,
         summary.load_below_min,
         opts.verdict,
+        load_estimate_only=summary.load_estimate_only,
+        burner_signal=summary.burner_signal,
     )

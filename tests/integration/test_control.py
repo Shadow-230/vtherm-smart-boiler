@@ -3176,7 +3176,7 @@ async def test_setup_failing_before_the_store_is_read_leaves_it_intact(
     day_start = float(int(START.timestamp() - 3 * 86400))
     day = DaySummary(
         day_start, day_start + 86400, 86400, 12, 10, 1, 7200.0, 36000.0, 3600.0, 7200.0,
-        0.0, 0.0, False, 8.5, None, 4.0, 60.0,
+        8.5, None, 4.0, 60.0,
     )  # fmt: skip
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
     entry.created_at = START - timedelta(days=7)  # the monitoring start (V1)

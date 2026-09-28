@@ -145,7 +145,7 @@
       },
       "building": {
         "title": "Building",
-        "description": "A first estimate of your house's heat loss; recorded heating days refine it. Leave empty what you do not know.",
+        "description": "A first estimate of your house's heat loss: rough answers are refined by recorded heating days. A value you enter always wins — the data never replace it; they show a mismatch. Leave empty what you do not know.",
         "data": {
           "floor_area": "Heated floor area",
           "insulation": "Insulation",
@@ -156,12 +156,12 @@
           "design_outdoor": "Design outdoor temperature"
         },
         "data_description": {
-          "floor_area": "In m². With the insulation class it gives a rough first estimate, replaced as data comes in; a wrong area skews the first days of the verdict.",
+          "floor_area": "In m². With the insulation class it gives a rough first estimate, shown until recorded days replace it; a rough estimate never decides the verdict.",
           "insulation": "Poor, average, good or very good. Part of the rough first estimate.",
           "thermal_mass": "How slowly the house cools. Recorded for later forecast features.",
-          "design_load_kw": "Your own heat-loss calculation, in kW at the design outdoor temperature. Wins over the rough estimate; a value no house has is refused.",
-          "loss_coefficient": "Heat loss per kelvin, in kW/K, if you know it. Wins over every estimate, measured ones included: a wrong value stays wrong.",
-          "heating_threshold": "Outdoor temperature above which the house needs no heating, in °C; also the degree-day base. Default 15 °C. Wrong, degree-days and gas per degree-day are skewed.",
+          "design_load_kw": "Your own heat-loss calculation, in kW at the design outdoor temperature. Always wins: recorded days never replace it, they show a mismatch. A value no house has is refused.",
+          "loss_coefficient": "Heat loss per kelvin, in kW/K, if you know it. Always wins, measured values included: recorded days never replace it, they show a mismatch — a wrong value stays wrong.",
+          "heating_threshold": "Outdoor temperature above which the house needs no heating, in °C; also the degree-day base. Default 15 °C, until recorded days over a wide enough range of outdoor temperatures measure it. Entered, it always wins; the measured value is shown beside it with any mismatch. Wrong, degree-days and gas per degree-day are skewed.",
           "design_outdoor": "The coldest outdoor temperature your design load refers to, in °C. Default −15 °C. Wrong, the estimate from your design load is skewed."
         }
       },
@@ -200,7 +200,7 @@
         "data_description": {
           "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C. Too high overstates the condensing share.",
           "short_burn_min": "Burns shorter than this count as short, in minutes. Default 10. Longer makes more burns short, and the verdict harsher.",
-          "monitoring_days": "Days of data before the verdict is given, and later before control can be enabled. Default 7; shorter is not allowed.",
+          "monitoring_days": "Days from when this integration was added before control can be switched on; the verdict needs this many days of data. Once they have passed, control may start even without a verdict — out of the heating season there may be too little data for one. Default 7; shorter is not allowed.",
           "near_room_k": "Water within this of the room counts as no hot water, in K. Default 3. Larger says 'no hot water' sooner.",
           "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60. Longer keeps learning paused longer after a fire.",
           "add_water_below": "Optional: below this pressure you are told to add water, in bar — take it from your boiler's manual (its minimum operating pressure). Empty by default: no notification. It only informs; heating stops only while the boiler itself reports a fault that stops it. Too low tells you late; too high tells you while the pressure is fine.",
@@ -436,7 +436,7 @@
       },
       "building": {
         "title": "Building",
-        "description": "A first estimate of your house's heat loss; recorded heating days refine it. Leave empty what you do not know. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "A first estimate of your house's heat loss: rough answers are refined by recorded heating days. A value you enter always wins — the data never replace it; they show a mismatch. Leave empty what you do not know. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "floor_area": "Heated floor area",
           "insulation": "Insulation",
@@ -447,12 +447,12 @@
           "design_outdoor": "Design outdoor temperature"
         },
         "data_description": {
-          "floor_area": "In m². With the insulation class it gives a rough first estimate, replaced as data comes in; a wrong area skews the first days of the verdict.",
+          "floor_area": "In m². With the insulation class it gives a rough first estimate, shown until recorded days replace it; a rough estimate never decides the verdict.",
           "insulation": "Poor, average, good or very good. Part of the rough first estimate.",
           "thermal_mass": "How slowly the house cools. Recorded for later forecast features.",
-          "design_load_kw": "Your own heat-loss calculation, in kW at the design outdoor temperature. Wins over the rough estimate; a value no house has is refused.",
-          "loss_coefficient": "Heat loss per kelvin, in kW/K, if you know it. Wins over every estimate, measured ones included: a wrong value stays wrong.",
-          "heating_threshold": "Outdoor temperature above which the house needs no heating, in °C; also the degree-day base. Default 15 °C. Wrong, degree-days and gas per degree-day are skewed.",
+          "design_load_kw": "Your own heat-loss calculation, in kW at the design outdoor temperature. Always wins: recorded days never replace it, they show a mismatch. A value no house has is refused.",
+          "loss_coefficient": "Heat loss per kelvin, in kW/K, if you know it. Always wins, measured values included: recorded days never replace it, they show a mismatch — a wrong value stays wrong.",
+          "heating_threshold": "Outdoor temperature above which the house needs no heating, in °C; also the degree-day base. Default 15 °C, until recorded days over a wide enough range of outdoor temperatures measure it. Entered, it always wins; the measured value is shown beside it with any mismatch. Wrong, degree-days and gas per degree-day are skewed.",
           "design_outdoor": "The coldest outdoor temperature your design load refers to, in °C. Default −15 °C. Wrong, the estimate from your design load is skewed."
         }
       },
@@ -491,7 +491,7 @@
         "data_description": {
           "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C. Too high overstates the condensing share.",
           "short_burn_min": "Burns shorter than this count as short, in minutes. Default 10. Longer makes more burns short, and the verdict harsher.",
-          "monitoring_days": "Days of data before the verdict is given, and later before control can be enabled. Default 7; shorter is not allowed.",
+          "monitoring_days": "Days from when this integration was added before control can be switched on; the verdict needs this many days of data. Once they have passed, control may start even without a verdict — out of the heating season there may be too little data for one. Default 7; shorter is not allowed.",
           "near_room_k": "Water within this of the room counts as no hot water, in K. Default 3. Larger says 'no hot water' sooner.",
           "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60. Longer keeps learning paused longer after a fire.",
           "add_water_below": "Optional: below this pressure you are told to add water, in bar — take it from your boiler's manual (its minimum operating pressure). Empty by default: no notification. It only informs; heating stops only while the boiler itself reports a fault that stops it. Too low tells you late; too high tells you while the pressure is fine.",
@@ -506,7 +506,7 @@
       },
       "control": {
         "title": "Control (experimental)",
-        "description": "How the plugin controls the boiler: the flow setpoint it writes, or on and off through a relay. Control stays off until you switch it on, and only after the monitoring period. Choose \"No control\" to keep monitoring only. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "How the plugin controls the boiler: the flow setpoint it writes, or on and off through a relay. Control stays off until you switch it on, and only after the monitoring period, counted in days from when this integration was added. Control may then start even without a verdict — out of the heating season the monitor may have too little data for one; the control switch shows the verdict. Choose \"No control\" to keep monitoring only. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "write_path": "Write path",
           "topology": "Gateway connection",
@@ -1023,6 +1023,26 @@
         "state_attributes": {
           "days_left_out": {
             "name": "Days left out (under control)"
+          },
+          "reasons": {
+            "name": "Reasons",
+            "state": {
+              "criteria_judged": "Too few criteria could be judged to say control is not worth enabling",
+              "no_burner_signal": "No burner (flame) signal is mapped: without it there is no verdict"
+            }
+          },
+          "changed_by_control": {
+            "name": "Changed by control",
+            "state": {
+              "true": "Changed by control in 0.2.2",
+              "false": "Not changed yet: not changed by control in 0.2.2; anti-cycling is planned for 0.3, still to be decided (PLAN.md)"
+            }
+          },
+          "detail": {
+            "name": "Why not judged",
+            "state": {
+              "estimate_only": "Estimate only: the building model rests on rough defaults, not on values entered or measured with confidence"
+            }
           }
         }
       },
@@ -1060,7 +1080,44 @@
         "name": "Building loss coefficient",
         "state_attributes": {
           "source": {
-            "name": "Source"
+            "name": "Source",
+            "state": {
+              "default": "Default (rule of thumb)",
+              "suggested": "Suggested, not confirmed",
+              "entered": "Entered by you",
+              "measured": "Measured",
+              "learned": "Learned"
+            }
+          },
+          "confidence": {
+            "name": "Confidence"
+          },
+          "entered": {
+            "name": "Entered"
+          },
+          "measured": {
+            "name": "Measured"
+          },
+          "measured_confidence": {
+            "name": "Measured confidence"
+          },
+          "mismatch": {
+            "name": "Entered and measured disagree"
+          }
+        }
+      },
+      "heating_threshold": {
+        "name": "Building heating threshold",
+        "state_attributes": {
+          "source": {
+            "name": "Source",
+            "state": {
+              "default": "Default (rule of thumb)",
+              "suggested": "Suggested, not confirmed",
+              "entered": "Entered by you",
+              "measured": "Measured",
+              "learned": "Learned"
+            }
           },
           "confidence": {
             "name": "Confidence"
@@ -1601,6 +1658,14 @@
             "state": {
               "boiler_link_lost": "Boiler link lost: control waits until it has been back for a minute"
             }
+          },
+          "verdict": {
+            "name": "Verdict",
+            "state": {
+              "worth_it": "Worth enabling",
+              "not_worth_it": "Not worth enabling: control may still be switched on",
+              "not_enough_data": "Not enough data: control may start without a verdict"
+            }
           }
         }
       }
@@ -1608,6 +1673,12 @@
     "button": {
       "reset_comfort_correction": {
         "name": "Reset comfort correction"
+      },
+      "reset_loss_coefficient": {
+        "name": "Reset measured heat loss"
+      },
+      "reset_heating_threshold": {
+        "name": "Reset measured heating threshold"
       }
     }
   },
@@ -1971,6 +2042,14 @@
     "reactions_removed": {
       "title": "Alarm reactions no longer offered",
       "description": "These alarm reactions are no longer offered and now only inform: {alarms}. The plugin stops heating only while the boiler itself reports a fault that stops it; the other alarms tell you what to do."
+    },
+    "installation_empty_circuit": {
+      "title": "A heating circuit has no rooms",
+      "description": "No Versatile Thermostat zone is assigned to these circuits: {circuits}. The plugin cannot tell when they need heat, and shows no critical room for them. Add their rooms in the integration's options, or remove the circuits."
+    },
+    "installation_underfloor_without_max_flow": {
+      "title": "Underfloor heating without a water limit",
+      "description": "These circuits feed underfloor heating straight from the boiler, without a mixing valve, and have no maximum flow temperature: {circuits}. Water that is too hot can damage a floor. Enter each circuit's maximum flow temperature — the floor's limit from its installer or manual — in the integration's options; until then control stays blocked."
     }
   }
 }

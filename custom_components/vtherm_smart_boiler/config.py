@@ -33,7 +33,7 @@ from .const import (
     WEATHER,
     ZONES,
 )
-from .control_config import ControlOptions, map_control_entities, parse_control
+from .control_config import ControlOptions, WritePath, map_control_entities, parse_control
 from .core.alarms import (
     ADD_WATER_RANGE_BAR,
     CIRCUIT_ALARM_MIN,
@@ -208,7 +208,11 @@ class EntryConfig:
             zones=tuple(zone_configs),
             circuit_flow_entities=flow_entities,
             reference_room=reference,
-            monitor=_monitor(options.get(MONITOR, {}), boiler_data),
+            monitor=_monitor(
+                options.get(MONITOR, {}),
+                boiler_data,
+                control_sets_water(boiler, options.get(CONTROL)),
+            ),
             freshness=freshness,
             control=control,
             control_problem=control_problem,
@@ -511,7 +515,19 @@ def _monitor_value(data: Mapping[str, Any], key: str, default: float | None) -> 
     return _read("invalid_monitor", key, lambda: float(data.get(key, default)))
 
 
-def _monitor(data: Mapping[str, Any], boiler: Mapping[str, Any]) -> MonitorConfig:
+def control_sets_water(boiler: Boiler, control: Any) -> bool:
+    """S-22: whether 0.2.2's control sets the water temperature here — a flow-setpoint boiler
+    whose control section, where there is one, does not switch a relay. Then low condensing is
+    a problem control changes; through a relay (X8), or for a boiler control is not offered
+    for, no problem the verdict finds is."""
+    if boiler.boiler_class is not BoilerClass.FLOW_SETPOINT:
+        return False
+    return not (isinstance(control, Mapping) and control.get("write_path") == WritePath.RELAY)
+
+
+def _monitor(
+    data: Mapping[str, Any], boiler: Mapping[str, Any], sets_water: bool = False
+) -> MonitorConfig:
     monitoring_days = _monitor_value(data, "monitoring_days", 7.0)
     window = _read(
         "invalid_monitor",
@@ -532,7 +548,9 @@ def _monitor(data: Mapping[str, Any], boiler: Mapping[str, Any]) -> MonitorConfi
             # Declared without hot water: every burn heats. Never declared: burns are told apart.
             has_dhw=boiler.get("dhw") != DhwType.NONE,
             verdict=VerdictOptions(
-                min_days=monitoring_days, condensing_boiler=bool(boiler.get("condensing", True))
+                min_days=monitoring_days,
+                condensing_boiler=bool(boiler.get("condensing", True)),
+                control_sets_water=sets_water,
             ),
             # Never shorter than the monitoring period: the verdict could not be reached.
             verdict_window_days=(

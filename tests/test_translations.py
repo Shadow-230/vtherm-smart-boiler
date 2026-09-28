@@ -494,3 +494,56 @@ def test_y2_texts_are_translated() -> None:
         names = other["entity"]["sensor"]
         assert names["gas_per_degree_day"]["state_attributes"]["other_gas"]["name"], language
         assert names["verdict"]["state_attributes"]["days_left_out"]["name"], language
+
+
+def test_y3_texts_are_translated() -> None:
+    """Y3: the heating threshold's sensor with its attributes and the source of each value
+    (P-90); the verdict's new reasons, "changed by control" with its "not changed yet" text and
+    the "estimate only" detail (S-22, S-32, S-17, S-43); the switch's verdict (S-43); the two
+    reset buttons; the installation's issues with the circuits they name (P-94); the building
+    texts saying an entered value always wins (P-92) — in every language."""
+    from custom_components.vtherm_smart_boiler.core.parameters import Source
+    from custom_components.vtherm_smart_boiler.core.verdict import (
+        ESTIMATE_ONLY,
+        ReasonCode,
+        Verdict,
+    )
+
+    for language in ("en.json", *LANGUAGES):
+        texts = json.loads((TRANSLATIONS / language).read_text(encoding="utf-8"))
+        sensors = texts["entity"]["sensor"]
+        threshold = sensors["heating_threshold"]
+        assert threshold["name"], language
+        for attribute in ("source", "confidence", "entered", "measured", "mismatch"):
+            assert threshold["state_attributes"][attribute]["name"], (language, attribute)
+        sources = {s.value for s in Source}
+        assert _values(threshold, "source") == sources, language
+        assert _values(sensors["loss_coefficient"], "source") == sources, language
+        verdict = sensors["verdict"]
+        codes = {ReasonCode.CRITERIA_JUDGED.value, ReasonCode.NO_BURNER_SIGNAL.value}
+        assert codes <= _values(verdict, "reasons"), language
+        assert _values(verdict, "changed_by_control") == {"true", "false"}, language
+        assert _values(verdict, "detail") == {ESTIMATE_ONLY}, language
+        switch = texts["entity"]["switch"]["control"]
+        assert _values(switch, "verdict") == {v.value for v in Verdict}, language
+        for key in ("reset_heating_threshold", "reset_loss_coefficient"):
+            assert texts["entity"]["button"][key]["name"], (language, key)
+        for key in ("installation_empty_circuit", "installation_underfloor_without_max_flow"):
+            issue = texts["issues"][key]
+            assert issue["title"], (language, key)
+            assert set(PLACEHOLDER.findall(issue["description"])) == {"circuits"}, key
+    verdict = SOURCE["entity"]["sensor"]["verdict"]["state_attributes"]
+    not_changed = verdict["changed_by_control"]["state"]["false"]
+    assert not_changed.startswith("Not changed yet")
+    assert "anti-cycling is planned for 0.3, still to be decided" in not_changed
+    buttons = SOURCE["entity"]["button"]
+    assert buttons["reset_heating_threshold"]["name"] == "Reset measured heating threshold"
+    assert buttons["reset_loss_coefficient"]["name"] == "Reset measured heat loss"
+    for flow in ("config", "options"):
+        building = SOURCE[flow]["step"]["building"]
+        assert "data never replace it; they show a mismatch" in building["description"]
+        assert "never replace it" in building["data_description"]["design_load_kw"]
+        monitoring = SOURCE[flow]["step"]["monitor"]["data_description"]["monitoring_days"]
+        assert "even without a verdict" in monitoring
+    switch = SOURCE["entity"]["switch"]["control"]["state_attributes"]["verdict"]["state"]
+    assert "without a verdict" in switch["not_enough_data"]

@@ -91,8 +91,13 @@ def test_simulated_week_gives_a_verdict_and_counts_dhw() -> None:
     assert summary.load_below_min is not None
     assert summary.load_below_min.value == pytest.approx(1.0)
     result_verdict = verdict(summary)
-    assert result_verdict.verdict is Verdict.WORTH_IT
-    assert ReasonCode.LOAD_OFTEN_BELOW_MIN_POWER in {r.code for r in result_verdict.reasons}
+    # Answer K: a load below the minimum power is found, and 0.2.2's control does not change
+    # it — "not changed yet", no reason to enable control.
+    assert result_verdict.verdict is Verdict.NOT_WORTH_IT
+    load = next(
+        r for r in result_verdict.reasons if r.code is ReasonCode.LOAD_OFTEN_BELOW_MIN_POWER
+    )
+    assert load.changed_by_control is False
 
 
 def test_dhw_is_inferred_without_dhw_or_ch_signal() -> None:
@@ -120,8 +125,9 @@ def test_building_fit_recovers_the_simulated_house() -> None:
     days = [(d * DAY, (d + 1) * DAY) for d in range(1, len(means))]  # skip the start-up day
     points = fit_points([summarize_day(result.history, params, a, b) for a, b in days])
     assert len(points) == len(days)
-    fit = fit_daily_load(points, threshold=18.0)
+    fit = fit_daily_load(points, threshold=Estimate(18.0, Source.ENTERED))
     assert fit is not None
+    assert fit.loss is not None
     assert fit.loss.value == pytest.approx(house.loss_kw_per_k, rel=0.25)
     assert fit.threshold is not None
     expected_threshold = 20.5 - house.gains_kw / house.loss_kw_per_k

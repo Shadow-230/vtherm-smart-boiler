@@ -23,12 +23,12 @@ from .alarms import (
     settle,
     trend_warning,
 )
-from .building import LoadFit, fit_daily_load
+from .building import LoadFit
 from .cycles import ClassifiedBurn
 from .daily import (
     DaySummary,
     day_settled,
-    fit_points,
+    fit_building,
     keep_known_control,
     summarize_day,
     verdict_over_days,
@@ -40,7 +40,7 @@ from .report import ChangeReport, PeriodSummary, explain_change
 from .series import duration_where, time_weighted_mean
 from .signal_check import OutdoorCheck, check_outdoor
 from .signals import Signal
-from .verdict import VerdictResult
+from .verdict import LoadBasis, VerdictResult
 
 DAY = 86400.0
 HISTORY_DAYS = 8.0
@@ -74,6 +74,7 @@ def analyse(
     kept: Sequence[DaySummary] = (),
     settings: str = "",
     previous: Mapping[AlarmKind, Alarm] | None = None,
+    fit_since: Mapping[ParameterKey, float] | None = None,
 ) -> Analysis:
     """``days``: the complete local days of the history; ``kept``: the day summaries kept from
     earlier. The verdict covers the kept days, the history's days not kept yet and today. Only
@@ -82,7 +83,9 @@ def analyse(
     found. A day with a burn that started in it still running is not kept yet (P-83): it counts
     in this verdict as it stands, and is summarised whole once the burn ends. ``previous``: the
     trends of the last analysis — a trend that cannot be judged now keeps its state for an hour
-    (S-16)."""
+    (S-16). The building fit gets the heating threshold in use with its source (P-32);
+    ``fit_since``: a measured value the user reset is fitted from the days after the reset
+    only (P-90)."""
     full = summarize(history, parameters, now - HISTORY_DAYS * DAY, now, options)
     earlier = {day.start: day for day in kept}
     kept = [day for day in kept if day.settings == settings]
@@ -102,18 +105,24 @@ def analyse(
     today = summarize_day(history, parameters, today_start, now, options, settings, known_until=now)
     week = summarize(history, parameters, now - 7 * DAY, now, options)
     day = summarize(history, parameters, now - DAY, now, options)
-    threshold = parameters.value(ParameterKey.HEATING_THRESHOLD)
-    fit = None
-    points = fit_points([*kept, *new_days])  # every day kept, not only the rolling few
-    if threshold is not None and points:
-        fit = fit_daily_load(points, threshold, now)
-    report, unit = _report(history, parameters, options, now, threshold)
+    threshold = parameters.get(ParameterKey.HEATING_THRESHOLD).effective()
+    fit = (  # every day kept, not only the rolling few
+        None if threshold is None else fit_building([*kept, *new_days], threshold, now, fit_since)
+    )
+    report, unit = _report(
+        history, parameters, options, now, None if threshold is None else threshold.value
+    )
     return Analysis(
         at=now,
         day=day,
         week=week,
         verdict=verdict_over_days(
-            [*kept, *new_days, *waiting], options.verdict, options.verdict_window_days, today
+            [*kept, *new_days, *waiting],
+            options.verdict,
+            options.verdict_window_days,
+            today,
+            load=LoadBasis.from_parameters(parameters),
+            burner_signal=history.is_mapped(Signal.FLAME),
         ),
         trends=_trends(history, full, now, options.verdict.condensing_boiler, previous or {}),
         report=report,

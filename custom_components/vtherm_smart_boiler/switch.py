@@ -49,7 +49,10 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
     After a restart the switch comes back as the user left it (the wish is stored at once);
     control then waits for its blockers (Home Assistant starting, missing data) to clear. A
     switch disabled in Home Assistant means control off. Switching on by hand is refused while
-    a blocker that needs the user remains.
+    a blocker that needs the user remains. The monitoring period counts calendar days from the
+    entry's creation (answer K): once it has passed, control may start without a verdict —
+    off-season the monitor may have too little data for one — and the switch shows the verdict
+    so that this is said (S-43).
     """
 
     def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
@@ -88,7 +91,15 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
             # state, without confirmation that the boiler heats where no proof is mapped.
             **({"confirmation": status.confirmation} if relay else {}),
             **self._wall_thermostat(),
+            # S-43: the monitor's verdict; "not enough data" says control starts without one.
+            "verdict": self._verdict(),
         }
+
+    def _verdict(self) -> str | None:
+        """The verdict of the last analysis; ``None`` before the first."""
+        data = self.coordinator.data
+        analysis = None if data is None else data.analysis
+        return None if analysis is None else analysis.verdict.verdict.value
 
     def _wall_thermostat(self) -> dict[str, Any]:
         """With an OpenTherm thermostat on the gateway: the temperature it keeps after a

@@ -14,6 +14,7 @@
       "reference_room_setpoint": { "default": "mdi:thermostat" },
       "change_report": { "default": "mdi:chart-line" },
       "loss_coefficient": { "default": "mdi:home-export-outline" },
+      "heating_threshold": { "default": "mdi:home-thermometer-outline" },
       "forecast_snapshots": { "default": "mdi:weather-partly-cloudy" },
       "critical_zone": { "default": "mdi:radiator" },
       "emitter_power_factor": { "default": "mdi:radiator" },
@@ -58,7 +59,9 @@
       "control": { "default": "mdi:radiator", "state": { "off": "mdi:radiator-off" } }
     },
     "button": {
-      "reset_comfort_correction": { "default": "mdi:restore" }
+      "reset_comfort_correction": { "default": "mdi:restore" },
+      "reset_loss_coefficient": { "default": "mdi:restore" },
+      "reset_heating_threshold": { "default": "mdi:restore" }
     }
   }
 }

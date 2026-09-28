@@ -239,7 +239,14 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     from homeassistant.helpers.importlib import async_import_module
 
     await async_import_module(hass, f"{__package__}.coordinator")
-    from .coordinator import alive_store, async_read_control_state, control_store, main_store
+    from .coordinator import (
+        INSTALLATION_ISSUE,
+        INSTALLATION_WARNINGS,
+        alive_store,
+        async_read_control_state,
+        control_store,
+        main_store,
+    )
     from .forecasts import remove_partition_files
 
     _delete_removed_issues(hass, entry.entry_id)
@@ -267,6 +274,8 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "boiler_fault",
         *HAND_BACK_ISSUES,
         REACTIONS_REMOVED_ISSUE,
+        # P-94: the installation's warnings (Y3).
+        *(f"{INSTALLATION_ISSUE}_{code.value}" for code in INSTALLATION_WARNINGS),
     ):
         ir.async_delete_issue(hass, DOMAIN, f"{key}_{entry.entry_id}")
     store = main_store(hass, entry.entry_id)

@@ -280,18 +280,27 @@ def report(
     result = verdict(summary, mapping.options)
     lines.append(f"Verdict: {result.verdict.value}")
     for reason in result.reasons:
+        # S-22: a problem 0.2.2's control does not change is shown as such.
+        unchanged = ", not changed yet" if reason.changed_by_control is False else ""
+        detail = f", {reason.detail}" if reason.detail else ""
         lines.append(
-            f"  - {reason.code.value} ({reason.kind.value}): {_fmt(reason.value)} "
-            f"against {_fmt(reason.limit)}"
+            f"  - {reason.code.value} ({reason.kind.value}{unchanged}{detail}): "
+            f"{_fmt(reason.value)} against {_fmt(reason.limit)}"
         )
-    threshold = mapping.parameters.value(ParameterKey.HEATING_THRESHOLD) or 15.0
+    # P-32: the threshold in use with its source — the loss alone only through a trusted one.
+    threshold = mapping.parameters.get(ParameterKey.HEATING_THRESHOLD).effective()
     days = day_summaries(history, mapping, start, end, tz, known_until)
-    fit = fit_daily_load(fit_points(days), threshold)
-    if fit is not None:
-        fitted = "" if fit.threshold is None else f", threshold {fit.threshold.value:.1f} °C"
+    fit = None if threshold is None else fit_daily_load(fit_points(days), threshold)
+    if fit is not None and fit.loss is not None:
+        fitted = (
+            ""
+            if fit.threshold is None
+            else f", threshold {fit.threshold.value:.1f} °C "
+            f"(confidence {fit.threshold.confidence:.2f})"
+        )
         lines.append(
-            f"Building fit: {fit.loss.value:.3f} kW/K{fitted} from {fit.days} days "
-            f"(quality {fit.quality:.2f})"
+            f"Building fit: {fit.loss.value:.3f} kW/K (confidence {fit.loss.confidence:.2f})"
+            f"{fitted} from {fit.days} days (quality {fit.quality:.2f})"
         )
     return "\n".join(lines)
 

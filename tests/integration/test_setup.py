@@ -800,7 +800,7 @@ def _stored_days(start: float, count: int, settings: str) -> dict[str, dict[str,
         begin = start + d * DAY
         day = DaySummary(
             begin, begin + DAY, DAY, 48, 48, 48, 8 * 3600.0, DAY,
-            8 * 3600.0, 8 * 3600.0, DAY, DAY, True, 7.0, None, settings=settings,
+            8 * 3600.0, 8 * 3600.0, 7.0, None, settings=settings,
         )  # fmt: skip
         days[str(int(begin))] = day.to_dict()
     return days
@@ -838,7 +838,11 @@ async def test_the_verdict_comes_from_the_days_kept_across_a_restart(
     coordinator = entry.runtime_data
     assert len(coordinator.daily) == 20
     assert coordinator.analysis is not None
-    assert coordinator.analysis.verdict.verdict.value == "worth_it"  # all short burns
+    verdict = coordinator.analysis.verdict
+    # All short burns: found from the stored days, and shown as "not changed yet" (answer K).
+    assert verdict.verdict.value == "not_worth_it"
+    [short] = [r for r in verdict.reasons if r.code.value == "short_burns"]
+    assert short.changed_by_control is False
     stored = hass_storage[f"{DOMAIN}.{entry.entry_id}"]["data"]
     assert len(stored["daily"]) >= 20
 
@@ -862,7 +866,7 @@ async def test_an_unchanged_building_fit_is_not_saved_again(
         begin = now - (20 - d) * DAY
         outdoor = -4.0 + d
         day = DaySummary(
-            begin, begin + DAY, DAY, 10, 10, 0, 6 * 3600.0, DAY, 0.0, 0.0, 0.0, 0.0, False,
+            begin, begin + DAY, DAY, 10, 10, 0, 6 * 3600.0, DAY, 0.0, 0.0,
             None, None, outdoor_mean=outdoor, heat_kwh=0.2 * 24 * (16.0 - outdoor), settings=key,
         )  # fmt: skip
         days[str(int(begin))] = day.to_dict()
@@ -1167,7 +1171,12 @@ async def test_replayed_history_reaches_the_verdict(
     await hass.async_block_till_done()
     verdict = hass.states.get(entity_id(hass, entry, "sensor", "verdict"))
     assert verdict is not None
-    assert verdict.state == "worth_it"
+    # Every criterion judged — the load too, with the model entered (S-17); what is found is
+    # not changed by 0.2.2's control for a boiler not declared flow-setpoint (answer K).
+    assert verdict.state == "not_worth_it"
+    reasons = {r["code"]: r for r in verdict.attributes["reasons"]}
+    assert "load_unknown" not in reasons
+    assert all(r.get("changed_by_control") is not True for r in reasons.values())
     starts = hass.states.get(entity_id(hass, entry, "sensor", "starts_per_hour"))
     assert starts is not None
     assert float(starts.state) > 1.0
@@ -1191,7 +1200,7 @@ async def test_everything_stored_survives_a_restart(
     start = float(int(now - 3 * DAY))
     day = DaySummary(
         start, start + DAY, DAY, 12, 10, 1, 7200.0, 36000.0, 3600.0, 7200.0,
-        0.0, 0.0, False, 8.5, None, 4.0, 60.0,
+        8.5, None, 4.0, 60.0,
     )  # fmt: skip
     created = float(int(now - 10 * DAY))
     entry.created_at = datetime.fromtimestamp(created, UTC)
@@ -1667,7 +1676,8 @@ async def test_an_unrelated_option_keeps_the_stored_days(
     }
     await setup(hass, entry)
     await hass.async_block_till_done(wait_background_tasks=True)
-    assert entry.runtime_data.analysis.verdict.verdict.value == "worth_it"
+    # The stored days decide (short burns found, "not changed yet" — answer K).
+    assert entry.runtime_data.analysis.verdict.verdict.value == "not_worth_it"
     if change.get("signals") == "add pressure":
         signals = dict(entry.options["signals"]) | {"pressure": boiler.entity(Signal.PRESSURE)}
         change = {"signals": signals}
@@ -1679,7 +1689,7 @@ async def test_an_unrelated_option_keeps_the_stored_days(
     assert (coordinator.settings_key == before.settings_key) is kept
     assert len(coordinator.daily) == 20  # kept in the store either way
     verdict = coordinator.analysis.verdict.verdict.value
-    assert verdict == ("worth_it" if kept else "not_enough_data")
+    assert verdict == ("not_worth_it" if kept else "not_enough_data")
 
 
 async def test_burns_are_classified_per_analysis(

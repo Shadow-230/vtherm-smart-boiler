@@ -267,6 +267,26 @@ def test_the_verdict_knows_whether_the_boiler_condenses() -> None:
     assert verdict.condensing_boiler is False
 
 
+def test_the_verdict_knows_whether_control_sets_the_water() -> None:
+    """S-22: low condensing is a problem 0.2.2's control changes only where it sets the water
+    temperature — a flow-setpoint boiler, not switched through a relay; for the classes control
+    is not offered for, and by default (read-only), nothing the verdict finds is."""
+
+    def sets_water(options: dict) -> bool:
+        return EntryConfig.from_options(options).monitor.monitor.verdict.control_sets_water
+
+    assert sets_water(MINIMAL) is False  # read-only by default
+    assert sets_water(MINIMAL | {"boiler": {"class": "flow_setpoint"}}) is True
+    gateway = {"write_path": "opentherm_gw", "gateway_id": "gw"}
+    flow = MINIMAL | {"boiler": {"class": "flow_setpoint"}, "control": gateway}
+    assert sets_water(flow) is True
+    relay = {"write_path": "relay", "relay_entity": "switch.r", "relay_is_separate_contact": True}
+    assert sets_water(MINIMAL | {"boiler": {"class": "on_off"}, "control": relay}) is False
+    assert sets_water(MINIMAL | {"boiler": {"class": "curve_only"}}) is False
+    mixed = MINIMAL | {"boiler": {"class": "flow_setpoint"}, "control": relay}
+    assert sets_water(mixed) is False  # a relay sets no water, whatever the class says
+
+
 # --- X4: the circuit maximum's alarm (decision 10), the zone's "closes when off" (decision 4) ---
 
 

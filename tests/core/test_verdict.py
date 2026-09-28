@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.building import LoadModel
 from custom_components.vtherm_smart_boiler.core.metrics import CycleStats, Share
 from custom_components.vtherm_smart_boiler.core.series import Series
 from custom_components.vtherm_smart_boiler.core.verdict import (
+    ESTIMATE_ONLY,
     Reason,
     ReasonCode,
     ReasonKind,
@@ -16,6 +19,10 @@ from custom_components.vtherm_smart_boiler.core.verdict import (
     assess,
     load_below_min_share,
 )
+
+# The water-temperature path (a flow-setpoint boiler) and the relay path (an on/off boiler).
+FLOW_SETPOINT = VerdictOptions(control_sets_water=True)
+RELAY = VerdictOptions(control_sets_water=False)
 
 DAY = 86400.0
 HOUR = 3600.0
@@ -48,25 +55,31 @@ def test_not_enough_days_or_burns() -> None:
     assert Reason(ReasonCode.HEATING_BURNS, ReasonKind.DATA, 5, 20) in few.reasons
 
 
-def test_short_cycling_is_worth_it() -> None:
-    result = assess(10 * DAY, stats(4.5, 0.7), Share(0.9, DAY), Share(0.05, DAY))
-    assert result.verdict is Verdict.WORTH_IT
+def reason(result, code: ReasonCode) -> Reason:
+    return next(r for r in result.reasons if r.code is code)
+
+
+def test_short_cycling_is_found_with_its_value_and_limit() -> None:
+    result = assess(10 * DAY, stats(4.5, 0.7), Share(0.9, DAY), Share(0.05, DAY), FLOW_SETPOINT)
     assert {ReasonCode.FREQUENT_STARTS, ReasonCode.SHORT_BURNS} <= codes(result)
-    frequent = next(r for r in result.reasons if r.code is ReasonCode.FREQUENT_STARTS)
+    frequent = reason(result, ReasonCode.FREQUENT_STARTS)
+    assert frequent.kind is ReasonKind.PROBLEM
     assert frequent.value == pytest.approx(4.5)
     assert frequent.limit == 3.0
 
 
-def test_low_condensing_alone_is_worth_it() -> None:
-    result = assess(10 * DAY, stats(1.0, 0.1), Share(0.2, DAY), Share(0.05, DAY))
+def test_low_condensing_alone_is_worth_it_where_control_sets_the_water() -> None:
+    result = assess(10 * DAY, stats(1.0, 0.1), Share(0.2, DAY), Share(0.05, DAY), FLOW_SETPOINT)
     assert result.verdict is Verdict.WORTH_IT
     assert ReasonCode.LOW_CONDENSING in codes(result)
 
 
-def test_load_often_below_min_power_is_worth_it() -> None:
-    result = assess(10 * DAY, stats(1.0, 0.1), Share(0.9, DAY), Share(0.6, DAY))
-    assert result.verdict is Verdict.WORTH_IT
-    assert ReasonCode.LOAD_OFTEN_BELOW_MIN_POWER in codes(result)
+def test_load_often_below_min_power_is_found_but_not_changed_yet() -> None:
+    result = assess(10 * DAY, stats(1.0, 0.1), Share(0.9, DAY), Share(0.6, DAY), FLOW_SETPOINT)
+    assert result.verdict is Verdict.NOT_WORTH_IT
+    load = reason(result, ReasonCode.LOAD_OFTEN_BELOW_MIN_POWER)
+    assert load.kind is ReasonKind.PROBLEM
+    assert load.changed_by_control is False
 
 
 def test_well_behaved_boiler_is_not_worth_it() -> None:
@@ -82,9 +95,14 @@ def test_well_behaved_boiler_is_not_worth_it() -> None:
 
 
 def test_missing_inputs_are_named() -> None:
+    """Only the starts and the burn length judged, 2 of 4: not enough to say "not worth it"
+    (S-32) — and the two missing inputs are named."""
     result = assess(10 * DAY, stats(2.0, 0.3), None, None)
-    assert result.verdict is Verdict.NOT_WORTH_IT
+    assert result.verdict is Verdict.NOT_ENOUGH_DATA
     assert {ReasonCode.CONDENSING_UNKNOWN, ReasonCode.LOAD_UNKNOWN} <= codes(result)
+    assert reason(result, ReasonCode.CRITERIA_JUDGED) == Reason(
+        ReasonCode.CRITERIA_JUDGED, ReasonKind.DATA, 2, 3
+    )
 
 
 def test_load_below_min_share_over_heating_season_time() -> None:
@@ -99,9 +117,7 @@ def test_load_below_min_share_over_heating_season_time() -> None:
 def test_a_non_condensing_boiler_is_not_judged_on_condensing() -> None:
     """A1: a boiler not built to condense runs its return hot on purpose — no reason to enable
     control — and one that condenses often is no merit either."""
-    from dataclasses import replace
-
-    options = replace(VerdictOptions(), condensing_boiler=False)
+    options = replace(FLOW_SETPOINT, condensing_boiler=False)
     hot_return = assess(10 * DAY, stats(1.0, 0.1), Share(0.0, DAY), Share(0.05, DAY), options)
     assert hot_return.verdict is Verdict.NOT_WORTH_IT
     condensing = assess(10 * DAY, stats(1.0, 0.1), Share(0.95, DAY), Share(0.05, DAY), options)
@@ -118,6 +134,209 @@ def test_shares_on_minutes_of_data_decide_nothing() -> None:
     minutes = assess(10 * DAY, stats(1.0, 0.1), Share(0.0, 300.0), Share(0.9, 600.0))
     assert ReasonCode.CONDENSING_UNKNOWN in codes(minutes)
     assert ReasonCode.LOAD_UNKNOWN in codes(minutes)
-    assert minutes.verdict is Verdict.NOT_WORTH_IT
+    assert minutes.verdict is Verdict.NOT_ENOUGH_DATA  # 2 criteria of 4 judged (S-32)
     hours = assess(10 * DAY, stats(1.0, 0.1), Share(0.0, 20 * HOUR), Share(0.05, 3 * DAY))
     assert ReasonCode.LOW_CONDENSING in codes(hours)
+
+
+def test_the_verdict_load_criterion_needs_a_confident_model() -> None:
+    """T-43 (S-17): only rough answers — the loss from the floor area (DEFAULT, 0.3), the class
+    default threshold — and a minimum power: the load is not judged, and the reason says the
+    model is an estimate only; nothing of it can make the verdict. Entered values judge it."""
+    from custom_components.vtherm_smart_boiler.core.building import (
+        InsulationClass,
+        loss_from_coarse_answers,
+    )
+    from custom_components.vtherm_smart_boiler.core.history import History
+    from custom_components.vtherm_smart_boiler.core.monitor import summarize, verdict
+    from custom_components.vtherm_smart_boiler.core.parameters import (
+        Estimate,
+        ParameterKey,
+        ParameterSet,
+        Source,
+    )
+    from custom_components.vtherm_smart_boiler.core.signals import Signal
+
+    flame = Series[bool]([(0, False)])
+    for k in range(int(8 * DAY // (30 * 60))):  # a 10-minute burn every half hour, 8 days
+        flame.append(k * 1800 + 300, True)
+        flame.append(k * 1800 + 900, False)
+    history = History(
+        signals={
+            Signal.FLAME: flame,
+            Signal.RETURN: Series([(0, 35.0)]),  # condensing: judged, fine
+            Signal.DHW_ACTIVE: Series([(0, False)]),
+        },
+        weather=Series([(0, 8.0)]),
+    )
+    rough = (
+        ParameterSet()
+        .with_estimate(
+            ParameterKey.LOSS_COEFFICIENT,
+            loss_from_coarse_answers(150.0, InsulationClass.AVERAGE, -15.0, 20.0),
+        )
+        .with_estimate(ParameterKey.BOILER_MIN_POWER, Estimate(4.0, Source.ENTERED))
+    )
+    summary = summarize(history, rough, 0, 8 * DAY)
+    assert summary.load_below_min is None
+    result = verdict(summary)
+    load = reason(result, ReasonCode.LOAD_UNKNOWN)
+    assert load.kind is ReasonKind.MISSING
+    assert load.detail == ESTIMATE_ONLY
+    assert not any(r.code is ReasonCode.LOAD_OFTEN_BELOW_MIN_POWER for r in result.reasons)
+    # The user's own loss with the default threshold is half a model: an estimate still.
+    half = rough.with_estimate(ParameterKey.LOSS_COEFFICIENT, Estimate(0.2, Source.ENTERED))
+    assert reason(verdict(summarize(history, half, 0, 8 * DAY)), ReasonCode.LOAD_UNKNOWN).detail
+    # Both entered: judged — 1.4 kW at 8 °C, below the 4 kW minimum all the time.
+    entered = half.with_estimate(ParameterKey.HEATING_THRESHOLD, Estimate(15.0, Source.ENTERED))
+    judged = verdict(summarize(history, entered, 0, 8 * DAY))
+    assert ReasonCode.LOAD_OFTEN_BELOW_MIN_POWER in codes(judged)
+    # Without a minimum power, or without any outdoor temperature, the load is unknown, but
+    # not for the model's sake.
+    no_power = rough.without(ParameterKey.BOILER_MIN_POWER, Source.ENTERED)
+    missing = reason(verdict(summarize(history, no_power, 0, 8 * DAY)), ReasonCode.LOAD_UNKNOWN)
+    assert missing.detail is None
+    history.weather = Series()
+    no_outdoor = reason(verdict(summarize(history, rough, 0, 8 * DAY)), ReasonCode.LOAD_UNKNOWN)
+    assert no_outdoor.detail is None
+
+
+def test_not_worth_it_needs_three_of_four_criteria_judged() -> None:
+    """S-32: "not worth it" rests on at least 3 of the 4 criteria — starts, burn length,
+    condensing, load — with a known input; with 2 it is "not enough data", saying how many were
+    judged. A non-condensing boiler has 3 criteria and needs 2."""
+    two = assess(10 * DAY, stats(1.0, 0.1), None, None, FLOW_SETPOINT)
+    assert two.verdict is Verdict.NOT_ENOUGH_DATA
+    assert reason(two, ReasonCode.CRITERIA_JUDGED).value == 2
+    assert reason(two, ReasonCode.CRITERIA_JUDGED).limit == 3
+    for condensing, load in ((Share(0.9, DAY), None), (None, Share(0.05, DAY))):
+        three = assess(10 * DAY, stats(1.0, 0.1), condensing, load, FLOW_SETPOINT)
+        assert three.verdict is Verdict.NOT_WORTH_IT
+        assert ReasonCode.CRITERIA_JUDGED not in codes(three)
+    # A value between "fine" and "problem" is judged all the same: 2.0 starts an hour, 65 %.
+    between = assess(10 * DAY, stats(2.0, 0.1), Share(0.65, DAY), None, FLOW_SETPOINT)
+    assert between.verdict is Verdict.NOT_WORTH_IT
+    non_condensing = replace(FLOW_SETPOINT, condensing_boiler=False)
+    enough = assess(10 * DAY, stats(1.0, 0.1), None, None, non_condensing)
+    assert enough.verdict is Verdict.NOT_WORTH_IT  # starts and burn length: 2 of 3
+    assert reason(enough, ReasonCode.LOAD_UNKNOWN).kind is ReasonKind.MISSING
+
+
+def test_each_problem_reason_says_whether_this_release_changes_it() -> None:
+    """S-22: every problem carries ``changed_by_control``: low condensing is changed where
+    control sets the water temperature, not through a relay; frequent starts, short burns and a
+    load below the minimum power are not changed by 0.2.2's control. Other reasons carry
+    nothing."""
+    problems = (stats(4.5, 0.7), Share(0.2, DAY), Share(0.6, DAY))
+    for options, condensing_changed in ((FLOW_SETPOINT, True), (RELAY, False)):
+        result = assess(10 * DAY, *problems, options)
+        changed = {r.code: r.changed_by_control for r in result.reasons}
+        assert changed == {
+            ReasonCode.FREQUENT_STARTS: False,
+            ReasonCode.SHORT_BURNS: False,
+            ReasonCode.LOW_CONDENSING: condensing_changed,
+            ReasonCode.LOAD_OFTEN_BELOW_MIN_POWER: False,
+        }
+    fine = assess(10 * DAY, stats(1.0, 0.1), Share(0.9, DAY), Share(0.05, DAY), FLOW_SETPOINT)
+    assert all(r.changed_by_control is None for r in fine.reasons)
+
+
+def test_worth_it_only_from_a_problem_control_changes() -> None:
+    """Answer K: "worth it" only from a problem 0.2.2's control changes. Frequent starts and
+    short burns alone: not worth it, both kept as "not changed yet". Low condensing on a
+    flow-setpoint path: worth it; on the relay path: not."""
+    cycling = assess(10 * DAY, stats(4.5, 0.7), Share(0.9, DAY), Share(0.05, DAY), FLOW_SETPOINT)
+    assert cycling.verdict is Verdict.NOT_WORTH_IT
+    for code in (ReasonCode.FREQUENT_STARTS, ReasonCode.SHORT_BURNS):
+        found = reason(cycling, code)
+        assert found.kind is ReasonKind.PROBLEM
+        assert found.changed_by_control is False
+    low = (stats(1.0, 0.1), Share(0.2, DAY), Share(0.05, DAY))
+    assert assess(10 * DAY, *low, FLOW_SETPOINT).verdict is Verdict.WORTH_IT
+    relay = assess(10 * DAY, *low, RELAY)
+    assert relay.verdict is Verdict.NOT_WORTH_IT
+    assert reason(relay, ReasonCode.LOW_CONDENSING).changed_by_control is False
+    # Without knowing what control sets (the default), nothing is claimed changed.
+    assert assess(10 * DAY, *low).verdict is Verdict.NOT_WORTH_IT
+
+
+def test_without_a_flame_signal_the_verdict_says_so() -> None:
+    """S-43: no burner signal mapped — the verdict stays "not enough data", with that reason,
+    whatever else is known."""
+    result = assess(
+        10 * DAY, stats(4.5, 0.7), Share(0.2, DAY), Share(0.6, DAY), FLOW_SETPOINT,
+        burner_signal=False,
+    )  # fmt: skip
+    assert result.verdict is Verdict.NOT_ENOUGH_DATA
+    assert result.reasons == (Reason(ReasonCode.NO_BURNER_SIGNAL, ReasonKind.DATA),)
+
+
+def test_the_load_share_uses_the_current_model_on_stored_days() -> None:
+    """P-91: each day keeps seconds per whole °C of outdoor temperature (−30…+30 °C, the ends
+    clamped), not a share computed with the model of its day; the load share is computed from
+    them with the model and minimum power of now — a later measured loss changes it for every
+    stored day. Days stored before, without it, are left out of the load criterion."""
+    from custom_components.vtherm_smart_boiler.core.daily import (
+        DaySummary,
+        outdoor_distribution,
+        verdict_over_days,
+    )
+    from custom_components.vtherm_smart_boiler.core.parameters import (
+        Estimate,
+        ParameterKey,
+        ParameterSet,
+        Source,
+    )
+    from custom_components.vtherm_smart_boiler.core.verdict import LoadBasis
+
+    outdoor = Series([(0, -35.2), (HOUR, 2.4), (2 * HOUR, 2.6), (3 * HOUR, 41.0), (4 * HOUR, None)])
+    assert outdoor_distribution(outdoor, 0, 5 * HOUR) == (
+        (-30, HOUR),
+        (2, HOUR),
+        (3, HOUR),
+        (30, HOUR),
+    )
+    assert outdoor_distribution(Series([(0, None)]), 0, HOUR) == ()  # known nowhere: nothing
+
+    def day(index: int) -> DaySummary:
+        """Twelve hours at 0 °C and twelve at 10 °C; a burn an hour, condensing well."""
+        return replace(
+            DaySummary.empty(index * DAY, (index + 1) * DAY),
+            observed_s=DAY, starts=24, complete_burns=24, burn_s=6 * HOUR, heating_s=DAY,
+            condensing_s=6 * HOUR, condensing_basis_s=6 * HOUR,
+            outdoor_s=((0, 12 * HOUR), (10, 12 * HOUR)),
+        )  # fmt: skip
+
+    days = [day(index) for index in range(10)]
+
+    def parameters(loss: float) -> ParameterSet:
+        return (
+            ParameterSet()
+            .with_estimate(ParameterKey.LOSS_COEFFICIENT, Estimate(loss, Source.ENTERED))
+            .with_estimate(ParameterKey.HEATING_THRESHOLD, Estimate(15.0, Source.ENTERED))
+            .with_estimate(ParameterKey.BOILER_MIN_POWER, Estimate(2.5, Source.ENTERED))
+        )
+
+    def verdict_with(loss: float, kept: list[DaySummary]):
+        basis = LoadBasis.from_parameters(parameters(loss))
+        return verdict_over_days(kept, FLOW_SETPOINT, load=basis)
+
+    # 0.2 kW/K: 3 kW at 0 °C, 1 kW at 10 °C — below the 2.5 kW minimum half the time.
+    below = reason(verdict_with(0.2, days), ReasonCode.LOAD_OFTEN_BELOW_MIN_POWER)
+    assert below.value == pytest.approx(0.5)
+    # The same stored days with a larger loss: 5 kW at 10 °C, never below.
+    rarely = reason(verdict_with(0.5, days), ReasonCode.LOAD_RARELY_BELOW_MIN_POWER)
+    assert rarely.value == pytest.approx(0.0)
+    # Days stored before the distribution was kept count for everything but the load.
+    old = [replace(d, outdoor_s=None) for d in days]
+    unknown = verdict_with(0.2, old)
+    assert reason(unknown, ReasonCode.LOAD_UNKNOWN).kind is ReasonKind.MISSING
+    assert unknown.verdict is Verdict.NOT_WORTH_IT  # starts, burns, condensing: 3 judged
+    mixed = [*old[:5], *days[5:]]
+    assert reason(verdict_with(0.2, mixed), ReasonCode.LOAD_OFTEN_BELOW_MIN_POWER).value == (
+        pytest.approx(0.5)
+    )
+    # A stored day round-trips its distribution; an old stored day reads none.
+    assert DaySummary.from_dict(days[0].to_dict()) == days[0]
+    legacy = {k: v for k, v in days[0].to_dict().items() if k != "outdoor_s"}
+    assert DaySummary.from_dict(legacy).outdoor_s is None

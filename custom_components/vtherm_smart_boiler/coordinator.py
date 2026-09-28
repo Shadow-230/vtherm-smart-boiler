@@ -18,6 +18,13 @@ With the analysis it judges the lowest water temperature's evidence and shows a 
 never applied (X6, decision 2); the quick path shows what the wall thermostat on a gateway keeps
 after a hand-back. Each has its repair issue, raised here.
 
+The building model's measured values — the heat loss and the heating threshold — feed the
+monitor only; control never reads them (review question 11). Each can be reset by the user: the
+measured value is forgotten and fitted again from the days that start after the reset only,
+without touching the options — no reload, no hand-back (P-90). The installation's warnings (a
+circuit without zones, underfloor heating on an unmixed circuit without a maximum) are shown as
+repair issues (P-94).
+
 Y1's notifications are raised here too, control or not: "add water" below the threshold the user
 took from the boiler's manual, high pressure and hot flue gas at their alarm level held five
 minutes, the pressure trend's "risk of a leak", and the boiler's own fault — repair issues, each
@@ -114,6 +121,7 @@ from .core.emitters import FactorResult, FactorStatus, update_factor
 from .core.foreign_heat import ForeignHeatState, update_foreign_heat
 from .core.history import History, ZoneSeries, with_downtime
 from .core.hot_water import HotWater, hot_water_available
+from .core.installation import IssueCode, Severity
 from .core.lowest_water import (
     LowestWaterSuggestion,
     SetpointSource,
@@ -201,6 +209,12 @@ _NOTICE_DEFAULTS: dict[str, dict[str, str]] = {
     BOILER_FAULT_ISSUE: {"entity": "-"},
 }
 SAVE_DELAY_S = 120
+# P-94: the installation's warnings, each a warning repair issue ``installation_<code>_<entry>``
+# naming the circuits concerned, raised at every setup while the options hold it.
+INSTALLATION_ISSUE = "installation"
+INSTALLATION_WARNINGS = (IssueCode.EMPTY_CIRCUIT, IssueCode.UNDERFLOOR_WITHOUT_MAX_FLOW)
+# P-90: the measured values the user can reset, each fitted again from later days only.
+RESETTABLE = (ParameterKey.LOSS_COEFFICIENT, ParameterKey.HEATING_THRESHOLD)
 # P-80: the starts and ignition alarms count the burns the analysis classified; an analysis
 # older than this (three missed runs) has stopped, and its burns judge nothing (provisional,
 # K4): the alarms hold their state for an hour, then show unknown (S-16).
@@ -303,6 +317,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             ForecastRecorder(hass, entry.entry_id, config.weather) if config.weather else None
         )
         self.analysis: Analysis | None = None
+        # P-90: where the user reset a measured value, the moment: it is fitted from the days
+        # that start from then on only. Stored with the entry's data.
+        self.fit_since: dict[ParameterKey, float] = {}
         self._store = main_store(hass, entry.entry_id)
         self._control_store = control_store(hass, entry.entry_id)
         # Nothing is written before both stores were read: a setup that fails earlier must not
@@ -383,6 +400,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         now = dt_util.utcnow().timestamp()
         await self.link.async_detect()
         self._restore_notices()
+        self.report_installation()
         # Current states seed the history too: without the recorder they are all there is, and
         # an entity that does not change would otherwise never enter it.
         zones = set(self.config.zone_entities)
@@ -527,6 +545,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 self.parameters = self.parameters.with_estimate(ParameterKey(key), estimate)
             except KeyError, TypeError, ValueError:
                 _LOGGER.warning("Ignoring an unreadable stored value for %s", key)
+        self.fit_since = _fit_since(stored.get("fit_since"), now)
         self._loaded = True
         if read.rewrite:
             # Moved from a 0.2.1 store, or taken cautiously after a loss: written at once, so
@@ -576,6 +595,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 if f.value is not None
             },
             "measured": measured,
+            "fit_since": {key.value: at for key, at in self.fit_since.items()},
             "daily": {str(int(start)): day.to_dict() for start, day in sorted(self.daily.items())},
             # A copy of the control state: the fallback, and what 0.2.1 reads after a downgrade.
             "control": control,
@@ -1523,6 +1543,52 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         else:
             ir.async_delete_issue(self.hass, DOMAIN, issue_id)
 
+    async def async_reset_measured(self, key: ParameterKey) -> None:
+        """P-90 (review question 11): the user's reset of a measured building value — the heat
+        loss or the heating threshold. Its measured estimate is forgotten, and it is fitted
+        again from the days that start from now on only; the other value stays. An entered value
+        is not touched. Nothing else changes — no option, so no reload and no hand-back:
+        control never reads the building model. Saved at once and shown at once; the analysis
+        runs again so the verdict follows."""
+        if key not in RESETTABLE:
+            raise ValueError(f"{key} is not a measured building value")
+        now = dt_util.utcnow().timestamp()
+        self.parameters = self.parameters.without(key, Source.MEASURED)
+        self.fit_since[key] = now
+        _LOGGER.info("The measured %s was reset: it is fitted from new days only", key.value)
+        await self.async_save_now()
+        await self.async_refresh()
+        if not self._stopped:
+            self.config_entry.async_create_background_task(
+                self.hass, self.async_run_analysis(), f"{DOMAIN} analysis after a reset"
+            )
+
+    def report_installation(self) -> None:
+        """P-94: each warning of the installation — a circuit without zones, underfloor heating
+        on an unmixed circuit without a maximum — as a warning repair issue naming its circuits;
+        one the options no longer hold goes. Not fixable here: the options fix it."""
+        found: dict[IssueCode, list[str]] = {}
+        for issue in self.config.installation.issues():
+            if issue.severity is Severity.WARNING:
+                found.setdefault(issue.code, []).append(issue.subject or "-")
+        entry_id = self.config_entry.entry_id
+        for code in INSTALLATION_WARNINGS:
+            issue_id = f"{INSTALLATION_ISSUE}_{code.value}_{entry_id}"
+            circuits = found.get(code)
+            if not circuits:
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+                continue
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                is_persistent=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=f"{INSTALLATION_ISSUE}_{code.value}",
+                translation_placeholders={"circuits": ", ".join(circuits)},
+            )
+
     async def async_run_analysis(self) -> None:
         """The periodic analysis, on a copy of the history in an executor thread."""
         if self._analysing:
@@ -1536,6 +1602,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             back = self._history_back
             copy = self.history.copy_window(now - HISTORY_DAYS * DAY, now)
             days = local_days(now - HISTORY_DAYS * DAY, now)
+            since = dict(self.fit_since)
             analysis = await self.hass.async_add_executor_job(
                 analyse,
                 copy,
@@ -1547,6 +1614,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 self.settings_key,
                 # A trend that cannot be judged now keeps its last state for an hour (S-16).
                 None if self.analysis is None else dict(self.analysis.trends),
+                since,
             )
             if self._stopped:
                 return  # a reload came meanwhile: the new installation analyses for itself
@@ -1555,11 +1623,13 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 self._keep_days(analysis.new_days, now)
             fit = self.analysis.fit
             if fit is not None:
-                fitted = [(ParameterKey.LOSS_COEFFICIENT, fit.loss)]
-                if fit.threshold is not None:
-                    fitted.append((ParameterKey.HEATING_THRESHOLD, fit.threshold))
                 moved = False
-                for key, estimate in fitted:
+                for key, estimate in (
+                    (ParameterKey.LOSS_COEFFICIENT, fit.loss),
+                    (ParameterKey.HEATING_THRESHOLD, fit.threshold),
+                ):
+                    if estimate is None or self.fit_since.get(key) != since.get(key):
+                        continue  # not fitted, or reset while this analysis ran (P-90)
                     moved |= _moved(self.parameters.get(key).estimate(Source.MEASURED), estimate)
                     self.parameters = self.parameters.with_estimate(key, estimate)
                 if moved:  # a fit that has not moved is not written again every five minutes
@@ -1873,6 +1943,27 @@ def _created_at(entry: ConfigEntry) -> float | None:
     return at if math.isfinite(at) and at > 0 else None
 
 
+def _fit_since(raw: object, now: float) -> dict[ParameterKey, float]:
+    """The stored moments of the user's resets (P-90). A reset whose moment cannot be read
+    counts from ``now``: the days the user set aside are never fitted again, at the cost of
+    waiting for new ones. A value that cannot be reset is ignored."""
+    found: dict[ParameterKey, float] = {}
+    for key, value in raw.items() if isinstance(raw, dict) else ():
+        try:
+            parameter = ParameterKey(key)
+        except ValueError:
+            parameter = None
+        if parameter is None or parameter not in RESETTABLE:
+            _LOGGER.warning("Ignoring a stored reset of %s, which cannot be reset", key)
+            continue
+        at = _timestamp(value)
+        if at is None or at > now:
+            _LOGGER.warning("An unreadable stored reset of %s: it counts from now", key)
+            at = now
+        found[parameter] = at
+    return found
+
+
 FIT_MOVED = 0.01  # a relative change in a fitted value worth saving
 FIT_CONFIDENCE_MOVED = 0.02
 
@@ -1888,8 +1979,9 @@ def _moved(before: Estimate | None, after: Estimate) -> bool:
 
 
 # P-87: what a day's summary depends on. Any other option — the water volume, the pressure
-# signal, the alarms, control — leaves the stored days as they are. The load model's parameters
-# are not here either: the load share is to be recomputed from each day (Y3, P-91).
+# signal, the alarms, control — leaves the stored days as they are. The loss coefficient is not
+# here either: the load share is computed from each day's outdoor temperatures with the model
+# of now (P-91).
 SUMMARY_PARAMETERS = (
     ParameterKey.BOILER_MIN_POWER,
     ParameterKey.BOILER_MAX_POWER,

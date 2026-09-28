@@ -125,6 +125,7 @@ def test_summary_of_a_cycling_boiler() -> None:
         gas_at_min_power=0.4,
         gas_at_max_power=2.4,
         loss_coefficient=0.2,
+        heating_threshold=15.0,  # both entered: a model the load criterion trusts (S-17)
     )
     summary = summarize(history, parameters, 0, 8 * DAY)
     assert summary.heating.starts_per_hour == pytest.approx(2.0)
@@ -149,7 +150,10 @@ def test_summary_of_a_cycling_boiler() -> None:
     assert summary.load_below_min.value == pytest.approx(1.0)
     assert set(summary.by_outdoor) == {5.0}
     result = verdict(summary)
-    assert result.verdict is Verdict.WORTH_IT
+    # The load below the minimum power is a problem 0.2.2's control does not change (answer K).
+    assert result.verdict is Verdict.NOT_WORTH_IT
+    [load] = [r for r in result.reasons if r.code.value == "load_often_below_min_power"]
+    assert load.changed_by_control is False
 
 
 def test_summary_with_minimal_mapping() -> None:
