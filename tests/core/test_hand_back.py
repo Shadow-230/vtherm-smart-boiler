@@ -214,3 +214,16 @@ def test_what_is_shown_follows_the_weakest_target() -> None:
     assert shown((separate, taken), gateway=False, failing=False) is (
         HandBackConfirmation.TAKEN_BY_OTHER
     )
+
+
+def test_a_boiler_thermostats_modes_are_its_states() -> None:
+    """X8: a relay's boiler thermostat entity — any mode it reports is a known state: after its
+    rest state was read back, another mode with no trace is another controller's."""
+    from custom_components.vtherm_smart_boiler.core.hand_back import SwitchVerdict, judge_switch
+
+    assert judge_switch("off", "off", False, False, None) is SwitchVerdict.RELEASED
+    assert judge_switch("auto", "off", True, False, None) is SwitchVerdict.TAKEN
+    assert judge_switch("heat", "off", True, True, None) is SwitchVerdict.LOST
+    assert judge_switch("unavailable", "off", True, False, None) is SwitchVerdict.WAITING
+    assert judge_switch(None, "off", True, False, None) is SwitchVerdict.WAITING
+    assert judge_switch("auto", "off", True, False) is SwitchVerdict.WAITING  # a switch: on/off

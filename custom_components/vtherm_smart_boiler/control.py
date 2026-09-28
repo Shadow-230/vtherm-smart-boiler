@@ -72,6 +72,20 @@ correction" button sets it to 0 in the running session — nothing saved, reload
 start (decision 5).
 
 The control switch and control's entities stay available whatever the monitor does (P-02).
+
+On/off control through a relay (class 3, X8) runs the same unit through the relay rule
+(``core.relay``): the link is the relay — flame and flow never gate it, and it is never handed back
+for a lost link; out of reach for five minutes it raises "relay unreachable" and a repair issue,
+and gets the command again when it returns. A listener on the relay notes every change, with
+whether it carried one of the plugin's own write contexts. Its "off" ignored from the start
+blocks control like the heating switch's (answer O); stepping aside from another controller —
+the relay switched twice within a day while it stayed available, or a fourth unreported restart
+(answers C, N) — sets it once to its rest state and leaves it alone (answers H, L). A hand-back
+owed when the session commands the relay again is folded into the session, never off-then-on; a
+planned restart restores the last command at once, before the control switch restores (R11).
+While control does not hold a relay resting "off" and a room asks for heat or is near freezing,
+a repair issue says the boiler does not heat. Optional proof that the boiler heats is information
+only.
 """
 
 from __future__ import annotations
@@ -138,6 +152,7 @@ from .core.controller import (
     clock_start,
     reset_correction,
 )
+from .core.demand import zone_wants_heat
 from .core.guards import (
     TOLERANCE_K,
     Confirmation,
@@ -181,11 +196,13 @@ from .core.learning import (
     release_all,
     rename_zone,
 )
-from .core.limits import Grid, handed_back_in_frost, write_bounds
+from .core.limits import Grid, handed_back_in_frost, watched_temperatures, write_bounds
 from .core.loop import (
+    HEATING,
     HEATING_OFF_IGNORED,
     OFF,
     ON,
+    RELAY,
     LastCommand,
     LoopOutput,
     LoopState,
@@ -196,6 +213,15 @@ from .core.loop import (
     remember_command,
 )
 from .core.readings import BoilerSnapshot, ZoneState
+from .core.relay import (
+    ProofSeen,
+    ProofState,
+    RelaySeen,
+    RelayState,
+    follow_proof,
+    relay_check,
+    relay_write_failed,
+)
 from .core.signal_check import OutdoorStatus, curve_sensor
 from .core.signals import Signal
 from .core.zone_watch import in_recognition, no_zone_issue_due
@@ -206,6 +232,7 @@ from .transport.entities import (
     read_on_off,
     read_temperature,
     read_weather_temperature,
+    relay_hvac_modes,
     restart_reading,
     temperature_from_state,
     temperature_unit_of,
@@ -213,6 +240,7 @@ from .transport.entities import (
 from .transport.writers import (
     HandBackCheck,
     HandBackFailed,
+    RelayWriter,
     WriteError,
     Writer,
     make_writer,
@@ -278,6 +306,12 @@ VT_BOILER_GRACE_S = 600.0
 VT_CENTRAL_UNKNOWN_ISSUE_S = 600.0
 VT_CENTRAL_ISSUE = "vt_central_entry_not_running"
 RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control counts as off
+# X8's repair issues: the relay out of reach for five minutes (one text per declared state after
+# a power cut), the relay never taking the command this session, and a relay resting "off" while
+# control does not hold it and a room asks for heat or is near freezing.
+RELAY_UNREACHABLE_ISSUE = "relay_unreachable"
+RELAY_IGNORED_ISSUE = "relay_ignored"
+RELAY_RESTS_OFF_ISSUE = "relay_rests_off"
 SMARTPI_DOMAIN = "vtherm_smartpi"
 SMARTPI_SERVICE = "set_smartpi_learning"
 # Blockers found while running, besides those of the configuration (translation keys).
@@ -298,6 +332,12 @@ RUNTIME_BLOCKERS = (
     "mqtt_not_set_up",
     "zone_not_vt",
     "zone_on_boiler_thermostat",
+    # X8 (R2): a relay a VT zone drives, one of the boiler's gateway integration or of VT, and a
+    # boiler thermostat entity that cannot be set to both heat and off — read at every step, as
+    # they can change without the options changing.
+    "relay_used_by_zone",
+    "relay_of_boiler_interface",
+    "relay_climate_modes",
 )
 CONFIRMED_BY_GATEWAY = "confirmed_by_gateway"
 _SHOWN_CONFIRMED = frozenset({Confirmation.CONFIRMED.value, CONFIRMED_BY_GATEWAY})
@@ -360,11 +400,21 @@ def _kept_alarms(raw: Any) -> set[ControlAlarm]:
 
 def _memory_moved(before: LoopState, after: LoopState) -> bool:
     """Whether a value stored at once changed: a guard's baseline or its last fall-back without
-    a trace."""
-    return any(
+    a trace; the relay's one rewrite or its restarts answered (answers C, N)."""
+    relay = before.relay.rewritten_at != after.relay.rewritten_at or (
+        before.relay.restarts != after.relay.restarts
+    )
+    return relay or any(
         old.baseline != new.baseline or _last(old.fallbacks) != _last(new.fallbacks)
         for old, new in ((before.setpoint, after.setpoint), (before.switch, after.switch))
     )
+
+
+def _times(raw: Any) -> tuple[float, ...]:
+    """A stored list of moments; anything else raises ``ValueError``."""
+    if not isinstance(raw, list):
+        raise ValueError(f"not a list of moments: {raw!r}")
+    return tuple(_setpoint(item) for item in raw)
 
 
 def _zones_changed(before: LearningState, after: LearningState) -> bool:
@@ -440,6 +490,23 @@ class ControlAlarm(StrEnum):
     # ask for heat; and a demand criterion no known zone can feed (P-14). Neither has a reaction.
     NO_ZONE_KNOWN = "no_zone_known"
     DEMAND_CRITERION_NO_DATA = "demand_criterion_no_data"
+    # X8, the relay path only: the relay out of reach for five minutes (never a hand-back, R6);
+    # no sign the boiler heats for 30 minutes of the relay on (information, R12).
+    RELAY_UNREACHABLE = "relay_unreachable"
+    BOILER_NOT_RESPONDING = "boiler_not_responding"
+
+
+# Alarms that exist on one path only (R15): the relay's on the relay path; the boiler link's and
+# the missing confirmation elsewhere — a relay out of reach is "relay unreachable".
+RELAY_ONLY_ALARMS = frozenset({ControlAlarm.RELAY_UNREACHABLE, ControlAlarm.BOILER_NOT_RESPONDING})
+NOT_FOR_RELAY_ALARMS = frozenset({ControlAlarm.BOILER_LINK_LOST, ControlAlarm.CONFIRMATION_MISSING})
+
+
+def control_alarms_for(options: ControlOptions) -> tuple[ControlAlarm, ...]:
+    """The control alarms an installation's path has (R15)."""
+    relay = options.write_path is WritePath.RELAY
+    left_out = NOT_FOR_RELAY_ALARMS if relay else RELAY_ONLY_ALARMS
+    return tuple(alarm for alarm in ControlAlarm if alarm not in left_out)
 
 
 _EVENT_ALARM = {
@@ -447,8 +514,16 @@ _EVENT_ALARM = {
     GuardEvent.OUTSIDE_CHANGE: ControlAlarm.OUTSIDE_CHANGE,
 }
 # Alarms that inform and never hand back, whatever reaction was stored: a lost command is sent
-# again, a missing confirmation decides nothing (the boiler link does).
-_INFO_ONLY = frozenset({ControlAlarm.COMMANDS_LOST, ControlAlarm.CONFIRMATION_MISSING})
+# again, a missing confirmation decides nothing (the boiler link does); a relay out of reach
+# could not take a hand-back (R6), and the proof that the boiler heats is information (R12).
+_INFO_ONLY = frozenset(
+    {
+        ControlAlarm.COMMANDS_LOST,
+        ControlAlarm.CONFIRMATION_MISSING,
+        ControlAlarm.RELAY_UNREACHABLE,
+        ControlAlarm.BOILER_NOT_RESPONDING,
+    }
+)
 # Alarms kept across a restart: they explain a latch that survives it.
 _KEPT_ALARMS = frozenset({ControlAlarm.OUTSIDE_CHANGE, ControlAlarm.CONTROL_ERROR})
 
@@ -487,6 +562,14 @@ class ControlStatus:
     correction: float = 0.0  # the comfort correction now, K (P-38)
     activation_at: float | None = None  # when a start waiting VT's activation delay is due
     frost_closed_zones: tuple[str, ...] = ()  # watched rooms below the frost limit VT keeps closed
+    # X8, the relay path (R15): the relay as seen ("on", "off", "other", "unreachable"), where
+    # the command stands with it (``core.relay.RelayCheck``), whether the boiler shows it heats
+    # (``core.relay.HeatEvidence``), and what control cannot confirm: "controlled without
+    # confirmation" (a relay that reports no state), "without heat confirmation" (no proof).
+    relay_state: str | None = None
+    relay_check: str | None = None
+    boiler_heats: str | None = None
+    confirmation: str | None = None
 
     @property
     def confirmed_setpoint(self) -> float | None:
@@ -654,6 +737,17 @@ class ControlUnit:
         self._vt_central_issue = False
         # Decision 4: the rooms the frost issue shows now, with the temperature it shows.
         self._frost_issue_shown: dict[str, float] = {}
+        # X8, the relay: whether its last change carried one of the plugin's own write contexts,
+        # and whether it has shown a state since the unit started (its first report after a
+        # start finds a lost command, answer C); the proof that the boiler heats (R12); and the
+        # relay's repair issues up now.
+        self._relay_ours = False
+        self._relay_reported = False
+        self._restore_gave_way = False  # R11: this step's restore gave way, the relay not there
+        self._proof = ProofState()
+        self._relay_unreachable_issue: tuple[str, str] | None = None
+        self._relay_ignored_issue: tuple[str, str] | None = None
+        self._rests_off_issue: tuple[str, str] | None = None
 
     # --- status, listeners, storage -----------------------------------------------------
 
@@ -782,6 +876,10 @@ class ControlUnit:
             "heating_baseline": session.loop.switch.baseline,
             "fallback_at": _last(session.loop.setpoint.fallbacks),
             "heating_fallback_at": _last(session.loop.switch.fallbacks),
+            # The relay's one rewrite, and the untraced restarts it answered, each for its day
+            # (answers C, N): a restart does not give it three more answers.
+            "relay_rewritten_at": session.loop.relay.rewritten_at,
+            "relay_restarts": list(session.loop.relay.restarts),
             "failed": session.failed,
             "alarms": sorted(alarm.value for alarm in session.alarms & _KEPT_ALARMS),
             "hand_back_pending": self._hand_back_pending,
@@ -832,6 +930,8 @@ class ControlUnit:
         heating_baseline: float | None = field("heating_baseline", _level, None)
         fallback_at: float | None = field("fallback_at", _setpoint, None)
         heating_fallback_at: float | None = field("heating_fallback_at", _setpoint, None)
+        relay_rewritten_at: float | None = field("relay_rewritten_at", _setpoint, None)
+        relay_restarts: tuple[float, ...] = field("relay_restarts", _times, ())
         latched = _flag(data.get("latched"))
         self._session = _Session(
             loop=LoopState(
@@ -846,6 +946,7 @@ class ControlUnit:
                     baseline=heating_baseline,
                     fallbacks=() if heating_fallback_at is None else (heating_fallback_at,),
                 ),
+                relay=RelayState(rewritten_at=relay_rewritten_at, restarts=relay_restarts),
             ),
             learning=LearningState(
                 paused=paused,
@@ -893,8 +994,10 @@ class ControlUnit:
         (answer K). A blocker stopping it, where a hand-back stops heating, raises S-10's issue
         as for a session a blocker ended (V7)."""
         command = self._last_command
-        if self.hand_back_only or command is None or command.setpoint is None:
+        if self.hand_back_only or command is None:
             return
+        if command.setpoint is None and not self._relay_path:
+            return  # a water path's command without its setpoint is not given again
         control = self._session.loop.control
         refused = (
             not self._coordinator.control_readable
@@ -919,6 +1022,23 @@ class ControlUnit:
             return
         self._restore_command = BoilerCommand(command.heating, command.setpoint)
         self._restore_pending = True
+
+    @property
+    def _relay_path(self) -> bool:
+        return self.options.write_path is WritePath.RELAY
+
+    def _enabled_now(self) -> bool:
+        """Control is on — or, on the relay path, the switch has not restored the wish yet while
+        the store says "on" and the last command is to be given again: it goes out at the first
+        step, before the switch's restore wait (R11; V3 knows the wish from the store)."""
+        if self.enabled:
+            return True
+        return (
+            self._relay_path
+            and not self._restored
+            and self._restore_pending
+            and self._stored_enabled is True
+        )
 
     def _switch_disabled(self) -> bool:
         """The control switch entity is disabled in Home Assistant: control is off (answer K)."""
@@ -1054,6 +1174,7 @@ class ControlUnit:
         self._delete_stopped_heating_issue()
         self._show_frost_closed({})
         self._delete_vt_central_issue()  # the next run tells again, ten minutes on
+        self._delete_relay_issues()  # not during a planned stop; the next run tells again
         await self._async_learning_calls(deadline)
         self._coordinator.schedule_control_save()
 
@@ -1105,9 +1226,12 @@ class ControlUnit:
     def blockers(self, now: float) -> tuple[str, ...]:
         """Why control may not run now (translation keys); empty when it may."""
         config = self._coordinator.config
-        found = config_blockers(self.options, config.installation, config.shared_signals)
+        found = config_blockers(
+            self.options, config.installation, config.shared_signals, signals=config.signals
+        )
         if (missing := self._integration_missing()) is not None:
             found.append(missing)
+        found += self._relay_blockers()
         link = self._coordinator.link
         if link.zones_of_another_kind():
             found.append("zone_not_vt")  # a hand edit: only VT climates are zones (X5.7)
@@ -1147,6 +1271,24 @@ class ControlUnit:
             # blocked until the user switches control off and on after fixing it (X5.21).
             found.append(HEATING_OFF_IGNORED)
         return tuple(found)
+
+    def _relay_blockers(self) -> list[str]:
+        """R2 at run time: a relay a VT zone drives (VT can be reconfigured without the options
+        changing), one of the boiler's gateway integration or of VT, and a boiler thermostat
+        entity that cannot be set to both heat and off (where its modes are known)."""
+        relay = self.options.relay.entity
+        if not self._relay_path or not relay:
+            return []
+        found: list[str] = []
+        if self._coordinator.link.relay_used_by_zone(relay):
+            found.append("relay_used_by_zone")
+        if self._coordinator.link.relay_of_boiler_interface(relay):
+            found.append("relay_of_boiler_interface")
+        if relay.startswith("climate."):
+            modes = relay_hvac_modes(self._hass.states.get(relay))
+            if modes is not None and not {"heat", "off"} <= modes:
+                found.append("relay_climate_modes")
+        return found
 
     def _integration_missing(self) -> str | None:
         """X5.5 (P-69): the integration a gateway path writes through is gone or disabled — the
@@ -1383,6 +1525,8 @@ class ControlUnit:
             and not session.loop.control.controlling
             and self.options.configured
             and not self._restore_pending  # decision 3: the restore comes first
+            # R9: a relay's owed hand-back waits for the step's command, which folds it.
+            and not (self._relay_path and not self.hand_back_only)
         ):
             await self._async_follow_hand_back(now)
         if self.hand_back_only:
@@ -1390,7 +1534,7 @@ class ControlUnit:
             await self._async_release_learning(now)
             self._report_owed()
             return
-        if not self._restored:
+        if not self._restored and not self._enabled_now():
             if now - self._started_at < RESTORE_WAIT_S:
                 return  # the switch has not restored the user's choice yet: decide nothing
             # The switch never came (disabled in Home Assistant): control counts as off, and
@@ -1405,7 +1549,7 @@ class ControlUnit:
         blockers = self.blockers(now)
         monitor_failed = "monitor_failed" in blockers
         # Home Assistant starting alone does not stop a command kept or restored (decision 3).
-        if self.enabled and set(blockers) <= {HA_STARTING} and self._writer is None:
+        if self._enabled_now() and set(blockers) <= {HA_STARTING} and self._writer is None:
             self._writer = self._writer_factory(self._hass, self.options)
         zones = self._coordinator.link.zones()
         snapshot = self._coordinator.transport.snapshot(now)
@@ -1430,6 +1574,7 @@ class ControlUnit:
             setpoint_context=setpoint_context,
             heating_context=heating_context,
             grid=self._grid(),
+            relay_seen=self._relay_seen(now) if self._relay_path else None,
         )
         if session.loop.control.latched and not was_latched:
             self._latched_now()
@@ -1440,6 +1585,8 @@ class ControlUnit:
         else:
             await self._async_writes(out, now)
         await self._follow_restore(now, blockers, out.hand_back)
+        if self._relay_path:
+            await self._async_follow_relay(now, out)
         controlling = session.loop.control.controlling
         if out.hand_back and monitor_failed:
             self._report_monitor_failed(now)  # the session held the boiler
@@ -1463,6 +1610,8 @@ class ControlUnit:
             # blocker, a latch or a restart shows (P-08): control hands back if it held the
             # boiler; stand-alone that stops heating, so the user is told.
             (self.enabled and out.decision.link_lost, ControlAlarm.BOILER_LINK_LOST),
+            # The relay out of reach for five minutes while the switch is on (R6): no hand-back.
+            (self.enabled and out.relay_unreachable, ControlAlarm.RELAY_UNREACHABLE),
             (out.decision.frost_stuck, ControlAlarm.FROST_NOT_WARMING),  # heating goes on
             (out.decision.correction_at_limit, ControlAlarm.CORRECTION_AT_LIMIT),  # information
             (self._outdoor_suspect(), ControlAlarm.OUTDOOR_SENSOR_SUSPECT),  # left out
@@ -1478,8 +1627,9 @@ class ControlUnit:
         # while the latch for heating off ignored from the start holds, a restart included.
         ignored = out.ignored
         latch = session.loop.control
-        if latch.latched and HEATING_OFF_IGNORED in latch.latched_by and "heating" not in ignored:
-            ignored = (*ignored, "heating")
+        target = RELAY if self._relay_path else HEATING
+        if latch.latched and HEATING_OFF_IGNORED in latch.latched_by and target not in ignored:
+            ignored = (*ignored, target)
         for flagged, alarm in (
             (bool(ignored), ControlAlarm.WRITE_IGNORED),
             (out.commands_lost, ControlAlarm.COMMANDS_LOST),  # information: sent again
@@ -1494,6 +1644,8 @@ class ControlUnit:
             # without a trace a later judgement rests on.
             await self._coordinator.async_save_control_now()
         setpoint_check, heating_check = self._checks()
+        relay_state, relay_shown, heats, confirmation = self._relay_status(now, snapshot)
+        self._follow_relay_issues(now, zones, out)
         command = out.decision.command
         await self._async_learning(
             now,
@@ -1533,6 +1685,10 @@ class ControlUnit:
             correction=decision.correction,
             activation_at=decision.activation_at,
             frost_closed_zones=tuple(self._frost_issue_shown),
+            relay_state=relay_state,
+            relay_check=relay_shown,
+            boiler_heats=heats,
+            confirmation=confirmation,
         )
 
     async def async_reset_correction(self) -> None:
@@ -1565,12 +1721,22 @@ class ControlUnit:
             return
         control = self._session.loop.control
         blocked = [blocker for blocker in blockers if blocker != HA_STARTING]
-        failed = not self.enabled or control.latched or self._session.failed or bool(blocked)
+        failed = not self._enabled_now() or control.latched or self._session.failed or bool(blocked)
         if control.controlling and not failed:
             return  # the core holds it: the first write that goes through completes it
         if not failed and in_recognition(control.zones):
             return  # it waits for its write target or the boiler link
         self._restore_pending = False
+        if self._relay_path and not failed:
+            # R11: a relay not yet reported, or out of reach, never turns the restore into a
+            # hand-back — control decides anew, and the relay gets its command when it returns.
+            self._restore_gave_way = True
+            _LOGGER.info(
+                "The relay could not take the last command again within the recognition "
+                "period; control decides anew and writes it once the relay is back"
+            )
+            self._coordinator.schedule_control_save()
+            return
         _LOGGER.info(
             "The last command could not be given again after the restart; the owed hand-back "
             "goes first"
@@ -1595,8 +1761,13 @@ class ControlUnit:
 
     def _target_ready(self) -> bool:
         """The write target can take a command: on the entity path each entity written to is
-        there with a value (a gateway's read-back tells for the gateway paths, P-21)."""
+        there with a value (a gateway's read-back tells for the gateway paths, P-21); on the
+        relay path the relay shows a state (R11: a relay not yet reported waits)."""
         options = self.options
+        if self._relay_path:
+            relay = options.relay.entity
+            state = self._hass.states.get(relay) if relay else None
+            return state is not None and state.state not in UNAVAILABLE_STATES
         if options.write_path is not WritePath.ENTITY:
             return True
         targets = [options.setpoint_entity]
@@ -1658,8 +1829,12 @@ class ControlUnit:
         return None if shown is None else shown.value
 
     def _stops_heating(self) -> bool:
-        """A hand-back stops heating: nothing heats the house once control lets go."""
-        return hand_back_effect(self.options) is HandBackEffect.HEATING_STOPS
+        """A hand-back stops heating: nothing heats the house once control lets go — a relay
+        resting "off" included, unless a thermostat in parallel heats (X8)."""
+        return hand_back_effect(self.options) in (
+            HandBackEffect.HEATING_STOPS,
+            HandBackEffect.RELAY_RESTS_OFF,
+        )
 
     def _follow_frost(self, now: float, zones: Sequence[ZoneState]) -> None:
         """S-57: while control does not hold the boiler where a hand-back stops heating, a room
@@ -1854,6 +2029,19 @@ class ControlUnit:
             return
         if anew:
             ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+        key = (
+            LATCHED_ISSUE
+            if cause == ControlAlarm.OUTSIDE_CHANGE.value
+            else f"{LATCHED_ISSUE}_{HEATING_OFF_IGNORED}"
+        )
+        placeholders: dict[str, str] | None = None
+        if self._relay_path:
+            # A relay (X8): its own texts, naming it — the step aside by its rest state.
+            if cause == ControlAlarm.OUTSIDE_CHANGE.value:
+                key = f"{LATCHED_ISSUE}_relay_{'on' if self.options.relay.rests_on else 'off'}"
+            else:
+                key = f"{LATCHED_ISSUE}_relay_{HEATING_OFF_IGNORED}"
+            placeholders = {"relay": self._relay_name()}
         ir.async_create_issue(
             self._hass,
             DOMAIN,
@@ -1861,17 +2049,15 @@ class ControlUnit:
             is_fixable=False,
             is_persistent=False,
             severity=ir.IssueSeverity.ERROR if self._stops_heating() else ir.IssueSeverity.WARNING,
-            translation_key=(
-                LATCHED_ISSUE
-                if cause == ControlAlarm.OUTSIDE_CHANGE.value
-                else f"{LATCHED_ISSUE}_{HEATING_OFF_IGNORED}"
-            ),
+            translation_key=key,
+            translation_placeholders=placeholders,
         )
 
     def _boiler_link(self, snapshot: BoilerSnapshot) -> bool:
         """The boiler's own signals are fresh at this step: flame and flow known, each within its
         own age limit where the user set one — the flame's included (P-41). The core judges the
-        steps over a window (X2): lost after five stale minutes within ten.
+        steps over a window (X2): lost after five stale minutes within ten. On the relay path the
+        link is the relay (R6): flame and flow never gate it.
 
         Many sources (MQTT among them) report only on change, so a steady reading is not a stale
         one: without a limit only availability counts. The OTGW firmware over MQTT turns every
@@ -1879,6 +2065,8 @@ class ControlUnit:
         link between its ESP and its PIC is not seen through Home Assistant at all — its values
         only freeze (Q3.6), which the freshness option's text says.
         """
+        if self._relay_path:
+            return True
         freshness = self._coordinator.config.freshness
         flame = snapshot.flag(Signal.FLAME, freshness.get(Signal.FLAME))
         flow = snapshot.number(Signal.FLOW, freshness.get(Signal.FLOW))
@@ -1912,7 +2100,7 @@ class ControlUnit:
         restoring = self._restore_pending
         return ControlInputs(
             now=now,
-            enabled=self.enabled,
+            enabled=self._enabled_now(),
             blockers=blockers,
             hand_back_alarms=self._hand_back_alarms(),
             boiler_link=link,
@@ -1987,8 +2175,11 @@ class ControlUnit:
         return tuple(active)
 
     def _checks(self) -> tuple[str | None, str | None]:
-        """Where the setpoint and heating on/off stand with the device, as shown."""
+        """Where the setpoint and heating on/off stand with the device, as shown; the relay path
+        shows its own (``relay_check``)."""
         options = self.options
+        if self._relay_path:
+            return None, None
         loop = self._session.loop
         gateway = options.write_path in OTGW_PATHS
         self_echo = bool(options.confirmed_entity) and (
@@ -2046,6 +2237,14 @@ class ControlUnit:
             )
             if not heating_ok:
                 loop = replace(loop, switch=write_failed(loop.switch))
+        if out.relay is not None:
+            relay = out.relay
+            action = WriteAction(ON if relay.on else OFF, relay.kind)
+            heating_ok = await self._async_write(
+                "relay", lambda: writer.write_heating(relay.on), now, action
+            )
+            if not heating_ok:
+                loop = replace(loop, relay=relay_write_failed(loop.relay))
         self._session.loop = loop
         await self._async_remember_command(out, setpoint_ok, heating_ok, now)
         holds = out.decision.command is not None and not out.blocked
@@ -2185,6 +2384,7 @@ class ControlUnit:
                 baseline=self._release_baseline,
                 write_timeout_s=STOP_WRITE_TIMEOUT_S if self._stopping else None,
                 skip=skip,
+                once=self._step_aside(),
             )
         except asyncio.CancelledError as err:
             if _cancelled_from_outside():
@@ -2437,6 +2637,7 @@ class ControlUnit:
             str(check.expected),
             target.seen,
             traced or trace_seen(self._restart_at, now),  # X1's trace, the restart included
+            check.known,
         )
         target.released = verdict is SwitchVerdict.RELEASED
         target.lost = verdict is SwitchVerdict.LOST
@@ -2470,7 +2671,7 @@ class ControlUnit:
         issues = ir.async_get(self._hass)
         if issues.async_get_issue(DOMAIN, f"{LATCHED_ISSUE}_{entry_id}") is not None:
             return
-        stops = hand_back_effect(self.options) is HandBackEffect.HEATING_STOPS
+        stops = self._stops_heating()
         ir.async_create_issue(
             self._hass,
             DOMAIN,
@@ -2506,7 +2707,7 @@ class ControlUnit:
         so an earlier one the user dismissed does not hide it."""
         since = self._coordinator.monitor_lost_from
         since = now if since is None else since
-        stops = hand_back_effect(self.options) is HandBackEffect.HEATING_STOPS
+        stops = self._stops_heating()
         _LOGGER.warning(
             "The plugin's monitor has failed for five minutes: control hands the boiler back, "
             "and resumes on its own once the monitor works again"
@@ -2805,6 +3006,14 @@ class ControlUnit:
             state is None or state.state in UNAVAILABLE_STATES for state in (old, new)
         ):
             self._outages[entity_id] = now
+        if entity_id == self.options.relay.entity and (
+            old is None or new is None or old.state != new.state
+        ):
+            # R7: whether the relay's change carried one of the plugin's own write contexts.
+            writer = self._writer
+            self._relay_ours = (
+                new is not None and isinstance(writer, RelayWriter) and writer.ours(new.context.id)
+            )
         if entity_id == self.options.restart_entity:
             # Q3.7: a restart the device's entities may never show as unavailable.
             value, kind = restart_reading(new)
@@ -2886,6 +3095,294 @@ class ControlUnit:
             if self._hand_back_pending:
                 await self._async_try_hand_back(now)
             await self._async_release_learning(now)
+
+    # --- the relay (X8) --------------------------------------------------------------------
+
+    def _relay_name(self) -> str:
+        """The relay as the user sees it: its name, else its entity ID."""
+        relay = self.options.relay.entity or "-"
+        state = self._hass.states.get(relay)
+        return state.name if state is not None and state.name else relay
+
+    def _step_aside(self) -> bool:
+        """The relay's hand-back is a step aside — another controller, or its "off" ignored from
+        the start: its rest state written once, then left alone (answers H, L, O)."""
+        control = self._session.loop.control
+        causes = (ControlAlarm.OUTSIDE_CHANGE.value, HEATING_OFF_IGNORED)
+        return (
+            self._relay_path
+            and control.latched
+            and any(cause in control.latched_by for cause in causes)
+        )
+
+    def _relay_seen(self, now: float) -> RelaySeen:
+        """The relay as Home Assistant shows it now (R6, R7): its state — a switch on or off, a
+        boiler thermostat heat, off or another mode — whether it can take a write (there and not
+        unavailable), whether its state confirms anything (not ``assumed_state``), the trace of
+        an outage around it, whether its last change was the plugin's own, and whether this is
+        its first state since the unit started."""
+        entity = self.options.relay.entity
+        state = self._hass.states.get(entity) if entity else None
+        known = state is not None and state.state not in UNAVAILABLE_STATES
+        on: bool | None = None
+        if state is not None and known:
+            if entity is not None and entity.startswith("climate."):
+                on = {"heat": True, "off": False}.get(state.state)
+            else:
+                on = parse_binary(state.state)
+        first = known and not self._relay_reported
+        self._relay_reported = self._relay_reported or known
+        traced = entity is not None and (
+            outage_seen(self._outages, self._trace_entities(entity), now)
+            or trace_seen(self._restart_at, now)
+        )
+        return RelaySeen(
+            on=on,
+            known=known,
+            available=state is not None and state.state != "unavailable",
+            reports=state is None or state.attributes.get("assumed_state") is not True,
+            trace=traced,
+            ours=self._relay_ours,
+            first=first,
+            changed_at=None if state is None else state.last_changed.timestamp(),
+        )
+
+    async def _async_follow_relay(self, now: float, out: LoopOutput) -> None:
+        """After the relay step (R9, R11): the session holds the relay once the relay rule has a
+        command — written, or found shown and taken as it is — so the boiler may hold a state of
+        ours, stored at once with the last command. A hand-back owed then is folded into the
+        session, whose own hand-back comes at its end: never off-then-on. Otherwise an owed
+        hand-back goes out as the rest state."""
+        loop = self._session.loop
+        written = loop.relay.written
+        commands = out.decision.command is not None and not out.hand_back and not out.blocked
+        gave_way, self._restore_gave_way = self._restore_gave_way, False
+        holds = commands and written is not None
+        if not holds:
+            # The session commanding a relay nothing has reached yet (out of reach) keeps the
+            # owed hand-back for when it returns, which folds it; nor does a restore that gave
+            # way for such a relay turn into a hand-back (R6, R11). Otherwise it goes out.
+            if (
+                not commands
+                and not gave_way
+                and self._hand_back_pending
+                and not loop.control.controlling
+                and not self._restore_pending
+                and not out.hand_back
+            ):
+                await self._async_follow_hand_back(now)
+            return
+        assert written is not None
+        save = False
+        if not self._holding:
+            self._holding = True
+            save = True
+        last = self._last_command
+        if last is None or last.heating != written:
+            command, save_now = remember_command(self._command_stored, written, None, now)
+            self._last_command = command
+            if save_now:
+                self._command_stored = command
+                save = True
+        self._restore_pending = False
+        if self._hand_back_pending:
+            _LOGGER.info("The owed hand-back of the relay is folded into the session holding it")
+            self._hand_back_done()
+            self._hand_back_shown = None
+            save = True
+        if save:
+            await self._coordinator.async_save_control_now()
+
+    def _relay_status(
+        self, now: float, snapshot: BoilerSnapshot
+    ) -> tuple[str | None, str | None, str | None, str | None]:
+        """What the relay path shows (R15): the relay's state, where the command stands with it,
+        whether the boiler shows it heats — following the information alarm "no sign the boiler
+        heats" (R12) — and what control cannot confirm. Nothing elsewhere."""
+        if not self._relay_path:
+            return None, None, None, None
+        options = self.options
+        seen = self._relay_seen_quietly()
+        if not seen.known:
+            state = "unreachable"
+        else:
+            state = "other" if seen.on is None else ("on" if seen.on else "off")
+        relay = self._session.loop.relay
+        config = options.relay.config
+        reports = config.reports_state and seen.reports
+        check = relay_check(relay, config, reports=seen.reports)
+        on = (seen.on is True) if reports else (relay.written is True)
+        controlling = self._session.loop.control.controlling
+        proof = self._proof_seen(snapshot)
+        self._proof, heats, alarm = follow_proof(self._proof, on and controlling, proof, now)
+        if self.enabled and alarm:
+            self._session.alarms.add(ControlAlarm.BOILER_NOT_RESPONDING)
+        else:
+            self._session.alarms.discard(ControlAlarm.BOILER_NOT_RESPONDING)
+        if not reports:
+            confirmation: str | None = "controlled_without_confirmation"
+        elif not self._proof_mapped():
+            confirmation = "without_heat_confirmation"
+        else:
+            confirmation = None
+        return (
+            state,
+            None if check is None else check.value,
+            None if heats is None else heats.value,
+            confirmation,
+        )
+
+    def _relay_seen_quietly(self) -> RelaySeen:
+        """The relay's state and whether it reports, without touching what the step notes."""
+        entity = self.options.relay.entity
+        state = self._hass.states.get(entity) if entity else None
+        known = state is not None and state.state not in UNAVAILABLE_STATES
+        on: bool | None = None
+        if state is not None and known:
+            if entity is not None and entity.startswith("climate."):
+                on = {"heat": True, "off": False}.get(state.state)
+            else:
+                on = parse_binary(state.state)
+        return RelaySeen(
+            on=on,
+            known=known,
+            available=state is not None and state.state != "unavailable",
+            reports=state is None or state.attributes.get("assumed_state") is not True,
+        )
+
+    def _proof_seen(self, snapshot: BoilerSnapshot) -> ProofSeen:
+        """The proof inputs now (R12), each by its own age limit: the flame, the flow, the gas
+        meter, and the boiler's electric power with the threshold the user gave it."""
+        freshness = self._coordinator.config.freshness
+        power = snapshot.number(Signal.BOILER_POWER, freshness.get(Signal.BOILER_POWER))
+        return ProofSeen(
+            flame=snapshot.flag(Signal.FLAME, freshness.get(Signal.FLAME)),
+            flow=snapshot.number(Signal.FLOW, freshness.get(Signal.FLOW)),
+            gas=snapshot.number(Signal.GAS_METER, freshness.get(Signal.GAS_METER)),
+            power_w=power,
+            heats_above_w=self.options.relay.heats_above_w,
+        )
+
+    def _proof_mapped(self) -> bool:
+        """A proof input is mapped: the flame, the flow, the gas meter, or the boiler's power
+        with its threshold."""
+        signals = self._coordinator.config.signals
+        if any(s in signals for s in (Signal.FLAME, Signal.FLOW, Signal.GAS_METER)):
+            return True
+        return Signal.BOILER_POWER in signals and self.options.relay.heats_above_w is not None
+
+    def _follow_relay_issues(self, now: float, zones: Sequence[ZoneState], out: LoopOutput) -> None:
+        """The relay's repair issues (R6, R7, R10): out of reach for five minutes while control is
+        switched on; the command never taken this session (an error: nothing else controls the
+        boiler; where it is "off" the boiler may keep heating); and a relay resting "off" while
+        control does not hold it, it reads off, its hand-back was not taken by another
+        controller, and a room asks for heat or is near freezing."""
+        if not self._relay_path:
+            return
+        entry_id = self._coordinator.config_entry.entry_id
+        relay = self.options.relay
+        # R6: one text per declared state after a power cut, the sentence built in.
+        unreachable = self.enabled and out.relay_unreachable
+        key = f"{RELAY_UNREACHABLE_ISSUE}_{relay.power_on.value}" if unreachable else None
+        self._relay_unreachable_issue = self._show_relay_issue(
+            f"{RELAY_UNREACHABLE_ISSUE}_{entry_id}",
+            self._relay_unreachable_issue,
+            key,
+            ir.IssueSeverity.WARNING,
+            {"relay": self._relay_name()},
+        )
+        state = self._session.loop.relay
+        ignored = None
+        if state.ignored:
+            ignored = f"{RELAY_IGNORED_ISSUE}_off" if state.off_ignored else RELAY_IGNORED_ISSUE
+        self._relay_ignored_issue = self._show_relay_issue(
+            f"{RELAY_IGNORED_ISSUE}_{entry_id}",
+            self._relay_ignored_issue,
+            ignored,
+            ir.IssueSeverity.ERROR,
+            {"relay": self._relay_name()},
+        )
+        asking = self._rest_off_zones(now, zones, out)
+        rests_off = None if not asking else RELAY_RESTS_OFF_ISSUE
+        self._rests_off_issue = self._show_relay_issue(
+            f"{RELAY_RESTS_OFF_ISSUE}_{entry_id}",
+            self._rests_off_issue,
+            rests_off,
+            ir.IssueSeverity.WARNING,
+            {"zones": ", ".join(self._coordinator.link.zone_name(zone) for zone in asking)},
+        )
+
+    def _rest_off_zones(self, now: float, zones: Sequence[ZoneState], out: LoopOutput) -> list[str]:
+        """R10: the rooms that ask for heat, or are near freezing where frost protection would
+        heat them, while a relay resting "off" is not held by control and reads off (or reports
+        no state), within reach, its hand-back not taken by another controller. None otherwise."""
+        options = self.options
+        relay = options.relay.entity
+        if (
+            not relay
+            or options.relay.rests_on
+            or self._session.loop.control.controlling
+            or relay in self._taken_targets
+            or out.relay_unreachable
+        ):
+            return []
+        seen = self._relay_seen_quietly()
+        reports = options.relay.config.reports_state and seen.reports
+        if not seen.known or (reports and seen.on is not False):
+            return []
+        control = options.loop.control
+        max_age = control.zone_max_age_s
+        opening = control.demand.zone_opening
+        asking = [
+            zone.zone_id
+            for zone in zones
+            if zone.is_known(now, max_age) and zone_wants_heat(zone, opening)
+        ]
+        for zone in zones:
+            temperatures = watched_temperatures([zone], now, max_age, control.frost)
+            if (
+                any(t < control.frost.room_limit for t in temperatures)
+                and zone.zone_id not in asking
+            ):
+                asking.append(zone.zone_id)
+        return asking
+
+    def _show_relay_issue(
+        self,
+        issue_id: str,
+        shown: tuple[str, str] | None,
+        key: str | None,
+        severity: ir.IssueSeverity,
+        placeholders: dict[str, str],
+    ) -> tuple[str, str] | None:
+        """A relay issue raised under ``key`` (``None``: deleted), raised again only when its
+        text or what it names changes; returns what is shown."""
+        if key is None:
+            if shown is not None:
+                ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+            return None
+        now_shown = (key, repr(sorted(placeholders.items())))
+        if shown == now_shown:
+            return shown
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=severity,
+            translation_key=key,
+            translation_placeholders=placeholders,
+        )
+        return now_shown
+
+    def _delete_relay_issues(self) -> None:
+        entry_id = self._coordinator.config_entry.entry_id
+        for issue in (RELAY_UNREACHABLE_ISSUE, RELAY_IGNORED_ISSUE, RELAY_RESTS_OFF_ISSUE):
+            ir.async_delete_issue(self._hass, DOMAIN, f"{issue}_{entry_id}")
+        self._relay_unreachable_issue = None
+        self._relay_ignored_issue = None
+        self._rests_off_issue = None
 
     # --- learning pauses ------------------------------------------------------------------
 

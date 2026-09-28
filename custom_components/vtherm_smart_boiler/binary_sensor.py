@@ -14,10 +14,10 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .control import ControlAlarm
+from .control import ControlAlarm, control_alarms_for
 from .coordinator import SmartBoilerCoordinator
 from .core.alarms import AlarmKind
-from .core.signal_check import Feature, FeatureStatus, OutdoorStatus, SignalStatus
+from .core.signal_check import Feature, FeatureStatus, OutdoorStatus, link_problems
 from .core.signals import Signal
 from .entity import ControlEntity, SmartBoilerEntity
 
@@ -29,7 +29,10 @@ EARLY_WARNINGS = frozenset(
 
 def _alarm_kinds(coordinator: SmartBoilerCoordinator) -> list[AlarmKind]:
     signals = coordinator.config.signals
-    kinds = [AlarmKind.FREQUENT_STARTS, AlarmKind.UNSTABLE_IGNITION]
+    kinds: list[AlarmKind] = []
+    if Signal.FLAME in signals:
+        # Burns need the flame (X8, R4): without it these alarms could never judge anything.
+        kinds += [AlarmKind.FREQUENT_STARTS, AlarmKind.UNSTABLE_IGNITION]
     if Signal.PRESSURE in signals:
         kinds += [AlarmKind.PRESSURE_LOW, AlarmKind.PRESSURE_HIGH, AlarmKind.PRESSURE_FALLING]
     if Signal.FLUE_GAS in signals and coordinator.config.installation.boiler.condensing:
@@ -64,13 +67,17 @@ async def async_setup_entry(
     if coordinator.data.features[Feature.OUTDOOR_CHECK].status is FeatureStatus.AVAILABLE:
         entities.append(OutdoorSensorProblem(coordinator))
     if coordinator.control is not None:
-        entities += [ControlAlarmSensor(coordinator, kind) for kind in ControlAlarm]
+        # Each path's own alarms (R15): the relay's only on the relay path, the boiler link's
+        # and the missing confirmation not there.
+        kinds = control_alarms_for(coordinator.control.options)
+        entities += [ControlAlarmSensor(coordinator, kind) for kind in kinds]
     coordinator.expect_entities(entities)
     async_add_entities(entities)
 
 
 class ConnectionSensor(SmartBoilerEntity, BinarySensorEntity):
-    """On while every required boiler signal is known and fresh."""
+    """On while every mapped link signal (flame, flow) is known and fresh and, on the relay
+    path, the relay is within reach; unknown with no link signal mapped and no relay (X8)."""
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -79,19 +86,19 @@ class ConnectionSensor(SmartBoilerEntity, BinarySensorEntity):
         super().__init__(coordinator, "connection")
 
     @property
-    def is_on(self) -> bool:
+    def is_on(self) -> bool | None:
         return self.coordinator.data.connected
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        health = self.coordinator.data.health
-        return {
-            "problems": [
-                signal.value
-                for signal, h in health.items()
-                if h.required and h.status is not SignalStatus.OK
-            ]
-        }
+        problems = [signal.value for signal in link_problems(self.coordinator.data.health)]
+        control = self.coordinator.config.control
+        relay = control.relay.entity if control.write_path == "relay" else None
+        if relay is not None:
+            state = self.coordinator.hass.states.get(relay)
+            if state is None or state.state in ("unavailable", "unknown"):
+                problems.append("relay")
+        return {"problems": problems}
 
 
 class HotWaterSensor(SmartBoilerEntity, BinarySensorEntity):

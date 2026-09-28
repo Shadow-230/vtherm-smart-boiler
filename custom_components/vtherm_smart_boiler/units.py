@@ -1,5 +1,5 @@
-"""Unit conversion to the units the core uses: °C, bar, kW. No Home Assistant imports, so the
-history importer can use it too."""
+"""Unit conversion to the units the core uses: °C, bar, kW — a boiler's electric power in W. No
+Home Assistant imports, so the history importer can use it too."""
 
 from __future__ import annotations
 
@@ -114,6 +114,9 @@ def signal_value(signal: Signal, state: object, unit: str | None) -> float | boo
         converted = temperature_to_celsius(number, unit)
     elif spec.kind is SignalKind.PRESSURE:
         converted = pressure_to_bar(number, unit)
+    elif spec.kind is SignalKind.POWER:
+        kw = power_to_kw(number, unit)
+        converted = None if kw is None else kw * 1000.0
     else:
         converted = number
     if converted is None or not spec.plausible(converted):

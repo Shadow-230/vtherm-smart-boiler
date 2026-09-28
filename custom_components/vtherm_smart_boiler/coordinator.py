@@ -65,7 +65,7 @@ from .const import (
     owes_hand_back,
     stored_flag,
 )
-from .control_config import Topology, wall_thermostat_applies
+from .control_config import Topology, WritePath, wall_thermostat_applies
 from .core.alarms import (
     Alarm,
     AlarmKind,
@@ -113,7 +113,7 @@ from .core.signal_check import (
     SignalHealth,
     check_signals,
     features,
-    required_problems,
+    link_connected,
 )
 from .core.signals import Signal
 from .core.supply import circuit_return, circuit_supply
@@ -168,7 +168,9 @@ class MonitorData:
     snapshot: BoilerSnapshot
     health: dict[Signal, SignalHealth]
     features: dict[Feature, FeatureState]
-    connected: bool
+    # Every mapped link signal fresh and, on the relay path, the relay within reach; ``None``
+    # with no link signal mapped and no relay (X8, R4).
+    connected: bool | None
     zones: dict[str, ZoneView]
     reference: ReferenceRoom
     critical: dict[str, CriticalZone]
@@ -751,6 +753,15 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         """The first refresh of the current run of good ones; ``None`` after a failure."""
         return self._refreshes.good_since
 
+    def _relay_reachable(self) -> bool | None:
+        """On the relay path: whether the relay shows a state (R4, R6); ``None`` without one."""
+        control = self.config.control
+        relay = control.relay.entity
+        if control.write_path is not WritePath.RELAY or not relay:
+            return None
+        state = self.hass.states.get(relay)
+        return state is not None and state.state not in ("unavailable", "unknown")
+
     def _max_age(self, signal: Signal) -> float | None:
         return self.config.freshness.get(signal)  # one rule: only a limit the user set
 
@@ -864,7 +875,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             snapshot=snapshot,
             health=health,
             features=feature_states,
-            connected=not required_problems(health),
+            connected=link_connected(health, self._relay_reachable()),
             zones=views,
             reference=self._reference,
             critical=dict(self._critical),

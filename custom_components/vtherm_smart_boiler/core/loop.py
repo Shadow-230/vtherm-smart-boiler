@@ -17,6 +17,12 @@ back (S-11), so the next step latches and steps aside. A hand-back is passed on 
 guards never hold it back, and it names no target to leave out: the control unit makes the whole
 safe hand-back, over the other controller's value too (the user's answer H). The guards keep
 their memory across it (P-06): a hand-back inside a session resets only what was sent.
+
+On the relay path (class 3, X8) there is no setpoint and no heating switch: the loop plans no
+guard write and hands heating on/off to the relay rule (``core.relay``), whose lost commands count
+toward "commands lost" like the guards', whose "off" ignored from the start blocks control as the
+heating switch's does (answer O applied to relays), and whose finding another controller stops
+every write until the next step steps aside.
 """
 
 from __future__ import annotations
@@ -44,13 +50,23 @@ from .guards import (
     plan_write,
 )
 from .limits import Grid, write_bounds
+from .relay import (
+    RelayConfig,
+    RelaySeen,
+    RelayState,
+    RelayWrite,
+    after_hand_back_relay,
+    plan_relay,
+    relay_for_new_session,
+    relay_write_ignored,
+)
 
 DEFAULT_OFF_SETPOINT = 10.0
 ON, OFF = 1.0, 0.0  # heating on/off as the guard sees it
 # The latch's cause when heating on/off was ignored from the start with "off" among what it did
 # not take (answer O): blocked until the user switches control off and on.
 HEATING_OFF_IGNORED = "heating_off_ignored"
-SETPOINT, HEATING = "setpoint", "heating"  # the targets, as the alarms name them
+SETPOINT, HEATING, RELAY = "setpoint", "heating", "relay"  # the targets, as the alarms name them
 # A setpoint written this far from the last command stored is stored at once; a smaller step
 # (a ramp's) waits for the next save (provisional, K4).
 LAST_COMMAND_SAVE_K = 1.0
@@ -67,6 +83,8 @@ class LoopConfig:
     switch_guard: GuardConfig = field(default_factory=_no_echo_switch)  # heating on/off
     ch_writes: bool = True  # the write path can switch heating on and off
     off_setpoint: float = DEFAULT_OFF_SETPOINT  # written for "off" when it cannot
+    # The relay path (X8): heating on/off through the relay rule, and nothing else written.
+    relay: RelayConfig | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +95,7 @@ class LoopState:
     # Lost commands within the last day, (time, target): the warning "commands lost".
     losses: tuple[tuple[float, str], ...] = ()
     losses_warned: bool = False
+    relay: RelayState = field(default_factory=RelayState)  # the relay path's memory (X8)
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +110,9 @@ class LoopOutput:
     ignored: tuple[str, ...] = ()  # targets ignored from the start (``SETPOINT``, ``HEATING``)
     unconfirmed: tuple[str, ...] = ()  # targets whose read-back has been missing for long
     commands_lost: bool = False  # the warning: commands keep getting lost
+    relay: RelayWrite | None = None  # the relay path: what to write to the relay now
+    relay_unreachable: bool = False  # the relay out of reach for five minutes (its alarm)
+    relay_restart: bool = False  # an untraced restart answered: stored at once (answer N)
 
     @property
     def ch_enable(self) -> bool | None:
@@ -103,12 +125,14 @@ def _level(on: bool | None) -> float | None:
 
 
 def after_hand_back_loop(state: LoopState, control: ControlState) -> LoopState:
-    """A hand-back inside a session: the guards keep their memory (P-06), the losses too."""
+    """A hand-back inside a session: the guards keep their memory (P-06), the losses too, and
+    so does the relay rule."""
     return replace(
         state,
         control=control,
         setpoint=after_hand_back(state.setpoint),
         switch=after_hand_back(state.switch),
+        relay=after_hand_back_relay(state.relay),
     )
 
 
@@ -124,6 +148,8 @@ def new_session(state: LoopState, now: float) -> LoopState:
         ),
         setpoint=for_new_session(state.setpoint, now),
         switch=for_new_session(state.switch, now),
+        # The relay's one rewrite and its restarts, each for its day (answers C, N).
+        relay=relay_for_new_session(state.relay, now),
     )
 
 
@@ -163,10 +189,14 @@ def loop_step(
     setpoint_context: GuardContext = NO_CONTEXT,
     heating_context: GuardContext = NO_CONTEXT,
     grid: Grid | None = None,
+    relay_seen: RelaySeen | None = None,
 ) -> tuple[LoopState, LoopOutput]:
     """One step. ``setpoint_context``, ``heating_context``: what each guard knows beside its
     read-back — the trace of an outage, the thermostat's own request, hot water, a target back
-    from unavailable, the last command stored. ``grid``: the setpoint entity's grid, if any."""
+    from unavailable, the last command stored. ``grid``: the setpoint entity's grid, if any.
+    ``relay_seen``: the relay as Home Assistant shows it (the relay path; none: not seen)."""
+    if config.relay is not None:
+        return _relay_step(state, inputs, config, config.relay, relay_seen or RelaySeen())
     now = inputs.now
     if config.ch_writes and state.switch.off_ignored:
         # The plugin can no longer switch heating off (answer O): latched and handed back,
@@ -219,7 +249,10 @@ def loop_step(
         off = False
     else:
         heat = GuardResult(state.switch)
-        desired = off_value if off else _gridded(command.setpoint, grid, config, False)
+        # A water path's command always carries its setpoint; without one nothing is written.
+        water = command.setpoint
+        heating_value = None if water is None else _gridded(water, grid, config, False)
+        desired = off_value if off else heating_value
     if config.ch_writes and desired is not None:
         desired = _gridded(desired, grid, config, False)
     planned = plan_write(
@@ -280,6 +313,54 @@ def loop_step(
         ignored=ignored,
         unconfirmed=unconfirmed,
         commands_lost=warned,
+    )
+
+
+def _relay_step(
+    state: LoopState,
+    inputs: ControlInputs,
+    config: LoopConfig,
+    relay: RelayConfig,
+    seen: RelaySeen,
+) -> tuple[LoopState, LoopOutput]:
+    """The relay path's step: the controller's decision, then the relay rule — followed at every
+    step, whatever holds control, for the relay's reachability and its alarm."""
+    now = inputs.now
+    if state.relay.off_ignored:
+        # The plugin can no longer switch heating off (answer O applied to relays): latched and
+        # handed back, whatever alarm reaction is stored.
+        alarms = inputs.hand_back_alarms
+        if HEATING_OFF_IGNORED not in alarms:
+            inputs = replace(inputs, hand_back_alarms=(*alarms, HEATING_OFF_IGNORED))
+    warned = losses_warning(state.losses, now, state.losses_warned)
+    state = replace(state, losses_warned=warned)
+    control, decision = decide(state.control, inputs, config.control)
+    if decision.hand_back:
+        # Nothing new for the relay: its hand-back (the rest state) is the control unit's.
+        followed = plan_relay(state.relay, None, seen, now, relay)
+        kept = after_hand_back_loop(replace(state, relay=followed.state), control)
+        return kept, LoopOutput(
+            decision,
+            hand_back=True,
+            ignored=(RELAY,) if relay_write_ignored(kept.relay) else (),
+            commands_lost=warned,
+            relay_unreachable=followed.unreachable,
+        )
+    desired = None if decision.command is None else decision.command.ch_enable
+    result = plan_relay(state.relay, desired, seen, now, relay)
+    losses = add_loss(state.losses, now, RELAY) if result.lost else state.losses
+    warned = losses_warning(losses, now, warned)
+    new = replace(state, control=control, relay=result.state, losses=losses, losses_warned=warned)
+    return new, LoopOutput(
+        decision,
+        events=result.events,
+        heating_on=result.state.written,
+        blocked=result.state.blocked,
+        ignored=(RELAY,) if relay_write_ignored(result.state) else (),
+        commands_lost=warned,
+        relay=result.write,
+        relay_unreachable=result.unreachable,
+        relay_restart=result.restart,
     )
 
 

@@ -3,6 +3,12 @@
 It reads VT's climate entities (state and top-level attributes, see ``vtherm_attributes``) and
 VT's central mode select. It detects what is installed instead of assuming it: VT, its version,
 ``vtherm_api`` and SmartPI may be missing or older.
+
+Moving over from VT's own central boiler (X8, R14), it reads — never writes — what VT's central
+entry keeps (its commands, activation delay and keep-alive) and VT's two threshold numbers, so
+the relay path's form can offer them for confirmation before the user unticks VT's central
+boiler, which deletes the commands. The commands are split by the plugin's own reading of VT's
+documented format ``entity_id/domain.service[/attribute:value]``.
 """
 
 from __future__ import annotations
@@ -11,6 +17,7 @@ import logging
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from enum import StrEnum
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 
@@ -24,6 +31,7 @@ from homeassistant.loader import async_get_loaded_integration
 from .const import DOMAIN, OPENTHERM_GW_DOMAIN, VT_DOMAIN
 from .core.readings import ZoneState
 from .transport.entities import reported_at
+from .units import parse_number
 from .vtherm_attributes import CentralMode, central_mode, zone_values
 
 _LOGGER = logging.getLogger(__name__)
@@ -60,6 +68,15 @@ THERMOSTAT_TYPE = "thermostat_type"
 CENTRAL_CONFIG = "thermostat_central_config"
 ACTIVATION_DELAY = "central_boiler_activation_delay_sec"
 VT_ACTIVATION_DELAY_MAX_S = 600.0
+# VT's central boiler commands and keep-alive in its central entry (VT 10.4.0 ``const.py``), and
+# the unique IDs of its two threshold numbers (``number.py``), read for the migration (R14).
+ACTIVATION_SERVICE = "central_boiler_activation_service"
+DEACTIVATION_SERVICE = "central_boiler_deactivation_service"
+KEEP_ALIVE = "keep_alive_boiler_delay_sec"
+COUNT_THRESHOLD_UNIQUE_ID = "boiler_activation_threshold"
+POWER_THRESHOLD_UNIQUE_ID = "boiler_power_activation_threshold"
+# The plugin's repeat interval takes VT's keep-alive only within its own range (R3).
+REPEAT_RANGE_S = (10.0, 300.0)
 ROOM_SENSOR = "temperature_sensor_entity_id"  # in a thermostat's entry data (VT 10.4.0)
 # The entities a thermostat drives — switches, valves or climates — in its entry's data (VT 10.4.0
 # ``const.py:63``, ``CONF_UNDERLYING_LIST``; migrated there from the older per-slot keys).
@@ -72,6 +89,45 @@ class ZoneAlgorithm:
     smartpi_learning: bool | None = None  # SmartPI's learning flag; None: not SmartPI
     auto_tpi: bool = False  # Auto-TPI learning is on (a session or continuous kext)
     used_by_central_boiler: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VtCommand:
+    """One of VT's central boiler commands, as its documented format gives it."""
+
+    entity_id: str
+    domain: str
+    service: str
+    attribute: str | None = None
+    value: str | None = None
+
+
+class VtCommands(StrEnum):
+    """What VT's central boiler commands are, for the relay path."""
+
+    NONE = "none"  # VT keeps none (never set, or deleted once unticked)
+    RELAY = "relay"  # a switch turned on and off, or a boiler thermostat set to heat and off
+    NOT_SUPPORTED = "not_supported"  # anything else: the user picks the relay
+
+
+@dataclass(frozen=True, slots=True)
+class VtCentralBoiler:
+    """VT's central boiler settings, as the relay path's form may offer them (R14). ``None``
+    wherever the plugin cannot use a value: the field stays empty and the user decides."""
+
+    configured: bool  # "use a central boiler" ticked in VT
+    commands: VtCommands
+    relay: str | None = None
+    activation_delay_s: float | None = None
+    keep_alive_s: float | None = None  # VT's keep-alive, above 0
+    repeat_s: float | None = None  # the keep-alive where it lies within 10–300 s
+    power_threshold_kw: float | None = None  # as VT used it: whole numbers in its unit
+    count_threshold: int | None = None  # only where every zone VT counts has one device
+
+    @property
+    def exists(self) -> bool:
+        """VT's central boiler is configured, or its commands are still kept."""
+        return self.configured or self.commands is not VtCommands.NONE
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +192,143 @@ def zones_on_boiler_thermostat(
                 found.append(zone)
                 break
     return found
+
+
+def relay_used_by_zone(hass: HomeAssistant, entity_id: str) -> bool:
+    """R2: a VT thermostat — any of them, not only the plugin's zones — lists the entity among
+    the devices it drives: it switches it for a room, so it cannot be the boiler's relay."""
+    return any(
+        entity_id in (zone_underlying_entities(hass, zone) or ())
+        for zone in vt_climate_entities(hass)
+    )
+
+
+def relay_of_boiler_interface(hass: HomeAssistant, entity_id: str) -> bool:
+    """R2: the entity belongs to the boiler's gateway integration or to VT — a setting of the
+    boiler interface or a VT entity, never a relay contact."""
+    registered = er.async_get(hass).async_get(entity_id)
+    return registered is not None and registered.platform in (OPENTHERM_GW_DOMAIN, VT_DOMAIN)
+
+
+def parse_vt_command(raw: object) -> VtCommand | None:
+    """One of VT's central boiler commands in VT's documented format
+    ``entity_id/domain.service[/attribute:value]`` (the plugin's own reading of the format);
+    ``None`` for anything else."""
+    if not isinstance(raw, str):
+        return None
+    parts = [part.strip() for part in raw.strip().split("/")]
+    if len(parts) not in (2, 3):
+        return None
+    entity_id, service = parts[0], parts[1]
+    if entity_id.count(".") != 1 or service.count(".") != 1:
+        return None
+    domain, name = service.split(".")
+    if not (entity_id.split(".")[0] and entity_id.split(".")[1] and domain and name):
+        return None
+    attribute = value = None
+    if len(parts) == 3:
+        if ":" not in parts[2]:
+            return None
+        attribute, value = (item.strip() for item in parts[2].split(":", 1))
+        if not attribute:
+            return None
+    return VtCommand(entity_id, domain, name, attribute, value)
+
+
+def relay_from_vt_commands(on: VtCommand | None, off: VtCommand | None) -> str | None:
+    """The relay VT's two commands switch, where they fit the relay path: one switch turned on
+    and off, or one boiler thermostat set to heat and off; ``None`` for any other pair — VT's
+    free-form actions are not supported (Open after 0.2.2)."""
+    if on is None or off is None or on.entity_id != off.entity_id:
+        return None
+    entity = on.entity_id
+    kind = entity.split(".")[0]
+    if kind == "switch":
+        turns = (on.domain, on.service, off.domain, off.service)
+        plain = on.attribute is None and off.attribute is None
+        return entity if plain and turns == ("switch", "turn_on", "switch", "turn_off") else None
+    if kind == "climate":
+        sets = all(
+            (c.domain, c.service, c.attribute) == ("climate", "set_hvac_mode", "hvac_mode")
+            for c in (on, off)
+        )
+        return entity if sets and (on.value, off.value) == ("heat", "off") else None
+    return None
+
+
+def vt_central_boiler_settings(hass: HomeAssistant, zones: Sequence[str]) -> VtCentralBoiler | None:
+    """VT's central boiler as the relay path's form may pre-fill it (R14), read-only; ``None``
+    without VT's central entry. ``zones``: the plugin's zones, which cap the count. The
+    thresholds as VT used them — each the whole number of its state in VT's own unit — the
+    power converted to kW (``W`` ÷ 1000, ``kW`` as is, any other unit not pre-filled), each only
+    above 0; the count only where every zone VT counts has one heating device, as VT counts
+    devices and the plugin rooms. VT's keep-alive becomes the repeat interval only within
+    10–300 s."""
+    entry = vt_central_entry(hass)
+    if entry is None:
+        return None
+    data = entry.data
+    raw_on, raw_off = data.get(ACTIVATION_SERVICE), data.get(DEACTIVATION_SERVICE)
+    relay = relay_from_vt_commands(parse_vt_command(raw_on), parse_vt_command(raw_off))
+    if relay is not None:
+        commands = VtCommands.RELAY
+    elif any(isinstance(raw, str) and raw.strip() for raw in (raw_on, raw_off)):
+        commands = VtCommands.NOT_SUPPORTED
+    else:
+        commands = VtCommands.NONE
+    keep_alive = _positive(data.get(KEEP_ALIVE))
+    low, high = REPEAT_RANGE_S
+    return VtCentralBoiler(
+        configured=data.get(CENTRAL_BOILER_FEATURE) is True,
+        commands=commands,
+        relay=relay,
+        activation_delay_s=VThermLink(hass, zones).vt_central_activation_delay(),
+        keep_alive_s=keep_alive,
+        repeat_s=keep_alive if keep_alive is not None and low <= keep_alive <= high else None,
+        power_threshold_kw=_vt_power_threshold(hass),
+        count_threshold=_vt_count_threshold(hass, len(zones)),
+    )
+
+
+def _positive(raw: object) -> float | None:
+    value = parse_number(raw)
+    return value if value is not None and value > 0 else None
+
+
+def _vt_number(hass: HomeAssistant, unique_id: str) -> State | None:
+    entity_id = er.async_get(hass).async_get_entity_id("number", VT_DOMAIN, unique_id)
+    return None if entity_id is None else hass.states.get(entity_id)
+
+
+def _vt_power_threshold(hass: HomeAssistant) -> float | None:
+    """VT's power threshold as VT uses it: the whole number of its value in VT's power unit."""
+    state = _vt_number(hass, POWER_THRESHOLD_UNIQUE_ID)
+    value = None if state is None else parse_number(state.state)
+    if value is None or int(value) <= 0:
+        return None
+    unit = state.attributes.get("unit_of_measurement") if state is not None else None
+    factor = {"W": 0.001, "kW": 1.0}.get(unit if isinstance(unit, str) else "")
+    return None if factor is None else int(value) * factor
+
+
+def _vt_count_threshold(hass: HomeAssistant, zone_count: int) -> int | None:
+    """VT's device-count threshold, as a count of rooms: only where every thermostat VT's
+    central boiler counts has exactly one device, capped at the plugin's zone count."""
+    state = _vt_number(hass, COUNT_THRESHOLD_UNIQUE_ID)
+    value = None if state is None else parse_number(state.state)
+    if value is None or int(value) <= 0 or zone_count <= 0:
+        return None
+    link = VThermLink(hass, ())
+    counted = [
+        zone
+        for zone in vt_climate_entities(hass)
+        if link.zone_algorithm(zone).used_by_central_boiler is True
+    ]
+    if not counted:
+        return None
+    if any(len(zone_underlying_entities(hass, zone) or ()) != 1 for zone in counted):
+        return None
+    return min(int(value), zone_count)
 
 
 def is_vt_climate(hass: HomeAssistant, entity_id: str) -> bool:
@@ -285,6 +478,14 @@ class VThermLink:
     def zones_of_another_kind(self) -> list[str]:
         """The zones known not to be VT climates (a hand edit, X5.7)."""
         return zones_of_another_kind(self._hass, self._zones)
+
+    def relay_used_by_zone(self, relay: str) -> bool:
+        """R2: a VT thermostat drives the relay for a room (``relay_used_by_zone``)."""
+        return relay_used_by_zone(self._hass, relay)
+
+    def relay_of_boiler_interface(self, relay: str) -> bool:
+        """R2: the relay belongs to the boiler's gateway integration or to VT."""
+        return relay_of_boiler_interface(self._hass, relay)
 
     def zones_on_boiler_thermostat(self, boiler_entities: Sequence[str]) -> list[str]:
         """The zones built on the boiler's or the gateway's own thermostat (X5.19), as VT's

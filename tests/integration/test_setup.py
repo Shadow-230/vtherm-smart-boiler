@@ -975,7 +975,8 @@ async def test_the_gas_unit_follows_the_meter(hass: HomeAssistant) -> None:
 
 
 async def test_invalid_options_fail_setup_with_a_reason(hass: HomeAssistant) -> None:
-    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", options={"signals": {}})
+    # No signal is required any more (X8): a signal this version does not know is refused.
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", options={"signals": {"x": "a.b"}})
     entry.add_to_hass(hass)
     assert not await hass.config_entries.async_setup(entry.entry_id)
     assert entry.state is ConfigEntryState.SETUP_ERROR
@@ -1187,3 +1188,56 @@ async def test_both_stores_are_written_atomically(hass: HomeAssistant) -> None:
     assert coordinator._control_store.key == f"{DOMAIN}.{entry.entry_id}.control"
     assert main_store(hass, entry.entry_id)._atomic_writes
     assert control_store(hass, entry.entry_id)._atomic_writes
+
+
+async def test_a_relay_only_entry_monitors_without_boiler_signals(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """X8 (R4): no boiler signal at all — the entry sets up and monitors; the connection is
+    unknown (nothing tells), the features name the flame they miss, and no alarm that needs
+    burns exists. With the relay path the connection follows the relay."""
+    from custom_components.vtherm_smart_boiler.core.signal_check import Feature
+    from custom_components.vtherm_smart_boiler.core.signals import Signal
+
+    zones.add("living")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options={"signals": {}, "zones": [{"entity_id": e} for e in zones.entities.values()]},
+    )
+    await setup(hass, entry)
+    connection = hass.states.get(entity_id(hass, entry, "binary_sensor", "connection"))
+    assert connection is not None
+    assert connection.state == "unknown"
+    assert connection.attributes["problems"] == []
+    data = entry.runtime_data.data
+    assert data.features[Feature.CYCLES].missing == (Signal.FLAME,)
+    registry = er.async_get(hass)
+    for kind in ("frequent_starts", "unstable_ignition"):
+        unique_id = f"{entry.entry_id}_alarm_{kind}"
+        assert registry.async_get_entity_id("binary_sensor", DOMAIN, unique_id) is None
+
+
+@pytest.mark.parametrize(("shown", "on"), [("off", "on"), ("unavailable", "off")])
+async def test_the_connection_follows_the_relay(
+    hass: HomeAssistant, zones: FakeZones, shown: str, on: str
+) -> None:
+    zones.add("living")
+    hass.states.async_set("switch.boiler_relay", shown)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options={
+            "signals": {},
+            "boiler": {"class": "on_off"},
+            "zones": [{"entity_id": e} for e in zones.entities.values()],
+            "control": {"write_path": "relay", "relay_entity": "switch.boiler_relay"},
+        },
+    )
+    await setup(hass, entry)
+    connection = hass.states.get(entity_id(hass, entry, "binary_sensor", "connection"))
+    assert connection is not None
+    assert connection.state == on
+    assert connection.attributes["problems"] == ([] if on == "on" else ["relay"])

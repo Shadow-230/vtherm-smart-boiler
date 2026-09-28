@@ -99,6 +99,10 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "control_alarms": flow.control_alarms_schema(options),
         "control_return_confirm": flow.control_return_confirm_schema(),
         "confirm_blocking": flow.confirm_blocking_schema(),  # X5.12
+        # X8: the relay path's steps.
+        "control_relay": flow.control_relay_schema(options),
+        "control_relay_from_vt": flow.control_relay_schema(options),
+        "control_relay_behaviour": flow.control_relay_behaviour_schema(options),
     }
     for section in ("config", "options"):
         steps = schemas | (options_only if section == "options" else {})
@@ -255,6 +259,7 @@ def test_coded_states_and_attributes_are_translated() -> None:
     assert _values(SOURCE["entity"]["switch"]["control"], "off_by") == {
         "heating_switch",
         "low_setpoint",
+        "relay",
     }
     from custom_components.vtherm_smart_boiler.control_config import (
         FrostProtection,
@@ -351,3 +356,70 @@ def test_x7_texts_are_translated() -> None:
     assert SOURCE["entity"]["binary_sensor"]["hot_water"]["name"] == "{zone} heat available"
     flat = flatten(SOURCE)
     assert not [key for key, text in flat.items() if "hot-water and emitter" in text]
+
+
+def test_x8_texts_are_translated() -> None:
+    """X8: the relay path's options, blockers, alarms, attributes and issues — every coded value
+    with its text, every issue with the placeholders the code fills in; the relay's own settings
+    say a Shelly's timer on a repeated "on" is not documented (Q3.10)."""
+    from custom_components.vtherm_smart_boiler.control import (
+        RELAY_IGNORED_ISSUE,
+        RELAY_RESTS_OFF_ISSUE,
+        RELAY_UNREACHABLE_ISSUE,
+    )
+    from custom_components.vtherm_smart_boiler.control_config import WritePath
+    from custom_components.vtherm_smart_boiler.core.relay import (
+        HeatEvidence,
+        RelayCheck,
+        RelayPowerOn,
+        RelayReports,
+        RelayRest,
+        RelayTimer,
+    )
+
+    selectors = SOURCE["selector"]
+    assert set(selectors["write_path"]["options"]) == {"none"} | {p.value for p in WritePath}
+    for key, kind in (
+        ("relay_reports_state", RelayReports),
+        ("relay_power_on_state", RelayPowerOn),
+        ("relay_off_timer", RelayTimer),
+        ("relay_rest_state", RelayRest),
+    ):
+        assert set(selectors[key]["options"]) == {k.value for k in kind}, key
+    state = SOURCE["entity"]["sensor"]["control_state"]
+    assert _values(state, "relay_state") == {"on", "off", "other", "unreachable"}
+    assert _values(state, "relay_check") == {c.value for c in RelayCheck}
+    assert _values(state, "boiler_heats") == {h.value for h in HeatEvidence}
+    switch = SOURCE["entity"]["switch"]["control"]
+    assert _values(switch, "confirmation") == {
+        "controlled_without_confirmation",
+        "without_heat_confirmation",
+    }
+    for value in RelayPowerOn:
+        issue = SOURCE["issues"][f"{RELAY_UNREACHABLE_ISSUE}_{value.value}"]
+        assert issue["title"]
+        assert set(PLACEHOLDER.findall(issue["description"])) == {"relay"}
+    for key in (RELAY_IGNORED_ISSUE, f"{RELAY_IGNORED_ISSUE}_off"):
+        assert set(PLACEHOLDER.findall(SOURCE["issues"][key]["description"])) == {"relay"}
+    off = SOURCE["issues"][f"{RELAY_IGNORED_ISSUE}_off"]["description"]
+    assert "the relay does not switch off" in off
+    rests = SOURCE["issues"][RELAY_RESTS_OFF_ISSUE]
+    assert set(PLACEHOLDER.findall(rests["description"])) == {"zones"}
+    for key in (
+        "control_latched_relay_off",
+        "control_latched_relay_on",
+        "control_latched_relay_heating_off_ignored",
+    ):
+        issue = SOURCE["issues"][key]
+        assert issue["title"], key
+        assert set(PLACEHOLDER.findall(issue["description"])) == {"relay"}, key
+    step = SOURCE["options"]["step"]
+    timer = step["control_relay"]["data_description"]["relay_off_timer"]
+    assert 'whether a Shelly restarts it on a repeated "on" is not documented' in timer
+    assert 'untick "Use a central boiler"' in step["control_relay_from_vt"]["description"]
+    for key in ("relay_off_timer_min_missing", "vt_commands_not_supported"):
+        assert SOURCE["options"]["error"][key], key
+    assert "blocked_boiler_not_flow_setpoint" not in SOURCE["exceptions"]
+    for signals in (SOURCE["config"]["step"]["signals"], step["signals"]):
+        assert "None is required" in signals["description"]
+        assert signals["data"]["boiler_power"]

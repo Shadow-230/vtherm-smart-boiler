@@ -151,7 +151,6 @@ def test_coarse_building_answers_give_a_default_loss() -> None:
 @pytest.mark.parametrize(
     ("options", "code"),
     [
-        ({"signals": {"flame": "binary_sensor.flame"}}, "missing_signal"),
         (MINIMAL | {"signals": MINIMAL["signals"] | {"bogus": "a.b"}}, "unknown_signal"),
         (MINIMAL | {"parameters": {"boiler_min_power": 0.0}}, "implausible_parameter"),
         (MINIMAL | {"parameters": {"nope": 1}}, "unknown_parameter"),
@@ -559,3 +558,63 @@ def test_options_of_another_shape_name_what_they_can_and_never_raise(broken: dic
     found = named_entities(broken)
     assert set(found) <= {"climate.a"}
     assert rename_entity(broken, "climate.a", "climate.b") is not None
+
+
+def test_an_entry_without_boiler_signals_parses() -> None:
+    """X8 (R4): flame and flow are optional for the whole entry — a home with only a relay is
+    monitored too; no signal at all, or flame without flow, parses."""
+    for signals in ({}, {"flame": "binary_sensor.flame"}, {"flow": "sensor.flow"}):
+        config = EntryConfig.from_options({"signals": signals})
+        assert set(config.signals) == {Signal(key) for key in signals}
+        assert config.shared_signals == {}
+    config = EntryConfig.from_options({})
+    assert config.signals == {}
+
+
+def test_flame_and_flow_sharing_one_entity_drop_the_flow() -> None:
+    """X5's carry-over: one entity for flame and flow (a hand edit) — the flow is dropped as a
+    shared signal, never a ``missing_signal`` for the whole entry."""
+    config = EntryConfig.from_options({"signals": {"flame": "sensor.x", "flow": "sensor.x"}})
+    assert config.signals == {Signal.FLAME: "sensor.x"}
+    assert config.shared_signals == {Signal.FLOW: Signal.FLAME}
+
+
+def test_the_boiler_power_signal_parses() -> None:
+    """R4: the boiler's electric power, a power sensor in W (kW converted), plausible to
+    100 kW; used only as a relay's proof that the boiler heats."""
+    from custom_components.vtherm_smart_boiler.core.signals import (
+        SIGNAL_PRECEDENCE,
+        SIGNAL_SPECS,
+        SignalKind,
+    )
+    from custom_components.vtherm_smart_boiler.units import signal_value
+
+    config = EntryConfig.from_options({"signals": {"boiler_power": "sensor.plug_power"}})
+    assert config.signals == {Signal.BOILER_POWER: "sensor.plug_power"}
+    assert SIGNAL_SPECS[Signal.BOILER_POWER].kind is SignalKind.POWER
+    assert Signal.BOILER_POWER in SIGNAL_PRECEDENCE
+    assert signal_value(Signal.BOILER_POWER, "120", "W") == 120.0
+    assert signal_value(Signal.BOILER_POWER, "0.12", "kW") == pytest.approx(120.0)
+    assert signal_value(Signal.BOILER_POWER, "120", None) == 120.0  # no unit: W
+    assert signal_value(Signal.BOILER_POWER, "200", "kW") is None  # beyond 100 kW
+    assert signal_value(Signal.BOILER_POWER, "-5", "W") is None
+    assert signal_value(Signal.BOILER_POWER, "120", "V") is None  # not a power unit
+    assert signal_value(Signal.BOILER_POWER, "unavailable", "W") is None
+
+
+def test_a_relay_control_section_parses() -> None:
+    options = {
+        "boiler": {"class": "on_off"},
+        "zones": [{"entity_id": "climate.a"}],
+        "control": {
+            "write_path": "relay",
+            "relay_entity": "switch.boiler_relay",
+            "relay_is_separate_contact": True,
+            "relay_reports_state": "yes",
+        },
+    }
+    config = EntryConfig.from_options(options)
+    assert config.control.configured
+    assert config.control.relay.entity == "switch.boiler_relay"
+    assert "switch.boiler_relay" in named_entities(options)
+    assert named_entities(options)["switch.boiler_relay"] == ("control.relay_entity",)

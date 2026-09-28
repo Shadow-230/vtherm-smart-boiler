@@ -12,7 +12,7 @@ from custom_components.vtherm_smart_boiler.core.readings import (
     plausible_reading,
 )
 from custom_components.vtherm_smart_boiler.core.signals import (
-    REQUIRED_SIGNALS,
+    LINK_SIGNALS,
     SIGNAL_SPECS,
     Signal,
 )
@@ -20,7 +20,7 @@ from custom_components.vtherm_smart_boiler.core.signals import (
 
 def test_every_signal_has_a_spec_and_flame_and_flow_are_required() -> None:
     assert set(SIGNAL_SPECS) == set(Signal)
-    assert REQUIRED_SIGNALS == {Signal.FLAME, Signal.FLOW}
+    assert LINK_SIGNALS == {Signal.FLAME, Signal.FLOW}
 
 
 def test_reading_freshness() -> None:

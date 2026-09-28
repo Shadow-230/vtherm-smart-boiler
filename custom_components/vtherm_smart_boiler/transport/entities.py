@@ -87,6 +87,17 @@ def temperature_from_state(state: State | None) -> Reading:
     return Reading(value, reported_at(state))
 
 
+def relay_hvac_modes(state: State | None) -> set[str] | None:
+    """The modes a boiler thermostat entity offers (``hvac_modes``); ``None`` where not known —
+    the entity not there, or not reporting them."""
+    if state is None:
+        return None
+    modes = state.attributes.get("hvac_modes")
+    if not isinstance(modes, list | tuple) or not modes:
+        return None
+    return {str(mode) for mode in modes}
+
+
 def read_on_off(hass: HomeAssistant, entity_id: str) -> bool | None:
     """An on/off entity (e.g. an echo of heating on/off); anything else is unknown."""
     state = hass.states.get(entity_id)

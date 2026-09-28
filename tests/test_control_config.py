@@ -37,6 +37,13 @@ OTGW = {
 }
 # A gateway with an OpenTherm thermostat on its terminals.
 WITH_THERMOSTAT = {"topology": "gateway_with_thermostat", "thermostat_kind": "opentherm"}
+# X8: an on/off boiler switched through a relay, the separate-contact tick given (answer G).
+ON_OFF = Installation(Boiler(BoilerClass.ON_OFF), (Circuit("main"),), (Zone("climate.a", "main"),))
+RELAY = {
+    "write_path": "relay",
+    "relay_entity": "switch.boiler_relay",
+    "relay_is_separate_contact": True,
+}
 
 
 def test_no_write_path_means_not_configured() -> None:
@@ -153,13 +160,16 @@ def test_topologies() -> None:
         assert blocked is (topology is Topology.MONITOR_MODE)
 
 
-def test_control_needs_a_flow_setpoint_boiler() -> None:
+def test_control_needs_a_boiler_it_can_control() -> None:
+    """R1: a water-temperature path needs a flow-setpoint boiler, the relay an on/off one; the
+    other classes are monitored only."""
     for boiler_class in BoilerClass:
         installation = Installation(Boiler(boiler_class), (Circuit("main"),))
         blockers = config_blockers(parse_control(OTGW, installation, None), installation)
-        assert ("boiler_not_flow_setpoint" in blockers) is (
-            boiler_class is not BoilerClass.FLOW_SETPOINT
-        )
+        no_control = boiler_class in (BoilerClass.CURVE_ONLY, BoilerClass.READ_ONLY)
+        assert ("boiler_class_no_control" in blockers) is no_control
+        assert ("path_not_for_boiler_class" in blockers) is (boiler_class is BoilerClass.ON_OFF)
+        assert "boiler_not_flow_setpoint" not in blockers
 
 
 def test_every_blocker_is_listed() -> None:
@@ -208,6 +218,18 @@ def test_every_blocker_is_listed() -> None:
 
     shared = {Signal.RETURN: Signal.FLOW}
     found |= set(config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS, shared))
+    # X8: the relay path, and flame and flow optional for the entry.
+    found |= set(config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS, signals=()))
+    for data, installation in (
+        (RELAY, ON_OFF),
+        (RELAY, RADIATORS),
+        ({"write_path": "relay"}, ON_OFF),
+        (RELAY | {"relay_entity": "input_boolean.x"}, ON_OFF),
+        (RELAY | {"relay_is_separate_contact": False}, ON_OFF),
+        (RELAY | {"restart_entity": "switch.boiler_relay"}, ON_OFF),
+        (RELAY, Installation(Boiler(BoilerClass.READ_ONLY), (Circuit("main"),))),
+    ):
+        found |= set(config_blockers(parse_control(data, installation, None), installation))
     assert found == set(CONFIG_BLOCKERS)
 
 
@@ -1192,3 +1214,298 @@ def test_the_wall_thermostat_is_shown_only_for_an_opentherm_thermostat_on_a_gate
     from custom_components.vtherm_smart_boiler.control_config import wall_thermostat_applies
 
     assert wall_thermostat_applies(parse_control(data, RADIATORS, None)) is applies
+
+
+# --- X8: on/off control through a relay (class 3) ---------------------------------------------
+
+
+def test_relay_control_needs_an_on_off_boiler() -> None:
+    """R1: on/off + relay + an entity — none of the path's blockers; a flow-setpoint boiler with
+    the relay, or an on/off boiler with a setpoint path — ``path_not_for_boiler_class``; curve
+    only and read only — ``boiler_class_no_control``."""
+    assert config_blockers(parse_control(RELAY, ON_OFF, None), ON_OFF) == []
+    flow = parse_control(RELAY, RADIATORS, None)
+    assert config_blockers(flow, RADIATORS) == ["path_not_for_boiler_class"]
+    on_off_entity = parse_control(ENTITY, ON_OFF, None)
+    assert "path_not_for_boiler_class" in config_blockers(on_off_entity, ON_OFF)
+    for boiler_class in (BoilerClass.CURVE_ONLY, BoilerClass.READ_ONLY):
+        installation = Installation(
+            Boiler(boiler_class), (Circuit("main"),), (Zone("climate.a", "main"),)
+        )
+        blockers = config_blockers(parse_control(RELAY, installation, None), installation)
+        assert "boiler_class_no_control" in blockers
+        assert "path_not_for_boiler_class" not in blockers
+
+
+@pytest.mark.parametrize(
+    ("entity", "blocker"),
+    [
+        (None, "no_relay_entity"),
+        ("", "no_relay_entity"),
+        ("input_boolean.x", "relay_domain_not_supported"),
+        ("light.x", "relay_domain_not_supported"),
+        ("switch.x", None),
+        ("climate.x", None),
+    ],
+)
+def test_a_relay_is_a_switch_or_a_climate(entity: str | None, blocker: str | None) -> None:
+    """R2: a switch, or a boiler thermostat entity; never a helper, which confirms nothing."""
+    data = {**RELAY, "relay_entity": entity}
+    blockers = config_blockers(parse_control(data, ON_OFF, None), ON_OFF)
+    assert blockers == ([] if blocker is None else [blocker])
+
+
+@pytest.mark.parametrize(
+    ("tick", "blocked"), [(None, True), (False, True), ("yes", True), (True, False)]
+)
+def test_relay_control_needs_the_separate_contact_tick(tick: object, blocked: bool) -> None:
+    """Answer G: without the tick "this is a separate relay contact, not a setting stored in the
+    boiler's memory", control does not start; only a clear "yes" counts."""
+    data = {**RELAY, "relay_is_separate_contact": tick}
+    options = parse_control(data, ON_OFF, None)
+    assert options.relay.separate_contact is (not blocked)
+    blockers = config_blockers(options, ON_OFF)
+    assert ("relay_contact_not_confirmed" in blockers) is blocked
+
+
+def test_water_temperature_control_needs_flame_and_flow() -> None:
+    """R4: flame and flow are optional for the entry; control of the water temperature needs
+    both mapped — the relay path needs neither."""
+    from custom_components.vtherm_smart_boiler.core.signals import Signal
+
+    water = parse_control(OTGW, RADIATORS, None)
+    both = frozenset({Signal.FLAME, Signal.FLOW})
+    assert config_blockers(water, RADIATORS, signals=both) == []
+    assert config_blockers(water, RADIATORS, signals=()) == ["no_flame_signal", "no_flow_signal"]
+    assert config_blockers(water, RADIATORS, signals={Signal.FLAME}) == ["no_flow_signal"]
+    assert config_blockers(water, RADIATORS, signals={Signal.FLOW}) == ["no_flame_signal"]
+    for data in (ENTITY, OTGW | {"write_path": "otgw_mqtt", "mqtt_top": "t", "mqtt_node": "n"}):
+        found = config_blockers(parse_control(data, RADIATORS, None), RADIATORS, signals=())
+        assert {"no_flame_signal", "no_flow_signal"} <= set(found)
+    relay = parse_control(RELAY, ON_OFF, None)
+    assert config_blockers(relay, ON_OFF, signals=()) == []
+
+
+def test_relay_settings_have_cautious_defaults() -> None:
+    """R3: unanswered, each setting takes its cautious reading — its state report "I don't
+    know" (blind repeats), its state after a power cut "I don't know", a timer "I don't know",
+    the repeat interval 300 s, the rest state "off", no power proof, the tick not given."""
+    from custom_components.vtherm_smart_boiler.control_config import RelayOptions
+    from custom_components.vtherm_smart_boiler.core.relay import (
+        RelayPowerOn,
+        RelayReports,
+        RelayRest,
+        RelayTimer,
+    )
+
+    options = parse_control({"write_path": "relay", "relay_entity": "switch.r"}, ON_OFF, None)
+    relay = options.relay
+    assert relay == RelayOptions(entity="switch.r")
+    assert relay.reports is RelayReports.UNKNOWN
+    assert relay.power_on is RelayPowerOn.UNKNOWN
+    assert relay.timer is RelayTimer.UNKNOWN
+    assert relay.timer_min is None
+    assert relay.repeat_s == 300.0
+    assert relay.rest is RelayRest.OFF
+    assert relay.heats_above_w is None
+    assert not relay.separate_contact
+    assert not options.own_room_controller
+    loop = options.loop
+    assert loop.relay is not None
+    assert not loop.relay.reports_state  # blind repeats
+    assert loop.relay.renew_s == 300.0  # "it may have a timer": "on" repeated
+    control = loop.control
+    assert control.on_off
+    assert control.stale_hand_back_s is None  # the link is the relay (R6)
+    assert not control.comfort_correction
+    assert not options.learning.pause_on_water_swing  # R13: no water swing on a relay
+    assert not options.return_after_outside_change
+
+
+@pytest.mark.parametrize("length", [None, "", 0, 121, "soon"])
+def test_a_declared_timer_without_its_length_is_read_as_unknown(length: object) -> None:
+    from custom_components.vtherm_smart_boiler.core.relay import RelayTimer
+
+    data = {**RELAY, "relay_off_timer": "minutes", "relay_off_timer_min": length}
+    options = parse_control(data, ON_OFF, None)
+    assert options.relay.timer is RelayTimer.UNKNOWN
+    assert options.loop.relay is not None
+    assert options.loop.relay.renew_s == 300.0
+    declared = parse_control({**data, "relay_off_timer_min": 10}, ON_OFF, None)
+    assert declared.relay.timer is RelayTimer.MINUTES
+    assert declared.loop.relay is not None
+    assert declared.loop.relay.timer_s == 600.0
+
+
+@pytest.mark.parametrize(
+    ("raw", "read"),
+    [
+        (None, 300.0),
+        ("", 300.0),
+        (10, 10.0),
+        (60, 60.0),
+        (300, 300.0),
+        (5, 300.0),
+        (301, 300.0),
+        ("x", 300.0),
+    ],
+)
+def test_the_repeat_interval_stays_within_10_to_300_s(raw: object, read: float) -> None:
+    """A hand-edited value outside 10–300 s is read as 300 s."""
+    options = parse_control({**RELAY, "relay_repeat_s": raw}, ON_OFF, None)
+    assert options.relay.repeat_s == read
+    assert options.loop.relay is not None
+    assert options.loop.relay.repeat_s == read
+
+
+@pytest.mark.parametrize(
+    ("rest", "effect", "heating_on", "frost_by"),
+    [
+        (None, "relay_rests_off", False, "boiler"),
+        ("off", "relay_rests_off", False, "boiler"),
+        ("on", "relay_rests_on", True, "device"),
+    ],
+)
+def test_the_rest_state_decides_the_hand_back_effect(
+    rest: str | None, effect: str, heating_on: bool, frost_by: str
+) -> None:
+    """R9: on the relay path the hand-back's effect is the rest state — with the tick too, which
+    is read by itself there (answer M)."""
+    from custom_components.vtherm_smart_boiler.control_config import (
+        frost_protection_by,
+        hand_back_effect,
+        hand_back_heating_on,
+    )
+
+    for tick in (False, True):
+        data = {**RELAY, "relay_rest_state": rest, "own_room_controller": tick}
+        options = parse_control(data, ON_OFF, None)
+        shown = hand_back_effect(options)
+        assert shown is not None
+        assert shown.value == effect
+        assert hand_back_heating_on(options) is heating_on
+        by = frost_protection_by(options, controlling=False)
+        assert by is not None
+        assert by.value == frost_by
+
+
+def test_the_own_room_controller_tick_counts_on_the_relay_path_with_rest_state_on() -> None:
+    """Answers F, M wired: the tick is offered on the relay path, and counts as a working
+    thermostat only with the rest state "on"."""
+    from custom_components.vtherm_smart_boiler.control_config import (
+        own_room_controller_offered,
+        working_thermostat,
+    )
+
+    assert own_room_controller_offered(WritePath.RELAY, None)
+    for tick, rest, working in (
+        (True, "on", True),
+        (True, "off", False),
+        (False, "on", False),
+        (False, "off", False),
+    ):
+        data = {**RELAY, "own_room_controller": tick, "relay_rest_state": rest}
+        options = parse_control(data, ON_OFF, None)
+        assert options.own_room_controller is tick
+        assert working_thermostat(options) is working
+        assert options.loop.control.working_thermostat is working
+
+
+def test_the_circuit_rules_do_not_apply_to_a_relay() -> None:
+    """R1: the relay sets no water temperature — the circuit, curve, topology and read-back
+    blockers do not apply; the demand thresholds do."""
+    two = Installation(
+        Boiler(BoilerClass.ON_OFF),
+        (Circuit("a"), Circuit("b", CircuitControl.SEPARATE)),
+        (Zone("climate.a", "a", EmitterType.UNDERFLOOR),),
+    )
+    assert config_blockers(parse_control(RELAY, two, None), two) == []
+    many = parse_control({**RELAY, "count_threshold": 3}, ON_OFF, None)
+    assert config_blockers(many, ON_OFF) == ["count_threshold_above_zones"]
+    no_zones = Installation(Boiler(BoilerClass.ON_OFF), (Circuit("main"),))
+    assert config_blockers(parse_control(RELAY, no_zones, None), no_zones) == ["no_zones"]
+
+
+def test_the_relay_in_another_role_is_a_blocker() -> None:
+    """R2: the relay is none of the entities the options use in another role."""
+    data = {**RELAY, "restart_entity": "switch.boiler_relay"}
+    assert config_blockers(parse_control(data, ON_OFF, None), ON_OFF) == ["relay_in_another_role"]
+    from custom_components.vtherm_smart_boiler.core.signals import Signal
+
+    options = parse_control(RELAY, ON_OFF, None)
+    mapped = {Signal.PUMP_RUNNING: "switch.boiler_relay"}
+    assert config_blockers(options, ON_OFF, signals=mapped) == ["relay_in_another_role"]
+
+
+def test_no_return_by_itself_and_no_hand_back_for_an_ignored_write_on_the_relay_path() -> None:
+    """Decision 6: the return by itself is not offered for relays; decision 7: the reaction to an
+    ignored write is never offered on the relay path — stored ones are neutralised."""
+    data = {
+        **RELAY,
+        "return_after_outside_change": True,
+        "alarm_reactions": {"write_ignored": "hand_back", "pressure_low": "hand_back"},
+    }
+    options = parse_control(data, ON_OFF, None)
+    assert not options.return_after_outside_change
+    assert options.reaction("write_ignored") is AlarmReaction.INFO
+    assert options.reaction("pressure_low") is AlarmReaction.HAND_BACK
+
+
+def test_the_relay_is_named_among_the_entities_control_uses() -> None:
+    from custom_components.vtherm_smart_boiler.control_config import (
+        ENTITY_KEYS,
+        HAND_BACK_KEYS,
+        TARGET_KEYS,
+        rename_in_control,
+    )
+
+    options = parse_control(RELAY, ON_OFF, None)
+    assert "switch.boiler_relay" in options.entities
+    assert "relay_entity" in ENTITY_KEYS
+    assert {"relay_entity", "relay_rest_state"} <= set(HAND_BACK_KEYS)
+    assert {
+        "relay_entity",
+        "relay_reports_state",
+        "relay_power_on_state",
+        "relay_off_timer",
+        "relay_off_timer_min",
+        "relay_repeat_s",
+        "relay_rest_state",
+        "boiler_heats_above_w",
+        "relay_is_separate_contact",
+    } <= set(TARGET_KEYS)
+    renamed = rename_in_control(RELAY, "switch.boiler_relay", "switch.new")
+    assert renamed["relay_entity"] == "switch.new"
+
+
+@pytest.mark.parametrize(
+    ("raw", "read"),
+    [(None, None), ("", None), (9, None), (10, 10.0), (10000, 10000.0), (10001, None)],
+)
+def test_the_power_proof_threshold_is_read_within_its_range(
+    raw: object, read: float | None
+) -> None:
+    options = parse_control({**RELAY, "boiler_heats_above_w": raw}, ON_OFF, None)
+    assert options.relay.heats_above_w == read
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("relay_reports_state", "maybe"),
+        ("relay_power_on_state", "sometimes"),
+        ("relay_off_timer", "weekly"),
+        ("relay_rest_state", "half"),
+    ],
+)
+def test_a_relay_value_this_version_does_not_know_is_refused(key: str, value: str) -> None:
+    """P-70: an option value this version does not know is not passed off as a known one."""
+    with pytest.raises(ValueError, match="is not a valid"):
+        parse_control({**RELAY, key: value}, ON_OFF, None)
+
+
+def test_a_relay_not_picked_has_no_other_role() -> None:
+    from custom_components.vtherm_smart_boiler.control_config import relay_in_another_role
+
+    options = parse_control({"write_path": "relay"}, ON_OFF, None)
+    assert not relay_in_another_role(options, {})

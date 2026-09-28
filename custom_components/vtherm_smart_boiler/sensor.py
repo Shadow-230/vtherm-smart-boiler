@@ -19,6 +19,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
+from .control_config import WritePath
 from .coordinator import MonitorData, SmartBoilerCoordinator
 from .core.controller import ControlMode
 from .core.emitters import FactorStatus
@@ -378,7 +379,10 @@ async def async_setup_entry(
         for zone in coordinator.config.installation.zones
     ]
     if coordinator.control is not None:
-        entities += [ControlStateSensor(coordinator), ControlSetpointSensor(coordinator)]
+        entities.append(ControlStateSensor(coordinator))
+        if coordinator.control.options.write_path is not WritePath.RELAY:
+            # A relay sets no water temperature (R15).
+            entities.append(ControlSetpointSensor(coordinator))
     coordinator.expect_entities(entities)
     async_add_entities(entities)
 
@@ -515,6 +519,9 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "hand_back_confirmation",
             "comfort_correction",
             "activation_at",
+            "relay_state",
+            "relay_check",
+            "boiler_heats",
         }
     )
 
@@ -551,6 +558,18 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "comfort_correction": _round(status.correction, 2),
             # A start waiting VT's activation delay is due then (decision 5).
             "activation_at": _time(status.activation_at),
+            **self._relay(status),
+        }
+
+    def _relay(self, status: Any) -> dict[str, Any]:
+        """The relay path (R15): the relay as seen, where the command stands with it, and
+        whether the boiler shows it heats; nothing elsewhere."""
+        if self.control.options.write_path is not WritePath.RELAY:
+            return {}
+        return {
+            "relay_state": status.relay_state,
+            "relay_check": status.relay_check,
+            "boiler_heats": status.boiler_heats,
         }
 
 

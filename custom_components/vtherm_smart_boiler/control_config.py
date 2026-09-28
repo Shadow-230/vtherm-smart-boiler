@@ -23,17 +23,27 @@ a ``CH=0`` through ``CS=0`` and the override's lapse, so after a crash while "of
 contact could not heat the house: control is blocked for it, for "I don't know", and for no
 answer — a gateway entry made before 0.2.2 keeps control stopped until the user answers, with a
 notice asking for it (answer K). An answer that contradicts the topology blocks too.
+
+An on/off boiler (class 3, X8) is switched through a relay: a switch, or a boiler thermostat
+entity set to heat or off — never a helper, which confirms nothing. The relay's own settings are
+the user's declaration, each unanswered one read cautiously (``core.relay``); without the tick
+"this is a separate relay contact, not a setting stored in the boiler's memory" control does not
+start (answer G). The water-temperature parts — curve, limits, ramp, comfort correction, the
+circuit rules, the topology and the read-back — do not apply there; the demand thresholds do,
+and the hand-back's effect is the relay's rest state. Water-temperature control needs flame and
+flow mapped, which the entry itself no longer requires.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+import math
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
-from .core.controller import ControlConfig
+from .core.controller import OUTAGE_LOST_S, ControlConfig
 from .core.curve import HeatingCurve
 from .core.demand import DemandConfig
 from .core.guards import HELD_REFRESH_S, GuardConfig, WriteType
@@ -41,6 +51,16 @@ from .core.installation import BoilerClass, CircuitControl, EmitterType, Install
 from .core.learning import LearningConfig
 from .core.limits import FlowLimits, FrostConfig
 from .core.loop import DEFAULT_OFF_SETPOINT, LoopConfig
+from .core.relay import (
+    REPEAT_DEFAULT_S,
+    REPEAT_MAX_S,
+    REPEAT_MIN_S,
+    RelayConfig,
+    RelayPowerOn,
+    RelayReports,
+    RelayRest,
+    RelayTimer,
+)
 from .core.signals import Signal
 
 MINUTE = 60.0
@@ -87,6 +107,7 @@ class WritePath(StrEnum):
     ENTITY = "entity"  # a writable entity the user picked
     OPENTHERM_GW = "opentherm_gw"  # built-in OTGW through Home Assistant's opentherm_gw
     OTGW_MQTT = "otgw_mqtt"  # built-in OTGW through its firmware's MQTT commands
+    RELAY = "relay"  # an on/off boiler's relay: heating on and off only (class 3, X8)
 
 
 class Topology(StrEnum):
@@ -126,6 +147,10 @@ class HandBackEffect(StrEnum):
     DEVICE_DECIDES = "device_decides"  # a controller on the HA side: its own fallback applies
     # The user ticked "the boiler has its own room controller" (answer F): it takes over.
     OWN_CONTROL_RESUMES = "own_control_resumes"
+    # A relay goes to its rest state (X8, R9): "off" — heat only from a thermostat in parallel;
+    # "on" — the boiler heats by its own setting.
+    RELAY_RESTS_OFF = "relay_rests_off"
+    RELAY_RESTS_ON = "relay_rests_on"
 
 
 class AlarmReaction(StrEnum):
@@ -136,7 +161,10 @@ class AlarmReaction(StrEnum):
 # Everything ``config_blockers`` may report (translation keys).
 CONFIG_BLOCKERS = (
     "no_write_path",
-    "boiler_not_flow_setpoint",
+    # X8: the write path suits the boiler class — a setpoint path a flow-setpoint boiler, the
+    # relay an on/off boiler; the other classes are monitored only.
+    "boiler_class_no_control",
+    "path_not_for_boiler_class",
     "no_setpoint_entity",
     "write_type_not_supported",
     "no_hand_back",
@@ -168,6 +196,14 @@ CONFIG_BLOCKERS = (
     "thermostat_on_off",
     "thermostat_kind_unknown",
     "thermostat_kind_contradicts_topology",
+    # X8: water-temperature control needs the boiler link mapped; the relay path its relay, as a
+    # switch or a boiler thermostat entity used in no other role, and the separate-contact tick.
+    "no_flame_signal",
+    "no_flow_signal",
+    "no_relay_entity",
+    "relay_domain_not_supported",
+    "relay_in_another_role",
+    "relay_contact_not_confirmed",
 )
 OTGW_PATHS = frozenset({WritePath.OPENTHERM_GW, WritePath.OTGW_MQTT})
 # Write types control may use: nothing the boiler stores in its memory.
@@ -187,9 +223,10 @@ _CONTRADICTING_KIND = MappingProxyType(
 )
 # The topologies each write path can control with (P-44): the paths through a built-in OTGW need
 # a gateway topology; "virtual" is a controller on the Home Assistant side, reached through an
-# entity. X8 adds the relay path, which has no topology.
+# entity. The relay path has no topology (X8).
 PATH_TOPOLOGIES: Mapping[WritePath, frozenset[Topology]] = MappingProxyType(
     {
+        WritePath.RELAY: frozenset(),
         WritePath.OPENTHERM_GW: frozenset(
             {Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT}
         ),
@@ -199,24 +236,51 @@ PATH_TOPOLOGIES: Mapping[WritePath, frozenset[Topology]] = MappingProxyType(
         WritePath.ENTITY: frozenset(CONTROLLABLE_TOPOLOGIES),
     }
 )
+# The relay step's answers (X8): the relay, its own settings as the user declares them, and the
+# power above which the boiler counts as heating.
+RELAY_KEYS = (
+    "relay_entity", "relay_is_separate_contact", "relay_reports_state", "relay_power_on_state",
+    "relay_off_timer", "relay_off_timer_min", "relay_repeat_s", "relay_rest_state",
+    "boiler_heats_above_w",
+)  # fmt: skip
 # The answers of the writable-entity step — what control writes to, and how it hands back —
 # dropped when the write path changes (P-71: one list; X6 and X8 add their keys here).
 TARGET_KEYS = (
     "setpoint_entity", "write_type", "ch_entity", "ch_write_type", "hand_back",
     "hand_back_value", "hand_back_value_effect", "hand_back_entity", "hand_back_entity_write_type",
-    "gateway_id", "mqtt_top", "mqtt_node", "own_room_controller",
+    "gateway_id", "mqtt_top", "mqtt_node", "own_room_controller", *RELAY_KEYS,
 )  # fmt: skip
 # The control section's keys that name an entity (P-19: a rename is followed there, a removal
-# told; X8 adds its relay's keys here).
+# told).
 ENTITY_KEYS = (
     "setpoint_entity", "ch_entity", "hand_back_entity", "confirmed_entity", "ch_confirmed_entity",
-    "thermostat_setpoint_entity", "restart_entity", "frost_zone",
+    "thermostat_setpoint_entity", "restart_entity", "frost_zone", "relay_entity",
 )  # fmt: skip
-# What a hand-back goes through: fixed while one is owed.
+# What a hand-back goes through: fixed while one is owed — for a relay, the relay and its rest
+# state.
 HAND_BACK_KEYS = (
     "setpoint_entity", "ch_entity", "hand_back", "hand_back_value", "hand_back_value_effect",
     "hand_back_entity", "hand_back_entity_write_type", "gateway_id", "mqtt_top", "mqtt_node",
+    "relay_entity", "relay_rest_state",
 )  # fmt: skip
+# The relay's own settings unanswered: each its cautious reading (R3; provisional, K4) — its
+# state report "I don't know" (blind repeats), its state after a power cut "I don't know" (maybe
+# on), a timer "I don't know" (it may have one), the rest state "off", the tick not given. The
+# repeat interval empty means 300 s; no power threshold means the power proves nothing.
+RELAY_DEFAULTS: Mapping[str, Any] = MappingProxyType(
+    {
+        "relay_reports_state": RelayReports.UNKNOWN.value,
+        "relay_power_on_state": RelayPowerOn.UNKNOWN.value,
+        "relay_off_timer": RelayTimer.UNKNOWN.value,
+        "relay_rest_state": RelayRest.OFF.value,
+        "relay_is_separate_contact": False,
+    }
+)
+RELAY_DOMAINS = ("switch", "climate")  # a switch, or a boiler thermostat entity (never a helper)
+RELAY_TIMER_MIN = (1.0, 120.0)  # a declared switch-off timer, in minutes
+RELAY_HEATS_ABOVE_W = (10.0, 10000.0)  # the power above which the boiler counts as heating
+# Boiler classes the plugin monitors only: nothing it can write controls them.
+_MONITOR_ONLY_CLASSES = frozenset({BoilerClass.CURVE_ONLY, BoilerClass.READ_ONLY})
 # Decision 11 (S-39; provisional until the user lifts it at K4, even where the research is
 # favourable): control without a heating switch the boiler does not store is blocked — "off"
 # would be a low setpoint, and whether that stops the boiler and its pump is not known. Such
@@ -240,6 +304,9 @@ INFO_ONLY_ALARMS = frozenset({"frequent_starts", "circuit_too_hot"})
 # of the session is blocked and handed back like an installation without a working heating switch
 # (answer O). A stored reaction for them is neutralised (S-11).
 ALWAYS_HAND_BACK_ALARMS = frozenset({"outside_change", "heating_off_ignored"})
+# On the relay path an ignored write gets no reaction to choose (decision 7: offered only where a
+# thermostat or the boiler's own control takes over, never on the relay path): information.
+_RELAY_INFO_ONLY = frozenset({"write_ignored"})
 # "Off" sent as a low setpoint at least this far below the lowest water temperature (P-43,
 # decided): the boiler sees a change, and the guard's 0.5 K tolerance tells the two apart.
 OFF_BELOW_LOWEST_K = 1.0
@@ -251,9 +318,35 @@ EXPONENT_BY_EMITTER = {
 # "Off" sent as a low setpoint this close to a hand-back value that returns the boiler to its own
 # control would hand the boiler back instead of stopping heating (S-49).
 OFF_NEAR_HAND_BACK_K = 0.5
-# Hand-back effects where the heating part leaves a heating switch as it is: the hand-back stops
-# heating. X8's relay effects go to the relay's rest state instead, through its own writer.
-_HEATING_LEFT_AS_IT_IS = frozenset({HandBackEffect.HEATING_STOPS})
+# Hand-back effects where the heating part leaves heating as it is: the hand-back stops heating —
+# a relay resting "off" included (its writer goes to the rest state, never "on" otherwise).
+_HEATING_LEFT_AS_IT_IS = frozenset({HandBackEffect.HEATING_STOPS, HandBackEffect.RELAY_RESTS_OFF})
+
+
+@dataclass(frozen=True, slots=True)
+class RelayOptions:
+    """The relay path's answers (X8, R3): the relay, and its own settings as the user declared
+    them — the plugin cannot read them."""
+
+    entity: str | None = None
+    reports: RelayReports = RelayReports.UNKNOWN
+    power_on: RelayPowerOn = RelayPowerOn.UNKNOWN
+    timer: RelayTimer = RelayTimer.UNKNOWN
+    timer_min: float | None = None  # a declared length, 1–120 min
+    repeat_s: float = REPEAT_DEFAULT_S
+    rest: RelayRest = RelayRest.OFF
+    heats_above_w: float | None = None  # None: the boiler's power proves nothing
+    separate_contact: bool = False  # answer G: control does not start without it
+
+    @property
+    def config(self) -> RelayConfig:
+        """The relay rule's settings."""
+        timer_s = None if self.timer_min is None else self.timer_min * MINUTE
+        return RelayConfig(self.reports, self.power_on, self.timer, timer_s, self.repeat_s)
+
+    @property
+    def rests_on(self) -> bool:
+        return self.rest is RelayRest.ON
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,6 +388,7 @@ class ControlOptions:
     # "The boiler has its own room controller" (answers F, M): with every zone unknown, the
     # boiler is handed back to it; not ticked by default. It counts only where it is offered.
     own_room_controller: bool = False
+    relay: RelayOptions = field(default_factory=RelayOptions)  # the relay path (X8)
 
     @property
     def configured(self) -> bool:
@@ -320,6 +414,7 @@ class ControlOptions:
             self.ch_confirmed_entity,
             self.thermostat_setpoint_entity,
             self.restart_entity,
+            self.relay.entity,
         )
         return tuple(e for e in found if e)
 
@@ -355,6 +450,48 @@ def _minutes(data: Mapping[str, Any], key: str, default_min: float) -> float:
     return (default_min if value is None else value) * MINUTE
 
 
+def _number(raw: object) -> float | None:
+    """A stored number, finite; anything else — text, a flag, nothing — ``None``."""
+    if isinstance(raw, bool) or not isinstance(raw, int | float | str):
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _within(raw: object, bounds: tuple[float, float]) -> float | None:
+    value = _number(raw)
+    low, high = bounds
+    return value if value is not None and low <= value <= high else None
+
+
+def parse_relay(data: Mapping[str, Any]) -> RelayOptions:
+    """The relay's answers, each unanswered one with its cautious default (R3). A choice this
+    version does not know raises ``ValueError`` (P-70); hand-edited numbers outside their range
+    are read cautiously: a declared timer without a valid length as "I don't know", a repeat
+    interval outside 10–300 s as 300 s, a power threshold outside 10–10000 W as none."""
+    value = {**RELAY_DEFAULTS, **{k: v for k, v in data.items() if v not in (None, "")}}
+    timer = RelayTimer(value["relay_off_timer"])
+    timer_min = _within(data.get("relay_off_timer_min"), RELAY_TIMER_MIN)
+    if timer is not RelayTimer.MINUTES or timer_min is None:
+        timer = RelayTimer.UNKNOWN if timer is RelayTimer.MINUTES else timer
+        timer_min = None
+    repeat = _within(data.get("relay_repeat_s"), (REPEAT_MIN_S, REPEAT_MAX_S))
+    return RelayOptions(
+        entity=data.get("relay_entity") or None,
+        reports=RelayReports(value["relay_reports_state"]),
+        power_on=RelayPowerOn(value["relay_power_on_state"]),
+        timer=timer,
+        timer_min=timer_min,
+        repeat_s=REPEAT_DEFAULT_S if repeat is None else repeat,
+        rest=RelayRest(value["relay_rest_state"]),
+        heats_above_w=_within(data.get("boiler_heats_above_w"), RELAY_HEATS_ABOVE_W),
+        separate_contact=data.get("relay_is_separate_contact") is True,
+    )
+
+
 def parse_thermostat_kind(raw: object) -> ThermostatKind | None:
     """A stored answer to the thermostat-terminals question; ``None`` for no answer or one this
     version cannot read — never an exception: such an entry is blocked and asked again."""
@@ -387,7 +524,12 @@ def parse_control(
         offset=float(curve_value["offset"]),
     )
     value = {**CONTROL_DEFAULTS, **{k: v for k, v in data.items() if v is not None}}
-    if path in OTGW_PATHS:
+    relay = parse_relay(data) if path is WritePath.RELAY else RelayOptions()
+    on_off = path is WritePath.RELAY
+    if on_off:
+        # Nothing is written but the relay: no write type to declare.
+        write_type = ch_write_type = WriteType.UNKNOWN
+    elif path in OTGW_PATHS:
         # CS lapses unless repeated within a minute; the PIC keeps CH= until CH=1 or a reset —
         # held, not stored, so the heating switch stays in use (X6).
         write_type = WriteType.EXPIRING
@@ -434,11 +576,16 @@ def parse_control(
             ),
         ),
         fallback_setpoint=_float(data, "fallback_setpoint", None),
-        ramp_k_per_min=ramp,
+        ramp_k_per_min=None if on_off else ramp,
         decision_interval_s=_minutes(value, "decision_interval_min", 5.0),
-        comfort_correction=bool(value["comfort_correction"]),
+        # The relay sets no water temperature: nothing to correct (R5).
+        comfort_correction=bool(value["comfort_correction"]) and not on_off,
         # Only what the user saved: VT's own value is a pre-fill in the form, never taken here.
         activation_delay_s=float(value["activation_delay_s"]),
+        # The relay path (R5, R6): heating on and off only, and its link is the relay itself —
+        # never a hand-back for the boiler's signals, which never gate it.
+        on_off=on_off,
+        stale_hand_back_s=None if on_off else OUTAGE_LOST_S,
     )
     loop = LoopConfig(
         control=control,
@@ -455,16 +602,20 @@ def parse_control(
             refresh_s=OTGW_CH_REFRESH_S if path in OTGW_PATHS else HELD_REFRESH_S,
         ),
         # A heating switch the boiler may store is left alone: "off" is then a low setpoint.
-        ch_writes=path in OTGW_PATHS
-        or (bool(data.get("ch_entity")) and ch_write_type in WRITABLE_TYPES),
+        ch_writes=not on_off
+        and (
+            path in OTGW_PATHS or (bool(data.get("ch_entity")) and ch_write_type in WRITABLE_TYPES)
+        ),
         off_setpoint=float(value["off_setpoint"]),
+        relay=relay.config if on_off else None,
     )
+    fixed = ALWAYS_HAND_BACK_ALARMS | (_RELAY_INFO_ONLY if on_off else frozenset())
     reactions = {
         str(alarm): AlarmReaction(reaction)
         for alarm, reaction in (data.get("alarm_reactions") or {}).items()
         # A fixed reaction leaves nothing to choose: a stored one is neutralised, whatever it
         # holds (0.2.1's form offered "information" for an outside change, S-11).
-        if str(alarm) not in ALWAYS_HAND_BACK_ALARMS
+        if str(alarm) not in fixed
     }
     options = ControlOptions(
         write_path=path,
@@ -492,13 +643,16 @@ def parse_control(
         thermostat_kind=parse_thermostat_kind(data.get("thermostat_kind")),
         curve_entered=bool(curve_data.get("design_flow")),
         loop=loop,
-        learning=LearningConfig(),
+        # R13: no water swing on a relay — it sets no water temperature.
+        learning=LearningConfig(pause_on_water_swing=not on_off),
         learning_pauses=bool(value["learning_pauses"]),
         alarm_reactions=reactions,
-        return_after_outside_change=data.get("return_after_outside_change") is True,
+        # Decision 6: the return by itself is not offered for relays.
+        return_after_outside_change=data.get("return_after_outside_change") is True and not on_off,
         thermostat_setpoint_entity=data.get("thermostat_setpoint_entity") or None,
         restart_entity=data.get("restart_entity") or None,
         own_room_controller=data.get("own_room_controller") is True,
+        relay=relay,
     )
     working = replace(loop.control, working_thermostat=working_thermostat(options))
     return replace(options, loop=replace(loop, control=working))
@@ -507,18 +661,22 @@ def parse_control(
 def own_room_controller_offered(path: WritePath | None, topology: Topology | None) -> bool:
     """Where the tick "the boiler has its own room controller" is offered (answers F, M): the
     entity path with the virtual topology — with a gateway the thermostat on its terminals
-    already counts, and with nothing on them a hand-back stops heating anyway. X8 adds the
-    relay path, where the tick counts only with the rest state "on"
-    (``relay_working_thermostat``)."""
+    already counts, and with nothing on them a hand-back stops heating anyway — and the relay
+    path, where the tick counts only with the rest state "on" (``relay_working_thermostat``)."""
+    if path is WritePath.RELAY:
+        return True
     return path is WritePath.ENTITY and topology is Topology.VIRTUAL
 
 
 def own_room_controller_counts(control: ControlOptions) -> bool:
     """The tick counts: stored where it is offered, and with a hand-back that leaves the boiler
     heating — with a hand-back value declared "heating stops" (refused in the form) there is
-    nothing for the controller to take over. A tick stored anywhere else is ignored."""
+    nothing for the controller to take over; on the relay path only with the rest state "on"
+    (answer M). A tick stored anywhere else is ignored."""
     if not control.own_room_controller:
         return False
+    if control.write_path is WritePath.RELAY:
+        return relay_working_thermostat(ticked=True, rests_on=control.relay.rests_on)
     if not own_room_controller_offered(control.write_path, control.topology):
         return False
     return not (
@@ -546,7 +704,11 @@ def working_thermostat(control: ControlOptions) -> bool:
     to that heats by the rooms? A gateway with an OpenTherm thermostat declared on its
     terminals, or the boiler's own room controller where the tick counts. Not a hand-back value
     declared "own control" without the tick, nor "device decides", nor a stand-alone gateway,
-    nor a gateway whose terminals hold something else or were not answered for."""
+    nor a gateway whose terminals hold something else or were not answered for. On the relay
+    path the tick itself is read, with the rest state (answer M): its hand-back effect is the
+    rest state either way."""
+    if control.write_path is WritePath.RELAY:
+        return own_room_controller_counts(control)
     effect = hand_back_effect(control)
     if effect is HandBackEffect.THERMOSTAT_TAKES_OVER:
         return control.thermostat_kind is ThermostatKind.OPENTHERM
@@ -598,9 +760,13 @@ def wall_thermostat_applies(control: ControlOptions) -> bool:
 
 
 def hand_back_effect(control: ControlOptions) -> HandBackEffect | None:
-    """The effect of a hand-back: the boiler's own room controller where the user ticked it (and
-    it counts); for a hand-back value, what the user declared it does; else what the declared
-    topology leads to. ``None`` where control cannot run."""
+    """The effect of a hand-back: a relay's rest state (X8, R9); the boiler's own room controller
+    where the user ticked it (and it counts); for a hand-back value, what the user declared it
+    does; else what the declared topology leads to. ``None`` where control cannot run."""
+    if control.write_path is WritePath.RELAY:
+        if control.relay.rests_on:
+            return HandBackEffect.RELAY_RESTS_ON
+        return HandBackEffect.RELAY_RESTS_OFF
     if own_room_controller_counts(control):
         return HandBackEffect.OWN_CONTROL_RESUMES
     if control.hand_back is HandBack.VALUE and control.hand_back_value_effect is not None:
@@ -632,6 +798,10 @@ _FROST_PROTECTION_AFTER = {
     HandBackEffect.HEATING_STOPS: FrostProtection.BOILER,
     HandBackEffect.DEVICE_DECIDES: FrostProtection.DEVICE,
     HandBackEffect.OWN_CONTROL_RESUMES: FrostProtection.DEVICE,
+    # A relay resting "off": the boiler's own, if it has one (or a thermostat in parallel); one
+    # resting "on": the boiler's own control.
+    HandBackEffect.RELAY_RESTS_OFF: FrostProtection.BOILER,
+    HandBackEffect.RELAY_RESTS_ON: FrostProtection.DEVICE,
 }
 
 
@@ -649,7 +819,7 @@ def hand_back_heating_on(control: ControlOptions) -> bool:
     returns to a thermostat or its own control ("thermostat takes over", "device decides", and
     "own control resumes", the user's tick), and is left as it is where the hand-back stops
     heating. An effect not known turns it on: missing data never switches heating off by
-    itself."""
+    itself. A relay goes to its rest state: on only where the user chose "on"."""
     return hand_back_effect(control) not in _HEATING_LEFT_AS_IT_IS
 
 
@@ -699,8 +869,8 @@ def heating_writes(data: Mapping[str, Any]) -> bool:
     """Whether stored control options switch heating with a heating switch — the gateway paths
     always, with CH; the entity path with a heating switch declared expiring or held — rather
     than sending "off" as a low setpoint. A write type this version does not know counts as
-    none."""
-    if data.get("write_path") in OTGW_PATHS:
+    none. The relay switches heating itself (X8)."""
+    if data.get("write_path") in (*OTGW_PATHS, WritePath.RELAY):
         return True
     try:
         ch_write_type = WriteType(data.get("ch_write_type") or WriteType.UNKNOWN)
@@ -754,22 +924,89 @@ def curve_problems(
     return found
 
 
+def relay_in_another_role(
+    control: ControlOptions, signals: Collection[Signal] | Mapping[Signal, str] | None = None
+) -> bool:
+    """R2: the relay is an entity the options already use in another role — one control reads
+    or writes, or a mapped signal (``signals``, where given as their entities)."""
+    entity = control.relay.entity
+    if not entity:
+        return False
+    others = [
+        e
+        for e in (
+            control.setpoint_entity,
+            control.ch_entity,
+            control.hand_back_entity,
+            control.confirmed_entity,
+            control.ch_confirmed_entity,
+            control.thermostat_setpoint_entity,
+            control.restart_entity,
+        )
+        if e
+    ]
+    if isinstance(signals, Mapping):
+        others += [str(e) for e in signals.values()]
+    return entity in others
+
+
+def relay_blockers(
+    control: ControlOptions, signals: Collection[Signal] | Mapping[Signal, str] | None = None
+) -> list[str]:
+    """What the relay path lacks (R1–R3): the relay, a switch or a boiler thermostat entity used
+    in no other role, and the separate-contact tick (answer G)."""
+    found: list[str] = []
+    entity = control.relay.entity
+    if not entity:
+        found.append("no_relay_entity")
+    elif entity.split(".", 1)[0] not in RELAY_DOMAINS:
+        found.append("relay_domain_not_supported")
+    elif relay_in_another_role(control, signals):
+        found.append("relay_in_another_role")
+    if not control.relay.separate_contact:
+        found.append("relay_contact_not_confirmed")
+    return found
+
+
+def _zone_blockers(control: ControlOptions, installation: Installation) -> list[str]:
+    if not installation.zones:
+        return ["no_zones"]  # nothing could ever ask for heat (S-04)
+    if control.loop.control.demand.count_threshold > len(installation.zones):
+        return ["count_threshold_above_zones"]  # heating would never be asked for
+    return []
+
+
 def config_blockers(
     control: ControlOptions,
     installation: Installation,
     shared_signals: Mapping[Signal, Signal] | None = None,
+    *,
+    signals: Collection[Signal] | Mapping[Signal, str] | None = None,
 ) -> list[str]:
     """What the configuration still lacks for control (translation keys). ``shared_signals``:
     signals dropped because their entity feeds an earlier one (``EntryConfig.shared_signals``,
-    X5.2)."""
+    X5.2). ``signals``: the mapped signals (``EntryConfig.signals``) — water-temperature control
+    needs flame and flow among them (X8); ``None``: not given here, not checked."""
     if not control.configured:
         return ["no_write_path"]
     found: list[str] = []
-    if installation.boiler.boiler_class is not BoilerClass.FLOW_SETPOINT:
-        found.append("boiler_not_flow_setpoint")
+    path = control.write_path
+    boiler_class = installation.boiler.boiler_class
+    if boiler_class in _MONITOR_ONLY_CLASSES:
+        found.append("boiler_class_no_control")
+    elif (path is WritePath.RELAY) != (boiler_class is BoilerClass.ON_OFF):
+        found.append("path_not_for_boiler_class")
     if shared_signals:
         found.append("entity_for_two_signals")
-    path = control.write_path
+    if path is WritePath.RELAY:
+        # The relay sets no water temperature: the setpoint, topology, read-back, curve and
+        # circuit rules do not apply; the demand thresholds do (R1).
+        return [*found, *relay_blockers(control, signals), *_zone_blockers(control, installation)]
+    if signals is not None:
+        if Signal.FLAME not in signals:
+            found.append("no_flame_signal")
+        if Signal.FLOW not in signals:
+            found.append("no_flow_signal")
     if one_entity_in_two_roles(control):
         found.append("hand_back_switch_is_heating_switch")
     if path is WritePath.ENTITY:
@@ -834,10 +1071,7 @@ def config_blockers(
             and circuit.max_flow is None
         ):
             found.append("underfloor_without_max_flow")
-    if not installation.zones:
-        found.append("no_zones")  # nothing could ever ask for heat (S-04)
-    elif control.loop.control.demand.count_threshold > len(installation.zones):
-        found.append("count_threshold_above_zones")  # heating would never be asked for
+    found += _zone_blockers(control, installation)
     if not control.loop.ch_writes and off_too_close_to_lowest(
         control.loop.off_setpoint, control.loop.control.limits.hard_min
     ):

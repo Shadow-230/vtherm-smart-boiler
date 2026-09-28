@@ -126,6 +126,9 @@ class ChangeClass(StrEnum):
     IGNORED_FROM_START = "ignored_from_start"
     CLIPPED = "clipped"
     ANOTHER_CONTROLLER = "another_controller"
+    # Never read back since a send, for longer than the timeout, after the start phase: a relay's
+    # "not confirmed" (X8, ``core.relay``), sent again at its next check.
+    NOT_CONFIRMED = "not_confirmed"
 
 
 class Reaction(StrEnum):
@@ -145,6 +148,7 @@ REACTIONS: Mapping[ChangeClass, Reaction] = MappingProxyType(
         ChangeClass.FAILED_ATTEMPT: Reaction.RESEND,
         ChangeClass.IGNORED_FROM_START: Reaction.STOP,
         ChangeClass.ANOTHER_CONTROLLER: Reaction.REWRITE_ONCE,
+        ChangeClass.NOT_CONFIRMED: Reaction.NONE,  # a relay's next check sends it again
     }
 )
 

@@ -29,7 +29,7 @@ lost and is written again. All values provisional (K4).
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -172,13 +172,25 @@ def watch_foreign(
     return watch, watch.checks >= needed
 
 
-def judge_switch(state: str | None, expected: str, seen: bool, trace: bool) -> SwitchVerdict:
+def judge_switch(
+    state: str | None,
+    expected: str,
+    seen: bool,
+    trace: bool,
+    known: Collection[str] | None = ("on", "off"),
+) -> SwitchVerdict:
     """A two-valued target: released in its hand-back state. Once it was read back in that
     state, another known state means another controller — or, with a trace of an outage, a lost
-    command. Before that, or without a known state, it stays owed."""
+    command. Before that, or without a known state, it stays owed. ``known``: the states it
+    shows once known; ``None``: any it reports but unavailable or unknown (a relay's boiler
+    thermostat entity, whose modes are its states — X8)."""
     if state == expected:
         return SwitchVerdict.RELEASED
-    if not seen or state not in ("on", "off"):
+    if known is None:
+        shown = state is not None and state not in UNAVAILABLE_STATES
+    else:
+        shown = state in known
+    if not seen or not shown:
         return SwitchVerdict.WAITING
     return SwitchVerdict.LOST if trace else SwitchVerdict.TAKEN
 

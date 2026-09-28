@@ -15,7 +15,7 @@
       },
       "signals": {
         "title": "Sygnały kotła",
-        "description": "Wskaż encję, która podaje każdy sygnał. Płomień i temperatura zasilania są wymagane; każdy kolejny sygnał rozszerza monitor. Wtyczka tylko czyta te encje. Jedna encja zasila tylko jeden sygnał.",
+        "description": "Wskaż encję, która podaje każdy sygnał. Żaden nie jest wymagany: płomień i temperatura zasilania włączają metryki palnika, łącze z kotłem i sterowanie temperaturą wody, które wymaga obu; każdy kolejny sygnał rozszerza monitor. Dom z samym przekaźnikiem też jest monitorowany. Wtyczka tylko czyta te encje. Jedna encja zasila tylko jeden sygnał.",
         "data": {
           "flame": "Płomień",
           "flow": "Temperatura zasilania",
@@ -31,7 +31,8 @@
           "gas_meter": "Licznik gazu",
           "room_setpoint": "Nastawa termostatu przewodowego",
           "room_temperature": "Temperatura z termostatu przewodowego",
-          "weather": "Encja pogody"
+          "weather": "Encja pogody",
+          "boiler_power": "Moc elektryczna kotła"
         },
         "data_description": {
           "flame": "Włączony, gdy palnik pali. Z niego pochodzi każda metryka cykli: zła encja da złe starty i czasy palenia.",
@@ -48,7 +49,8 @@
           "gas_meter": "Licznik narastający gazu lub energii. Daje zmierzony gaz na stopniodzień zamiast szacunku.",
           "room_setpoint": "Nastawa pokojowa termostatu ściennego przy bramce, od strony termostatu — np. „Room setpoint 1” na urządzeniu termostatu bramki albo TrSet_thermostat firmware'u z włączonymi osobnymi źródłami; nie cel encji climate bramki. Pokazywana jako temperatura, którą termostat ścienny utrzyma po oddaniu sterowania.",
           "room_temperature": "Temperatura pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
-          "weather": "Jej prognozy są zapisywane na potrzeby przyszłych funkcji prognoz, a jej temperatura zastępuje brakujący albo podejrzany czujnik zewnętrzny — w stopniodniach i krzywej sterowania. Żadne dane nie opuszczają Home Assistant."
+          "weather": "Jej prognozy są zapisywane na potrzeby przyszłych funkcji prognoz, a jej temperatura zastępuje brakujący albo podejrzany czujnik zewnętrzny — w stopniodniach i krzywej sterowania. Żadne dane nie opuszczają Home Assistant.",
+          "boiler_power": "Opcjonalnie: moc elektryczna kotła, np. z gniazdka z pomiarem; służy tylko jako dowód, że kocioł sterowany przekaźnikiem grzeje."
         }
       },
       "boiler": {
@@ -67,7 +69,7 @@
           "bypass": "Bypass lub sprzęgło hydrauliczne"
         },
         "data_description": {
-          "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Sterowanie (eksperymentalne) wymaga klasy „Nastawa zasilania”; przy pozostałych wtyczka tylko monitoruje.",
+          "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Sterowanie (eksperymentalne): nastawa zasilania (temperatura wody) albo wł./wył. (przekaźnik); pozostałe klasy są tylko monitorowane.",
           "dhw": "Brak, zasobnik albo kocioł dwufunkcyjny; wymagane. Służy do interpretacji paleń: przy „brak” każde palenie liczy się jako c.o. — zadeklarowane w kotle, który grzeje ciepłą wodę, jej pobory liczyłyby się jako starty c.o.; zły typ liczy ciepłą wodę jako c.o. albo odwrotnie.",
           "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych i są oceniane po tym, jak często kondensują; dla innych kotłów bezwzględny alarm spalin jest wyłączony, a kondensacja nie wpływa na werdykt. Zły wybór ostrzega za późno albo bez powodu i myli werdykt.",
           "boiler_min_power": "Najmniejsza moc grzania z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować. Zła wartość wypacza tę ocenę w werdykcie.",
@@ -275,7 +277,7 @@
       },
       "signals": {
         "title": "Sygnały kotła",
-        "description": "Wskaż encję, która podaje każdy sygnał. Płomień i temperatura zasilania są wymagane; każdy kolejny sygnał rozszerza monitor. Wtyczka tylko czyta te encje. Jedna encja zasila tylko jeden sygnał. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Wskaż encję, która podaje każdy sygnał. Żaden nie jest wymagany: płomień i temperatura zasilania włączają metryki palnika, łącze z kotłem i sterowanie temperaturą wody, które wymaga obu; każdy kolejny sygnał rozszerza monitor. Dom z samym przekaźnikiem też jest monitorowany. Wtyczka tylko czyta te encje. Jedna encja zasila tylko jeden sygnał. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "flame": "Płomień",
           "flow": "Temperatura zasilania",
@@ -291,7 +293,8 @@
           "gas_meter": "Licznik gazu",
           "room_setpoint": "Nastawa termostatu przewodowego",
           "room_temperature": "Temperatura z termostatu przewodowego",
-          "weather": "Encja pogody"
+          "weather": "Encja pogody",
+          "boiler_power": "Moc elektryczna kotła"
         },
         "data_description": {
           "flame": "Włączony, gdy palnik pali. Z niego pochodzi każda metryka cykli: zła encja da złe starty i czasy palenia.",
@@ -308,7 +311,8 @@
           "gas_meter": "Licznik narastający gazu lub energii. Daje zmierzony gaz na stopniodzień zamiast szacunku.",
           "room_setpoint": "Nastawa pokojowa termostatu ściennego przy bramce, od strony termostatu — np. „Room setpoint 1” na urządzeniu termostatu bramki albo TrSet_thermostat firmware'u z włączonymi osobnymi źródłami; nie cel encji climate bramki. Pokazywana jako temperatura, którą termostat ścienny utrzyma po oddaniu sterowania.",
           "room_temperature": "Temperatura pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
-          "weather": "Jej prognozy są zapisywane na potrzeby przyszłych funkcji prognoz, a jej temperatura zastępuje brakujący albo podejrzany czujnik zewnętrzny — w stopniodniach i krzywej sterowania. Żadne dane nie opuszczają Home Assistant."
+          "weather": "Jej prognozy są zapisywane na potrzeby przyszłych funkcji prognoz, a jej temperatura zastępuje brakujący albo podejrzany czujnik zewnętrzny — w stopniodniach i krzywej sterowania. Żadne dane nie opuszczają Home Assistant.",
+          "boiler_power": "Opcjonalnie: moc elektryczna kotła, np. z gniazdka z pomiarem; służy tylko jako dowód, że kocioł sterowany przekaźnikiem grzeje."
         }
       },
       "freshness": {
@@ -329,7 +333,8 @@
           "gas_meter": "Licznik gazu",
           "room_setpoint": "Nastawa termostatu przewodowego",
           "room_temperature": "Temperatura z termostatu przewodowego",
-          "weather": "Encja pogody"
+          "weather": "Encja pogody",
+          "boiler_power": "Moc elektryczna kotła"
         }
       },
       "boiler": {
@@ -348,7 +353,7 @@
           "bypass": "Bypass lub sprzęgło hydrauliczne"
         },
         "data_description": {
-          "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Sterowanie (eksperymentalne) wymaga klasy „Nastawa zasilania”; przy pozostałych wtyczka tylko monitoruje.",
+          "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Sterowanie (eksperymentalne): nastawa zasilania (temperatura wody) albo wł./wył. (przekaźnik); pozostałe klasy są tylko monitorowane.",
           "dhw": "Brak, zasobnik albo kocioł dwufunkcyjny; wymagane. Służy do interpretacji paleń: przy „brak” każde palenie liczy się jako c.o. — zadeklarowane w kotle, który grzeje ciepłą wodę, jej pobory liczyłyby się jako starty c.o.; zły typ liczy ciepłą wodę jako c.o. albo odwrotnie.",
           "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych i są oceniane po tym, jak często kondensują; dla innych kotłów bezwzględny alarm spalin jest wyłączony, a kondensacja nie wpływa na werdykt. Zły wybór ostrzega za późno albo bez powodu i myli werdykt.",
           "boiler_min_power": "Najmniejsza moc grzania z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować. Zła wartość wypacza tę ocenę w werdykcie.",
@@ -490,7 +495,7 @@
       },
       "control": {
         "title": "Sterowanie (eksperymentalne)",
-        "description": "Jak wtyczka zapisuje do kotła nastawę zasilania. Sterowanie pozostaje wyłączone, dopóki go nie włączysz, i działa dopiero po okresie monitorowania. Wybierz „Bez sterowania”, żeby tylko monitorować. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Jak wtyczka steruje kotłem: zapisując nastawę zasilania albo włączając i wyłączając go przekaźnikiem. Sterowanie pozostaje wyłączone, dopóki go nie włączysz, i działa dopiero po okresie monitorowania. Wybierz „Bez sterowania”, żeby tylko monitorować. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "write_path": "Ścieżka zapisu",
           "topology": "Podłączenie bramki",
@@ -501,10 +506,10 @@
           "restart_entity": "Wskaźnik restartu"
         },
         "data_description": {
-          "write_path": "Bez sterowania (domyślnie); wybrana przez ciebie encja do zapisu, np. liczba EMS-ESP albo ESPHome OpenTherm; bramka OpenTherm Gateway przez integrację OpenTherm Gateway w Home Assistant; albo polecenia MQTT firmware OTGW. Wybierz ścieżkę, którą naprawdę oferuje twój interfejs kotła: zła oznacza zapisy, które się nie udają albo trafiają donikąd.",
-          "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Tryb monitora: bramka tylko słucha i sterowanie jest niemożliwe. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki. Utrata danych kotła podnosi alarm i oddaje sterowanie w każdej topologii — bez termostatu grzanie ustaje, dopóki dane nie wrócą. Z termostatem: gdy steruje wtyczka, nastawa ogrzewania termostatu ściennego i jego wyłącznik nic nie robią — ustawienia ciepłej wody nadal działają; po oddaniu sterowania albo gdy Home Assistant nie działa, termostat grzeje według własnej nastawy i programu, więc ustaw je tak, jak ma być w domu.",
+          "write_path": "Bez sterowania (domyślnie); wybrana przez ciebie encja do zapisu, np. liczba EMS-ESP albo ESPHome OpenTherm; bramka OpenTherm Gateway przez integrację OpenTherm Gateway w Home Assistant; albo polecenia MQTT firmware OTGW. Wybierz ścieżkę, którą naprawdę oferuje twój interfejs kotła: zła oznacza zapisy, które się nie udają albo trafiają donikąd. Przekaźnik, dla kotła wł./wył.: przełącznik na zaciskach termostatu pokojowego kotła albo encja termostatu kotła ustawiana na grzanie lub wyłączenie. Oferowane są tylko ścieżki pasujące do klasy kotła.",
+          "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Tryb monitora: bramka tylko słucha i sterowanie jest niemożliwe. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki. Utrata danych kotła podnosi alarm i oddaje sterowanie w każdej topologii — bez termostatu grzanie ustaje, dopóki dane nie wrócą. Z termostatem: gdy steruje wtyczka, nastawa ogrzewania termostatu ściennego i jego wyłącznik nic nie robią — ustawienia ciepłej wody nadal działają; po oddaniu sterowania albo gdy Home Assistant nie działa, termostat grzeje według własnej nastawy i programu, więc ustaw je tak, jak ma być w domu. Nieużywane przy przekaźniku: to, co robi oddanie sterowania, określa jego stan po oddaniu sterowania.",
           "thermostat_kind": "Tylko dla bramki, z termostatem albo samodzielnej. Termostat OpenTherm: rozmawia z kotłem i może pokazywać temperaturę wody. Styk wł./wył.: prosty termostat lub włącznik na dwóch przewodach — bramka zamienia go w żądanie grzania, a „wyłączone ogrzewanie” wtyczki blokowałoby go po awarii Home Assistant, więc sterowanie nie jest dostępne. Nic: brak termostatu. Nie wiem: sterowanie nie jest dostępne, dopóki tego nie sprawdzisz. Z termostatem wybierz OpenTherm; bez termostatu wybierz Nic.",
-          "confirmed_entity": "Encja, która pokazuje nastawę odebraną przez kocioł, np. „Control setpoint 1” urządzenia kotła w bramce — pokazuje ona, co bramka wysyła, więc nastawa jest pokazywana jako potwierdzona przez bramkę, nie przez kocioł. Wymagana: każdy zapis jest z nią porównywany, a zapis zignorowany przez kocioł albo nadpisany przez inny sterownik zostaje zgłoszony. Encja nastawy wtyczki pokazuje tylko potwierdzoną wartość, w przeciwnym razie stan nieznany. Wybranie encji, do której się pisze, niczego nie potwierdza: nastawa jest wtedy pokazywana jako niezweryfikowana.",
+          "confirmed_entity": "Encja, która pokazuje nastawę odebraną przez kocioł, np. „Control setpoint 1” urządzenia kotła w bramce — pokazuje ona, co bramka wysyła, więc nastawa jest pokazywana jako potwierdzona przez bramkę, nie przez kocioł. Wymagana: każdy zapis jest z nią porównywany, a zapis zignorowany przez kocioł albo nadpisany przez inny sterownik zostaje zgłoszony. Encja nastawy wtyczki pokazuje tylko potwierdzoną wartość, w przeciwnym razie stan nieznany. Wybranie encji, do której się pisze, niczego nie potwierdza: nastawa jest wtedy pokazywana jako niezweryfikowana. Nieużywane przy przekaźniku: potwierdza go jego własny stan.",
           "ch_confirmed_entity": "Opcjonalnie: encja, która pokazuje, czy kocioł dostaje włączone ogrzewanie — np. „Central heating 1” urządzenia kotła w bramce, pokazujące, co bramka wysyła do kotła. Z nią włączanie i wyłączanie ogrzewania jest sprawdzane jak nastawa: przełączenie zignorowane przez kocioł jest zgłaszane, a zmienione przez inny sterownik zapisywane jeszcze raz, po czym wszystkie zapisy ustają. Bez niej włączenie ogrzewania jest pokazywane jako niezweryfikowane, a przełączenie przez inny sterownik pozostaje niezauważone. Wybranie encji, do której się pisze, albo żądania termostatu zamiast tego, co dostaje kocioł, niczego nie potwierdza albo zatrzymuje sterowanie.",
           "thermostat_setpoint_entity": "Opcjonalnie, dla bramki z termostatem OpenTherm: temperatura wody, o którą prosi sam termostat (w opentherm_gw „Control setpoint 1” urządzenia termostatu), nie odczyt zwrotny kotła. Gdy kocioł wróci do niej po przerwie, wtyczka wyśle swoje polecenie ponownie, zamiast uznać to za inny sterownik. Puste (domyślnie): liczy się tylko wartość sprzed wtyczki.",
           "restart_entity": "Opcjonalnie: czujnik bramki lub interfejsu kotła, który pokazuje jego restarty — czas pracy liczony od nowa, licznik restartów, który rośnie, albo czas uruchomienia (na przykład licznik restartów firmware OTGW albo czujnik czasu pracy EMS-ESP lub ESPHome). Pokazany przez niego restart liczy się przez 5 minut jako ślad przerwy: jeśli kocioł wróci wtedy do własnej wartości, wtyczka uzna to za utracone polecenie i po prostu wyśle je ponownie. Puste (domyślnie): restart widać tylko wtedy, gdy encje urządzenia stają się niedostępne, a szybki restart, który niczego nie pokazuje, jest oceniany jak powrót bez śladu przerwy — pierwszy w ciągu godziny wtyczka wyśle ponownie, ale drugi może zostać uznany za inny sterownik i wtyczka ustąpi."
@@ -669,6 +674,86 @@
         "data_description": {
           "save_anyway": "Zaznacz, aby mimo to zapisać zmianę. Bez zaznaczenia (domyślnie) nic nie zostanie zapisane i wrócisz do menu."
         }
+      },
+      "control_relay": {
+        "title": "Przekaźnik",
+        "description": "Jak wtyczka włącza i wyłącza kocioł dwustanowy — tak jak kocioł centralny Versatile Thermostat. Zalecane: styk przekaźnika na zaciskach termostatu pokojowego kotła — styk bezpotencjałowy; sprawdź instrukcję albo zapytaj instalatora, bo na tych zaciskach może być napięcie sieciowe — nigdy w zasilaniu kotła, co odcięłoby też wybieg pompy i jego własną ochronę przed zamarzaniem. Zostaw stary termostat podłączony równolegle na zaciskach kotła (nie na wejściu przekaźnika), nastawiony nisko: zagrzeje, gdy Home Assistant zawiedzie — ale zawory sterowane przez Versatile Thermostat zostają wtedy tam, gdzie były, więc ciepło może nie dojść do każdego pokoju. Ustaw przekaźnik tak, by po zaniku zasilania startował wyłączony. Ustaw własny przycisk lub wejście przekaźnika jako „odłączone”, żeby jego naciśnięcie nie przełączało kotła. Opcjonalnie włącz w przekaźniku własny wyłącznik czasowy, odnawiany każdym „włącz”; ustaw go dopiero, gdy ruszy sterowanie wtyczki. Sprawdź to wszystko raz latem. Temperaturę wody ustala sam kocioł: krzywa i granice temperatury wody nie mają zastosowania, a przy ogrzewaniu podłogowym bez zaworu mieszającego jego ustawienie musi pasować do podłogi. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "data": {
+          "relay_entity": "Przekaźnik",
+          "relay_is_separate_contact": "To osobny styk przekaźnika, a nie ustawienie zapisywane w pamięci kotła",
+          "relay_reports_state": "Przekaźnik zgłasza swój rzeczywisty stan",
+          "relay_power_on_state": "Stan po zaniku zasilania",
+          "relay_off_timer": "Własny wyłącznik czasowy przekaźnika",
+          "relay_off_timer_min": "Długość wyłącznika czasowego (min)",
+          "relay_repeat_s": "Odstęp powtórzeń",
+          "relay_rest_state": "Przekaźnik po oddaniu sterowania",
+          "own_room_controller": "Kocioł ma własny regulator pokojowy",
+          "boiler_heats_above_w": "Kocioł grzeje powyżej"
+        },
+        "data_description": {
+          "relay_entity": "Przełącznik na zaciskach termostatu pokojowego kotła albo encja termostatu kotła, którą wtyczka ustawia na grzanie lub wyłączenie. Nie pomocnik (input_boolean): niczego nie potwierdza. Nigdy ustawienie, które kocioł zapisuje w pamięci (np. „heating activated” w EMS-ESP): każde przełączenie by ją zużywało. Nie przełącznik używany przez strefę Versatile Thermostat. Dla encji termostatu kotła „grzanie” potwierdza polecenie, nie to, że palnik się pali. Przekaźnik Zigbee może wyglądać na dostępny do 2 godzin po awarii (ZHA) albo zawsze (Zigbee2MQTT z wyłączoną dostępnością): włącz raportowanie dostępności.",
+          "relay_is_separate_contact": "Zaznacz, aby potwierdzić, że przekaźnik jest osobnym stykiem (np. na zaciskach termostatu pokojowego kotła), a nie ustawieniem wł./wył., które kocioł trzyma w pamięci, jak „heating activated” w EMS-ESP: każde przełączenie zużywałoby tę pamięć. Sterowanie nie ruszy, dopóki tego nie zaznaczysz.",
+          "relay_reports_state": "Tak: przekaźnik wysyła do Home Assistant stan styku; wtyczka sprawdza go co 5 minut i po każdym powrocie, zapisuje tylko przy różnicy, po restarcie wysyła polecenie ponownie (do 3 niezgłoszonych restartów na dobę), a gdy przełączy go coś innego — przywraca raz; drugie przełączenie w ciągu doby albo czwarty niezgłoszony restart sprawia, że wtyczka raz ustawia przekaźnik w stan po oddaniu sterowania, wycofuje się i więcej go nie rusza. Nie albo Nie wiem (domyślnie): wtyczka nie widzi przekaźnika, powtarza polecenie co podany odstęp i pokazuje „sterowany bez potwierdzenia”; zmiana zrobiona na przekaźniku zostanie w tym czasie cofnięta. Encja oznaczona jako stan zakładany zawsze liczy się jako Nie.",
+          "relay_power_on_state": "Co robi przekaźnik po powrocie zasilania — to jego własne ustawienie, którego wtyczka nie odczyta. Wyłączony (zalecane): kocioł czeka wyłączony, aż wróci Home Assistant i wyda polecenie. Włączony, ostatni stan albo Nie wiem (domyślnie): po zaniku zasilania kocioł może grzać bez sterowania, dopóki nie wróci Home Assistant. Wyłączony albo Włączony: przekaźnik zastany w tym stanie, choć Home Assistant nie widział przerwy, jest traktowany jak po restarcie i wtyczka wysyła polecenie ponownie — do 3 razy na dobę; za czwartym razem uznaje, że przekaźnik przełącza coś innego, i się wycofuje. Ostatni stan albo Nie wiem: każda zmiana na przekaźniku jest w ten sam sposób traktowana jak możliwy restart.",
+          "relay_off_timer": "Czy przekaźnik sam się wyłącza po pewnym czasie od „włącz” (PulseTime w Tasmocie; auto-off w Shelly — nie jest udokumentowane, czy Shelly odnawia go przy powtórzonym „włącz”, więc to sprawdź). Brak: wtyczka zapisuje tylko wtedy, gdy stan przekaźnika się różni. Długość (podaj ją niżej): wtyczka powtarza „włącz” co połowę tego czasu, nie rzadziej niż co odstęp powtórzeń, a przekaźnik sam wyłączy ogrzewanie, gdy Home Assistant stanie. Nie wiem (domyślnie): traktowane jak „może go mieć” — wtyczka powtarza „włącz” co odstęp powtórzeń; wyłącznik krótszy niż ten odstęp wygląda jak przełączenie przekaźnika przez coś innego, więc go podaj. Ustaw wyłącznik w przekaźniku dopiero, gdy ruszy sterowanie wtyczki, bo inaczej wyłączy ogrzewanie, gdy VT wciąż steruje przekaźnikiem.",
+          "relay_off_timer_min": "Tylko gdy powyżej wybrano długość: liczba minut, 1–120, po której przekaźnik sam się wyłącza.",
+          "relay_repeat_s": "Dla przekaźnika, który nie zgłasza stanu albo ma lub może mieć własny wyłącznik czasowy: co ile sekund wtyczka powtarza polecenie, 10–300. Puste (domyślnie): 300 s. Wpisywane z podtrzymania Versatile Thermostat, jeśli było ustawione na najwyżej 300 s; dłuższe nie jest wpisywane. Najwyżej 300 s: przekaźnik, który po restarcie jest w złym stanie, zostaje w nim najwyżej tyle. Niektóre przekaźniki zapisują każde polecenie, więc krótszy odstęp nie zawsze jest lepszy.",
+          "relay_rest_state": "Na co przekaźnik jest ustawiany, gdy wtyczka oddaje sterowanie (sterowanie wyłączone, błąd, zatrzymanie Home Assistant albo wycofanie się przed innym sterownikiem). Wyłączony (domyślnie): kocioł grzeje tylko przez termostat podłączony równolegle, jeśli jest; bez niego grzanie ustaje, a wtyczka powiadomi, gdy pokój poprosi o ciepło albo zbliży się do zamarzania. Włączony: kocioł grzeje według własnego ustawienia bez sterowania pokojami — pokoje ograniczają tylko ich zawory, a kocioł może pracować na zamknięte zawory; wybierz to tylko dla kotła, który ma tak pracować, np. dostarczonego ze zworką na tych zaciskach albo z termostatem połączonym szeregowo.",
+          "own_room_controller": "Zaznacz tylko wtedy, gdy kocioł ma własny regulator pokojowy, który sam prosi o ciepło, gdy wtyczka odda sterowanie, a stan przekaźnika po oddaniu sterowania to „włączony” — przekaźnik jest wtedy stykiem zapotrzebowania na ciepło kotła. Jeśli Versatile Thermostat w ogóle nie odpowiada, wtyczka odda wtedy przekaźnik w stan „włączony” i grzeje ten regulator. Przy stanie po oddaniu sterowania „wyłączony” zaznaczenie niczego nie zmienia: gdy Versatile Thermostat nie odpowiada, przekaźnik zostaje wyłączony, z alarmem. Domyślnie wyłączone. Ryzyko: bez takiego regulatora przekaźnik oddany jako „włączony” zostawia kocioł grzejący bez kontroli temperatury w pokojach.",
+          "boiler_heats_above_w": "Opcjonalnie, gdy przypisana jest moc elektryczna kotła: moc w W, powyżej której kocioł uznaje się za grzejący. Puste (domyślnie): moc nie służy jako dowód."
+        }
+      },
+      "control_relay_from_vt": {
+        "title": "Przekaźnik — przejście z Versatile Thermostat",
+        "description": "Jak wtyczka włącza i wyłącza kocioł dwustanowy — tak jak kocioł centralny Versatile Thermostat. Zalecane: styk przekaźnika na zaciskach termostatu pokojowego kotła — styk bezpotencjałowy; sprawdź instrukcję albo zapytaj instalatora, bo na tych zaciskach może być napięcie sieciowe — nigdy w zasilaniu kotła, co odcięłoby też wybieg pompy i jego własną ochronę przed zamarzaniem. Zostaw stary termostat podłączony równolegle na zaciskach kotła (nie na wejściu przekaźnika), nastawiony nisko: zagrzeje, gdy Home Assistant zawiedzie — ale zawory sterowane przez Versatile Thermostat zostają wtedy tam, gdzie były, więc ciepło może nie dojść do każdego pokoju. Ustaw przekaźnik tak, by po zaniku zasilania startował wyłączony. Ustaw własny przycisk lub wejście przekaźnika jako „odłączone”, żeby jego naciśnięcie nie przełączało kotła. Opcjonalnie włącz w przekaźniku własny wyłącznik czasowy, odnawiany każdym „włącz”; ustaw go dopiero, gdy ruszy sterowanie wtyczki. Sprawdź to wszystko raz latem. Temperaturę wody ustala sam kocioł: krzywa i granice temperatury wody nie mają zastosowania, a przy ogrzewaniu podłogowym bez zaworu mieszającego jego ustawienie musi pasować do podłogi. Tym kotłem steruje teraz kocioł centralny Versatile Thermostat. Jego ustawienia są wpisane tam, gdzie wtyczka może ich użyć — przekaźnik z jego poleceń (przełącznik włączany i wyłączany albo termostat kotła ustawiany na grzanie i wyłączenie; w innym razie wybierz przekaźnik), opóźnienie startu, odstęp powtórzeń i progi tak, jak VT ich naprawdę używał (VT zaokrągla je w dół do liczb całkowitych w swojej jednostce mocy; VT liczy urządzenia, a wtyczka pokoje, więc liczba jest wpisana tylko tam, gdzie każdy pokój ma jedno urządzenie). Sprawdź je i zapisz. Potem: 1. poczekaj na koniec okresu monitorowania; 2. w centralnej konfiguracji VT odznacz „Użyj kotła centralnego” (VT usunie wtedy swoje polecenia); 3. uruchom ponownie Home Assistant — do tego czasu VT może jeszcze przełączać przekaźnik, więc sterowanie czeka; 4. odznacz „Używany przez kocioł centralny” w pokojach, w których uczy się Auto-TPI (problem do naprawy wtyczki je wymienia); 5. przenieś automatyzacje i pulpity z czujnika i zdarzenia kotła VT; 6. włącz sterowanie — i dopiero teraz ustaw własny wyłącznik czasowy przekaźnika. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "data": {
+          "relay_entity": "Przekaźnik",
+          "relay_is_separate_contact": "To osobny styk przekaźnika, a nie ustawienie zapisywane w pamięci kotła",
+          "relay_reports_state": "Przekaźnik zgłasza swój rzeczywisty stan",
+          "relay_power_on_state": "Stan po zaniku zasilania",
+          "relay_off_timer": "Własny wyłącznik czasowy przekaźnika",
+          "relay_off_timer_min": "Długość wyłącznika czasowego (min)",
+          "relay_repeat_s": "Odstęp powtórzeń",
+          "relay_rest_state": "Przekaźnik po oddaniu sterowania",
+          "own_room_controller": "Kocioł ma własny regulator pokojowy",
+          "boiler_heats_above_w": "Kocioł grzeje powyżej"
+        },
+        "data_description": {
+          "relay_entity": "Przełącznik na zaciskach termostatu pokojowego kotła albo encja termostatu kotła, którą wtyczka ustawia na grzanie lub wyłączenie. Nie pomocnik (input_boolean): niczego nie potwierdza. Nigdy ustawienie, które kocioł zapisuje w pamięci (np. „heating activated” w EMS-ESP): każde przełączenie by ją zużywało. Nie przełącznik używany przez strefę Versatile Thermostat. Dla encji termostatu kotła „grzanie” potwierdza polecenie, nie to, że palnik się pali. Przekaźnik Zigbee może wyglądać na dostępny do 2 godzin po awarii (ZHA) albo zawsze (Zigbee2MQTT z wyłączoną dostępnością): włącz raportowanie dostępności.",
+          "relay_is_separate_contact": "Zaznacz, aby potwierdzić, że przekaźnik jest osobnym stykiem (np. na zaciskach termostatu pokojowego kotła), a nie ustawieniem wł./wył., które kocioł trzyma w pamięci, jak „heating activated” w EMS-ESP: każde przełączenie zużywałoby tę pamięć. Sterowanie nie ruszy, dopóki tego nie zaznaczysz.",
+          "relay_reports_state": "Tak: przekaźnik wysyła do Home Assistant stan styku; wtyczka sprawdza go co 5 minut i po każdym powrocie, zapisuje tylko przy różnicy, po restarcie wysyła polecenie ponownie (do 3 niezgłoszonych restartów na dobę), a gdy przełączy go coś innego — przywraca raz; drugie przełączenie w ciągu doby albo czwarty niezgłoszony restart sprawia, że wtyczka raz ustawia przekaźnik w stan po oddaniu sterowania, wycofuje się i więcej go nie rusza. Nie albo Nie wiem (domyślnie): wtyczka nie widzi przekaźnika, powtarza polecenie co podany odstęp i pokazuje „sterowany bez potwierdzenia”; zmiana zrobiona na przekaźniku zostanie w tym czasie cofnięta. Encja oznaczona jako stan zakładany zawsze liczy się jako Nie.",
+          "relay_power_on_state": "Co robi przekaźnik po powrocie zasilania — to jego własne ustawienie, którego wtyczka nie odczyta. Wyłączony (zalecane): kocioł czeka wyłączony, aż wróci Home Assistant i wyda polecenie. Włączony, ostatni stan albo Nie wiem (domyślnie): po zaniku zasilania kocioł może grzać bez sterowania, dopóki nie wróci Home Assistant. Wyłączony albo Włączony: przekaźnik zastany w tym stanie, choć Home Assistant nie widział przerwy, jest traktowany jak po restarcie i wtyczka wysyła polecenie ponownie — do 3 razy na dobę; za czwartym razem uznaje, że przekaźnik przełącza coś innego, i się wycofuje. Ostatni stan albo Nie wiem: każda zmiana na przekaźniku jest w ten sam sposób traktowana jak możliwy restart.",
+          "relay_off_timer": "Czy przekaźnik sam się wyłącza po pewnym czasie od „włącz” (PulseTime w Tasmocie; auto-off w Shelly — nie jest udokumentowane, czy Shelly odnawia go przy powtórzonym „włącz”, więc to sprawdź). Brak: wtyczka zapisuje tylko wtedy, gdy stan przekaźnika się różni. Długość (podaj ją niżej): wtyczka powtarza „włącz” co połowę tego czasu, nie rzadziej niż co odstęp powtórzeń, a przekaźnik sam wyłączy ogrzewanie, gdy Home Assistant stanie. Nie wiem (domyślnie): traktowane jak „może go mieć” — wtyczka powtarza „włącz” co odstęp powtórzeń; wyłącznik krótszy niż ten odstęp wygląda jak przełączenie przekaźnika przez coś innego, więc go podaj. Ustaw wyłącznik w przekaźniku dopiero, gdy ruszy sterowanie wtyczki, bo inaczej wyłączy ogrzewanie, gdy VT wciąż steruje przekaźnikiem.",
+          "relay_off_timer_min": "Tylko gdy powyżej wybrano długość: liczba minut, 1–120, po której przekaźnik sam się wyłącza.",
+          "relay_repeat_s": "Dla przekaźnika, który nie zgłasza stanu albo ma lub może mieć własny wyłącznik czasowy: co ile sekund wtyczka powtarza polecenie, 10–300. Puste (domyślnie): 300 s. Wpisywane z podtrzymania Versatile Thermostat, jeśli było ustawione na najwyżej 300 s; dłuższe nie jest wpisywane. Najwyżej 300 s: przekaźnik, który po restarcie jest w złym stanie, zostaje w nim najwyżej tyle. Niektóre przekaźniki zapisują każde polecenie, więc krótszy odstęp nie zawsze jest lepszy.",
+          "relay_rest_state": "Na co przekaźnik jest ustawiany, gdy wtyczka oddaje sterowanie (sterowanie wyłączone, błąd, zatrzymanie Home Assistant albo wycofanie się przed innym sterownikiem). Wyłączony (domyślnie): kocioł grzeje tylko przez termostat podłączony równolegle, jeśli jest; bez niego grzanie ustaje, a wtyczka powiadomi, gdy pokój poprosi o ciepło albo zbliży się do zamarzania. Włączony: kocioł grzeje według własnego ustawienia bez sterowania pokojami — pokoje ograniczają tylko ich zawory, a kocioł może pracować na zamknięte zawory; wybierz to tylko dla kotła, który ma tak pracować, np. dostarczonego ze zworką na tych zaciskach albo z termostatem połączonym szeregowo.",
+          "own_room_controller": "Zaznacz tylko wtedy, gdy kocioł ma własny regulator pokojowy, który sam prosi o ciepło, gdy wtyczka odda sterowanie, a stan przekaźnika po oddaniu sterowania to „włączony” — przekaźnik jest wtedy stykiem zapotrzebowania na ciepło kotła. Jeśli Versatile Thermostat w ogóle nie odpowiada, wtyczka odda wtedy przekaźnik w stan „włączony” i grzeje ten regulator. Przy stanie po oddaniu sterowania „wyłączony” zaznaczenie niczego nie zmienia: gdy Versatile Thermostat nie odpowiada, przekaźnik zostaje wyłączony, z alarmem. Domyślnie wyłączone. Ryzyko: bez takiego regulatora przekaźnik oddany jako „włączony” zostawia kocioł grzejący bez kontroli temperatury w pokojach.",
+          "boiler_heats_above_w": "Opcjonalnie, gdy przypisana jest moc elektryczna kotła: moc w W, powyżej której kocioł uznaje się za grzejący. Puste (domyślnie): moc nie służy jako dowód."
+        }
+      },
+      "control_relay_behaviour": {
+        "title": "Przekaźnik: kiedy przełącza",
+        "description": "Przekaźnik włącza i wyłącza kocioł razem ze strefami Versatile Thermostat i ochroną przed zamarzaniem, od razu — przy starcie po opóźnieniu włączenia VT; nic, co wtyczka liczy lub odmierza, go nie wstrzymuje, tak jak we własnym kotle centralnym VT. Każda wartość domyślna jest ostrożna. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "data": {
+          "activation_delay_s": "Opóźnienie włączenia",
+          "count_threshold": "Strefy wołające",
+          "power_threshold_kw": "Moc wołająca",
+          "opening_threshold": "Otwarcie zaworów wołające",
+          "learning_pauses": "Pauzuj naukę stref",
+          "frost_limit": "Ochrona przed mrozem poniżej",
+          "frost_release": "Ochrona przed mrozem do",
+          "frost_zone": "Strefa przeciwmrozowa"
+        },
+        "data_description": {
+          "activation_delay_s": "Sekundy, przez które grzanie czeka po pierwszym wezwaniu, aby wolne zawory (termoelektryczne, podłogówka) otworzyły się, zanim ruszą kocioł i pompa — jak w centralnym kotle Versatile Thermostat; wstępnie wypełnione ustawieniem VT, jeśli VT je zachował, do potwierdzenia. Wyłączenie nigdy nie jest opóźniane. Domyślnie 0: od razu. Ryzyko: strefa z impulsem grzania krótszym niż opóźnienie nigdy nie uruchomi kotła, a impulsy niewiele dłuższe dają krótkie palenia.",
+          "count_threshold": "Ogrzewanie jest potrzebne, gdy co najmniej tyle stref zgłasza zapotrzebowanie. Domyślnie 1; najwyżej liczba stref. 0 wyłącza liczenie, zostawiając sam próg mocy albo otwarcia, jak w Versatile Thermostat. Wyższa zostawia pojedynczy wołający pokój bez ciepła.",
+          "power_threshold_kw": "Opcjonalnie: grzanie jest potrzebne, gdy średnia moc stref w cyklu, liczona jak w Versatile Thermostat, osiągnie tę wartość, w kW — liczona tylko wtedy, gdy choć jedna z nich ma otwarty zawór albo włączone urządzenie. Za wysoki próg zostawia małe pokoje bez ciepła.",
+          "opening_threshold": "Opcjonalnie: ogrzewanie jest potrzebne, gdy największe otwarcie zaworu wśród wołających stref osiąga tę wartość, w %. Za wysoka zostawia bez ciepła pokój, który otwiera zawór tylko trochę.",
+          "learning_pauses": "Wstrzymuj naukę SmartPI podczas grzania ciepłej wody i gdy strefę grzeje obce źródło, żeby nie uczyła się tego, co zrobił kocioł; każde wstrzymanie i wznowienie jest sprawdzane w SmartPI. Przy przekaźniku temperaturę wody ustala sam kocioł, więc jej wahania niczego nie wstrzymują. Domyślnie włączone. Auto-TPI nie da się wstrzymać bez skasowania tego, czego się nauczyło, więc strefy z nim są tylko zgłaszane. Wyłączone: SmartPI uczy się także w tych chwilach, co może zafałszować jego model.",
+          "frost_limit": "Pilnowana strefa zimniejsza niż ta wartość uruchamia grzanie, bez względu na resztę, jeśli ciepło może do niej dotrzeć — zawór otwarty albo urządzenie włączone — w °C. Domyślnie 5 °C. Za niska grozi zamarznięciem rur; za wysoka grzeje pokoje, które trzymasz wyłączone.",
+          "frost_release": "Ochrona przed mrozem kończy się, gdy każda pilnowana strefa jest powyżej tej wartości, w °C. Domyślnie 7 °C, powyżej progu. Blisko progu grzanie przeciwmrozowe włącza się i wyłącza częściej.",
+          "frost_zone": "Opcjonalnie: pilnuj przed mrozem tylko tej strefy. Puste (domyślnie): wszystkich stref. Grzanie przeciwmrozowe działa tylko dla zimnego pokoju, którego zawór może się otworzyć — Versatile Thermostat podaje go jako otwarty albo urządzenie jako włączone; zimny pokój, który VT trzyma zamknięty, zgłasza zamiast tego problem do naprawy. Grzanie, które przez dwie godziny nie ogrzewa pokoju, podnosi alarm; nigdy nie jest przerywane."
+        }
       }
     },
     "error": {
@@ -744,7 +829,15 @@
       "design_outdoor_too_warm": "Projektowa temperatura zewnętrzna musi być co najmniej 10 K niższa od temperatury pokojowej krzywej.",
       "hard_min_not_below_design_flow": "Najniższa temperatura wody musi być niższa od projektowej temperatury zasilania.",
       "thermostat_kind_missing": "Podaj, co jest podłączone do zacisków termostatu bramki.",
-      "thermostat_kind_contradicts_topology": "Ta odpowiedź nie pasuje do podłączenia bramki: termostat OpenTherm oznacza „Bramka z termostatem”, brak termostatu oznacza pracę samodzielną. Wybierz drugie podłączenie."
+      "thermostat_kind_contradicts_topology": "Ta odpowiedź nie pasuje do podłączenia bramki: termostat OpenTherm oznacza „Bramka z termostatem”, brak termostatu oznacza pracę samodzielną. Wybierz drugie podłączenie.",
+      "relay_domain_not_supported": "Przekaźnik musi być przełącznikiem albo encją termostatu kotła, nie pomocnikiem.",
+      "relay_climate_modes": "Tej encji termostatu nie da się ustawić zarówno na grzanie, jak i na wyłączenie.",
+      "relay_used_by_zone": "Tę encję przełącza już strefa Versatile Thermostat.",
+      "relay_of_boiler_interface": "Ta encja należy do integracji kotła albo VT, nie do przekaźnika.",
+      "relay_in_another_role": "Opcje już używają tej encji w innej roli albo jako sygnału.",
+      "relay_off_timer_min_missing": "Podaj długość wyłącznika czasowego w minutach.",
+      "path_not_for_boiler_class": "Ścieżka zapisu nie pasuje do klasy kotła: przekaźnik dla kotła wł./wył., ścieżka nastawy dla kotła z nastawą zasilania.",
+      "vt_commands_not_supported": "Polecenia kotła w Versatile Thermostat nie wskazują przełącznika włączanego i wyłączanego ani termostatu kotła ustawianego na grzanie i wyłączenie: wybierz przekaźnik."
     }
   },
   "selector": {
@@ -817,7 +910,8 @@
         "none": "Bez sterowania",
         "entity": "Encja do zapisu",
         "opentherm_gw": "OpenTherm Gateway (integracja OpenTherm Gateway)",
-        "otgw_mqtt": "Firmware OTGW przez MQTT"
+        "otgw_mqtt": "Firmware OTGW przez MQTT",
+        "relay": "Przekaźnik (kocioł wł./wył.)"
       }
     },
     "topology": {
@@ -861,6 +955,34 @@
       "options": {
         "own_control": "Wraca jego własne sterowanie",
         "heating_stops": "Grzanie ustaje"
+      }
+    },
+    "relay_reports_state": {
+      "options": {
+        "yes": "Tak",
+        "no": "Nie",
+        "unknown": "Nie wiem"
+      }
+    },
+    "relay_power_on_state": {
+      "options": {
+        "off": "Wyłączony",
+        "on": "Włączony",
+        "last": "Ostatni stan",
+        "unknown": "Nie wiem"
+      }
+    },
+    "relay_off_timer": {
+      "options": {
+        "none": "Brak",
+        "minutes": "Długość",
+        "unknown": "Nie wiem"
+      }
+    },
+    "relay_rest_state": {
+      "options": {
+        "off": "Wyłączony",
+        "on": "Włączony"
       }
     }
   },
@@ -1069,6 +1191,34 @@
           },
           "activation_at": {
             "name": "Grzanie ruszy o"
+          },
+          "relay_state": {
+            "name": "Przekaźnik",
+            "state": {
+              "on": "Włączony",
+              "off": "Wyłączony",
+              "other": "Inny tryb",
+              "unreachable": "Poza zasięgiem"
+            }
+          },
+          "relay_check": {
+            "name": "Polecenie przekaźnika",
+            "state": {
+              "confirmed": "Potwierdzone przez przekaźnik (nie to, że kocioł grzeje)",
+              "waiting": "Wysłane, czeka na przekaźnik",
+              "not_confirmed": "Niepotwierdzone: wysyłane ponownie przy następnym sprawdzeniu",
+              "ignored": "Ignorowane od początku: nie wysyłane ponownie w tej sesji",
+              "unverified": "Sterowany bez potwierdzenia: przekaźnik nie zgłasza stanu",
+              "changed_from_outside": "Przełączany przez coś innego: wtyczka się wycofała"
+            }
+          },
+          "boiler_heats": {
+            "name": "Kocioł grzeje",
+            "state": {
+              "heats": "Są oznaki grzania",
+              "not_seen": "Na razie brak oznak grzania",
+              "unverified": "Bez potwierdzenia, że kocioł grzeje"
+            }
           }
         }
       },
@@ -1326,6 +1476,12 @@
             "name": "Kryteria"
           }
         }
+      },
+      "alarm_relay_unreachable": {
+        "name": "Sterowanie: przekaźnik poza zasięgiem"
+      },
+      "alarm_boiler_not_responding": {
+        "name": "Sterowanie: brak oznak grzania kotła"
       }
     },
     "switch": {
@@ -1338,7 +1494,9 @@
               "thermostat_takes_over": "Przejmuje termostat",
               "heating_stops": "Grzanie staje do powrotu sterowania",
               "device_decides": "Działa własne zabezpieczenie urządzenia",
-              "own_control_resumes": "Przejmuje własne sterowanie kotła"
+              "own_control_resumes": "Przejmuje własne sterowanie kotła",
+              "relay_rests_off": "Przekaźnik zostaje wyłączony: ciepło tylko z termostatu równoległego",
+              "relay_rests_on": "Przekaźnik zostaje włączony: kocioł grzeje według własnego ustawienia"
             }
           },
           "frost_protection_by": {
@@ -1354,7 +1512,8 @@
             "name": "Wyłączanie ogrzewania przez",
             "state": {
               "heating_switch": "Przełącznik ogrzewania",
-              "low_setpoint": "Niską nastawę"
+              "low_setpoint": "Niską nastawę",
+              "relay": "Przekaźnik"
             }
           },
           "wall_thermostat_setpoint": {
@@ -1366,6 +1525,13 @@
               "not_mapped": "Nieznana: przypisz nastawę termostatu ściennego",
               "unknown": "Termostat ścienny nie podaje nastawy",
               "low": "Poniżej 15 °C: po oddaniu sterowania dom się wychłodzi"
+            }
+          },
+          "confirmation": {
+            "name": "Potwierdzenie",
+            "state": {
+              "controlled_without_confirmation": "Sterowany bez potwierdzenia",
+              "without_heat_confirmation": "Sterowany bez potwierdzenia, że kocioł grzeje"
             }
           }
         }
@@ -1383,9 +1549,6 @@
     },
     "blocked_no_write_path": {
       "message": "Sterowanie nie jest skonfigurowane: wybierz w opcjach, jak wtyczka zapisuje do kotła. Inne powody: {others}."
-    },
-    "blocked_boiler_not_flow_setpoint": {
-      "message": "Sterowanie wymaga kotła klasy „Nastawa zasilania”. Inne powody: {others}."
     },
     "blocked_no_setpoint_entity": {
       "message": "Wybierz encję, która przyjmuje nastawę zasilania. Inne powody: {others}."
@@ -1472,7 +1635,7 @@
       "message": "Encja nastawy przyjmuje teraz wartości co ponad 1 °C, więc odczyt zwrotny nie potwierdzi wartości: wybierz inną encję w opcjach. Inne powody: {others}."
     },
     "blocked_heating_off_ignored": {
-      "message": "Od początku sesji kocioł nie przyjął polecenia wtyczki „wyłącz grzanie”, więc wtyczka nie mogła wyłączyć ogrzewania. Sterowanie się zatrzymało, a kocioł został oddany. Sprawdź przełącznik ogrzewania wybrany w opcjach i ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej. Inne powody: {others}."
+      "message": "Od początku sesji kocioł nie przyjął polecenia wtyczki „wyłącz grzanie” — albo przekaźnik polecenia „wyłącz” — więc wtyczka nie mogła wyłączyć ogrzewania. Sterowanie się zatrzymało, a kocioł został oddany. Sprawdź przełącznik ogrzewania albo przekaźnik wybrany w opcjach i ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej. Inne powody: {others}."
     },
     "blocked_hand_back_switch_is_heating_switch": {
       "message": "Przełącznik sterowania zewnętrznego jest też przełącznikiem ogrzewania albo encją nastawy: oddawanie sterowania przełączałoby go bez końca. Wybierz w opcjach inną encję. Inne powody: {others}."
@@ -1518,6 +1681,39 @@
     },
     "blocked_thermostat_kind_contradicts_topology": {
       "message": "Ta odpowiedź nie pasuje do podłączenia bramki: termostat OpenTherm oznacza „Bramka z termostatem”, brak termostatu oznacza pracę samodzielną. Wybierz drugie podłączenie. Inne powody: {others}."
+    },
+    "blocked_boiler_class_no_control": {
+      "message": "Sterowanie wymaga kotła klasy „Nastawa zasilania” albo „Wł./wył. (przekaźnik)”. Inne powody: {others}."
+    },
+    "blocked_path_not_for_boiler_class": {
+      "message": "Ścieżka zapisu nie pasuje do klasy kotła: przekaźnik dla kotła wł./wył., ścieżka nastawy dla kotła z nastawą zasilania. Inne powody: {others}."
+    },
+    "blocked_no_relay_entity": {
+      "message": "Wybierz przekaźnik w opcjach sterowania. Inne powody: {others}."
+    },
+    "blocked_relay_contact_not_confirmed": {
+      "message": "Sterowanie czeka, aż w opcjach przekaźnika potwierdzisz, że przekaźnik jest osobnym stykiem, a nie ustawieniem zapisywanym w pamięci kotła. Inne powody: {others}."
+    },
+    "blocked_relay_domain_not_supported": {
+      "message": "Przekaźnik musi być przełącznikiem albo encją termostatu kotła, nie pomocnikiem. Inne powody: {others}."
+    },
+    "blocked_relay_climate_modes": {
+      "message": "Tej encji termostatu nie da się ustawić zarówno na grzanie, jak i na wyłączenie. Inne powody: {others}."
+    },
+    "blocked_relay_used_by_zone": {
+      "message": "Tę encję przełącza już strefa Versatile Thermostat. Inne powody: {others}."
+    },
+    "blocked_relay_of_boiler_interface": {
+      "message": "Ta encja należy do integracji kotła albo VT, nie do przekaźnika. Inne powody: {others}."
+    },
+    "blocked_relay_in_another_role": {
+      "message": "Przekaźnik jest encją, której opcje już używają w innej roli albo jako sygnału. Inne powody: {others}."
+    },
+    "blocked_no_flame_signal": {
+      "message": "Sterowanie temperaturą wody wymaga przypisania płomienia w sygnałach. Inne powody: {others}."
+    },
+    "blocked_no_flow_signal": {
+      "message": "Sterowanie temperaturą wody wymaga przypisania temperatury zasilania w sygnałach. Inne powody: {others}."
     }
   },
   "issues": {
@@ -1627,6 +1823,46 @@
     "lowest_water_suggestion_boiler": {
       "title": "Kocioł wciąż się wyłącza przy swojej najniższej temperaturze wody",
       "description": "W ostatnich {days} dniach {short} z {burns} cykli grzania przy około {reference} °C trwało krócej niż {limit} min i skończyło się, bo woda była dość ciepła, choć pokoje wciąż prosiły o ciepło. Rozważ podniesienie minimalnej temperatury zasilania albo punktu początkowego krzywej grzewczej w urządzeniu, które ustala temperaturę wody, do około {value} °C — nie równoległego przesunięcia krzywej, które podnosi też wodę w mróz. Dłuższe cykle są prawdopodobne; mniej uruchomień — nie na pewno. Wtyczka niczego tam nie zmienia."
+    },
+    "relay_unreachable_off": {
+      "title": "Przekaźnik jest nieosiągalny",
+      "description": "{relay} jest poza zasięgiem od 5 minut. Wtyczka nie może przełączać kotła i nie oddaje sterowania, bo nic nie dotarłoby do przekaźnika; wyśle polecenie ponownie, gdy tylko przekaźnik wróci. Do tego czasu przekaźnik zostaje, jak był, albo robi to, co mówią jego własne ustawienia: po zaniku zasilania startuje wyłączony, jak podano w opcjach, więc kocioł czeka wyłączony."
+    },
+    "relay_unreachable_on": {
+      "title": "Przekaźnik jest nieosiągalny",
+      "description": "{relay} jest poza zasięgiem od 5 minut. Wtyczka nie może przełączać kotła i nie oddaje sterowania, bo nic nie dotarłoby do przekaźnika; wyśle polecenie ponownie, gdy tylko przekaźnik wróci. Do tego czasu przekaźnik zostaje, jak był, albo robi to, co mówią jego własne ustawienia: po zaniku zasilania startuje włączony, jak podano w opcjach, więc kocioł może grzać bez sterowania."
+    },
+    "relay_unreachable_last": {
+      "title": "Przekaźnik jest nieosiągalny",
+      "description": "{relay} jest poza zasięgiem od 5 minut. Wtyczka nie może przełączać kotła i nie oddaje sterowania, bo nic nie dotarłoby do przekaźnika; wyśle polecenie ponownie, gdy tylko przekaźnik wróci. Do tego czasu przekaźnik zostaje, jak był, albo robi to, co mówią jego własne ustawienia: po zaniku zasilania wraca do ostatniego stanu, jak podano w opcjach, więc kocioł może grzać bez sterowania."
+    },
+    "relay_unreachable_unknown": {
+      "title": "Przekaźnik jest nieosiągalny",
+      "description": "{relay} jest poza zasięgiem od 5 minut. Wtyczka nie może przełączać kotła i nie oddaje sterowania, bo nic nie dotarłoby do przekaźnika; wyśle polecenie ponownie, gdy tylko przekaźnik wróci. Do tego czasu przekaźnik zostaje, jak był, albo robi to, co mówią jego własne ustawienia: nie wiadomo, co robi po zaniku zasilania, więc kocioł może grzać bez sterowania."
+    },
+    "relay_ignored": {
+      "title": "Przekaźnik nie przyjmuje polecenia — sprawdź go",
+      "description": "{relay} nie przyjął polecenia wtyczki po trzech próbach w tej sesji. Nic innego nie steruje teraz kotłem: sprawdź przekaźnik i encję wybraną w opcjach. Wtyczka spróbuje ponownie, gdy sterowanie następnym razem przejmie kocioł."
+    },
+    "relay_ignored_off": {
+      "title": "Przekaźnik nie przyjmuje polecenia — sprawdź go",
+      "description": "{relay} nie przyjął polecenia wtyczki po trzech próbach w tej sesji. Nic innego nie steruje teraz kotłem: sprawdź przekaźnik i encję wybraną w opcjach. Wtyczka spróbuje ponownie, gdy sterowanie następnym razem przejmie kocioł. Kocioł może dalej grzać: przekaźnik się nie wyłącza. Sterowanie pozostaje zatrzymane, dopóki go nie wyłączysz i nie włączysz."
+    },
+    "relay_rests_off": {
+      "title": "Kocioł nie grzeje, gdy sterowanie jest wyłączone",
+      "description": "Sterowanie kotłem jest wyłączone, a przekaźnik pozostaje wyłączony, choć {zones} proszą o ciepło albo zbliżają się do zamarzania. Kocioł grzeje teraz tylko przez termostat podłączony równolegle, jeśli taki masz. Włącz ponownie sterowanie albo zmień w opcjach stan przekaźnika po oddaniu sterowania."
+    },
+    "control_latched_relay_off": {
+      "title": "Sterowanie się wycofało: coś innego przełącza przekaźnik",
+      "description": "Coś innego przełącza {relay} — automatyzacja, jego własny przycisk, osoba albo restarty, których przekaźnik nie zgłasza. Wtyczka przywracała stan; zmieniał się dalej, więc wtyczka się wycofała: raz wyłączyła przekaźnik, zgodnie z jego stanem po oddaniu sterowania, i teraz go nie rusza. Kocioł grzeje tylko przez termostat podłączony równolegle, jeśli taki jest. Jeśli przekaźnik uruchamia się ponownie bez zgłoszenia albo ma własny wyłącznik czasowy, podaj w opcjach jego stan po zaniku zasilania i ten wyłącznik; jeśli restartuje się kilka razy na dobę, sprawdź jego zasilanie i łączność. Wyłącz i włącz sterowanie, aby znów przejąć przekaźnik."
+    },
+    "control_latched_relay_on": {
+      "title": "Sterowanie się wycofało: coś innego przełącza przekaźnik",
+      "description": "Coś innego przełącza {relay} — automatyzacja, jego własny przycisk, osoba albo restarty, których przekaźnik nie zgłasza. Wtyczka przywracała stan; zmieniał się dalej, więc wtyczka się wycofała: raz włączyła przekaźnik, zgodnie z jego stanem po oddaniu sterowania, i teraz go nie rusza; kocioł grzeje według własnego ustawienia, bez sterowania pokojami. Jeśli przekaźnik uruchamia się ponownie bez zgłoszenia albo ma własny wyłącznik czasowy, podaj w opcjach jego stan po zaniku zasilania i ten wyłącznik; jeśli restartuje się kilka razy na dobę, sprawdź jego zasilanie i łączność. Wyłącz i włącz sterowanie, aby znów przejąć przekaźnik."
+    },
+    "control_latched_relay_heating_off_ignored": {
+      "title": "Sterowanie zatrzymane: przekaźnik nie przyjmuje „wyłącz”",
+      "description": "Od początku sesji {relay} nie przyjął polecenia wtyczki „wyłącz”: kocioł może dalej grzać, bo przekaźnik się nie wyłącza. Sterowanie się zatrzymało; przekaźnik został raz ustawiony w stan po oddaniu sterowania, na którym też nie można polegać. Sprawdź przekaźnik i encję wybraną w opcjach, a potem wyłącz i włącz sterowanie. Monitor działa dalej."
     }
   }
 }

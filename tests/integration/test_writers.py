@@ -911,3 +911,182 @@ async def test_an_entity_writer_refuses_one_entity_in_two_roles(
         hass,
         options(**base | {"ch_entity": "", "hand_back": "switch", "hand_back_entity": "switch.ch"}),
     )
+
+
+# --- X8: the relay writer ----------------------------------------------------------------------
+
+ON_OFF = Installation(Boiler(BoilerClass.ON_OFF), (Circuit("main"),))
+RELAY = "switch.boiler_relay"
+BOILER_THERMOSTAT = "climate.boiler"
+
+
+def relay_options(**data: Any):
+    return parse_control(
+        {"write_path": "relay", "relay_entity": RELAY, "relay_is_separate_contact": True} | data,
+        ON_OFF,
+        None,
+    )
+
+
+def record_contexts(hass: HomeAssistant, *services: tuple[str, str]) -> list[tuple[str, str, Any]]:
+    """Each call with the id of the context it came with."""
+    calls: list[tuple[str, str, Any]] = []
+    for domain, service in services:
+
+        async def handle(call: ServiceCall, domain=domain, service=service) -> None:
+            calls.append((domain, service, dict(call.data) | {"context": call.context.id}))
+
+        hass.services.async_register(domain, service, handle)
+    return calls
+
+
+async def test_relay_writer_switch(hass: HomeAssistant) -> None:
+    """R9: a switch is turned on and off, each call with a context of the plugin's own that it
+    remembers; the hand-back writes only the rest state — "off" by default — checked by the
+    relay's own reported state (an exception to "the written entity confirms nothing")."""
+    from custom_components.vtherm_smart_boiler.transport.writers import RelayWriter
+
+    calls = record_contexts(hass, ("switch", "turn_on"), ("switch", "turn_off"))
+    hass.states.async_set(RELAY, "off")
+    writer = make_writer(hass, relay_options(relay_reports_state="yes"))
+    assert isinstance(writer, RelayWriter)
+    await writer.write_heating(True)
+    await writer.write_heating(False)
+    hass.states.async_set(RELAY, "on")
+    checks = await writer.hand_back()
+    assert [(d, s, c["entity_id"]) for d, s, c in calls] == [
+        ("switch", "turn_on", RELAY),
+        ("switch", "turn_off", RELAY),
+        ("switch", "turn_off", RELAY),
+    ]
+    assert all(writer.ours(c["context"]) for _d, _s, c in calls)
+    assert not writer.ours("someone-else")
+    assert not writer.ours(None)
+    assert checks == (HandBackCheck(RELAY, "off", CheckKind.SWITCH, CheckSource.SEPARATE),)
+    with pytest.raises(WriteError):
+        await writer.write_setpoint(45.0)  # a relay takes no water temperature
+
+
+async def test_relay_writer_climate(hass: HomeAssistant) -> None:
+    """A boiler thermostat entity is set to heat or off with ``climate.set_hvac_mode``; its
+    check reads "off" (or "heat" where the rest state is "on")."""
+    calls = record(hass, ("climate", "set_hvac_mode"))
+    hass.states.async_set(BOILER_THERMOSTAT, "off", {"hvac_modes": ["off", "heat"]})
+    options = relay_options(relay_entity=BOILER_THERMOSTAT, relay_reports_state="yes")
+    writer = make_writer(hass, options)
+    await writer.write_heating(True)
+    await writer.write_heating(False)
+    hass.states.async_set(BOILER_THERMOSTAT, "heat", {"hvac_modes": ["off", "heat"]})
+    [check] = await writer.hand_back()
+    assert calls == [
+        ("climate", "set_hvac_mode", {"entity_id": BOILER_THERMOSTAT, "hvac_mode": "heat"}),
+        ("climate", "set_hvac_mode", {"entity_id": BOILER_THERMOSTAT, "hvac_mode": "off"}),
+        ("climate", "set_hvac_mode", {"entity_id": BOILER_THERMOSTAT, "hvac_mode": "off"}),
+    ]
+    assert check.expected == "off"
+    assert check.known is None  # any mode it reports is a known state
+    resting_on = make_writer(hass, replace_rest(options, "on"))
+    hass.states.async_set(BOILER_THERMOSTAT, "off", {"hvac_modes": ["off", "heat"]})
+    [check] = await resting_on.hand_back()
+    assert calls[-1][2]["hvac_mode"] == "heat"
+    assert check.expected == "heat"
+
+
+def replace_rest(options: Any, rest: str) -> Any:
+    from dataclasses import replace
+
+    from custom_components.vtherm_smart_boiler.core.relay import RelayRest
+
+    return replace(options, relay=replace(options.relay, rest=RelayRest(rest)))
+
+
+@pytest.mark.parametrize(("rest", "service"), [("off", "turn_off"), ("on", "turn_on")])
+async def test_a_relay_hand_back_switches_on_only_when_chosen(
+    hass: HomeAssistant, rest: str, service: str
+) -> None:
+    """S-27: the hand-back never switches the relay on unless its rest state is "on"."""
+    calls = record(hass, ("switch", "turn_on"), ("switch", "turn_off"))
+    hass.states.async_set(RELAY, "off" if rest == "on" else "on")
+    writer = make_writer(hass, relay_options(relay_rest_state=rest))
+    await writer.hand_back()
+    assert calls == [("switch", service, {"entity_id": RELAY})]
+
+
+@pytest.mark.parametrize("shown", ["unavailable", None])
+async def test_an_unavailable_relay_is_a_failed_write(
+    hass: HomeAssistant, shown: str | None
+) -> None:
+    """Nothing reaches an unavailable or missing relay: every write, the hand-back's included,
+    fails — the hand-back stays owed with its check."""
+    calls = record(hass, ("switch", "turn_on"), ("switch", "turn_off"))
+    if shown is not None:
+        hass.states.async_set(RELAY, shown)
+    writer = make_writer(hass, relay_options(relay_reports_state="yes"))
+    with pytest.raises(WriteError):
+        await writer.write_heating(True)
+    with pytest.raises(HandBackFailed) as failed:
+        await writer.hand_back()
+    assert failed.value.checks == (
+        HandBackCheck(RELAY, "off", CheckKind.SWITCH, CheckSource.SEPARATE, written=False),
+    )
+    assert calls == []
+    hass.states.async_set(RELAY, "unknown")  # there, without a state: it is written
+    await writer.write_heating(True)
+    assert calls == [("switch", "turn_on", {"entity_id": RELAY})]
+
+
+@pytest.mark.parametrize(("reports", "assumed"), [("no", False), ("unknown", False), ("yes", True)])
+async def test_a_relay_without_a_state_gives_no_hand_back_check(
+    hass: HomeAssistant, reports: str, assumed: bool
+) -> None:
+    """A relay that reports no state — declared so, not known, or ``assumed_state`` — confirms
+    nothing: its hand-back is done once written (shown unverified), never owed for ever."""
+    record(hass, ("switch", "turn_on"), ("switch", "turn_off"))
+    hass.states.async_set(RELAY, "on", {"assumed_state": True} if assumed else {})
+    writer = make_writer(hass, relay_options(relay_reports_state=reports))
+    [check] = await writer.hand_back()
+    assert check.source is CheckSource.ASSUMED
+    assert check.written
+
+
+async def test_a_step_aside_writes_the_rest_state_once(hass: HomeAssistant) -> None:
+    """Answers H, L: stepping aside writes the rest state once, unless the relay already reads
+    it — then it is left alone, read back or not: its check is done once written."""
+    calls = record(hass, ("switch", "turn_on"), ("switch", "turn_off"))
+    hass.states.async_set(RELAY, "on")
+    writer = make_writer(hass, relay_options(relay_reports_state="yes"))
+    [check] = await writer.hand_back(once=True)
+    assert calls == [("switch", "turn_off", {"entity_id": RELAY})]
+    assert check.source is CheckSource.ASSUMED
+    assert check.written
+    hass.states.async_set(RELAY, "off")
+    [check] = await writer.hand_back(once=True)
+    assert len(calls) == 1  # already at its rest state: nothing written
+    assert check.written
+    # Another hand-back of a reporting relay already at its rest state writes nothing either.
+    [check] = await writer.hand_back()
+    assert len(calls) == 1
+    assert check.source is CheckSource.SEPARATE
+
+
+@pytest.mark.parametrize(
+    ("entity", "expected"),
+    [
+        (RELAY, {("switch", "turn_on"), ("switch", "turn_off")}),
+        (BOILER_THERMOSTAT, {("climate", "set_hvac_mode")}),
+        (None, set()),
+    ],
+)
+async def test_relay_writer_services(entity: str | None, expected: set) -> None:
+    assert writer_services(relay_options(relay_entity=entity)) == expected
+
+
+async def test_a_relay_writer_needs_a_relay_it_can_switch(hass: HomeAssistant) -> None:
+    for entity in (None, "input_boolean.x", "light.x"):
+        with pytest.raises(ValueError, match="no relay"):
+            make_writer(hass, relay_options(relay_entity=entity))
+
+
+async def test_a_relay_writer_names_its_services(hass: HomeAssistant) -> None:
+    writer = make_writer(hass, relay_options())
+    assert writer.services == {("switch", "turn_on"), ("switch", "turn_off")}

@@ -6,7 +6,8 @@ cautious default. A stored value this version does not know raises a ``ConfigErr
 section (``invalid_boiler``, ``invalid_circuit``, ...), which the options flow shows on that
 section's step (P-70). One entity mapped to two signals is kept for the first in the form's
 order; the later signal is dropped and recorded in ``shared_signals`` — control gets a blocker,
-the monitor runs (X5.2).
+the monitor runs (X5.2). No signal is required (X8): flame and flow serve the monitor and
+water-temperature control, which gets a blocker without them.
 """
 
 from __future__ import annotations
@@ -66,7 +67,7 @@ from .core.metrics import DEFAULT_CONDENSING_RETURN, ModulationScale
 from .core.monitor import MonitorOptions
 from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
 from .core.reference_room import DEFAULT_SWITCH_MARGIN_K, Strategy
-from .core.signals import REQUIRED_SIGNALS, SIGNAL_PRECEDENCE, Signal
+from .core.signals import SIGNAL_PRECEDENCE, Signal
 from .core.verdict import VerdictOptions
 
 
@@ -328,11 +329,8 @@ def _signals(data: Mapping[str, Any]) -> tuple[dict[Signal, str], dict[Signal, S
             continue
         owner[entity] = signal
         signals[signal] = entity
-    for signal in sorted(REQUIRED_SIGNALS):
-        if signal not in signals:
-            # A required signal lost to an earlier one's entity is missing too (a hand edit: the
-            # form's domains keep flame and flow apart).
-            raise ConfigError("missing_signal", signal.value)
+    # No signal is required for the entry (X8): a home with only a relay is monitored too, and
+    # water-temperature control gets a blocker where flame or flow is missing.
     return signals, shared
 
 

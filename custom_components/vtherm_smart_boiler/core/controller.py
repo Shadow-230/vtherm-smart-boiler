@@ -73,6 +73,13 @@ rules of bounded learning (principle 13), each mapped:
    at hand-back, at a session's end and by the user (``reset_correction``, the "Reset comfort
    correction" button, answer J).
 
+On/off control through a relay (class 3, X8; ``ControlConfig.on_off``) decides heating on or off
+by the same rules — frost protection, the zones' demand, VT's activation delay, the recognition
+and grace periods and decision 3 — without a water temperature: the boiler sets its own, so the
+curve, limits, ramp and comfort correction do not apply, no outdoor temperature is needed, and
+FALLBACK never shows. Its link is the relay itself: the control unit keeps ``boiler_link`` true
+and ``stale_hand_back_s`` unset there, and the relay rule (``core.relay``) judges its reach.
+
 "Heat flows" (S-24) is the flame burning without hot water; with the flame unknown, heating
 commanded without hot water. The rise and the fall count the steps' time, each step a minute at
 most and never a negative one (P-46): a clock set back moves nothing. The fall is twice as fast
@@ -226,6 +233,10 @@ class ControlConfig:
     working_thermostat: bool = False
     # VT's activation delay, carried over (decision 5): a start waits this long; 0: at once.
     activation_delay_s: float = 0.0
+    # On/off control through a relay (class 3, X8): heating on or off only — no water
+    # temperature, so the curve, the limits, the ramp and the comfort correction do not apply,
+    # the outdoor temperature is not needed, and FALLBACK never shows.
+    on_off: bool = False
 
     def __post_init__(self) -> None:
         if self.decision_interval_s <= 0:
@@ -272,7 +283,7 @@ class ControlInputs:
 @dataclass(frozen=True, slots=True)
 class BoilerCommand:
     ch_enable: bool
-    setpoint: float
+    setpoint: float | None  # None: on/off control through a relay sets no water temperature
 
 
 @dataclass(frozen=True, slots=True)
@@ -627,6 +638,8 @@ def _heating_decision(
 ) -> tuple[ControlState, ControlDecision]:
     """Heating on or off at every step — after VT's activation delay for a start — and the
     water temperature every decision interval."""
+    if config.on_off:
+        return _on_off_decision(state, inputs, config, frost, demand)
     now = inputs.now
     outdoor = state.outdoor
     coldest = min(
@@ -783,6 +796,76 @@ def _heating_decision(
         effective_outdoor=outdoor.effective,
         frost_stuck=frost_stuck,
         correction_at_limit=new_state.correction_limit_s >= CORRECTION_LIMIT_S,
+        activation_at=activation_at,
+    )
+
+
+def _on_off_decision(
+    state: ControlState,
+    inputs: ControlInputs,
+    config: ControlConfig,
+    frost: bool,
+    demand: Demand,
+) -> tuple[ControlState, ControlDecision]:
+    """On/off control through a relay (class 3, X8, R5): heating on or off at every step, from
+    frost protection and the zones' demand, after VT's activation delay for a start — the same
+    rules as the water-temperature path, without a water temperature: the boiler sets its own.
+    Modes FROST, HEATING and IDLE; never FALLBACK, as no outdoor temperature is needed."""
+    now = inputs.now
+    coldest = min(
+        watched_temperatures(inputs.zones, now, config.zone_max_age_s, config.frost), default=None
+    )
+    wanted, heat_reason = _want_heat(demand, frost)
+    pending, want_heat = _activation(state, inputs, config, wanted)
+    waiting = pending is not None and wanted
+    activation_at = None if pending is None else now + max(0.0, config.activation_delay_s - pending)
+    state = replace(state, activation_s=pending, activation_step_at=now)
+    frost_on = frost and want_heat
+    if frost_on and state.frost_since is None:
+        state = replace(state, frost_since=now, frost_from=coldest)  # the real start
+    elif not frost_on:
+        state = replace(state, frost_since=None, frost_from=None)
+    reasons: tuple[Reason, ...] = (
+        (heat_reason, Reason.ACTIVATION_DELAY) if waiting else (heat_reason,)
+    )
+    if waiting and state.command is None:
+        # Taking the relay afresh: nothing is written while the start waits (as for the water).
+        idle = replace(state, mode=ControlMode.IDLE, frost=frost, reasons=reasons, last_step_at=now)
+        return idle, ControlDecision(
+            ControlMode.IDLE, None, reasons=reasons, activation_at=activation_at
+        )
+    frost_stuck = (
+        frost_on
+        and state.frost_since is not None
+        and now - state.frost_since >= FROST_ALARM_S
+        and coldest is not None
+        and state.frost_from is not None
+        and coldest < state.frost_from + FROST_WARMING_K
+    )
+    mode = ControlMode.HEATING if want_heat else ControlMode.IDLE
+    if frost_on:
+        mode = ControlMode.FROST
+    command = BoilerCommand(want_heat, None)
+    new_state = replace(
+        state,
+        mode=mode,
+        controlling=True,
+        frost=frost,
+        command=command,
+        target=None,
+        upper=None,
+        reasons=reasons,
+        water_reasons=(),
+        decided_at=now,
+        correction=0.0,
+        last_step_at=now,
+    )
+    return new_state, ControlDecision(
+        mode,
+        command,
+        reasons=reasons,
+        effective_outdoor=state.outdoor.effective,
+        frost_stuck=frost_stuck,
         activation_at=activation_at,
     )
 

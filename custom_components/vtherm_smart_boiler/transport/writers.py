@@ -11,8 +11,16 @@ parts one after another at once, each tried whatever the others do, waiting for 
 thermostat or its own control — on a gateway always ``CH=1``; (3) the release — ``CS=0``, the
 hand-back value, the external-control switch off, or nothing (the device's own timeout). It
 returns what each target must show once the hand-back reached it (``HandBackCheck``); only that
-confirmation waits for the read-back. A relay goes to its rest state instead, through a writer of
-its own (X8).
+confirmation waits for the read-back.
+
+A relay (class 3, X8) goes to its rest state instead, through a writer of its own: "off" unless
+the user chose "on" — the relay is never switched on otherwise (S-27). Its own reported state
+confirms the relay — not that the boiler heats — an exception to "the written entity confirms
+nothing"; a relay that reports no state, or an ``assumed_state`` entity, confirms nothing, and its
+hand-back is done once written. At a step aside the rest state is written once, unless the relay
+already reads it, and the relay is then left alone (answers H, L). Every relay write carries a
+``Context`` of the plugin's own, remembered, so the relay's own changes can be told from the
+plugin's.
 
 OpenTherm Gateway facts (OTGW firmware documentation and the PIC 6.6 source,
 research/2026-09-24-otgw-topologies-f3-f7.md): a control-setpoint override of 8 °C or more lapses
@@ -32,14 +40,17 @@ from __future__ import annotations
 
 import asyncio
 import math
+from collections import deque
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
+from homeassistant.core import Context
 from homeassistant.util import dt as dt_util
 
 from ..control_config import (
     KEEPALIVE_S,
+    RELAY_DOMAINS,
     ControlOptions,
     HandBack,
     WritePath,
@@ -50,6 +61,7 @@ from ..control_config import (
 from ..core.guards import HELD_REFRESH_S, WriteType
 from ..core.hand_back import CheckKind, CheckSource, ReleaseRule
 from ..core.limits import GRID_EPSILON, is_on_grid
+from ..core.relay import CONTEXTS_KEPT
 from ..units import celsius_to, parse_number
 from .entities import grid_from_state
 
@@ -81,7 +93,9 @@ class HandBackCheck:
     last value it was given; ``written``: this attempt wrote every part of the target. What its
     release is judged against: ``release_from``, the plugin's last value, ``lowest``, written
     first, and ``baseline``, the value from before the session (the timeout); ``before``: the
-    read-back as it stood before the commands, for a value reported after them.
+    read-back as it stood before the commands, for a value reported after them. ``known``: the
+    states a two-valued target shows once known — ``None``: any it reports (a boiler thermostat
+    entity's modes).
     """
 
     entity_id: str
@@ -95,6 +109,7 @@ class HandBackCheck:
     baseline: float | None = None
     written: bool = True
     before: State | None = field(default=None, compare=False, repr=False)
+    known: tuple[str, ...] | None = ("on", "off")
 
     @property
     def key(self) -> str:
@@ -142,13 +157,15 @@ class Writer(Protocol):
         baseline: float | None = None,
         write_timeout_s: float | None = None,
         skip: Collection[str] = (),
+        once: bool = False,
     ) -> tuple[HandBackCheck, ...]:
         """The safe hand-back. Returns what every target must show for it to count as done.
         ``release_from``: the setpoint the plugin last wrote; ``baseline``: the read-back from
         before the session (``None``: not known). ``write_timeout_s``: each write's cap, when not
         the usual one (at a stop). ``skip``: targets not written this time — done, held by
         another controller, a third value being judged, a timeout never rewritten — whose checks
-        are returned all the same."""
+        are returned all the same. ``once``: a step aside — a relay's rest state is written
+        once and then left alone (answer L); the other writers make the whole hand-back."""
         ...
 
 
@@ -228,11 +245,15 @@ class _ServiceWriter:
         data: dict[str, object],
         *,
         timeout_s: float | None = None,
+        context: Context | None = None,
     ) -> None:
-        """One service call, capped at ``timeout_s`` (else ``WRITE_TIMEOUT_S``)."""
+        """One service call, capped at ``timeout_s`` (else ``WRITE_TIMEOUT_S``), with the
+        plugin's own ``context`` where given (a relay's writes)."""
         try:
             async with asyncio.timeout(WRITE_TIMEOUT_S if timeout_s is None else timeout_s):
-                await self._hass.services.async_call(domain, service, data, blocking=True)
+                await self._hass.services.async_call(
+                    domain, service, data, blocking=True, context=context
+                )
         except asyncio.CancelledError as err:
             task = asyncio.current_task()
             if task is not None and task.cancelling():
@@ -250,6 +271,14 @@ def _domain(entity_id: str) -> str:
 def writer_services(options: ControlOptions) -> frozenset[tuple[str, str]]:
     """Every service a writer for these options may call; empty when control is not set up."""
     path = options.write_path
+    if path is WritePath.RELAY:
+        relay = options.relay.entity
+        domain = None if not relay else _domain(relay)
+        if domain == "switch":
+            return frozenset({("switch", "turn_on"), ("switch", "turn_off")})
+        if domain == "climate":
+            return frozenset({("climate", "set_hvac_mode")})
+        return frozenset()
     if path is WritePath.OPENTHERM_GW:
         return OTGW_SERVICES
     if path is WritePath.OTGW_MQTT:
@@ -362,6 +391,7 @@ class EntityWriter(_ServiceWriter):
         baseline: float | None = None,
         write_timeout_s: float | None = None,
         skip: Collection[str] = (),
+        once: bool = False,
     ) -> tuple[HandBackCheck, ...]:
         """The lowest water temperature, the heating switch on where the effect says so, then the
         release; each part tried whatever the others do, and any failure raised at the end with
@@ -569,6 +599,7 @@ class OpenthermGwWriter(_GatewayWriter):
         baseline: float | None = None,
         write_timeout_s: float | None = None,
         skip: Collection[str] = (),
+        once: bool = False,
     ) -> tuple[HandBackCheck, ...]:
         """``CS=<lowest>``, ``CH=1``, then ``CS=0``; each tried whatever the others do, and the
         hand-back counts only with the gateway connected, once its read-back shows the release.
@@ -640,6 +671,7 @@ class OtgwMqttWriter(_GatewayWriter):
         baseline: float | None = None,
         write_timeout_s: float | None = None,
         skip: Collection[str] = (),
+        once: bool = False,
     ) -> tuple[HandBackCheck, ...]:
         """``CS=<lowest>``, ``CH=1``, then ``CS=0``; each tried whatever the others do, and the
         hand-back counts only with the gateway connected, once its read-back shows the release:
@@ -654,6 +686,113 @@ class OtgwMqttWriter(_GatewayWriter):
         )
         self._require_connected()
         return (self._release_check(before, release_from),)
+
+
+class RelayWriter(_ServiceWriter):
+    """The relay of an on/off boiler (X8, R2, R9): a switch turned on and off, or a boiler
+    thermostat entity set to heat or off. Writes go only to the relay — nothing the boiler
+    stores — each with a ``Context`` of the plugin's own, remembered (the last
+    ``CONTEXTS_KEPT``) so the relay's changes the plugin made can be told apart."""
+
+    def __init__(self, hass: HomeAssistant, options: ControlOptions) -> None:
+        super().__init__(hass)
+        relay = options.relay.entity
+        if not relay or _domain(relay) not in RELAY_DOMAINS:
+            raise ValueError("no relay: a switch or a boiler thermostat entity")
+        self._options = options
+        self._relay = relay
+        self._climate = _domain(relay) == "climate"
+        self._rest_on = options.relay.rests_on
+        self._contexts: deque[str] = deque(maxlen=CONTEXTS_KEPT)
+
+    @property
+    def services(self) -> frozenset[tuple[str, str]]:
+        return writer_services(self._options)
+
+    def ours(self, context_id: str | None) -> bool:
+        """Whether a change carried one of the plugin's own relay writes."""
+        return context_id is not None and context_id in self._contexts
+
+    def _value(self, on: bool) -> str:
+        """The state the relay shows for ``on``: a switch on or off, a boiler thermostat heat or
+        off."""
+        if self._climate:
+            return "heat" if on else "off"
+        return "on" if on else "off"
+
+    async def _switch(self, on: bool, timeout_s: float | None = None) -> None:
+        self._check_target(self._relay)
+        context = Context()
+        self._contexts.append(context.id)
+        if self._climate:
+            await self._call(
+                "climate",
+                "set_hvac_mode",
+                {"entity_id": self._relay, "hvac_mode": self._value(on)},
+                timeout_s=timeout_s,
+                context=context,
+            )
+        else:
+            await self._call(
+                "switch",
+                "turn_on" if on else "turn_off",
+                {"entity_id": self._relay},
+                timeout_s=timeout_s,
+                context=context,
+            )
+
+    async def write_setpoint(self, value: float) -> None:
+        raise WriteError("a relay takes no water temperature")
+
+    async def write_heating(self, on: bool) -> None:
+        await self._switch(on)
+
+    async def keep_alive(self, returned: bool = False) -> None:
+        """The relay rule repeats and renews the relay itself."""
+
+    async def renew_external(self) -> None:
+        """A relay has no external-control switch."""
+
+    def _reports(self, state: State | None) -> bool:
+        """Its own state confirms the relay: declared so, and not an optimistic entity."""
+        assumed = state is not None and state.attributes.get("assumed_state") is True
+        return self._options.relay.config.reports_state and not assumed
+
+    async def hand_back(
+        self,
+        *,
+        release_from: float | None = None,
+        baseline: float | None = None,
+        write_timeout_s: float | None = None,
+        skip: Collection[str] = (),
+        once: bool = False,
+    ) -> tuple[HandBackCheck, ...]:
+        """Only the rest state: "off" by default, "on" only where the user chose it (S-27).
+        A relay that reports its state and already shows it is not written. At a step aside
+        (``once``) it is written once and then left alone, read back or not: its check counts
+        once written (answers H, L)."""
+        relay = self._relay
+        expected = self._value(self._rest_on)
+        state = self._hass.states.get(relay)
+        reports = self._reports(state)
+        shows = state is not None and state.state == expected
+        errors: list[WriteError] = []
+        if relay in skip or ((reports or once) and shows):
+            written = True
+        else:
+            written = await _part(errors, lambda: self._switch(self._rest_on, write_timeout_s))
+        source = CheckSource.SEPARATE if reports and not once else CheckSource.ASSUMED
+        check = HandBackCheck(
+            relay,
+            expected,
+            CheckKind.SWITCH,
+            source,
+            written=written,
+            known=None if self._climate else ("on", "off"),
+        )
+        if errors:
+            raise HandBackFailed("; ".join(str(err) for err in errors), (check,))
+        return (check,)
 
 
 async def _part(errors: list[WriteError], write: Callable[[], Awaitable[None]]) -> bool:
@@ -682,6 +821,8 @@ async def _all_of(*steps: Callable[[], Awaitable[None]]) -> None:
 
 
 def make_writer(hass: HomeAssistant, options: ControlOptions) -> Writer:
+    if options.write_path is WritePath.RELAY:
+        return RelayWriter(hass, options)
     if options.write_path is WritePath.ENTITY:
         return EntityWriter(hass, options)
     if options.write_path is WritePath.OPENTHERM_GW:

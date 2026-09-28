@@ -24,7 +24,7 @@ class SignalStatus(StrEnum):
 @dataclass(frozen=True, slots=True)
 class SignalHealth:
     status: SignalStatus
-    required: bool
+    link: bool  # part of the boiler link (``SignalSpec.link``)
     age_s: float | None = None
 
 
@@ -36,7 +36,7 @@ def check_signals(
     for signal, spec in SIGNAL_SPECS.items():
         max_age = (max_ages or {}).get(signal)
         if not snapshot.is_mapped(signal):
-            result[signal] = SignalHealth(SignalStatus.NOT_MAPPED, spec.required)
+            result[signal] = SignalHealth(SignalStatus.NOT_MAPPED, spec.link)
             continue
         reading = snapshot.reading(signal)
         age = reading.age(snapshot.t)
@@ -46,13 +46,29 @@ def check_signals(
             status = SignalStatus.STALE
         else:
             status = SignalStatus.OK
-        result[signal] = SignalHealth(status, spec.required, age)
+        result[signal] = SignalHealth(status, spec.link, age)
     return result
 
 
-def required_problems(health: Mapping[Signal, SignalHealth]) -> list[Signal]:
-    """Required signals that are not OK."""
-    return [s for s, h in health.items() if h.required and h.status is not SignalStatus.OK]
+def link_problems(health: Mapping[Signal, SignalHealth]) -> list[Signal]:
+    """The boiler link's mapped signals that are not OK; an unmapped one is none (X8)."""
+    return [
+        s
+        for s, h in health.items()
+        if h.link and h.status not in (SignalStatus.OK, SignalStatus.NOT_MAPPED)
+    ]
+
+
+def link_connected(
+    health: Mapping[Signal, SignalHealth], relay_reachable: bool | None = None
+) -> bool | None:
+    """The connection (X8, R4): every mapped link signal OK and, on the relay path, the relay
+    within reach (``relay_reachable``; ``None``: no relay). Unknown with no link signal mapped
+    and no relay: nothing tells."""
+    mapped = [s for s, h in health.items() if h.link and h.status is not SignalStatus.NOT_MAPPED]
+    if not mapped and relay_reachable is None:
+        return None
+    return not link_problems(health) and relay_reachable is not False
 
 
 class Feature(StrEnum):

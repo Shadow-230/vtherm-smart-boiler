@@ -569,3 +569,151 @@ async def test_zones_of_another_kind(hass: HomeAssistant, zones: FakeZones) -> N
     assert is_vt_climate(hass, living)
     assert not is_vt_climate(hass, other)
     assert not is_vt_climate(hass, "climate.away")
+
+
+# --- X8: moving over from VT's central boiler (R14), read only -------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "parsed"),
+    [
+        ("switch.r/switch.turn_on", ("switch.r", "switch", "turn_on", None, None)),
+        (
+            " climate.b / climate.set_hvac_mode / hvac_mode : heat ",
+            ("climate.b", "climate", "set_hvac_mode", "hvac_mode", "heat"),
+        ),
+        ("switch.r/switch.turn_on/", None),  # an empty attribute part
+        ("switch.r/switch.turn_on/value", None),  # no "attribute:value"
+        ("switch.r", None),
+        ("switch/switch.turn_on", None),  # no entity ID
+        ("switch.r/turn_on", None),  # no service domain
+        ("a/b/c/d", None),
+        ("", None),
+        (None, None),
+        (5, None),
+    ],
+)
+def test_vt_commands_are_read_in_vts_documented_format(raw: object, parsed: tuple | None) -> None:
+    from custom_components.vtherm_smart_boiler.vtherm_link import VtCommand, parse_vt_command
+
+    assert parse_vt_command(raw) == (None if parsed is None else VtCommand(*parsed))
+
+
+@pytest.mark.parametrize(
+    ("on", "off", "relay"),
+    [
+        ("switch.r/switch.turn_on", "switch.r/switch.turn_off", "switch.r"),
+        (
+            "climate.b/climate.set_hvac_mode/hvac_mode:heat",
+            "climate.b/climate.set_hvac_mode/hvac_mode:off",
+            "climate.b",
+        ),
+        ("switch.r/switch.turn_on", "switch.other/switch.turn_off", None),  # two entities
+        ("switch.r/switch.turn_off", "switch.r/switch.turn_on", None),  # reversed
+        ("switch.r/switch.toggle", "switch.r/switch.toggle", None),
+        ("switch.r/switch.turn_on/brightness:5", "switch.r/switch.turn_off", None),
+        (
+            "climate.b/climate.set_hvac_mode/hvac_mode:auto",
+            "climate.b/climate.set_hvac_mode/hvac_mode:off",
+            None,
+        ),
+        (
+            "climate.b/climate.set_temperature/temperature:60",
+            "climate.b/climate.set_temperature/temperature:10",
+            None,
+        ),
+        ("input_boolean.x/input_boolean.turn_on", "input_boolean.x/input_boolean.turn_off", None),
+        ("script.on/script.turn_on", "script.off/script.turn_on", None),
+    ],
+)
+def test_only_a_switch_or_boiler_thermostat_pair_names_the_relay(
+    on: str, off: str, relay: str | None
+) -> None:
+    from custom_components.vtherm_smart_boiler.vtherm_link import (
+        parse_vt_command,
+        relay_from_vt_commands,
+    )
+
+    assert relay_from_vt_commands(parse_vt_command(on), parse_vt_command(off)) == relay
+
+
+async def test_vt_central_boiler_settings_are_read_without_writing(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """R14: VT's central entry and threshold numbers read — its commands, delay and keep-alive,
+    the thresholds as VT used them — and nothing written: the entry's data and the numbers stay
+    as they were. Without VT's central entry, nothing to read."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import (
+        VtCommands,
+        vt_central_boiler_settings,
+    )
+
+    assert vt_central_boiler_settings(hass, []) is None
+    entry = MockConfigEntry(
+        domain=VT_PLATFORM,
+        data={
+            "thermostat_type": "thermostat_central_config",
+            "use_central_boiler_feature": True,
+            "central_boiler_activation_service": "switch.r/switch.turn_on",
+            "central_boiler_deactivation_service": "switch.r/switch.turn_off",
+            "central_boiler_activation_delay_sec": 30,
+            "keep_alive_boiler_delay_sec": 60,
+        },
+    )
+    entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    power = registry.async_get_or_create("number", VT_PLATFORM, "boiler_power_activation_threshold")
+    hass.states.async_set(power.entity_id, "3.9", {"unit_of_measurement": "kW"})
+    data = dict(entry.data)
+    before = hass.states.get(power.entity_id)
+    settings = vt_central_boiler_settings(hass, [zones.add("living")])
+    assert settings is not None
+    assert settings.configured
+    assert settings.commands is VtCommands.RELAY
+    assert settings.relay == "switch.r"
+    assert settings.activation_delay_s == 30.0
+    assert settings.repeat_s == 60.0
+    assert settings.power_threshold_kw == 3.0
+    assert settings.count_threshold is None  # no count number
+    assert dict(entry.data) == data
+    assert hass.states.get(power.entity_id) == before
+    # Unticked: VT deleted its commands — nothing to name the relay, the delay still kept.
+    hass.config_entries.async_update_entry(
+        entry,
+        data={"thermostat_type": "thermostat_central_config", "keep_alive_boiler_delay_sec": 0},
+    )
+    settings = vt_central_boiler_settings(hass, [])
+    assert settings is not None
+    assert settings.commands is VtCommands.NONE
+    assert not settings.exists
+    assert settings.relay is None
+    assert settings.repeat_s is None
+    assert settings.keep_alive_s is None
+    # A power threshold in another unit is not converted.
+    hass.states.async_set(power.entity_id, "3000", {"unit_of_measurement": "BTU/h"})
+    settings = vt_central_boiler_settings(hass, [])
+    assert settings is not None
+    assert settings.power_threshold_kw is None
+
+
+async def test_a_relay_a_vt_zone_drives_or_of_the_gateway_is_found(hass: HomeAssistant) -> None:
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import (
+        relay_of_boiler_interface,
+        relay_used_by_zone,
+    )
+
+    registry = er.async_get(hass)
+    zone = registry.async_get_or_create("climate", VT_PLATFORM, "room").entity_id
+    vt = MockConfigEntry(domain=VT_PLATFORM, data={"underlying_entity_ids": ["switch.heater"]})
+    vt.add_to_hass(hass)
+    registry.async_update_entity(zone, config_entry_id=vt.entry_id)
+    assert relay_used_by_zone(hass, "switch.heater")
+    assert not relay_used_by_zone(hass, "switch.relay")
+    gateway = registry.async_get_or_create("switch", "opentherm_gw", "ch").entity_id
+    assert relay_of_boiler_interface(hass, gateway)
+    assert relay_of_boiler_interface(hass, zone)  # a VT entity
+    assert not relay_of_boiler_interface(hass, "switch.relay")  # not registered

@@ -18,6 +18,7 @@ flow = "sensor.boiler_flow_temperature"
 # room_setpoint = "sensor.thermostat_room_setpoint"          # a wired room thermostat's
 # room_temperature = "sensor.thermostat_room_temperature"
 # gas_meter = "sensor.gas_meter"
+# boiler_power = "sensor.boiler_plug_power"                  # a relay's proof of heat (W)
 
 [weather]
 # entity = "weather.home"

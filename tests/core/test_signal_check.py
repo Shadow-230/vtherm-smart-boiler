@@ -17,7 +17,8 @@ from custom_components.vtherm_smart_boiler.core.signal_check import (
     check_signals,
     curve_sensor,
     features,
-    required_problems,
+    link_connected,
+    link_problems,
 )
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 
@@ -44,10 +45,31 @@ def test_signal_health() -> None:
     assert health[Signal.PRESSURE].status is SignalStatus.OK
     assert health[Signal.GAS_METER] == SignalHealth(SignalStatus.NOT_MAPPED, False)
     assert set(health) == set(Signal)
-    assert required_problems(health) == []
+    assert link_problems(health) == []
     limited = check_signals(snapshot, {Signal.FLOW: HOUR})
     assert limited[Signal.FLOW] == SignalHealth(SignalStatus.STALE, True, 2 * HOUR)
-    assert required_problems(limited) == [Signal.FLOW]
+    assert link_problems(limited) == [Signal.FLOW]
+
+
+def test_the_connection_follows_the_mapped_link_signals_and_the_relay() -> None:
+    """X8 (R4): on while every mapped link signal is OK and, on the relay path, the relay is
+    within reach; unknown with no link signal mapped and no relay."""
+    fresh = BoilerSnapshot(
+        NOW, {Signal.FLAME: Reading(False, NOW), Signal.FLOW: Reading(40.0, NOW)}
+    )
+    flame_only = BoilerSnapshot(NOW, {Signal.FLAME: Reading(False, NOW)})
+    lost = BoilerSnapshot(NOW, {Signal.FLAME: Reading(None, NOW)})
+    nothing = BoilerSnapshot(NOW, {})
+    assert link_connected(check_signals(fresh)) is True
+    assert link_connected(check_signals(flame_only)) is True  # the flow not mapped: no problem
+    assert link_problems(check_signals(flame_only)) == []
+    assert link_connected(check_signals(lost)) is False
+    assert link_problems(check_signals(lost)) == [Signal.FLAME]
+    assert link_connected(check_signals(nothing)) is None
+    assert link_connected(check_signals(nothing), relay_reachable=True) is True
+    assert link_connected(check_signals(nothing), relay_reachable=False) is False
+    assert link_connected(check_signals(fresh), relay_reachable=False) is False
+    assert link_connected(check_signals(lost), relay_reachable=True) is False
 
 
 def test_freshness_limits_can_be_overridden() -> None:

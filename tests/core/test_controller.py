@@ -1970,3 +1970,118 @@ def test_the_decision_carries_the_correction() -> None:
     assert decisions[-1].correction == pytest.approx(1.0) == state.correction
     _state, [off] = run([inputs(1900.0, enabled=False)], WATER, state)
     assert off.correction == 0.0
+
+
+# --- X8: on/off control through a relay (class 3) ---------------------------------------------
+
+ON_OFF = ControlConfig(
+    curve=CURVE, ramp_k_per_min=None, on_off=True, stale_hand_back_s=None, comfort_correction=False
+)
+
+
+def test_on_off_mode_heats_without_a_water_temperature() -> None:
+    """R5: a calling zone and no outdoor temperature — heating on, no setpoint, HEATING; never
+    FALLBACK, however long the outdoor temperature stays away; the curve, limits and ramp not
+    used."""
+    steps = [inputs(t, outdoor_sensor=None) for t in stepped(0.0, 5 * 3600.0, 60.0)]
+    state, decisions = run(steps, ON_OFF)
+    assert all(d.command == BoilerCommand(True, None) for d in decisions)
+    assert all(d.mode is ControlMode.HEATING for d in decisions)
+    assert all(d.target is None for d in decisions)
+    assert all(Reason.DEMAND in d.reasons for d in decisions)
+    assert not any(r.value.startswith("limit_") or r is Reason.RAMP for r in decisions[-1].reasons)
+    assert state.controlling
+    assert state.correction == 0.0
+
+
+def test_on_off_mode_idle_and_frost() -> None:
+    """No demand: IDLE, off. A cold zone that can take heat: FROST, on."""
+    _state, [idle] = run([inputs(0.0, zones=(zone(0.0, valve_open=0.0),))], ON_OFF)
+    assert idle.mode is ControlMode.IDLE
+    assert idle.command == BoilerCommand(False, None)
+    cold = zone(0.0, valve_open=0.05, temperature=4.0, heating_enabled=False)
+    _state, [frost] = run([inputs(0.0, zones=(cold,))], ON_OFF)
+    assert frost.mode is ControlMode.FROST
+    assert frost.command == BoilerCommand(True, None)
+
+
+def _relay_config(**control: object) -> ControlConfig:
+    """The relay path's control, parsed as the plugin does (answers F, M)."""
+    from custom_components.vtherm_smart_boiler.control_config import parse_control
+    from custom_components.vtherm_smart_boiler.core.installation import (
+        Boiler,
+        BoilerClass,
+        Circuit,
+        Installation,
+        Zone,
+    )
+
+    installation = Installation(
+        Boiler(BoilerClass.ON_OFF), (Circuit("main"),), (Zone("a", "main"), Zone("b", "main"))
+    )
+    data = {"write_path": "relay", "relay_entity": "switch.boiler", **control}
+    return parse_control(data, installation, None).loop.control
+
+
+@pytest.mark.parametrize(
+    ("control", "handed_back"),
+    [
+        ({}, False),
+        ({"own_room_controller": True, "relay_rest_state": "on"}, True),
+        ({"own_room_controller": True, "relay_rest_state": "off"}, False),  # answer M
+        ({"relay_rest_state": "on"}, False),  # negative: resting "on" is no working thermostat
+    ],
+)
+def test_on_off_mode_every_zone_unknown_after_the_grace_is_off(
+    control: dict[str, object], handed_back: bool
+) -> None:
+    """Decision 3 on the relay path: every zone unknown after the grace — the relay off, reason
+    ``zones_unknown``, never its rest state; with the tick "the boiler has its own room
+    controller" and the rest state "on" (the relay is its heat-demand contact) handed back to it
+    instead, without a latch (answers F, M)."""
+    config = _relay_config(**control)
+    assert config.on_off
+    assert config.working_thermostat is handed_back
+    steps = during(0.0, 10.0 + 10.0 + GRACE_S + 30.0, gone_after(10.0))
+    state, decisions = run(steps, config)
+    after = [d for s, d in zip(steps, decisions, strict=True) if s.now >= 20.0 + GRACE_S]
+    assert all(d.zones_unknown for d in after)
+    assert all(d.reasons == (Reason.ZONES_UNKNOWN,) for d in after)
+    if handed_back:
+        backs = [s.now for s, d in zip(steps, decisions, strict=True) if d.hand_back]
+        assert backs == [20.0 + GRACE_S]
+        assert all(d.mode is ControlMode.HANDED_BACK and d.command is None for d in after)
+    else:
+        assert not any(d.hand_back for d in decisions)
+        assert all(d.command == BoilerCommand(False, None) for d in after)
+        assert all(d.mode is ControlMode.IDLE for d in after)
+    assert not state.latched
+
+
+def test_on_off_mode_never_hands_back_for_a_lost_link() -> None:
+    """R6: the link is the relay; the boiler's own signals never gate a relay (the control unit
+    keeps ``boiler_link`` true there), and even an hour without them hands nothing back."""
+    steps = [inputs(t, boiler_link=False) for t in stepped(0.0, 3600.0, 10.0)]
+    _state, decisions = run([inputs(0.0), *steps[1:]], ON_OFF)
+    assert not any(d.hand_back for d in decisions)
+    assert not any(d.link_lost for d in decisions)
+    _state, decisions = run([inputs(t) for t in stepped(0.0, 600.0)], ON_OFF)
+    assert all(d.command == BoilerCommand(True, None) for d in decisions)
+
+
+def test_on_off_mode_waits_the_activation_delay_and_restores_at_once() -> None:
+    """Decision 5 on the relay path: a start waits VT's activation delay; a command restored
+    after a restart, where the plugin held the relay, waits for nothing."""
+    config = replace(ON_OFF, activation_delay_s=60.0)
+    steps = [inputs(t) for t in stepped(0.0, 90.0)]
+    _state, decisions = run(steps, config)
+    at = {s.now: d for s, d in zip(steps, decisions, strict=True)}
+    assert at[50.0].command is None
+    assert Reason.ACTIVATION_DELAY in at[50.0].reasons
+    assert at[60.0].command == BoilerCommand(True, None)
+    restored = BoilerCommand(True, None)
+    _state, [kept] = run(
+        [inputs(0.0, zones=(placeholder("a", 0.0),), restored_command=restored)], config
+    )
+    assert kept.command == restored
+    assert kept.reasons == (Reason.ZONES_RECOGNITION,)

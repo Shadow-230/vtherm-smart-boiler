@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.vtherm_smart_boiler.config import EntryConfig
@@ -230,13 +230,19 @@ async def test_advanced_flow_with_two_circuits(
 
 
 async def create_entry(
-    hass: HomeAssistant, entities: dict[str, str], level: str, zones: tuple[str, ...] = ()
+    hass: HomeAssistant,
+    entities: dict[str, str],
+    level: str,
+    zones: tuple[str, ...] = (),
+    boiler_class: str = "flow_setpoint",
 ) -> str:
+    """An entry made through the config flow; its boiler class decides which control paths the
+    options offer (X8): the setpoint paths for a flow-setpoint boiler, the relay for on/off."""
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
     for data in (
         {"name": "Boiler", "level": level},
         {"flame": entities["flame"], "flow": entities["flow"]},
-        {"class": "read_only", "dhw": "none", "condensing": True}
+        {"class": boiler_class, "dhw": "none", "condensing": True}
         | ({"modulation_scale": "capacity"} if level == "advanced" else {}),
         {"control": "unmixed_shared"} | ({"add_another": False} if level == "advanced" else {}),
         {"zones": [entities[zone] for zone in zones]},
@@ -1914,7 +1920,9 @@ async def test_an_edit_that_would_block_control_is_confirmed_first(
     result = await options_step(hass, result, read_only)
     assert result["step_id"] == "confirm_blocking"
     shown = result["description_placeholders"]
-    assert shown["first"] == 'Control needs a boiler of the class "Flow setpoint".'
+    assert shown["first"] == (
+        'Control needs a boiler of the class "Flow setpoint" or "On/off (relay)".'
+    )
     assert shown["more"] == "0"
     assert form_default(result, "save_anyway") is False
     result = await options_step(hass, result, {"save_anyway": False})
@@ -2297,3 +2305,509 @@ def test_a_topology_without_thermostat_terminals_drops_the_kind(
         },
     )
     assert ("thermostat_kind" in options["control"]) is kept
+
+
+# --- X8: the relay path ------------------------------------------------------------------------
+
+RELAY = "switch.boiler_relay"
+RELAY_ANSWERS = {
+    "relay_entity": RELAY,
+    "relay_is_separate_contact": True,
+    "relay_reports_state": "yes",
+    "relay_power_on_state": "off",
+    "relay_off_timer": "none",
+    "relay_rest_state": "off",
+    "own_room_controller": False,
+}
+
+
+async def to_relay_step(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
+    hass.states.async_set(RELAY, "off")
+    result = await open_control(hass, entry_id)
+    return await options_step(hass, result, {"write_path": "relay"})
+
+
+def path_options(result: dict[str, Any]) -> list[str]:
+    for marker, validator in result["data_schema"].schema.items():
+        if str(marker) == "write_path":
+            return list(validator.config["options"])
+    raise AssertionError("no write path in the form")
+
+
+@pytest.mark.parametrize(
+    ("boiler_class", "offered"),
+    [
+        ("on_off", ["none", "relay"]),
+        ("flow_setpoint", ["none", "entity", "opentherm_gw", "otgw_mqtt"]),
+        ("curve_only", ["none"]),
+        ("read_only", ["none"]),
+    ],
+)
+async def test_the_relay_path_is_offered_only_for_on_off_boilers(
+    hass: HomeAssistant, entities: dict[str, str], boiler_class: str, offered: list[str]
+) -> None:
+    """R1: the path select offers what the boiler class suits; a path it does not suit is
+    refused on submit."""
+    entry_id = await create_entry(hass, entities, "simple", ("living",), boiler_class)
+    result = await open_control(hass, entry_id)
+    assert path_options(result) == offered
+    wrong = "entity" if boiler_class == "on_off" else "relay"
+    with pytest.raises(InvalidData):  # the select does not offer it
+        await options_step(hass, result, {"write_path": wrong})
+
+
+async def test_a_path_the_class_does_not_suit_is_refused_by_the_first_step() -> None:
+    from custom_components.vtherm_smart_boiler.config_flow import control_error
+
+    on_off = {"boiler": {"class": "on_off"}}
+    assert control_error({"write_path": "entity"}, on_off) == {
+        "write_path": "path_not_for_boiler_class"
+    }
+    assert control_error({"write_path": "relay"}, on_off) == {}  # no read-back or topology
+    flow = {"boiler": {"class": "flow_setpoint"}}
+    assert control_error({"write_path": "relay"}, flow) == {
+        "write_path": "path_not_for_boiler_class"
+    }
+
+
+async def test_the_relay_step_asks_the_relays_own_settings(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """R3: the relay's own settings, each with its cautious default — its state report,
+    after a power cut and timer "I don't know", the rest state "off" — and the separate-contact
+    tick, off by default and never pre-filled (answer G). The relay path needs no read-back,
+    topology or thermostat kind; the answers go to the options as given."""
+    entry_id = await create_entry(hass, entities, "simple", ("living",), "on_off")
+    result = await to_relay_step(hass, entry_id)
+    assert result["step_id"] == "control_relay"
+    assert form_default(result, "relay_is_separate_contact") is False
+    assert form_default(result, "relay_reports_state") == "unknown"
+    assert form_default(result, "relay_power_on_state") == "unknown"
+    assert form_default(result, "relay_off_timer") == "unknown"
+    assert form_default(result, "relay_rest_state") == "off"
+    assert form_default(result, "own_room_controller") is False
+    assert form_default(result, "relay_repeat_s") is None
+    assert "boiler_heats_above_w" not in result["data_schema"].schema  # advanced only
+    result = await options_step(hass, result, RELAY_ANSWERS)
+    assert result["step_id"] == "control_relay_behaviour"
+    result = await options_step(hass, result, {"activation_delay_s": 0})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert control == {"write_path": "relay", "activation_delay_s": 0} | RELAY_ANSWERS
+    config = EntryConfig.from_options(hass.config_entries.async_get_entry(entry_id).options)
+    assert config.control.relay.separate_contact
+
+
+@pytest.mark.parametrize("level", ["simple", "advanced"])
+async def test_the_relay_path_shows_the_activation_delay(
+    hass: HomeAssistant, entities: dict[str, str], level: str
+) -> None:
+    """Decision 5 on the relay path: its behaviour step shows VT's activation delay at the
+    simple level (alone) and the advanced one (with the thresholds, learning pauses and frost),
+    pre-filled from VT's stored value for confirmation; T-37's check applies there."""
+    MockConfigEntry(
+        domain="versatile_thermostat",
+        data={
+            "thermostat_type": "thermostat_central_config",
+            "central_boiler_activation_delay_sec": 90,
+        },
+    ).add_to_hass(hass)
+    entry_id = await create_entry(hass, entities, level, ("living",), "on_off")
+    result = await to_relay_step(hass, entry_id)
+    result = await options_step(hass, result, RELAY_ANSWERS)
+    assert result["step_id"] == "control_relay_behaviour"
+    assert form_default(result, "activation_delay_s") == 90
+    fields = {str(marker) for marker in result["data_schema"].schema}
+    if level == "simple":
+        assert fields == {"activation_delay_s"}
+        return
+    assert {"count_threshold", "learning_pauses", "frost_limit", "frost_release"} <= fields
+    answer = {
+        "activation_delay_s": 90,
+        "count_threshold": 1,
+        "learning_pauses": True,
+        "frost_limit": 7,
+        "frost_release": 7,
+    }
+    result = await options_step(hass, result, answer)
+    assert result["errors"] == {"frost_release": "frost_release_not_above_limit"}  # T-37
+    result = await options_step(hass, result, answer | {"frost_release": 9})
+    assert result["step_id"] == "control_alarms"
+
+
+async def test_the_relay_path_offers_no_return_by_itself(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 6: the return by itself after another controller is not offered for relays; nor
+    a reaction to an ignored write (decision 7: never on the relay path)."""
+    entry_id = await create_entry(hass, entities, "advanced", ("living",), "on_off")
+    result = await to_relay_step(hass, entry_id)
+    result = await options_step(hass, result, RELAY_ANSWERS)
+    result = await options_step(
+        hass,
+        result,
+        {"activation_delay_s": 0, "count_threshold": 1, "learning_pauses": True},
+    )
+    assert result["step_id"] == "control_alarms"
+    fields = {str(marker) for marker in result["data_schema"].schema}
+    assert "return_after_outside_change" not in fields
+    assert "write_ignored" not in fields
+    assert "write_failed" in fields
+
+
+@pytest.mark.parametrize("rest", ["off", "on"])
+async def test_the_relay_path_offers_the_own_room_controller_tick(
+    hass: HomeAssistant, entities: dict[str, str], rest: str
+) -> None:
+    """Answer M: the tick is on the relay step; saved with the rest state "off" it is kept, and
+    does not count as a working thermostat."""
+    from custom_components.vtherm_smart_boiler.control_config import working_thermostat
+
+    entry_id = await create_entry(hass, entities, "simple", ("living",), "on_off")
+    result = await to_relay_step(hass, entry_id)
+    assert "own_room_controller" in {str(m) for m in result["data_schema"].schema}
+    answers = RELAY_ANSWERS | {"own_room_controller": True, "relay_rest_state": rest}
+    result = await options_step(hass, result, answers)
+    result = await options_step(hass, result, {"activation_delay_s": 0})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    options = hass.config_entries.async_get_entry(entry_id).options
+    assert options["control"]["own_room_controller"] is True
+    assert working_thermostat(EntryConfig.from_options(options).control) is (rest == "on")
+
+
+async def test_a_declared_timer_needs_its_length(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    entry_id = await create_entry(hass, entities, "simple", ("living",), "on_off")
+    result = await to_relay_step(hass, entry_id)
+    result = await options_step(hass, result, RELAY_ANSWERS | {"relay_off_timer": "minutes"})
+    assert result["errors"] == {"relay_off_timer_min": "relay_off_timer_min_missing"}
+    answers = RELAY_ANSWERS | {"relay_off_timer": "minutes", "relay_off_timer_min": 15}
+    result = await options_step(hass, result, answers)
+    assert result["step_id"] == "control_relay_behaviour"
+
+
+async def test_a_relay_used_by_a_vt_zone_or_the_gateway_is_refused(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """R2: a switch a VT thermostat drives for a room, an entity of the boiler's gateway
+    integration or of VT, a boiler thermostat entity without both heat and off, and one the
+    options already use in another role."""
+    from homeassistant.helpers import entity_registry as er
+
+    registry = er.async_get(hass)
+    entry_id = await create_entry(hass, entities, "simple", ("living",), "on_off")
+    vt = MockConfigEntry(
+        domain="versatile_thermostat", data={"underlying_entity_ids": ["switch.room_heater"]}
+    )
+    vt.add_to_hass(hass)
+    registry.async_update_entity(entities["bedroom"], config_entry_id=vt.entry_id)
+    hass.states.async_set("switch.room_heater", "off")
+    gateway = registry.async_get_or_create("switch", "opentherm_gw", "gw-ch-override").entity_id
+    hass.states.async_set(gateway, "off")
+    hass.states.async_set("climate.boiler", "heat", {"hvac_modes": ["heat", "auto"]})
+    cases = [
+        ("switch.room_heater", "relay_used_by_zone"),
+        (gateway, "relay_of_boiler_interface"),
+        ("climate.boiler", "relay_climate_modes"),
+    ]
+    for relay, error in cases:
+        result = await to_relay_step(hass, entry_id)
+        result = await options_step(hass, result, RELAY_ANSWERS | {"relay_entity": relay})
+        assert result["errors"] == {"relay_entity": error}, relay
+    hass.states.async_set("climate.boiler", "heat", {"hvac_modes": ["heat", "off"]})
+    result = await to_relay_step(hass, entry_id)
+    result = await options_step(hass, result, RELAY_ANSWERS | {"relay_entity": "climate.boiler"})
+    assert result["step_id"] == "control_relay_behaviour"
+
+
+async def test_a_relay_in_another_role_is_refused(hass: HomeAssistant) -> None:
+    from custom_components.vtherm_smart_boiler.config_flow import relay_entity_error
+
+    options = {
+        "zones": [{"entity_id": "climate.a", "foreign_heat": [{"entity_id": "switch.stove"}]}],
+        "control": {"write_path": "relay", "relay_entity": "switch.stove"},
+    }
+    assert relay_entity_error(hass, options, "switch.stove") == "relay_in_another_role"
+    assert relay_entity_error(hass, options, "switch.other") is None
+    alone = {"control": {"write_path": "relay", "relay_entity": "switch.other"}}
+    assert relay_entity_error(hass, alone, "switch.other") is None  # its own field
+    assert relay_entity_error(hass, alone, None) == "entity_not_suitable"
+
+
+@pytest.mark.parametrize("relay", ["input_boolean.boiler", "light.boiler"])
+async def test_an_input_boolean_relay_is_refused(
+    hass: HomeAssistant, entities: dict[str, str], relay: str
+) -> None:
+    entry_id = await create_entry(hass, entities, "simple", ("living",), "on_off")
+    hass.states.async_set(relay, "off")
+    result = await to_relay_step(hass, entry_id)
+    result = await options_step(hass, result, RELAY_ANSWERS | {"relay_entity": relay})
+    assert result["errors"] == {"relay_entity": "relay_domain_not_supported"}
+
+
+def vt_central(hass: HomeAssistant, **data: Any) -> MockConfigEntry:
+    """VT's central entry with VT 10.4.0's keys."""
+    entry = MockConfigEntry(
+        domain="versatile_thermostat",
+        data={"thermostat_type": "thermostat_central_config"} | data,
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+def vt_threshold(hass: HomeAssistant, unique_id: str, value: str, unit: str | None = None) -> None:
+    from homeassistant.helpers import entity_registry as er
+
+    number = er.async_get(hass).async_get_or_create("number", "versatile_thermostat", unique_id)
+    hass.states.async_set(number.entity_id, value, {"unit_of_measurement": unit} if unit else {})
+
+
+@pytest.mark.parametrize(
+    ("commands", "relay", "note"),
+    [
+        (
+            ("switch.boiler_relay/switch.turn_on", "switch.boiler_relay/switch.turn_off"),
+            RELAY,
+            None,
+        ),
+        (
+            (
+                "climate.boiler/climate.set_hvac_mode/hvac_mode:heat",
+                "climate.boiler/climate.set_hvac_mode/hvac_mode:off",
+            ),
+            "climate.boiler",
+            None,
+        ),
+        (
+            (
+                "input_boolean.boiler/input_boolean.turn_on",
+                "input_boolean.boiler/input_boolean.turn_off",
+            ),
+            None,
+            "vt_commands_not_supported",
+        ),
+        (
+            ("script.boiler_on/script.turn_on", "script.boiler_off/script.turn_on"),
+            None,
+            "vt_commands_not_supported",
+        ),
+    ],
+)
+async def test_the_relay_step_is_prefilled_from_vts_central_boiler(
+    hass: HomeAssistant,
+    entities: dict[str, str],
+    commands: tuple[str, str],
+    relay: str | None,
+    note: str | None,
+) -> None:
+    """R14: moving over from VT's central boiler — the relay from its commands (a switch pair,
+    a boiler thermostat pair; a free-form command "not supported"), the delay, the repeat
+    interval, and the thresholds as VT used them (``int()``; W → kW); shown for confirmation,
+    the separate-contact tick never pre-filled; nothing written to VT."""
+    hass.states.async_set("climate.boiler", "off", {"hvac_modes": ["heat", "off"]})
+    central = vt_central(
+        hass,
+        use_central_boiler_feature=True,
+        central_boiler_activation_service=commands[0],
+        central_boiler_deactivation_service=commands[1],
+        central_boiler_activation_delay_sec=60,
+        keep_alive_boiler_delay_sec=120,
+    )
+    vt_threshold(hass, "boiler_power_activation_threshold", "1500.9", "W")
+    before = dict(central.data)
+    entry_id = await create_entry(hass, entities, "advanced", ("living",), "on_off")
+    result = await open_control(hass, entry_id)
+    result = await options_step(hass, result, {"write_path": "relay"})
+    assert result["step_id"] == "control_relay_from_vt"
+    assert result["errors"] == ({} if note is None else {"base": note})
+    assert form_default(result, "relay_entity") == relay
+    assert form_default(result, "relay_repeat_s") == 120
+    assert form_default(result, "relay_is_separate_contact") is False
+    answers = RELAY_ANSWERS | {"relay_entity": relay or RELAY}
+    hass.states.async_set(RELAY, "off")
+    result = await options_step(hass, result, answers)
+    assert result["step_id"] == "control_relay_behaviour"
+    assert form_default(result, "activation_delay_s") == 60
+    assert form_default(result, "power_threshold_kw") == 1.5  # 1500 W as VT used it
+    assert form_default(result, "count_threshold") == 1  # VT's count 0: not carried over
+    assert dict(central.data) == before  # nothing written to VT
+
+
+async def test_the_count_and_long_keep_alive_prefill_rules(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """R14: the count only where every zone VT counts has one device, capped at the plugin's
+    zones; a keep-alive above 300 s not pre-filled; both thresholds 0 — nothing."""
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import vt_central_boiler_settings
+
+    registry = er.async_get(hass)
+    vt_central(
+        hass,
+        use_central_boiler_feature=True,
+        central_boiler_activation_service="switch.r/switch.turn_on",
+        central_boiler_deactivation_service="switch.r/switch.turn_off",
+        keep_alive_boiler_delay_sec=600,
+    )
+    vt_threshold(hass, "boiler_activation_threshold", "3.7")
+    vt_threshold(hass, "boiler_power_activation_threshold", "2.2", "kW")
+    zones = [entities["living"], entities["bedroom"]]
+    for zone, devices in ((entities["living"], ["switch.a"]), (entities["bedroom"], ["switch.b"])):
+        entry = MockConfigEntry(
+            domain="versatile_thermostat", data={"underlying_entity_ids": devices}
+        )
+        entry.add_to_hass(hass)
+        registry.async_update_entity(zone, config_entry_id=entry.entry_id)
+        hass.states.async_set(zone, "heat", {"configuration": {"is_used_by_central_boiler": True}})
+    settings = vt_central_boiler_settings(hass, zones)
+    assert settings is not None
+    assert settings.relay == "switch.r"
+    assert settings.repeat_s is None  # 600 s: longer than the plugin's 300 s
+    assert settings.keep_alive_s == 600
+    assert settings.power_threshold_kw == 2.0  # int(2.2) in VT's kW
+    assert settings.count_threshold == 2  # int(3.7) = 3, capped at the two zones
+    assert vt_central_boiler_settings(hass, zones[:1]).count_threshold == 1  # type: ignore[union-attr]
+    # A multi-device zone: VT counts devices, the plugin rooms — no count.
+    entry = MockConfigEntry(
+        domain="versatile_thermostat", data={"underlying_entity_ids": ["switch.b", "switch.c"]}
+    )
+    entry.add_to_hass(hass)
+    registry.async_update_entity(entities["bedroom"], config_entry_id=entry.entry_id)
+    settings = vt_central_boiler_settings(hass, zones)
+    assert settings is not None
+    assert settings.count_threshold is None
+    vt_threshold(hass, "boiler_activation_threshold", "0")
+    vt_threshold(hass, "boiler_power_activation_threshold", "0.4", "kW")  # int() → 0: off
+    settings = vt_central_boiler_settings(hass, zones)
+    assert settings is not None
+    assert settings.count_threshold is None
+    assert settings.power_threshold_kw is None
+
+
+async def test_prefill_without_a_vt_central_entry_leaves_the_fields_empty(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """No VT central entry, or one without its commands (unticked): the plain relay step, its
+    fields empty but for the cautious defaults."""
+    entry_id = await create_entry(hass, entities, "simple", ("living",), "on_off")
+    result = await to_relay_step(hass, entry_id)
+    assert result["step_id"] == "control_relay"
+    assert result["errors"] == {}
+    assert form_default(result, "relay_entity") is None  # no default: the user picks it
+    assert form_default(result, "relay_repeat_s") is None
+    vt_central(hass, central_boiler_activation_delay_sec=30)  # unticked: commands deleted
+    result = await to_relay_step(hass, entry_id)
+    assert result["step_id"] == "control_relay"
+
+
+async def test_the_signals_step_accepts_no_signals(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """R4: nothing is required on the signals step — a home with only a relay."""
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await step(hass, result, {"name": "Relay only", "level": "simple"})
+    assert result["step_id"] == "signals"
+    assert all(type(marker).__name__ == "Optional" for marker in result["data_schema"].schema)
+    result = await step(hass, result, {})
+    assert result["step_id"] == "boiler"
+
+
+async def test_unmapping_the_flame_under_water_control_is_confirmed_first(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """R4: flame and flow are optional for the entry, but water-temperature control needs both:
+    an edit that unmaps the flame asks first, naming the blocker."""
+    from custom_components.vtherm_smart_boiler.config_flow import options_blockers
+
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=controlled_options(entities)
+    )
+    entry.add_to_hass(hass)
+    assert options_blockers(entry.options) == []
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "signals"})
+    result = await options_step(hass, result, {"flow": entities["flow"]})
+    assert result["step_id"] == "confirm_blocking"
+    assert result["description_placeholders"]["first"] == (
+        "Water-temperature control needs the flame mapped in the signals."
+    )
+
+
+def test_the_relay_behaviour_step_offers_vts_count() -> None:
+    """R14: VT's count, where it fits rooms, is the count threshold's default at the advanced
+    level; the tick of the entity path's form is offered on the relay path too."""
+    from custom_components.vtherm_smart_boiler.config_flow import (
+        _offers_own_room_controller,
+        control_relay_behaviour_schema,
+    )
+    from custom_components.vtherm_smart_boiler.vtherm_link import VtCentralBoiler, VtCommands
+
+    prefill = VtCentralBoiler(configured=True, commands=VtCommands.NONE, count_threshold=2)
+    options = {"level": "advanced", "control": {"write_path": "relay"}}
+    result = {"data_schema": control_relay_behaviour_schema(options, prefill)}
+    assert form_default(result, "count_threshold") == 2
+    assert _offers_own_room_controller({"write_path": "relay"})
+
+
+@pytest.mark.parametrize(
+    ("answer", "error"),
+    [
+        ({"count_threshold": 5}, {"count_threshold": "count_threshold_above_zones"}),
+        ({"count_threshold": 0}, {"count_threshold": "no_demand_criterion"}),
+    ],
+)
+async def test_the_relay_behaviour_step_checks_its_answers(
+    hass: HomeAssistant, entities: dict[str, str], answer: dict[str, Any], error: dict[str, str]
+) -> None:
+    entry_id = await create_entry(hass, entities, "advanced", ("living",), "on_off")
+    result = await to_relay_step(hass, entry_id)
+    result = await options_step(hass, result, RELAY_ANSWERS)
+    base = {"activation_delay_s": 0, "count_threshold": 1, "learning_pauses": True}
+    result = await options_step(hass, result, base | answer)
+    assert result["errors"] == error
+
+
+async def test_the_relay_behaviour_step_refuses_a_criterion_no_zone_feeds(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    entry_id = await create_entry(hass, entities, "advanced", ("living",), "on_off")
+    result = await to_relay_step(hass, entry_id)
+    result = await options_step(hass, result, RELAY_ANSWERS)
+    answer = {
+        "activation_delay_s": 0,
+        "count_threshold": 1,
+        "learning_pauses": True,
+        "power_threshold_kw": 2.0,
+    }
+    result = await options_step(hass, result, answer)
+    assert result["errors"] == {"power_threshold_kw": "power_criterion_no_zone"}
+
+
+async def test_the_relay_cannot_change_while_control_holds_it(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """P-12 for the relay: what the hand-back goes through — the relay and its rest state — does
+    not change while control holds the relay; switch control off first."""
+    hass.states.async_set(RELAY, "off")
+    options = {
+        "signals": {"flame": entities["flame"], "flow": entities["flow"]},
+        "boiler": {"class": "on_off", "dhw": "none"},
+        "zones": [{"entity_id": entities["living"]}],
+        "monitor": {"monitoring_days": 0},
+        "control": {"write_path": "relay"} | RELAY_ANSWERS,
+    }
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    await entry.runtime_data.control.async_set_enabled(True)
+    assert entry.runtime_data.control.holding
+    result = await to_relay_step(hass, entry.entry_id)
+    result = await options_step(hass, result, RELAY_ANSWERS | {"relay_rest_state": "on"})
+    assert result["errors"] == {"base": "control_holds_boiler"}
+    await entry.runtime_data.control.async_set_enabled(False)
+    await hass.async_block_till_done()

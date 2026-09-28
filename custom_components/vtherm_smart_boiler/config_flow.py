@@ -11,6 +11,12 @@ curve's values fitting together. A value stored that this version does not know 
 section's step, never as an exception (P-70). An options edit that would add a blocker to
 control asks for confirmation first (Open after R6 #3); every save but the level's reloads the
 integration, which hands the boiler back while control holds it (P-67, provisional, K4).
+
+The write path suits the boiler class: a flow-setpoint boiler gets the setpoint paths, an on/off
+boiler the relay (X8), the other classes only "no control". The relay path asks for the relay and
+its own settings — pre-filled from Versatile Thermostat's central boiler where it can be moved
+over, shown for confirmation and never saved without the user — then its behaviour step, which
+shows VT's activation delay at every level; no signal is required for the entry.
 """
 
 from __future__ import annotations
@@ -64,6 +70,9 @@ from .control_config import (
     INFO_ONLY_ALARMS,
     OTGW_PATHS,
     PATH_TOPOLOGIES,
+    RELAY_DEFAULTS,
+    RELAY_DOMAINS,
+    RELAY_KEYS,
     TARGET_KEYS,
     AlarmReaction,
     ControlOptions,
@@ -98,8 +107,19 @@ from .core.guards import WriteType
 from .core.installation import BoilerClass, CircuitControl, DhwType, EmitterType
 from .core.metrics import ModulationScale
 from .core.reference_room import Strategy
-from .transport.entities import read_bounds, read_grid, temperature_unit_of
-from .vtherm_link import VThermLink, is_vt_climate, zone_name, zones_on_boiler_thermostat
+from .core.relay import RelayPowerOn, RelayReports, RelayRest, RelayTimer
+from .transport.entities import read_bounds, read_grid, relay_hvac_modes, temperature_unit_of
+from .vtherm_link import (
+    VtCentralBoiler,
+    VtCommands,
+    VThermLink,
+    is_vt_climate,
+    relay_of_boiler_interface,
+    relay_used_by_zone,
+    vt_central_boiler_settings,
+    zone_name,
+    zones_on_boiler_thermostat,
+)
 
 # --- field definitions ----------------------------------------------------------------------
 
@@ -121,10 +141,11 @@ SIGNAL_FIELDS: dict[str, tuple[dict[str, Any], bool]] = {
     "pump_running": (_BINARY, False),
     "flue_gas": (_TEMPERATURE, False),
     "gas_meter": ({"domain": "sensor", "device_class": ["gas", "energy"]}, False),
+    # X8: the boiler's electric power, only a relay's proof that the boiler heats.
+    "boiler_power": ({"domain": "sensor", "device_class": "power"}, False),
     "room_setpoint": (_TEMPERATURE, False),
     "room_temperature": (_TEMPERATURE, False),
 }
-REQUIRED_FIELDS = ("flame", "flow")
 
 
 def _entity(
@@ -269,19 +290,14 @@ def _stored_signals(options: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def signals_schema(options: dict[str, Any]) -> vol.Schema:
+    """Every signal optional (X8): a home with only a relay is monitored too; water-temperature
+    control gets a blocker without flame and flow."""
     current = {**_stored_signals(options), WEATHER: options.get(WEATHER)}
     fields: dict[Any, Any] = {}
     for key, (filter_, simple) in SIGNAL_FIELDS.items():
         if not simple and not _advanced(options):
             continue
-        marker = (
-            vol.Required(key, default=current[key])
-            if key in REQUIRED_FIELDS and current.get(key)
-            else vol.Required(key)
-            if key in REQUIRED_FIELDS
-            else _optional(key, current)
-        )
-        fields[marker] = _entity(filter_)
+        fields[_optional(key, current)] = _entity(filter_)
     fields[_optional(WEATHER, current)] = _entity({"domain": "weather"})
     return vol.Schema(fields)
 
@@ -547,6 +563,7 @@ def _limit(
 # --- control ----------------------------------------------------------------------------------
 
 NO_CONTROL = "none"
+_RELAY_ENTITY = {"domain": list(RELAY_DOMAINS)}  # a switch, or a boiler thermostat entity
 _SETPOINT_ENTITY = {"domain": ["number", "input_number"]}
 _ON_OFF_ENTITY = {"domain": ["switch", "input_boolean"]}
 _READ_BACK_ENTITY = {"domain": ["sensor", "number", "input_number"]}
@@ -586,7 +603,10 @@ CURVE_KEYS = ("design_outdoor", "design_flow", "room", "exponent", "offset")
 # What an absent hand-back answer means: the form fills in this default (an entry saved before
 # the answer existed has none). What a hand-back goes through (``HAND_BACK_KEYS``) and the
 # writable-entity step's answers (``TARGET_KEYS``) are listed once, in the control options.
-_HAND_BACK_DEFAULTS = {"hand_back_entity_write_type": WriteType.UNKNOWN.value}
+_HAND_BACK_DEFAULTS = {
+    "hand_back_entity_write_type": WriteType.UNKNOWN.value,
+    "relay_rest_state": RELAY_DEFAULTS["relay_rest_state"],
+}
 OWN_ROOM_CONTROLLER = "own_room_controller"
 # A demand threshold no zone can feed (P-14): the field, and what the form says.
 _UNFED = {
@@ -608,14 +628,35 @@ def _thermostat_kind_field(control: Mapping[str, Any]) -> vol.Optional:
     )
 
 
+# The write paths each boiler class may take (R1): the setpoint paths for a flow-setpoint
+# boiler, the relay for an on/off boiler; the other classes are monitored only.
+_PATHS_BY_CLASS: Mapping[str, tuple[str, ...]] = {
+    BoilerClass.FLOW_SETPOINT.value: (
+        WritePath.ENTITY.value,
+        WritePath.OPENTHERM_GW.value,
+        WritePath.OTGW_MQTT.value,
+    ),
+    BoilerClass.ON_OFF.value: (WritePath.RELAY.value,),
+}
+
+
+def paths_for_class(options: Mapping[str, Any]) -> list[str]:
+    """The write paths the form offers for the boiler class: "no control" and those that suit
+    it."""
+    boiler = options.get(BOILER)
+    boiler_class = boiler.get("class") if isinstance(boiler, Mapping) else None
+    return [NO_CONTROL, *_PATHS_BY_CLASS.get(str(boiler_class), ())]
+
+
 def control_schema(options: dict[str, Any]) -> vol.Schema:
     control = options.get(CONTROL, {})
-    paths = [NO_CONTROL, *(path.value for path in WritePath)]
+    paths = paths_for_class(options)
+    stored = control.get("write_path", NO_CONTROL)
+    # A stored path the class no longer suits is not offered: the user chooses again.
+    default = stored if stored in paths else vol.UNDEFINED
     return vol.Schema(
         {
-            vol.Required("write_path", default=control.get("write_path", NO_CONTROL)): _select(
-                "write_path", paths
-            ),
+            vol.Required("write_path", default=default): _select("write_path", paths),
             _optional("topology", control): _select("topology", [t.value for t in Topology]),
             # Asked with a gateway topology only; the form cannot hide it for the others, chosen
             # on this same page (its text says so), and the save drops it for them.
@@ -669,9 +710,14 @@ def control_entity_schema(options: dict[str, Any]) -> vol.Schema:
 
 def _offers_own_room_controller(control: Mapping[str, Any]) -> bool:
     """The tick "the boiler has its own room controller" is offered on the entity path with
-    the virtual topology — not with a gateway (answer M); X8 adds the relay path."""
+    the virtual topology — not with a gateway (answer M) — and on the relay step."""
     try:
         path = WritePath(str(control.get("write_path")))
+    except ValueError:
+        return False
+    if path is WritePath.RELAY:
+        return True
+    try:
         topology = Topology(str(control.get("topology")))
     except ValueError:
         return False
@@ -767,6 +813,160 @@ def _zone_entities(options: dict[str, Any]) -> list[str]:
     return [zone["entity_id"] for zone in options.get(ZONES, []) if zone.get("entity_id")]
 
 
+# --- the relay path (X8) ------------------------------------------------------------------------
+
+RELAY_ENTITY = "relay_entity"
+RELAY_TIMER_MIN = "relay_off_timer_min"
+HEATS_ABOVE = "boiler_heats_above_w"
+RELAY_STEP_KEYS = (*RELAY_KEYS, OWN_ROOM_CONTROLLER)
+
+
+def control_relay_schema(
+    options: dict[str, Any], prefill: VtCentralBoiler | None = None
+) -> vol.Schema:
+    """The relay and its own settings (R3) — the user's declaration, each with its cautious
+    default — and the tick "the boiler has its own room controller" (answer M). ``prefill``:
+    VT's central boiler, whose relay and repeat interval are offered for confirmation where
+    nothing is stored yet (R14). The separate-contact tick is never pre-filled (answer G)."""
+    control = options.get(CONTROL, {})
+
+    def choice(key: str, kind: type[StrEnum]) -> Any:
+        return _choice(control.get(key), kind, RELAY_DEFAULTS[key])
+
+    relay = control.get(RELAY_ENTITY) or (prefill.relay if prefill is not None else None)
+    repeat = control.get("relay_repeat_s")
+    if repeat in (None, "") and prefill is not None:
+        repeat = prefill.repeat_s
+    fields: dict[Any, Any] = {
+        vol.Required(RELAY_ENTITY, default=relay or vol.UNDEFINED): _entity(_RELAY_ENTITY),
+        vol.Required(
+            "relay_is_separate_contact", default=control.get("relay_is_separate_contact") is True
+        ): selector.BooleanSelector(),
+        vol.Required(
+            "relay_reports_state", default=choice("relay_reports_state", RelayReports)
+        ): _select("relay_reports_state", [r.value for r in RelayReports]),
+        vol.Required(
+            "relay_power_on_state", default=choice("relay_power_on_state", RelayPowerOn)
+        ): _select("relay_power_on_state", [p.value for p in RelayPowerOn]),
+        vol.Required("relay_off_timer", default=choice("relay_off_timer", RelayTimer)): _select(
+            "relay_off_timer", [t.value for t in RelayTimer]
+        ),
+        _optional(RELAY_TIMER_MIN, control): _number(1, 120, 1, "min"),
+        _optional("relay_repeat_s", {"relay_repeat_s": repeat}): _number(10, 300, 10, "s"),
+        vol.Required("relay_rest_state", default=choice("relay_rest_state", RelayRest)): _select(
+            "relay_rest_state", [r.value for r in RelayRest]
+        ),
+        vol.Required(
+            OWN_ROOM_CONTROLLER, default=control.get(OWN_ROOM_CONTROLLER) is True
+        ): selector.BooleanSelector(),
+    }
+    if _advanced(options):
+        fields[_optional(HEATS_ABOVE, control)] = _number(10, 10000, 10, "W")
+    return vol.Schema(fields)
+
+
+def relay_entity_error(
+    hass: HomeAssistant, options: Mapping[str, Any], entity: object
+) -> str | None:
+    """R2, in the form: the relay is a switch, or a boiler thermostat entity that can be set to
+    both heat and off — never a helper; one no VT thermostat drives for a room; no entity of the
+    boiler's gateway integration or of VT; none the options already use in another role. The
+    error key, or ``None``."""
+    if not isinstance(entity, str) or "." not in entity:
+        return "entity_not_suitable"
+    if entity.split(".", 1)[0] not in RELAY_DOMAINS:
+        return "relay_domain_not_supported"
+    modes = relay_hvac_modes(hass.states.get(entity))
+    if entity.startswith("climate.") and modes is not None and not {"heat", "off"} <= modes:
+        return "relay_climate_modes"
+    if relay_used_by_zone(hass, entity):
+        return "relay_used_by_zone"
+    if relay_of_boiler_interface(hass, entity):
+        return "relay_of_boiler_interface"
+    from .config import named_entities
+
+    fields = named_entities(options).get(entity, ())
+    if any(field != f"{CONTROL}.{RELAY_ENTITY}" for field in fields):
+        return "relay_in_another_role"
+    return None
+
+
+def apply_control_relay(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    """The relay step's answers; the power threshold kept where its field is not shown, and a
+    timer's length only with a declared length."""
+    control = dict(options.get(CONTROL, {}))
+    shown = [key for key in RELAY_STEP_KEYS if key != HEATS_ABOVE or _advanced(options)]
+    _set_or_drop(control, user_input, tuple(shown))
+    if control.get("relay_off_timer") != RelayTimer.MINUTES:
+        control.pop(RELAY_TIMER_MIN, None)
+    options[CONTROL] = control
+
+
+# The relay path's behaviour step: its demand thresholds, learning pauses and frost fields at the
+# advanced level (``CONTROL_ADVANCED_KEYS``), VT's activation delay at every level (decision 5).
+RELAY_BEHAVIOUR_KEYS = (
+    "count_threshold",
+    "power_threshold_kw",
+    "opening_threshold",
+    "learning_pauses",
+    "frost_limit",
+    "frost_release",
+    "frost_zone",
+)
+
+
+def control_relay_behaviour_schema(
+    options: dict[str, Any], prefill: VtCentralBoiler | None = None
+) -> vol.Schema:
+    """The relay path's behaviour (R5, R14): VT's activation delay, shown at every level and
+    pre-filled from VT's own; at the advanced level the demand thresholds — pre-filled with VT's
+    as it used them — learning pauses and frost protection, moved here from the curve step,
+    which the relay path does not have."""
+    control = options.get(CONTROL, {})
+    vt_delay = None if prefill is None else prefill.activation_delay_s
+    fields: dict[Any, Any] = {**activation_delay_field(control, vt_delay)}
+    if not _advanced(options):
+        return vol.Schema(fields)
+
+    def default(key: str) -> Any:
+        return control.get(key, CONTROL_DEFAULTS[key])
+
+    count = control.get("count_threshold")
+    if count is None and prefill is not None and prefill.count_threshold is not None:
+        count = prefill.count_threshold
+    power = control.get("power_threshold_kw")
+    if power in (None, "") and prefill is not None:
+        power = prefill.power_threshold_kw
+    fields |= {
+        vol.Required(
+            "count_threshold",
+            default=CONTROL_DEFAULTS["count_threshold"] if count is None else count,
+        ): _number(0, 20, 1),
+        _optional("power_threshold_kw", {"power_threshold_kw": power}): _number(
+            0.1, 100, 0.1, "kW"
+        ),
+        _optional("opening_threshold", control): _number(1, 100, 1, "%"),
+        vol.Required("learning_pauses", default=default("learning_pauses")): (
+            selector.BooleanSelector()
+        ),
+        vol.Required("frost_limit", default=default("frost_limit")): _number(3, 10, 0.5, "°C"),
+        vol.Required("frost_release", default=default("frost_release")): _number(4, 12, 0.5, "°C"),
+        _optional("frost_zone", control): selector.EntitySelector(
+            selector.EntitySelectorConfig(include_entities=_zone_entities(options))
+        ),
+    }
+    return vol.Schema(fields)
+
+
+def apply_control_relay_behaviour(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    control = dict(options.get(CONTROL, {}))
+    keys: tuple[str, ...] = (ACTIVATION_DELAY,)
+    if _advanced(options):
+        keys += RELAY_BEHAVIOUR_KEYS
+    _set_or_drop(control, user_input, keys)
+    options[CONTROL] = control
+
+
 def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
     control = options.get(CONTROL, {})
 
@@ -790,6 +990,19 @@ def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
 RETURN_KEY = "return_after_outside_change"
 
 
+def _relay_path(options: Mapping[str, Any]) -> bool:
+    control = options.get(CONTROL)
+    return isinstance(control, Mapping) and control.get("write_path") == WritePath.RELAY
+
+
+def reaction_alarms(options: Mapping[str, Any]) -> tuple[str, ...]:
+    """The alarms whose reaction the form offers: on the relay path not an ignored write, which
+    may hand back only where a thermostat or the boiler's own control takes over (decision 7)."""
+    if _relay_path(options):
+        return tuple(alarm for alarm in REACTION_ALARMS if alarm != "write_ignored")
+    return REACTION_ALARMS
+
+
 def control_alarms_schema(options: dict[str, Any]) -> vol.Schema:
     control = options.get(CONTROL, {})
     reactions = control.get("alarm_reactions", {})
@@ -798,12 +1011,13 @@ def control_alarms_schema(options: dict[str, Any]) -> vol.Schema:
         vol.Required(alarm, default=reactions.get(alarm, AlarmReaction.INFO.value)): _select(
             "alarm_reaction", choices
         )
-        for alarm in REACTION_ALARMS
+        for alarm in reaction_alarms(options)
     }
-    # Off by default, confirmed twice (decision 6); X8 hides it on the relay path.
-    fields[vol.Required(RETURN_KEY, default=control.get(RETURN_KEY) is True)] = (
-        selector.BooleanSelector()
-    )
+    if not _relay_path(options):
+        # Off by default, confirmed twice (decision 6); not offered for relays.
+        fields[vol.Required(RETURN_KEY, default=control.get(RETURN_KEY) is True)] = (
+            selector.BooleanSelector()
+        )
     return vol.Schema(fields)
 
 
@@ -827,10 +1041,22 @@ CONTROL_STEP_KEYS = (
 )
 
 
+# What the relay path does not read (X8): it has no topology, no thermostat terminals and no
+# setpoint read-back; a restart indicator of the relay's device stays a trace of an outage.
+_NOT_FOR_RELAY = (
+    "topology",
+    THERMOSTAT_KIND,
+    "confirmed_entity",
+    "ch_confirmed_entity",
+    "thermostat_setpoint_entity",
+)
+
+
 def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     """The first control step: the write path, topology, what is wired to the gateway's
     thermostat terminals and read-backs; "none" removes control. A topology without thermostat
-    terminals keeps no answer about them."""
+    terminals keeps no answer about them; the relay path keeps none of them but the restart
+    indicator."""
     if user_input["write_path"] == NO_CONTROL:
         options.pop(CONTROL, None)
         return
@@ -841,6 +1067,9 @@ def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     _set_or_drop(control, user_input, CONTROL_STEP_KEYS)
     if not _gateway_topology(control.get("topology")):
         control.pop(THERMOSTAT_KIND, None)
+    if user_input["write_path"] == WritePath.RELAY:
+        for key in _NOT_FOR_RELAY:
+            control.pop(key, None)
     options[CONTROL] = control
 
 
@@ -884,8 +1113,8 @@ def apply_control_behaviour(options: dict[str, Any], user_input: dict[str, Any])
 
 def apply_control_alarms(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     control = dict(options.get(CONTROL, {}))
-    control["alarm_reactions"] = {alarm: user_input[alarm] for alarm in REACTION_ALARMS}
-    if user_input.get(RETURN_KEY) is True:
+    control["alarm_reactions"] = {alarm: user_input[alarm] for alarm in reaction_alarms(options)}
+    if user_input.get(RETURN_KEY) is True and not _relay_path(options):
         control[RETURN_KEY] = True
     else:
         control.pop(RETURN_KEY, None)  # off: the default
@@ -916,13 +1145,21 @@ TARGET_ENTITY_FIELDS: Mapping[str, EntityFilter] = {
 }
 
 
-def control_error(user_input: dict[str, Any]) -> dict[str, str]:
-    """What the first control step needs: every write is checked against a read-back, and the
-    topology decides what a hand-back does — both required, and suited to the write path (one
-    table with the blockers, P-44). A gateway topology needs the answer about its thermostat
-    terminals, one that fits it (decision 1)."""
+def control_error(
+    user_input: dict[str, Any], options: Mapping[str, Any] | None = None
+) -> dict[str, str]:
+    """What the first control step needs: a write path the boiler class suits (X8; ``options``:
+    the options it is chosen in, where known); every write is checked against a read-back, and
+    the topology decides what a hand-back does — both required, and suited to the write path
+    (one table with the blockers, P-44). A gateway topology needs the answer about its
+    thermostat terminals, one that fits it (decision 1). The relay needs none of them: its own
+    state is its read-back, and its rest state what a hand-back does."""
     path = user_input.get("write_path")
     if path in (None, NO_CONTROL):
+        return {}
+    if options is not None and path not in paths_for_class(options):
+        return {"write_path": "path_not_for_boiler_class"}
+    if path == WritePath.RELAY:
         return {}
     if not user_input.get("confirmed_entity"):
         return {"confirmed_entity": "confirmed_entity_missing"}
@@ -1047,7 +1284,9 @@ def options_blockers(options: Mapping[str, Any]) -> list[str] | None:
         return None
     if not config.control.configured:
         return None
-    return config_blockers(config.control, config.installation, config.shared_signals)
+    return config_blockers(
+        config.control, config.installation, config.shared_signals, signals=config.signals
+    )
 
 
 def hand_back_value_problem(options: dict[str, Any], problem: str) -> bool:
@@ -1196,6 +1435,7 @@ CONTROL_ENTITY_KEYS = (
     "ch_confirmed_entity",
     "thermostat_setpoint_entity",
     "restart_entity",
+    "relay_entity",
 )
 
 
@@ -1919,7 +2159,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         if user_input is not None:
             path = user_input["write_path"]
             current = self.config_entry.options.get(CONTROL, {}).get("write_path")
-            errors = control_error(user_input)
+            errors = control_error(user_input, self.options)
             if not errors and path != NO_CONTROL:
                 errors = entity_errors(self.hass, user_input, CONTROL_ENTITY_FIELDS)
             if not errors and path != NO_CONTROL and not _zone_entities(self.options):
@@ -1938,6 +2178,12 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             apply_control(self.options, user_input)
             if path == NO_CONTROL:
                 return await self.async_step_save()
+            if path == WritePath.RELAY:
+                # R14: moving over from VT's central boiler, where it is set up or its commands
+                # are still kept: its settings offered, with the steps that follow.
+                prefill = self._vt_prefill()
+                moving = prefill is not None and prefill.exists
+                return await self._goto("control_relay_from_vt" if moving else "control_relay")
             step = {
                 WritePath.ENTITY: "control_entity",
                 WritePath.OPENTHERM_GW: "control_gateway",
@@ -2049,6 +2295,96 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         return self._form(
             step_id="control_mqtt", data_schema=control_mqtt_schema(self.options), errors=errors
         )
+
+    def _vt_prefill(self) -> VtCentralBoiler | None:
+        """VT's central boiler settings, read only (R14)."""
+        return vt_central_boiler_settings(self.hass, _zone_entities(self.options))
+
+    async def async_step_control_relay(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return await self._async_relay_step("control_relay", user_input)
+
+    async def async_step_control_relay_from_vt(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The relay step moving over from VT's central boiler: the same form, pre-filled, with
+        the migration's steps in its description (R14)."""
+        return await self._async_relay_step("control_relay_from_vt", user_input)
+
+    async def _async_relay_step(
+        self, step_id: str, user_input: dict[str, Any] | None
+    ) -> ConfigFlowResult:
+        """The relay and its own settings (R2, R3): refused in the form where the relay is no
+        switch or boiler thermostat entity, cannot be set to heat and off, is driven by a VT
+        zone, belongs to the boiler's gateway integration or to VT, or has another role; a
+        declared timer needs its length. What the hand-back goes through — the relay and its
+        rest state — cannot change while a hand-back is owed or control holds the relay."""
+        prefill = self._vt_prefill()
+        schema = control_relay_schema(self.options, prefill)
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            problem = relay_entity_error(self.hass, self.options, user_input.get(RELAY_ENTITY))
+            if problem is not None:
+                errors = {RELAY_ENTITY: problem}
+            elif user_input.get("relay_off_timer") == RelayTimer.MINUTES and user_input.get(
+                RELAY_TIMER_MIN
+            ) in (None, ""):
+                errors = {RELAY_TIMER_MIN: "relay_off_timer_min_missing"}
+            blocker = await self._async_hand_back_blocker()
+            if not errors and blocker and self._changes_hand_back(user_input, schema):
+                errors = {"base": blocker}
+            if not errors:
+                apply_control_relay(self.options, user_input)
+                return await self.async_step_control_relay_behaviour()
+        elif (
+            prefill is not None
+            and prefill.commands is VtCommands.NOT_SUPPORTED
+            and not self.options.get(CONTROL, {}).get(RELAY_ENTITY)
+        ):
+            # VT's commands name no switch or boiler thermostat pair: the user picks the relay.
+            errors = {"base": "vt_commands_not_supported"}
+        return self._form(step_id=step_id, data_schema=schema, errors=errors)
+
+    async def async_step_control_relay_behaviour(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The relay path's behaviour: VT's activation delay at every level; at the advanced
+        level the demand thresholds, learning pauses and frost fields, with the checks the
+        curve and behaviour steps make (T-37 among them)."""
+        prefill = self._vt_prefill()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if _advanced(self.options):
+                errors = self._relay_behaviour_error(user_input)
+            if not errors:
+                apply_control_relay_behaviour(self.options, user_input)
+                if _advanced(self.options):
+                    return await self.async_step_control_alarms()
+                return await self.async_step_save()
+        return self._form(
+            step_id="control_relay_behaviour",
+            data_schema=control_relay_behaviour_schema(self.options, prefill),
+            errors=errors,
+        )
+
+    def _relay_behaviour_error(self, user_input: dict[str, Any]) -> dict[str, str]:
+        count = int(user_input.get("count_threshold", CONTROL_DEFAULTS["count_threshold"]))
+        if user_input.get("frost_limit", CONTROL_DEFAULTS["frost_limit"]) >= user_input.get(
+            "frost_release", CONTROL_DEFAULTS["frost_release"]
+        ):
+            return {"frost_release": "frost_release_not_above_limit"}
+        if found := self._frost_zone_error(user_input):
+            return found
+        if count > len(self.options.get(ZONES, [])):
+            return {"count_threshold": "count_threshold_above_zones"}
+        if count == 0 and not (
+            user_input.get("power_threshold_kw") or user_input.get("opening_threshold")
+        ):
+            return {"count_threshold": "no_demand_criterion"}
+        if (unfed := self._criterion_no_zone_feeds(user_input)) is not None:
+            return {unfed: _UNFED[unfed]}
+        return {}
 
     async def async_step_control_curve(
         self, user_input: dict[str, Any] | None = None

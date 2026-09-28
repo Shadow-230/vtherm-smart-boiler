@@ -14,7 +14,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .control_config import hand_back_effect, wall_thermostat_applies
+from .control_config import WritePath, hand_back_effect, wall_thermostat_applies
 from .coordinator import SmartBoilerCoordinator
 from .entity import ControlEntity
 
@@ -62,7 +62,13 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         status = self.control.status
-        effect = hand_back_effect(self.control.options)
+        options = self.control.options
+        effect = hand_back_effect(options)
+        relay = options.write_path is WritePath.RELAY
+        if relay:
+            off_by = "relay"  # the relay switches the boiler off itself (X8)
+        else:
+            off_by = "heating_switch" if options.loop.ch_writes else "low_setpoint"
         return {
             "experimental": True,
             "blockers": list(status.blockers),
@@ -71,10 +77,13 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
             # hand-back leaves the boiler with — after a stand-alone hand-back, the boiler's own,
             # if it has one (S-57).
             "frost_protection_by": status.frost_protection_by,
-            # How "off" reaches the boiler: a heating switch really switches heating off; a low
-            # setpoint may leave the boiler's CH pump running.
-            "off_by": "heating_switch" if self.control.options.loop.ch_writes else "low_setpoint",
+            # How "off" reaches the boiler: a heating switch or a relay really switches heating
+            # off; a low setpoint may leave the boiler's CH pump running.
+            "off_by": off_by,
             "allowed_services": sorted(f"{d}.{s}" for d, s in self.control.allowed_services),
+            # The relay path (R15): controlled without confirmation where the relay reports no
+            # state, without confirmation that the boiler heats where no proof is mapped.
+            **({"confirmation": status.confirmation} if relay else {}),
             **self._wall_thermostat(),
         }
 

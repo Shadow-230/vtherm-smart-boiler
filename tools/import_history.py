@@ -37,7 +37,7 @@ from custom_components.vtherm_smart_boiler.core.parameters import (
     Source,
 )
 from custom_components.vtherm_smart_boiler.core.series import Series, known_duration
-from custom_components.vtherm_smart_boiler.core.signals import REQUIRED_SIGNALS, Signal
+from custom_components.vtherm_smart_boiler.core.signals import LINK_SIGNALS, Signal
 from custom_components.vtherm_smart_boiler.units import signal_value, temperature_to_celsius
 from custom_components.vtherm_smart_boiler.vtherm_attributes import zone_values
 
@@ -89,7 +89,8 @@ def parse_mapping(data: Mapping[str, Any]) -> EntityMapping:
         if not isinstance(entity, str) or "." not in entity:
             raise MappingError(f"[boiler] {key}: expected an entity ID")
         signals[signal] = entity
-    missing = sorted(s.value for s in REQUIRED_SIGNALS if s not in signals)
+    # The history's analysis needs the boiler link's signals (the entry itself no longer does).
+    missing = sorted(s.value for s in LINK_SIGNALS if s not in signals)
     if missing:
         raise MappingError(f"[boiler] missing required signals: {', '.join(missing)}")
     zones: dict[str, str] = {}

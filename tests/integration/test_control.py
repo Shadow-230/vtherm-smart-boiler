@@ -20,9 +20,10 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import EVENT_CALL_SERVICE
-from homeassistant.core import Event, HomeAssistant, ServiceCall, State
+from homeassistant.core import Context, Event, HomeAssistant, ServiceCall, State
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
@@ -3107,6 +3108,9 @@ async def test_a_0_2_1_store_moves_to_the_control_store(
         "heating_baseline": None,
         "fallback_at": None,
         "heating_fallback_at": None,
+        # X8: the relay's one rewrite and the restarts it answered (answers C, N).
+        "relay_rewritten_at": None,
+        "relay_restarts": [],
     }
     assert hass_storage[control_key(entry)]["data"] == moved
     main = hass_storage[main_key(entry)]["data"]
@@ -5903,7 +5907,12 @@ def control_entities() -> list[tuple[str, str]]:
         ("sensor", "control_state"),
         ("sensor", "control_setpoint"),
         ("button", "reset_comfort_correction"),
-        *(("binary_sensor", f"alarm_{kind.value}") for kind in control_module.ControlAlarm),
+        # The gateway path's alarms: the relay's exist on the relay path only (X8, R15).
+        *(
+            ("binary_sensor", f"alarm_{kind.value}")
+            for kind in control_module.ControlAlarm
+            if kind not in control_module.RELAY_ONLY_ALARMS
+        ),
     ]
 
 
@@ -9197,3 +9206,779 @@ async def test_a_failing_evaluation_keeps_the_last_suggestion_and_the_analysis(
     ]
     assert len(failures) == 1  # logged once, not at every run
     assert rig.gateway.calls == written
+
+
+# --- X8: on/off control through a relay (class 3) ---------------------------------------------
+
+RELAY = "switch.fake_boiler_relay"
+START_TRACE_S = 310.0  # past the five minutes a unit's start counts as a trace of an outage
+
+
+class _RelayEntity(SwitchEntity):
+    """The relay's switch entity, as its integration would add it."""
+
+    _attr_should_poll = False
+    _attr_name = "Fake boiler relay"
+    _attr_unique_id = "fake_boiler_relay"
+
+    def __init__(self, relay: FakeRelay) -> None:
+        self.entity_id = relay.entity_id
+        self._relay = relay
+
+    @property
+    def is_on(self) -> bool:
+        return self._relay.on
+
+    @property
+    def available(self) -> bool:
+        return self._relay.available
+
+    @property
+    def assumed_state(self) -> bool:
+        return self._relay.assumed
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        self._relay.turned(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        self._relay.turned(False)
+
+
+@dataclass
+class FakeRelay:
+    """A relay on the boiler's room-thermostat terminals as Home Assistant shows it — a Shelly,
+    Tasmota or Zigbee relay: a real switch entity, switched by the plugin's calls, which it may
+    not take (``takes``), or by something else; out of reach, back in another state after a
+    power cut, or an optimistic entity (``assumed``). Home Assistant calls no unavailable
+    entity."""
+
+    hass: HomeAssistant
+    entity_id: str = RELAY
+    on: bool = False
+    available: bool = True
+    takes: bool = True
+    assumed: bool = False
+    calls: list[bool] = field(default_factory=list)
+    entity: _RelayEntity | None = None
+
+    def turned(self, on: bool) -> None:
+        """A call reached it — with the caller's context, which Home Assistant keeps."""
+        self.calls.append(on)
+        if self.takes:
+            self.on = on
+        assert self.entity is not None
+        self.entity.async_write_ha_state()
+
+    def publish(self) -> None:
+        """A report of its own, with a context of its own (not the plugin's)."""
+        assert self.entity is not None
+        self.entity.async_set_context(Context())
+        self.entity.async_write_ha_state()
+
+    def switch(self, on: bool) -> None:
+        """Something else — an automation, its own button — switches it while it stays up."""
+        self.on = on
+        self.publish()
+
+    def away(self) -> None:
+        self.available = False
+        self.publish()
+
+    def back(self, on: bool) -> None:
+        """Back after a power or link loss, in ``on``."""
+        self.available = True
+        self.on = on
+        self.publish()
+
+
+@pytest.fixture
+async def relay(rig: Rig) -> FakeRelay:
+    from homeassistant.setup import async_setup_component
+    from pytest_homeassistant_custom_component.common import setup_test_component_platform
+
+    fake = FakeRelay(rig.hass)
+    fake.entity = _RelayEntity(fake)
+    setup_test_component_platform(rig.hass, "switch", [fake.entity])
+    assert await async_setup_component(rig.hass, "switch", {"switch": {"platform": "test"}})
+    await rig.hass.async_block_till_done()
+    return fake
+
+
+def relay_options(
+    zones: FakeZones, signals: tuple[Signal, ...] = SIGNALS, **control: Any
+) -> dict[str, Any]:
+    """An on/off boiler switched through a relay that reports its state, starts off after a power
+    cut and has no timer — the separate-contact tick given (answer G)."""
+    return {
+        "signals": {s.value: BOILER_ENTITIES[s] for s in signals},
+        "boiler": {"class": "on_off", "dhw": "combi"},
+        "zones": [{"entity_id": e} for e in zones.entities.values()],
+        "monitor": {"monitoring_days": 0},
+        "control": {
+            "write_path": "relay",
+            "relay_entity": RELAY,
+            "relay_is_separate_contact": True,
+            "relay_reports_state": "yes",
+            "relay_power_on_state": "off",
+            "relay_off_timer": "none",
+        }
+        | control,
+    }
+
+
+async def start_relay(rig: Rig, signals: tuple[Signal, ...] = SIGNALS, **control: Any) -> None:
+    entry = add_entry(rig, relay_options(rig.zones, signals, **control))
+    assert await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    rig.entry = entry
+
+
+def calling(rig: Rig, on: bool = True) -> None:
+    if on:
+        rig.zones.set("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+    else:
+        rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+
+
+def control_alarm(rig: Rig, kind: str) -> str:
+    return rig.state("binary_sensor", f"alarm_{kind}").state
+
+
+def name_of(rig: Rig, entity_id: str) -> str:
+    state = rig.hass.states.get(entity_id)
+    assert state is not None
+    return state.name
+
+
+async def test_relay_control_follows_vt_both_ways(rig: Rig, relay: FakeRelay) -> None:
+    """The relay goes on and off with the zones, at once; written on a mismatch only — no
+    repeats for a relay that reports its state and has no timer; switched off, control hands
+    back to the rest state, "off"."""
+    await start_relay(rig)
+    await rig.switch(True)
+    assert relay.calls == [True]
+    calling(rig, False)
+    await rig.advance(10)
+    assert relay.calls == [True, False]
+    calling(rig)
+    await rig.advance(10)
+    assert relay.calls == [True, False, True]
+    await rig.advance(3600)
+    assert relay.calls == [True, False, True]
+    state = rig.state("sensor", "control_state")
+    assert state.state == "heating"
+    assert state.attributes["relay_state"] == "on"
+    assert state.attributes["relay_check"] == "confirmed"
+    switch = rig.state("switch", "control")
+    assert switch.attributes["off_by"] == "relay"
+    assert switch.attributes["hand_back_effect"] == "relay_rests_off"
+    assert switch.attributes["confirmation"] is None
+    assert rig.entry is not None
+    registry = er.async_get(rig.hass)
+    setpoint = f"{rig.entry.entry_id}_control_setpoint"
+    assert registry.async_get_entity_id("sensor", DOMAIN, setpoint) is None  # R15
+    link = f"{rig.entry.entry_id}_alarm_boiler_link_lost"
+    assert registry.async_get_entity_id("binary_sensor", DOMAIN, link) is None
+    await rig.switch(False)
+    assert relay.calls[-1] is False
+    assert not relay.on
+    assert rig.state("sensor", "control_state").attributes["hand_back_confirmation"] == "confirmed"
+
+
+async def test_a_relay_out_of_reach_alarms_and_never_hands_back(rig: Rig, relay: FakeRelay) -> None:
+    """R6: nothing is written while the relay is out of reach, and nothing handed back — it
+    could not arrive; after five minutes the alarm and its repair issue; back after a power cut,
+    it gets the command at once."""
+    await start_relay(rig)
+    await rig.switch(True)
+    relay.away()
+    await rig.advance(290)
+    assert control_alarm(rig, "relay_unreachable") == "off"
+    assert issue(rig, "relay_unreachable") is None
+    await rig.advance(20)
+    assert control_alarm(rig, "relay_unreachable") == "on"
+    found = issue(rig, "relay_unreachable")
+    assert found is not None
+    assert found.translation_key == "relay_unreachable_off"
+    assert found.translation_placeholders == {"relay": name_of(rig, RELAY)}
+    assert relay.calls == [True]  # no write, no rest state
+    assert rig.state("sensor", "control_state").state == "heating"  # control keeps deciding
+    assert control_alarm(rig, "hand_back_failed") == "off"
+    relay.back(False)
+    await rig.advance(10)
+    assert relay.calls == [True, True]
+    assert relay.on
+    assert control_alarm(rig, "relay_unreachable") == "off"
+    assert issue(rig, "relay_unreachable") is None
+    # Flame and flow never gate a relay: the boiler's signals lost, control goes on.
+    rig.flow = None
+    rig.flame = None
+    await rig.advance(600)
+    assert rig.state("sensor", "control_state").state == "heating"
+    assert relay.calls == [True, True]
+
+
+async def test_a_relay_restart_gets_the_command_again(rig: Rig, relay: FakeRelay) -> None:
+    """Answer C: back from a power cut in another state — the command at once, counted; the
+    third within a day raises "commands lost", information only."""
+    await start_relay(rig)
+    await rig.switch(True)
+    for n in (1, 2, 3):
+        await rig.advance(130)  # past the last send's confirmation window
+        relay.away()
+        await rig.advance(30)
+        relay.back(False)
+        await rig.advance(10)
+        assert relay.calls[-1] is True, n
+        assert relay.on
+        assert control_alarm(rig, "commands_lost") == ("on" if n == 3 else "off"), n
+    assert control_alarm(rig, "outside_change") == "off"
+    assert rig.state("sensor", "control_state").state == "heating"
+
+
+@pytest.mark.parametrize(("rest", "severity"), [("off", "error"), ("on", "warning")])
+async def test_a_relay_switched_by_an_automation_is_rewritten_once_then_handed_back(
+    rig: Rig, relay: FakeRelay, rest: str, severity: str
+) -> None:
+    """Answers C, H and L: commanded off, switched on by an automation while it stayed
+    available — written back once; the second time within a day the plugin steps aside: the
+    rest state written once (unless the relay reads it already), then nothing, even when the
+    automation switches the relay again at once. The latch and its repair issue survive a
+    restart; switching control off and on clears them."""
+    calling(rig, False)
+    await start_relay(rig, relay_rest_state=rest)
+    await rig.switch(True)
+    await rig.advance(START_TRACE_S)
+    relay.switch(True)
+    await rig.advance(10)
+    assert relay.calls == [False]  # rewritten once
+    assert not relay.on
+    await rig.advance(130)  # past the rewrite's own confirmation window
+    relay.switch(True)
+    await rig.advance(20)
+    expected = [False, False] if rest == "off" else [False]  # "on" is read already
+    assert relay.calls == expected
+    relay.switch(not relay.on)  # the automation again, at once
+    await rig.advance(600)
+    assert relay.calls == expected  # left alone
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    assert rig.state("sensor", "control_state").attributes["relay_check"] is not None
+    found = issue(rig, "control_latched")
+    assert found is not None
+    assert found.translation_key == f"control_latched_relay_{rest}"
+    assert found.severity.value == severity
+    assert found.translation_placeholders == {"relay": name_of(rig, RELAY)}
+    assert rig.entry is not None
+    assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
+    await rig.hass.async_block_till_done()
+    await rig.advance(60)
+    assert relay.calls == expected
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    assert issue(rig, "control_latched") is not None
+    await rig.switch(False)
+    await rig.switch(True)
+    assert issue(rig, "control_latched") is None
+    assert rig.state("sensor", "control_state").state == "idle"
+
+
+async def test_a_relay_rest_state_changed_after_the_hand_back_is_left(
+    rig: Rig, relay: FakeRelay
+) -> None:
+    """R9 (V5's two-valued rule): control switched off — the rest state read back once, the
+    hand-back is done; changed afterwards with no trace, it is left to whoever changed it. Never
+    read back, the hand-back stays owed and is sent again every minute."""
+    await start_relay(rig)
+    await rig.switch(True)
+    await rig.switch(False)
+    assert relay.calls == [True, False]
+    relay.switch(True)
+    await rig.advance(600)
+    assert relay.calls == [True, False]  # not retried
+    relay.switch(False)
+    relay.takes = False  # a relay that does not take "off": never read back
+    await rig.switch(True)
+    assert relay.calls[-1] is True
+    relay.on = True
+    relay.publish()
+    await rig.switch(False)
+    await rig.advance(60)
+    offs = [call for call in relay.calls[3:] if call is False]
+    assert len(offs) >= 2  # owed, and sent again after a minute
+    assert rig.entry is not None
+    assert rig.entry.runtime_data.control.hand_back_owed
+
+
+@pytest.mark.parametrize("power_on", ["off", "unknown"])
+async def test_a_relay_that_keeps_restarting_steps_aside_on_the_fourth_time(
+    rig: Rig, relay: FakeRelay, power_on: str
+) -> None:
+    """Answer N: found off — its declared state after a power cut — with no trace while it
+    stayed available (or, with "I don't know", any change): a restart the relay did not report,
+    answered three times within a day; the fourth steps aside with the rest state once (here the
+    relay reads "off" already), and the latch survives a restart."""
+    await start_relay(rig, relay_power_on_state=power_on)
+    await rig.switch(True)
+    await rig.advance(START_TRACE_S)
+    for n in (1, 2, 3):
+        relay.switch(False)
+        await rig.advance(10)
+        assert relay.calls[-1] is True, n
+        assert relay.on
+        await rig.advance(600)
+    count = len(relay.calls)
+    relay.switch(False)
+    await rig.advance(20)
+    assert relay.calls[count:] == []  # stepping aside: no rewrite, the rest state read already
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    assert issue(rig, "control_latched") is not None
+    assert rig.entry is not None
+    assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
+    await rig.hass.async_block_till_done()
+    await rig.advance(60)
+    assert relay.calls[count:] == []
+    assert rig.state("sensor", "control_state").state == "handed_back"
+
+
+async def test_a_planned_restart_rests_then_restores_at_once(rig: Rig, relay: FakeRelay) -> None:
+    """R11: a planned stop sets the rest state; the next start gives the stored command at its
+    first step, with no activation delay (decision 5)."""
+    await start_relay(rig, activation_delay_s=120)
+    await rig.switch(True)
+    await rig.advance(120)
+    assert relay.calls == [True]
+    assert rig.entry is not None
+    assert await rig.hass.config_entries.async_unload(rig.entry.entry_id)
+    await rig.hass.async_block_till_done()
+    assert relay.calls == [True, False]  # the rest state at the stop
+    assert await rig.hass.config_entries.async_setup(rig.entry.entry_id)
+    await rig.hass.async_block_till_done()
+    assert relay.calls == [True, False, True]  # at once: no delay, no hand-back first
+    await rig.advance(600)
+    assert relay.calls == [True, False, True]
+
+
+def relay_restorable(rig: Rig, **changes: Any) -> dict[str, Any]:
+    """The control store a run that held the relay left — a crash, by default."""
+    return {
+        "enabled": True,
+        "controlling": True,
+        "last_command": {"heating": True, "setpoint": None, "at": START.timestamp()},
+        # As the entry holds them after its migration, which keeps the lowest water temperature.
+        "taken_with": relay_options(rig.zones)["control"] | {"hard_min": LOWEST},
+    } | changes
+
+
+async def start_relay_with_stored(
+    rig: Rig, hass_storage: dict[str, Any], control: dict[str, Any] | None
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=relay_options(rig.zones)
+    )
+    entry.add_to_hass(rig.hass)
+    if control is None:
+        seed_main(hass_storage, entry)  # the control store lost: it counts as holding (answer K)
+    else:
+        seed_stores(hass_storage, entry, control, "0.2.2")
+    await set_up(rig, entry)
+
+
+async def test_a_crash_restores_without_a_hand_back_first(
+    rig: Rig, relay: FakeRelay, hass_storage: dict[str, Any]
+) -> None:
+    """R11: after a crash the relay gets the stored command at once — no rest state first."""
+    await start_relay_with_stored(rig, hass_storage, relay_restorable(rig))
+    await rig.advance(20)
+    assert relay.calls == [True]
+    assert rig.entry is not None
+    assert not rig.entry.runtime_data.control.hand_back_owed
+
+
+async def test_an_unreadable_store_hands_a_relay_back_first(
+    rig: Rig, relay: FakeRelay, hass_storage: dict[str, Any]
+) -> None:
+    """Answer K: a lost control store means "was controlling": the rest state first."""
+    relay.on = True
+    relay.publish()
+    await start_relay_with_stored(rig, hass_storage, None)
+    await rig.advance(20)
+    assert relay.calls[0] is False
+
+
+@pytest.mark.parametrize("case", ["wish_off", "latched", "blocked", "options_differ", "no_command"])
+async def test_no_restore_when_the_wish_was_off_or_latched_or_blocked(
+    rig: Rig, relay: FakeRelay, hass_storage: dict[str, Any], case: str
+) -> None:
+    """R11's negatives: the relay is not given the stored command — it goes to its rest state,
+    the owed hand-back."""
+    relay.on = True
+    relay.publish()
+    changes: dict[str, Any] = {
+        "wish_off": {"enabled": False},
+        "latched": {"latched": True, "latched_by": ["outside_change"]},
+        "options_differ": {
+            "taken_with": relay_options(rig.zones, relay_repeat_s=60)["control"]
+            | {"hard_min": LOWEST}
+        },
+        "no_command": {"last_command": None},
+    }.get(case, {})
+    if case == "blocked":
+        vt_central_boiler(rig, True)
+    await start_relay_with_stored(rig, hass_storage, relay_restorable(rig, **changes))
+    await rig.advance(20)
+    assert relay.calls[:1] == [False]  # the rest state, never the stored "on" first
+
+
+async def test_an_owed_relay_hand_back_is_folded_when_control_resumes(
+    rig: Rig, relay: FakeRelay
+) -> None:
+    """R9: a hand-back owed (the relay was away) and control on again as the relay returns in
+    the commanded state: only the command — nothing written, as it shows it — no off-then-on."""
+    await start_relay(rig)
+    await rig.switch(True)
+    relay.away()
+    await rig.switch(False)  # the rest state cannot reach it: owed
+    assert rig.entry is not None
+    unit = rig.entry.runtime_data.control
+    assert unit.hand_back_owed
+    relay.back(True)
+    await rig.switch(True)
+    assert relay.calls == [True]
+    assert not unit.hand_back_owed
+    await rig.advance(120)
+    assert relay.calls == [True]
+    await rig.switch(False)
+    assert relay.calls == [True, False]  # the session's own hand-back at its end
+
+
+async def test_the_rest_state_notice_when_a_zone_calls(rig: Rig, relay: FakeRelay) -> None:
+    """R10: control not holding a relay resting "off", a zone calling: a repair issue naming it;
+    near freezing too; it goes once control takes the relay, or the relay is on (another
+    controller took it)."""
+    await start_relay(rig)
+    await rig.advance(10)
+    found = issue(rig, "relay_rests_off")
+    assert found is not None
+    zone = name_of(rig, rig.zones.entities["living"])
+    assert found.translation_placeholders == {"zones": zone}
+    relay.switch(True)  # someone switched it on: the boiler may heat
+    await rig.advance(10)
+    assert issue(rig, "relay_rests_off") is None
+    relay.switch(False)
+    calling(rig, False)
+    await rig.advance(10)
+    assert issue(rig, "relay_rests_off") is None
+    rig.zones.set("living", "off", current_temperature=4.0, valve_open_percent=10)
+    await rig.advance(10)
+    assert issue(rig, "relay_rests_off") is not None  # near freezing, heat could reach it
+    calling(rig)
+    await rig.switch(True)
+    await rig.advance(10)
+    assert issue(rig, "relay_rests_off") is None
+
+
+async def test_no_rest_state_notice_for_a_relay_resting_on(rig: Rig, relay: FakeRelay) -> None:
+    await start_relay(rig, relay_rest_state="on")
+    await rig.advance(10)
+    assert issue(rig, "relay_rests_off") is None
+
+
+@pytest.mark.parametrize(
+    ("reports", "assumed", "signals", "shown"),
+    [
+        ("no", False, SIGNALS, "controlled_without_confirmation"),
+        ("unknown", False, SIGNALS, "controlled_without_confirmation"),
+        ("yes", True, SIGNALS, "controlled_without_confirmation"),
+        ("yes", False, (Signal.OUTDOOR,), "without_heat_confirmation"),
+        ("yes", False, SIGNALS, None),
+    ],
+)
+async def test_controlled_without_confirmation_is_shown(
+    rig: Rig,
+    relay: FakeRelay,
+    reports: str,
+    assumed: bool,
+    signals: tuple[Signal, ...],
+    shown: str | None,
+) -> None:
+    relay.assumed = assumed
+    relay.publish()
+    await start_relay(rig, signals, relay_reports_state=reports)
+    await rig.switch(True)
+    assert rig.state("switch", "control").attributes["confirmation"] == shown
+    check = rig.state("sensor", "control_state").attributes["relay_check"]
+    assert (check == "unverified") is (shown == "controlled_without_confirmation")
+
+
+async def test_boiler_not_responding_after_thirty_minutes(rig: Rig, relay: FakeRelay) -> None:
+    """R12: 30 minutes of the relay on, a proof input known and no sign of heat — the
+    information alarm; it clears on any proof. Without a proof input: never, and the status
+    says so."""
+    await start_relay(rig)
+    await rig.switch(True)
+    await rig.advance(1790)
+    assert control_alarm(rig, "boiler_not_responding") == "off"
+    await rig.advance(20)
+    assert control_alarm(rig, "boiler_not_responding") == "on"
+    assert rig.state("sensor", "control_state").attributes["boiler_heats"] == "not_seen"
+    rig.flame = True
+    await rig.advance(10)
+    assert control_alarm(rig, "boiler_not_responding") == "off"
+    assert rig.state("sensor", "control_state").attributes["boiler_heats"] == "heats"
+    assert rig.state("sensor", "control_state").state == "heating"  # information only
+
+
+async def test_no_heat_alarm_without_a_proof_input(rig: Rig, relay: FakeRelay) -> None:
+    await start_relay(rig, (Signal.OUTDOOR,))
+    await rig.switch(True)
+    await rig.advance(2100)
+    assert control_alarm(rig, "boiler_not_responding") == "off"
+    assert rig.state("sensor", "control_state").attributes["boiler_heats"] == "unverified"
+    switch = rig.state("switch", "control")
+    assert switch.attributes["confirmation"] == "without_heat_confirmation"
+
+
+async def test_only_the_relays_services_are_called(rig: Rig, relay: FakeRelay) -> None:
+    await start_relay(rig)
+    await rig.switch(True)
+    calling(rig, False)
+    await rig.advance(30)
+    await rig.switch(False)
+    control = rig.entity("switch", "control")
+    made = {
+        (domain, service)
+        for domain, service, data in rig.services
+        if data.get("entity_id") != control
+    }
+    assert made == {("switch", "turn_on"), ("switch", "turn_off")}
+    allowed = rig.state("switch", "control").attributes["allowed_services"]
+    assert set(allowed) <= {
+        "switch.turn_on",
+        "switch.turn_off",
+        "vtherm_smartpi.set_smartpi_learning",
+    }
+
+
+async def test_learning_pauses_apply_to_a_relay(rig: Rig, relay: FakeRelay) -> None:
+    """R13: SmartPI's learning is paused during hot water on the relay path too."""
+    learning: list[tuple[str, bool]] = []
+
+    async def set_learning(call: ServiceCall) -> None:
+        learning.append((call.data["entity_id"], call.data["learning_enabled"]))
+
+    rig.hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    zone = rig.zones.entities["living"]
+    rig.zones.set(
+        "living",
+        hvac_action="heating",
+        valve_open_percent=60,
+        on_percent=0.6,
+        configuration={"proportional_function": "smartpi"},
+        specific_states={"smartpi_learning_enabled": True},
+    )
+    await start_relay(rig)
+    await rig.switch(True)
+    rig.dhw = True
+    await rig.advance(10)
+    assert learning == [(zone, False)]
+    await rig.switch(False)
+    assert learning[-1] == (zone, True)
+
+
+@pytest.mark.parametrize("command", [True, False])
+async def test_a_relay_that_never_takes_the_command_raises_relay_ignored(
+    rig: Rig, relay: FakeRelay, command: bool
+) -> None:
+    """R7: never the commanded state for 120 s after each of the session's first three sends —
+    not written again this session; "write ignored" names the relay and a repair issue (an
+    error) says so. Where it is "off" it ignores, control is blocked (answer O): the boiler may
+    keep heating."""
+    relay.on = not command
+    relay.takes = False
+    relay.publish()
+    calling(rig, command)
+    await start_relay(rig)
+    # Past the unit's start, a trace of an outage: sends within it are lost commands, not the
+    # start phase's attempts (X1's rule).
+    await rig.advance(START_TRACE_S)
+    await rig.switch(True)
+    await rig.advance(720)
+    sends = [call for call in relay.calls if call is command]
+    assert len(sends) == 3
+    write_ignored = rig.state("binary_sensor", "alarm_write_ignored")
+    assert write_ignored.state == "on"
+    assert write_ignored.attributes["targets"] == ["relay"]
+    found = issue(rig, "relay_ignored")
+    assert found is not None
+    assert found.severity.value == "error"
+    assert found.translation_key == ("relay_ignored" if command else "relay_ignored_off")
+    await rig.advance(1200)
+    # Not written again this session, repeats included; where "off" is ignored, the rest state
+    # ("off") is written once at the hand-back, though it cannot be relied on (answer O).
+    assert len([call for call in relay.calls if call is command]) == (3 if command else 4)
+    if not command:
+        blockers = rig.state("switch", "control").attributes["blockers"]
+        assert "heating_off_ignored" in blockers
+        latch = issue(rig, "control_latched")
+        assert latch is not None
+        assert latch.translation_key == "control_latched_relay_heating_off_ignored"
+
+
+async def test_a_relay_a_vt_zone_drives_or_of_the_gateway_blocks_control(
+    rig: Rig, relay: FakeRelay
+) -> None:
+    """R2 at run time: VT can be reconfigured without the options changing — a relay a VT
+    thermostat drives for a room, one of the gateway integration or VT, or a boiler thermostat
+    entity that cannot be set to heat and off, blocks control; nothing is written to it."""
+    await start_relay(rig)
+    await rig.switch(True)
+    assert relay.calls == [True]
+    vt = MockConfigEntry(domain=VT_PLATFORM, data={"underlying_entity_ids": [RELAY]})
+    vt.add_to_hass(rig.hass)
+    registry = er.async_get(rig.hass)
+    registry.async_update_entity(rig.zones.entities["living"], config_entry_id=vt.entry_id)
+    await rig.advance(10)
+    assert "relay_used_by_zone" in blockers(rig)
+    assert relay.calls == [True, False]  # handed back: the rest state
+    await rig.advance(600)
+    assert relay.calls == [True, False]
+
+
+async def test_a_relay_boiler_thermostat_without_both_modes_blocks_control(
+    rig: Rig, relay: FakeRelay
+) -> None:
+    rig.hass.states.async_set("climate.boiler", "off", {"hvac_modes": ["off", "auto"]})
+    await start_relay(rig, relay_entity="climate.boiler")
+    await rig.advance(10)
+    assert "relay_climate_modes" in blockers(rig)
+    rig.hass.states.async_set("climate.boiler", "off", {"hvac_modes": ["off", "heat"]})
+    await rig.advance(10)
+    assert "relay_climate_modes" not in blockers(rig)
+
+
+async def test_the_relay_path_needs_no_boiler_signal_but_the_water_path_does(
+    rig: Rig, relay: FakeRelay
+) -> None:
+    """R4: flame and flow optional for the entry; water-temperature control gets blockers where
+    either is missing — the relay path none."""
+    await start_relay(rig, (Signal.OUTDOOR,))
+    await rig.switch(True)
+    assert relay.calls == [True]
+    assert "no_flame_signal" not in blockers(rig)
+    assert "no_flow_signal" not in blockers(rig)
+
+
+async def test_water_temperature_control_is_blocked_without_flame_and_flow(rig: Rig) -> None:
+    entry_options = options(rig.zones) | {
+        "signals": {Signal.OUTDOOR.value: BOILER_ENTITIES[Signal.OUTDOOR]}
+    }
+    entry = add_entry(rig, entry_options)
+    assert await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    rig.entry = entry
+    await rig.advance(10)
+    found = blockers(rig)
+    assert "no_flame_signal" in found
+    assert "no_flow_signal" in found
+    await rig.advance(30)
+    assert rig.gateway.calls == []
+
+
+async def test_a_relay_not_yet_reported_never_turns_the_restore_into_a_hand_back(
+    rig: Rig, relay: FakeRelay, hass_storage: dict[str, Any]
+) -> None:
+    """R11: the relay out of reach from the start and the zones not reported: the restore
+    waits; when the recognition period ends it gives way without a hand-back — nothing could
+    reach the relay — and the relay gets the command as soon as it is back, never "off"
+    first."""
+    from custom_components.vtherm_smart_boiler.core.zone_watch import RECOGNITION_S
+
+    relay.away()
+    not_started(rig)
+    await start_relay_with_stored(rig, hass_storage, relay_restorable(rig))
+    await rig.advance(RECOGNITION_S + 30)
+    assert relay.calls == []
+    assert control_alarm(rig, "hand_back_failed") == "off"
+    assert issue(rig, OWED) is None
+    started(rig)
+    relay.back(False)
+    await rig.advance(10)
+    assert relay.calls == [True]
+
+
+async def test_the_relay_restore_goes_out_before_the_switch_restores(
+    rig: Rig, relay: FakeRelay, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R11: V3 knows the wish from the store — the stored command is written at the first
+    step, before the control switch has restored the user's wish."""
+    from homeassistant.helpers.restore_state import RestoreEntity
+
+    from custom_components.vtherm_smart_boiler import switch as switch_module
+
+    async def added_without_restore(self: Any) -> None:
+        await RestoreEntity.async_added_to_hass(self)
+
+    monkeypatch.setattr(switch_module.ControlSwitch, "async_added_to_hass", added_without_restore)
+    await start_relay_with_stored(rig, hass_storage, relay_restorable(rig))
+    assert relay.calls == []
+    await rig.advance(10)
+    assert relay.calls == [True]
+
+
+async def test_an_owed_relay_hand_back_waits_for_the_relay_while_control_commands_it(
+    rig: Rig, relay: FakeRelay
+) -> None:
+    """R6, R9: control on again while the relay is still out of reach — the owed hand-back is
+    not tried against it, and once it is back only the command goes out, folding the debt."""
+    await start_relay(rig)
+    await rig.switch(True)
+    relay.away()
+    await rig.switch(False)
+    await rig.switch(True)
+    await rig.advance(180)
+    assert relay.calls == [True]  # nothing reached it meanwhile
+    assert rig.entry is not None
+    unit = rig.entry.runtime_data.control
+    assert unit.hand_back_owed
+    relay.back(False)
+    await rig.advance(10)
+    assert relay.calls == [True, True]  # the command, never "off" first
+    assert not unit.hand_back_owed
+    assert control_alarm(rig, "hand_back_failed") == "off"
+
+
+async def test_a_failed_relay_write_is_sent_again_at_the_next_step(
+    rig: Rig, relay: FakeRelay, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A relay write that fails — the service raises — raises "write failed" and goes again at
+    the next step."""
+    failing = {"on": True}
+
+    async def turn_on(self: Any, **kwargs: Any) -> None:
+        if failing["on"]:
+            raise HomeAssistantError("the relay did not answer")
+        self._relay.turned(True)
+
+    monkeypatch.setattr(_RelayEntity, "async_turn_on", turn_on)
+    await start_relay(rig)
+    await rig.switch(True)
+    assert relay.calls == []
+    assert control_alarm(rig, "write_failed") == "on"
+    failing["on"] = False
+    await rig.advance(10)
+    assert relay.calls == [True]
+    assert control_alarm(rig, "write_failed") == "off"
+
+
+async def test_unreadable_relay_memory_in_the_store_is_skipped(
+    rig: Rig, relay: FakeRelay, hass_storage: dict[str, Any]
+) -> None:
+    """A stored restart list or rewrite of another shape is skipped, logged, and the rest of
+    the store restored."""
+    stored = relay_restorable(rig, relay_restarts="yesterday", relay_rewritten_at="noon")
+    await start_relay_with_stored(rig, hass_storage, stored)
+    await rig.advance(20)
+    assert relay.calls == [True]  # the restore goes on
+    assert rig.entry is not None
+    loop = rig.entry.runtime_data.control._session.loop
+    assert loop.relay.restarts == ()
+    assert loop.relay.rewritten_at is None

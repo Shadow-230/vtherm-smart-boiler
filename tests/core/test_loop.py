@@ -30,6 +30,15 @@ from custom_components.vtherm_smart_boiler.core.loop import (
     remember_command,
 )
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
+from custom_components.vtherm_smart_boiler.core.relay import (
+    RelayConfig,
+    RelayPowerOn,
+    RelayReports,
+    RelaySeen,
+    RelayState,
+    RelayTimer,
+    RelayWrite,
+)
 from custom_components.vtherm_smart_boiler.core.zone_watch import graced, in_recognition
 
 CONFIG = LoopConfig(
@@ -517,3 +526,130 @@ def test_small_steps_are_stored_at_once_as_they_add_up() -> None:
     stored = LastCommand(True, 45.0, 0.0)
     assert not remember_command(stored, True, 45.5, 10.0)[1]
     assert remember_command(stored, True, 46.0, 20.0)[1]  # a kelvin from the one stored
+
+
+# --- X8: on/off control through a relay ---------------------------------------------------------
+
+RELAY_LOOP = LoopConfig(
+    control=ControlConfig(
+        curve=HeatingCurve(), ramp_k_per_min=None, on_off=True, stale_hand_back_s=None
+    ),
+    ch_writes=False,
+    relay=RelayConfig(reports=RelayReports.YES, power_on=RelayPowerOn.ON, timer=RelayTimer.NONE),
+)
+
+
+def test_a_relay_has_no_setpoint_guard() -> None:
+    """R5: the loop plans no setpoint or heating-switch write on the relay path; heating on/off
+    goes to the relay rule, and the guards stay untouched."""
+    seen = RelaySeen(on=False, known=True, available=True)
+    state, out = loop_step(LoopState(), inputs(0.0), None, RELAY_LOOP, relay_seen=seen)
+    assert out.setpoint is None
+    assert out.heating is None
+    assert out.relay == RelayWrite(True, WriteKind.CHANGE)
+    assert out.heating_on is True
+    assert state.setpoint == GuardState()
+    assert state.switch == GuardState()
+    assert out.decision.command is not None
+    assert out.decision.command.setpoint is None
+    # Without an outdoor temperature too: never FALLBACK.
+    _state, out = loop_step(
+        LoopState(), inputs(0.0, outdoor_sensor=None), None, RELAY_LOOP, relay_seen=seen
+    )
+    assert out.relay == RelayWrite(True, WriteKind.CHANGE)
+    assert out.decision.mode.value == "heating"
+
+
+def test_a_relay_loss_counts_toward_commands_lost_and_a_step_aside_hands_back() -> None:
+    """A relay's lost commands feed "commands lost"; another controller stops every write, and
+    the next step hands back (the unit then latches and makes the relay's hand-back)."""
+    on = RelaySeen(on=True, known=True, available=True)
+    state, out = loop_step(LoopState(), inputs(0.0), None, RELAY_LOOP, relay_seen=on)
+    assert out.relay is None  # it already shows the command: nothing written
+    for n, t in enumerate((1000.0, 2000.0, 3000.0), start=1):
+        back = RelaySeen(on=False, known=True, available=True, trace=True, changed_at=t)
+        state, out = loop_step(state, inputs(t), None, RELAY_LOOP, relay_seen=back)
+        assert out.relay == RelayWrite(True, WriteKind.RESEND)
+        assert out.commands_lost is (n == 3)
+        state, out = loop_step(state, inputs(t + 10), None, RELAY_LOOP, relay_seen=on)
+    switched = RelaySeen(on=False, known=True, available=True, changed_at=4000.0)
+    state, out = loop_step(state, inputs(4000.0), None, RELAY_LOOP, relay_seen=switched)
+    assert out.relay == RelayWrite(True, WriteKind.REWRITE)  # answer C: rewritten once
+    state, out = loop_step(state, inputs(4010.0), None, RELAY_LOOP, relay_seen=on)
+    switched = RelaySeen(on=False, known=True, available=True, changed_at=5000.0)
+    state, out = loop_step(state, inputs(5000.0), None, RELAY_LOOP, relay_seen=switched)
+    assert out.events == (GuardEvent.OUTSIDE_CHANGE,)
+    assert out.relay is None
+    assert out.blocked
+    # The unit turns the event into the always-hand-back alarm: the next step hands back.
+    state, out = loop_step(
+        state,
+        inputs(5010.0, hand_back_alarms=("outside_change",)),
+        None,
+        RELAY_LOOP,
+        relay_seen=switched,
+    )
+    assert out.hand_back
+    assert state.relay.written is None
+    assert state.relay.blocked  # the session's memory stays
+
+
+def test_a_relay_that_ignores_off_from_the_start_blocks_control() -> None:
+    """Answer O applied to relays: "off" ignored from the start — the next step latches with
+    ``heating_off_ignored`` and hands back, whatever reaction is stored."""
+    stuck = RelaySeen(on=True, known=True, available=True)
+    zones = (ZoneState("z", 20.0, 21.0, True, reported_at=0.0, valve_open=0.0),)
+    state = LoopState()
+    out = None
+    for t in [10.0 * n for n in range(0, 80)]:
+        state, out = loop_step(state, inputs(t, zones=zones), None, RELAY_LOOP, relay_seen=stuck)
+        if out.hand_back:
+            break
+    assert out is not None
+    assert out.hand_back
+    assert state.control.latched
+    assert HEATING_OFF_IGNORED in state.control.latched_by
+    assert out.ignored == ("relay",)
+
+
+def test_a_new_session_keeps_the_relays_rewrite_and_restarts_for_their_day() -> None:
+    relay = RelayState(rewritten_at=100.0, restarts=(50.0,), blocked=True, ignored=True)
+    kept = new_session(LoopState(relay=relay), 1000.0).relay
+    assert kept.rewritten_at == 100.0
+    assert kept.restarts == (50.0,)
+    assert not kept.blocked
+    assert not kept.ignored
+
+
+def test_a_relays_own_timer_lapses_never_raise_commands_lost() -> None:
+    """R5 (SCOPE §5 class 3): a relay whose declared 10-min timer a repeated "on" does not
+    restart lapses every 10 minutes through a whole day. Each lapse is its own: "on" goes out
+    again at the same step, no loss is counted, and "commands lost" never rises."""
+    relay = RelayConfig(
+        reports=RelayReports.YES,
+        power_on=RelayPowerOn.OFF,
+        timer=RelayTimer.MINUTES,
+        timer_s=600.0,
+    )
+    config = replace(RELAY_LOOP, relay=relay)
+    state = LoopState()
+    on, on_at, changed_at = False, None, None
+    lapses = resent = 0
+    t = 0.0
+    while t <= DAY:
+        if on and on_at is not None and t - on_at >= 600.0:  # the relay's own timer
+            on, changed_at = False, on_at + 600.0
+            lapses += 1
+        seen = RelaySeen(on=on, known=True, available=True, changed_at=changed_at)
+        state, out = loop_step(state, inputs(t), None, config, relay_seen=seen)
+        assert not out.commands_lost, t
+        if out.relay is not None:
+            if out.relay.on and not on:
+                on_at, changed_at = t, t
+                resent += 1
+            on = out.relay.on
+        t += 10.0
+    assert lapses == 144
+    assert resent == lapses + 1  # the first "on", then one at each lapse
+    assert state.losses == ()
+    assert on

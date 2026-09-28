@@ -17,6 +17,7 @@ class SignalKind(StrEnum):
     PERCENT = "percent"
     PRESSURE = "pressure"
     COUNTER = "counter"
+    POWER = "power"  # W
 
 
 class Signal(StrEnum):
@@ -36,6 +37,9 @@ class Signal(StrEnum):
     CH_ACTIVE = "ch_active"
     PUMP_RUNNING = "pump_running"
     GAS_METER = "gas_meter"
+    # The boiler's electric power, e.g. from a plug that measures it: only a relay's proof that
+    # the boiler heats (X8).
+    BOILER_POWER = "boiler_power"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,10 +50,14 @@ class SignalSpec:
     no age limit here: one freshness rule serves the monitor and control — a value is fresh while
     its entity is available and, if the user set an age limit for it, reported within it. A
     steady reading is not a stale one; many sources report only on change.
+
+    ``link``: the signal is part of the boiler link — the connection sensor, and the link of
+    water-temperature control, which needs it mapped (X8: no signal is required for the entry;
+    a home with only a relay is monitored too).
     """
 
     kind: SignalKind
-    required: bool = False
+    link: bool = False
     low: float | None = None
     high: float | None = None
 
@@ -61,8 +69,8 @@ class SignalSpec:
 
 
 SIGNAL_SPECS: dict[Signal, SignalSpec] = {
-    Signal.FLAME: SignalSpec(SignalKind.BINARY, required=True),
-    Signal.FLOW: SignalSpec(SignalKind.TEMPERATURE, required=True, low=-20.0, high=110.0),
+    Signal.FLAME: SignalSpec(SignalKind.BINARY, link=True),
+    Signal.FLOW: SignalSpec(SignalKind.TEMPERATURE, link=True, low=-20.0, high=110.0),
     Signal.RETURN: SignalSpec(SignalKind.TEMPERATURE, low=-20.0, high=110.0),
     Signal.MODULATION: SignalSpec(SignalKind.PERCENT, low=0.0, high=100.0),
     Signal.CH_SETPOINT: SignalSpec(SignalKind.TEMPERATURE, low=0.0, high=100.0),
@@ -75,10 +83,13 @@ SIGNAL_SPECS: dict[Signal, SignalSpec] = {
     Signal.CH_ACTIVE: SignalSpec(SignalKind.BINARY),
     Signal.PUMP_RUNNING: SignalSpec(SignalKind.BINARY),
     Signal.GAS_METER: SignalSpec(SignalKind.COUNTER, low=0.0),
+    Signal.BOILER_POWER: SignalSpec(SignalKind.POWER, low=0.0, high=100000.0),
 }
 
-REQUIRED_SIGNALS: frozenset[Signal] = frozenset(
-    signal for signal, spec in SIGNAL_SPECS.items() if spec.required
+# The boiler link's signals: water-temperature control needs them mapped (``no_flame_signal``,
+# ``no_flow_signal``), the connection sensor judges them. Optional for the entry (X8).
+LINK_SIGNALS: frozenset[Signal] = frozenset(
+    signal for signal, spec in SIGNAL_SPECS.items() if spec.link
 )
 
 # The order the form asks for the signals in, which is also their precedence: one entity feeds
@@ -99,6 +110,7 @@ SIGNAL_PRECEDENCE: tuple[Signal, ...] = (
     Signal.PUMP_RUNNING,
     Signal.FLUE_GAS,
     Signal.GAS_METER,
+    Signal.BOILER_POWER,
     Signal.ROOM_SETPOINT,
     Signal.ROOM_TEMPERATURE,
 )
