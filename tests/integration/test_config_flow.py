@@ -9,6 +9,7 @@ from homeassistant.config_entries import SOURCE_USER
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
+from custom_components.vtherm_smart_boiler.config import EntryConfig
 from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 
@@ -763,6 +764,40 @@ async def test_freshness_limits_are_set_per_signal(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry.options["freshness"] == {"flow": 900.0}
+
+
+async def test_the_weather_entity_gets_a_freshness_limit_of_its_own(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """P-41 (X2): with a weather entity set, the freshness step offers its own age limit, stored
+    in seconds beside the signals' and read apart from them; none by default. Without a weather
+    entity the field is not offered, and a limit left from before goes with the next save."""
+    entry_id = await create_entry(hass, entities, "simple")
+    signals = {"flame": entities["flame"], "flow": entities["flow"]}
+
+    async def save(step_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        menu = await hass.config_entries.options.async_init(entry_id)
+        result = await options_step(hass, menu, {"next_step_id": step_id})
+        shown = result
+        result = await options_step(hass, result, data)
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+        return shown
+
+    await save("signals", signals | {"weather": WEATHER_ENTITY})
+    form = await save("freshness", {"flow": 15, "weather": 90})
+    assert set(form["data_schema"].schema) == {"flame", "flow", "weather"}
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry.options["freshness"] == {"flow": 900.0, "weather": 5400.0}
+    config = EntryConfig.from_options(entry.options)
+    assert config.freshness == {Signal.FLOW: 900.0}
+    assert config.weather_max_age_s == 5400.0
+    form = await save("freshness", {"flow": 15})
+    assert EntryConfig.from_options(entry.options).weather_max_age_s is None  # emptied: none
+    await save("signals", signals)  # the weather entity removed
+    form = await save("freshness", {"flow": 15})
+    assert set(form["data_schema"].schema) == {"flame", "flow"}
     assert entry.options["freshness"] == {"flow": 900.0}
 
 

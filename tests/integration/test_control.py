@@ -200,6 +200,8 @@ class Rig:
     flow_reported: bool = True  # False: the flow is not reported again (a source that reports
     # only on change, as MQTT entities do)
     outdoor_reported: bool = True  # the same for the outdoor temperature
+    flame: bool | None = False  # None: the flame's entity unavailable
+    flame_reported: bool = True  # the same for the flame
     services: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
     storage: dict[str, Any] = field(default_factory=dict)  # the test's stores (hass_storage)
 
@@ -207,10 +209,10 @@ class Rig:
         """The gateway's periodic reports: fresh boiler signals and setpoint echo; without its
         connection, the gateway's entities are unavailable."""
         connected = self.gateway.connected
-        values: dict[Signal, float | bool | None] = {
-            Signal.FLAME: False if connected else None,
-            Signal.DHW_ACTIVE: self.dhw if connected else None,
-        }
+        values: dict[Signal, float | bool | None] = {}
+        if self.flame_reported:
+            values[Signal.FLAME] = self.flame if connected else None
+        values[Signal.DHW_ACTIVE] = self.dhw if connected else None
         if self.outdoor_reported:
             values[Signal.OUTDOOR] = self.outdoor if connected else None
         if self.flow_reported:
@@ -432,6 +434,8 @@ async def test_no_write_without_fresh_boiler_data(rig: Rig) -> None:
 
 
 async def test_stale_data_stops_writes_and_hands_back_after_five_minutes(rig: Rig) -> None:
+    """Without the flow nothing is written; after five minutes a hand-back. Control resumes by
+    itself once the flow has been back for a minute without a break (X2), not before."""
     await start(rig)
     await rig.switch(True)
     rig.flow = None
@@ -445,6 +449,9 @@ async def test_stale_data_stops_writes_and_hands_back_after_five_minutes(rig: Ri
     assert rig.state("sensor", "control_state").state == "handed_back"
     resumed = len(rig.gateway.calls)
     rig.flow = 35.0
+    await rig.advance(50)
+    assert rig.gateway.calls[resumed:] == []  # fresh for less than a minute: still handed back
+    assert rig.state("sensor", "control_state").state == "handed_back"
     await rig.advance(20)
     assert ("setpoint", EXPECTED) in rig.gateway.calls[resumed:]  # control resumes with data
 
@@ -2087,7 +2094,8 @@ async def test_a_latch_holds_through_a_day_and_a_night(
 @pytest.mark.parametrize("topology", ["gateway_standalone", "gateway_with_thermostat"])
 async def test_a_lost_boiler_link_raises_an_alarm_and_hands_back(rig: Rig, topology: str) -> None:
     """In every topology: no write without the boiler's data, an alarm, and after five minutes a
-    hand-back — stand-alone, heating stops, as the switch says. Control resumes with the data."""
+    hand-back — stand-alone, heating stops, as the switch says. Control resumes, and the alarm
+    goes, once the data has been back for a minute (X2)."""
     await start(rig, topology=topology)
     await rig.switch(True)
     effect = rig.state("switch", "control").attributes["hand_back_effect"]
@@ -2100,7 +2108,10 @@ async def test_a_lost_boiler_link_raises_an_alarm_and_hands_back(rig: Rig, topol
     assert rig.gateway.calls[count:] == HAND_BACK
     assert rig.state("binary_sensor", "alarm_boiler_link_lost").state == "on"
     rig.flow = 35.0
-    await rig.advance(20)
+    await rig.advance(50)  # the flow back for less than a minute: the link is still lost
+    assert rig.state("binary_sensor", "alarm_boiler_link_lost").state == "on"
+    assert rig.gateway.calls[count:] == HAND_BACK
+    await rig.advance(20)  # a minute of it (X2)
     assert rig.state("binary_sensor", "alarm_boiler_link_lost").state == "off"
     assert rig.gateway.setpoints()[-1] == EXPECTED  # control resumed
 
@@ -6898,3 +6909,242 @@ async def test_the_return_by_itself_knows_each_hand_back_state(rig: Rig, path: s
     await rig.advance(3660, step=60.0)
     assert rig.state("sensor", "control_state").attributes["latched_by"] == []
     assert issue(rig, "control_latched") is None
+
+
+# --- X2: the boiler link and freshness (P-08, P-41; T-03; Open after R6 #8) --------------------
+
+
+def link_alarm(rig: Rig) -> str:
+    return rig.state("binary_sensor", "alarm_boiler_link_lost").state
+
+
+@pytest.mark.parametrize("lost", ["flow", "gateway"])
+async def test_a_lost_link_after_a_restart_raises_boiler_link_lost(
+    rig: Rig, hass_storage: dict[str, Any], lost: str
+) -> None:
+    """T-03 (P-08; the review's Appendix B, first row): stand-alone, the last run held the boiler
+    and control is to stay on; Home Assistant restarts with the boiler link still lost — the flow
+    gone, or the whole gateway. The owed hand-back goes first (it reaches a gateway that is
+    there); the link's samples start empty, so the alarm rises 300 s after the start, and ten
+    minutes on it is still on, the state showing the wait: a restart no longer clears it."""
+    if lost == "flow":
+        rig.flow = None
+    else:
+        rig.gateway.connected = False
+    rig.live()
+    await start_with_stored(
+        rig,
+        hass_storage,
+        {"controlling": True, "enabled": True},
+        "0.2.2",
+        topology="gateway_standalone",
+    )
+    assert rig.state("switch", "control").state == "on"
+    await rig.advance(290)
+    assert link_alarm(rig) == "off"
+    await rig.advance(20)
+    assert link_alarm(rig) == "on"
+    await rig.advance(300)  # ten minutes after the start
+    assert link_alarm(rig) == "on"
+    state = rig.state("sensor", "control_state")
+    assert state.state in ("handed_back", "waiting_data")
+    assert "boiler_link_stale" in state.attributes["reasons"]
+    assert rig.gateway.calls == ([] if lost == "gateway" else HAND_BACK)  # nothing more
+
+
+@pytest.mark.parametrize("held_by", ["monitoring_period", "latch"])
+async def test_boiler_link_lost_rises_while_a_blocker_holds(
+    rig: Rig, hass_storage: dict[str, Any], held_by: str
+) -> None:
+    """P-08: the switch on while the monitoring period blocks control — or a latch holds it; the
+    link down for six minutes raises the alarm all the same, with nothing written, and the alarm
+    goes once the link has been back for a minute."""
+    stored: dict[str, Any] = {"enabled": True}
+    entry_options = options(rig.zones)
+    if held_by == "latch":
+        stored |= {"latched": True, "latched_by": ["pressure_low"]}
+    else:
+        entry_options["monitor"] = {"monitoring_days": 7}  # the entry is created now
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=entry_options)
+    entry.add_to_hass(rig.hass)
+    seed_stores(hass_storage, entry, stored, "0.2.2")
+    await set_up(rig, entry)
+    assert rig.state("switch", "control").state == "on"
+    control_state = rig.state("sensor", "control_state")
+    if held_by == "latch":
+        assert control_state.state == "handed_back"
+    else:
+        assert control_state.attributes["blockers"] == ["monitoring_period"]
+    rig.flow = None
+    await rig.advance(290)
+    assert link_alarm(rig) == "off"
+    await rig.advance(70)  # six minutes
+    assert link_alarm(rig) == "on"
+    rig.flow = 35.0
+    await rig.advance(80)
+    assert link_alarm(rig) == "off"
+    assert rig.gateway.calls == []  # held back throughout
+
+
+async def test_switching_on_with_the_link_down_raises_the_alarm(rig: Rig) -> None:
+    """P-08: switched on while the flow is gone: nothing is written, the state says control waits
+    for data, and 300 s later the alarm rises — though control never held the boiler."""
+    await start(rig)
+    rig.flow = None
+    rig.live()
+    await rig.switch(True)
+    await rig.advance(290)
+    assert link_alarm(rig) == "off"
+    assert rig.state("sensor", "control_state").state == "waiting_data"
+    await rig.advance(20)
+    assert link_alarm(rig) == "on"
+    assert rig.gateway.calls == []
+
+
+async def test_the_link_alarm_is_off_while_control_is_switched_off(rig: Rig) -> None:
+    """Negative: with control switched off the alarm stays off however long the link is lost,
+    and nothing is written. Switched on with the link lost for long, the alarm is on at once —
+    switching does not make a lost link fresh; switched off, it goes at once."""
+    await start(rig)
+    rig.flow = None
+    await rig.advance(900)
+    assert link_alarm(rig) == "off"
+    await rig.switch(True)
+    assert link_alarm(rig) == "on"
+    await rig.switch(False)
+    assert link_alarm(rig) == "off"
+    await rig.advance(300)
+    assert link_alarm(rig) == "off"
+    await rig.switch(True)  # a new session: the link's window is kept
+    assert link_alarm(rig) == "on"
+    assert rig.gateway.calls == []
+
+
+async def test_a_flapping_flow_still_hands_back(rig: Rig) -> None:
+    """P-08 in Home Assistant: the flow reported for one step in five — never five minutes stale
+    in a row — hands back once its stale steps cover five minutes within ten; control stays
+    handed back, the alarm on, while it keeps flapping."""
+    await start(rig)
+    await rig.switch(True)
+    for i in range(120):  # twenty minutes, fresh at every fifth step
+        rig.flow = 35.0 if i % 5 == 4 else None
+        await rig.advance(10)
+    assert rig.gateway.setpoints().count(0.0) == 1  # handed back once
+    assert rig.gateway.calls[-3:] == HAND_BACK  # nothing written since
+    assert link_alarm(rig) == "on"
+    assert rig.state("sensor", "control_state").state == "handed_back"
+
+
+@pytest.mark.parametrize("limit", [600.0, None], ids=["flame_limit", "no_limit"])
+async def test_a_stale_flame_counts_by_its_own_limit(rig: Rig, limit: float | None) -> None:
+    """P-41: the flame stops reporting while its entity stays available (MQTT without
+    availability); the flow reports on. With the flame's own limit of ten minutes nothing is
+    written once it has passed, and the hand-back follows the window rule five minutes later,
+    with the alarm. Negative: without a limit a steady flame is not a stale one — control goes
+    on, its keep-alives with it."""
+    freshness = {} if limit is None else {"flame": limit}
+    entry = add_entry(rig, options(rig.zones) | {"freshness": freshness})
+    await set_up(rig, entry)
+    await rig.switch(True)
+    rig.flame_reported = False  # its last report: now
+    await rig.advance(600)  # the limit reached, not passed
+    assert rig.state("sensor", "control_state").state == "heating"
+    count = len(rig.gateway.calls)
+    await rig.advance(290)
+    if limit is None:
+        assert ("setpoint", EXPECTED) in rig.gateway.calls[count:]  # keep-alives went on
+        await rig.advance(600)
+        assert rig.state("sensor", "control_state").state == "heating"
+        assert link_alarm(rig) == "off"
+        assert 0.0 not in rig.gateway.setpoints()
+        return
+    assert rig.gateway.calls[count:] == []  # nothing written after the flame's limit
+    assert rig.state("sensor", "control_state").state == "waiting_data"
+    assert link_alarm(rig) == "off"
+    await rig.advance(30)
+    assert rig.gateway.calls[count:] == HAND_BACK
+    assert link_alarm(rig) == "on"
+    assert rig.state("sensor", "control_state").state == "handed_back"
+
+
+async def test_a_missing_flame_is_a_lost_link_like_a_missing_flow(rig: Rig) -> None:
+    """P-41, missing input: the flame's entity unavailable while the flow reports on — nothing is
+    written, and after five minutes the hand-back and the alarm, as for the flow; the flame back
+    for a minute, control resumes and the alarm goes."""
+    await start(rig)
+    await rig.switch(True)
+    rig.flame = None
+    rig.live()
+    count = len(rig.gateway.calls)
+    await rig.advance(290)
+    assert rig.gateway.calls[count:] == []
+    assert link_alarm(rig) == "off"
+    await rig.advance(20)
+    assert rig.gateway.calls[count:] == HAND_BACK
+    assert link_alarm(rig) == "on"
+    rig.flame = False
+    await rig.advance(70)
+    assert link_alarm(rig) == "off"
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+
+
+@pytest.mark.parametrize(
+    ("weather", "limit", "early", "late"),
+    [
+        ("cloudy", None, "outdoor_weather", "outdoor_weather"),
+        ("cloudy", 1800.0, "outdoor_weather", "outdoor_held"),
+        ("unavailable", None, "outdoor_held", "outdoor_held"),
+    ],
+    ids=["no_weather_limit", "weather_limit", "weather_unavailable"],
+)
+async def test_the_weather_entity_uses_its_own_age_limit(
+    rig: Rig, weather: str, limit: float | None, early: str, late: str
+) -> None:
+    """P-41: the outdoor sensor has a limit of ten minutes and stops reporting; the weather entity
+    reported once, at the start. Without a limit of its own it still feeds the curve after the
+    sensor's limit — the sensor's limit is not its; with its own limit of 30 minutes it is left
+    out after them, and the curve holds the last value. Missing input: an unavailable weather
+    entity is never used."""
+    attributes = {"temperature": 0.0, "temperature_unit": "°C"} if weather == "cloudy" else {}
+    rig.hass.states.async_set(WEATHER_ENTITY, weather, attributes)
+    freshness = {"outdoor": 600.0} | ({} if limit is None else {"weather": limit})
+    entry = add_entry(rig, options(rig.zones) | {"weather": WEATHER_ENTITY, "freshness": freshness})
+    await set_up(rig, entry)
+    await rig.switch(True)
+    rig.outdoor_reported = False
+    await rig.advance(20 * 60, step=60.0)  # the sensor stale for ten minutes
+    assert early in rig.state("sensor", "control_state").attributes["reasons"]
+    await rig.advance(20 * 60, step=60.0)  # the weather's report 40 minutes old
+    reasons = rig.state("sensor", "control_state").attributes["reasons"]
+    assert late in reasons
+    assert "outdoor_sensor" not in reasons
+
+
+@pytest.mark.parametrize("limits", [True, False], ids=["limits", "no_limits"])
+async def test_hot_water_flags_count_by_their_own_limits(rig: Rig, limits: bool) -> None:
+    """X2, one freshness rule for the monitor and control: the flags hot water is read from —
+    its own, else the flame on with heating off — each count by their own age limit; a stale
+    one is unknown, as an unavailable one is. Negative: without limits a steady flag counts,
+    however old its report."""
+    from custom_components.vtherm_smart_boiler.core.readings import BoilerSnapshot, Reading
+
+    freshness = {"dhw_active": 600.0, "flame": 600.0, "ch_active": 600.0} if limits else {}
+    entry = add_entry(rig, options(rig.zones) | {"freshness": freshness})
+    await set_up(rig, entry)
+    coordinator = entry.runtime_data
+    now = START.timestamp()
+    old, new = now - 700.0, now - 10.0
+
+    def dhw(**flags: tuple[bool | None, float | None]) -> bool | None:
+        readings = {Signal(key): Reading(*reading) for key, reading in flags.items()}
+        return coordinator.dhw_now(BoilerSnapshot(now, readings))
+
+    stale = None if limits else True
+    assert dhw(dhw_active=(True, new)) is True
+    assert dhw(dhw_active=(True, old)) is stale
+    assert dhw(dhw_active=(None, new)) is None  # unavailable: unknown
+    inferred = {"flame": (True, new), "ch_active": (False, new)}
+    assert dhw(dhw_active=(None, new), **inferred) is True  # the flame on, heating off
+    assert dhw(dhw_active=(True, old), **inferred) is True
+    assert dhw(flame=(True, old), ch_active=(False, new)) is stale
+    assert dhw(flame=(True, new), ch_active=(False, old)) is stale

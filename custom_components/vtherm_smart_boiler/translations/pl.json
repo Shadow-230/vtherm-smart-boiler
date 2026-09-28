@@ -293,7 +293,7 @@
       },
       "freshness": {
         "title": "Limity świeżości",
-        "description": "Limit wieku dla każdego sygnału, w minutach: wartość niezgłoszona dłużej liczy się jako nieświeża, dla monitora i dla sterowania tak samo — bez świeżego płomienia i zasilania sterowanie nic nie zapisuje i po pięciu minutach oddaje kocioł. Puste (domyślnie): liczy się tylko dostępność encji, bo wiele źródeł (m.in. MQTT) zgłasza tylko zmiany, a stała wartość nie jest nieświeża. Ryzyko: bez limitu źródło, które zamarza, nie stając się niedostępne, nie zostanie wykryte; limit krótszy niż odstęp zgłoszeń źródła zatrzyma sterowanie przy stałej pogodzie.",
+        "description": "Limit wieku dla każdego sygnału, w minutach: wartość niezgłoszona dłużej liczy się jako nieświeża, dla monitora i dla sterowania tak samo — bez świeżego płomienia i zasilania sterowanie nic nie zapisuje i po pięciu minutach oddaje kocioł. Puste (domyślnie): liczy się tylko dostępność encji, bo wiele źródeł (m.in. MQTT) zgłasza tylko zmiany, a stała wartość nie jest nieświeża. Ryzyko: bez limitu źródło, które zamarza, nie stając się niedostępne, nie zostanie wykryte; limit krótszy niż odstęp zgłoszeń źródła zatrzyma sterowanie przy stałej pogodzie. Sterowanie sprawdza płomień i temperaturę zasilania, każde według jego limitu; połączenie, które co chwilę znika, uznaje się za utracone, gdy przez pięć minut w ciągu dziesięciu nie ma świeżych danych. Encja pogody ma własny limit, domyślnie brak. Przy bramce OpenTherm Gateway połączonej przez MQTT jej rozłączenie widać w ciągu około 90 s (encje stają się niedostępne), ale zerwane połączenie wewnątrz niej, między modułem ESP a układem PIC, może w ogóle nie zostać wykryte: encje pozostają dostępne, a ich wartości po prostu przestają się zmieniać.",
         "data": {
           "flame": "Płomień",
           "flow": "Temperatura zasilania",
@@ -308,7 +308,8 @@
           "flue_gas": "Temperatura spalin",
           "gas_meter": "Licznik gazu",
           "room_setpoint": "Nastawa termostatu przewodowego",
-          "room_temperature": "Temperatura z termostatu przewodowego"
+          "room_temperature": "Temperatura z termostatu przewodowego",
+          "weather": "Encja pogody"
         }
       },
       "boiler": {

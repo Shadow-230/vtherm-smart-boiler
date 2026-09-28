@@ -35,7 +35,8 @@ How control resumes after it stopped (``SCOPE.md`` §7):
 - heating off ignored from the start of a session (answer O): a latch and a blocker naming it,
   until the user switches control off and on;
 - an internal error: at any change of the control switch;
-- a lost boiler link: on its own, once the data is fresh again;
+- a lost boiler link — stale for five minutes within ten, a flapping one included: on its own,
+  once the data has been fresh for a minute without a break (X2);
 - the plugin's own monitor failing for five minutes: on its own, once it has worked for a minute
   without a failure, with an information note (the user's answer I);
 - a blocker: on its own, once it is gone. Where a hand-back stops heating, a blocker that ended
@@ -343,7 +344,7 @@ class ControlAlarm(StrEnum):
     OUTSIDE_CHANGE = "outside_change"
     HAND_BACK_FAILED = "hand_back_failed"
     CONTROL_ERROR = "control_error"
-    BOILER_LINK_LOST = "boiler_link_lost"  # handed back without the boiler's data
+    BOILER_LINK_LOST = "boiler_link_lost"  # the boiler's data lost while control is on (X2)
     ZONE_UNKNOWN = "zone_unknown"  # a zone unknown for long: frost protection cannot see it
     FROST_NOT_WARMING = "frost_not_warming"  # frost heating for long without the room warming
     CORRECTION_AT_LIMIT = "correction_at_limit"  # the comfort correction at 3 K for hours
@@ -1141,16 +1142,12 @@ class ControlUnit:
             self._note_monitor_recovered(now)  # control holds the boiler again
         self._follow_stopped_heating(now, blockers)
         self._follow_frost(now, zones)
-        if Reason.BOILER_LINK_STALE in out.decision.reasons and (
-            out.hand_back or out.decision.mode is ControlMode.HANDED_BACK
-        ):
-            # Every topology: without the boiler's data control hands back; stand-alone that
-            # stops heating, so the user is told.
-            session.alarms.add(ControlAlarm.BOILER_LINK_LOST)
-        elif inputs.boiler_link:
-            session.alarms.discard(ControlAlarm.BOILER_LINK_LOST)
         unknown = self._follow_unknown_zones(now, zones)
         for flagged, alarm in (
+            # Every topology, whenever the switch is on and the link is lost — whatever a
+            # blocker, a latch or a restart shows (P-08): control hands back if it held the
+            # boiler; stand-alone that stops heating, so the user is told.
+            (self.enabled and out.decision.link_lost, ControlAlarm.BOILER_LINK_LOST),
             (out.decision.frost_stuck, ControlAlarm.FROST_NOT_WARMING),  # heating goes on
             (out.decision.correction_at_limit, ControlAlarm.CORRECTION_AT_LIMIT),  # information
             (self._outdoor_suspect(), ControlAlarm.OUTDOOR_SENSOR_SUSPECT),  # left out
@@ -1407,17 +1404,21 @@ class ControlUnit:
             ),
         )
 
-    def _boiler_link(self, snapshot: BoilerSnapshot, now: float) -> bool:
-        """The boiler's own signals are there: flame and flow known.
+    def _boiler_link(self, snapshot: BoilerSnapshot) -> bool:
+        """The boiler's own signals are fresh at this step: flame and flow known, each within its
+        own age limit where the user set one — the flame's included (P-41). The core judges the
+        steps over a window (X2): lost after five stale minutes within ten.
 
         Many sources (MQTT among them) report only on change, so a steady reading is not a stale
-        one; the age of the flow reading counts only when the user set a freshness limit for it.
+        one: without a limit only availability counts. The OTGW firmware over MQTT turns every
+        entity unavailable within about 90 s of dropping off (its availability topic); a broken
+        link between its ESP and its PIC is not seen through Home Assistant at all — its values
+        only freeze (Q3.6), which the freshness option's text says.
         """
-        flow = snapshot.reading(Signal.FLOW)
-        if snapshot.flag(Signal.FLAME) is None or flow.value is None:
-            return False
-        limit = self._coordinator.config.freshness.get(Signal.FLOW)
-        return limit is None or flow.is_fresh(now, limit)
+        freshness = self._coordinator.config.freshness
+        flame = snapshot.flag(Signal.FLAME, freshness.get(Signal.FLAME))
+        flow = snapshot.number(Signal.FLOW, freshness.get(Signal.FLOW))
+        return flame is not None and flow is not None
 
     def _inputs(
         self,
@@ -1429,7 +1430,8 @@ class ControlUnit:
         coordinator = self._coordinator
         config = coordinator.config
         # One freshness rule: a steady reading is not a stale one, so its age counts only with a
-        # limit the user set. A sensor the monitor found stuck leaves the curve to the weather
+        # limit the user set — each by its own, the weather entity's apart from the outdoor
+        # sensor's (P-41). A sensor the monitor found stuck leaves the curve to the weather
         # entity, then the held value and the fallback; one far from the weather gives way where
         # the weather reads colder (more heat, which the valves throttle), and without a weather
         # reading where the check saw it read warmer.
@@ -1437,7 +1439,7 @@ class ControlUnit:
         weather = None
         if config.weather:
             reading = read_weather_temperature(self._hass, config.weather)
-            if reading.is_fresh(now, outdoor_age):
+            if reading.is_fresh(now, config.weather_max_age_s):
                 weather = float(reading.value) if reading.value is not None else None
         check = getattr(self._coordinator.analysis, "outdoor", None)
         sensor = curve_sensor(check, snapshot.number(Signal.OUTDOOR, outdoor_age), weather)
@@ -1446,9 +1448,9 @@ class ControlUnit:
             enabled=self.enabled,
             blockers=blockers,
             hand_back_alarms=self._hand_back_alarms(),
-            boiler_link=self._boiler_link(snapshot, now),
+            boiler_link=self._boiler_link(snapshot),
             read_back_known=self._read_back_known(),
-            flame=snapshot.flag(Signal.FLAME),
+            flame=snapshot.flag(Signal.FLAME, config.freshness.get(Signal.FLAME)),
             dhw=coordinator.dhw_now(snapshot),
             outdoor_sensor=sensor,
             outdoor_weather=weather,

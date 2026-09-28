@@ -9,10 +9,14 @@ Order of precedence, checked on every tick:
    it). An alarm latches whatever blockers show at the same step (P-48); the status still lists
    them.
 3. A precondition missing (a blocker) → no command; hand back once if we were controlling.
-4. The boiler's signals are not fresh → no command (nothing is written without fresh data); if
-   that lasts beyond the stale hand-back time, hand back once; control resumes with fresh data.
-   Before control takes the boiler, the read-back that would show its hand-back must hold a
-   value (P-21): until then nothing is written either.
+4. The boiler link lost, or the boiler's signals not fresh at this step → no command (nothing
+   is written without fresh data). The link is judged over a window, at every step and before
+   anything above (X2): lost once stale steps cover five minutes within ten — a link fresh one
+   step in five is still lost — and back once fresh for a minute without a break. Lost while
+   controlling, control hands back once; it resumes by itself once the link is back. A stale
+   step short of a loss only writes nothing; the next fresh step writes at once. Before control
+   takes the boiler, the read-back that would show its hand-back must hold a value (P-21):
+   until then nothing is written either.
 5. Otherwise heating on or off, decided at every step from frost protection and the zones'
    demand — VT's central mode and summer or winter reach the plugin through the zones, and
    nothing counted or timed holds heating against VT; and the
@@ -34,6 +38,7 @@ not rise: a clip is never learned as a limit.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
@@ -126,6 +131,17 @@ _LIMIT_REASON = {
 
 
 @dataclass(frozen=True, slots=True)
+class OutageWindow:
+    """The checks of something that may fail or go stale, judged over a window: the plugin's own
+    monitor (a refresh that failed; V6), the boiler link (a step without fresh data; X2)."""
+
+    checks: tuple[tuple[float, bool], ...] = ()  # (time, bad) of each check that still counts
+    lost: bool = False  # bad for five minutes within ten; stays until good for a minute
+    lost_from: float | None = None  # the first bad moment in the window when the loss began
+    good_since: float | None = None  # the first check of the current run of good ones
+
+
+@dataclass(frozen=True, slots=True)
 class ControlConfig:
     curve: HeatingCurve
     limits: FlowLimits = field(default_factory=FlowLimits)
@@ -142,7 +158,9 @@ class ControlConfig:
     # state (unavailable, not started), and a room sensor gone quiet is VT's own safety mode's.
     zone_max_age_s: float | None = None
     comfort_correction: bool = True
-    stale_hand_back_s: float | None = 300.0  # hand back after this long without fresh data
+    # The boiler link is lost once its stale steps cover this long within the last
+    # ``OUTAGE_WINDOW_S`` (X2): control then hands back. ``None``: never lost (tests, simulator).
+    stale_hand_back_s: float | None = OUTAGE_LOST_S
     outdoor_time_constant_s: float = DEFAULT_TIME_CONSTANT_S
     outdoor_hold_s: float = DEFAULT_HOLD_S
 
@@ -162,6 +180,10 @@ class ControlInputs:
     blockers: tuple[str, ...] = ()  # preconditions not met
     hand_back_alarms: tuple[str, ...] = ()  # active alarms whose reaction is hand-back
     boiler_link: bool = True  # the boiler's own signals are fresh
+    # X3's restore waits, within the recognition period, for a boiler link that has not reported
+    # since the start: that silence declares no loss yet (X2) — a link not yet reported never
+    # turns a restore into a hand-back.
+    link_unreported: bool = False
     # The read-back that shows a hand-back got through holds a value: control takes the boiler
     # only with it (P-21, the gateway paths); once controlling, its loss decides nothing here.
     read_back_known: bool = True
@@ -199,7 +221,11 @@ class ControlState:
     last_step_at: float | None = None
     upper: float | None = None  # the highest setpoint the limits allow, at the last decision
     correction_limit_since: float | None = None  # when the correction reached its band's edge
-    waiting_since: float | None = None  # when the boiler's signals went stale
+    # The boiler link over a window (X2): a sample at every step — stale or fresh — whether it is
+    # lost, and since when it has been fresh. Kept through a hand-back and a new session (a fact
+    # about the link, not the session); empty after a restart.
+    link: OutageWindow = field(default_factory=OutageWindow)
+    link_unreported: bool = False  # the last step's restore waited for a link not yet reported
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +238,7 @@ class ControlDecision:
     effective_outdoor: float | None = None
     frost_stuck: bool = False  # frost heating for long without the room warming: tell the user
     correction_at_limit: bool = False  # the correction at its band's edge for hours: tell the user
+    link_lost: bool = False  # the boiler link is lost (X2): stale for five minutes within ten
 
 
 def clock_start(since: float | None, now: float) -> float:
@@ -224,17 +251,6 @@ def clock_due(at: float, now: float, longest_s: float) -> float:
     """When a moment planned at most ``longest_s`` ahead is due. One further ahead means the wall
     clock was set back: it is due now, rather than once the clock has caught up (C9)."""
     return now if at - now > longest_s else at
-
-
-@dataclass(frozen=True, slots=True)
-class OutageWindow:
-    """The checks of something that may fail or go stale, judged over a window: the plugin's own
-    monitor (a refresh that failed; V6), the boiler link (a step without fresh data; X2)."""
-
-    checks: tuple[tuple[float, bool], ...] = ()  # (time, bad) of each check that still counts
-    lost: bool = False  # bad for five minutes within ten; stays until good for a minute
-    lost_from: float | None = None  # the first bad moment in the window when the loss began
-    good_since: float | None = None  # the first check of the current run of good ones
 
 
 def _spans(checks: Sequence[tuple[float, bool]], at: float) -> Iterator[tuple[float, float, bool]]:
@@ -253,15 +269,17 @@ def bad_time(
     return sum(max(0.0, end - max(t, start)) for t, end, bad in _spans(checks, now) if bad)
 
 
-def follow_outage(window: OutageWindow, now: float, bad: bool | None = None) -> OutageWindow:
+def follow_outage(
+    window: OutageWindow, now: float, bad: bool | None = None, lost_s: float = OUTAGE_LOST_S
+) -> OutageWindow:
     """The window at ``now``, with a check made now (``bad``) or none (``None``: time passing).
 
-    A loss begins once bad checks cover ``OUTAGE_LOST_S`` within the last ``OUTAGE_WINDOW_S`` —
-    a source that keeps dropping out counts, not only one gone for good — and ends once the
-    checks have been good for ``OUTAGE_BACK_S`` without a break; its checks are then cleared,
-    so a single failure afterwards is no loss. No check yet counts as nothing bad. A check
-    earlier than the last one means the wall clock was set back: the later ones go (C9); a
-    moment taken just before the last check is judged at that check.
+    A loss begins once bad checks cover ``lost_s`` (``OUTAGE_LOST_S``) within the last
+    ``OUTAGE_WINDOW_S`` — a source that keeps dropping out counts, not only one gone for good —
+    and ends once the checks have been good for ``OUTAGE_BACK_S`` without a break; its checks are
+    then cleared, so a single failure afterwards is no loss. No check yet counts as nothing bad.
+    A check earlier than the last one means the wall clock was set back: the later ones go (C9);
+    a moment taken just before the last check is judged at that check.
     """
     checks = window.checks
     good_since = window.good_since
@@ -278,7 +296,7 @@ def follow_outage(window: OutageWindow, now: float, bad: bool | None = None) -> 
         if good_since is not None and at - good_since >= OUTAGE_BACK_S:
             return OutageWindow(good_since=good_since)
         return replace(window, checks=checks, good_since=good_since)
-    if bad_time(checks, at) >= OUTAGE_LOST_S:
+    if bad_time(checks, at) >= lost_s:
         spans = _spans(checks, at)
         first = min(max(t, start) for t, end, failed in spans if failed and end > start)
         return OutageWindow(checks, True, first, good_since)
@@ -313,21 +331,50 @@ def _release(
     return new_state, ControlDecision(mode, None, hand_back=state.controlling, reasons=(reason,))
 
 
+def follow_link(state: ControlState, inputs: ControlInputs, config: ControlConfig) -> OutageWindow:
+    """The boiler link's window after this step (X2): the step is a sample, stale where the
+    boiler's signals are not fresh. The link is lost once stale samples cover
+    ``stale_hand_back_s`` within the last ``OUTAGE_WINDOW_S``, and back once fresh for
+    ``OUTAGE_BACK_S`` without a break (``follow_outage``).
+
+    While X3's restore waits for a link not yet reported since the start, no loss is declared.
+    Once the link reports, that silence is forgotten — it was no staleness; still silent when
+    the wait ends, the samples since the start count as stale, so it is lost at once where they
+    cover the limit.
+    """
+    stale = not inputs.boiler_link
+    window = state.link
+    if state.link_unreported and not inputs.link_unreported and not stale:
+        window = OutageWindow()  # it has reported: the wait's silence was no staleness
+    limit = config.stale_hand_back_s
+    if limit is None or inputs.link_unreported:
+        limit = math.inf
+    return follow_outage(window, inputs.now, stale, lost_s=limit)
+
+
 def decide(
     state: ControlState, inputs: ControlInputs, config: ControlConfig
 ) -> tuple[ControlState, ControlDecision]:
-    """One tick of the controller."""
-    now = inputs.now
+    """One tick of the controller. The boiler link is followed first, at every step — switched
+    off, latched or blocked alike — and every decision says whether it is lost (X2)."""
     outdoor = update_outdoor(
         state.outdoor,
         inputs.outdoor_sensor,
         inputs.outdoor_weather,
-        now,
+        inputs.now,
         config.outdoor_time_constant_s,
         config.outdoor_hold_s,
     )
-    state = replace(state, outdoor=outdoor)
+    link = follow_link(state, inputs, config)
+    state = replace(state, outdoor=outdoor, link=link, link_unreported=inputs.link_unreported)
+    state, decision = _decide(state, inputs, config)
+    return state, replace(decision, link_lost=link.lost)
 
+
+def _decide(
+    state: ControlState, inputs: ControlInputs, config: ControlConfig
+) -> tuple[ControlState, ControlDecision]:
+    now = inputs.now
     if not inputs.enabled:
         return _release(state, ControlMode.DISABLED, Reason.CONTROL_OFF)
     if state.latched or inputs.hand_back_alarms:
@@ -337,17 +384,15 @@ def decide(
         return _release(state, ControlMode.HANDED_BACK, Reason.ALARM_HAND_BACK)
     if inputs.blockers:
         return _release(state, ControlMode.NOT_ALLOWED, Reason.PRECONDITION)
-    if not inputs.boiler_link:
-        since = clock_start(state.waiting_since, now)
-        state = replace(state, waiting_since=since)
-        if (
-            state.controlling
-            and config.stale_hand_back_s is not None
-            and now - since >= config.stale_hand_back_s
-        ):
-            return _release(state, ControlMode.HANDED_BACK, Reason.BOILER_LINK_STALE)
+    if state.link.lost and state.controlling:
+        # Stale for five minutes within ten, a flapping link included (P-08): hand back once;
+        # control resumes by itself once the link has been fresh for a minute.
+        return _release(state, ControlMode.HANDED_BACK, Reason.BOILER_LINK_STALE)
+    if state.link.lost or not inputs.boiler_link:
+        # Nothing is written without fresh data. A stale step short of a loss keeps control: the
+        # next fresh step writes at once.
         reasons = (Reason.BOILER_LINK_STALE,)
-        # Once handed back for stale data, that stays what is shown until the data returns.
+        # Once handed back for a lost link, that stays what is shown until the link is back.
         mode = (
             ControlMode.HANDED_BACK
             if not state.controlling and state.mode is ControlMode.HANDED_BACK
@@ -355,7 +400,6 @@ def decide(
         )
         waiting = replace(state, mode=mode, reasons=reasons, decided_at=None)
         return waiting, ControlDecision(mode, None, reasons=reasons)
-    state = replace(state, waiting_since=None)
     if not state.controlling and not inputs.read_back_known:
         # A boiler taken now could never be seen handed back: nothing is written yet (P-21).
         reasons = (Reason.READ_BACK_UNKNOWN,)

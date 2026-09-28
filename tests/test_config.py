@@ -27,6 +27,7 @@ def test_minimal_options_get_cautious_defaults() -> None:
     assert [c.circuit_id for c in config.installation.circuits] == ["main"]
     assert config.zones == ()
     assert config.weather is None
+    assert config.weather_max_age_s is None  # no age limit: availability only
     assert config.reference_room.strategy is Strategy.LARGEST_DEFICIT
     assert config.monitor.monitoring_days == 7.0
     assert config.monitor.monitor.modulation_scale is ModulationScale.RANGE
@@ -111,6 +112,26 @@ def test_full_options() -> None:
     assert "switch.fire" in config.watched_entities
     assert "sensor.mixed_flow" in config.watched_entities
     assert "weather.home" in config.watched_entities
+
+
+@pytest.mark.parametrize(
+    ("freshness", "signals", "weather"),
+    [
+        ({"outdoor": 600, "weather": 1800}, {Signal.OUTDOOR: 600.0}, 1800.0),
+        ({"outdoor": 600}, {Signal.OUTDOOR: 600.0}, None),
+        ({"weather": None}, {}, None),
+        ({}, {}, None),
+    ],
+    ids=["both", "sensor_only", "weather_none", "none"],
+)
+def test_the_weather_entity_has_an_age_limit_of_its_own(
+    freshness: dict, signals: dict, weather: float | None
+) -> None:
+    """P-41 (X2): ``freshness["weather"]`` is the weather entity's own limit, taken out before
+    the signals are read — never the outdoor sensor's, never a signal; none by default."""
+    config = EntryConfig.from_options(MINIMAL | {"weather": "weather.home", "freshness": freshness})
+    assert config.freshness == signals
+    assert config.weather_max_age_s == weather
 
 
 def test_coarse_building_answers_give_a_default_loss() -> None:

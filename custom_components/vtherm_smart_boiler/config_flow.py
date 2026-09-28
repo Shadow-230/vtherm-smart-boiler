@@ -178,19 +178,29 @@ def signals_schema(options: dict[str, Any]) -> vol.Schema:
     return vol.Schema(fields)
 
 
+def _freshness_keys(options: dict[str, Any]) -> list[str]:
+    """What may have an age limit: each mapped signal, and the weather entity when one is set —
+    its own limit, never the outdoor sensor's (X2)."""
+    keys = list(options.get(SIGNALS, {}))
+    if options.get(WEATHER):
+        keys.append(WEATHER)
+    return keys
+
+
 def freshness_schema(options: dict[str, Any]) -> vol.Schema:
-    """An optional age limit, in minutes, for each mapped signal."""
+    """An optional age limit, in minutes, for each mapped signal and the weather entity."""
     limits = {k: v / 60.0 for k, v in options.get(FRESHNESS, {}).items() if v is not None}
     return vol.Schema(
-        {_optional(key, limits): _number(1, 1440, 1, "min") for key in options.get(SIGNALS, {})}
+        {_optional(key, limits): _number(1, 1440, 1, "min") for key in _freshness_keys(options)}
     )
 
 
 def apply_freshness(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    keys = _freshness_keys(options)
     options[FRESHNESS] = {
         key: float(value) * 60.0
         for key, value in user_input.items()
-        if key in options.get(SIGNALS, {}) and value not in (None, "")
+        if key in keys and value not in (None, "")
     }
 
 

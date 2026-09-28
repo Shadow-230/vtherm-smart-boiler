@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 
 import pytest
@@ -60,6 +60,11 @@ def run(steps, config: ControlConfig = CONFIG, state: ControlState | None = None
         state, decision = decide(state, step, config)
         decisions.append(decision)
     return state, decisions
+
+
+def stepped(start: float, stop: float, step: float = 10.0) -> list[float]:
+    """Control's steps: every ``step`` seconds from ``start`` up to, not including, ``stop``."""
+    return [start + i * step for i in range(round((stop - start) / step))]
 
 
 def test_disabled_writes_nothing_and_hands_back_nothing() -> None:
@@ -170,10 +175,13 @@ def test_vt_modes_act_through_the_zones() -> None:
 
 
 def test_stale_boiler_link_writes_nothing_and_keeps_control() -> None:
+    """A stale step writes nothing; a stale spell far short of the loss (X2) keeps control, and
+    the next fresh step writes at once — the minute's wait is only for a link that was lost."""
     state, decisions = run([inputs(0.0), inputs(30.0, boiler_link=False), inputs(60.0)])
     assert decisions[1].mode is ControlMode.WAITING_DATA
     assert decisions[1].command is None
     assert not decisions[1].hand_back
+    assert not any(d.link_lost for d in decisions)
     assert decisions[2].command is not None  # decided again at once
     assert state.controlling
 
@@ -203,13 +211,13 @@ def test_a_read_back_lost_while_controlling_is_no_hand_back_by_itself() -> None:
     _state, decisions = run(
         [
             inputs(0.0),
-            inputs(10.0, read_back_known=False, boiler_link=False),
-            inputs(320.0, read_back_known=False, boiler_link=False),
+            *(inputs(t, read_back_known=False, boiler_link=False) for t in stepped(10.0, 320.0)),
         ],
         config,
     )
-    assert [d.hand_back for d in decisions] == [False, False, True]  # the stale link's
-    assert Reason.BOILER_LINK_STALE in decisions[2].reasons
+    assert [d.hand_back for d in decisions].count(True) == 1  # the stale link's
+    assert decisions[-1].hand_back
+    assert Reason.BOILER_LINK_STALE in decisions[-1].reasons
 
 
 def test_no_demand_is_idle() -> None:
@@ -445,30 +453,35 @@ def test_comfort_correction_can_be_off() -> None:
 
 
 def test_long_data_loss_hands_back_once_and_resumes() -> None:
+    """Stale from 30 s: lost once stale steps cover five minutes (330 s), handed back once and
+    shown so; the data back at 400 s, control resumes only after a minute of it without a break
+    (X2), with the window cleared. Negative: without a stale hand-back time, never."""
     config = replace(CONFIG, stale_hand_back_s=300.0)
-    state, decisions = run(
-        [
-            inputs(0.0),
-            inputs(30.0, boiler_link=False),
-            inputs(200.0, boiler_link=False),
-            inputs(330.0, boiler_link=False),
-            inputs(360.0, boiler_link=False),
-            inputs(400.0),
-        ],
-        config,
-    )
-    assert [d.hand_back for d in decisions] == [False, False, False, True, False, False]
-    assert decisions[3].mode is ControlMode.HANDED_BACK
-    assert Reason.BOILER_LINK_STALE in decisions[3].reasons
-    assert decisions[4].mode is ControlMode.HANDED_BACK  # stays shown until data returns
-    assert decisions[4].command is None
-    assert decisions[5].mode is ControlMode.HEATING
-    assert state.waiting_since is None
+    steps = [
+        inputs(0.0),
+        *(inputs(t, boiler_link=False) for t in stepped(30.0, 400.0)),
+        *(inputs(t) for t in stepped(400.0, 470.0)),
+    ]
+    state, decisions = run(steps, config)
+    at = {step.now: decision for step, decision in zip(steps, decisions, strict=True)}
+    assert [step.now for step, d in zip(steps, decisions, strict=True) if d.hand_back] == [330.0]
+    assert at[330.0].mode is ControlMode.HANDED_BACK
+    assert Reason.BOILER_LINK_STALE in at[330.0].reasons
+    assert at[330.0].link_lost
+    assert not at[320.0].link_lost
+    for t in (340.0, 400.0, 450.0):  # stays shown until the link is back
+        assert at[t].mode is ControlMode.HANDED_BACK
+        assert at[t].command is None
+        assert at[t].link_lost
+    assert at[460.0].mode is ControlMode.HEATING  # a minute of fresh data
+    assert not at[460.0].link_lost
+    assert state.controlling
+    assert state.link.checks == ()  # the window starts afresh
     never = replace(CONFIG, stale_hand_back_s=None)
     _state, decisions = run(
-        [inputs(0.0), inputs(30.0, boiler_link=False), inputs(9999.0, boiler_link=False)], never
+        [inputs(0.0), *(inputs(t, boiler_link=False) for t in stepped(30.0, 1200.0))], never
     )
-    assert not any(d.hand_back for d in decisions)
+    assert not any(d.hand_back or d.link_lost for d in decisions)
 
 
 def test_heating_follows_the_zones_at_every_step_both_ways() -> None:
@@ -565,26 +578,22 @@ def test_a_clock_jumping_forward_does_not_raise_the_correction_at_once() -> None
 
 
 def test_a_clock_set_back_does_not_hold_up_the_stale_hand_back() -> None:
-    """The boiler's data went stale, then the wall clock was set back an hour: the wait for the
-    stale hand-back starts again when the clock went back — five minutes, not an hour and five.
-    Negative: a clock that only moves forward keeps the wait's start."""
+    """The boiler's data went stale, then the wall clock was set back an hour: the stale samples
+    later than the clock go, and the stale hand-back comes five minutes after the set-back, not
+    an hour and five (X2's window). Negative: a clock that only moves forward keeps the samples
+    — the hand-back five minutes after the first stale step."""
     config = replace(CONFIG, stale_hand_back_s=300.0)
     state, _ = run([inputs(10000.0), inputs(10030.0, boiler_link=False)], config)
-    assert state.waiting_since == 10030.0
-    state, decisions = run(
-        [
-            inputs(6430.0, boiler_link=False),  # an hour back
-            inputs(6600.0, boiler_link=False),
-            inputs(6730.0, boiler_link=False),
-        ],
-        config,
-        state,
-    )
-    assert [d.hand_back for d in decisions] == [False, False, True]
-    assert Reason.BOILER_LINK_STALE in decisions[2].reasons
+    assert state.link.checks[-1] == (10030.0, True)
+    back = [inputs(t, boiler_link=False) for t in stepped(6430.0, 6740.0)]  # an hour back
+    state, decisions = run(back, config, state)
+    assert [step.now for step, d in zip(back, decisions, strict=True) if d.hand_back] == [6730.0]
+    assert Reason.BOILER_LINK_STALE in decisions[-1].reasons
     state, _ = run([inputs(0.0), inputs(30.0, boiler_link=False)], config)
-    state, _ = run([inputs(60.0, boiler_link=False)], config, state)
-    assert state.waiting_since == 30.0  # not reset
+    forward = [inputs(t, boiler_link=False) for t in stepped(40.0, 340.0)]
+    state, decisions = run(forward, config, state)
+    assert state.link.checks[1] == (30.0, True)  # not reset
+    assert [step.now for step, d in zip(forward, decisions, strict=True) if d.hand_back] == [330.0]
 
 
 def test_a_clock_set_back_makes_the_water_decision_due() -> None:
@@ -746,3 +755,175 @@ def test_a_loss_starts_at_its_first_failure_in_the_window() -> None:
     assert window.lost
     assert window.lost_from == 700.0
     assert window.checks[0][0] >= 1000.0 - OUTAGE_WINDOW_S - MAX_STEP_S  # old checks go
+
+
+# --- X2: the boiler link judged over a window (P-08; T-26; Open after R6 #8) -------------------
+
+
+def linked(start: float, stop: float, fresh: Callable[[float], bool], **kw) -> list[ControlInputs]:
+    """A step every 10 s from ``start`` up to, not including, ``stop``; the link fresh at the
+    steps where ``fresh(t)``."""
+    return [inputs(t, boiler_link=fresh(t), **kw) for t in stepped(start, stop)]
+
+
+def flapping(t: float) -> bool:
+    """Fresh for one step in every 290 s: no stale run ever reaches five minutes."""
+    return t % 290.0 == 0.0
+
+
+def test_a_flapping_boiler_link_still_hands_back() -> None:
+    """T-26 (P-08): controlling, the link fresh for one step in every 290 s for an hour. Its
+    stale runs are 280 s at most, yet together they cover five minutes within ten: control hands
+    back once, as soon as they do (the first stale step at 10 s; 280 s, the fresh step, then 20
+    s more), says the link is lost, and stays handed back while the link keeps flapping."""
+    steps = [inputs(0.0), *linked(10.0, HOUR, flapping)]
+    state, decisions = run(steps)
+    backs = [step.now for step, d in zip(steps, decisions, strict=True) if d.hand_back]
+    assert backs == [320.0]
+    first = [step.now for step in steps].index(320.0)
+    assert decisions[first].link_lost
+    assert decisions[first].mode is ControlMode.HANDED_BACK
+    assert Reason.BOILER_LINK_STALE in decisions[first].reasons
+    assert not any(d.link_lost for d in decisions[:first])
+    later = decisions[first:]
+    assert all(d.link_lost and d.command is None for d in later)  # no resume while it flaps
+    assert all(d.mode is ControlMode.HANDED_BACK for d in later)
+    assert not state.controlling
+
+
+def test_one_stale_step_every_five_minutes_never_hands_back() -> None:
+    """Negative: one stale step every 300 s covers 20 s within ten minutes — never lost, never
+    handed back, and each fresh step writes at once (no write is held back before a loss)."""
+    steps = [inputs(0.0), *linked(10.0, 2 * HOUR, lambda t: t % 300.0 != 0.0)]
+    state, decisions = run(steps)
+    assert not any(d.hand_back or d.link_lost for d in decisions)
+    for step, decision in zip(steps, decisions, strict=True):
+        assert (decision.command is None) is (not step.boiler_link)
+    assert state.controlling
+
+
+def test_after_a_stale_hand_back_control_resumes_after_a_minute_of_fresh_data() -> None:
+    """Flapping as in T-26: handed back, and no resume. Then fresh without a break: for 59 s
+    still handed back, nothing written; at 60 s the link is back, its window cleared, and
+    control takes the boiler again by itself. A single stale step later is no loss."""
+    state, decisions = run([inputs(0.0), *linked(10.0, 1200.0, flapping)])
+    assert [d.hand_back for d in decisions].count(True) == 1
+    assert not state.controlling
+    state, decisions = run(linked(1200.0, 1260.0, lambda _t: True), state=state)
+    assert all(d.link_lost and d.command is None and not d.hand_back for d in decisions)
+    assert all(d.mode is ControlMode.HANDED_BACK for d in decisions)
+    state, [back] = run([inputs(1260.0)], state=state)
+    assert not back.link_lost
+    assert back.command is not None
+    assert back.mode is ControlMode.HEATING
+    assert state.controlling
+    assert state.link == OutageWindow(good_since=1200.0)  # cleared
+    steps = [inputs(1270.0, boiler_link=False), *linked(1280.0, 1500.0, lambda _t: True)]
+    state, decisions = run(steps, state=state)
+    assert not any(d.hand_back or d.link_lost for d in decisions)
+    assert decisions[0].command is None  # nothing written at the stale step
+    assert all(d.command is not None for d in decisions[1:])  # at once again
+    assert state.controlling
+
+
+def test_a_clock_set_back_does_not_stretch_the_link_window() -> None:
+    """Negative (C9, Open after R6 #8; V6's rule for the link): stale for 270 s, then the wall
+    clock set back an hour and stale for 270 s more. The samples later than now go, so the two
+    spells never add up to a loss — the loss needs five stale minutes after the set-back; and no
+    sample later than now stays in the window."""
+    state, _ = run([inputs(10000.0), *linked(10010.0, 10280.0, lambda _t: False)])
+    assert not state.link.lost
+    steps = linked(6400.0, 6710.0, lambda _t: False)
+    state, decisions = run(steps, state=state)
+    assert all(t <= 6700.0 for t, _stale in state.link.checks)
+    backs = [step.now for step, d in zip(steps, decisions, strict=True) if d.hand_back]
+    assert backs == [6700.0]  # not at 6430 s, where the spells would sum to five minutes
+    assert not any(d.link_lost for d in decisions[:-1])
+    assert decisions[-1].link_lost
+
+
+@pytest.mark.parametrize(
+    "blocked",
+    [
+        {"enabled": False},
+        {"blockers": ("monitoring_period",)},
+        {"hand_back_alarms": ("pressure_low",)},
+    ],
+    ids=["switched_off", "blocker", "latch"],
+)
+def test_the_link_is_judged_whatever_holds_control(blocked: dict) -> None:
+    """P-08: the link's samples are taken at every step, before control switched off, a blocker
+    or a latch is looked at — the decision says the link is lost there too, after five stale
+    minutes. Negative: the same steps with a fresh link, or only 290 s stale, say nothing."""
+    stale = [inputs(t, boiler_link=False, **blocked) for t in stepped(0.0, 310.0)]
+    _state, decisions = run(stale)
+    assert not any(d.link_lost for d in decisions[:-1])
+    assert decisions[-1].link_lost  # at 300 s
+    assert all(d.command is None for d in decisions)
+    fresh = [inputs(t, **blocked) for t in stepped(0.0, 310.0)]
+    _state, decisions = run(fresh)
+    assert not any(d.link_lost for d in decisions)
+    _state, decisions = run(stale[:-1])
+    assert not any(d.link_lost for d in decisions)
+
+
+def test_the_link_is_judged_from_the_first_step_after_a_start() -> None:
+    """After a restart the samples start empty: a link down from the start is lost 300 s after
+    it — no sooner, whatever came before the restart. Missing input: no sample yet is no loss."""
+    assert ControlState().link == OutageWindow()
+    steps = [inputs(t, boiler_link=False) for t in stepped(0.0, 310.0)]
+    _state, decisions = run(steps)
+    assert [step.now for step, d in zip(steps, decisions, strict=True) if d.link_lost] == [300.0]
+    assert decisions[0].mode is ControlMode.WAITING_DATA
+    assert decisions[0].reasons == (Reason.BOILER_LINK_STALE,)
+    assert not any(d.hand_back for d in decisions)  # never controlled: nothing to hand back
+
+
+def restored(t: float) -> ControlState:
+    """X3's restore after a restart: the last command held again; the samples start empty."""
+    return ControlState(controlling=True, command=BoilerCommand(True, 45.0), last_step_at=t)
+
+
+def test_a_link_not_yet_reported_never_turns_a_restore_into_a_hand_back() -> None:
+    """X3's hook: while the restore waits, within the recognition period, for a link that has not
+    reported since the start, that silence is not counted as stale — no loss, no hand-back,
+    nothing written. Still silent when the wait ends (600 s), the time since the start counts as
+    stale: lost at once, and the restored boiler is handed back."""
+    waiting = [inputs(t, boiler_link=False, link_unreported=True) for t in stepped(0.0, 600.0)]
+    state, decisions = run(waiting, state=restored(0.0))
+    assert not any(d.hand_back or d.link_lost for d in decisions)
+    assert all(d.command is None for d in decisions)
+    assert state.controlling
+    state, [end] = run([inputs(600.0, boiler_link=False)], state=state)
+    assert end.link_lost
+    assert end.hand_back
+    assert Reason.BOILER_LINK_STALE in end.reasons
+
+
+def test_a_link_that_reports_during_the_wait_starts_its_window_afresh() -> None:
+    """X3's hook: the link reports 180 s after the start — the three minutes of waiting are
+    forgotten: a stale spell afterwards needs five minutes of its own (from 190 s: lost at
+    490 s, not at 310 s). Negative: the flag unset from the start, the same silence counts."""
+    waiting = [inputs(t, boiler_link=False, link_unreported=True) for t in stepped(0.0, 180.0)]
+    steps = [*waiting, inputs(180.0), *linked(190.0, 500.0, lambda _t: False)]
+    _state, decisions = run(steps, state=restored(0.0))
+    lost = [step.now for step, d in zip(steps, decisions, strict=True) if d.hand_back]
+    assert lost == [490.0]
+    counted = [
+        *(inputs(t, boiler_link=False) for t in stepped(0.0, 180.0)),
+        inputs(180.0),
+        *linked(190.0, 500.0, lambda _t: False),
+    ]
+    _state, decisions = run(counted, state=restored(0.0))
+    lost = [step.now for step, d in zip(counted, decisions, strict=True) if d.hand_back]
+    assert lost == [310.0]
+
+
+def test_the_stale_hand_back_time_is_the_link_threshold() -> None:
+    """``stale_hand_back_s`` (300 s, decided) is how much stale time within the window makes the
+    link lost; a shorter one hands back sooner. ``None`` never does (the negative in
+    ``test_long_data_loss_hands_back_once_and_resumes``)."""
+    assert ControlConfig(curve=CURVE).stale_hand_back_s == OUTAGE_LOST_S == 300.0
+    steps = [inputs(0.0), *linked(10.0, 200.0, lambda _t: False)]
+    _state, decisions = run(steps, replace(CONFIG, stale_hand_back_s=120.0))
+    assert [step.now for step, d in zip(steps, decisions, strict=True) if d.hand_back] == [130.0]

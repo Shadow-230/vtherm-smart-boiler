@@ -293,7 +293,7 @@
       },
       "freshness": {
         "title": "Freshness limits",
-        "description": "An age limit per signal, in minutes: a value not reported for longer counts as stale, for the monitor and for control alike — without a fresh flame and flow, control writes nothing and hands back after five minutes. Empty (default): only whether the entity is available counts, since many sources (MQTT among them) report only on change and a steady value is not a stale one. Risk: without a limit, a source that freezes without going unavailable is not caught; a limit shorter than a source's reporting interval stops control in steady weather.",
+        "description": "An age limit per signal, in minutes: a value not reported for longer counts as stale, for the monitor and for control alike — without a fresh flame and flow, control writes nothing and hands back after five minutes. Empty (default): only whether the entity is available counts, since many sources (MQTT among them) report only on change and a steady value is not a stale one. Risk: without a limit, a source that freezes without going unavailable is not caught; a limit shorter than a source's reporting interval stops control in steady weather. Control reads the flame and the flow each by its own limit; a link that keeps dropping in and out counts as lost once it has been stale for five minutes within ten. The weather entity has its own limit, none by default. On an OpenTherm Gateway over MQTT, the gateway dropping off shows within about 90 s (its entities turn unavailable), but a broken link inside it, between its ESP and its PIC, may not be seen at all: its entities stay available and their values simply stop changing.",
         "data": {
           "flame": "Flame",
           "flow": "Flow temperature",
@@ -308,7 +308,8 @@
           "flue_gas": "Flue gas temperature",
           "gas_meter": "Gas meter",
           "room_setpoint": "Wired thermostat setpoint",
-          "room_temperature": "Wired thermostat room temperature"
+          "room_temperature": "Wired thermostat room temperature",
+          "weather": "Weather entity"
         }
       },
       "boiler": {

@@ -801,13 +801,15 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
 
     def dhw_now(self, snapshot: BoilerSnapshot) -> bool | None:
         """DHW running now: its own signal, else flame on without heating demand from the CH
-        signal; otherwise unknown."""
+        signal; otherwise unknown. Each flag is read by its own age limit, for the monitor and
+        control alike (one freshness rule, X2): a stale one is unknown."""
         if not self.config.monitor.monitor.has_dhw:
             return False  # declared: the boiler heats no hot water
-        dhw = snapshot.flag(Signal.DHW_ACTIVE)
+        dhw = snapshot.flag(Signal.DHW_ACTIVE, self._max_age(Signal.DHW_ACTIVE))
         if dhw is not None:
             return dhw
-        flame, ch = snapshot.flag(Signal.FLAME), snapshot.flag(Signal.CH_ACTIVE)
+        flame = snapshot.flag(Signal.FLAME, self._max_age(Signal.FLAME))
+        ch = snapshot.flag(Signal.CH_ACTIVE, self._max_age(Signal.CH_ACTIVE))
         if flame is True and ch is False:
             return True
         return None

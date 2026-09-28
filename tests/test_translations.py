@@ -85,7 +85,8 @@ def test_every_form_field_and_select_option_is_translated() -> None:
     options_only = {
         "level": flow.level_schema(options),
         "freshness": flow.freshness_schema(
-            options | {"signals": dict.fromkeys(flow.SIGNAL_FIELDS, "sensor.x")}
+            options
+            | {"signals": dict.fromkeys(flow.SIGNAL_FIELDS, "sensor.x"), "weather": "weather.x"}
         ),
         "control": flow.control_schema(options),
         "control_entity": flow.control_entity_schema(options),

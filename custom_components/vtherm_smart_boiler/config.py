@@ -119,6 +119,9 @@ class EntryConfig:
     freshness: dict[Signal, float | None]
     control: ControlOptions = field(default_factory=ControlOptions)
     control_problem: str | None = None  # why control was left out (non-strict parsing only)
+    # The weather entity's own age limit (X2): none by default — availability only; never the
+    # outdoor sensor's.
+    weather_max_age_s: float | None = None
 
     @property
     def zone_entities(self) -> tuple[str, ...]:
@@ -158,6 +161,7 @@ class EntryConfig:
             raise ConfigError(errors[0].code.value, errors[0].subject)
         parameters = _parameters(options.get(PARAMETERS, {}), options.get(BUILDING, {}))
         reference = _reference(options.get(REFERENCE_ROOM, {}), [z.zone_id for z in zones])
+        freshness, weather_max_age = _freshness(options.get(FRESHNESS, {}))
         control_problem: str | None = None
         try:
             control = _control(options.get(CONTROL), installation, parameters)
@@ -175,9 +179,10 @@ class EntryConfig:
             circuit_flow_entities=flow_entities,
             reference_room=reference,
             monitor=_monitor(options.get(MONITOR, {}), boiler_data),
-            freshness=_freshness(options.get(FRESHNESS, {})),
+            freshness=freshness,
             control=control,
             control_problem=control_problem,
+            weather_max_age_s=weather_max_age,
         )
 
 
@@ -346,15 +351,20 @@ def _alarm_thresholds(data: Mapping[str, Any]) -> AlarmThresholds:
     )
 
 
-def _freshness(data: Mapping[str, Any]) -> dict[Signal, float | None]:
+def _freshness(data: Mapping[str, Any]) -> tuple[dict[Signal, float | None], float | None]:
+    """The age limit of each signal, and the weather entity's own, stored under ``weather`` beside
+    them and taken out first: it is no signal. ``None``: no limit — availability only."""
+    weather = data.get(WEATHER)
     result: dict[Signal, float | None] = {}
     for key, value in data.items():
+        if key == WEATHER:
+            continue
         try:
             signal = Signal(key)
         except ValueError as err:
             raise ConfigError("unknown_signal", key) from err
         result[signal] = None if value is None else float(value)
-    return result
+    return result, None if weather is None else float(weather)
 
 
 def _control(

@@ -98,8 +98,9 @@ def test_the_guards_keep_their_memory_across_a_hand_back_in_a_session() -> None:
     assert [t for t, out in outs if out.hand_back] == [490.0]
     assert state.setpoint.rewritten_at == 170.0  # kept across the hand-back
     assert state.setpoint.baseline == 0.0
-    state, outs = run(state, CONFIG, 510.0, 690.0, value)  # control resumes
-    assert outs[0][1].setpoint == WriteAction(value, WriteKind.CHANGE)
+    state, outs = run(state, CONFIG, 510.0, 690.0, value)  # control resumes after a minute
+    written = [(t, out.setpoint) for t, out in outs if out.setpoint is not None]
+    assert written[0] == (570.0, WriteAction(value, WriteKind.CHANGE))
     state, out = loop_step(state, inputs(700.0), 60.0, CONFIG)
     state, out = loop_step(state, inputs(710.0), 60.0, CONFIG)  # again, the same day
     assert out.setpoint is None
@@ -138,6 +139,25 @@ def test_a_new_session_keeps_only_the_one_rewrite() -> None:
     assert fresh.setpoint == GuardState(rewritten_at=0.0)
     assert fresh.switch == GuardState()
     assert new_session(state, DAY).setpoint == GuardState()
+
+
+def test_a_new_session_keeps_the_boiler_link_window() -> None:
+    """X2: the link's samples are a fact about the link, not the session — switching control
+    off and on while the link is lost does not make it fresh: still lost, nothing written,
+    until it has been fresh for a minute. Everything else of the session starts afresh."""
+    state, _ = run(LoopState(), CONFIG, 0.0, 0.0, None)
+    state, outs = run(state, CONFIG, 10.0, 310.0, None, boiler_link=False)
+    assert outs[-1][1].hand_back  # lost at 310 s
+    fresh = new_session(state, 320.0)
+    assert fresh.control.link == state.control.link
+    assert fresh.control.link.lost
+    assert not fresh.control.controlling
+    assert fresh.control.mode.value == "disabled"
+    fresh, outs = run(fresh, CONFIG, 320.0, 370.0, None)  # fresh again, not yet a minute
+    assert all(out.decision.link_lost and out.setpoint is None for _t, out in outs)
+    fresh, outs = run(fresh, CONFIG, 380.0, 380.0, None)
+    assert not outs[0][1].decision.link_lost
+    assert outs[0][1].setpoint is not None
 
 
 def test_ignored_from_the_start_keeps_the_other_target_and_frost() -> None:
