@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_integration
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -135,7 +136,7 @@ async def test_at_start_a_real_vt_thermostat_is_read_and_shows_the_plugins_value
     await heat_to(hass, 21.5)  # VT publishes its attributes again
     shown = hass.states.get(LIVING).attributes.get("smart_boiler")
     assert shown is not None
-    assert set(shown) == {"hot_water", "emitter_power_factor"}
+    assert set(shown) == {"heat_available", "emitter_power_factor"}
 
 
 async def test_a_vt_thermostat_already_running_shows_the_values_after_vt_reloads(
@@ -462,3 +463,96 @@ async def test_vt_power_shedding_removes_demand(hass: HomeAssistant, freezer: An
     zone, after = demand()
     assert not zone.shedding
     assert after.wanted is True
+
+
+def vt_central_with_boiler() -> MockConfigEntry:
+    """VT's central configuration with its central boiler on: a relay switched through two
+    commands in VT 10.4.0's format."""
+    from custom_components.versatile_thermostat import const as vt
+
+    boiler = {
+        vt.CONF_USE_CENTRAL_BOILER_FEATURE: True,
+        vt.CONF_CENTRAL_BOILER_ACTIVATION_SRV: "input_boolean.boiler_relay/input_boolean.turn_on",
+        vt.CONF_CENTRAL_BOILER_DEACTIVATION_SRV: (
+            "input_boolean.boiler_relay/input_boolean.turn_off"
+        ),
+    }
+    return MockConfigEntry(
+        domain=vt.DOMAIN,
+        title="Central",
+        unique_id="central",
+        data={**vt_central().data, **boiler},
+    )
+
+
+async def test_a_real_vt_central_entry_is_read_through_its_reload_and_its_untick(
+    hass: HomeAssistant,
+) -> None:
+    """X7 against VT 10.4.0: its central boiler configured, the plugin reads it at every state
+    change while VT sets its central entry up again — never unknown (P-105). The user unticks
+    it (VT drops its two commands and reloads): VT's entry says "off", yet in this run the
+    plugin keeps it as there — VT's manager may still switch the relay until Home Assistant
+    restarts."""
+    from custom_components.versatile_thermostat import const as vt
+    from homeassistant.const import EVENT_STATE_CHANGED
+    from homeassistant.core import Event, callback
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import VT_CENTRAL_SEEN, VThermLink
+
+    celsius = {"unit_of_measurement": "°C", "device_class": "temperature"}
+    hass.states.async_set("sensor.outdoor_temperature", "5.0", celsius)
+    assert await async_setup_component(
+        hass, "input_boolean", {"input_boolean": {"boiler_relay": {}}}
+    )
+    central = vt_central_with_boiler()
+    hass.set_state(CoreState.starting)
+    await setup(hass, central)
+    hass.set_state(CoreState.running)
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done()
+    link = VThermLink(hass, [])
+    sensor = er.async_get(hass).async_get_entity_id(
+        "binary_sensor", vt.DOMAIN, "central_boiler_state"
+    )
+    assert sensor is not None  # VT's own sensor, registered and provided: what is read first
+    shown = hass.states.get(sensor)
+    assert shown is not None
+    assert shown.attributes.get("is_central_boiler_configured") is True
+
+    def now() -> bool | None:
+        """What the plugin reads at this moment, this run's latch left aside."""
+        latched = hass.data.pop(VT_CENTRAL_SEEN, None)
+        try:
+            return link.vt_central_boiler_configured()
+        finally:
+            if latched:
+                hass.data[VT_CENTRAL_SEEN] = latched
+
+    assert link.vt_central_boiler_configured() is True
+    seen: list[bool | None] = []
+
+    @callback
+    def note(_event: Event) -> None:
+        seen.append(now())
+
+    hass.bus.async_listen(EVENT_STATE_CHANGED, note)
+    assert await hass.config_entries.async_reload(central.entry_id)
+    await hass.async_block_till_done()
+    assert seen  # VT's entities went and came back
+    assert set(seen) == {True}
+    seen.clear()
+    unticked = {
+        key: value
+        for key, value in central.data.items()
+        if key
+        not in (vt.CONF_CENTRAL_BOILER_ACTIVATION_SRV, vt.CONF_CENTRAL_BOILER_DEACTIVATION_SRV)
+    } | {vt.CONF_USE_CENTRAL_BOILER_FEATURE: False}
+    hass.config_entries.async_update_entry(central, data=unticked)  # VT reloads everything
+    await hass.async_block_till_done()
+    assert seen
+    assert None not in seen
+    stand_in = hass.states.get(sensor)
+    assert stand_in is not None
+    assert stand_in.attributes.get("restored") is True  # VT no longer provides the sensor
+    assert now() is False  # VT's entry says "off" now...
+    assert link.vt_central_boiler_configured() is True  # ...but not before the restart

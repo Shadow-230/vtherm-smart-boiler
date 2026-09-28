@@ -27,7 +27,7 @@ notice asking for it (answer K). An answer that contradicts the topology blocks 
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from types import MappingProxyType
@@ -206,6 +206,12 @@ TARGET_KEYS = (
     "hand_back_value", "hand_back_value_effect", "hand_back_entity", "hand_back_entity_write_type",
     "gateway_id", "mqtt_top", "mqtt_node", "own_room_controller",
 )  # fmt: skip
+# The control section's keys that name an entity (P-19: a rename is followed there, a removal
+# told; X8 adds its relay's keys here).
+ENTITY_KEYS = (
+    "setpoint_entity", "ch_entity", "hand_back_entity", "confirmed_entity", "ch_confirmed_entity",
+    "thermostat_setpoint_entity", "restart_entity", "frost_zone",
+)  # fmt: skip
 # What a hand-back goes through: fixed while one is owed.
 HAND_BACK_KEYS = (
     "setpoint_entity", "ch_entity", "hand_back", "hand_back_value", "hand_back_value_effect",
@@ -316,6 +322,25 @@ class ControlOptions:
             self.restart_entity,
         )
         return tuple(e for e in found if e)
+
+
+def map_control_entities(
+    section: Mapping[str, Any], visit: Callable[[str, str], str]
+) -> dict[str, Any]:
+    """A control section — the options' own, or one stored with the control state ("taken
+    with") — rebuilt with ``visit(key, entity)`` for every entity it names (``ENTITY_KEYS``);
+    everything else as it is."""
+    result = dict(section)
+    for key in ENTITY_KEYS:
+        entity = section.get(key)
+        if isinstance(entity, str) and entity:
+            result[key] = visit(key, entity)
+    return result
+
+
+def rename_in_control(section: Mapping[str, Any], old: str, new: str) -> dict[str, Any]:
+    """A control section with the entity ``old`` renamed ``new`` wherever it names it (P-19)."""
+    return map_control_entities(section, lambda _key, entity: new if entity == old else entity)
 
 
 def _float(data: Mapping[str, Any], key: str, default: float | None) -> float | None:

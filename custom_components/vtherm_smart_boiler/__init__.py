@@ -6,7 +6,7 @@ imported and tested on its own.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from .const import CONTROL, DOMAIN, UNREADABLE_ISSUE, has_control_section, owes_hand_back
@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 PLATFORMS = ("sensor", "binary_sensor", "switch", "button")
 # The notice asking what is wired to the gateway's thermostat terminals (answer K, X6).
 KIND_ISSUE = "thermostat_kind_missing"
+# An entity the options name that Home Assistant removed: one repair issue per entity (P-19).
+REMOVED_ISSUE = "entity_removed"
 
 
 # Loaded through Home Assistant's import executor before first use: importing them in the event
@@ -93,6 +95,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _remove_stale_entities(hass, entry, coordinator.expected_unique_ids)
         entry.async_on_unload(entry.add_update_listener(_async_options_updated))
         coordinator.async_start_background()
+        # Last: renames and removals are followed only for an entry that runs (P-19).
+        entry.async_on_unload(_follow_entities(hass, entry, coordinator))
     except Exception:
         await _async_setup_failed(hass, entry, coordinator)
         raise
@@ -197,6 +201,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     from .coordinator import async_read_control_state, control_store, main_store
     from .forecasts import remove_partition_files
 
+    _delete_removed_issues(hass, entry.entry_id)
     for key in (
         "hand_back_owed",
         "hand_back_taken_by_other",
@@ -211,6 +216,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "control_options_invalid",
         "auto_tpi_blocked",
         "learning_not_paused",
+        "vt_central_entry_not_running",  # VT's central entry not running (X7)
         UNREADABLE_ISSUE,
     ):
         ir.async_delete_issue(hass, DOMAIN, f"{key}_{entry.entry_id}")
@@ -426,3 +432,150 @@ async def _async_migrate_zone_unique_ids(
         return None
 
     await er.async_migrate_entries(hass, entry.entry_id, migrate)
+
+
+def _follow_entities(
+    hass: HomeAssistant, entry: ConfigEntry, coordinator: SmartBoilerCoordinator
+) -> Callable[[], None]:
+    """P-19 (follow, provisional, K4): every entity the options name — and, for a unit that
+    only hands back, the options the boiler was taken with — is followed in the entity registry.
+    A rename is carried into the options, one reload as any options save (X5.13), and into what
+    control keeps for it; a removal raises a repair issue naming the fields, and the plugin goes
+    on without the entity (the missing-data rules) until it is back or the options no longer
+    name it. Any other change of the registry is not the plugin's."""
+    from homeassistant.core import Event, callback
+    from homeassistant.helpers import entity_registry as er
+    from homeassistant.helpers import issue_registry as ir
+    from homeassistant.helpers.event import async_track_entity_registry_updated_event
+
+    named = _named_entities(entry, coordinator)
+    _clear_removed_issues(hass, entry, named)
+    # Renames of one batch — a device renamed renames its entities one after the other — are
+    # applied together at the next turn of the event loop: the options' save starts the reload
+    # at once, and its unload would stop following before the rest of the batch.
+    pending: list[tuple[str, str]] = []
+
+    @callback
+    def follow_pending() -> None:
+        renames = list(pending)
+        pending.clear()
+        _follow_renames(hass, entry, coordinator, renames)
+
+    @callback
+    def changed(event: Event[er.EventEntityRegistryUpdatedData]) -> None:
+        data = event.data
+        entity = data["entity_id"]
+        if data["action"] == "update":
+            old = data.get("old_entity_id")
+            if isinstance(old, str) and old != entity:
+                if not pending:
+                    hass.loop.call_soon(follow_pending)
+                pending.append((old, entity))
+        elif data["action"] == "remove":
+            fields = _named_entities(entry, coordinator).get(entity, ())
+            _report_removed(hass, entry, entity, fields)
+        else:  # registered again: back in Home Assistant
+            ir.async_delete_issue(hass, DOMAIN, _removed_issue_id(entry.entry_id, entity))
+
+    return async_track_entity_registry_updated_event(hass, list(named), changed)
+
+
+def _named_entities(
+    entry: ConfigEntry, coordinator: SmartBoilerCoordinator
+) -> dict[str, tuple[str, ...]]:
+    from .config import named_entities
+
+    found = dict(named_entities(entry.options))
+    for unit in _units(coordinator):
+        for entity, fields in unit.named_entities().items():
+            found.setdefault(entity, fields)
+    return found
+
+
+def _follow_renames(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordinator: SmartBoilerCoordinator,
+    renames: list[tuple[str, str]],
+) -> None:
+    """Entities the plugin uses got other IDs: what control keeps for them follows — stored at
+    once — and so do the options, whose save reloads the entry as any options save does: one
+    reload for the batch. Where only what a unit that hands back keeps named one, the entry is
+    reloaded to hand back through the new ID. An entry removed meanwhile is left alone."""
+    import logging
+
+    from .config import rename_entity
+
+    if hass.config_entries.async_get_entry(entry.entry_id) is None:
+        return
+    options: dict[str, Any] = dict(entry.options)
+    kept = False
+    for old, new in renames:
+        logging.getLogger(__name__).info("%s is now %s: the plugin follows it", old, new)
+        for unit in _units(coordinator):
+            kept = unit.rename_entity(old, new) or kept
+        coordinator.rename_zone(old, new)
+        options = rename_entity(options, old, new)
+    if kept:
+        coordinator.schedule_control_save()
+    if options != dict(entry.options):
+        hass.config_entries.async_update_entry(entry, options=options)
+    elif kept:
+        hass.config_entries.async_schedule_reload(entry.entry_id)
+
+
+def _removed_issue_id(entry_id: str, entity: str) -> str:
+    return f"{REMOVED_ISSUE}_{entry_id}_{entity}"
+
+
+def _report_removed(
+    hass: HomeAssistant, entry: ConfigEntry, entity: str, fields: tuple[str, ...]
+) -> None:
+    """The repair issue of an entity the options name that Home Assistant removed: a warning,
+    not fixable, kept across restarts (nothing would raise it again)."""
+    import logging
+
+    from homeassistant.helpers import issue_registry as ir
+
+    shown = ", ".join(fields) or "-"
+    logging.getLogger(__name__).warning(
+        "%s is no longer in Home Assistant (%s): the plugin goes on without it", entity, shown
+    )
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        _removed_issue_id(entry.entry_id, entity),
+        is_fixable=False,
+        is_persistent=True,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=REMOVED_ISSUE,
+        translation_placeholders={"field": shown, "entity": entity},
+    )
+
+
+def _clear_removed_issues(
+    hass: HomeAssistant, entry: ConfigEntry, named: Mapping[str, tuple[str, ...]]
+) -> None:
+    """At setup: an entity's removal issue goes once the options no longer name it or it is
+    back in the registry."""
+    from homeassistant.helpers import entity_registry as er
+    from homeassistant.helpers import issue_registry as ir
+
+    prefix = _removed_issue_id(entry.entry_id, "")
+    registry = er.async_get(hass)
+    for domain, issue_id in list(ir.async_get(hass).issues):
+        if domain != DOMAIN or not issue_id.startswith(prefix):
+            continue
+        entity = issue_id.removeprefix(prefix)
+        if entity not in named or registry.async_get(entity) is not None:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+
+
+def _delete_removed_issues(hass: HomeAssistant, entry_id: str) -> None:
+    """The entry is gone: so are its removal issues."""
+    from homeassistant.helpers import issue_registry as ir
+
+    prefix = _removed_issue_id(entry_id, "")
+    for domain, issue_id in list(ir.async_get(hass).issues):
+        if domain == DOMAIN and issue_id.startswith(prefix):
+            ir.async_delete_issue(hass, DOMAIN, issue_id)

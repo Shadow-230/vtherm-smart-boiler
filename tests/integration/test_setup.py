@@ -407,6 +407,136 @@ async def test_zone_entities_keep_their_identity_when_the_thermostat_is_renamed(
     assert entity_id(hass, entry, "binary_sensor", "hot_water", "climate.lounge") == before
 
 
+def count_setups(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every setup of the plugin's entry from now on: a reload is one more."""
+    import custom_components.vtherm_smart_boiler as plugin
+
+    setups: list[str] = []
+    real = plugin.async_setup_entry
+
+    async def counted(hass: HomeAssistant, entry: Any) -> bool:
+        setups.append(entry.entry_id)
+        return await real(hass, entry)
+
+    monkeypatch.setattr(plugin, "async_setup_entry", counted)
+    return setups
+
+
+async def test_a_renamed_entity_is_followed(
+    hass: HomeAssistant, zones: FakeZones, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P-19 (follow, provisional, K4): a VT climate and a boiler signal renamed in Home
+    Assistant at once — as renaming their device does: the options hold the new entity IDs
+    after one reload, as any options save; the zone's entities keep their identity; and the new
+    IDs are followed from then on."""
+    registry = er.async_get(hass)
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    flow = registry.async_get_or_create(
+        "sensor", "fake_boiler", "flow", suggested_object_id="fake_boiler_flow"
+    )
+    assert flow.entity_id == boiler.entity(Signal.FLOW)
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    living = zones.add("living")
+    entry = entry_for(boiler, zones, reference_room={"strategy": "chosen_zone", "zone": living})
+    await setup(hass, entry)
+    before = entity_id(hass, entry, "binary_sensor", "hot_water", living)
+    setups = count_setups(monkeypatch)
+    registry.async_update_entity(living, new_entity_id="climate.lounge")
+    registry.async_update_entity(flow.entity_id, new_entity_id="sensor.boiler_flow")
+    await hass.async_block_till_done()
+    assert entry.options["zones"] == [{"entity_id": "climate.lounge"}]
+    assert entry.options["signals"]["flow"] == "sensor.boiler_flow"
+    assert entry.options["reference_room"]["zone"] == "climate.lounge"
+    assert setups == [entry.entry_id]  # one reload
+    assert entry.state is ConfigEntryState.LOADED
+    assert entity_id(hass, entry, "binary_sensor", "hot_water", "climate.lounge") == before
+    registry.async_update_entity("climate.lounge", new_entity_id="climate.salon")
+    await hass.async_block_till_done()
+    assert entry.options["zones"] == [{"entity_id": "climate.salon"}]
+    assert len(setups) == 2
+
+
+async def test_other_registry_changes_are_not_followed(
+    hass: HomeAssistant, zones: FakeZones, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Negatives: an entity the options do not name renamed or removed, and a named entity
+    changed in anything but its ID (its name, disabled or not), change nothing: no reload, no
+    issue."""
+    from homeassistant.helpers import issue_registry as ir
+
+    registry = er.async_get(hass)
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    living = zones.add("living")
+    other = registry.async_get_or_create("sensor", "fake", "other")
+    entry = entry_for(boiler, zones)
+    await setup(hass, entry)
+    options = dict(entry.options)
+    setups = count_setups(monkeypatch)
+    registry.async_update_entity(other.entity_id, new_entity_id="sensor.renamed_other")
+    registry.async_update_entity(living, name="Living room")
+    registry.async_remove("sensor.renamed_other")
+    await hass.async_block_till_done()
+    assert dict(entry.options) == options
+    assert setups == []
+    assert not [i for (d, i) in ir.async_get(hass).issues if d == DOMAIN and "removed" in i]
+
+
+async def test_a_removed_entity_raises_a_repair_issue(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """P-19: an entity the options name removed from Home Assistant — a VT thermostat deleted —
+    raises a repair issue naming the fields and the entity: a warning, not fixable, kept across
+    restarts; the plugin goes on without it. Back in the registry, the issue goes; so does it
+    once the options no longer name the entity."""
+    from homeassistant.helpers import issue_registry as ir
+
+    registry = er.async_get(hass)
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    living = zones.add("living")
+    bedroom = zones.add("bedroom")
+    entry = entry_for(boiler, zones, reference_room={"strategy": "chosen_zone", "zone": living})
+    await setup(hass, entry)
+    issue_id = f"entity_removed_{entry.entry_id}_{living}"
+
+    def remove(entity: str) -> None:  # as a VT thermostat deleted: its state goes with it
+        registry.async_remove(entity)
+        hass.states.async_remove(entity)
+
+    remove(living)
+    await hass.async_block_till_done()
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.translation_key == "entity_removed"
+    assert issue.severity is ir.IssueSeverity.WARNING
+    assert not issue.is_fixable
+    assert issue.is_persistent
+    assert issue.translation_placeholders == {
+        "field": "zones, reference_room.zone",
+        "entity": living,
+    }
+    assert entry.state is ConfigEntryState.LOADED  # goes on without it
+    zones.add("living")  # the same thermostat registered again
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+    gone = f"entity_removed_{entry.entry_id}_{bedroom}"
+    remove(bedroom)
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, gone) is not None
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, "zones": [{"entity_id": living}]}
+    )
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, gone) is None  # no longer named
+    remove(living)
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+    assert await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None  # with the entry
+
+
 async def test_zone_entities_from_before_move_to_the_stable_key(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:

@@ -520,6 +520,12 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         if added or dropped:
             self.schedule_save(FACTOR_SAVE_DELAY_S)
 
+    def rename_zone(self, old: str, new: str) -> None:
+        """P-19: a zone's VT climate renamed: the emitter factor learned for it follows, stored
+        under the new entity ID at the next save (the reload that follows makes one)."""
+        if old in self._factors:
+            self._factors[new] = self._factors.pop(old)
+
     def expect_entities(self, entities: list[Any]) -> None:
         self.expected_unique_ids.update(e.unique_id for e in entities if e.unique_id)
 
@@ -1044,8 +1050,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         what its advice costs: Auto-TPI that cannot learn — flagged as used by VT's central
         boiler while that feature is off, which is how the plugin replaces it (research F2) —
         and, while control runs with learning pauses, learning it cannot pause: Auto-TPI (only a
-        reset would pause it) and SmartPI without its learning flag."""
-        central_off = not self.link.vt_central_boiler_configured()
+        reset would pause it) and SmartPI without its learning flag. VT's central boiler unknown
+        says nothing about Auto-TPI's learning in the zones VT's central boiler uses: the first
+        issue is left as it is, and those zones are in neither (P-54)."""
+        central = self.link.vt_central_boiler_configured()
         control = self.config.control
         pauses = control.configured and control.learning_pauses
         blocked: list[str] = []
@@ -1055,11 +1063,15 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             flagless_smartpi = (
                 algorithm.proportional_function == "smartpi" and algorithm.smartpi_learning is None
             )
-            if algorithm.auto_tpi and algorithm.used_by_central_boiler and central_off:
+            depends = algorithm.auto_tpi and algorithm.used_by_central_boiler
+            if depends and central is None:
+                continue  # whether it learns is not known either way
+            if depends and central is False:
                 blocked.append(self.link.zone_name(zone_id))
             elif pauses and (algorithm.auto_tpi or flagless_smartpi):
                 unpaused.append(self.link.zone_name(zone_id))
-        self._issue("auto_tpi_blocked", blocked)
+        if central is not None:
+            self._issue("auto_tpi_blocked", blocked)
         self._issue("learning_not_paused", unpaused)
 
     def report_no_zone_known(self, kind: str | None) -> None:

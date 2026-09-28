@@ -10,6 +10,7 @@ from custom_components.vtherm_smart_boiler.core.learning import (
     follow_resumes,
     plan_learning,
     release_all,
+    rename_zone,
 )
 
 MIN = 60.0
@@ -317,3 +318,33 @@ def test_a_release_forgets_the_causes() -> None:
     assert zones == ("a",)
     assert released.causes == {}
     assert released.dhw_ended == {}
+
+
+def test_a_renamed_zone_keeps_what_the_plugin_holds_for_it() -> None:
+    """P-19: a VT climate renamed in Home Assistant keeps its pause, its resume, their causes
+    and times under the new entity ID — the plugin still resumes what it paused itself."""
+    state = LearningState(
+        paused={"climate.a": 1.0, "climate.b": 2.0},
+        setpoints=((1.0, 45.0),),
+        last_toggle={"climate.a": 1.0, "climate.b": 2.0},
+        resuming={"climate.a": 3.0},
+        resume_since={"climate.a": 3.0},
+        causes={"climate.a": (PauseCause.DHW,), "climate.b": ()},
+        dhw_ended={"climate.a": 4.0},
+    )
+    renamed = rename_zone(state, "climate.a", "climate.c")
+    assert renamed.paused == {"climate.c": 1.0, "climate.b": 2.0}
+    assert renamed.last_toggle == {"climate.c": 1.0, "climate.b": 2.0}
+    assert renamed.resuming == {"climate.c": 3.0}
+    assert renamed.resume_since == {"climate.c": 3.0}
+    assert renamed.causes == {"climate.c": (PauseCause.DHW,), "climate.b": ()}
+    assert renamed.dhw_ended == {"climate.c": 4.0}
+    assert renamed.setpoints == state.setpoints
+
+
+def test_renaming_a_zone_the_plugin_holds_nothing_for_changes_nothing() -> None:
+    """Negative: an entity the learning state does not name, or no state at all."""
+    state = LearningState(paused={"climate.a": 1.0}, last_toggle={"climate.a": 1.0})
+    assert rename_zone(state, "climate.x", "climate.y") is state
+    empty = LearningState()
+    assert rename_zone(empty, "climate.a", "climate.c") is empty

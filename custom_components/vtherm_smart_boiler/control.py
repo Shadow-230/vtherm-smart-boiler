@@ -123,6 +123,8 @@ from .control_config import (
     frost_protection_by,
     hand_back_effect,
     highest_water_temperature,
+    map_control_entities,
+    rename_in_control,
     working_thermostat,
 )
 from .core.controller import (
@@ -177,6 +179,7 @@ from .core.learning import (
     follow_resumes,
     plan_learning,
     release_all,
+    rename_zone,
 )
 from .core.limits import Grid, handed_back_in_frost, write_bounds
 from .core.loop import (
@@ -269,6 +272,11 @@ ZONE_UNKNOWN_ALARM_S = 30 * 60.0  # a zone unknown this long is reported
 # where it was known to be off at the step before (P-105; provisional, K4). A restorable store
 # after a restart stands for "known off just before": a session cannot run while it is on.
 VT_BOILER_GRACE_S = 600.0
+# VT's central boiler unknown this long while control is switched on — its central entry stuck in
+# a failed setup, its setting unreadable — raises a repair issue saying why control waits (P-20;
+# provisional, K4). Control stays blocked meanwhile: VT's manager may still switch the boiler.
+VT_CENTRAL_UNKNOWN_ISSUE_S = 600.0
+VT_CENTRAL_ISSUE = "vt_central_entry_not_running"
 RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control counts as off
 SMARTPI_DOMAIN = "vtherm_smartpi"
 SMARTPI_SERVICE = "set_smartpi_learning"
@@ -640,6 +648,10 @@ class ControlUnit:
         # been unknown after that.
         self._vt_boiler_off = False
         self._vt_boiler_unknown_since: float | None = None
+        # P-20: since when VT's central boiler has been unknown, whatever came before, and
+        # whether the repair issue telling of it is up.
+        self._vt_central_unknown_since: float | None = None
+        self._vt_central_issue = False
         # Decision 4: the rooms the frost issue shows now, with the temperature it shows.
         self._frost_issue_shown: dict[str, float] = {}
 
@@ -682,6 +694,35 @@ class ControlUnit:
     def stored_wish(self) -> bool | None:
         """The user's on/off wish as the last run stored it; ``None`` when none was stored."""
         return self._stored_enabled
+
+    def named_entities(self) -> dict[str, tuple[str, ...]]:
+        """The entities the options this unit runs with name — for a unit that only hands back,
+        the options the boiler was taken with — each with its fields (P-19)."""
+        found: dict[str, list[str]] = {}
+
+        def note(key: str, entity: str) -> str:
+            found.setdefault(entity, []).append(f"control.{key}")
+            return entity
+
+        map_control_entities(self._raw, note)
+        return {entity: tuple(fields) for entity, fields in found.items()}
+
+    def rename_entity(self, old: str, new: str) -> bool:
+        """P-19: Home Assistant renamed an entity: what this unit keeps for it follows — a
+        zone's paused learning and its resume, the options the boiler was taken with (stored
+        with the control state) and a target another controller holds. Whether anything
+        changed; the options themselves are saved by the caller, which reloads."""
+        learning = self._session.learning
+        renamed = rename_zone(learning, old, new)
+        raw = rename_in_control(self._raw, old, new)
+        taken = {new if target == old else target for target in self._taken_targets}
+        changed = renamed is not learning or raw != self._raw or taken != self._taken_targets
+        self._session.learning = renamed
+        self._raw = raw
+        self._taken_targets = taken
+        if isinstance(self._taken_with, Mapping):
+            self._taken_with = rename_in_control(self._taken_with, old, new)
+        return changed
 
     def async_add_listener(self, update: Callable[[], None]) -> Callable[[], None]:
         self._listeners.append(update)
@@ -1012,6 +1053,7 @@ class ControlUnit:
         # next run raises it again at its first step outside the recognition period.
         self._delete_stopped_heating_issue()
         self._show_frost_closed({})
+        self._delete_vt_central_issue()  # the next run tells again, ten minutes on
         await self._async_learning_calls(deadline)
         self._coordinator.schedule_control_save()
 
@@ -1127,16 +1169,22 @@ class ControlUnit:
         return None
 
     def _vt_boiler_in_grace(self, now: float) -> bool:
-        """P-105: VT's central boiler unknown — its central entry reloading — does not count as
-        a blocker for ``VT_BOILER_GRACE_S`` where it was known to be off at the step before."""
+        """P-105: VT's central boiler unknown does not count as a blocker for
+        ``VT_BOILER_GRACE_S`` where it was known to be off at the step before — since X7 only
+        where VT's stored setting cannot settle it. Not while VT's central entry is stuck in a
+        failed setup: its manager may still switch the boiler (P-20)."""
         if not self._vt_boiler_off:
+            return False
+        if self._coordinator.link.vt_central_entry_failed():
             return False
         since = self._vt_boiler_unknown_since
         return since is None or now - clock_start(since, now) < VT_BOILER_GRACE_S
 
     def _follow_vt_boiler(self, now: float) -> tuple[str, ...]:
-        """VT's central boiler at this step, for P-105's grace; the blockers that wait in it."""
+        """VT's central boiler at this step, for P-105's grace and P-20's issue; the blockers
+        that wait in the grace."""
         configured = self._coordinator.link.vt_central_boiler_configured()
+        self._follow_vt_central_issue(now, configured)
         if configured is not None:
             self._vt_boiler_off = configured is False
             self._vt_boiler_unknown_since = None
@@ -1144,6 +1192,42 @@ class ControlUnit:
         if self._vt_boiler_off and self._vt_boiler_unknown_since is None:
             self._vt_boiler_unknown_since = now
         return ("vt_central_boiler_unknown (grace)",) if self._vt_boiler_in_grace(now) else ()
+
+    def _follow_vt_central_issue(self, now: float, configured: bool | None) -> None:
+        """P-20: VT's central boiler unknown for ``VT_CENTRAL_UNKNOWN_ISSUE_S`` while control is
+        switched on raises a repair issue — a warning, not fixable — saying why control waits;
+        known again, or control switched off, it goes."""
+        if configured is not None:
+            self._vt_central_unknown_since = None
+        else:
+            self._vt_central_unknown_since = clock_start(self._vt_central_unknown_since, now)
+        since = self._vt_central_unknown_since
+        due = self.enabled and since is not None and now - since >= VT_CENTRAL_UNKNOWN_ISSUE_S
+        if due and not self._vt_central_issue:
+            _LOGGER.warning(
+                "Versatile Thermostat's central boiler cannot be ruled out: its central "
+                "configuration is not running and its settings do not say it is off, so control "
+                "waits"
+            )
+            ir.async_create_issue(
+                self._hass,
+                DOMAIN,
+                self._vt_central_issue_id(),
+                is_fixable=False,
+                is_persistent=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=VT_CENTRAL_ISSUE,
+            )
+            self._vt_central_issue = True
+        elif not due and self._vt_central_issue:
+            self._delete_vt_central_issue()
+
+    def _vt_central_issue_id(self) -> str:
+        return f"{VT_CENTRAL_ISSUE}_{self._coordinator.config_entry.entry_id}"
+
+    def _delete_vt_central_issue(self) -> None:
+        ir.async_delete_issue(self._hass, DOMAIN, self._vt_central_issue_id())
+        self._vt_central_issue = False
 
     def _grid(self) -> Grid | None:
         """The setpoint entity's grid (P-15), on the entity path; ``None`` elsewhere or without

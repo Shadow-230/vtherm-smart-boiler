@@ -1095,7 +1095,7 @@
         "name": "Boiler signals"
       },
       "hot_water": {
-        "name": "{zone} hot water",
+        "name": "{zone} heat available",
         "state_attributes": {
           "reason": {
             "name": "Why not",
@@ -1433,10 +1433,10 @@
       "message": "Control becomes available once the monitoring period has passed. Other reasons: {others}."
     },
     "blocked_vt_central_boiler_active": {
-      "message": "Versatile Thermostat's own central boiler is configured. Remove it first, so that only one controller drives the boiler, then restart Home Assistant: VT stops its central boiler's keep-alive commands only then. Other reasons: {others}."
+      "message": "Versatile Thermostat's own central boiler is configured. Remove it first, so that only one controller drives the boiler, then restart Home Assistant: VT stops sending its central boiler's commands only then. Control keeps waiting until Home Assistant has restarted, even once you have unticked it. Other reasons: {others}."
     },
     "blocked_vt_central_boiler_unknown": {
-      "message": "Versatile Thermostat's central boiler cannot be ruled out yet: VT's central configuration is not loaded (starting, reloading, or failed to load — see Settings → Devices & services). Control waits for it. Other reasons: {others}."
+      "message": "Versatile Thermostat's central boiler cannot be ruled out yet: VT's central configuration failed to load (see Settings → Devices & services), or its settings do not say whether its central boiler is on. Control waits for it. Other reasons: {others}."
     },
     "blocked_control_error": {
       "message": "Control stopped after an internal error. Check the log, then switch control off and on again. Other reasons: {others}."
@@ -1554,11 +1554,19 @@
     },
     "vt_feature_manager_unsupported": {
       "title": "VT's thermostats cannot show the plugin's zone values",
-      "description": "The Versatile Thermostat installed here has no feature managers (they need VT 10.4 or newer, with vtherm_api 0.5 or newer), so its thermostats cannot show the plugin's hot-water and emitter values. The plugin's own zone entities show them meanwhile. Update Versatile Thermostat to show them on the thermostats too."
+      "description": "The Versatile Thermostat installed here cannot load the plugin's feature manager (feature managers need VT {version} or newer, with vtherm_api 0.5 or newer; the plugin is tested with VT 10.4.0), so its thermostats cannot show the plugin's heat-available and emitter values. The plugin's own zone entities show them meanwhile. Update Versatile Thermostat to show them on the thermostats too."
     },
     "vt_reload_needed": {
       "title": "Some VT thermostats need a reload to show the plugin's values",
-      "description": "These thermostats were already running when the plugin registered with Versatile Thermostat, and pick it up only when VT reloads: {zones}. Reload Versatile Thermostat to show the plugin's hot-water and emitter values on them; the plugin's own zone entities show them meanwhile. Nothing else depends on it."
+      "description": "These thermostats were already running when the plugin registered with Versatile Thermostat, and pick it up only when VT reloads: {zones}. Reload Versatile Thermostat to show the plugin's heat-available and emitter values on them; the plugin's own zone entities show them meanwhile. Nothing else depends on it."
+    },
+    "vt_central_entry_not_running": {
+      "title": "Versatile Thermostat's central configuration is not running",
+      "description": "Its setup failed, and its settings say VT's central boiler is on. Control waits, so that two controllers never drive the boiler: fix VT's central configuration, or untick its central boiler and restart Home Assistant."
+    },
+    "entity_removed": {
+      "title": "An entity the plugin uses is gone",
+      "description": "{field}: {entity} is no longer in Home Assistant. Pick another one in the options; until then the plugin works without it."
     },
     "hand_back_taken_by_other": {
       "title": "After the hand-back another controller holds the boiler",

@@ -43,6 +43,7 @@ from custom_components.vtherm_smart_boiler.control_config import (
 from custom_components.vtherm_smart_boiler.core.alarms import AlarmKind
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.signals import Signal
+from custom_components.vtherm_smart_boiler.vtherm_link import VT_CENTRAL_SEEN
 
 from .harness import (
     BOILER_ENTITIES,
@@ -924,6 +925,57 @@ async def test_auto_tpi_zones_that_cannot_learn_raise_a_repair_issue(rig: Rig) -
         ir.async_get(rig.hass).async_get_issue(DOMAIN, f"learning_not_paused_{rig.entry.entry_id}")
         is None
     )
+
+
+def vt_central_unknown(rig: Rig) -> MockConfigEntry:
+    """VT's central entry stuck in a failed setup with its central boiler on in its data: VT's
+    central boiler cannot be ruled out (X7, P-20)."""
+    central = MockConfigEntry(
+        domain="versatile_thermostat",
+        data={"thermostat_type": "thermostat_central_config", "use_central_boiler_feature": True},
+        state=ConfigEntryState.SETUP_ERROR,
+    )
+    central.add_to_hass(rig.hass)
+    registry = er.async_get(rig.hass)
+    sensor = registry.async_get_or_create(
+        "binary_sensor", VT_PLATFORM, "central_boiler_state", config_entry=central
+    )
+    registry.async_get(sensor.entity_id).write_unavailable_state(rig.hass)
+    return central
+
+
+@pytest.mark.parametrize("raised_before", [True, False])
+async def test_auto_tpi_issue_is_left_as_it_is_while_vt_boiler_is_unknown(
+    rig: Rig, raised_before: bool
+) -> None:
+    """P-54: VT's central boiler unknown says nothing about Auto-TPI's learning — the issue
+    raised stays, none is raised; and the zone is not reported as learning unpaused either.
+    Known again, it decides as before."""
+    rig.zones.set(
+        "living",
+        configuration={"proportional_function": "tpi", "is_used_by_central_boiler": True},
+        specific_states={"auto_tpi_state": "on"},
+    )
+    central = None if raised_before else vt_central_unknown(rig)
+    await start(rig)
+    assert rig.entry is not None
+    coordinator = rig.entry.runtime_data
+    blocked = f"auto_tpi_blocked_{rig.entry.entry_id}"
+    unpaused = f"learning_not_paused_{rig.entry.entry_id}"
+    assert (issue(rig, "auto_tpi_blocked") is not None) is raised_before
+    if central is None:
+        central = vt_central_unknown(rig)
+    assert coordinator.link.vt_central_boiler_configured() is None
+    coordinator.check_learning()
+    assert (ir.async_get(rig.hass).async_get_issue(DOMAIN, blocked) is not None) is raised_before
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, unpaused) is None
+    hass = rig.hass
+    hass.config_entries.async_update_entry(
+        central, data={**central.data, "use_central_boiler_feature": False}
+    )
+    assert coordinator.link.vt_central_boiler_configured() is False
+    coordinator.check_learning()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, blocked) is not None  # known: decided
 
 
 @pytest.mark.parametrize(
@@ -1809,16 +1861,14 @@ async def test_a_switch_that_stays_on_is_no_hand_back(rig: Rig) -> None:
     assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
 
 
-def vt_central_entry(rig: Rig) -> MockConfigEntry:
-    """VT's central entry with its central boiler switched off, its sensor a stand-in (T6)."""
-    from homeassistant.config_entries import ConfigEntryState
-
-    from .harness import VT_PLATFORM
-
+def vt_central_entry(rig: Rig, feature: bool | None = False) -> MockConfigEntry:
+    """VT's central entry, loaded, with its central boiler switched off — ``feature``: its
+    stored setting, ``None`` for none — and its sensor a stand-in (T6)."""
+    data: dict[str, Any] = {"thermostat_type": "thermostat_central_config"}
+    if feature is not None:
+        data["use_central_boiler_feature"] = feature
     central = MockConfigEntry(
-        domain="versatile_thermostat",
-        data={"use_central_boiler_feature": False},
-        state=ConfigEntryState.LOADED,
+        domain="versatile_thermostat", data=data, state=ConfigEntryState.LOADED
     )
     central.add_to_hass(rig.hass)
     registry = er.async_get(rig.hass)
@@ -1829,22 +1879,35 @@ def vt_central_entry(rig: Rig) -> MockConfigEntry:
     return central
 
 
+def vt_sensor(rig: Rig, state: str | None, configured: bool | None = None) -> None:
+    """VT's own central-boiler sensor: provided in ``state`` — ``"unavailable"`` says nothing,
+    which X7 leaves unknown (X3's grace), and ``configured`` is VT's attribute; ``None`` — the
+    stand-in again."""
+    registry = er.async_get(rig.hass)
+    entity_id = registry.async_get_entity_id("binary_sensor", VT_PLATFORM, "central_boiler_state")
+    assert entity_id is not None
+    if state is None:
+        registry.async_get(entity_id).write_unavailable_state(rig.hass)
+        return
+    attributes = {} if configured is None else {"is_central_boiler_configured": configured}
+    rig.hass.states.async_set(entity_id, state, attributes)
+
+
 @pytest.mark.parametrize("minutes", [2, 11])
-async def test_a_vt_central_reload_does_not_hand_back_within_the_grace(
+async def test_a_vt_central_boiler_unknown_does_not_hand_back_within_the_grace(
     rig: Rig, minutes: int
 ) -> None:
-    """P-105 (X3's part): VT's central boiler known off, then unknown while VT sets its central
-    entry up again: for ten minutes it does not count as a blocker — control goes on, the
-    status shows it waiting. Two minutes of it change nothing; after eleven it blocks and
-    hands back, and control takes the boiler again once VT is back without it."""
-    from homeassistant.config_entries import ConfigEntryState
-
-    central = vt_central_entry(rig)
+    """P-105 (X3's part): VT's central boiler known off, then unknown — since X7, only where VT's
+    stored setting cannot settle it (here VT's own sensor, provided, says nothing): for ten
+    minutes it does not count as a blocker — control goes on, the status shows it waiting. Two
+    minutes of it change nothing; after eleven it blocks and hands back, and control takes the
+    boiler again once VT's central boiler is known off again."""
+    vt_central_entry(rig)
     await start(rig)
     await rig.switch(True)
     await rig.advance(20)
     assert rig.gateway.setpoints()[-1] == EXPECTED
-    central.mock_state(rig.hass, ConfigEntryState.SETUP_IN_PROGRESS)
+    vt_sensor(rig, "unavailable")
     await rig.advance(20)
     attributes = rig.state("sensor", "control_state").attributes
     assert attributes["blockers"] == []
@@ -1858,7 +1921,7 @@ async def test_a_vt_central_reload_does_not_hand_back_within_the_grace(
         assert "vt_central_boiler_unknown" in attributes["blockers"]
         assert attributes["blockers_waiting"] == []
         assert rig.gateway.setpoints()[-1] == 0.0
-    central.mock_state(rig.hass, ConfigEntryState.LOADED)
+    vt_sensor(rig, None)
     await rig.advance(20)
     attributes = rig.state("sensor", "control_state").attributes
     assert "vt_central_boiler_unknown" not in attributes["blockers"]
@@ -1869,10 +1932,8 @@ async def test_a_vt_central_reload_does_not_hand_back_within_the_grace(
 async def test_vt_central_boiler_unknown_from_the_start_blocks_without_a_grace(rig: Rig) -> None:
     """Negative: never known off before — from the start of a unit with nothing to restore —
     VT's central boiler unknown blocks as before."""
-    from homeassistant.config_entries import ConfigEntryState
-
-    central = vt_central_entry(rig)
-    central.mock_state(rig.hass, ConfigEntryState.SETUP_IN_PROGRESS)
+    vt_central_entry(rig)
+    vt_sensor(rig, "unavailable")
     await start(rig)
     await rig.switch(True)
     await rig.advance(20)
@@ -1880,6 +1941,161 @@ async def test_vt_central_boiler_unknown_from_the_start_blocks_without_a_grace(r
     assert "vt_central_boiler_unknown" in attributes["blockers"]
     assert attributes["blockers_waiting"] == []
     assert rig.gateway.setpoints() == []
+
+
+@pytest.mark.parametrize("state", ["unload_in_progress", "not_loaded", "setup_in_progress"])
+async def test_while_vt_reloads_its_central_entry_control_does_not_hand_back(
+    rig: Rig, state: str
+) -> None:
+    """P-105 (X7): VT sets its central entry up again — its sensor a stand-in or gone: its
+    stored setting "off" answers, so nothing blocks or waits, however long the reload takes,
+    and the boiler is never handed back. Negative: its setting "on" — VT's central boiler
+    there: blocked at once, and handed back."""
+    central = vt_central_entry(rig)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+    central.mock_state(rig.hass, ConfigEntryState(state))
+    await rig.advance(11 * 60)
+    attributes = rig.state("sensor", "control_state").attributes
+    assert attributes["blockers"] == []
+    assert attributes["blockers_waiting"] == []
+    assert 0.0 not in rig.gateway.setpoints()
+    assert rig.state("sensor", "control_state").state == "heating"
+    rig.hass.config_entries.async_update_entry(
+        central, data={**central.data, "use_central_boiler_feature": True}
+    )
+    await rig.advance(10)
+    assert "vt_central_boiler_active" in rig.state("sensor", "control_state").attributes["blockers"]
+    assert rig.gateway.setpoints()[-1] == 0.0
+
+
+async def test_a_vt_central_entry_in_a_failed_setup_gets_no_grace(rig: Rig) -> None:
+    """P-20 (the cautious reading, X7): VT's central boiler known off, then its central entry
+    stuck in a failed setup with the feature on in its data — VT's manager may run: blocked at
+    once, no grace, and handed back."""
+    central = vt_central_entry(rig)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+    rig.hass.config_entries.async_update_entry(
+        central, data={**central.data, "use_central_boiler_feature": True}
+    )
+    central.mock_state(rig.hass, ConfigEntryState.SETUP_ERROR)
+    await rig.advance(10)
+    attributes = rig.state("sensor", "control_state").attributes
+    assert "vt_central_boiler_unknown" in attributes["blockers"]
+    assert attributes["blockers_waiting"] == []
+    assert rig.gateway.setpoints()[-1] == 0.0
+
+
+def central_issue(rig: Rig) -> ir.IssueEntry | None:
+    return issue(rig, "vt_central_entry_not_running")
+
+
+async def test_a_vt_central_entry_in_setup_error_is_told_after_ten_minutes(rig: Rig) -> None:
+    """P-20: VT's central entry stuck in a failed setup with its central boiler on in its data:
+    unknown — control waits (VT's manager may still switch the boiler) — and after ten minutes
+    of it (provisional, K4) a repair issue says why: a warning, not fixable. It goes once the
+    state is known — here the feature switched off in VT's data — and control runs."""
+    central = MockConfigEntry(
+        domain="versatile_thermostat",
+        data={"thermostat_type": "thermostat_central_config", "use_central_boiler_feature": True},
+        state=ConfigEntryState.SETUP_ERROR,
+    )
+    central.add_to_hass(rig.hass)
+    er.async_get(rig.hass).async_get_or_create(
+        "binary_sensor", VT_PLATFORM, "central_boiler_state", config_entry=central
+    )
+    await start(rig)
+    assert rig.entry is not None
+    assert rig.entry.runtime_data.link.vt_central_boiler_configured() is None
+    await rig.switch(True)  # waits: the blocker passes on its own
+    await rig.advance(9 * 60)
+    assert "vt_central_boiler_unknown" in blockers(rig)
+    assert central_issue(rig) is None  # not ten minutes yet
+    await rig.advance(70)
+    found = central_issue(rig)
+    assert found is not None
+    assert found.translation_key == "vt_central_entry_not_running"
+    assert found.severity is ir.IssueSeverity.WARNING
+    assert not found.is_fixable
+    assert rig.gateway.setpoints() == []  # control waited all along
+    rig.hass.config_entries.async_update_entry(
+        central, data={**central.data, "use_central_boiler_feature": False}
+    )
+    await rig.advance(20)
+    assert central_issue(rig) is None
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+
+
+@pytest.mark.parametrize("case", ["feature_off", "switched_off", "unloaded"])
+async def test_no_vt_central_issue_without_a_wait_to_tell_of(rig: Rig, case: str) -> None:
+    """Negatives: VT's central entry in a failed setup with its central boiler off in its data
+    is no VT central boiler — nothing blocks, nothing is told; control switched off waits for
+    nothing, and the issue goes; the unit stopping takes it with it."""
+    central = MockConfigEntry(
+        domain="versatile_thermostat",
+        data={
+            "thermostat_type": "thermostat_central_config",
+            "use_central_boiler_feature": case != "feature_off",
+        },
+        state=ConfigEntryState.SETUP_ERROR,
+    )
+    central.add_to_hass(rig.hass)
+    await start(rig)
+    assert rig.entry is not None
+    await rig.switch(True)
+    await rig.advance(11 * 60)
+    if case == "feature_off":
+        assert "vt_central_boiler_unknown" not in blockers(rig)
+        assert central_issue(rig) is None
+        assert rig.gateway.setpoints()[-1] == EXPECTED
+        return
+    assert central_issue(rig) is not None
+    if case == "switched_off":
+        await rig.switch(False)
+        await rig.advance(10)
+    else:
+        assert await rig.hass.config_entries.async_unload(rig.entry.entry_id)
+        await rig.hass.async_block_till_done()
+    assert central_issue(rig) is None
+
+
+async def test_the_vt_boiler_blocker_waits_for_the_restart(rig: Rig) -> None:
+    """X7: VT's central boiler configured blocks control; unticked — VT sets its central entry
+    up again without its sensor — it keeps blocking in this run, whatever VT's keep-alive: VT's
+    manager may still switch the boiler until Home Assistant restarts, as the blocker's text
+    says. A reload of the plugin does not clear it; the restart does."""
+    central = vt_central_entry(rig, True)
+    vt_sensor(rig, "off", configured=True)  # VT runs its central boiler
+    await start(rig)
+    await rig.advance(10)
+    assert "vt_central_boiler_active" in blockers(rig)
+    rig.hass.config_entries.async_update_entry(
+        central, data={**central.data, "use_central_boiler_feature": False}
+    )
+    central.mock_state(rig.hass, ConfigEntryState.SETUP_IN_PROGRESS)
+    vt_sensor(rig, None)
+    central.mock_state(rig.hass, ConfigEntryState.LOADED)
+    await rig.advance(20)
+    assert "vt_central_boiler_active" in blockers(rig)
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)
+    assert err.value.translation_key == "blocked_vt_central_boiler_active"
+    assert rig.entry is not None
+    assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
+    await rig.hass.async_block_till_done()
+    await rig.advance(20)
+    assert "vt_central_boiler_active" in blockers(rig)  # the plugin's reload changes nothing
+    rig.hass.data.pop(VT_CENTRAL_SEEN)  # what the restart does to Home Assistant's data
+    await rig.advance(20)
+    assert "vt_central_boiler_active" not in blockers(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.gateway.setpoints()[-1] == EXPECTED
 
 
 @pytest.mark.usefixtures("low_setpoint_off")
@@ -6111,6 +6327,14 @@ def vt_central_boiler(rig: Rig, configured: bool) -> None:
     rig.hass.states.async_set(boiler.entity_id, "off", {"is_central_boiler_configured": configured})
 
 
+def vt_central_boiler_gone(rig: Rig) -> None:
+    """VT's own central boiler removed, and — as X7 asks, since VT's manager may still switch
+    the boiler until then — Home Assistant restarted: the latch of this run cleared. For tests
+    about a blocker's end, where which blocker it was does not matter."""
+    vt_central_boiler(rig, False)
+    rig.hass.data.pop(VT_CENTRAL_SEEN, None)
+
+
 def stopped_heating(rig: Rig) -> ir.IssueEntry | None:
     return issue(rig, "control_stopped_heating")
 
@@ -6160,7 +6384,7 @@ async def test_a_blocker_that_stops_a_stand_alone_session_raises_an_issue(
     assert not found.is_persistent
     await rig.advance(120)
     assert _logged(caplog, logging.WARNING, "stays stopped by vt_central_boiler_active") == 1
-    vt_central_boiler(rig, False)
+    vt_central_boiler_gone(rig)
     await rig.advance(10)
     assert rig.state("sensor", "control_state").state == "heating"  # control resumed
     assert stopped_heating(rig) is None
@@ -6224,7 +6448,7 @@ async def test_no_stopped_heating_issue_where_the_blocker_has_its_own_or_heating
     if case == "cleared_within_a_minute":
         await rig.advance(40)
         assert stopped_heating(rig) is None
-        vt_central_boiler(rig, False)  # gone within the minute, as after a VT reload
+        vt_central_boiler_gone(rig)  # gone within the minute
     await rig.advance(120)
     assert stopped_heating(rig) is None
     assert not unit.stored()["stopped_heating"]
@@ -6283,7 +6507,7 @@ async def test_the_stopped_heating_issue_comes_back_after_a_restart_while_the_bl
         assert stopped_heating(rig) is None
         return
     assert stopped_heating(rig) is not None
-    vt_central_boiler(rig, False)
+    vt_central_boiler_gone(rig)
     await rig.advance(10)
     assert rig.state("sensor", "control_state").state == "heating"
     assert stopped_heating(rig) is None
@@ -7322,6 +7546,57 @@ def started(rig: Rig, zone_id: str = "living") -> None:
     rig.zones.set(zone_id, hvac_action="heating", valve_open_percent=60, on_percent=0.6)
 
 
+async def test_a_renamed_entity_carries_what_control_stored_for_it(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """P-19: a VT climate — a zone, and the frost zone of the control options — renamed while
+    control runs: the zone's paused learning and the options the boiler was taken with follow it
+    in the store, and the resume at the reload goes to the renamed thermostat."""
+    hass = rig.hass
+    learning: list[dict[str, Any]] = []
+
+    async def set_learning(call: ServiceCall) -> None:
+        learning.append(dict(call.data))
+
+    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    living = rig.zones.entities["living"]
+    rig.zones.set(
+        "living",
+        hvac_action="heating",
+        valve_open_percent=60,
+        on_percent=0.6,
+        configuration={"proportional_function": "smartpi"},
+        specific_states={"smartpi_learning_enabled": False},
+    )
+    registry = er.async_get(hass)
+    extra = {"frost_zone": living}
+    stored = restorable(
+        rig,
+        controlling=False,
+        paused={living: START.timestamp()},
+        pause_causes={living: ["dhw"]},
+        taken_with=taken_with(rig, **extra),
+    )
+    await start_with_stored(rig, hass_storage, stored, "0.2.2", **extra)
+    await rig.advance(10)
+    assert rig.gateway.setpoints()  # control holds the boiler: what it was taken with is kept
+    assert living in stored_control(hass_storage, rig)["paused"]
+    rig.gateway.calls.clear()
+    registry.async_update_entity(living, new_entity_id="climate.lounge")
+    await hass.async_block_till_done()
+    assert rig.entry is not None
+    assert rig.entry.options["zones"] == [{"entity_id": "climate.lounge"}]
+    control = rig.entry.options["control"]
+    assert control["frost_zone"] == "climate.lounge"
+    kept = stored_control(hass_storage, rig)
+    for key in ("paused", "pause_causes", "resuming", "resume_since", "dhw_ended"):
+        assert living not in kept[key], key
+    assert "climate.lounge" in kept["paused"] or "climate.lounge" in kept["resuming"]
+    assert kept["taken_with"] == control
+    assert {"entity_id": living, "learning_enabled": True} not in learning
+    assert {"entity_id": "climate.lounge", "learning_enabled": True} in learning
+
+
 def no_zone_issue(rig: Rig) -> ir.IssueEntry | None:
     return issue(rig, "no_zone_known")
 
@@ -7480,10 +7755,8 @@ async def test_a_restore_passes_vt_central_boiler_unknown_within_the_grace(
     """P-105 after a restart (provisional, K4): a restorable store stands for VT's central
     boiler known off just before; unknown at the start, the restore goes on within the grace;
     still unknown after ten minutes, it blocks and hands back."""
-    from homeassistant.config_entries import ConfigEntryState
-
-    central = vt_central_entry(rig)
-    central.mock_state(rig.hass, ConfigEntryState.SETUP_IN_PROGRESS)
+    vt_central_entry(rig)
+    vt_sensor(rig, "unavailable")  # unknown, X7's stored setting notwithstanding
     not_started(rig)
     await start_with_stored(rig, hass_storage, restorable(rig), "0.2.2")
     await rig.advance(10)
@@ -7498,6 +7771,23 @@ async def test_a_restore_passes_vt_central_boiler_unknown_within_the_grace(
         "vt_central_boiler_unknown" in rig.state("sensor", "control_state").attributes["blockers"]
     )
     assert rig.gateway.setpoints()[-1] == 0.0
+
+
+async def test_a_restore_does_not_pass_a_failed_vt_central_entry(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """X7 (P-20), negative of the grace at the start: a restorable store stands for VT's central
+    boiler known off just before — not while VT's central entry is stuck in a failed setup with
+    its central boiler on in its data, as VT's manager may run: no restore, the owed hand-back
+    instead, and control waits."""
+    vt_central_unknown(rig)
+    await start_with_stored(rig, hass_storage, restorable(rig), "0.2.2")
+    await rig.advance(10)
+    assert ("setpoint", RESTORED) not in rig.gateway.calls
+    assert rig.gateway.calls[:3] == [("setpoint", LOWEST), ("ch", True), ("setpoint", 0.0)]
+    attributes = rig.state("sensor", "control_state").attributes
+    assert "vt_central_boiler_unknown" in attributes["blockers"]
+    assert attributes["blockers_waiting"] == []
 
 
 @pytest.mark.parametrize("installation", ["standalone", "value_stops_heating"])

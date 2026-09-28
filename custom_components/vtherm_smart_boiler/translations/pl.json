@@ -1095,7 +1095,7 @@
         "name": "Sygnały kotła"
       },
       "hot_water": {
-        "name": "{zone} ciepła woda",
+        "name": "{zone} ciepło dostępne",
         "state_attributes": {
           "reason": {
             "name": "Dlaczego nie",
@@ -1433,10 +1433,10 @@
       "message": "Sterowanie będzie dostępne po okresie monitorowania. Inne powody: {others}."
     },
     "blocked_vt_central_boiler_active": {
-      "message": "Skonfigurowany jest kocioł centralny Versatile Thermostat. Najpierw go usuń, żeby kotłem sterował tylko jeden sterownik, a potem uruchom ponownie Home Assistant: dopiero wtedy VT przestaje ponawiać polecenia podtrzymania kotła centralnego. Inne powody: {others}."
+      "message": "Skonfigurowany jest kocioł centralny Versatile Thermostat. Najpierw go usuń, żeby kotłem sterował tylko jeden sterownik, a potem uruchom ponownie Home Assistant: dopiero wtedy VT przestaje wysyłać polecenia kotła centralnego. Sterowanie czeka do ponownego uruchomienia Home Assistant, nawet po odznaczeniu. Inne powody: {others}."
     },
     "blocked_vt_central_boiler_unknown": {
-      "message": "Nie da się jeszcze wykluczyć centralnego kotła Versatile Thermostat: centralna konfiguracja VT nie jest załadowana (startuje, przeładowuje się albo nie udało się jej załadować — zobacz Ustawienia → Urządzenia i usługi). Sterowanie na nią czeka. Inne powody: {others}."
+      "message": "Nie da się jeszcze wykluczyć centralnego kotła Versatile Thermostat: nie udało się załadować centralnej konfiguracji VT (zobacz Ustawienia → Urządzenia i usługi) albo jej ustawienia nie mówią, czy kocioł centralny jest włączony. Sterowanie czeka. Inne powody: {others}."
     },
     "blocked_control_error": {
       "message": "Sterowanie zatrzymało się po błędzie wewnętrznym. Sprawdź log, potem wyłącz i włącz sterowanie. Inne powody: {others}."
@@ -1554,11 +1554,19 @@
     },
     "vt_feature_manager_unsupported": {
       "title": "Termostaty VT nie mogą pokazać wartości stref wtyczki",
-      "description": "Zainstalowany tu Versatile Thermostat nie ma menedżerów funkcji (wymagają VT 10.4 lub nowszego z vtherm_api 0.5 lub nowszym), więc jego termostaty nie mogą pokazać wartości ciepłej wody i grzejników wtyczki. Do tego czasu pokazują je encje stref samej wtyczki. Zaktualizuj Versatile Thermostat, żeby pokazać je także na termostatach."
+      "description": "Zainstalowany tu Versatile Thermostat nie może załadować menedżera funkcji wtyczki (menedżery funkcji wymagają VT {version} lub nowszego z vtherm_api 0.5 lub nowszym; wtyczkę testowano z VT 10.4.0), więc jego termostaty nie mogą pokazać wartości dostępności ciepła i grzejników wtyczki. Do tego czasu pokazują je encje stref samej wtyczki. Zaktualizuj Versatile Thermostat, żeby pokazać je także na termostatach."
     },
     "vt_reload_needed": {
       "title": "Część termostatów VT wymaga przeładowania, żeby pokazać wartości wtyczki",
-      "description": "Te termostaty działały już, gdy wtyczka zarejestrowała się w Versatile Thermostat, i przejmą ją dopiero po przeładowaniu VT: {zones}. Przeładuj Versatile Thermostat, żeby pokazać na nich wartości ciepłej wody i grzejników wtyczki; do tego czasu pokazują je encje stref samej wtyczki. Nic innego od tego nie zależy."
+      "description": "Te termostaty działały już, gdy wtyczka zarejestrowała się w Versatile Thermostat, i przejmą ją dopiero po przeładowaniu VT: {zones}. Przeładuj Versatile Thermostat, żeby pokazać na nich wartości dostępności ciepła i grzejników wtyczki; do tego czasu pokazują je encje stref samej wtyczki. Nic innego od tego nie zależy."
+    },
+    "vt_central_entry_not_running": {
+      "title": "Centralna konfiguracja Versatile Thermostat nie działa",
+      "description": "Jej uruchomienie się nie powiodło, a jej ustawienia mówią, że kocioł centralny VT jest włączony. Sterowanie czeka, żeby kotłem nigdy nie sterowały dwa sterowniki: napraw centralną konfigurację VT albo odznacz w niej kocioł centralny i uruchom ponownie Home Assistant."
+    },
+    "entity_removed": {
+      "title": "Encja używana przez wtyczkę zniknęła",
+      "description": "{field}: {entity} nie ma już w Home Assistant. Wybierz inną w opcjach; do tego czasu wtyczka działa bez niej."
     },
     "hand_back_taken_by_other": {
       "title": "Po oddaniu kotłem steruje inny sterownik",

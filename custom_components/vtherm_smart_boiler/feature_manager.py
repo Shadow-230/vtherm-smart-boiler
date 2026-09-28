@@ -5,13 +5,17 @@ VT picks up external feature managers from the ``vtherm_api`` registry when a th
 the plugin never triggers itself. The factory is registered only while VT is loaded — asking
 ``vtherm_api`` for its API before VT sets it up would leave VT a bare one — and again whenever VT
 has created a new API (VT drops it with its last entry). Every method of the manager catches its
-own errors, so VT's loop never breaks because of the plugin.
+own errors, and every call the plugin makes on VT's API is inside ``try``, so no error of the
+plugin's ever reaches VT (T-53).
 
 The managers reach the plugin's data through a stable access point, not through the installation
 that created them: after the plugin reloads (an options change), the managers VT already holds
-show the values again at once; while no installation runs, they publish nothing. Whether the
-manager works is shown: a repair issue when VT's API has no feature managers, and one listing
-the zones whose thermostat started before the registration and needs VT's reload.
+show the values again at once; while no installation runs, they publish nothing. VT records its
+thermostats' attributes, so a manager replaces what it published only on a real change (P-63).
+Whether the manager works is shown: a repair issue when VT cannot load feature managers — an API
+without them, or a VT older than the first version that creates them, whatever its API offers
+(P-60) — and one listing the zones VT shows running whose thermostat started before the
+registration and needs VT's reload (P-59).
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, Home
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 
+from . import vtherm_link
 from .const import DOMAIN, VT_DOMAIN
 
 if TYPE_CHECKING:
@@ -37,6 +42,13 @@ ATTRIBUTE = "smart_boiler"
 DATA_KEY = f"{DOMAIN}_feature_manager"
 UNSUPPORTED_ISSUE = "vt_feature_manager_unsupported"
 RELOAD_GRACE_S = 15 * 60  # a started thermostat shows the values within this, else needs a reload
+# The public name of "heat reaches the zone now" (P-61; "hot water" is the boiler's domestic hot
+# water), and the zone's emitter power factor.
+HEAT_AVAILABLE = "heat_available"
+EMITTER_POWER_FACTOR = "emitter_power_factor"
+# The factor published again only once it has moved this far from what VT shows (P-63;
+# provisional, K4).
+FACTOR_STEP = 0.05
 
 type Lookup = Callable[[str], dict[str, Any] | None]
 
@@ -50,8 +62,8 @@ class RegistrationState(StrEnum):
 def zone_values(
     coordinators: list[SmartBoilerCoordinator], entity_id: str
 ) -> dict[str, Any] | None:
-    """The zone's hot water availability and emitter power factor, from the first installation
-    that has the zone; ``None`` when none has it."""
+    """Whether heat reaches the zone now, and its emitter power factor, from the first
+    installation that has the zone; ``None`` when none has it."""
     for coordinator in coordinators:
         data = coordinator.data
         view = data.zones.get(entity_id) if data is not None else None
@@ -59,10 +71,21 @@ def zone_values(
             continue
         factor = view.factor.value
         return {
-            "hot_water": view.hot_water.available,
-            "emitter_power_factor": None if factor is None else round(factor, 3),
+            HEAT_AVAILABLE: view.hot_water.available,
+            EMITTER_POWER_FACTOR: None if factor is None else round(factor, 3),
         }
     return None
+
+
+def _real_change(published: dict[str, Any], values: dict[str, Any]) -> bool:
+    """P-63: heat availability changed, the factor came or went, or it moved by at least
+    ``FACTOR_STEP`` from what was published."""
+    if published.get(HEAT_AVAILABLE) != values.get(HEAT_AVAILABLE):
+        return True
+    before, now = published.get(EMITTER_POWER_FACTOR), values.get(EMITTER_POWER_FACTOR)
+    if before is None or now is None:
+        return (before is None) != (now is None)
+    return bool(abs(float(now) - float(before)) >= FACTOR_STEP)
 
 
 def _running(hass: HomeAssistant) -> list[SmartBoilerCoordinator]:
@@ -73,13 +96,15 @@ def _running(hass: HomeAssistant) -> list[SmartBoilerCoordinator]:
 
 class SmartBoilerFeatureManager:
     """One per VT thermostat; publishes, never controls. Other plugins read the values as the
-    properties ``hot_water`` and ``emitter_power_factor``."""
+    properties ``heat_available`` and ``emitter_power_factor``, as they are now; the attribute
+    on VT's thermostat keeps what was last published until a real change (P-63)."""
 
     def __init__(self, hass: HomeAssistant, thermostat: Any, lookup: Lookup) -> None:
         self._hass = hass
         self._thermostat = thermostat
         self._lookup = lookup
         self._failing = False  # a lasting failure is logged once, with its trace
+        self._published: dict[str, Any] | None = None  # what VT's thermostat shows
 
     def post_init(self, entry_infos: Any) -> None:
         return None
@@ -116,16 +141,16 @@ class SmartBoilerFeatureManager:
         return self._hass
 
     @property
-    def hot_water(self) -> bool | None:
+    def heat_available(self) -> bool | None:
         """Heat is reaching the zone now; ``None`` when unknown or not the plugin's zone."""
         values = self._values()
-        return None if values is None else values["hot_water"]
+        return None if values is None else values[HEAT_AVAILABLE]
 
     @property
     def emitter_power_factor(self) -> float | None:
         """The zone's emitter output now versus its reference; ``None`` when unknown."""
         values = self._values()
-        return None if values is None else values["emitter_power_factor"]
+        return None if values is None else values[EMITTER_POWER_FACTOR]
 
     def _values(self) -> dict[str, Any] | None:
         entity_id = getattr(self._thermostat, "entity_id", None)
@@ -135,9 +160,12 @@ class SmartBoilerFeatureManager:
         try:
             values = self._values()
             if values is None:
+                self._published = None
                 attributes.pop(ATTRIBUTE, None)
             else:
-                attributes[ATTRIBUTE] = values
+                if self._published is None or _real_change(self._published, values):
+                    self._published = dict(values)
+                attributes[ATTRIBUTE] = dict(self._published)
         except Exception:  # VT's attribute update must never fail because of the plugin
             if self._failing:
                 _LOGGER.debug("Could not add the plugin's zone values", exc_info=True)
@@ -187,9 +215,14 @@ def _stored_api(hass: HomeAssistant) -> Any | None:
 
 def _api(hass: HomeAssistant) -> tuple[Any | None, RegistrationState]:
     """VT's API once VT has created it, with what it allows. ``get_vtherm_api`` is called only
-    when the instance exists, as it would create a bare one otherwise."""
+    when the instance exists, as it would create a bare one otherwise. A VT older than the first
+    version that creates outside feature managers is unsupported whatever its API offers: the
+    ``vtherm_api`` shared with the plugin has the method all the same (P-60); its version
+    unknown, the API's capability decides."""
     if VT_DOMAIN not in hass.config.components:
         return None, RegistrationState.WAITING
+    if vtherm_link.vt_loads_feature_managers(vtherm_link.vt_version(hass)) is False:
+        return None, RegistrationState.UNSUPPORTED
     try:
         from vtherm_api.vtherm_api import VThermAPI
     except ImportError:
@@ -203,7 +236,12 @@ def _api(hass: HomeAssistant) -> tuple[Any | None, RegistrationState]:
         return None, RegistrationState.WAITING
     if api is None:
         return None, RegistrationState.WAITING
-    if not hasattr(api, "register_feature_manager"):
+    try:
+        supported = callable(getattr(api, "register_feature_manager", None))
+    except Exception:  # an API that cannot even say: as without the method
+        _LOGGER.debug("VT's API could not be asked for feature managers", exc_info=True)
+        supported = False
+    if not supported:
         return None, RegistrationState.UNSUPPORTED
     return api, RegistrationState.REGISTERED
 
@@ -239,7 +277,11 @@ class FeatureRegistration:
 
     @callback
     def _on_climate_state(self, _event: Event[EventStateChangedData]) -> None:
-        stored = _stored_api(self._hass)
+        try:
+            stored = _stored_api(self._hass)
+        except Exception:  # never into VT's state writes
+            _LOGGER.debug("VT's API could not be looked up", exc_info=True)
+            return
         if stored is not None and stored is not self._api:
             self.check()
 
@@ -250,7 +292,18 @@ class FeatureRegistration:
             self._unsub = None
 
     def check(self) -> bool:
-        """Registered with VT's current API — again, if VT has created a new one."""
+        """Registered with VT's current API — again, if VT has created a new one. Never raises
+        (T-53): an unexpected error leaves it waiting, to be checked again at the next update."""
+        try:
+            return self._check()
+        except Exception:
+            _LOGGER.warning("Could not check the VT feature manager's registration", exc_info=True)
+            self._api = None
+            self.registered_at = None
+            self._set_state(RegistrationState.WAITING)
+            return False
+
+    def _check(self) -> bool:
         api, state = _api(self._hass)
         if api is not None and api is not self._api:
             try:
@@ -277,6 +330,7 @@ class FeatureRegistration:
                 is_fixable=False,
                 severity=ir.IssueSeverity.WARNING,
                 translation_key=UNSUPPORTED_ISSUE,
+                translation_placeholders={"version": vtherm_link.VT_FEATURE_MANAGERS_FROM},
             )
         else:
             ir.async_delete_issue(self._hass, DOMAIN, UNSUPPORTED_ISSUE)
@@ -290,10 +344,12 @@ class FeatureRegistration:
             self._unsub_states = None
         ir.async_delete_issue(self._hass, DOMAIN, UNSUPPORTED_ISSUE)
         api, self._api = self._api, None
-        if api is None or not hasattr(api, "unregister_feature_manager"):
+        if api is None:
             return
         try:  # the instance it was registered with, even if VT has since dropped it
-            api.unregister_feature_manager(MANAGER_NAME)
+            unregister = getattr(api, "unregister_feature_manager", None)
+            if callable(unregister):
+                unregister(MANAGER_NAME)
         except Exception:
             _LOGGER.debug("Could not unregister the VT feature manager", exc_info=True)
 
@@ -315,7 +371,9 @@ def async_attach(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> No
 def async_check(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> None:
     """At each update: registered with VT's current API, and the zones whose thermostat still
     shows none of the values some time after the registration reported — they started before
-    it and pick the manager up only at VT's next reload."""
+    it and pick the manager up only at VT's next reload. Only a zone VT shows running is listed:
+    reported and ready, its mode known (P-59); one away, unavailable or still starting would
+    show nothing anyway."""
     current = registration(hass)
     if current is not None:
         current.check()
@@ -330,7 +388,11 @@ def async_check(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> Non
     ):
         link = coordinator.link
         for zone_id in coordinator.config.zone_entities:
-            if zone_id in data.zones and link.shows_attribute(zone_id, ATTRIBUTE) is False:
+            if zone_id not in data.zones:
+                continue
+            zone = link.zone(zone_id)
+            running = zone.started and zone.ready is not False and zone.heating_enabled is not None
+            if running and link.shows_attribute(zone_id, ATTRIBUTE) is False:
                 missing.append(link.zone_name(zone_id))
     if missing:
         ir.async_create_issue(

@@ -32,7 +32,7 @@ from .const import (
     WEATHER,
     ZONES,
 )
-from .control_config import ControlOptions, parse_control
+from .control_config import ControlOptions, map_control_entities, parse_control
 from .core.alarms import (
     CIRCUIT_ALARM_MIN,
     CIRCUIT_ALARM_RISE_K,
@@ -206,6 +206,93 @@ class EntryConfig:
             weather_max_age_s=weather_max_age,
             shared_signals=shared,
         )
+
+
+type EntityVisit = Callable[[str, str], str]
+
+
+def named_entities(options: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
+    """Every entity the options name, each with the fields that name it (``signals.flame``,
+    ``zones``, ``control.setpoint_entity``, ...) — what a rename is followed in and a removal
+    names (P-19). Options of another shape (a hand edit) are read as far as they go."""
+    found: dict[str, list[str]] = {}
+
+    def note(field_name: str, entity: str) -> str:
+        found.setdefault(entity, []).append(field_name)
+        return entity
+
+    _map_entities(options, note)
+    return {entity: tuple(fields) for entity, fields in found.items()}
+
+
+def rename_entity(options: Mapping[str, Any], old: str, new: str) -> dict[str, Any]:
+    """The options with the entity ``old`` renamed ``new`` wherever they name it (P-19: Home
+    Assistant renamed it); equal to them where they do not. The stored options are not
+    touched."""
+    return _map_entities(options, lambda _field, entity: new if entity == old else entity)
+
+
+def _map_entities(options: Mapping[str, Any], visit: EntityVisit) -> dict[str, Any]:
+    """The options rebuilt with ``visit(field, entity)`` for every entity they name — one list
+    of fields for following and for renaming. A part of another shape stays as it is."""
+    result = dict(options)
+    signals = options.get(SIGNALS)
+    if isinstance(signals, Mapping):
+        result[SIGNALS] = {
+            key: _visit(visit, f"{SIGNALS}.{key}", value) for key, value in signals.items()
+        }
+    if WEATHER in options:
+        result[WEATHER] = _visit(visit, WEATHER, options[WEATHER])
+    circuits = options.get(CIRCUITS)
+    if isinstance(circuits, list):
+        result[CIRCUITS] = [
+            _visit_item(visit, item, "flow_entity", f"{CIRCUITS}.{item.get('id')}.flow_entity")
+            if isinstance(item, Mapping)
+            else item
+            for item in circuits
+        ]
+    zones = options.get(ZONES)
+    if isinstance(zones, list):
+        result[ZONES] = [_zone_entities(visit, item) for item in zones]
+    reference = options.get(REFERENCE_ROOM)
+    if isinstance(reference, Mapping):
+        result[REFERENCE_ROOM] = _visit_item(visit, reference, "zone", f"{REFERENCE_ROOM}.zone")
+    control = options.get(CONTROL)
+    if isinstance(control, Mapping):
+        result[CONTROL] = map_control_entities(
+            control, lambda key, entity: visit(f"{CONTROL}.{key}", entity)
+        )
+    return result
+
+
+def _visit(visit: EntityVisit, field_name: str, value: Any) -> Any:
+    return visit(field_name, value) if isinstance(value, str) and value else value
+
+
+def _visit_item(
+    visit: EntityVisit, item: Mapping[str, Any], key: str, field_name: str
+) -> dict[str, Any]:
+    result = dict(item)
+    if key in item:
+        result[key] = _visit(visit, field_name, item[key])
+    return result
+
+
+def _zone_entities(visit: EntityVisit, item: Any) -> Any:
+    """A zone item with its thermostat and its foreign-heat sources visited."""
+    if not isinstance(item, Mapping):
+        return item
+    zone = _visit_item(visit, item, "entity_id", ZONES)
+    sources = item.get("foreign_heat")
+    if isinstance(sources, list):
+        field_name = f"{ZONES}.foreign_heat ({item.get('entity_id')})"
+        zone["foreign_heat"] = [
+            _visit_item(visit, source, "entity_id", field_name)
+            if isinstance(source, Mapping)
+            else source
+            for source in sources
+        ]
+    return zone
 
 
 def _enum[E: StrEnum](kind: type[E], data: Mapping[str, Any], key: str, default: E, code: str) -> E:

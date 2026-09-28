@@ -325,3 +325,29 @@ def test_x6_texts_are_translated() -> None:
     assert labels["hard_max"] == "Highest water temperature"
     flat = flatten(SOURCE)
     assert not [key for key, text in flat.items() if "flow setpoint" in text and "hard_" in key]
+
+
+def test_x7_texts_are_translated() -> None:
+    """X7: VT's central entry not running (P-20), an entity removed (P-19), VT without feature
+    managers naming the first version that loads them and the one tested (P-60), the restart
+    the "VT central boiler active" blocker waits for, and the zone value's public name (P-61) —
+    each issue with the placeholders the code fills in."""
+    from custom_components.vtherm_smart_boiler import REMOVED_ISSUE
+    from custom_components.vtherm_smart_boiler.control import VT_CENTRAL_ISSUE
+    from custom_components.vtherm_smart_boiler.feature_manager import UNSUPPORTED_ISSUE
+    from custom_components.vtherm_smart_boiler.vtherm_link import VT_TESTED
+
+    central = SOURCE["issues"][VT_CENTRAL_ISSUE]
+    assert central["title"]
+    assert not PLACEHOLDER.findall(central["description"])
+    removed = SOURCE["issues"][REMOVED_ISSUE]
+    assert removed["title"]
+    assert set(PLACEHOLDER.findall(removed["description"])) == {"field", "entity"}
+    unsupported = SOURCE["issues"][UNSUPPORTED_ISSUE]["description"]
+    assert set(PLACEHOLDER.findall(unsupported)) == {"version"}
+    assert f"VT {VT_TESTED}" in unsupported
+    active = SOURCE["exceptions"]["blocked_vt_central_boiler_active"]["message"]
+    assert "until Home Assistant has restarted, even once you have unticked it" in active
+    assert SOURCE["entity"]["binary_sensor"]["hot_water"]["name"] == "{zone} heat available"
+    flat = flatten(SOURCE)
+    assert not [key for key, text in flat.items() if "hot-water and emitter" in text]

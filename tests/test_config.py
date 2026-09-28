@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from custom_components.vtherm_smart_boiler.config import ConfigError, EntryConfig
+from custom_components.vtherm_smart_boiler.config import (
+    ConfigError,
+    EntryConfig,
+    named_entities,
+    rename_entity,
+)
 from custom_components.vtherm_smart_boiler.core.foreign_heat import SourceKind
 from custom_components.vtherm_smart_boiler.core.installation import (
     BoilerClass,
@@ -445,3 +450,112 @@ def test_the_setpoint_read_back_is_recorded_without_a_setpoint_signal(
     read_back = control.get("confirmed_entity") if recorded else None
     assert config.setpoint_read_back == read_back
     assert (read_back in config.watched_entities) is recorded
+
+
+# P-19 (X7): every entity the options name, so a rename can be followed and a removal told.
+NAMING = {
+    "signals": {"flame": "binary_sensor.flame", "flow": "sensor.flow", "outdoor": "sensor.out"},
+    "weather": "weather.home",
+    "boiler": {"class": "flow_setpoint"},
+    "circuits": [{"id": "main", "flow_entity": "sensor.circuit_flow"}],
+    "zones": [
+        {
+            "entity_id": "climate.living",
+            "circuit": "main",
+            "foreign_heat": [{"entity_id": "switch.stove", "kind": "switch"}],
+        },
+        {"entity_id": "climate.bedroom", "circuit": "main"},
+    ],
+    "reference_room": {"strategy": "chosen_zone", "zone": "climate.living"},
+    "freshness": {"flow": 600},
+    "control": {
+        "write_path": "entity",
+        "topology": "virtual",
+        "setpoint_entity": "number.setpoint",
+        "ch_entity": "switch.heating",
+        "hand_back_entity": "switch.external",
+        "confirmed_entity": "sensor.confirmed",
+        "ch_confirmed_entity": "binary_sensor.heating_echo",
+        "thermostat_setpoint_entity": "sensor.thermostat_setpoint",
+        "restart_entity": "sensor.uptime",
+        "frost_zone": "climate.bedroom",
+        "curve": {"design_outdoor": -20, "design_flow": 50},
+    },
+}
+
+
+def test_every_entity_the_options_name_is_found_with_its_fields() -> None:
+    assert named_entities(NAMING) == {
+        "binary_sensor.flame": ("signals.flame",),
+        "sensor.flow": ("signals.flow",),
+        "sensor.out": ("signals.outdoor",),
+        "weather.home": ("weather",),
+        "sensor.circuit_flow": ("circuits.main.flow_entity",),
+        "climate.living": ("zones", "reference_room.zone"),
+        "switch.stove": ("zones.foreign_heat (climate.living)",),
+        "climate.bedroom": ("zones", "control.frost_zone"),
+        "number.setpoint": ("control.setpoint_entity",),
+        "switch.heating": ("control.ch_entity",),
+        "switch.external": ("control.hand_back_entity",),
+        "sensor.confirmed": ("control.confirmed_entity",),
+        "binary_sensor.heating_echo": ("control.ch_confirmed_entity",),
+        "sensor.thermostat_setpoint": ("control.thermostat_setpoint_entity",),
+        "sensor.uptime": ("control.restart_entity",),
+    }
+    # Every entity the entry follows is among them.
+    assert set(EntryConfig.from_options(NAMING).watched_entities) <= set(named_entities(NAMING))
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "changed"),
+    [
+        ("climate.living", "climate.lounge", ("zones", "reference_room")),
+        ("climate.bedroom", "climate.guest_room", ("zones", "control")),
+        ("sensor.flow", "sensor.boiler_flow", ("signals",)),
+        ("switch.stove", "switch.fireplace", ("zones",)),
+        ("sensor.circuit_flow", "sensor.radiator_flow", ("circuits",)),
+        ("weather.home", "weather.house", ("weather",)),
+        ("number.setpoint", "number.boiler_setpoint", ("control",)),
+    ],
+)
+def test_a_renamed_entity_is_replaced_wherever_the_options_name_it(
+    old: str, new: str, changed: tuple[str, ...]
+) -> None:
+    import copy
+
+    before = copy.deepcopy(NAMING)
+    renamed = rename_entity(NAMING, old, new)
+    assert NAMING == before  # the stored options are not touched
+    assert old not in named_entities(renamed)
+    assert named_entities(renamed)[new] == named_entities(NAMING)[old]
+    assert {key for key in NAMING if renamed[key] != NAMING[key]} == set(changed)
+    EntryConfig.from_options(renamed)  # still options this version reads
+
+
+@pytest.mark.parametrize(
+    "old",
+    [
+        "climate.elsewhere",  # an entity the options do not name
+        "main",  # a circuit's ID is no entity
+        "flow",  # nor is a signal's key
+        "chosen_zone",  # nor an option's value
+    ],
+)
+def test_renaming_what_the_options_do_not_name_as_an_entity_changes_nothing(old: str) -> None:
+    assert rename_entity(NAMING, old, "sensor.new") == NAMING
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        {"signals": None, "zones": "climate.a", "circuits": {"id": "main"}},
+        {"zones": [None, {"entity_id": None}, {"entity_id": "climate.a", "foreign_heat": None}]},
+        {"reference_room": "climate.a", "control": ["setpoint_entity"], "weather": 5},
+        {},
+    ],
+)
+def test_options_of_another_shape_name_what_they_can_and_never_raise(broken: dict) -> None:
+    """Missing data: a hand edit of another shape is read as far as it goes; nothing raises."""
+    found = named_entities(broken)
+    assert set(found) <= {"climate.a"}
+    assert rename_entity(broken, "climate.a", "climate.b") is not None

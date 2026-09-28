@@ -14,13 +14,14 @@ from dataclasses import dataclass, replace
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 
-from homeassistant.config_entries import ConfigEntryState
+from awesomeversion import AwesomeVersion
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import ATTR_RESTORED, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_loaded_integration
 
-from .const import OPENTHERM_GW_DOMAIN, VT_DOMAIN
+from .const import DOMAIN, OPENTHERM_GW_DOMAIN, VT_DOMAIN
 from .core.readings import ZoneState
 from .transport.entities import reported_at
 from .vtherm_attributes import CentralMode, central_mode, zone_values
@@ -31,6 +32,28 @@ SMARTPI_DOMAIN = "vtherm_smartpi"
 CENTRAL_MODE_UNIQUE_ID = "central_mode"
 CENTRAL_BOILER_UNIQUE_ID = "central_boiler_state"
 CENTRAL_BOILER_FEATURE = "use_central_boiler_feature"  # in VT's central entry (VT 10.4.0)
+# VT's central boiler seen configured at any moment of this Home Assistant run (X7): VT's manager
+# lives in its API and may switch the boiler until Home Assistant restarts, even once unticked,
+# with or without its keep-alive. Kept in Home Assistant's data, so a reload of the plugin does
+# not clear it and a restart does; never from the entry's ``modified_at`` or VT's keep-alive.
+VT_CENTRAL_SEEN = f"{DOMAIN}_vt_central_seen"
+# VT's central entry running or being set up again (a reload, Home Assistant starting): its
+# stored setting answers (P-105). In any other state — a failed setup (setup error or retry,
+# migration error, failed unload), or one a later Home Assistant adds — only "off" rules VT's
+# central boiler out: its manager may still run (P-20).
+_CENTRAL_RUNNING = frozenset(
+    {
+        ConfigEntryState.LOADED,
+        ConfigEntryState.SETUP_IN_PROGRESS,
+        ConfigEntryState.UNLOAD_IN_PROGRESS,
+        ConfigEntryState.NOT_LOADED,
+    }
+)
+# VT loads outside feature managers from this version on (research/2026-09-27-q3-1-vt-feature-
+# manager-version.md; provisional, K4): VT 10.0 and 10.1 use ``vtherm_api`` for control
+# algorithms only — a registration there succeeds, and no manager is ever created (P-60).
+VT_FEATURE_MANAGERS_FROM = "10.2.0"
+VT_TESTED = "10.4.0"  # the only VT version the plugin is tested with
 # VT's central entry is the one whose ``thermostat_type`` is this (VT 10.4.0 ``const.py``); its
 # central boiler's activation delay, 0–600 s, stays in its data once the feature is unticked.
 THERMOSTAT_TYPE = "thermostat_type"
@@ -160,6 +183,39 @@ def vt_climate_entities(hass: HomeAssistant) -> list[str]:
     )
 
 
+def vt_central_entry(hass: HomeAssistant) -> ConfigEntry | None:
+    """VT's central configuration entry — the VT entry whose ``thermostat_type`` says so (VT
+    10.4.0) — whatever its state; ``None`` without one. Read only: the plugin never writes to
+    VT's entries."""
+    for entry in hass.config_entries.async_entries(VT_DOMAIN):
+        if entry.data.get(THERMOSTAT_TYPE) == CENTRAL_CONFIG:
+            return entry
+    return None
+
+
+def vt_version(hass: HomeAssistant) -> str | None:
+    """VT's version as its manifest gives it (Home Assistant refuses a custom integration
+    without a valid one); ``None`` while VT is not loaded or on any loader problem."""
+    try:
+        integration = async_get_loaded_integration(hass, VT_DOMAIN)
+        return None if integration.version is None else str(integration.version)
+    except Exception:  # any loader problem just means "unknown"
+        _LOGGER.debug("VT's version could not be read", exc_info=True)
+        return None
+
+
+def vt_loads_feature_managers(version: str | None) -> bool | None:
+    """Whether a VT version creates the feature managers other integrations register (P-60);
+    ``None`` when the version is unknown or cannot be compared — capability detection decides
+    then. A beta of the first version counts as older: support is under-claimed, never over."""
+    if not version:
+        return None
+    try:
+        return AwesomeVersion(version) >= AwesomeVersion(VT_FEATURE_MANAGERS_FROM)
+    except Exception:  # a version of another form
+        return None
+
+
 class VThermLink:
     """Zones as the core sees them, read from VT's climate entities."""
 
@@ -266,54 +322,87 @@ class VThermLink:
         )
 
     def vt_central_boiler_configured(self) -> bool | None:
-        """Whether VT's own central boiler feature is set up (then it must not run alongside);
-        ``None`` while it cannot be ruled out — VT's entity for it is away while VT sets its
-        central entry up (a reload, a late start).
+        """Whether VT's own central boiler is set up — then it must not run alongside; ``None``
+        while it cannot be ruled out (X7: P-20, P-105).
 
-        VT creates the entity only while the feature is on, and Home Assistant keeps its
-        registry entry, with a stand-in "unavailable" state, once VT no longer provides it: with
-        VT's central entry loaded, that stand-in means the feature is off."""
+        In this order: seen configured at any moment of this Home Assistant run → there until the
+        restart VT needs (``VT_CENTRAL_SEEN``). VT's sensor for it provided → what it says. Else
+        VT's central entry answers — VT creates the sensor only while the feature is on, and Home
+        Assistant keeps its registry entry, with a stand-in "unavailable" state, once VT no
+        longer provides it: the entry gone or disabled by the user → not there; running or being
+        set up again (a reload, Home Assistant starting) → its stored setting, unknown without
+        it; stuck in a failed setup → not there only where its setting says "off". Without the
+        sensor in the registry, only VT's central entry saying "on" counts (VT has not registered
+        the sensor yet)."""
+        hass = self._hass
+        if hass.data.get(VT_CENTRAL_SEEN):
+            return True
+        found = self._vt_central_boiler_now()
+        if found is True:
+            hass.data[VT_CENTRAL_SEEN] = True
+            _LOGGER.info(
+                "Versatile Thermostat's central boiler is configured: control stays blocked "
+                "until Home Assistant restarts, even once it is unticked"
+            )
+        return found
+
+    def _vt_central_boiler_now(self) -> bool | None:
         registry = er.async_get(self._hass)
         entity_id = registry.async_get_entity_id(
             "binary_sensor", VT_DOMAIN, CENTRAL_BOILER_UNIQUE_ID
         )
         if entity_id is None:
-            return False
+            central = vt_central_entry(self._hass)
+            if central is None or central.data.get(CENTRAL_BOILER_FEATURE) is not True:
+                return False
+            return _central_entry_says(central)
         state = self._hass.states.get(entity_id)
         entry = registry.async_get(entity_id)
         provided = state is not None and not state.attributes.get(ATTR_RESTORED)
-        if not provided or (entry is not None and entry.disabled):
-            owner = (
-                self._hass.config_entries.async_get_entry(entry.config_entry_id)
-                if entry is not None and entry.config_entry_id
-                else None
-            )
-            if owner is None:
-                return False  # left behind by a VT entry that is gone
-            if owner.state is not ConfigEntryState.LOADED:
+        if state is not None and provided and not (entry is not None and entry.disabled):
+            configured = state.attributes.get("is_central_boiler_configured")
+            if state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN) or configured is None:
                 return None
-            feature = owner.data.get(CENTRAL_BOILER_FEATURE)
-            return feature if isinstance(feature, bool) else False
-        configured = None if state is None else state.attributes.get("is_central_boiler_configured")
-        if state is None or state.state in ("unavailable", "unknown") or configured is None:
+            return configured is True
+        owner = self._central_owner(entry)
+        # No owner: left behind by a VT entry that is gone.
+        return False if owner is None else _central_entry_says(owner)
+
+    def _central_owner(self, sensor: er.RegistryEntry | None) -> ConfigEntry | None:
+        """The entry of VT's central-boiler sensor; without the sensor in the registry, VT's
+        central entry."""
+        if sensor is None:
+            return vt_central_entry(self._hass)
+        if not sensor.config_entry_id:
             return None
-        return configured is True
+        return self._hass.config_entries.async_get_entry(sensor.config_entry_id)
+
+    def vt_central_entry_failed(self) -> bool:
+        """VT's central entry is stuck in a failed setup and not disabled: VT's manager may still
+        switch the boiler, so an unknown VT central boiler gets no grace there (P-20)."""
+        registry = er.async_get(self._hass)
+        entity_id = registry.async_get_entity_id(
+            "binary_sensor", VT_DOMAIN, CENTRAL_BOILER_UNIQUE_ID
+        )
+        owner = self._central_owner(None if entity_id is None else registry.async_get(entity_id))
+        return (
+            owner is not None and owner.disabled_by is None and owner.state not in _CENTRAL_RUNNING
+        )
 
     def vt_central_activation_delay(self) -> float | None:
         """VT's central boiler activation delay, in seconds, as VT keeps it in its central
         entry — also once its central boiler is unticked (decision 5); ``None`` without VT, a
         central entry, or a number within VT's 0–600 s. A pre-fill for the form only: the
         plugin's own option is what counts."""
-        for entry in self._hass.config_entries.async_entries(VT_DOMAIN):
-            if entry.data.get(THERMOSTAT_TYPE) != CENTRAL_CONFIG:
-                continue
-            raw = entry.data.get(ACTIVATION_DELAY)
-            if isinstance(raw, bool) or not isinstance(raw, int | float):
-                return None
-            value = float(raw)
-            inside = math.isfinite(value) and 0.0 <= value <= VT_ACTIVATION_DELAY_MAX_S
-            return value if inside else None
-        return None
+        entry = vt_central_entry(self._hass)
+        if entry is None:
+            return None
+        raw = entry.data.get(ACTIVATION_DELAY)
+        if isinstance(raw, bool) or not isinstance(raw, int | float):
+            return None
+        value = float(raw)
+        inside = math.isfinite(value) and 0.0 <= value <= VT_ACTIVATION_DELAY_MAX_S
+        return value if inside else None
 
     def central_mode(self) -> CentralMode | None:
         """VT's central mode, or ``None`` when VT has no central configuration."""
@@ -331,16 +420,11 @@ class VThermLink:
             entry.state is ConfigEntryState.LOADED
             for entry in self._hass.config_entries.async_entries(VT_DOMAIN)
         )
-        vt_version: str | None = None
-        if vt_loaded:
-            try:
-                integration = async_get_loaded_integration(self._hass, VT_DOMAIN)
-                vt_version = None if integration.version is None else str(integration.version)
-            except Exception:  # any loader problem just means "unknown"
-                _LOGGER.debug("VT's version could not be read", exc_info=True)
-                vt_version = None
         return VtCapabilities(
-            vt_loaded, vt_version, self._api_version, SMARTPI_DOMAIN in components
+            vt_loaded,
+            vt_version(self._hass) if vt_loaded else None,
+            self._api_version,
+            SMARTPI_DOMAIN in components,
         )
 
 
@@ -351,3 +435,16 @@ def _vtherm_api_version() -> str | None:
         return version("vtherm_api")
     except ImportError, PackageNotFoundError:
         return None
+
+
+def _central_entry_says(entry: ConfigEntry) -> bool | None:
+    """What VT's central entry says of its central boiler while its sensor does not: disabled
+    by the user → not there; in a failed setup → not there only where its setting is "off", as
+    VT's manager may still run (P-20); otherwise — running, or being set up again (P-105) — its
+    stored setting, unknown without one."""
+    if entry.disabled_by is not None:
+        return False
+    feature = entry.data.get(CENTRAL_BOILER_FEATURE)
+    if entry.state not in _CENTRAL_RUNNING:
+        return False if feature is False else None
+    return feature if isinstance(feature, bool) else None

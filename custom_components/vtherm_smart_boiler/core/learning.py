@@ -234,3 +234,32 @@ def release_all(state: LearningState, now: float) -> tuple[LearningState, tuple[
     since = {**dict.fromkeys(state.paused, now), **state.resume_since}
     released = LearningState({}, state.setpoints, toggles, resuming, since)  # causes forgotten
     return released, tuple(state.paused)
+
+
+def rename_zone(state: LearningState, old: str, new: str) -> LearningState:
+    """The state with a zone renamed (P-19: its VT climate got another entity ID): what the
+    plugin holds for it — its pause, its resume, their causes and times — follows it. The same
+    state where the zone is not in it."""
+
+    def moved[T](values: Mapping[str, T]) -> dict[str, T]:
+        return {(new if zone == old else zone): value for zone, value in values.items()}
+
+    keyed = (
+        state.paused,
+        state.last_toggle,
+        state.resuming,
+        state.resume_since,
+        state.causes,
+        state.dhw_ended,
+    )
+    if not any(old in values for values in keyed):
+        return state
+    return replace(
+        state,
+        paused=moved(state.paused),
+        last_toggle=moved(state.last_toggle),
+        resuming=moved(state.resuming),
+        resume_since=moved(state.resume_since),
+        causes=moved(state.causes),
+        dhw_ended=moved(state.dhw_ended),
+    )
