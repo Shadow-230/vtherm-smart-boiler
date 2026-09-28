@@ -51,7 +51,7 @@ def test_every_entity_key_has_a_name() -> None:
     binary = SOURCE["entity"]["binary_sensor"]
     for description in BOILER_SENSORS:
         assert "name" in sensors[description.key], description.key
-    for key in ("critical_zone", "emitter_power_factor"):
+    for key in ("critical_zone", "emitter_power_factor", "features"):
         assert "name" in sensors[key]
     for kind in AlarmKind:
         assert "name" in binary[f"alarm_{kind.value}"], kind
@@ -59,8 +59,9 @@ def test_every_entity_key_has_a_name() -> None:
         assert "name" in binary[key]
 
 
-# Forms whose one description covers every field alike.
-ONE_DESCRIPTION = {"freshness"}
+# Forms whose one description covers every field alike (P-103: the freshness step has its
+# fields' own now).
+ONE_DESCRIPTION: set[str] = set()
 
 
 def test_every_form_field_and_select_option_is_translated() -> None:
@@ -185,7 +186,7 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
 
     for blocker in (*CONFIG_BLOCKERS, *RUNTIME_BLOCKERS):
         message = SOURCE["exceptions"][f"blocked_{blocker}"]["message"]
-        assert "{others}" in message, blocker
+        assert "{count}" in message, blocker  # P-74: the others counted, not listed by key
     for kind in ControlAlarm:
         assert "name" in SOURCE["entity"]["binary_sensor"][f"alarm_{kind.value}"], kind
     assert set(SOURCE["entity"]["sensor"]["control_state"]["state"]) == {
@@ -505,6 +506,7 @@ def test_y3_texts_are_translated() -> None:
     from custom_components.vtherm_smart_boiler.core.parameters import Source
     from custom_components.vtherm_smart_boiler.core.verdict import (
         ESTIMATE_ONLY,
+        WATER_NOT_CONTROLLED,
         ReasonCode,
         Verdict,
     )
@@ -523,7 +525,7 @@ def test_y3_texts_are_translated() -> None:
         codes = {ReasonCode.CRITERIA_JUDGED.value, ReasonCode.NO_BURNER_SIGNAL.value}
         assert codes <= _values(verdict, "reasons"), language
         assert _values(verdict, "changed_by_control") == {"true", "false"}, language
-        assert _values(verdict, "detail") == {ESTIMATE_ONLY}, language
+        assert _values(verdict, "detail") == {ESTIMATE_ONLY, WATER_NOT_CONTROLLED}, language
         switch = texts["entity"]["switch"]["control"]
         assert _values(switch, "verdict") == {v.value for v in Verdict}, language
         for key in ("reset_heating_threshold", "reset_loss_coefficient"):
@@ -547,3 +549,356 @@ def test_y3_texts_are_translated() -> None:
         assert "even without a verdict" in monitoring
     switch = SOURCE["entity"]["switch"]["control"]["state_attributes"]["verdict"]["state"]
     assert "without a verdict" in switch["not_enough_data"]
+
+
+# --- P-76: the reverse key parity ---------------------------------------------------------------
+
+PACKAGE = TRANSLATIONS.parent
+
+
+def _module_constants() -> dict[str, str]:
+    """Every module-level string constant of the package, by name (a name bound to two values
+    is left out)."""
+    import ast
+
+    found: dict[str, str] = {}
+    clashes: set[str] = set()
+    for path in PACKAGE.rglob("*.py"):
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            targets = [node.target] if isinstance(node, ast.AnnAssign) else []
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            value = getattr(node, "value", None)
+            if not (isinstance(value, ast.Constant) and isinstance(value.value, str)):
+                continue
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    if found.get(target.id, value.value) != value.value:
+                        clashes.add(target.id)
+                    found[target.id] = value.value
+    return {name: value for name, value in found.items() if name not in clashes}
+
+
+def _code_mentions() -> tuple[set[str], list[re.Pattern[str]]]:
+    """What the package's code can name a translation key with: every string constant, every
+    value of its enums, and every f-string as a pattern — its names resolved to the package's
+    constants, anything else any text (an f-string of fewer than three letters of its own is
+    left out: it could match anything)."""
+    import ast
+    import enum
+    import importlib
+    import inspect
+
+    constants = _module_constants()
+    literals: set[str] = {"true", "false"}  # a bool shown as its state's key
+    patterns: list[re.Pattern[str]] = []
+    for path in PACKAGE.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                literals.add(node.value)
+            elif isinstance(node, ast.JoinedStr):
+                parts: list[str] = []
+                own = 0
+                for value in node.values:
+                    if isinstance(value, ast.Constant):
+                        parts.append(re.escape(str(value.value)))
+                        own += len(str(value.value))
+                    elif (
+                        isinstance(value, ast.FormattedValue)
+                        and isinstance(value.value, ast.Name)
+                        and value.value.id in constants
+                    ):
+                        parts.append(re.escape(constants[value.value.id]))
+                        own += len(constants[value.value.id])
+                    else:
+                        parts.append(".+")
+                if own >= 3:
+                    patterns.append(re.compile("^" + "".join(parts) + "$"))
+        module = ".".join(path.relative_to(PACKAGE.parents[1]).with_suffix("").parts)
+        loaded = importlib.import_module(module.removesuffix(".__init__"))
+        for _name, member in inspect.getmembers(loaded, inspect.isclass):
+            if issubclass(member, enum.StrEnum) and member.__module__ == loaded.__name__:
+                literals.update(item.value for item in member)
+    return literals, patterns
+
+
+def _mentioned(code: str, literals: set[str], patterns: list[re.Pattern[str]]) -> bool:
+    return code in literals or any(pattern.match(code) for pattern in patterns)
+
+
+def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """The fields of every step's form, built at both levels of detail and for each write path,
+    and the options each translated selector offers."""
+    from custom_components.vtherm_smart_boiler import config_flow as flow
+
+    zones = {"zones": [{"entity_id": "climate.a"}, {"entity_id": "climate.b"}]}
+    circuits = {"circuits": [{"id": "main", "max_flow": 45}, {"id": "second"}]}
+    signals = {"signals": dict.fromkeys(flow.SIGNAL_FIELDS, "sensor.x"), "weather": "weather.x"}
+    controls = [
+        {
+            "write_path": "opentherm_gw",
+            "topology": "gateway_with_thermostat",
+            "thermostat_kind": "opentherm",
+        },
+        {"write_path": "otgw_mqtt", "topology": "gateway_standalone"},
+        {"write_path": "entity", "topology": "virtual", "hand_back": "value"},
+        {"write_path": "relay"},
+    ]
+    fields: dict[str, set[str]] = {}
+    selectors: dict[str, set[str]] = {}
+    for level in ("simple", "advanced"):
+        for control in controls:
+            boiler = {"class": "on_off" if control["write_path"] == "relay" else "flow_setpoint"}
+            options = {"level": level, **zones, **circuits, **signals, "boiler": boiler}
+            options["control"] = control
+            schemas = {
+                "user": flow.user_schema({}),
+                "level": flow.level_schema(options),
+                "signals": flow.signals_schema(options),
+                "freshness": flow.freshness_schema(options),
+                "boiler": flow.boiler_schema(options),
+                "circuit": flow.circuit_schema(options, {}, more=True),
+                "zones": flow.zones_schema(options),
+                "zone": flow.zone_schema(options, {}),
+                "building": flow.building_schema(options),
+                "reference": flow.reference_schema(options),
+                "monitor": flow.monitor_schema(options),
+                "control": flow.control_schema(options),
+                "control_entity": flow.control_entity_schema(options),
+                "control_gateway": flow.control_gateway_schema(options, ["gw"]),
+                "control_mqtt": flow.control_mqtt_schema(options),
+                "control_curve": flow.control_curve_schema(options, 120.0),
+                "control_behaviour": flow.control_behaviour_schema(options),
+                "control_alarms": flow.control_alarms_schema(options),
+                "control_return_confirm": flow.control_return_confirm_schema(),
+                "confirm_blocking": flow.confirm_blocking_schema(),
+                "control_relay": flow.control_relay_schema(options),
+                "control_relay_from_vt": flow.control_relay_schema(options),
+                "control_relay_behaviour": flow.control_relay_behaviour_schema(options),
+            }
+            for step, schema in schemas.items():
+                for marker, validator in schema.schema.items():
+                    fields.setdefault(step, set()).add(str(marker))
+                    config = getattr(validator, "config", {})
+                    key = config.get("translation_key")
+                    if key:
+                        offered = config["options"]
+                        values = {o["value"] if isinstance(o, dict) else o for o in offered}
+                        selectors.setdefault(key, set()).update(values)
+    return fields, selectors
+
+
+def _unused_keys(texts: dict) -> list[str]:
+    from custom_components.vtherm_smart_boiler.config_flow import (
+        SmartBoilerConfigFlow,
+        SmartBoilerOptionsFlow,
+    )
+
+    literals, patterns = _code_mentions()
+    fields, selectors = _flow_fields()
+    flows = {"config": SmartBoilerConfigFlow, "options": SmartBoilerOptionsFlow}
+    unused: list[str] = []
+    for key in flatten(texts):
+        parts = key.split(".")
+        section = parts[0]
+        if section in flows and parts[1] == "step":
+            step, part = parts[2], parts[3]
+            no_step = not hasattr(flows[section], f"async_step_{step}")
+            no_field = part in ("data", "data_description") and parts[4] not in fields.get(step, ())
+            no_menu = part == "menu_options" and not _mentioned(parts[4], literals, patterns)
+            if no_step or no_field or no_menu:
+                unused.append(key)
+        elif section in flows:
+            if not _mentioned(parts[2], literals, patterns):
+                unused.append(key)  # an error or abort reason the code never gives
+        elif section == "selector":
+            if parts[3] not in selectors.get(parts[1], set()):
+                unused.append(key)  # a choice no form offers
+        elif section == "entity":
+            codes = [parts[2]] + [
+                p for p in parts[3:] if p not in ("name", "state", "state_attributes")
+            ]
+            if not all(_mentioned(code, literals, patterns) for code in codes):
+                unused.append(key)
+        elif section in ("exceptions", "issues"):
+            if not _mentioned(parts[1], literals, patterns):
+                unused.append(key)
+        else:
+            unused.append(key)
+    return unused
+
+
+def test_every_key_is_used() -> None:
+    """P-76: the reverse key parity — every text in the English source is one the code can
+    show: a step and field of a form built at both levels, a selector's choice a form offers, an
+    entity, attribute or state the code names, an error, exception or issue the code raises. A
+    text left behind by removed code (the ``frequent_starts`` reaction's, say) fails here."""
+    assert _unused_keys(SOURCE) == []
+
+
+def test_an_unused_key_is_found() -> None:
+    """P-76's negative: a text the code cannot show — a field no form has, a selector's choice
+    no form offers, an issue, an attribute's state or an error nobody raises — is reported."""
+    import copy
+
+    texts = copy.deepcopy(SOURCE)
+    texts["options"]["step"]["control_alarms"]["data"]["frequent_starts"] = "Frequent starts"
+    texts["options"]["step"]["no_such_step"] = {"title": "Nowhere"}
+    texts["selector"]["level"]["options"]["expert"] = "Expert"
+    texts["issues"]["never_raised_issue"] = {"title": "Never"}
+    texts["entity"]["sensor"]["verdict"]["state_attributes"]["reasons"]["state"]["xyzzy"] = "X"
+    texts["options"]["error"]["never_given_error"] = "Never"
+    assert sorted(_unused_keys(texts)) == [
+        "entity.sensor.verdict.state_attributes.reasons.state.xyzzy",
+        "issues.never_raised_issue.title",
+        "options.error.never_given_error",
+        "options.step.control_alarms.data.frequent_starts",
+        "options.step.no_such_step.title",
+        "selector.level.options.expert",
+    ]
+
+
+ALL_LANGUAGES = ("en.json", *LANGUAGES)
+
+
+def _texts(language: str) -> dict:
+    return json.loads((TRANSLATIONS / language).read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("language", ALL_LANGUAGES)
+def test_coded_lists_have_translated_text(language: str) -> None:
+    """P-39: every code the coded lists carry — control's reasons, blockers and latch, the
+    verdict's reasons — has a text under its entity's ``state_attributes.<name>.state``, each
+    list with its ``_text`` attribute named, in every language."""
+    from custom_components.vtherm_smart_boiler.control import RUNTIME_BLOCKERS, ControlAlarm
+    from custom_components.vtherm_smart_boiler.control_config import CONFIG_BLOCKERS
+    from custom_components.vtherm_smart_boiler.core.controller import Reason
+    from custom_components.vtherm_smart_boiler.core.loop import HEATING_OFF_IGNORED
+    from custom_components.vtherm_smart_boiler.core.verdict import ReasonCode
+
+    entity = _texts(language)["entity"]
+    state = entity["sensor"]["control_state"]
+    switch = entity["switch"]["control"]
+    verdict = entity["sensor"]["verdict"]
+    blockers = {*CONFIG_BLOCKERS, *RUNTIME_BLOCKERS}
+    latches = {ControlAlarm.OUTSIDE_CHANGE.value, ControlAlarm.WRITE_IGNORED.value}
+    latches.add(HEATING_OFF_IGNORED)
+    assert _values(state, "reasons") == {reason.value for reason in Reason}
+    assert _values(state, "blockers") == blockers
+    assert _values(switch, "blockers") == blockers
+    assert _values(state, "latched_by") == latches
+    assert _values(verdict, "reasons") == {code.value for code in ReasonCode}
+    for owner, attributes in (
+        (state, ("reasons", "blockers", "blockers_waiting", "latched_by")),
+        (switch, ("blockers", "blocked_by")),
+        (verdict, ("reasons",)),
+    ):
+        for attribute in attributes:
+            assert owner["state_attributes"][f"{attribute}_text"]["name"], attribute
+    for texts in (state, switch, verdict):
+        for attribute in texts["state_attributes"].values():
+            assert all(text.strip() for text in attribute.get("state", {}).values())
+
+
+@pytest.mark.parametrize("language", ALL_LANGUAGES)
+def test_every_feature_and_missing_input_has_a_text(language: str) -> None:
+    """The missing-data rule (Y4): the "Features" sensor names every feature, its statuses and
+    both its attributes, and every input a feature can lack has a text — a signal by its field's
+    label, a dropped signal with the one that kept its entity."""
+    from custom_components.vtherm_smart_boiler.core import signal_check
+    from custom_components.vtherm_smart_boiler.core.signal_check import Feature, FeatureStatus
+    from custom_components.vtherm_smart_boiler.core.signals import Signal
+
+    texts = _texts(language)
+    sensor = texts["entity"]["sensor"]["features"]
+    assert sensor["name"]
+    attributes = sensor["state_attributes"]
+    for feature in Feature:
+        assert set(attributes[feature.value]["state"]) == {s.value for s in FeatureStatus}
+        assert attributes[f"{feature.value}_missing"]["name"]
+        assert attributes[f"{feature.value}_missing_text"]["name"]
+    inputs = {
+        value
+        for name, value in vars(signal_check).items()
+        if name.isupper() and isinstance(value, str)
+    }
+    missing = attributes["missing"]["state"]
+    # Every signal a feature can lack: all but the modulation and the wired thermostat's room
+    # temperature, which no feature needs alone.
+    unneeded = {Signal.MODULATION, Signal.ROOM_TEMPERATURE}
+    assert inputs | {s.value for s in Signal if s not in unneeded} <= set(missing)
+    # Composed by the plugin with the signals' names: no placeholders (hassfest forbids them in
+    # an attribute's states).
+    assert missing[signal_check.ENTITY_FOR_TWO_SIGNALS]
+    assert missing["unavailable_now"]
+    fields = texts["options"]["step"]["freshness"]["data"]
+    assert missing["flame"] == fields["flame"]  # a signal is named as its field is
+
+
+@pytest.mark.parametrize("language", ALL_LANGUAGES)
+def test_critical_zone_states_are_translated(language: str) -> None:
+    """P-73: the critical zone's own states have their text, and its name the circuit's
+    number, as the options show the circuit."""
+    from custom_components.vtherm_smart_boiler.core.zones import SelectionStatus
+
+    critical = _texts(language)["entity"]["sensor"]["critical_zone"]
+    assert set(critical["state"]) == {s.value for s in SelectionStatus} - {"ok"}
+    assert set(PLACEHOLDER.findall(critical["name"])) == {"circuit"}
+
+
+def test_blocked_switch_messages_count_the_others() -> None:
+    """P-74: no raw code in a message — the switch's refusal counts the other blockers, and
+    the options' error gives its reason in words."""
+    for language in ALL_LANGUAGES:
+        exceptions = _texts(language)["exceptions"]
+        for key, text in exceptions.items():
+            if key.startswith("blocked_"):
+                assert set(PLACEHOLDER.findall(text["message"])) == {"count"}, (language, key)
+        assert set(PLACEHOLDER.findall(exceptions["invalid_options"]["message"])) == {
+            "reason",
+            "subject",
+        }
+
+
+@pytest.mark.parametrize("language", ALL_LANGUAGES)
+def test_entity_names_do_not_repeat_the_device(language: str) -> None:
+    """P-104: the device is named after the entry ("Boiler" by default); no entity's name
+    starts with it again."""
+    names = [
+        texts["name"]
+        for platform in _texts(language)["entity"].values()
+        for texts in platform.values()
+    ]
+    assert not [name for name in names if name.split()[0].lower() in ("boiler", "kocioł")]
+    entity = _texts(language)["entity"]
+    assert entity["binary_sensor"]["connection"]["name"] in ("Signals", "Sygnały")
+    assert entity["switch"]["control"]["name"] in (
+        "Control (experimental)",
+        "Sterowanie (eksperymentalne)",
+    )
+
+
+def test_y4_texts_are_translated() -> None:
+    """Y4: the room for correction says the correction's real bound (P-66); every freshness
+    field has its own description (P-103); the resumes given up have their issue, naming the
+    zones, and the control state its attribute; the verdict's low condensing through a relay
+    says why it is not changed — in every language."""
+    from custom_components.vtherm_smart_boiler.control import LEARNING_NOT_RESUMED_ISSUE
+    from custom_components.vtherm_smart_boiler.core.controller import CORRECTION_MAX_K
+
+    band = SOURCE["options"]["step"]["control_curve"]["data_description"]["ceiling_band"]
+    assert f"stops at {CORRECTION_MAX_K:g} K" in band
+    assert "10 K" in band
+    for language in ALL_LANGUAGES:
+        texts = _texts(language)
+        freshness = texts["options"]["step"]["freshness"]
+        assert set(freshness["data_description"]) == set(freshness["data"]), language
+        issue = texts["issues"][LEARNING_NOT_RESUMED_ISSUE]
+        assert issue["title"], language
+        assert set(PLACEHOLDER.findall(issue["description"])) == {"zones"}, language
+        state = texts["entity"]["sensor"]["control_state"]["state_attributes"]
+        assert state["learning_not_resumed"]["name"], language
+    detail = SOURCE["entity"]["sensor"]["verdict"]["state_attributes"]["detail"]["state"]
+    assert "does not set the water temperature" in detail["water_not_controlled"]
+    assert "anti-cycling" not in detail["water_not_controlled"]

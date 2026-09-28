@@ -1,5 +1,6 @@
 """Binary sensors: connection, hot water available and foreign heat per zone, alarms, and the
-alarms of control."""
+alarms of control. An alarm exists only where its feature is not inactive (the missing-data
+rule, Y4)."""
 
 from __future__ import annotations
 
@@ -9,17 +10,16 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .control import ControlAlarm, control_alarms_for
-from .coordinator import SmartBoilerCoordinator
+from .coordinator import SmartBoilerConfigEntry, SmartBoilerCoordinator
 from .core.alarms import AlarmKind
-from .core.signal_check import Feature, FeatureStatus, OutdoorStatus, link_problems
+from .core.signal_check import OutdoorStatus, link_problems
 from .core.signals import Signal
-from .entity import ControlEntity, SmartBoilerEntity
+from .entity import ControlEntity, SmartBoilerEntity, feature_configured
 
 # Early warnings are advanced: created but hidden until the user shows them.
 EARLY_WARNINGS = frozenset(
@@ -28,27 +28,19 @@ EARLY_WARNINGS = frozenset(
 
 
 def _alarm_kinds(coordinator: SmartBoilerCoordinator) -> list[AlarmKind]:
-    signals = coordinator.config.signals
-    condensing = coordinator.config.installation.boiler.condensing
-    kinds: list[AlarmKind] = []
-    if Signal.FLAME in signals:
-        # Burns need the flame (X8, R4): without it these alarms could never judge anything.
-        kinds += [AlarmKind.FREQUENT_STARTS, AlarmKind.UNSTABLE_IGNITION]
-    if Signal.PRESSURE in signals:
-        if coordinator.config.monitor.alarms.add_water_below is not None:
-            kinds.append(AlarmKind.PRESSURE_LOW)  # Y1: only with the "add water" threshold
-        kinds += [AlarmKind.PRESSURE_HIGH, AlarmKind.PRESSURE_FALLING]
-    if Signal.FLUE_GAS in signals and condensing:
-        kinds.append(AlarmKind.FLUE_GAS_HIGH)
-    if Signal.FLUE_GAS in signals and Signal.RETURN in signals and condensing:
-        # P-85: where the trend is computed — a non-condensing boiler's flue follows the return.
-        kinds.append(AlarmKind.FLUE_GAS_RISING)
-    kinds.append(AlarmKind.HYSTERESIS_DRIFT)
-    if Signal.PUMP_RUNNING in signals or Signal.CH_ACTIVE in signals:
-        kinds.append(AlarmKind.LOW_FLOW)
-    if any(c.max_flow_alarm is not None for c in coordinator.config.installation.circuits):
-        kinds.append(AlarmKind.CIRCUIT_TOO_HOT)  # only for a circuit with a maximum (decision 10)
-    return kinds
+    """The monitor's alarms whose feature the configuration does not leave inactive (Y4): the
+    burns' need the flame (X8, R4), the "add water" one its threshold (Y1), the pressure trend
+    the flame and flow too, the flue gas ones a condensing boiler, the hysteresis drift the
+    flame, the flow and zones, the low-flow one its inputs (P-99), the circuit's only with a
+    maximum (decision 10). The flue gas trend also needs the return, over which it is computed
+    (P-85)."""
+    trend = Signal.RETURN in coordinator.config.signals
+    return [
+        kind
+        for kind in AlarmKind
+        if feature_configured(coordinator, f"alarm_{kind.value}")
+        and (trend or kind is not AlarmKind.FLUE_GAS_RISING)
+    ]
 
 
 PARALLEL_UPDATES = 0  # read from the coordinator: no update requests to limit
@@ -56,25 +48,31 @@ PARALLEL_UPDATES = 0  # read from the coordinator: no update requests to limit
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: SmartBoilerConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    coordinator: SmartBoilerCoordinator = entry.runtime_data
+    coordinator = entry.runtime_data
     entities: list[BinarySensorEntity] = [ConnectionSensor(coordinator)]
+    hot_water = feature_configured(coordinator, "hot_water")
     for zone_config, zone in zip(
         coordinator.config.zones, coordinator.config.installation.zones, strict=True
     ):
-        entities.append(HotWaterSensor(coordinator, zone.zone_id))
+        if hot_water:
+            entities.append(HotWaterSensor(coordinator, zone.zone_id))
         if zone_config.foreign_heat:
             entities.append(ForeignHeatSensor(coordinator, zone.zone_id))
     entities += [AlarmSensor(coordinator, kind) for kind in _alarm_kinds(coordinator)]
-    if coordinator.data.features[Feature.OUTDOOR_CHECK].status is FeatureStatus.AVAILABLE:
+    if feature_configured(coordinator, "outdoor_sensor_problem"):
         entities.append(OutdoorSensorProblem(coordinator))
     if coordinator.control is not None:
         # Each path's own alarms (R15): the relay's only on the relay path, the boiler link's
-        # and the missing confirmation not there.
+        # and the missing confirmation not there; each only where its feature is not inactive.
         kinds = control_alarms_for(coordinator.control.options)
-        entities += [ControlAlarmSensor(coordinator, kind) for kind in kinds]
+        entities += [
+            ControlAlarmSensor(coordinator, kind)
+            for kind in kinds
+            if feature_configured(coordinator, f"alarm_{kind.value}")
+        ]
     coordinator.expect_entities(entities)
     async_add_entities(entities)
 
@@ -106,9 +104,8 @@ class ConnectionSensor(SmartBoilerEntity, BinarySensorEntity):
 
 
 class HotWaterSensor(SmartBoilerEntity, BinarySensorEntity):
-    _unrecorded_attributes = frozenset({"excess"})
-
-    """Heat is reaching the zone's emitters; unknown when it cannot be told."""
+    """Heat is reaching the zone's emitters; unknown when it cannot be told, with its reason.
+    How far the flow stands above the room is left to the diagnostics (P-72)."""
 
     _attr_device_class = BinarySensorDeviceClass.HEAT
 
@@ -122,10 +119,7 @@ class HotWaterSensor(SmartBoilerEntity, BinarySensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         hot = self.coordinator.data.zones[self.zone or ""].hot_water
-        return {
-            "reason": None if hot.reason is None else hot.reason.value,
-            "excess": None if hot.excess is None else round(hot.excess, 1),
-        }
+        return {"reason": None if hot.reason is None else hot.reason.value}
 
 
 class ForeignHeatSensor(SmartBoilerEntity, BinarySensorEntity):
@@ -154,11 +148,10 @@ class ForeignHeatSensor(SmartBoilerEntity, BinarySensorEntity):
 
 
 class AlarmSensor(SmartBoilerEntity, BinarySensorEntity):
-    _unrecorded_attributes = frozenset({"value"})
-
     """An alarm or early warning: on while active, unknown while it cannot be judged once its
     hour's hold is over (S-16) — never "OK" for want of data. Information only: the monitor's
-    alarms never change control."""
+    alarms never change control. The value it judged, which changes with every reading, is left
+    to the diagnostics (P-72)."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 
@@ -180,17 +173,15 @@ class AlarmSensor(SmartBoilerEntity, BinarySensorEntity):
             return {}
         return {
             "level": None if alarm.level is None else alarm.level.value,
-            "value": alarm.value,
             "limit": alarm.limit,
             "reason": alarm.reason,
         }
 
 
 class OutdoorSensorProblem(SmartBoilerEntity, BinarySensorEntity):
-    _unrecorded_attributes = frozenset({"mean_difference"})
-
     """On when the boiler's outdoor sensor disagrees with the weather entity or is stuck."""
 
+    _unrecorded_attributes = frozenset({"mean_difference"})
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_entity_registry_visible_default = False
 

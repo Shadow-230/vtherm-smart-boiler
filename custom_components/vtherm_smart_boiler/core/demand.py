@@ -18,9 +18,11 @@ alone, a count threshold of 0 turning the count off, as in VT:
 A criterion no known zone can feed — no device power above 0 (VT publishes 0 when none is set),
 no opening or duty cycle at all — has no data: it is left out, and when no configured criterion
 can be judged, demand is unknown, never a silent "no" (P-14; decision 3 then decides). Only
-zones whose state is known count: a zone that is unavailable, heating while VT has not started
-it, or whose room sensor has gone quiet is unknown, never "no demand"; a zone in its grace
-period keeps its last known answer (``memory``); with no zone known, demand is unknown.
+zones whose state is known count: a zone that is unavailable, or heating while VT has not
+started it, is unknown, never "no demand"; a zone in its grace period keeps its last known
+answer (``memory``); with no zone known, demand is unknown. A zone whose room sensor VT has
+lost still counts — VT keeps running it on its last temperature or its safety duty — and only
+raises the zone alarm; a steady room is no stale one (P-116).
 """
 
 from __future__ import annotations

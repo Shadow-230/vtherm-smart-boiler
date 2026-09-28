@@ -359,9 +359,13 @@ def test_one_entity_for_two_signals_drops_the_later_one(stored: dict) -> None:
     config = EntryConfig.from_options(options)
     assert config.signals == {Signal.FLAME: "binary_sensor.flame", Signal.FLOW: "sensor.flow"}
     assert config.shared_signals == {Signal.RETURN: Signal.FLOW}
-    condensing = features(frozenset(config.signals), False, False)[Feature.CONDENSING]
-    assert condensing.status is FeatureStatus.UNAVAILABLE
-    assert condensing.missing == (Signal.RETURN,)
+    condensing = features(frozenset(config.signals), False, False, shared=config.shared_signals)[
+        Feature.CONDENSING
+    ]
+    assert condensing.status is FeatureStatus.INACTIVE
+    # Y4: named as dropped, with the signal that kept the entity.
+    assert condensing.missing == ("entity_for_two_signals",)
+    assert condensing.shared == ((Signal.RETURN, Signal.FLOW),)
     blockers = config_blockers(config.control, config.installation, config.shared_signals)
     assert blockers == ["entity_for_two_signals"]
     # The control's setpoint read-back is watched too, without a CH setpoint signal (X6).

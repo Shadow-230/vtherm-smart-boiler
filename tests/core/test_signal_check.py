@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.readings import BoilerSnapshot, Reading
 from custom_components.vtherm_smart_boiler.core.series import Series
 from custom_components.vtherm_smart_boiler.core.signal_check import (
+    ADD_WATER_THRESHOLD,
+    CONTROL,
+    ENTITY_FOR_TWO_SIGNALS,
+    ControlKind,
     Feature,
+    FeatureState,
     FeatureStatus,
     OutdoorCheck,
     OutdoorStatus,
@@ -88,56 +95,331 @@ def test_minimal_mapping_enables_the_basics() -> None:
     assert result[Feature.HOT_WATER].status is FeatureStatus.AVAILABLE
     assert result[Feature.CONDENSING].missing == (Signal.RETURN,)
     assert result[Feature.DHW_DETECTION].status is FeatureStatus.DEGRADED
-    assert result[Feature.GAS].status is FeatureStatus.UNAVAILABLE
-    assert result[Feature.DEGREE_DAYS].status is FeatureStatus.UNAVAILABLE
-    assert result[Feature.OUTDOOR_CHECK].status is FeatureStatus.UNAVAILABLE
+    assert result[Feature.GAS].status is FeatureStatus.INACTIVE
+    assert result[Feature.DEGREE_DAYS].status is FeatureStatus.INACTIVE
+    assert result[Feature.OUTDOOR_CHECK].status is FeatureStatus.INACTIVE
+
+
+# Everything an installation can give, on a water-temperature path: a gateway with an OpenTherm
+# thermostat, every signal but the relay's power, a circuit with its maximum.
+EVERYTHING = frozenset(Signal)
+FULL: dict[str, Any] = {
+    "add_water": True,
+    "zone_valves": True,
+    "zone_data": True,
+    "has_dhw": True,
+    "condensing": True,
+    "control": ControlKind.WATER,
+    "circuit_maximum": True,
+    "wall_thermostat": True,
+}
 
 
 def test_full_mapping() -> None:
-    result = features(frozenset(Signal), has_weather=True, has_gas_rates=True, add_water=True)
-    assert all(state.status is FeatureStatus.AVAILABLE for state in result.values())
+    result = features(EVERYTHING, has_weather=True, has_gas_rates=True, **FULL)
     assert set(result) == set(Feature)
+    inactive = {f for f, state in result.items() if state.status is not FeatureStatus.AVAILABLE}
+    assert inactive == {Feature.RELAY_PROOF}  # a water path has no relay
+    relay = features(
+        EVERYTHING,
+        has_weather=True,
+        has_gas_rates=True,
+        **(FULL | {"control": ControlKind.RELAY, "wall_thermostat": False}),
+    )
+    inactive = {f for f, state in relay.items() if state.status is not FeatureStatus.AVAILABLE}
+    # A relay sets no water temperature, and a gateway's wall thermostat is no relay's.
+    assert inactive == {Feature.COMFORT_CORRECTION, Feature.WALL_THERMOSTAT_FALLBACK}
+
+
+# The missing-data rule (Y4): for each feature of the table, each required input taken away —
+# (feature, what changes, the status then, the codes it names). A signal is taken off the
+# mapping; every other input is a keyword of ``features``.
+CASES: list[tuple[Feature, dict[str, Any], FeatureStatus, tuple[str, ...]]] = [
+    (Feature.CYCLES, {"without": {Signal.FLAME}}, FeatureStatus.INACTIVE, ("flame",)),
+    (Feature.CONDENSING, {"without": {Signal.FLAME}}, FeatureStatus.INACTIVE, ("flame",)),
+    (Feature.CONDENSING, {"without": {Signal.RETURN}}, FeatureStatus.INACTIVE, ("return",)),
+    (
+        Feature.DHW_DETECTION,
+        {"without": {Signal.DHW_ACTIVE}},
+        FeatureStatus.DEGRADED,
+        ("dhw_active",),
+    ),
+    (
+        Feature.DHW_DETECTION,
+        {"without": {Signal.DHW_ACTIVE, Signal.CH_ACTIVE, Signal.FLOW}},
+        FeatureStatus.INACTIVE,
+        ("dhw_active",),
+    ),
+    (Feature.GAS, {"without": {Signal.GAS_METER}}, FeatureStatus.DEGRADED, ("gas_meter",)),
+    (
+        Feature.GAS,
+        {"without": {Signal.GAS_METER}, "has_gas_rates": False},
+        FeatureStatus.INACTIVE,
+        ("gas_meter",),
+    ),
+    (Feature.DEGREE_DAYS, {"without": {Signal.OUTDOOR}}, FeatureStatus.DEGRADED, ("outdoor",)),
+    (
+        Feature.DEGREE_DAYS,
+        {"without": {Signal.OUTDOOR}, "has_weather": False},
+        FeatureStatus.INACTIVE,
+        ("outdoor", "weather_entity"),
+    ),
+    (Feature.HOT_WATER, {"without": {Signal.FLOW}}, FeatureStatus.INACTIVE, ("flow",)),
+    (
+        Feature.HOT_WATER,
+        {"without": {Signal.FLOW}, "circuit_flow": True},
+        FeatureStatus.DEGRADED,
+        ("flow",),
+    ),
+    (Feature.EMITTER_FACTOR, {"without": {Signal.FLOW}}, FeatureStatus.INACTIVE, ("flow",)),
+    (
+        Feature.FLUE_GAS_WARNING,
+        {"without": {Signal.FLUE_GAS}},
+        FeatureStatus.INACTIVE,
+        ("flue_gas",),
+    ),
+    (
+        Feature.FLUE_GAS_WARNING,
+        {"condensing": False},
+        FeatureStatus.INACTIVE,
+        ("condensing_boiler",),
+    ),
+    # The absolute alarm needs no return; only the trend over the return does.
+    (Feature.FLUE_GAS_WARNING, {"without": {Signal.RETURN}}, FeatureStatus.DEGRADED, ("return",)),
+    (
+        Feature.PRESSURE_WARNING,
+        {"without": {Signal.PRESSURE}},
+        FeatureStatus.INACTIVE,
+        ("pressure",),
+    ),
+    (Feature.ADD_WATER, {"without": {Signal.PRESSURE}}, FeatureStatus.INACTIVE, ("pressure",)),
+    (
+        Feature.ADD_WATER,
+        {"add_water": False},
+        FeatureStatus.INACTIVE,
+        ("add_water_threshold",),
+    ),
+    *(
+        (Feature.PRESSURE_TREND, {"without": {signal}}, FeatureStatus.INACTIVE, (signal.value,))
+        for signal in (Signal.PRESSURE, Signal.FLAME, Signal.FLOW)
+    ),
+    *(
+        (Feature.HYSTERESIS_DRIFT, {"without": {signal}}, FeatureStatus.INACTIVE, (signal.value,))
+        for signal in (Signal.FLOW, Signal.FLAME)
+    ),
+    (Feature.HYSTERESIS_DRIFT, {"zone_data": False}, FeatureStatus.INACTIVE, ("zone_data",)),
+    (
+        Feature.UNSTABLE_IGNITION,
+        {"without": {Signal.FLAME}},
+        FeatureStatus.INACTIVE,
+        ("flame",),
+    ),
+    (
+        Feature.UNSTABLE_IGNITION,
+        {"without": {Signal.FLOW}},
+        FeatureStatus.DEGRADED,
+        ("flow",),
+    ),
+    (
+        Feature.UNSTABLE_IGNITION,
+        {"without": {Signal.CH_SETPOINT}},
+        FeatureStatus.DEGRADED,
+        ("ch_setpoint",),
+    ),
+    (
+        Feature.LOW_FLOW,
+        {"without": {Signal.PUMP_RUNNING, Signal.CH_ACTIVE}},
+        FeatureStatus.INACTIVE,
+        ("pump_running", "ch_active"),
+    ),
+    (Feature.LOW_FLOW, {"zone_valves": False}, FeatureStatus.INACTIVE, ("valve_openings",)),
+    (Feature.LOW_FLOW, {"zone_data": False}, FeatureStatus.INACTIVE, ("valve_openings",)),
+    (Feature.LOW_FLOW, {"bypass": True}, FeatureStatus.INACTIVE, ("no_bypass",)),
+    (
+        Feature.LOW_FLOW,
+        {"without": {Signal.DHW_ACTIVE}},
+        FeatureStatus.INACTIVE,
+        ("dhw_active",),
+    ),
+    (
+        Feature.OUTDOOR_CHECK,
+        {"without": {Signal.OUTDOOR}},
+        FeatureStatus.INACTIVE,
+        ("outdoor",),
+    ),
+    (Feature.OUTDOOR_CHECK, {"has_weather": False}, FeatureStatus.INACTIVE, ("weather_entity",)),
+    (
+        Feature.BOILER_FAULT_STOP,
+        {"without": {Signal.LOW_PRESSURE_FAULT, Signal.BOILER_LOCKOUT}},
+        FeatureStatus.INACTIVE,
+        ("low_pressure_fault", "boiler_lockout"),
+    ),
+    (Feature.BOILER_FAULT_STOP, {"control": None}, FeatureStatus.INACTIVE, ("control",)),
+    (Feature.VERDICT, {"without": {Signal.FLAME}}, FeatureStatus.INACTIVE, ("flame",)),
+    (Feature.COMFORT_CORRECTION, {"control": None}, FeatureStatus.INACTIVE, ("control",)),
+    (
+        Feature.COMFORT_CORRECTION,
+        {"control": ControlKind.RELAY},
+        FeatureStatus.INACTIVE,
+        ("water_control",),
+    ),
+    (Feature.COMFORT_CORRECTION, {"zone_data": False}, FeatureStatus.INACTIVE, ("zone_data",)),
+    (
+        Feature.COMFORT_CORRECTION,
+        {"comfort_correction": False},
+        FeatureStatus.INACTIVE,
+        ("turned_off",),
+    ),
+    (Feature.FROST_PROTECTION, {"control": None}, FeatureStatus.INACTIVE, ("control",)),
+    (Feature.FROST_PROTECTION, {"zone_data": False}, FeatureStatus.INACTIVE, ("zone_data",)),
+    (Feature.ACTIVATION_DELAY, {"control": None}, FeatureStatus.INACTIVE, ("control",)),
+    (
+        Feature.CIRCUIT_OVERSHOOT_ALARM,
+        {"without": {Signal.FLOW}},
+        FeatureStatus.INACTIVE,
+        ("flow",),
+    ),
+    (
+        Feature.CIRCUIT_OVERSHOOT_ALARM,
+        {"circuit_maximum": False},
+        FeatureStatus.INACTIVE,
+        ("circuit_maximum",),
+    ),
+    *(
+        (
+            Feature.LOWEST_WATER_SUGGESTION,
+            {"without": {signal}},
+            FeatureStatus.INACTIVE,
+            (signal.value,),
+        )
+        for signal in (Signal.FLAME, Signal.FLOW, Signal.CH_SETPOINT)
+    ),
+    (
+        Feature.WALL_THERMOSTAT_FALLBACK,
+        {"wall_thermostat": False},
+        FeatureStatus.INACTIVE,
+        ("wall_thermostat",),
+    ),
+    (
+        Feature.WALL_THERMOSTAT_FALLBACK,
+        {"without": {Signal.ROOM_SETPOINT}},
+        FeatureStatus.INACTIVE,
+        ("room_setpoint",),
+    ),
+    (
+        Feature.RELAY_PROOF,
+        {"control": ControlKind.WATER},
+        FeatureStatus.INACTIVE,
+        ("relay_control",),
+    ),
+    (
+        Feature.RELAY_PROOF,
+        {
+            "control": ControlKind.RELAY,
+            "without": {Signal.FLAME, Signal.FLOW, Signal.GAS_METER, Signal.BOILER_POWER},
+        },
+        FeatureStatus.INACTIVE,
+        ("flame", "flow", "gas_meter", "boiler_power"),
+    ),
+    (Feature.FORECASTS, {"has_weather": False}, FeatureStatus.INACTIVE, ("weather_entity",)),
+]
+
+
+@pytest.mark.parametrize(
+    ("feature", "change", "status", "missing"),
+    CASES,
+    ids=[f"{case[0].value}-{index}" for index, case in enumerate(CASES)],
+)
+def test_every_feature_names_what_it_lacks(
+    feature: Feature, change: dict[str, Any], status: FeatureStatus, missing: tuple[str, ...]
+) -> None:
+    """The missing-data rule: a feature whose input is missing is inactive — or degraded where
+    it works from a weaker one — and names it, a code with a translated text."""
+    change = dict(change)
+    mapped = EVERYTHING - change.pop("without", set())
+    arguments = {"has_weather": True, "has_gas_rates": True, **FULL}
+    if feature is Feature.RELAY_PROOF:
+        arguments |= {"control": ControlKind.RELAY, "power_threshold": True}
+    arguments |= change
+    weather = arguments.pop("has_weather")
+    rates = arguments.pop("has_gas_rates")
+    result = features(mapped, weather, rates, **arguments)[feature]
+    assert (result.status, result.missing) == (status, missing)
+    assert all(isinstance(code, str) for code in result.missing)
+    full = features(EVERYTHING, True, True, **(FULL | _path(feature)))[feature]
+    assert full.status is FeatureStatus.AVAILABLE, feature  # the input is what it lacked
+
+
+def _path(feature: Feature) -> dict[str, Any]:
+    if feature is Feature.RELAY_PROOF:
+        return {"control": ControlKind.RELAY, "power_threshold": True}
+    return {}
+
+
+def test_a_signal_whose_entity_feeds_an_earlier_one_is_named_so() -> None:
+    """X5: one entity mapped to two signals is kept for the first; the later signal is dropped,
+    and each feature that needs it names it with ``entity_for_two_signals`` and the signal that
+    kept the entity."""
+    result = features(
+        EVERYTHING - {Signal.RETURN},
+        True,
+        True,
+        **FULL,
+        shared={Signal.RETURN: Signal.FLOW},
+    )
+    condensing = result[Feature.CONDENSING]
+    assert (condensing.status, condensing.missing) == (
+        FeatureStatus.INACTIVE,
+        (ENTITY_FOR_TWO_SIGNALS,),
+    )
+    assert condensing.shared == ((Signal.RETURN, Signal.FLOW),)
+    flue = result[Feature.FLUE_GAS_WARNING]
+    assert (flue.status, flue.missing, flue.shared) == (
+        FeatureStatus.DEGRADED,
+        (ENTITY_FOR_TWO_SIGNALS,),
+        ((Signal.RETURN, Signal.FLOW),),
+    )
+    # Negative: a feature that does not need the dropped signal names nothing.
+    assert result[Feature.CYCLES] == FeatureState(FeatureStatus.AVAILABLE)
+
+
+def test_nothing_known_names_every_input() -> None:
+    """Negative: with no input at all, every feature is inactive or degraded and names what it
+    lacks — none is inactive without a code."""
+    result = features(frozenset(), False, False, zone_data=False)
+    for feature, state in result.items():
+        assert state.status is FeatureStatus.INACTIVE, feature
+        assert state.missing, feature
 
 
 def test_the_y1_features_name_what_they_lack() -> None:
     """Y1 (P-99 and the missing-data rule): each feature says why it is inactive — a signal to
-    map, or a reason that is no signal."""
+    map, or another input, each a code."""
     nothing = features(frozenset(), False, False)
     low_flow = nothing[Feature.LOW_FLOW]
     assert (low_flow.status, low_flow.missing) == (
-        FeatureStatus.UNAVAILABLE,
+        FeatureStatus.INACTIVE,
         (Signal.PUMP_RUNNING, Signal.CH_ACTIVE),
     )
     fault = nothing[Feature.BOILER_FAULT_STOP]
     assert (fault.status, fault.missing) == (
-        FeatureStatus.UNAVAILABLE,
-        (Signal.LOW_PRESSURE_FAULT, Signal.BOILER_LOCKOUT),
+        FeatureStatus.INACTIVE,
+        (CONTROL, Signal.LOW_PRESSURE_FAULT, Signal.BOILER_LOCKOUT),
     )
-    assert nothing[Feature.ADD_WATER].missing == (Signal.PRESSURE,)
+    assert nothing[Feature.ADD_WATER].missing == (Signal.PRESSURE, ADD_WATER_THRESHOLD)
     assert nothing[Feature.PRESSURE_TREND].missing == (Signal.PRESSURE, Signal.FLAME, Signal.FLOW)
     assert nothing[Feature.HYSTERESIS_DRIFT].missing == (Signal.FLAME, Signal.FLOW)
-    pressure = features(frozenset({Signal.PRESSURE}), False, False)
-    add_water = pressure[Feature.ADD_WATER]
-    assert (add_water.status, add_water.reason) == (FeatureStatus.UNAVAILABLE, "no_threshold")
-    assert (
-        features(frozenset({Signal.PRESSURE}), False, False, add_water=True)[
-            Feature.ADD_WATER
-        ].status
-        is FeatureStatus.AVAILABLE
-    )
     pump = frozenset({Signal.PUMP_RUNNING})
     assert features(pump, False, False)[Feature.LOW_FLOW].status is FeatureStatus.AVAILABLE
-    bypass = features(pump, False, False, bypass=True)[Feature.LOW_FLOW]
-    assert (bypass.status, bypass.reason) == (FeatureStatus.UNAVAILABLE, "bypass")
-    valves = features(pump, False, False, zone_valves=False)[Feature.LOW_FLOW]
-    assert (valves.status, valves.reason) == (FeatureStatus.UNAVAILABLE, "zone_without_valve")
     # P-27: a boiler with hot water needs the hot-water signal, or hot water stays unknown.
     combi = features(pump, False, False, has_dhw=True)[Feature.LOW_FLOW]
-    assert (combi.status, combi.missing) == (FeatureStatus.UNAVAILABLE, (Signal.DHW_ACTIVE,))
+    assert (combi.status, combi.missing) == (FeatureStatus.INACTIVE, (Signal.DHW_ACTIVE,))
     told = features(pump | {Signal.DHW_ACTIVE}, False, False, has_dhw=True)[Feature.LOW_FLOW]
     assert told.status is FeatureStatus.AVAILABLE
-    drift = features(frozenset({Signal.FLAME, Signal.FLOW}), False, False, zone_data=False)
-    assert drift[Feature.HYSTERESIS_DRIFT].reason == "no_zone_data"
+    # Zones whose valves are not known yet do not make the warning inactive.
+    assert features(pump, False, False, zone_valves=None)[Feature.LOW_FLOW].status is (
+        FeatureStatus.AVAILABLE
+    )
 
 
 def test_a_gateway_fault_flag_needs_the_fault_indication() -> None:
@@ -145,23 +427,46 @@ def test_a_gateway_fault_flag_needs_the_fault_indication() -> None:
     indication mapped — without it that flag stops nothing, and the feature names it; one from
     elsewhere counts alone."""
     flags = frozenset({Signal.LOW_PRESSURE_FAULT})
-    gated = features(flags, False, False, gateway=flags)[Feature.BOILER_FAULT_STOP]
-    assert (gated.status, gated.missing) == (FeatureStatus.UNAVAILABLE, (Signal.FAULT_INDICATION,))
-    both = features(flags | {Signal.FAULT_INDICATION}, False, False, gateway=flags)
+    water = {"control": ControlKind.WATER}
+    gated = features(flags, False, False, gateway=flags, **water)[Feature.BOILER_FAULT_STOP]
+    assert (gated.status, gated.missing) == (FeatureStatus.INACTIVE, (Signal.FAULT_INDICATION,))
+    both = features(flags | {Signal.FAULT_INDICATION}, False, False, gateway=flags, **water)
     assert both[Feature.BOILER_FAULT_STOP].status is FeatureStatus.AVAILABLE
-    mixed = features(flags | {Signal.BOILER_LOCKOUT}, False, False, gateway=flags)[
+    mixed = features(flags | {Signal.BOILER_LOCKOUT}, False, False, gateway=flags, **water)[
         Feature.BOILER_FAULT_STOP
     ]
     assert (mixed.status, mixed.missing) == (FeatureStatus.DEGRADED, (Signal.FAULT_INDICATION,))
-    alone = features(flags, False, False)[Feature.BOILER_FAULT_STOP]
+    alone = features(flags, False, False, **water)[Feature.BOILER_FAULT_STOP]
     assert alone.status is FeatureStatus.AVAILABLE
+    relay = features(flags, False, False, control=ControlKind.RELAY)[Feature.BOILER_FAULT_STOP]
+    assert relay.status is FeatureStatus.AVAILABLE  # the relay stops for it too (Y1)
+
+
+def test_the_relay_proof_counts_the_power_only_with_its_threshold() -> None:
+    """X8 (R12): the boiler's electric power proves heat only against the threshold the user
+    gave; without it, and with no other proof input, the proof is inactive."""
+    power = frozenset({Signal.BOILER_POWER})
+    relay = {"control": ControlKind.RELAY}
+    without = features(power, False, False, **relay)[Feature.RELAY_PROOF]
+    assert without.status is FeatureStatus.INACTIVE
+    with_threshold = features(power, False, False, power_threshold=True, **relay)
+    assert with_threshold[Feature.RELAY_PROOF].status is FeatureStatus.AVAILABLE
+
+
+def test_the_suggestion_takes_the_read_back_for_the_ch_setpoint() -> None:
+    """X6: without the CH setpoint signal, control's read-back is the suggestion's setpoint."""
+    mapped = frozenset({Signal.FLAME, Signal.FLOW})
+    alone = features(mapped, False, False)[Feature.LOWEST_WATER_SUGGESTION]
+    assert (alone.status, alone.missing) == (FeatureStatus.INACTIVE, (Signal.CH_SETPOINT,))
+    read_back = features(mapped, False, False, read_back=True)[Feature.LOWEST_WATER_SUGGESTION]
+    assert read_back.status is FeatureStatus.AVAILABLE
 
 
 @pytest.mark.parametrize(
     ("mapped", "rates", "status"),
     [
         ({Signal.MODULATION}, True, FeatureStatus.DEGRADED),
-        ({Signal.MODULATION}, False, FeatureStatus.UNAVAILABLE),
+        ({Signal.MODULATION}, False, FeatureStatus.INACTIVE),
         ({Signal.GAS_METER}, False, FeatureStatus.AVAILABLE),
     ],
 )

@@ -1,14 +1,17 @@
 """Forecast recording (FC0): snapshots from ``weather.get_forecasts`` kept in HA storage.
 
 The only service the plugin calls in the monitor is ``weather.get_forecasts``, and only for the
-forecast types the weather entity says it offers. Snapshots are stored in weekly partitions, one
-storage file each: a save serialises and writes only its own week, in the executor, from the
-snapshots captured when it was planned. Weeks past the retention are removed, also those a
-restart no longer loads.
+forecast types the weather entity says it offers, while the entity is there and neither
+unavailable nor unknown; each call is given ``FORECAST_CALL_TIMEOUT_S`` (P-55). Snapshots are
+stored in weekly partitions, one storage file each: a save serialises and writes only its own
+week, in the executor, from the snapshots captured when it was planned. At setup the stored
+weeks are parsed in the executor, and only the current week stays in memory, the older ones as a
+count (P-23). Weeks past the retention are removed, also those a restart no longer loads.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import Mapping, Sequence
@@ -35,6 +38,10 @@ from .units import parse_number, temperature_to_celsius
 _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 1
 SAVE_DELAY_S = 60
+# How long one ``weather.get_forecasts`` call may take before its snapshot is given up
+# (provisional, K4): a weather integration that hangs must not hold the recording.
+FORECAST_CALL_TIMEOUT_S = 30.0
+_NO_WEATHER = ("unavailable", "unknown")
 
 # The forecast types a weather entity offers (Home Assistant's WeatherEntityFeature).
 _FEATURE = {ForecastKind.DAILY: 1, ForecastKind.HOURLY: 2}
@@ -83,7 +90,9 @@ class ForecastRecorder:
         self._weather = weather_entity
         self.store = ForecastStore()
         self._stores: dict[int, Store[dict[str, Any]]] = {}
-        self._dirty: set[int] = set()
+        # The weeks changed since they were loaded, each with its snapshots as last captured:
+        # what the flush at unload writes — the week may have left memory since (P-23).
+        self._dirty: dict[int, tuple[ForecastSnapshot, ...]] = {}
         self.unsupported: set[ForecastKind] = set()
 
     def _storage(self, partition: int) -> Store[dict[str, Any]]:
@@ -97,11 +106,14 @@ class ForecastRecorder:
         return self._stores[partition]
 
     async def async_load(self, now: float) -> None:
-        """Load the partitions still inside the retention; remove the files of older ones."""
+        """Load the partitions still inside the retention — parsed in the executor, the current
+        week in full and the older ones only as a count (P-23) — and remove the files of older
+        ones."""
         first = partition_of(now - DEFAULT_RETENTION_S)
-        loaded = []
+        current = partition_of(now)
+        loaded: dict[int, Sequence[object]] = {}
         unreadable = 0
-        for partition in range(first, partition_of(now) + 1):
+        for partition in range(first, current + 1):
             # Each week on its own: one that cannot be read (written by a later version, say)
             # costs that week, not the others or the entry's setup.
             try:
@@ -111,10 +123,16 @@ class ForecastRecorder:
                 unreadable += 1
                 continue
             if isinstance(data, dict) and isinstance(data.get("snapshots"), list):
-                loaded.append(data["snapshots"])
+                loaded[partition] = data["snapshots"]
         if unreadable:
             _LOGGER.warning("Skipped %s stored forecast weeks that could not be read", unreadable)
-        skipped = self.store.load(loaded)
+        # Parsed on a store of its own, which nothing else sees until it is ready; a snapshot
+        # taken meanwhile (none at setup) is kept.
+        fresh = ForecastStore(self.store.retention_s, self.store.horizon_points)
+        skipped = await self._hass.async_add_executor_job(fresh.load, loaded, current)
+        for snapshot in self.store.snapshots():
+            fresh.add(snapshot)
+        self.store = fresh
         if skipped:
             _LOGGER.warning("Skipped %s unreadable stored forecast snapshots", skipped)
         await self._hass.async_add_executor_job(
@@ -122,9 +140,14 @@ class ForecastRecorder:
         )
 
     async def async_take(self, now: float) -> int:
-        """Take one snapshot of every supported forecast type; returns how many were stored."""
+        """Take one snapshot of every supported forecast type; returns how many were stored.
+        Nothing is asked while the weather entity is missing, unavailable or unknown (P-55)."""
         state = self._hass.states.get(self._weather)
-        units = state.attributes if state is not None else {}
+        if state is None or state.state in _NO_WEATHER:
+            _LOGGER.debug("No forecast asked for: %s is not available", self._weather)
+            await self._async_prune(now)
+            return 0
+        units = state.attributes
         features = units.get("supported_features")
         taken = 0
         for kind in (ForecastKind.HOURLY, ForecastKind.DAILY):
@@ -135,13 +158,22 @@ class ForecastRecorder:
             if kind in self.unsupported:
                 continue
             try:
-                response = await self._hass.services.async_call(
-                    "weather",
-                    "get_forecasts",
-                    {"entity_id": self._weather, "type": kind.value},
-                    blocking=True,
-                    return_response=True,
+                async with asyncio.timeout(FORECAST_CALL_TIMEOUT_S):
+                    response = await self._hass.services.async_call(
+                        "weather",
+                        "get_forecasts",
+                        {"entity_id": self._weather, "type": kind.value},
+                        blocking=True,
+                        return_response=True,
+                    )
+            except TimeoutError:
+                _LOGGER.debug(
+                    "No %s forecast from %s within %s s",
+                    kind,
+                    self._weather,
+                    FORECAST_CALL_TIMEOUT_S,
                 )
+                continue
             except HomeAssistantError as err:
                 _LOGGER.debug("No %s forecast from %s: %s", kind, self._weather, err)
                 continue
@@ -150,7 +182,10 @@ class ForecastRecorder:
             if not isinstance(items, list) or not items:
                 continue
             snapshot = ForecastSnapshot(now, kind, parse_forecast(items, units))
-            self.store.add(snapshot)
+            if self.store.add(snapshot) is None:
+                # The clock went back past the week in memory: that week is not rewritten.
+                _LOGGER.debug("A forecast snapshot of an earlier week is not stored")
+                continue
             taken += 1
         if taken:
             self._schedule_save(partition_of(now))
@@ -165,7 +200,7 @@ class ForecastRecorder:
         def data() -> dict[str, Any]:
             return {"snapshots": [snapshot.to_dict() for snapshot in snapshots]}
 
-        self._dirty.add(partition)
+        self._dirty[partition] = snapshots
         self._storage(partition).async_delay_save(data, SAVE_DELAY_S)
 
     async def _async_prune(self, now: float) -> None:
@@ -173,13 +208,13 @@ class ForecastRecorder:
         cutoff = partition_of(now - DEFAULT_RETENTION_S - PARTITION_S)
         for partition in [p for p in self._stores if p < cutoff]:
             # P-56: removed for good — the flush at unload must not write it back, empty.
-            self._dirty.discard(partition)
+            self._dirty.pop(partition, None)
             await self._stores.pop(partition).async_remove()
 
     async def async_flush(self) -> None:
-        """Write the partitions changed since they were loaded now (on unload)."""
-        for partition in sorted(self._dirty):
-            snapshots = self.store.in_partition(partition)
+        """Write the partitions changed since they were loaded now (on unload), each with its
+        snapshots as last captured."""
+        for partition, snapshots in sorted(self._dirty.items()):
             await self._storage(partition).async_save(
                 {"snapshots": [snapshot.to_dict() for snapshot in snapshots]}
             )

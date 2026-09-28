@@ -101,14 +101,6 @@ class EntityTransport:
         self._by_entity = {entity: signal for signal, entity in self._mapping.items()}
         self.gateway = frozenset(gateway)
 
-    @property
-    def mapping(self) -> dict[Signal, str]:
-        return dict(self._mapping)
-
-    @property
-    def entity_ids(self) -> tuple[str, ...]:
-        return tuple(self._mapping.values())
-
     def signal_of(self, entity_id: str) -> Signal | None:
         return self._by_entity.get(entity_id)
 

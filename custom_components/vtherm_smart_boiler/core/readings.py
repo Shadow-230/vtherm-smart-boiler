@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from .signals import SIGNAL_SPECS, Signal, SignalKind
+from .signals import Signal
 
 type Value = float | bool
 
@@ -37,21 +37,6 @@ UNKNOWN = Reading()
 # One meaning each, wherever a zone's valve opening or duty cycle is judged.
 ZONE_OPEN = 0.05  # above this the zone takes heat: it calls, it heats
 ZONE_SATURATED = 0.95  # this open, the zone cannot give its room more
-
-
-def plausible_reading(signal: Signal, value: Value | None, reported_at: float | None) -> Reading:
-    """A reading with values of the wrong type or outside the plausible range made unknown."""
-    spec = SIGNAL_SPECS[signal]
-    if value is None:
-        return Reading(None, reported_at)
-    if spec.kind is SignalKind.BINARY:
-        return Reading(value if isinstance(value, bool) else None, reported_at)
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return Reading(None, reported_at)
-    number = float(value)
-    if number != number or not spec.plausible(number):  # NaN or out of range
-        return Reading(None, reported_at)
-    return Reading(number, reported_at)
 
 
 @dataclass(frozen=True, slots=True)

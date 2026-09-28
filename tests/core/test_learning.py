@@ -348,3 +348,55 @@ def test_renaming_a_zone_the_plugin_holds_nothing_for_changes_nothing() -> None:
     assert rename_zone(state, "climate.x", "climate.y") is state
     empty = LearningState()
     assert rename_zone(empty, "climate.a", "climate.c") is empty
+
+
+def test_a_resume_given_up_is_recorded_once() -> None:
+    """Y4 (the V3 carry-over): a resume whose flag keeps reading off is given up a day after the
+    first one, and the give-up is recorded — with when — for the unit to log once and show; a
+    later step leaves the record as it is."""
+    state, _ = release_all(LearningState(paused={"a": 0.0}, last_toggle={"a": 0.0}), 0.0)
+    state, _ = follow_resumes(state, {"a": False}, 24 * 60 * MIN - 1, CONFIG)
+    assert state.given_up == {}
+    state, _ = follow_resumes(state, {"a": False}, 24 * 60 * MIN, CONFIG)
+    assert state.given_up == {"a": 24 * 60 * MIN}
+    state, again = follow_resumes(state, {"a": False}, 25 * 60 * MIN, CONFIG)
+    assert (state.given_up, again) == ({"a": 24 * 60 * MIN}, ())
+
+
+def test_a_zone_gone_for_a_day_is_given_up_too() -> None:
+    state = LearningState(resuming={"a": 0.0}, resume_since={"a": 0.0})
+    state, _ = follow_resumes(state, {}, 24 * 60 * MIN, CONFIG)
+    assert state.given_up == {"a": 24 * 60 * MIN}
+
+
+def test_a_resume_that_takes_is_not_given_up() -> None:
+    """Negative: a flag that reads on in time ends the resume, with nothing given up."""
+    state, _ = release_all(LearningState(paused={"a": 0.0}), 0.0)
+    state, _ = follow_resumes(state, {"a": True}, 24 * 60 * MIN, CONFIG)
+    assert (state.resuming, state.given_up) == ({}, {})
+
+
+def test_a_given_up_zone_whose_learning_is_back_on_is_forgotten() -> None:
+    """Switched back on — by the user, say — the zone is not shown any more; unknown, it
+    stays shown."""
+    state = LearningState(given_up={"a": 0.0})
+    kept, _ = follow_resumes(state, {"a": None}, MIN, CONFIG)
+    assert kept.given_up == {"a": 0.0}
+    back, _ = follow_resumes(state, {"a": True}, MIN, CONFIG)
+    assert back.given_up == {}
+
+
+def test_a_new_pause_forgets_that_a_resume_was_given_up() -> None:
+    state = LearningState(given_up={"a": 0.0})
+    paused = plan(state, [zone("a")], 30, dhw=True)
+    assert paused.pause == ("a",)
+    assert paused.state.given_up == {}
+    other = plan(state, [zone("b")], 30, dhw=True)
+    assert other.state.given_up == {"a": 0.0}  # another zone's pause leaves it
+
+
+def test_a_release_and_a_rename_keep_what_was_given_up() -> None:
+    state = LearningState(paused={"b": 0.0}, given_up={"a": 0.0})
+    released, _ = release_all(state, MIN)
+    assert released.given_up == {"a": 0.0}
+    assert rename_zone(released, "a", "c").given_up == {"c": 0.0}

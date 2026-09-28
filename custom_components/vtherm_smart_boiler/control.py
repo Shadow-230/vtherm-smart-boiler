@@ -115,7 +115,6 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
-from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import (
     CALLBACK_TYPE,
     CoreState,
@@ -338,6 +337,10 @@ RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control
 RELAY_UNREACHABLE_ISSUE = "relay_unreachable"
 RELAY_IGNORED_ISSUE = "relay_ignored"
 RELAY_RESTS_OFF_ISSUE = "relay_rests_off"
+# Y4 (the V3 carry-over): SmartPI zones whose learning the plugin paused and could not switch back
+# on for a day — no longer tried: a warning repair issue naming them, told once in the log, until
+# the zone's learning is on again or the plugin pauses it again.
+LEARNING_NOT_RESUMED_ISSUE = "learning_not_resumed"
 SMARTPI_DOMAIN = "vtherm_smartpi"
 SMARTPI_SERVICE = "set_smartpi_learning"
 # Blockers found while running, besides those of the configuration (translation keys).
@@ -444,12 +447,13 @@ def _times(raw: Any) -> tuple[float, ...]:
 
 
 def _zones_changed(before: LearningState, after: LearningState) -> bool:
-    """Whether the zones paused or followed, or a pause's causes, changed (not only when a
-    resume was last sent)."""
+    """Whether the zones paused, followed or given up, or a pause's causes, changed (not only
+    when a resume was last sent)."""
     return (
         before.paused.keys() != after.paused.keys()
         or before.resuming.keys() != after.resuming.keys()
         or before.causes != after.causes
+        or before.given_up.keys() != after.given_up.keys()
     )
 
 
@@ -597,6 +601,8 @@ class ControlStatus:
     # be judged now, their hold over (S-16): shown unknown.
     blocked_by: tuple[str, ...] = ()
     unknown_alarms: frozenset[ControlAlarm] = frozenset()
+    # Y4: SmartPI zones whose learning could not be switched back on for a day: no longer tried.
+    learning_not_resumed: tuple[str, ...] = ()
 
     @property
     def confirmed_setpoint(self) -> float | None:
@@ -904,6 +910,8 @@ class ControlUnit:
             "dhw_ended": dict(session.learning.dhw_ended),
             "resuming": dict(session.learning.resuming),
             "resume_since": dict(session.learning.resume_since),
+            # Resumes given up (Y4): the next run shows them again.
+            "resume_given_up": dict(session.learning.given_up),
             "latched": session.loop.control.latched,
             "latched_by": list(session.loop.control.latched_by),
             # What another controller showed when the plugin stepped aside: its latch issue
@@ -966,6 +974,9 @@ class ControlUnit:
         dhw_ended: dict[str, float] = field(
             "dhw_ended", lambda raw: {str(z): float(t) for z, t in raw.items()}, {}
         )
+        given_up: dict[str, float] = field(
+            "resume_given_up", lambda raw: {str(z): float(t) for z, t in raw.items()}, {}
+        )
         alarms: set[ControlAlarm] = field("alarms", _kept_alarms, set())
         latched_by: tuple[str, ...] = field(
             "latched_by", lambda raw: tuple(str(a) for a in raw), ()
@@ -1006,6 +1017,7 @@ class ControlUnit:
                 resume_since={z: t for z, t in resume_since.items() if z in resuming},
                 causes={z: c for z, c in causes.items() if z in paused},
                 dhw_ended={z: t for z, t in dhw_ended.items() if z in paused},
+                given_up=given_up,
             ),
             alarms=alarms,
             failed=_flag(data.get("failed")),
@@ -1131,6 +1143,7 @@ class ControlUnit:
         self._report_owed()
         self._report_latched(anew=False)  # a stored latch holds: its issue again (V7)
         self._resume_hand_back_issues()  # Y1: what the last run left of them
+        self._report_given_up()  # Y4: resumes the last run gave up, shown again (not logged)
         self._started_at = dt_util.utcnow().timestamp()
         self._monitor_issue_since = self._monitor_issue_left()
         self._track_outages(self._started_at)
@@ -1139,17 +1152,11 @@ class ControlUnit:
                 self._hass, self._async_timer, timedelta(seconds=CONTROL_TICK_SECONDS)
             )
         )
-        # Hand back before Home Assistant stops its integrations (MQTT disconnects on the stop
-        # event itself); older versions without shutdown jobs get the stop event.
-        add_shutdown_job = getattr(self._hass, "async_add_shutdown_job", None)
-        if callable(add_shutdown_job):
-            self._stop_unsub = add_shutdown_job(
-                HassJob(self._async_shutdown, "vtherm_smart_boiler hand-back")
-            )
-        else:
-            self._stop_unsub = self._hass.bus.async_listen_once(
-                EVENT_HOMEASSISTANT_STOP, self._async_ha_stop
-            )
+        # Hand back before Home Assistant stops its integrations: its shutdown jobs run before
+        # the stop event (every supported version has them).
+        self._stop_unsub = self._hass.async_add_shutdown_job(
+            HassJob(self._async_shutdown, "vtherm_smart_boiler hand-back")
+        )
 
     async def async_restore_enabled(self, on: bool) -> None:
         """The switch, once added, gives the user's wish back after a restart (the stored wish,
@@ -1172,10 +1179,6 @@ class ControlUnit:
         # Home Assistant is going through its list of shutdown jobs: removing this one from it
         # now would make it skip the next job, so it stays.
         self._stop_unsub = None
-        await self.async_stop()
-
-    async def _async_ha_stop(self, _event: Event) -> None:
-        self._stop_unsub = None  # a one-time listener removes itself
         await self.async_stop()
 
     async def async_stop(self) -> None:
@@ -1227,6 +1230,9 @@ class ControlUnit:
         self._show_frost_closed({})
         self._delete_vt_central_issue()  # the next run tells again, ten minutes on
         self._delete_relay_issues()  # not during a planned stop; the next run tells again
+        # The resumes given up: stored, the next run with a unit shows them again (Y4).
+        entry_id = self._coordinator.config_entry.entry_id
+        ir.async_delete_issue(self._hass, DOMAIN, f"{LEARNING_NOT_RESUMED_ISSUE}_{entry_id}")
         await self._async_learning_calls(deadline)
         self._coordinator.schedule_control_save()
 
@@ -1757,6 +1763,7 @@ class ControlUnit:
             confirmation=confirmation,
             blocked_by=self._blocked_by(),
             unknown_alarms=self._unknown_alarms(),
+            learning_not_resumed=tuple(sorted(session.learning.given_up)),
         )
 
     async def async_reset_correction(self) -> None:
@@ -3636,6 +3643,7 @@ class ControlUnit:
         self._learning_calls += [(zone_id, True) for zone_id in plan.resume]
         before = self._session.learning
         self._session.learning = plan.state
+        self._follow_given_up(before, plan.state)
         if plan.pause or _zones_changed(before, plan.state):
             # Stored before SmartPI is asked (the calls come after the step): a crash right
             # after a pause must still know the zone is the plugin's to resume (P-10).
@@ -3655,18 +3663,53 @@ class ControlUnit:
         if learning.paused:
             learning, zones = release_all(learning, now)
             self._learning_calls += [(zone_id, True) for zone_id in zones]
-        if learning.resuming:
+        if learning.resuming or learning.given_up:
             link = self._coordinator.link
-            flags = {z: link.zone_algorithm(z).smartpi_learning for z in learning.resuming}
+            zones = (*learning.resuming, *learning.given_up)
+            flags = {z: link.zone_algorithm(z).smartpi_learning for z in zones}
             followed, again = follow_resumes(learning, flags, now, self.options.learning)
             self._learning_calls += [(zone_id, True) for zone_id in again]
             learning = followed
         self._session.learning = learning
+        self._follow_given_up(before, learning)
         if _zones_changed(before, learning):
             # Which zones are paused or followed is stored before SmartPI is asked (P-10).
             await self._coordinator.async_save_control_now()
         elif learning.resuming != before.resuming:
             self._coordinator.schedule_control_save()  # only when a resume was last sent
+
+    def _follow_given_up(self, before: LearningState, after: LearningState) -> None:
+        """Y4: a SmartPI resume given up a day after the first one is told once in the log and
+        shown — the control state's ``learning_not_resumed`` and a warning repair issue naming
+        the zones — until the zone's learning is on again or the plugin pauses it again."""
+        for zone_id in sorted(after.given_up.keys() - before.given_up.keys()):
+            _LOGGER.warning(
+                "SmartPI learning of %s could not be switched back on for a day after the plugin "
+                "paused it; the plugin no longer tries. Switch it on in SmartPI if you want it",
+                zone_id,
+            )
+        if after.given_up.keys() != before.given_up.keys():
+            self._report_given_up()
+
+    def _report_given_up(self) -> None:
+        """The repair issue of the resumes given up (Y4): raised, with the zones' names, while
+        any is shown; deleted otherwise."""
+        issue_id = f"{LEARNING_NOT_RESUMED_ISSUE}_{self._coordinator.config_entry.entry_id}"
+        zones = sorted(self._session.learning.given_up)
+        if not zones:
+            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+            return
+        link = self._coordinator.link
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=LEARNING_NOT_RESUMED_ISSUE,
+            translation_placeholders={"zones": ", ".join(link.zone_name(z) for z in zones)},
+        )
 
     async def _async_learning_calls(self, deadline: float | None = None) -> None:
         """Make the planned SmartPI calls, together and without the lock. Whether each took is

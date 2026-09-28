@@ -1,6 +1,10 @@
 """Sensors: boiler metrics, verdict, reference room, critical zones, emitter power factors, the
-building model's heat loss and heating threshold, the lowest water temperature's suggestion, and
-the state and setpoint of control."""
+building model's heat loss and heating threshold, the lowest water temperature's suggestion, the
+features and what each lacks (the missing-data rule), and the state and setpoint of control.
+
+Coded attributes stay codes, for automations; each list of codes — control's reasons, blockers
+and latch, the verdict's reasons — has a sibling ``<name>_text`` in Home Assistant's language
+(P-39), kept out of the recorder. Timestamps are ISO 8601 (P-78)."""
 
 from __future__ import annotations
 
@@ -14,33 +18,39 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature, UnitOfTime
+from homeassistant.const import EntityCategory, UnitOfRatio, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from .control_config import WritePath
-from .coordinator import MonitorData, SmartBoilerCoordinator
+from .coordinator import MonitorData, SmartBoilerConfigEntry, SmartBoilerCoordinator
 from .core.controller import ControlMode
 from .core.emitters import FactorStatus
 from .core.lowest_water import SuggestionState
 from .core.monitor import MonitorSummary
 from .core.parameters import ParameterKey, Source
-from .core.signal_check import Feature, FeatureStatus, SignalStatus
+from .core.signal_check import (
+    ENTITY_FOR_TWO_SIGNALS,
+    Feature,
+    FeatureState,
+    FeatureStatus,
+    SignalStatus,
+)
 from .core.signals import Signal
 from .core.verdict import Reason, Verdict
 from .core.zones import SelectionStatus
-from .entity import ControlEntity, SmartBoilerEntity
+from .entity import ControlEntity, SmartBoilerEntity, code_text, coded_text, feature_configured
 
 type Value = float | str | None
 
 
 @dataclass(frozen=True, kw_only=True)
 class BoilerSensorDescription(SensorEntityDescription):
+    """A monitor sensor; whether it exists follows its feature (``entity.FEATURE_ENTITIES``)."""
+
     value_fn: Callable[[MonitorData], Value]
     attributes_fn: Callable[[MonitorData], dict[str, Any]] | None = None
-    needs: Feature | None = None  # created only when this feature is available or degraded
 
 
 def _day(data: MonitorData) -> MonitorSummary | None:
@@ -95,6 +105,8 @@ def _degree_days(data: MonitorData) -> Value:
 
 
 def _gas_per_degree_day(data: MonitorData) -> Value:
+    """Gas per degree-day in the meter's unit; the unit is added by the sensor, which shows no
+    value until the meter's unit is known (P-75)."""
     week = _week(data)
     return None if week is None else _round(week.gas_per_degree_day, 3)
 
@@ -134,7 +146,7 @@ def _verdict_attributes(data: MonitorData) -> dict[str, Any]:
     reasons = [] if verdict is None else verdict.reasons
     return {
         "reasons": [_reason(r) for r in reasons],
-        "monitoring_since": data.monitoring_since,
+        "monitoring_since": _time(data.monitoring_since),
         # P-96: days left out because the plugin controlled the boiler in them.
         "days_left_out": None if verdict is None else verdict.days_left_out,
     }
@@ -149,9 +161,9 @@ def _signal_problems(data: MonitorData) -> Value:
 
 
 def _signal_attributes(data: MonitorData) -> dict[str, Any]:
+    """Each signal's health; the features have their own sensor (Y4)."""
     return {
         "signals": {signal.value: health.status.value for signal, health in data.health.items()},
-        "features": {feature.value: state.status.value for feature, state in data.features.items()},
     }
 
 
@@ -273,6 +285,15 @@ def _lowest_water_attributes(data: MonitorData) -> dict[str, Any]:
     }
 
 
+def _forecast_snapshots(data: MonitorData) -> Value:
+    """How many forecast snapshots are kept; unknown while the weather entity is missing,
+    unavailable or unknown (Y4)."""
+    state = data.features_now.get(Feature.FORECASTS)
+    if state is not None and state.status is FeatureStatus.INACTIVE:
+        return None
+    return data.forecast_snapshots
+
+
 def _round(value: float | None, digits: int) -> float | None:
     return None if value is None else round(value, digits)
 
@@ -306,17 +327,16 @@ BOILER_SENSORS: tuple[BoilerSensorDescription, ...] = (
     ),
     BoilerSensorDescription(
         key="short_burn_share",
-        native_unit_of_measurement=PERCENTAGE,
+        native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         entity_registry_visible_default=False,
         value_fn=_short_share,
     ),
     BoilerSensorDescription(
         key="condensing_share",
-        native_unit_of_measurement=PERCENTAGE,
+        native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=_condensing,
-        needs=Feature.CONDENSING,
     ),
     BoilerSensorDescription(
         key="degree_days",
@@ -324,14 +344,12 @@ BOILER_SENSORS: tuple[BoilerSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         entity_registry_visible_default=False,
         value_fn=_degree_days,
-        needs=Feature.DEGREE_DAYS,
     ),
     BoilerSensorDescription(
         key="gas_per_degree_day",
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=_gas_per_degree_day,
         attributes_fn=_gas_attributes,
-        needs=Feature.GAS,
     ),
     BoilerSensorDescription(
         key="verdict",
@@ -367,7 +385,7 @@ BOILER_SENSORS: tuple[BoilerSensorDescription, ...] = (
     ),
     BoilerSensorDescription(
         key="change_report",
-        native_unit_of_measurement=PERCENTAGE,
+        native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
         entity_registry_visible_default=False,
         value_fn=_report_value,
         attributes_fn=_report_attributes,
@@ -400,7 +418,7 @@ BOILER_SENSORS: tuple[BoilerSensorDescription, ...] = (
         key="forecast_snapshots",
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
-        value_fn=lambda data: data.forecast_snapshots,
+        value_fn=_forecast_snapshots,
     ),
 )
 
@@ -410,25 +428,25 @@ PARALLEL_UPDATES = 0  # read from the coordinator: no update requests to limit
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: SmartBoilerConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    coordinator: SmartBoilerCoordinator = entry.runtime_data
-    data = coordinator.data
+    coordinator = entry.runtime_data
     entities: list[SensorEntity] = [
         BoilerSensor(coordinator, description)
         for description in BOILER_SENSORS
-        if description.needs is None
-        or data.features[description.needs].status is not FeatureStatus.UNAVAILABLE
+        if feature_configured(coordinator, description.key)  # the missing-data rule (Y4)
     ]
+    entities.append(FeaturesSensor(coordinator))
     entities += [
         CriticalZoneSensor(coordinator, circuit.circuit_id)
         for circuit in coordinator.config.installation.circuits
     ]
-    entities += [
-        EmitterFactorSensor(coordinator, zone.zone_id)
-        for zone in coordinator.config.installation.zones
-    ]
+    if feature_configured(coordinator, "emitter_power_factor"):
+        entities += [
+            EmitterFactorSensor(coordinator, zone.zone_id)
+            for zone in coordinator.config.installation.zones
+        ]
     if coordinator.control is not None:
         entities.append(ControlStateSensor(coordinator))
         if coordinator.control.options.write_path is not WritePath.RELAY:
@@ -445,8 +463,8 @@ class BoilerSensor(SmartBoilerEntity, SensorEntity):
     _unrecorded_attributes = frozenset(
         {
             "reasons",
+            "reasons_text",
             "signals",
-            "features",
             "temperature",
             "setpoint",
             "deficit",
@@ -476,25 +494,56 @@ class BoilerSensor(SmartBoilerEntity, SensorEntity):
     @property
     def native_unit_of_measurement(self) -> str | None:
         if self.entity_description.key == "gas_per_degree_day":
-            # The gas meter's unit as it is now: it may be unknown while the meter starts (P70).
-            return f"{_gas_unit(self.coordinator)}/K·d"
+            # The gas meter's unit as it is now; none while it is not known (P-75).
+            unit = _gas_unit(self.coordinator)
+            return None if unit is None else f"{unit}/K·d"
         return self.entity_description.native_unit_of_measurement
 
     @property
     def native_value(self) -> Value:
+        key = self.entity_description.key
+        if key == "gas_per_degree_day" and _gas_unit(self.coordinator) is None:
+            return None  # P-75: no value without its unit — a number would mean anything
         return self.entity_description.value_fn(self.coordinator.data)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         attributes_fn = self.entity_description.attributes_fn
-        return None if attributes_fn is None else attributes_fn(self.coordinator.data)
+        if attributes_fn is None:
+            return None
+        attributes = attributes_fn(self.coordinator.data)
+        if self.entity_description.key == "verdict":
+            attributes["reasons_text"] = _reasons_text(self.coordinator, attributes["reasons"])
+        return attributes
 
 
-def _gas_unit(coordinator: SmartBoilerCoordinator) -> str:
+def _gas_unit(coordinator: SmartBoilerCoordinator) -> str | None:
+    """The gas meter's unit, as its entity reports it now; ``None`` without a meter, while it
+    reports none, or while it is not there (P-75)."""
     entity = coordinator.config.signals.get(Signal.GAS_METER)
     state = coordinator.hass.states.get(entity) if entity else None
     unit = state.attributes.get("unit_of_measurement") if state is not None else None
-    return str(unit) if unit else "gas"
+    return str(unit) if unit else None
+
+
+def _reasons_text(coordinator: SmartBoilerCoordinator, reasons: list[dict[str, Any]]) -> str:
+    """P-39: the verdict's reasons as one text — each reason's own, with why it is not judged
+    or why it is not changed where a detail says so, else whether control changes it (S-22)."""
+
+    def text(attribute: str, code: str) -> str:
+        return code_text(coordinator, "sensor", "verdict", attribute, code)
+
+    shown: list[str] = []
+    for reason in reasons:
+        part = text("reasons", reason["code"])
+        detail = reason.get("detail")
+        changed = reason.get("changed_by_control")
+        if detail is not None:
+            part += f" ({text('detail', detail)})"
+        elif changed is not None:
+            part += f" ({text('changed_by_control', 'true' if changed else 'false')})"
+        shown.append(part)
+    return ", ".join(shown)
 
 
 class CriticalZoneSensor(SmartBoilerEntity, SensorEntity):
@@ -529,7 +578,7 @@ class EmitterFactorSensor(SmartBoilerEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
 
-    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_native_unit_of_measurement = UnitOfRatio.PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, coordinator: SmartBoilerCoordinator, zone: str) -> None:
@@ -547,7 +596,7 @@ class EmitterFactorSensor(SmartBoilerEntity, SensorEntity):
         return {
             "status": factor.status.value,
             "reason": None if factor.reason is None else factor.reason.value,
-            "computed_at": factor.at,
+            "computed_at": _time(factor.at),
             "output_w": _round(factor.output_w, 0),
             "held": factor.status is FactorStatus.HELD,
         }
@@ -557,12 +606,76 @@ def _time(t: float | None) -> str | None:
     return None if t is None else dt_util.utc_from_timestamp(t).isoformat()
 
 
+_SIGNAL_CODES = frozenset(signal.value for signal in Signal)
+
+
+class FeaturesSensor(SmartBoilerEntity, SensorEntity):
+    """The missing-data rule (Y4): how many features are inactive now, and for each its status —
+    available, degraded or inactive — with the inputs it lacks as codes and as text. A signal
+    dropped because its entity feeds an earlier one is named so, with the signal that kept it;
+    a mapped signal that is not known now is named as unavailable."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _unrecorded_attributes = frozenset(f"{feature.value}_missing_text" for feature in Feature)
+
+    def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
+        super().__init__(coordinator, "features")
+
+    @property
+    def native_value(self) -> int:
+        states = self.coordinator.data.features_now.values()
+        return sum(1 for state in states if state.status is FeatureStatus.INACTIVE)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        data = self.coordinator.data
+        attributes: dict[str, Any] = {}
+        missing: set[str] = set()
+        for feature, state in data.features_now.items():
+            attributes[feature.value] = state.status.value
+            attributes[f"{feature.value}_missing"] = list(state.missing)
+            attributes[f"{feature.value}_missing_text"] = self._missing_text(state)
+            missing.update(state.missing)
+        attributes["missing"] = sorted(missing)
+        return attributes
+
+    def _text(self, code: str) -> str:
+        return code_text(self.coordinator, "sensor", "features", "missing", code)
+
+    def _missing_text(self, state: FeatureState) -> str:
+        health = self.coordinator.data.health
+        shared = iter(state.shared)
+        texts: list[str] = []
+        for code in state.missing:
+            pair = next(shared, None) if code == ENTITY_FOR_TWO_SIGNALS else None
+            if pair is not None:
+                # "Return temperature: its entity already feeds Flow temperature".
+                dropped, kept = pair
+                phrase = self._text(code)
+                texts.append(f"{self._text(dropped.value)}: {phrase} {self._text(kept.value)}")
+                continue
+            text = self._text(code)
+            signal = Signal(code) if code in _SIGNAL_CODES else None
+            if signal is not None and health[signal].status is not SignalStatus.NOT_MAPPED:
+                # Mapped, but not known now: named as unavailable.
+                text = f"{text} ({self._text('unavailable_now')})"
+            texts.append(text)
+        return ", ".join(texts)
+
+
 class ControlStateSensor(ControlEntity, SensorEntity):
-    """What control does now and why: mode, reasons, blockers, latch and hand-back."""
+    """What control does now and why: mode, reasons, blockers, latch and hand-back; each coded
+    list with its text (P-39); SmartPI zones whose learning the plugin could not switch back on
+    for a day, no longer tried (Y4)."""
 
     _unrecorded_attributes = frozenset(
         {
             "reasons",
+            "reasons_text",
+            "blockers_text",
+            "blockers_waiting_text",
+            "latched_by_text",
             "target",
             "heating_on",
             "heating_confirmation",
@@ -588,23 +701,32 @@ class ControlStateSensor(ControlEntity, SensorEntity):
     def native_value(self) -> str:
         return self.control.status.mode.value
 
+    def _text(self, attribute: str, codes: tuple[str, ...]) -> str:
+        return coded_text(self.coordinator, "sensor", "control_state", attribute, codes)
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         status = self.control.status
         return {
             "reasons": list(status.reasons),
+            "reasons_text": self._text("reasons", status.reasons),
             "blockers": list(status.blockers),
+            "blockers_text": self._text("blockers", status.blockers),
             # Blockers that do not count yet: VT's central boiler unknown in its grace (P-105).
             "blockers_waiting": list(status.blockers_waiting),
+            "blockers_waiting_text": self._text("blockers", status.blockers_waiting),
             "target": _round(status.target, 1),
             "heating_on": status.heating_on,
             "heating_confirmation": status.heating_check,
             "hand_back_at": _time(status.hand_back_at),
             "hand_back_confirmation": status.hand_back_check,
             "latched_by": list(status.latched_by),
+            "latched_by_text": self._text("latched_by", status.latched_by),
             "unknown_zones": list(status.unknown_zones),
             "room_sensor_lost_zones": list(status.room_sensor_lost_zones),
             "learning_paused": list(status.paused_zones),
+            # Y4: SmartPI zones the plugin could not switch back on for a day: no longer tried.
+            "learning_not_resumed": list(status.learning_not_resumed),
             "writes_stopped": status.writes_stopped,
             "monitor_failed_since": _time(status.monitor_failed_since),
             # The comfort correction the session learned, K (P-38); the button resets it.

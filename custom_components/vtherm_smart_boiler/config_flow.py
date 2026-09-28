@@ -1588,12 +1588,6 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
     )
 
 
-def validate(options: dict[str, Any]) -> str | None:
-    """A translation key of the first problem, or None."""
-    problem = validate_problem(options)
-    return None if problem is None else problem[0]
-
-
 def validate_problem(options: dict[str, Any]) -> tuple[str, str | None] | None:
     """The first problem as a translation key and what it concerns, or None. Options this
     version cannot read at all are a problem too, shown on the signals step — never an
@@ -2158,11 +2152,11 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         text = texts.get(f"component.{DOMAIN}.exceptions.blocked_{blocker}.message")
         if not text:
             return blocker
-        at = text.find("{others}")
+        at = text.find("{count}")  # the sentence counting the others (P-74)
         if at < 0:
             return text
         start = text.rfind(". ", 0, at)
-        return text[: start + 1] if start >= 0 else text.replace("{others}", "-")
+        return text[: start + 1] if start >= 0 else text.replace("{count}", "-")
 
     # --- control: path and topology → path details → curve and limits → (advanced) behaviour
     # → alarm reactions → save

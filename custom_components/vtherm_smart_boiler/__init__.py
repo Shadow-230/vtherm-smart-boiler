@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
     from .config import EntryConfig
     from .control import ControlUnit
-    from .coordinator import SmartBoilerCoordinator
+    from .coordinator import SmartBoilerConfigEntry, SmartBoilerCoordinator
 
 PLATFORMS = ("sensor", "binary_sensor", "switch", "button")
 # The notice asking what is wired to the gateway's thermostat terminals (answer K, X6).
@@ -35,7 +35,7 @@ HAND_BACK_ISSUES = ("hand_back_boiler_link_lost", "hand_back_control_error")
 _RUNTIME_MODULES = ("config", "coordinator", "control", "feature_manager", "entity")
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) -> bool:
     from homeassistant.exceptions import ConfigEntryError
     from homeassistant.helpers.importlib import async_import_module
 
@@ -67,7 +67,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryError(
             translation_domain=DOMAIN,
             translation_key="invalid_options",
-            translation_placeholders={"code": code, "subject": subject},
+            # P-74: the reason in the user's language, as the options form shows it.
+            translation_placeholders={
+                "reason": await _async_options_error_text(hass, code),
+                "subject": subject,
+            },
         ) from err
     coordinator = SmartBoilerCoordinator(hass, entry, config)
     try:
@@ -93,6 +97,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for unit in _units(coordinator):
             await unit.async_start()
         entry.runtime_data = coordinator
+        await coordinator.async_load_texts()  # the coded lists' texts (P-39)
         await _async_migrate_zone_unique_ids(hass, entry, config)
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         feature_manager.async_attach(hass, coordinator)
@@ -107,8 +112,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
+async def _async_options_error_text(hass: HomeAssistant, code: str) -> str:
+    """P-74: an options error's text in Home Assistant's language — English where it has none,
+    the code itself where no text exists."""
+    from homeassistant.helpers.translation import async_get_translations
+
+    try:
+        texts = await async_get_translations(hass, hass.config.language, "options", {DOMAIN})
+    except Exception:  # the entry stops with its reason all the same
+        return code
+    return texts.get(f"component.{DOMAIN}.options.error.{code}", code)
+
+
 async def _async_setup_failed(
-    hass: HomeAssistant, entry: ConfigEntry, coordinator: SmartBoilerCoordinator
+    hass: HomeAssistant, entry: SmartBoilerConfigEntry, coordinator: SmartBoilerCoordinator
 ) -> None:
     """Nothing of a failed setup keeps running: the units hand back again if still owed (a
     persistent issue tells of one that did not get through), then every clock, listener and
@@ -216,7 +233,7 @@ def _migrate_alarms(hass: HomeAssistant, entry: ConfigEntry) -> None:
         )
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) -> bool:
     from . import feature_manager
 
     coordinator = entry.runtime_data
@@ -264,6 +281,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "control_options_invalid",
         "auto_tpi_blocked",
         "learning_not_paused",
+        "learning_not_resumed",  # SmartPI resumes given up after a day (Y4)
         "vt_central_entry_not_running",  # VT's central entry not running (X7)
         UNREADABLE_ISSUE,
         # Y1: the notifications (a reload keeps them), the hand-back issues, the migration's.

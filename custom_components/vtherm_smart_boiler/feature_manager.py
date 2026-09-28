@@ -261,10 +261,6 @@ class FeatureRegistration:
         self.state = RegistrationState.WAITING
         self.registered_at: float | None = None  # when the current API got the factory
 
-    @property
-    def registered(self) -> bool:
-        return self._api is not None
-
     def start(self) -> None:
         # VT drops its API with its last entry and creates a new one when set up again; a
         # thermostat it then builds writes its first state before it starts and asks for

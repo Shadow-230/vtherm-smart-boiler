@@ -5,14 +5,15 @@ Two paths. The quick one runs on state changes (debounced) and every 30 s: curre
 signal check, hot water, emitter factors, foreign heat, reference room, critical zones, current
 alarms. The analysis runs every few minutes on a copy of the history, off the event loop:
 summaries, verdict, trend warnings, report, outdoor check and building fit. After a restart the
-history is rebuilt from the recorder, which keeps these states anyway; the plugin's own storage
-holds only small things (monitoring start, held emitter factors, measured parameters, the day
-summaries). A small store of its own, the last-run record, keeps when the plugin last ran —
-written every ten minutes and at a clean stop, so the entry's store is written only when its own
-data changes: the time the plugin was down — a stop, a crash, a reload — is unknown in what is
-read back (P-95). The control state goes into the history as well, live from the control unit
-and back from the recorder's copy of its sensor, so each day knows its time under control
-(P-96).
+history is rebuilt from the recorder, which keeps these states anyway; the entry's own store
+holds only small things: the monitoring start, held emitter factors, measured parameters and when
+the user reset one, the day summaries, a copy of when the plugin was down and a copy of the
+control state (P-116). A small store of its own, the last-run record, keeps when the plugin last
+ran — written every ten minutes and at a clean stop, so the entry's store is written only when
+its own data changes: the time the plugin was down — a stop, a crash, a reload — is unknown in
+what is read back (P-95). The control state goes into the history as well, live from the
+control unit and back from the recorder's copy of its sensor, so each day knows its time under
+control (P-96).
 
 With the analysis it judges the lowest water temperature's evidence and shows a suggestion,
 never applied (X6, decision 2); the quick path shows what the wall thermostat on a gateway keeps
@@ -24,6 +25,11 @@ measured value is forgotten and fitted again from the days that start after the 
 without touching the options — no reload, no hand-back (P-90). The installation's warnings (a
 circuit without zones, underfloor heating on an unmixed circuit without a maximum) are shown as
 repair issues (P-94).
+
+Every feature is checked by what the configuration gives — which entities are created — by that
+and the zones' valves as they report — which of them are available — and by what is known now,
+which the "Features" sensor shows, each feature available, degraded or inactive with what it
+lacks (the missing-data rule, Y4).
 
 Y1's notifications are raised here too, control or not: "add water" below the threshold the user
 took from the boiler's manual, high pressure and hot flue gas at their alarm level held five
@@ -43,7 +49,7 @@ import copy
 import logging
 import math
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -145,9 +151,11 @@ from .core.reference_room import ReferenceRoom, select_reference
 from .core.series import Series, known_duration
 from .core.signal_check import (
     FAULT_SIGNALS,
+    ControlKind,
     Feature,
     FeatureState,
     SignalHealth,
+    SignalStatus,
     check_signals,
     features,
     link_connected,
@@ -227,6 +235,10 @@ ALIVE_SAVE_S = 10 * 60
 UNAVAILABLE_STATES = ("unavailable", "unknown")
 
 
+# P-101: the entry of this integration, its runtime data typed.
+type SmartBoilerConfigEntry = ConfigEntry[SmartBoilerCoordinator]
+
+
 def _bar(value: float | None) -> str:
     return "-" if value is None else f"{value:.2f}"
 
@@ -275,12 +287,15 @@ class MonitorData:
     # thermostat on a gateway keeps after a hand-back (``None`` where there is none to show).
     lowest_water: LowestWaterSuggestion | None = None
     wall_thermostat: WallFallback | None = None
+    # Y4: ``features`` by what the configuration gives (the entities follow it); these by
+    # what is known now — the "Features" sensor shows them.
+    features_now: dict[Feature, FeatureState] = field(default_factory=dict)
 
 
 class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     """One installation: its boiler, circuits and VT zones."""
 
-    config_entry: ConfigEntry
+    config_entry: SmartBoilerConfigEntry
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, config: EntryConfig) -> None:
         super().__init__(
@@ -381,6 +396,22 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._wall_since: float | None = None
         self._wall_issue: tuple[str, dict[str, str]] | None = None
         self._lowest_water_issue: tuple[str, dict[str, str]] | None = None
+        # P-39: the integration's entity texts in Home Assistant's language, loaded once at
+        # setup (English where the language has none): what the coded lists are shown with.
+        self.texts: dict[str, str] = {}
+
+    async def async_load_texts(self) -> None:
+        """The entity texts in Home Assistant's language, once (P-39). Without them the codes
+        stand for themselves."""
+        from homeassistant.helpers.translation import async_get_translations
+
+        try:
+            self.texts = await async_get_translations(
+                self.hass, self.hass.config.language, "entity", {DOMAIN}
+            )
+        except Exception:  # the texts are an extra: the codes are shown instead
+            _LOGGER.exception("Could not load the entity texts; the codes are shown instead")
+            self.texts = {}
 
     # --- lifecycle ------------------------------------------------------------------------
 
@@ -939,10 +970,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         snapshot = self.transport.snapshot(now)
         health = check_signals(snapshot, config.freshness)
         mapped = frozenset(config.signals)
-        has_rates = all(
-            self.parameters.value(key) is not None
-            for key in (ParameterKey.GAS_AT_MIN_POWER, ParameterKey.GAS_AT_MAX_POWER)
-        )
+        has_rates = self._has_rates()
         flow = snapshot.number(Signal.FLOW)
         flow_fresh = snapshot.reading(Signal.FLOW).is_fresh(now, self._max_age(Signal.FLOW))
         return_temp = snapshot.number(Signal.RETURN, self._max_age(Signal.RETURN))
@@ -1027,18 +1055,17 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             )
 
         known_zones = [z for z in zone_states.values() if z.is_fresh(now, ZONE_MAX_AGE_S)]
-        feature_states = features(
-            mapped,
-            config.weather is not None,
+        zone_valves = all(z.valve_open is not None for z in known_zones) if known_zones else None
+        # The configuration's view — which entities exist — and what is known now (Y4).
+        feature_states = self._features(mapped, config.weather is not None, has_rates, zone_valves)
+        healthy = frozenset(s for s in mapped if health[s].status is SignalStatus.OK)
+        features_now = self._features(
+            healthy,
+            self._weather_known(),
             has_rates,
-            add_water=config.monitor.alarms.add_water_below is not None,
-            bypass=config.installation.boiler.bypass,
-            zone_valves=(
-                all(z.valve_open is not None for z in known_zones) if known_zones else None
-            ),
-            zone_data=bool(zone_states),
-            gateway=self.transport.gateway,
-            has_dhw=config.monitor.monitor.has_dhw,
+            zone_valves,
+            zone_data=bool(known_zones),
+            read_back=self._read_back_serves(),
         )
         self._alarms = self._current_alarms(snapshot, now, list(zone_states.values()))
         self._zones_unknown_since = every_zone_unknown_since(
@@ -1066,12 +1093,82 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             central_mode=self.link.central_mode(),
             analysis=self.analysis,
             monitoring_since=self.monitoring_since,
-            forecast_snapshots=len(self.forecasts.store.snapshots()) if self.forecasts else 0,
+            forecast_snapshots=self.forecasts.store.count() if self.forecasts else 0,
             capabilities=self.link.capabilities(),
             parameters=self.parameters,
             lowest_water=self.lowest_water,
             wall_thermostat=wall,
+            features_now=features_now,
         )
+
+    def configured_features(self) -> dict[Feature, FeatureState]:
+        """The feature table by the configuration alone — what entities are created from: the
+        zones' valves, known only once they report, never keep an entity from being created."""
+        return self._features(
+            frozenset(self.config.signals), self.config.weather is not None, self._has_rates(), None
+        )
+
+    def _has_rates(self) -> bool:
+        return all(
+            self.parameters.value(key) is not None
+            for key in (ParameterKey.GAS_AT_MIN_POWER, ParameterKey.GAS_AT_MAX_POWER)
+        )
+
+    def _features(
+        self,
+        mapped: frozenset[Signal],
+        has_weather: bool,
+        has_rates: bool,
+        zone_valves: bool | None,
+        *,
+        zone_data: bool | None = None,
+        read_back: bool | None = None,
+    ) -> dict[Feature, FeatureState]:
+        """The feature table (the missing-data rule, Y4) for ``mapped`` signals: by default
+        what the options give — zones configured, the control's read-back configured — or,
+        given, what is known now."""
+        config = self.config
+        control = config.control
+        kind: ControlKind | None = None
+        if control.configured:
+            kind = ControlKind.RELAY if control.write_path is WritePath.RELAY else ControlKind.WATER
+        circuits = config.installation.circuits
+        return features(
+            mapped,
+            has_weather,
+            has_rates,
+            add_water=config.monitor.alarms.add_water_below is not None,
+            bypass=config.installation.boiler.bypass,
+            zone_valves=zone_valves,
+            zone_data=bool(config.installation.zones) if zone_data is None else zone_data,
+            gateway=self.transport.gateway,
+            has_dhw=config.monitor.monitor.has_dhw,
+            condensing=config.installation.boiler.condensing,
+            control=kind,
+            # The option as the user left it: a relay's correction is off for want of water
+            # control, not by the option.
+            comfort_correction=kind is not ControlKind.WATER
+            or control.loop.control.comfort_correction,
+            circuit_maximum=any(c.max_flow is not None for c in circuits),
+            circuit_flow=bool(config.circuit_flow_entities),
+            wall_thermostat=wall_thermostat_applies(control),
+            read_back=config.setpoint_read_back is not None if read_back is None else read_back,
+            power_threshold=control.relay.heats_above_w is not None,
+            shared=config.shared_signals,
+        )
+
+    def _weather_known(self) -> bool:
+        """The weather entity configured and its state known now."""
+        weather = self.config.weather
+        state = self.hass.states.get(weather) if weather else None
+        return state is not None and state.state not in UNAVAILABLE_STATES
+
+    def _read_back_serves(self) -> bool:
+        """Control's read-back stands for the CH setpoint now: while the plugin sets the water
+        (X6)."""
+        unit = self.control
+        plugin = unit is not None and not unit.hand_back_only and unit.controlling
+        return plugin and self.config.setpoint_read_back is not None
 
     def _follow_wall_thermostat(self, snapshot: BoilerSnapshot, now: float) -> WallFallback | None:
         """The wall thermostat on a gateway with an OpenTherm thermostat: what it keeps after a

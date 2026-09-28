@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 from homeassistant.core import HomeAssistant
@@ -89,3 +90,86 @@ async def test_the_control_section_keeps_what_is_not_personal(
     assert "gw-in-the-cellar" not in text
     assert "sensor.gw_control_setpoint" not in text
     assert living not in text
+
+
+async def test_diagnostics_redact_an_entity_that_is_away(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """T-50 (P-30): the options name ``sensor.gone`` — in no state and not in the registry. The
+    entry's options are a read-only mapping, not a dict: the entity named there is redacted
+    all the same, wherever it appears."""
+    from types import MappingProxyType
+
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 40.0})
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        options={
+            "signals": boiler.mapping() | {"pressure": "sensor.gone"},
+            "zones": [{"entity_id": zones.add("living")}],
+        },
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert isinstance(entry.options, MappingProxyType)
+    assert hass.states.get("sensor.gone") is None
+    result = await async_get_config_entry_diagnostics(hass, entry)
+    text = json.dumps(result)
+    assert "sensor.gone" not in text
+    assert result["options"]["signals"]["pressure"].startswith("entity_")
+
+
+async def test_diagnostics_work_for_an_entry_in_setup_error(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    """Review question 20: an entry whose setup failed has no runtime data — its diagnostics
+    give the redacted options, the entry's state, and the control state read from its store,
+    redacted too (an owed hand-back is what the user most needs to see)."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        options={
+            "signals": {"flame": "binary_sensor.boiler_flame"},
+            "boiler": {"class": "no such class"},  # cannot be read: the setup fails
+        },
+    )
+    entry.add_to_hass(hass)
+    key = f"{DOMAIN}.{entry.entry_id}.control"
+    stored = {
+        "controlling": True,
+        "hand_back_pending": True,
+        "taken_with": {"setpoint_entity": "number.boiler_setpoint_gone"},
+        "resuming": {"climate.room_gone": 1000.0},  # a zone keyed by its ID
+    }
+    hass_storage[key] = {"version": 1, "key": key, "data": stored}
+    assert not await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    assert not hasattr(entry, "runtime_data")
+    result = await async_get_config_entry_diagnostics(hass, entry)
+    text = json.dumps(result)
+    assert result["state"] == "setup_error"
+    assert result["options"]["boiler"] == {"class": "no such class"}
+    assert result["options"]["signals"]["flame"].startswith("entity_")
+    assert result["control_state"]["controlling"] is True
+    assert result["control_state"]["hand_back_pending"] is True
+    assert "binary_sensor.boiler_flame" not in text
+    assert "number.boiler_setpoint_gone" not in text
+    assert "climate.room_gone" not in text
+
+
+async def test_diagnostics_of_an_entry_never_set_up_read_nothing_owed(
+    hass: HomeAssistant,
+) -> None:
+    """Negative: without runtime data and without any store, the diagnostics still answer —
+    nothing stored, nothing owed."""
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", options={"signals": {}})
+    entry.add_to_hass(hass)
+    result = await async_get_config_entry_diagnostics(hass, entry)
+    assert result["state"] == "not_loaded"
+    assert result["control_state"] == {}
+    assert result["control_readable"] is False

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -212,11 +214,12 @@ def test_changing_attributes_stay_out_of_the_recorder() -> None:
         (EmitterFactorSensor, {"computed_at", "output_w"}),
         (CriticalZoneSensor, {"demand", "deficit"}),
         (BoilerSensor, {"reasons", "temperature", "deficit", "contributions"}),
-        (HotWaterSensor, {"excess"}),
-        (AlarmSensor, {"value"}),
         (OutdoorSensorProblem, {"mean_difference"}),
     ):
         assert changing <= cls._unrecorded_attributes, cls.__name__
+    # P-72: the continuous values are no attributes at all any more; the diagnostics keep them.
+    for cls in (HotWaterSensor, AlarmSensor):
+        assert not cls._unrecorded_attributes & {"excess", "value"}, cls.__name__
 
 
 async def test_a_new_emitter_factor_is_saved_slowly_a_latch_soon(hass: HomeAssistant) -> None:
@@ -1791,3 +1794,267 @@ async def test_gas_used_with_the_burner_off_is_shown_apart(
         assert week.gas.amount == pytest.approx(0.0)  # none of it heating gas
     else:
         assert "other_gas" not in sensor.attributes
+
+
+# --- Y4 ------------------------------------------------------------------------------------------
+
+
+EN_TEXTS = json.loads(
+    (
+        Path(__file__).resolve().parents[2]
+        / "custom_components/vtherm_smart_boiler/translations/en.json"
+    ).read_text(encoding="utf-8")
+)
+
+
+async def test_invalid_options_name_their_reason_in_words(hass: HomeAssistant) -> None:
+    """P-74: options this version cannot use stop the entry with the reason the options form
+    shows, in Home Assistant's language — not a raw code; a code without a text stands for
+    itself."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", options={"boiler": {"class": "no such class"}}
+    )
+    entry.add_to_hass(hass)
+    assert not await hass.config_entries.async_setup(entry.entry_id)
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    assert entry.error_reason_translation_key == "invalid_options"
+    placeholders = entry.error_reason_translation_placeholders or {}
+    assert placeholders["reason"] == EN_TEXTS["options"]["error"]["invalid_boiler"]
+    assert "invalid_boiler" not in (entry.reason or "")
+
+
+async def test_gas_per_degree_day_has_no_unit_until_the_meter_has_one(
+    hass: HomeAssistant,
+) -> None:
+    """P-75: while the meter's unit is not known, the sensor shows neither a unit nor a value —
+    never an English "gas"; once the meter reports its unit, both."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.GAS_METER))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    meter = boiler.entity(Signal.GAS_METER)
+    hass.states.async_set(meter, "1234.5", {})  # no unit reported yet
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    await entry.runtime_data.async_run_analysis()
+    sensor_id = entity_id(hass, entry, "sensor", "gas_per_degree_day")
+    sensor = hass.states.get(sensor_id)
+    assert sensor is not None
+    assert "unit_of_measurement" not in sensor.attributes
+    assert sensor.state == "unknown"
+    hass.states.async_set(meter, "1234.5", {"unit_of_measurement": "m³"})
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    sensor = hass.states.get(sensor_id)
+    assert sensor is not None
+    assert sensor.attributes["unit_of_measurement"] == "m³/K·d"
+    assert "gas" not in sensor.attributes["unit_of_measurement"]
+
+
+async def test_timestamps_are_iso(hass: HomeAssistant, zones: FakeZones) -> None:
+    """P-78: every moment an attribute shows is ISO 8601 — the monitoring start, when an
+    emitter factor was computed — never seconds since the epoch."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0})
+    living = zones.add("living", hvac_action="heating", valve_open_percent=70, on_percent=0.7)
+    entry = entry_for(boiler, zones)
+    await setup(hass, entry)
+    registry = er.async_get(hass)
+    factor_id = entity_id(hass, entry, "sensor", "emitter_power_factor", living)
+    registry.async_update_entity(factor_id, disabled_by=None)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    checked = 0
+    for registered in er.async_entries_for_config_entry(registry, entry.entry_id):
+        state = hass.states.get(registered.entity_id)
+        if state is None:
+            continue
+        for name, value in state.attributes.items():
+            if not (name.endswith("_at") or name.endswith("_since")):
+                continue
+            checked += 1
+            assert value is None or isinstance(value, str), (registered.entity_id, name)
+            if value is not None:
+                assert datetime.fromisoformat(value).tzinfo is not None, (name, value)
+    assert checked >= 2
+    verdict = hass.states.get(entity_id(hass, entry, "sensor", "verdict"))
+    assert verdict is not None
+    assert isinstance(verdict.attributes["monitoring_since"], str)
+    factor = hass.states.get(factor_id)
+    assert factor is not None
+    assert isinstance(factor.attributes["computed_at"], str)
+
+
+async def test_change_report_and_forecast_snapshots_need_their_data(
+    hass: HomeAssistant, forecasts: FakeForecasts
+) -> None:
+    """P-100: without degree-days — no outdoor sensor, no weather entity — no change report;
+    without a weather entity no forecast snapshots. With them, both are created."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    bare = entry_for(boiler)
+    await setup(hass, bare)
+    registry = er.async_get(hass)
+    for key in ("change_report", "forecast_snapshots"):
+        assert registry.async_get_entity_id("sensor", DOMAIN, f"{bare.entry_id}_{key}") is None
+    assert await hass.config_entries.async_unload(bare.entry_id)
+    with_weather = entry_for(boiler, weather=WEATHER_ENTITY)
+    await setup(hass, with_weather)
+    for key in ("change_report", "forecast_snapshots"):
+        found = registry.async_get_entity_id("sensor", DOMAIN, f"{with_weather.entry_id}_{key}")
+        assert found is not None, key
+
+
+def test_percent_sensors_use_unit_of_ratio() -> None:
+    """P-102: the percentage unit Home Assistant asks for since 2026.7."""
+    from homeassistant.const import UnitOfRatio
+
+    from custom_components.vtherm_smart_boiler import sensor
+
+    percents = [
+        d for d in sensor.BOILER_SENSORS if d.native_unit_of_measurement == UnitOfRatio.PERCENTAGE
+    ]
+    assert {d.key for d in percents} == {"short_burn_share", "condensing_share", "change_report"}
+    assert all(type(d.native_unit_of_measurement) is UnitOfRatio for d in percents)
+    # Home Assistant keeps an ``_attr_`` class value under ``__attr_``.
+    unit = getattr(sensor.EmitterFactorSensor, "__attr_native_unit_of_measurement")
+    assert unit is UnitOfRatio.PERCENTAGE
+    source = (Path(sensor.__file__)).read_text(encoding="utf-8")
+    assert "PERCENTAGE," not in source.replace("UnitOfRatio.PERCENTAGE,", "")
+
+
+async def test_a_critical_zone_is_named_by_its_circuits_number(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """P-73: the critical zone's name gives the circuit as the options show it — its number —
+    not its stored ID; its own states are translated."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    zones.add("living")
+    entry = entry_for(
+        boiler, zones, circuits=[{"id": "main"}, {"id": "circuit_2", "control": "separate"}]
+    )
+    options = dict(entry.options)
+    options["zones"] = [{"entity_id": zones.entities["living"], "circuit": "main"}]
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
+    await setup(hass, entry)
+    second = hass.states.get(entity_id(hass, entry, "sensor", "critical_zone_circuit_2"))
+    assert second is not None
+    assert second.name.endswith("circuit 2")
+    assert "circuit_2" not in second.name
+    assert second.state == "no_active_zone"  # a state with its text (P-73)
+
+
+def test_every_platform_takes_the_typed_entry() -> None:
+    """P-101: the entry's runtime data is typed — every platform, the diagnostics' data aside,
+    takes ``SmartBoilerConfigEntry``; the package's ``__init__`` imports it for typing only."""
+    import ast
+    import inspect
+
+    from custom_components.vtherm_smart_boiler import (
+        binary_sensor,
+        button,
+        coordinator,
+        sensor,
+        switch,
+    )
+
+    assert coordinator.SmartBoilerConfigEntry.__value__.__args__ == (  # type: ignore[attr-defined]
+        coordinator.SmartBoilerCoordinator,
+    )
+    for module in (sensor, binary_sensor, switch, button):
+        hints = inspect.get_annotations(module.async_setup_entry)
+        assert hints["entry"] == "SmartBoilerConfigEntry", module.__name__
+    package = Path(coordinator.__file__).parent / "__init__.py"
+    tree = ast.parse(package.read_text(encoding="utf-8"))
+    top = [n for n in tree.body if isinstance(n, ast.ImportFrom) and n.module == "coordinator"]
+    assert top == []  # at module level only under TYPE_CHECKING, inside ``if``
+
+
+def test_entity_classes_have_their_docstrings() -> None:
+    """P-77: a class docstring after the attributes is none; each entity class has its own."""
+    from custom_components.vtherm_smart_boiler import binary_sensor
+
+    for cls in (
+        binary_sensor.HotWaterSensor,
+        binary_sensor.AlarmSensor,
+        binary_sensor.OutdoorSensorProblem,
+        binary_sensor.ConnectionSensor,
+        binary_sensor.ControlAlarmSensor,
+    ):
+        assert cls.__doc__, cls.__name__
+
+
+async def test_the_continuous_values_stay_in_the_diagnostics(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """P-72: an alarm's value and a zone's flow excess leave the attributes — a state row per
+    change — and stay in the diagnostics."""
+    from custom_components.vtherm_smart_boiler.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.PRESSURE))
+    boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0, Signal.PRESSURE: 1.5})
+    living = zones.add("living", hvac_action="heating", valve_open_percent=70, on_percent=0.7)
+    entry = entry_for(boiler, zones)
+    await setup(hass, entry)
+    alarm = hass.states.get(entity_id(hass, entry, "binary_sensor", "alarm_pressure_high"))
+    hot = hass.states.get(entity_id(hass, entry, "binary_sensor", "hot_water", living))
+    assert alarm is not None
+    assert hot is not None
+    assert "value" not in alarm.attributes
+    assert "excess" not in hot.attributes
+    result = await async_get_config_entry_diagnostics(hass, entry)
+    assert result["alarms"]["pressure_high"]["value"] == 1.5
+    (zone,) = result["zones"].values()
+    assert zone["hot_water"]["excess"] is not None
+
+
+def test_text_attributes_stay_out_of_the_recorder() -> None:
+    """P-39: the ``_text`` siblings are the codes again in words — kept out of the recorder, as
+    the features' texts are."""
+    from custom_components.vtherm_smart_boiler.core.signal_check import Feature
+    from custom_components.vtherm_smart_boiler.sensor import (
+        BoilerSensor,
+        ControlStateSensor,
+        FeaturesSensor,
+    )
+    from custom_components.vtherm_smart_boiler.switch import ControlSwitch
+
+    for cls, texts in (
+        (BoilerSensor, {"reasons_text"}),
+        (
+            ControlStateSensor,
+            {"reasons_text", "blockers_text", "blockers_waiting_text", "latched_by_text"},
+        ),
+        (ControlSwitch, {"blockers_text", "blocked_by_text"}),
+        (FeaturesSensor, {f"{feature.value}_missing_text" for feature in Feature}),
+    ):
+        assert texts <= cls._unrecorded_attributes, cls.__name__
+
+
+async def test_without_the_texts_the_codes_stand_for_themselves(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Negative (P-39, P-74): texts that cannot be loaded leave the codes shown as they are —
+    never an error, never an empty text for a code."""
+    from homeassistant.helpers import translation
+
+    from custom_components.vtherm_smart_boiler import _async_options_error_text
+    from custom_components.vtherm_smart_boiler.entity import coded_text
+
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+
+    async def broken(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+        raise RuntimeError("no translations")
+
+    monkeypatch.setattr(translation, "async_get_translations", broken)
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    assert coordinator.texts == {}
+    shown = coded_text(coordinator, "sensor", "control_state", "reasons", ("control_off", "x"))
+    assert shown == "control_off, x"
+    assert await _async_options_error_text(hass, "invalid_boiler") == "invalid_boiler"
+    monkeypatch.undo()
+    assert await _async_options_error_text(hass, "no_such_code") == "no_such_code"

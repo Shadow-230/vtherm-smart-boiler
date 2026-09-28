@@ -72,6 +72,9 @@ def link_connected(
 
 
 class Feature(StrEnum):
+    """What the plugin does with the inputs an installation gives (the missing-data rule): each
+    feature is available, degraded or inactive, and names what it lacks."""
+
     CYCLES = "cycles"
     CONDENSING = "condensing"
     DHW_DETECTION = "dhw_detection"
@@ -90,23 +93,78 @@ class Feature(StrEnum):
     PRESSURE_TREND = "pressure_trend"
     UNSTABLE_IGNITION = "unstable_ignition"
     HYSTERESIS_DRIFT = "hysteresis_drift"
+    # Y4: the verdict, and the features of phase X — the comfort correction, frost protection
+    # and VT's activation delay (X4), the circuit's too-hot alarm (X4, decision 10), the lowest
+    # water temperature's suggestion and the wall thermostat after a hand-back (X6), the relay's
+    # proof that the boiler heats (X8) — and the forecast snapshots.
+    VERDICT = "verdict"
+    COMFORT_CORRECTION = "comfort_correction"
+    FROST_PROTECTION = "frost_protection"
+    ACTIVATION_DELAY = "activation_delay"
+    CIRCUIT_OVERSHOOT_ALARM = "circuit_overshoot_alarm"
+    LOWEST_WATER_SUGGESTION = "lowest_water_suggestion"
+    WALL_THERMOSTAT_FALLBACK = "wall_thermostat_fallback"
+    RELAY_PROOF = "relay_proof"
+    FORECASTS = "forecasts"
 
 
 class FeatureStatus(StrEnum):
     AVAILABLE = "available"
     DEGRADED = "degraded"  # works, from weaker inputs (e.g. inferred instead of measured)
-    UNAVAILABLE = "unavailable"
+    INACTIVE = "inactive"  # an input it needs is missing, unknown or unavailable
+
+
+# The inputs a feature may lack that are no signal — each a code in ``FeatureState.missing``,
+# beside the signals' own (``Signal`` values), named in a translated text.
+ADD_WATER_THRESHOLD = "add_water_threshold"  # the "add water" threshold, from the manual
+CONDENSING_BOILER = "condensing_boiler"  # the boiler declared condensing
+ZONE_DATA = "zone_data"  # VT zones configured, and at run time one known
+VALVE_OPENINGS = "valve_openings"  # every zone reports its valve opening
+NO_BYPASS = "no_bypass"  # no bypass or low-loss header declared
+WEATHER_ENTITY = "weather_entity"  # the weather entity, and at run time its state
+CONTROL = "control"  # control configured
+WATER_CONTROL = "water_control"  # control that sets the water temperature, not a relay
+RELAY_CONTROL = "relay_control"  # control through a relay
+WALL_THERMOSTAT = "wall_thermostat"  # control through a gateway with an OpenTherm thermostat
+CIRCUIT_MAXIMUM = "circuit_maximum"  # a circuit with a maximum flow temperature
+TURNED_OFF = "turned_off"  # the option that runs it is off
+# A signal dropped because its entity feeds an earlier signal (X5), in place of its own code.
+ENTITY_FOR_TWO_SIGNALS = "entity_for_two_signals"
+
+
+class ControlKind(StrEnum):
+    """What control is configured to drive: the water temperature, or a relay (X8)."""
+
+    WATER = "water"
+    RELAY = "relay"
 
 
 @dataclass(frozen=True, slots=True)
 class FeatureState:
     status: FeatureStatus
-    missing: tuple[Signal, ...] = ()  # what to map for the full feature
-    reason: str | None = None  # why it is inactive where no signal would help
+    # The inputs it lacks — for an inactive feature what it needs, for a degraded one what
+    # would make it whole: a signal's code, another input's (above), or, for a signal dropped
+    # because its entity feeds an earlier one, ``ENTITY_FOR_TWO_SIGNALS``.
+    missing: tuple[str, ...] = ()
+    # For each ``ENTITY_FOR_TWO_SIGNALS`` in ``missing``, in order: the signal dropped and the
+    # signal that kept its entity.
+    shared: tuple[tuple[Signal, Signal], ...] = ()
 
 
 # The boiler's own fault signals (Y1), in the order the form asks for them.
 FAULT_SIGNALS = (Signal.LOW_PRESSURE_FAULT, Signal.BOILER_LOCKOUT)
+# What proves a relay's boiler heats (X8, R12): any one of them; the power with its threshold.
+PROOF_SIGNALS = (Signal.FLAME, Signal.FLOW, Signal.GAS_METER, Signal.BOILER_POWER)
+
+
+def _state(required: list[str], improving: list[str] | None = None) -> FeatureState:
+    """Inactive naming what is required and missing; else degraded naming what would make it
+    whole; else available."""
+    if required:
+        return FeatureState(FeatureStatus.INACTIVE, tuple(required))
+    if improving:
+        return FeatureState(FeatureStatus.DEGRADED, tuple(improving))
+    return FeatureState(FeatureStatus.AVAILABLE)
 
 
 def features(
@@ -120,106 +178,199 @@ def features(
     zone_data: bool = True,
     gateway: frozenset[Signal] = frozenset(),
     has_dhw: bool = False,
+    condensing: bool = True,
+    control: ControlKind | None = None,
+    comfort_correction: bool = True,
+    circuit_maximum: bool = False,
+    circuit_flow: bool = False,
+    wall_thermostat: bool = False,
+    read_back: bool = False,
+    power_threshold: bool = False,
+    shared: Mapping[Signal, Signal] | None = None,
 ) -> dict[Feature, FeatureState]:
-    """What the mapped signals enable; ``has_gas_rates``: gas at min and max power are known.
-    Y1: ``add_water`` — the user entered the "add water" threshold; ``bypass`` — a bypass or a
-    low-loss header is declared; ``zone_valves`` — whether every zone reports a valve opening
-    (``None``: not known yet); ``zone_data`` — zones are configured; ``gateway`` — the mapped
+    """What the inputs enable (the missing-data rule): each feature available, degraded or
+    inactive, naming what it lacks. Configured, ``mapped`` holds the mapped signals and each
+    flag what the options give; at run time the signals known now, and the flags what is known
+    now. ``has_gas_rates``: gas at min and max power are known. Y1: ``add_water`` — the user
+    entered the "add water" threshold; ``bypass`` — a bypass or a low-loss header is declared;
+    ``zone_valves`` — whether every zone reports a valve opening (``None``: not known yet);
+    ``zone_data`` — zones are configured (at run time: one is known); ``gateway`` — the mapped
     signals the OpenTherm Gateway reports, whose fault flags need the fault indication (Q3.9);
-    ``has_dhw`` — the boiler heats hot water, which the low-flow warning must tell apart."""
+    ``has_dhw`` — the boiler heats hot water, which the low-flow warning must tell apart.
+    Y4: ``condensing`` — the boiler is declared condensing; ``control`` — what control drives,
+    ``None`` without control; ``comfort_correction`` — its option; ``circuit_maximum`` — a
+    circuit has a maximum flow; ``circuit_flow`` — a circuit has its own flow sensor;
+    ``wall_thermostat`` — control through a gateway with an OpenTherm thermostat (X6);
+    ``read_back`` — control's read-back stands in for the CH setpoint signal (X6);
+    ``power_threshold`` — the relay's proof has a power threshold (X8); ``shared`` — signals
+    dropped because their entity feeds an earlier one, each with the signal that kept it."""
 
-    def need(*signals: Signal) -> FeatureState:
-        missing = tuple(s for s in signals if s not in mapped)
-        return FeatureState(
-            FeatureStatus.UNAVAILABLE if missing else FeatureStatus.AVAILABLE, missing
-        )
+    def lacking(*signals: Signal) -> list[str]:
+        return [s.value for s in signals if s not in mapped]
 
-    result = {
-        Feature.CYCLES: need(Signal.FLAME),
-        Feature.CONDENSING: need(Signal.FLAME, Signal.RETURN),
-        Feature.HOT_WATER: need(Signal.FLOW),
-        Feature.EMITTER_FACTOR: need(Signal.FLOW),
-        Feature.FLUE_GAS_WARNING: need(Signal.FLUE_GAS, Signal.RETURN),
-        Feature.PRESSURE_WARNING: need(Signal.PRESSURE),
+    result: dict[Feature, FeatureState] = {
+        Feature.CYCLES: _state(lacking(Signal.FLAME)),
+        Feature.CONDENSING: _state(lacking(Signal.FLAME, Signal.RETURN)),
+        Feature.PRESSURE_WARNING: _state(lacking(Signal.PRESSURE)),
+        Feature.PRESSURE_TREND: _state(lacking(Signal.PRESSURE, Signal.FLAME, Signal.FLOW)),
+        Feature.VERDICT: _state(lacking(Signal.FLAME)),
     }
+    # The heat reaching a zone: the boiler's flow, or a circuit's own sensor for its zones.
+    for feature in (Feature.HOT_WATER, Feature.EMITTER_FACTOR):
+        flow = lacking(Signal.FLOW)
+        result[feature] = _state(flow if not circuit_flow else [], flow)
     if Signal.DHW_ACTIVE in mapped:
-        result[Feature.DHW_DETECTION] = FeatureState(FeatureStatus.AVAILABLE)
+        result[Feature.DHW_DETECTION] = _state([])
     elif Signal.CH_ACTIVE in mapped or Signal.FLOW in mapped:
-        result[Feature.DHW_DETECTION] = FeatureState(FeatureStatus.DEGRADED, (Signal.DHW_ACTIVE,))
+        result[Feature.DHW_DETECTION] = _state([], [Signal.DHW_ACTIVE.value])
     else:
-        result[Feature.DHW_DETECTION] = FeatureState(
-            FeatureStatus.UNAVAILABLE, (Signal.DHW_ACTIVE,)
-        )
+        result[Feature.DHW_DETECTION] = _state([Signal.DHW_ACTIVE.value])
     if Signal.GAS_METER in mapped:
-        result[Feature.GAS] = FeatureState(FeatureStatus.AVAILABLE)
+        result[Feature.GAS] = _state([])
     elif Signal.MODULATION in mapped and has_gas_rates:
-        result[Feature.GAS] = FeatureState(FeatureStatus.DEGRADED, (Signal.GAS_METER,))
+        result[Feature.GAS] = _state([], [Signal.GAS_METER.value])
     else:
-        result[Feature.GAS] = FeatureState(FeatureStatus.UNAVAILABLE, (Signal.GAS_METER,))
+        result[Feature.GAS] = _state([Signal.GAS_METER.value])
     if Signal.OUTDOOR in mapped:
-        result[Feature.DEGREE_DAYS] = FeatureState(FeatureStatus.AVAILABLE)
+        result[Feature.DEGREE_DAYS] = _state([])
     elif has_weather:
-        result[Feature.DEGREE_DAYS] = FeatureState(FeatureStatus.DEGRADED, (Signal.OUTDOOR,))
+        result[Feature.DEGREE_DAYS] = _state([], [Signal.OUTDOOR.value])
     else:
-        result[Feature.DEGREE_DAYS] = FeatureState(FeatureStatus.UNAVAILABLE, (Signal.OUTDOOR,))
-    outdoor_check = Signal.OUTDOOR in mapped and has_weather
-    result[Feature.OUTDOOR_CHECK] = FeatureState(
-        FeatureStatus.AVAILABLE if outdoor_check else FeatureStatus.UNAVAILABLE,
-        () if Signal.OUTDOOR in mapped else (Signal.OUTDOOR,),
+        result[Feature.DEGREE_DAYS] = _state([Signal.OUTDOOR.value, WEATHER_ENTITY])
+    weather = [] if has_weather else [WEATHER_ENTITY]
+    result[Feature.OUTDOOR_CHECK] = _state(lacking(Signal.OUTDOOR) + weather)
+    result[Feature.FORECASTS] = _state(weather)
+    # The absolute flue gas alarm needs the flue gas of a condensing boiler; only the trend
+    # over the return needs the return (P-85).
+    result[Feature.FLUE_GAS_WARNING] = _state(
+        lacking(Signal.FLUE_GAS) + ([] if condensing else [CONDENSING_BOILER]),
+        lacking(Signal.RETURN),
     )
-    result[Feature.LOW_FLOW] = _low_flow_feature(mapped, bypass, zone_valves, has_dhw)
-    result[Feature.BOILER_FAULT_STOP] = _fault_feature(mapped, gateway)
-    add = need(Signal.PRESSURE)
-    if add.status is FeatureStatus.AVAILABLE and not add_water:
-        add = FeatureState(FeatureStatus.UNAVAILABLE, reason="no_threshold")
-    result[Feature.ADD_WATER] = add
-    result[Feature.PRESSURE_TREND] = need(Signal.PRESSURE, Signal.FLAME, Signal.FLOW)
+    result[Feature.ADD_WATER] = _state(
+        lacking(Signal.PRESSURE) + ([] if add_water else [ADD_WATER_THRESHOLD])
+    )
+    result[Feature.HYSTERESIS_DRIFT] = _state(
+        lacking(Signal.FLAME, Signal.FLOW) + ([] if zone_data else [ZONE_DATA])
+    )
     if Signal.FLAME not in mapped:
-        result[Feature.UNSTABLE_IGNITION] = need(Signal.FLAME)
+        result[Feature.UNSTABLE_IGNITION] = _state(lacking(Signal.FLAME))
     else:
         # P-81: without flow and CH setpoint every short burn counts, as before.
-        ignition = need(Signal.FLOW, Signal.CH_SETPOINT)
-        if ignition.missing:
-            ignition = FeatureState(FeatureStatus.DEGRADED, ignition.missing)
-        result[Feature.UNSTABLE_IGNITION] = ignition
-    drift = need(Signal.FLAME, Signal.FLOW)
-    if drift.status is FeatureStatus.AVAILABLE and not zone_data:
-        drift = FeatureState(FeatureStatus.UNAVAILABLE, reason="no_zone_data")
-    result[Feature.HYSTERESIS_DRIFT] = drift
-    return result
+        result[Feature.UNSTABLE_IGNITION] = _state([], lacking(Signal.FLOW, Signal.CH_SETPOINT))
+    result[Feature.LOW_FLOW] = _low_flow_feature(mapped, bypass, zone_valves, zone_data, has_dhw)
+    result[Feature.BOILER_FAULT_STOP] = _fault_feature(mapped, gateway, control)
+    result.update(
+        _control_features(mapped, control, comfort_correction, zone_data, wall_thermostat)
+    )
+    result[Feature.CIRCUIT_OVERSHOOT_ALARM] = _state(
+        ([] if Signal.FLOW in mapped or circuit_flow else [Signal.FLOW.value])
+        + ([] if circuit_maximum else [CIRCUIT_MAXIMUM])
+    )
+    suggestion = lacking(Signal.FLAME, Signal.FLOW)
+    if Signal.CH_SETPOINT not in mapped and not read_back:
+        suggestion.append(Signal.CH_SETPOINT.value)
+    result[Feature.LOWEST_WATER_SUGGESTION] = _state(suggestion)
+    result[Feature.RELAY_PROOF] = _proof_feature(mapped, control, power_threshold)
+    return {feature: _named_shared(state, shared or {}) for feature, state in result.items()}
+
+
+def _control_features(
+    mapped: frozenset[Signal],
+    control: ControlKind | None,
+    comfort_correction: bool,
+    zone_data: bool,
+    wall_thermostat: bool,
+) -> dict[Feature, FeatureState]:
+    """The features of control: each needs control configured; the comfort correction one that
+    sets the water temperature, and its option on; frost protection and the correction the
+    zones; the wall thermostat after a hand-back a gateway with an OpenTherm thermostat and its
+    setpoint signal (X6)."""
+    configured = [] if control is not None else [CONTROL]
+    zones = [] if zone_data else [ZONE_DATA]
+    water = configured or ([] if control is ControlKind.WATER else [WATER_CONTROL])
+    return {
+        Feature.COMFORT_CORRECTION: _state(
+            water + zones + ([] if comfort_correction else [TURNED_OFF])
+        ),
+        Feature.FROST_PROTECTION: _state(configured + zones),
+        Feature.ACTIVATION_DELAY: _state(configured),
+        Feature.WALL_THERMOSTAT_FALLBACK: _state(
+            ([] if wall_thermostat else [WALL_THERMOSTAT])
+            + ([] if Signal.ROOM_SETPOINT in mapped else [Signal.ROOM_SETPOINT.value])
+        ),
+    }
+
+
+def _proof_feature(
+    mapped: frozenset[Signal], control: ControlKind | None, power_threshold: bool
+) -> FeatureState:
+    """X8 (R12): the proof that a relay's boiler heats — any one proof input, the power only
+    with its threshold; on the relay path only."""
+    if control is not ControlKind.RELAY:
+        return _state([RELAY_CONTROL])
+    inputs = [s for s in PROOF_SIGNALS if s in mapped]
+    if inputs and not (inputs == [Signal.BOILER_POWER] and not power_threshold):
+        return _state([])
+    return _state([s.value for s in PROOF_SIGNALS])
+
+
+def _named_shared(state: FeatureState, shared: Mapping[Signal, Signal]) -> FeatureState:
+    """X5: a signal dropped because its entity feeds an earlier one is named so, with the
+    signal that kept the entity."""
+    if not shared or not any(code in shared for code in state.missing):
+        return state
+    missing: list[str] = []
+    pairs: list[tuple[Signal, Signal]] = []
+    for code in state.missing:
+        dropped = next((s for s in shared if s.value == code), None)
+        if dropped is None:
+            missing.append(code)
+        else:
+            missing.append(ENTITY_FOR_TWO_SIGNALS)
+            pairs.append((dropped, shared[dropped]))
+    return FeatureState(state.status, tuple(missing), tuple(pairs))
 
 
 def _low_flow_feature(
-    mapped: frozenset[Signal], bypass: bool, zone_valves: bool | None, has_dhw: bool
+    mapped: frozenset[Signal],
+    bypass: bool,
+    zone_valves: bool | None,
+    zone_data: bool,
+    has_dhw: bool,
 ) -> FeatureState:
     """P-99: the low-flow warning needs a pump-running or CH-active signal and zones that report
     a valve opening — and, on a boiler with hot water, the hot-water signal: with hot water
-    unknown it is not judged (P-27); with a bypass or a low-loss header it does not apply."""
+    unknown it is not judged (P-27); with a bypass or a low-loss header it does not apply.
+    Zones whose valves are not known yet (``zone_valves`` ``None``) do not make it inactive."""
+    missing: list[str] = []
     if Signal.PUMP_RUNNING not in mapped and Signal.CH_ACTIVE not in mapped:
-        return FeatureState(FeatureStatus.UNAVAILABLE, (Signal.PUMP_RUNNING, Signal.CH_ACTIVE))
+        missing += [Signal.PUMP_RUNNING.value, Signal.CH_ACTIVE.value]
+    if not zone_data or zone_valves is False:
+        missing.append(VALVE_OPENINGS)
     if bypass:
-        return FeatureState(FeatureStatus.UNAVAILABLE, reason="bypass")
+        missing.append(NO_BYPASS)
     if has_dhw and Signal.DHW_ACTIVE not in mapped:
-        return FeatureState(FeatureStatus.UNAVAILABLE, (Signal.DHW_ACTIVE,))
-    if zone_valves is False:
-        return FeatureState(FeatureStatus.UNAVAILABLE, reason="zone_without_valve")
-    return FeatureState(FeatureStatus.AVAILABLE)
+        missing.append(Signal.DHW_ACTIVE.value)
+    return _state(missing)
 
 
-def _fault_feature(mapped: frozenset[Signal], gateway: frozenset[Signal]) -> FeatureState:
-    """Y1: the stop on the boiler's own fault needs one of its fault signals; a flag the
-    OpenTherm Gateway reports counts only with the boiler's fault indication mapped (Q3.9) —
-    without it, that flag stops nothing."""
+def _fault_feature(
+    mapped: frozenset[Signal], gateway: frozenset[Signal], control: ControlKind | None
+) -> FeatureState:
+    """Y1: the stop on the boiler's own fault is control's — it needs control and one of its
+    fault signals; a flag the OpenTherm Gateway reports counts only with the boiler's fault
+    indication mapped (Q3.9) — without it, that flag stops nothing."""
     flags = [s for s in FAULT_SIGNALS if s in mapped]
+    configured = [] if control is not None else [CONTROL]
     if not flags:
-        return FeatureState(FeatureStatus.UNAVAILABLE, FAULT_SIGNALS)
-    if Signal.FAULT_INDICATION in mapped:
-        return FeatureState(FeatureStatus.AVAILABLE)
+        return _state(configured + [s.value for s in FAULT_SIGNALS])
+    if configured or Signal.FAULT_INDICATION in mapped:
+        return _state(configured)
     gated = [s for s in flags if s in gateway]
     if not gated:
-        return FeatureState(FeatureStatus.AVAILABLE)
-    status = FeatureStatus.UNAVAILABLE if len(gated) == len(flags) else FeatureStatus.DEGRADED
-    return FeatureState(status, (Signal.FAULT_INDICATION,))
+        return _state([])
+    indication = [Signal.FAULT_INDICATION.value]
+    return _state(indication) if len(gated) == len(flags) else _state([], indication)
 
 
 class OutdoorStatus(StrEnum):

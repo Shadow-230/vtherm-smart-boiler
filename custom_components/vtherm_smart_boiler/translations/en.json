@@ -348,6 +348,27 @@
           "low_pressure_fault": "Boiler's low-water-pressure fault",
           "boiler_lockout": "Boiler lockout",
           "fault_indication": "Boiler fault indication"
+        },
+        "data_description": {
+          "flame": "Flame: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale. Control reads it by this limit: stale for five minutes within ten, the boiler is handed back.",
+          "flow": "Flow temperature: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale. Control reads it by this limit: stale for five minutes within ten, the boiler is handed back.",
+          "return": "Return temperature: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "modulation": "Modulation: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "dhw_active": "Hot water (DHW) active: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "pressure": "Water pressure: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "outdoor": "Outdoor temperature (boiler sensor): its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "ch_setpoint": "Heating setpoint: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "ch_active": "Heating active: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "pump_running": "Pump running: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "flue_gas": "Flue gas temperature: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "gas_meter": "Gas meter: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "room_setpoint": "Wired thermostat setpoint: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "room_temperature": "Wired thermostat room temperature: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "weather": "The weather entity's own age limit, in minutes, never the outdoor sensor's: not reported for longer, its temperature counts as unknown. Empty (default): only whether the entity is available counts.",
+          "boiler_power": "Boiler electric power: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "low_pressure_fault": "Boiler's low-water-pressure fault: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "boiler_lockout": "Boiler lockout: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "fault_indication": "Boiler fault indication: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale."
         }
       },
       "boiler": {
@@ -603,7 +624,7 @@
           "room": "The room temperature the curve is built for, in °C. Default 20 °C. Too high raises the whole curve and wastes gas.",
           "exponent": "How the curve bends. Empty picks it from the emitters: radiators 1.3, convectors 1.4, underfloor 1.1. The wrong bend under-heats in frost or overheats in mild weather.",
           "offset": "Shifts the whole curve up or down, in K. Default 0. Up wastes gas; down leaves rooms cold.",
-          "ceiling_band": "How far above the curve a comfort correction may go, in K. Default 10 K; 0 turns correction off in effect. Larger lets one cold room push the water up for every room.",
+          "ceiling_band": "How far above the curve the comfort correction may raise the water, in K. The correction stops at 3 K on its own: a band of 3 K or more leaves it that bound, a smaller one lowers it, and 0 turns correction off in effect. Default 10 K. Risk: a small band gives a room that stays cold less help.",
           "fallback_setpoint": "Used when no outdoor temperature is known — the sensor failed, or the monitor found it stuck or far from the weather, and the weather entity is missing too — once the last effective temperature has been held for three hours, in °C. Empty (default): the curve at its design point, the most heat the curve gives: never too little heat, the valves keep rooms from overheating.",
           "frost_limit": "A watched zone colder than this starts heating, whatever else applies, where heat can reach it — its valve open or its device on — in °C. Default 5 °C. Too low risks frozen pipes; too high heats rooms you keep off.",
           "frost_release": "Frost protection ends once every watched zone is above this, in °C. Default 7 °C, above the limit. Close to the limit, frost heating starts and stops more often.",
@@ -1027,6 +1048,18 @@
           "reasons": {
             "name": "Reasons",
             "state": {
+              "monitored_days": "Days monitored",
+              "heating_burns": "Heating burns counted",
+              "frequent_starts": "Frequent starts",
+              "few_starts": "Few starts",
+              "short_burns": "Mostly short burns",
+              "long_burns": "Burns long enough",
+              "low_condensing": "Little condensing",
+              "good_condensing": "Good condensing",
+              "condensing_unknown": "Condensing not known: no return temperature, or too little of it",
+              "load_often_below_min_power": "The building's load often below the boiler's minimum power",
+              "load_rarely_below_min_power": "The building's load rarely below the boiler's minimum power",
+              "load_unknown": "The building's load not known",
               "criteria_judged": "Too few criteria could be judged to say control is not worth enabling",
               "no_burner_signal": "No burner (flame) signal is mapped: without it there is no verdict"
             }
@@ -1039,10 +1072,17 @@
             }
           },
           "detail": {
-            "name": "Why not judged",
+            "name": "Detail",
             "state": {
-              "estimate_only": "Estimate only: the building model rests on rough defaults, not on values entered or measured with confidence"
+              "estimate_only": "Estimate only: the building model rests on rough defaults, not on values entered or measured with confidence",
+              "water_not_controlled": "Not changed: here control does not set the water temperature — through a relay, or without water-temperature control"
             }
+          },
+          "reasons_text": {
+            "name": "Reasons (text)"
+          },
+          "monitoring_since": {
+            "name": "Monitoring since"
           }
         }
       },
@@ -1172,7 +1212,7 @@
         "name": "Forecast snapshots"
       },
       "critical_zone": {
-        "name": "Critical zone {circuit}",
+        "name": "Critical zone, circuit {circuit}",
         "state_attributes": {
           "status": {
             "name": "Status",
@@ -1182,6 +1222,10 @@
               "no_valid_measurement": "No valid measurement"
             }
           }
+        },
+        "state": {
+          "no_active_zone": "No zone is heating",
+          "no_valid_measurement": "No valid measurement"
         }
       },
       "emitter_power_factor": {
@@ -1278,6 +1322,121 @@
               "not_seen": "No sign of heat yet",
               "unverified": "Without confirmation that the boiler heats"
             }
+          },
+          "reasons": {
+            "name": "Reasons",
+            "state": {
+              "control_off": "Control is off",
+              "precondition": "A blocker keeps control from running (see the blockers)",
+              "alarm_hand_back": "An alarm handed the boiler back and latched control: switch control off and on",
+              "boiler_link_stale": "The boiler's data is not fresh: nothing is written",
+              "read_back_unknown": "Waiting for the read-back: a hand-back could not be seen yet",
+              "outdoor_sensor": "Outdoor temperature from the boiler's sensor",
+              "outdoor_weather": "Outdoor temperature from the weather entity",
+              "outdoor_held": "Outdoor temperature held from before",
+              "outdoor_unknown": "Outdoor temperature unknown",
+              "demand": "A zone asks for heat",
+              "no_demand": "No zone asks for heat",
+              "zones_unknown": "No zone's state is known",
+              "zones_recognition": "The zones are still reporting: nothing new is decided",
+              "frost": "Frost protection",
+              "ramp": "The setpoint moves step by step (ramp)",
+              "limit_hard_min": "Held at the lowest water temperature",
+              "limit_hard_max": "Held at the highest water temperature",
+              "limit_circuit_max": "Held at the circuit's maximum",
+              "limit_boiler_max": "Held at the boiler's maximum",
+              "limit_ceiling": "Held at the curve plus its room for correction",
+              "limit_fixed_circuit": "Raised for the circuit with a fixed mixing valve",
+              "comfort_correction": "Comfort correction applied",
+              "activation_delay": "Waiting for the activation delay",
+              "boiler_fault": "The boiler reports its own fault: heating off"
+            }
+          },
+          "reasons_text": {
+            "name": "Reasons (text)"
+          },
+          "blockers": {
+            "name": "Blockers",
+            "state": {
+              "no_write_path": "Control is not set up",
+              "boiler_class_no_control": "This boiler class cannot be controlled",
+              "path_not_for_boiler_class": "The write path does not suit the boiler class",
+              "no_setpoint_entity": "No setpoint entity picked",
+              "write_type_not_supported": "The setpoint entity's write type cannot be used",
+              "no_hand_back": "No hand-back chosen",
+              "timeout_needs_expiring_writes": "The timeout hand-back needs expiring writes",
+              "no_gateway": "No OpenTherm Gateway ID",
+              "no_mqtt_topic": "No MQTT topic prefix or node name",
+              "no_confirmed_setpoint": "No setpoint read-back picked",
+              "no_topology": "The gateway's connection is not declared",
+              "topology_no_control": "The gateway runs in monitor mode",
+              "curve_not_entered": "The heating curve is not entered",
+              "one_direct_circuit_only": "Only one circuit fed straight from the boiler can be controlled",
+              "underfloor_without_max_flow": "Underfloor heating on an unmixed circuit without its maximum",
+              "no_zones": "No Versatile Thermostat zone",
+              "count_threshold_above_zones": "The demand threshold asks for more zones than there are",
+              "off_setpoint_not_below_hard_min": "\"Off\" is not below the lowest water temperature",
+              "hand_back_switch_not_writable": "The external control switch's write type cannot be used",
+              "hand_back_value_above_max": "The hand-back value is above a maximum",
+              "off_setpoint_near_hand_back_value": "\"Off\" is too close to the hand-back value",
+              "hand_back_switch_is_heating_switch": "The external control switch also serves another role",
+              "entity_for_two_signals": "One entity feeds two signals",
+              "topology_not_for_path": "The gateway's connection does not suit the write path",
+              "design_flow_too_low": "The design flow temperature is too low",
+              "design_flow_above_hard_max": "The design flow temperature is above the highest water temperature",
+              "design_outdoor_too_warm": "The design outdoor temperature is too warm",
+              "hard_min_not_below_design_flow": "The lowest water temperature is not below the design flow temperature",
+              "no_heating_switch": "No heating switch the plugin may use",
+              "thermostat_on_off": "An on/off contact on the gateway's thermostat terminals",
+              "thermostat_kind_unknown": "Not answered: what is wired to the gateway's thermostat terminals",
+              "thermostat_kind_contradicts_topology": "The answer on the thermostat terminals does not fit the gateway's connection",
+              "no_flame_signal": "No flame signal",
+              "no_flow_signal": "No flow temperature signal",
+              "no_relay_entity": "No relay picked",
+              "relay_domain_not_supported": "The relay is neither a switch nor a boiler thermostat entity",
+              "relay_in_another_role": "The relay also serves another role",
+              "relay_contact_not_confirmed": "Not confirmed that the relay is a separate contact",
+              "ha_starting": "Home Assistant is starting",
+              "monitoring_period": "The monitoring period has not passed yet",
+              "vt_central_boiler_active": "Versatile Thermostat's own central boiler is configured",
+              "vt_central_boiler_unknown": "Versatile Thermostat's central boiler cannot be ruled out yet",
+              "setpoint_outside_entity_range": "The setpoint entity does not take every value control may write",
+              "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit",
+              "setpoint_step_too_coarse": "The setpoint entity's step is too coarse",
+              "control_error": "Stopped after an internal error: switch control off and on",
+              "monitor_failed": "The plugin's monitor keeps failing",
+              "heating_off_ignored": "The boiler did not take \"heating off\": switch control off and on",
+              "gateway_not_set_up": "The gateway's integration is removed or disabled",
+              "mqtt_not_set_up": "The MQTT integration is removed or disabled",
+              "zone_not_vt": "A zone is not a Versatile Thermostat thermostat",
+              "zone_on_boiler_thermostat": "A zone is built on the boiler's own thermostat",
+              "relay_used_by_zone": "A zone already switches the relay",
+              "relay_of_boiler_interface": "The relay belongs to the boiler's or VT's own integration",
+              "relay_climate_modes": "The thermostat entity cannot be set to both heat and off"
+            }
+          },
+          "blockers_text": {
+            "name": "Blockers (text)"
+          },
+          "blockers_waiting": {
+            "name": "Blockers waiting"
+          },
+          "blockers_waiting_text": {
+            "name": "Blockers waiting (text)"
+          },
+          "latched_by": {
+            "name": "Latched by",
+            "state": {
+              "outside_change": "Another controller changed a value: the plugin stepped aside",
+              "write_ignored": "The boiler ignores a value control writes (set to hand back)",
+              "heating_off_ignored": "The boiler did not take \"heating off\" from the start"
+            }
+          },
+          "latched_by_text": {
+            "name": "Latched by (text)"
+          },
+          "learning_not_resumed": {
+            "name": "Learning not switched back on"
           }
         }
       },
@@ -1297,11 +1456,401 @@
             }
           }
         }
+      },
+      "features": {
+        "name": "Features",
+        "state_attributes": {
+          "cycles": {
+            "name": "Burner cycles",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "cycles_missing": {
+            "name": "Burner cycles: missing"
+          },
+          "cycles_missing_text": {
+            "name": "Burner cycles: what is missing"
+          },
+          "condensing": {
+            "name": "Condensing share",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "condensing_missing": {
+            "name": "Condensing share: missing"
+          },
+          "condensing_missing_text": {
+            "name": "Condensing share: what is missing"
+          },
+          "dhw_detection": {
+            "name": "Hot water detection",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "dhw_detection_missing": {
+            "name": "Hot water detection: missing"
+          },
+          "dhw_detection_missing_text": {
+            "name": "Hot water detection: what is missing"
+          },
+          "gas": {
+            "name": "Gas use",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "gas_missing": {
+            "name": "Gas use: missing"
+          },
+          "gas_missing_text": {
+            "name": "Gas use: what is missing"
+          },
+          "degree_days": {
+            "name": "Degree-days",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "degree_days_missing": {
+            "name": "Degree-days: missing"
+          },
+          "degree_days_missing_text": {
+            "name": "Degree-days: what is missing"
+          },
+          "hot_water": {
+            "name": "Heat available in the zones",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "hot_water_missing": {
+            "name": "Heat available in the zones: missing"
+          },
+          "hot_water_missing_text": {
+            "name": "Heat available in the zones: what is missing"
+          },
+          "emitter_factor": {
+            "name": "Emitter power",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "emitter_factor_missing": {
+            "name": "Emitter power: missing"
+          },
+          "emitter_factor_missing_text": {
+            "name": "Emitter power: what is missing"
+          },
+          "flue_gas_warning": {
+            "name": "Flue gas warnings",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "flue_gas_warning_missing": {
+            "name": "Flue gas warnings: missing"
+          },
+          "flue_gas_warning_missing_text": {
+            "name": "Flue gas warnings: what is missing"
+          },
+          "pressure_warning": {
+            "name": "High water pressure",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "pressure_warning_missing": {
+            "name": "High water pressure: missing"
+          },
+          "pressure_warning_missing_text": {
+            "name": "High water pressure: what is missing"
+          },
+          "outdoor_check": {
+            "name": "Outdoor sensor check",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "outdoor_check_missing": {
+            "name": "Outdoor sensor check: missing"
+          },
+          "outdoor_check_missing_text": {
+            "name": "Outdoor sensor check: what is missing"
+          },
+          "low_flow": {
+            "name": "Low-flow warning",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "low_flow_missing": {
+            "name": "Low-flow warning: missing"
+          },
+          "low_flow_missing_text": {
+            "name": "Low-flow warning: what is missing"
+          },
+          "boiler_fault_stop": {
+            "name": "Stop on the boiler's own fault",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "boiler_fault_stop_missing": {
+            "name": "Stop on the boiler's own fault: missing"
+          },
+          "boiler_fault_stop_missing_text": {
+            "name": "Stop on the boiler's own fault: what is missing"
+          },
+          "add_water": {
+            "name": "\"Add water\" notification",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "add_water_missing": {
+            "name": "\"Add water\" notification: missing"
+          },
+          "add_water_missing_text": {
+            "name": "\"Add water\" notification: what is missing"
+          },
+          "pressure_trend": {
+            "name": "Pressure trend (risk of a leak)",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "pressure_trend_missing": {
+            "name": "Pressure trend (risk of a leak): missing"
+          },
+          "pressure_trend_missing_text": {
+            "name": "Pressure trend (risk of a leak): what is missing"
+          },
+          "unstable_ignition": {
+            "name": "Unstable ignition",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "unstable_ignition_missing": {
+            "name": "Unstable ignition: missing"
+          },
+          "unstable_ignition_missing_text": {
+            "name": "Unstable ignition: what is missing"
+          },
+          "hysteresis_drift": {
+            "name": "Hysteresis drift",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "hysteresis_drift_missing": {
+            "name": "Hysteresis drift: missing"
+          },
+          "hysteresis_drift_missing_text": {
+            "name": "Hysteresis drift: what is missing"
+          },
+          "verdict": {
+            "name": "Control verdict",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "verdict_missing": {
+            "name": "Control verdict: missing"
+          },
+          "verdict_missing_text": {
+            "name": "Control verdict: what is missing"
+          },
+          "comfort_correction": {
+            "name": "Comfort correction",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "comfort_correction_missing": {
+            "name": "Comfort correction: missing"
+          },
+          "comfort_correction_missing_text": {
+            "name": "Comfort correction: what is missing"
+          },
+          "frost_protection": {
+            "name": "Frost protection",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "frost_protection_missing": {
+            "name": "Frost protection: missing"
+          },
+          "frost_protection_missing_text": {
+            "name": "Frost protection: what is missing"
+          },
+          "activation_delay": {
+            "name": "Activation delay",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "activation_delay_missing": {
+            "name": "Activation delay: missing"
+          },
+          "activation_delay_missing_text": {
+            "name": "Activation delay: what is missing"
+          },
+          "circuit_overshoot_alarm": {
+            "name": "Circuit too-hot alarm",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "circuit_overshoot_alarm_missing": {
+            "name": "Circuit too-hot alarm: missing"
+          },
+          "circuit_overshoot_alarm_missing_text": {
+            "name": "Circuit too-hot alarm: what is missing"
+          },
+          "lowest_water_suggestion": {
+            "name": "Lowest water temperature suggestion",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "lowest_water_suggestion_missing": {
+            "name": "Lowest water temperature suggestion: missing"
+          },
+          "lowest_water_suggestion_missing_text": {
+            "name": "Lowest water temperature suggestion: what is missing"
+          },
+          "wall_thermostat_fallback": {
+            "name": "Wall thermostat after a hand-back",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "wall_thermostat_fallback_missing": {
+            "name": "Wall thermostat after a hand-back: missing"
+          },
+          "wall_thermostat_fallback_missing_text": {
+            "name": "Wall thermostat after a hand-back: what is missing"
+          },
+          "relay_proof": {
+            "name": "Proof that the boiler heats (relay)",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "relay_proof_missing": {
+            "name": "Proof that the boiler heats (relay): missing"
+          },
+          "relay_proof_missing_text": {
+            "name": "Proof that the boiler heats (relay): what is missing"
+          },
+          "forecasts": {
+            "name": "Forecast recording",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "forecasts_missing": {
+            "name": "Forecast recording: missing"
+          },
+          "forecasts_missing_text": {
+            "name": "Forecast recording: what is missing"
+          },
+          "missing": {
+            "name": "Missing inputs",
+            "state": {
+              "flame": "Flame",
+              "flow": "Flow temperature",
+              "return": "Return temperature",
+              "dhw_active": "Hot water (DHW) active",
+              "pressure": "Water pressure",
+              "outdoor": "Outdoor temperature (boiler sensor)",
+              "ch_setpoint": "Heating setpoint",
+              "ch_active": "Heating active",
+              "pump_running": "Pump running",
+              "flue_gas": "Flue gas temperature",
+              "gas_meter": "Gas meter",
+              "boiler_power": "Boiler electric power",
+              "room_setpoint": "Wired thermostat setpoint",
+              "low_pressure_fault": "Boiler's low-water-pressure fault",
+              "boiler_lockout": "Boiler lockout",
+              "fault_indication": "Boiler fault indication",
+              "add_water_threshold": "The \"add water\" threshold, from the boiler's manual",
+              "condensing_boiler": "A condensing boiler, as declared in the boiler's options",
+              "zone_data": "Versatile Thermostat zones with data",
+              "valve_openings": "Every zone's valve opening",
+              "no_bypass": "No bypass or low-loss header (one is declared)",
+              "weather_entity": "A weather entity",
+              "control": "Control, set up in the options",
+              "water_control": "Control that sets the water temperature, not a relay",
+              "relay_control": "Control through a relay",
+              "wall_thermostat": "Control through a gateway with an OpenTherm wall thermostat",
+              "circuit_maximum": "A circuit's maximum flow temperature",
+              "turned_off": "Turned off in the options",
+              "entity_for_two_signals": "its entity already feeds",
+              "unavailable_now": "unavailable now"
+            }
+          }
+        }
       }
     },
     "binary_sensor": {
       "connection": {
-        "name": "Boiler signals"
+        "name": "Signals"
       },
       "hot_water": {
         "name": "{zone} heat available",
@@ -1605,7 +2154,7 @@
     },
     "switch": {
       "control": {
-        "name": "Boiler control (experimental)",
+        "name": "Control (experimental)",
         "state_attributes": {
           "hand_back_effect": {
             "name": "On hand-back",
@@ -1666,6 +2215,72 @@
               "not_worth_it": "Not worth enabling: control may still be switched on",
               "not_enough_data": "Not enough data: control may start without a verdict"
             }
+          },
+          "blockers": {
+            "name": "Blockers",
+            "state": {
+              "no_write_path": "Control is not set up",
+              "boiler_class_no_control": "This boiler class cannot be controlled",
+              "path_not_for_boiler_class": "The write path does not suit the boiler class",
+              "no_setpoint_entity": "No setpoint entity picked",
+              "write_type_not_supported": "The setpoint entity's write type cannot be used",
+              "no_hand_back": "No hand-back chosen",
+              "timeout_needs_expiring_writes": "The timeout hand-back needs expiring writes",
+              "no_gateway": "No OpenTherm Gateway ID",
+              "no_mqtt_topic": "No MQTT topic prefix or node name",
+              "no_confirmed_setpoint": "No setpoint read-back picked",
+              "no_topology": "The gateway's connection is not declared",
+              "topology_no_control": "The gateway runs in monitor mode",
+              "curve_not_entered": "The heating curve is not entered",
+              "one_direct_circuit_only": "Only one circuit fed straight from the boiler can be controlled",
+              "underfloor_without_max_flow": "Underfloor heating on an unmixed circuit without its maximum",
+              "no_zones": "No Versatile Thermostat zone",
+              "count_threshold_above_zones": "The demand threshold asks for more zones than there are",
+              "off_setpoint_not_below_hard_min": "\"Off\" is not below the lowest water temperature",
+              "hand_back_switch_not_writable": "The external control switch's write type cannot be used",
+              "hand_back_value_above_max": "The hand-back value is above a maximum",
+              "off_setpoint_near_hand_back_value": "\"Off\" is too close to the hand-back value",
+              "hand_back_switch_is_heating_switch": "The external control switch also serves another role",
+              "entity_for_two_signals": "One entity feeds two signals",
+              "topology_not_for_path": "The gateway's connection does not suit the write path",
+              "design_flow_too_low": "The design flow temperature is too low",
+              "design_flow_above_hard_max": "The design flow temperature is above the highest water temperature",
+              "design_outdoor_too_warm": "The design outdoor temperature is too warm",
+              "hard_min_not_below_design_flow": "The lowest water temperature is not below the design flow temperature",
+              "no_heating_switch": "No heating switch the plugin may use",
+              "thermostat_on_off": "An on/off contact on the gateway's thermostat terminals",
+              "thermostat_kind_unknown": "Not answered: what is wired to the gateway's thermostat terminals",
+              "thermostat_kind_contradicts_topology": "The answer on the thermostat terminals does not fit the gateway's connection",
+              "no_flame_signal": "No flame signal",
+              "no_flow_signal": "No flow temperature signal",
+              "no_relay_entity": "No relay picked",
+              "relay_domain_not_supported": "The relay is neither a switch nor a boiler thermostat entity",
+              "relay_in_another_role": "The relay also serves another role",
+              "relay_contact_not_confirmed": "Not confirmed that the relay is a separate contact",
+              "ha_starting": "Home Assistant is starting",
+              "monitoring_period": "The monitoring period has not passed yet",
+              "vt_central_boiler_active": "Versatile Thermostat's own central boiler is configured",
+              "vt_central_boiler_unknown": "Versatile Thermostat's central boiler cannot be ruled out yet",
+              "setpoint_outside_entity_range": "The setpoint entity does not take every value control may write",
+              "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit",
+              "setpoint_step_too_coarse": "The setpoint entity's step is too coarse",
+              "control_error": "Stopped after an internal error: switch control off and on",
+              "monitor_failed": "The plugin's monitor keeps failing",
+              "heating_off_ignored": "The boiler did not take \"heating off\": switch control off and on",
+              "gateway_not_set_up": "The gateway's integration is removed or disabled",
+              "mqtt_not_set_up": "The MQTT integration is removed or disabled",
+              "zone_not_vt": "A zone is not a Versatile Thermostat thermostat",
+              "zone_on_boiler_thermostat": "A zone is built on the boiler's own thermostat",
+              "relay_used_by_zone": "A zone already switches the relay",
+              "relay_of_boiler_interface": "The relay belongs to the boiler's or VT's own integration",
+              "relay_climate_modes": "The thermostat entity cannot be set to both heat and off"
+            }
+          },
+          "blockers_text": {
+            "name": "Blockers (text)"
+          },
+          "blocked_by_text": {
+            "name": "Blocked by (text)"
           }
         }
       }
@@ -1684,175 +2299,175 @@
   },
   "exceptions": {
     "invalid_options": {
-      "message": "The configuration cannot be used ({code}: {subject}). Open the options and correct it."
+      "message": "The configuration cannot be used ({subject}): {reason} Open the options and correct it."
     },
     "blocked_no_write_path": {
-      "message": "Control is not set up: choose in the options how the plugin writes to the boiler. Other reasons: {others}."
+      "message": "Control is not set up: choose in the options how the plugin writes to the boiler. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_setpoint_entity": {
-      "message": "Pick the entity that takes the flow setpoint. Other reasons: {others}."
+      "message": "Pick the entity that takes the flow setpoint. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_write_type_not_supported": {
-      "message": "The setpoint entity is declared persistent or of unknown write type, and the plugin never writes to the boiler's persistent memory: declare it expiring or held in the options. Other reasons: {others}."
+      "message": "The setpoint entity is declared persistent or of unknown write type, and the plugin never writes to the boiler's persistent memory: declare it expiring or held in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_hand_back": {
-      "message": "Choose how control is handed back to the boiler: a value, the device's own timeout or a switch. Other reasons: {others}."
+      "message": "Choose how control is handed back to the boiler: a value, the device's own timeout or a switch. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_gateway": {
-      "message": "Enter the OpenTherm Gateway ID. Other reasons: {others}."
+      "message": "Enter the OpenTherm Gateway ID. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_mqtt_topic": {
-      "message": "Enter the gateway's MQTT topic prefix and node name. Other reasons: {others}."
+      "message": "Enter the gateway's MQTT topic prefix and node name. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_confirmed_setpoint": {
-      "message": "Pick the entity that reports the setpoint the boiler received (read-back). Other reasons: {others}."
+      "message": "Pick the entity that reports the setpoint the boiler received (read-back). Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_topology": {
-      "message": "Declare how the gateway is connected. Other reasons: {others}."
+      "message": "Declare how the gateway is connected. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_topology_no_control": {
-      "message": "The gateway runs in monitor mode and cannot control the boiler. Other reasons: {others}."
+      "message": "The gateway runs in monitor mode and cannot control the boiler. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_curve_not_entered": {
-      "message": "Enter the heating curve, at least the design flow temperature. Other reasons: {others}."
+      "message": "Enter the heating curve, at least the design flow temperature. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_one_direct_circuit_only": {
-      "message": "This version controls only one circuit fed straight from the boiler (unmixed, or with a fixed thermostatic mixing valve). Other reasons: {others}."
+      "message": "This version controls only one circuit fed straight from the boiler (unmixed, or with a fixed thermostatic mixing valve). Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_underfloor_without_max_flow": {
-      "message": "Underfloor heating on an unmixed circuit needs a maximum flow temperature for that circuit. Other reasons: {others}."
+      "message": "Underfloor heating on an unmixed circuit needs a maximum flow temperature for that circuit. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_count_threshold_above_zones": {
-      "message": "The demand threshold asks for more zones than are configured, so heating would never be asked for: lower it in the options. Other reasons: {others}."
+      "message": "The demand threshold asks for more zones than are configured, so heating would never be asked for: lower it in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_zones": {
-      "message": "Control needs at least one Versatile Thermostat zone: add them in the options. Other reasons: {others}."
+      "message": "Control needs at least one Versatile Thermostat zone: add them in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_ha_starting": {
-      "message": "Home Assistant is still starting. Other reasons: {others}."
+      "message": "Home Assistant is still starting. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_monitoring_period": {
-      "message": "Control becomes available once the monitoring period has passed. Other reasons: {others}."
+      "message": "Control becomes available once the monitoring period has passed. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_vt_central_boiler_active": {
-      "message": "Versatile Thermostat's own central boiler is configured. Remove it first, so that only one controller drives the boiler, then restart Home Assistant: VT stops sending its central boiler's commands only then. Control keeps waiting until Home Assistant has restarted, even once you have unticked it. Other reasons: {others}."
+      "message": "Versatile Thermostat's own central boiler is configured. Remove it first, so that only one controller drives the boiler, then restart Home Assistant: VT stops sending its central boiler's commands only then. Control keeps waiting until Home Assistant has restarted, even once you have unticked it. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_vt_central_boiler_unknown": {
-      "message": "Versatile Thermostat's central boiler cannot be ruled out yet: VT's central configuration failed to load (see Settings → Devices & services), or its settings do not say whether its central boiler is on. Control waits for it. Other reasons: {others}."
+      "message": "Versatile Thermostat's central boiler cannot be ruled out yet: VT's central configuration failed to load (see Settings → Devices & services), or its settings do not say whether its central boiler is on. Control waits for it. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_control_error": {
-      "message": "Control stopped after an internal error. Check the log, then switch control off and on again. Other reasons: {others}."
+      "message": "Control stopped after an internal error. Check the log, then switch control off and on again. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_monitor_failed": {
-      "message": "The plugin's monitor has failed for 5 minutes, so control handed the boiler back; it resumes on its own once the monitor works again. Check the log. Other reasons: {others}."
+      "message": "The plugin's monitor has failed for 5 minutes, so control handed the boiler back; it resumes on its own once the monitor works again. Check the log. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_timeout_needs_expiring_writes": {
-      "message": "The device's timeout hands back only with expiring writes: choose a hand-back value or a switch in the options. Other reasons: {others}."
+      "message": "The device's timeout hands back only with expiring writes: choose a hand-back value or a switch in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_setpoint_outside_entity_range": {
-      "message": "The setpoint entity does not accept every value control may write (a limit, the \"off\" setpoint or the hand-back value): adjust them to its range in the options. Other reasons: {others}."
+      "message": "The setpoint entity does not accept every value control may write (a limit, the \"off\" setpoint or the hand-back value): adjust them to its range in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_off_setpoint_not_below_hard_min": {
-      "message": "The \"off\" setpoint is not at least 1 °C below the lowest water temperature: lower it in the options. Other reasons: {others}."
+      "message": "The \"off\" setpoint is not at least 1 °C below the lowest water temperature: lower it in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_setpoint_unit_not_supported": {
-      "message": "The setpoint entity's unit is not a temperature unit (°C, °F or K), so a value written would mean something else to it: pick the boiler's flow setpoint entity in the options. Other reasons: {others}."
+      "message": "The setpoint entity's unit is not a temperature unit (°C, °F or K), so a value written would mean something else to it: pick the boiler's flow setpoint entity in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_hand_back_switch_not_writable": {
-      "message": "Declare the external control switch expiring or held: the plugin never writes to the boiler's persistent memory. Other reasons: {others}."
+      "message": "Declare the external control switch expiring or held: the plugin never writes to the boiler's persistent memory. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_hand_back_value_above_max": {
-      "message": "The hand-back value is above the highest water temperature or the circuit's maximum: the boiler would get hotter water than the circuit allows. Other reasons: {others}."
+      "message": "The hand-back value is above the highest water temperature or the circuit's maximum: the boiler would get hotter water than the circuit allows. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_off_setpoint_near_hand_back_value": {
-      "message": "\"Off\" is within 0.5 K of the hand-back value, which returns the boiler to its own control: \"off\" would hand the boiler back instead of stopping heating. Pick another value. Other reasons: {others}."
+      "message": "\"Off\" is within 0.5 K of the hand-back value, which returns the boiler to its own control: \"off\" would hand the boiler back instead of stopping heating. Pick another value. Other reasons: {count} (all are listed on the control state)."
     },
     "monitor_refresh_failed": {
       "message": "The plugin's monitor could not compute its data; the log has the details."
     },
     "blocked_setpoint_step_too_coarse": {
-      "message": "The setpoint entity now takes values in steps above 1 °C, so its read-back cannot confirm a value: pick another entity in the options. Other reasons: {others}."
+      "message": "The setpoint entity now takes values in steps above 1 °C, so its read-back cannot confirm a value: pick another entity in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_heating_off_ignored": {
-      "message": "From the start of the session the boiler did not take the plugin's \"heating off\" — or the relay its \"off\" — so the plugin could not switch heating off. Control stopped and the boiler was handed back. Check the heating switch or the relay picked in the options and the boiler's settings, then switch control off and on. The monitor keeps running. Other reasons: {others}."
+      "message": "From the start of the session the boiler did not take the plugin's \"heating off\" — or the relay its \"off\" — so the plugin could not switch heating off. Control stopped and the boiler was handed back. Check the heating switch or the relay picked in the options and the boiler's settings, then switch control off and on. The monitor keeps running. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_hand_back_switch_is_heating_switch": {
-      "message": "The external control switch is also the heating switch or the setpoint entity: handing back would switch it on and off for ever. Pick another entity in the options. Other reasons: {others}."
+      "message": "The external control switch is also the heating switch or the setpoint entity: handing back would switch it on and off for ever. Pick another entity in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_entity_for_two_signals": {
-      "message": "One entity feeds two signals, so the later one is not used. Pick another entity for it in the signals options. Other reasons: {others}."
+      "message": "One entity feeds two signals, so the later one is not used. Pick another entity for it in the signals options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_topology_not_for_path": {
-      "message": "The gateway connection does not suit the write path: choose another in the options. Other reasons: {others}."
+      "message": "The gateway connection does not suit the write path: choose another in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_heating_switch": {
-      "message": "Control needs a heating switch that the boiler does not store in its memory. Without one, \"off\" would be a low setpoint, and whether that stops the boiler and its pump is not known yet. The monitor keeps running. Other reasons: {others}."
+      "message": "Control needs a heating switch that the boiler does not store in its memory. Without one, \"off\" would be a low setpoint, and whether that stops the boiler and its pump is not known yet. The monitor keeps running. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_gateway_not_set_up": {
-      "message": "The OpenTherm Gateway integration of the gateway picked is removed or disabled: the commands would go nowhere. Set it up or enable it, or pick another gateway in the options. Other reasons: {others}."
+      "message": "The OpenTherm Gateway integration of the gateway picked is removed or disabled: the commands would go nowhere. Set it up or enable it, or pick another gateway in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_mqtt_not_set_up": {
-      "message": "The MQTT integration is removed or disabled: the commands would go nowhere. Set it up or enable it. Other reasons: {others}."
+      "message": "The MQTT integration is removed or disabled: the commands would go nowhere. Set it up or enable it. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_zone_not_vt": {
-      "message": "A zone is not a Versatile Thermostat thermostat, and only those can be zones: remove it in the options. Other reasons: {others}."
+      "message": "A zone is not a Versatile Thermostat thermostat, and only those can be zones: remove it in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_zone_on_boiler_thermostat": {
-      "message": "A Versatile Thermostat zone is built on the boiler's or gateway's own thermostat entity: it would ask for heat whenever the flame burns. Build the zone on a room sensor and its valves or radiator thermostats instead. Other reasons: {others}."
+      "message": "A Versatile Thermostat zone is built on the boiler's or gateway's own thermostat entity: it would ask for heat whenever the flame burns. Build the zone on a room sensor and its valves or radiator thermostats instead. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_design_flow_too_low": {
-      "message": "The design flow temperature must be at least 5 K above the curve's room temperature. Correct it in the options. Other reasons: {others}."
+      "message": "The design flow temperature must be at least 5 K above the curve's room temperature. Correct it in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_design_flow_above_hard_max": {
-      "message": "The design flow temperature is above the highest water temperature, so the curve would be cut off in frost. Raise the highest water temperature or lower the design flow in the options. Other reasons: {others}."
+      "message": "The design flow temperature is above the highest water temperature, so the curve would be cut off in frost. Raise the highest water temperature or lower the design flow in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_design_outdoor_too_warm": {
-      "message": "The design outdoor temperature must be at least 10 K below the curve's room temperature. Correct it in the options. Other reasons: {others}."
+      "message": "The design outdoor temperature must be at least 10 K below the curve's room temperature. Correct it in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_hard_min_not_below_design_flow": {
-      "message": "The lowest water temperature must be below the design flow temperature. Correct it in the options. Other reasons: {others}."
+      "message": "The lowest water temperature must be below the design flow temperature. Correct it in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_thermostat_on_off": {
-      "message": "An on/off contact is wired to the gateway's thermostat terminals: the gateway's \"heating off\" would block it after a Home Assistant crash, so control is not offered. The monitor keeps running. Other reasons: {others}."
+      "message": "An on/off contact is wired to the gateway's thermostat terminals: the gateway's \"heating off\" would block it after a Home Assistant crash, so control is not offered. The monitor keeps running. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_thermostat_kind_unknown": {
-      "message": "Control waits until you say, in the control options, what is wired to the gateway's thermostat terminals. Other reasons: {others}."
+      "message": "Control waits until you say, in the control options, what is wired to the gateway's thermostat terminals. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_thermostat_kind_contradicts_topology": {
-      "message": "This answer does not fit the gateway connection: an OpenTherm thermostat means \"Gateway with a thermostat\", nothing means stand-alone. Pick the other connection. Other reasons: {others}."
+      "message": "This answer does not fit the gateway connection: an OpenTherm thermostat means \"Gateway with a thermostat\", nothing means stand-alone. Pick the other connection. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_boiler_class_no_control": {
-      "message": "Control needs a boiler of the class \"Flow setpoint\" or \"On/off (relay)\". Other reasons: {others}."
+      "message": "Control needs a boiler of the class \"Flow setpoint\" or \"On/off (relay)\". Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_path_not_for_boiler_class": {
-      "message": "The write path does not suit the boiler class: a relay for an on/off boiler, a setpoint path for a flow-setpoint boiler. Other reasons: {others}."
+      "message": "The write path does not suit the boiler class: a relay for an on/off boiler, a setpoint path for a flow-setpoint boiler. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_relay_entity": {
-      "message": "Pick the relay in the control options. Other reasons: {others}."
+      "message": "Pick the relay in the control options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_relay_contact_not_confirmed": {
-      "message": "Control waits until you confirm, in the relay options, that the relay is a separate contact and not a setting stored in the boiler's memory. Other reasons: {others}."
+      "message": "Control waits until you confirm, in the relay options, that the relay is a separate contact and not a setting stored in the boiler's memory. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_relay_domain_not_supported": {
-      "message": "The relay must be a switch or a boiler thermostat entity, not a helper. Other reasons: {others}."
+      "message": "The relay must be a switch or a boiler thermostat entity, not a helper. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_relay_climate_modes": {
-      "message": "This thermostat entity cannot be set to both heat and off. Other reasons: {others}."
+      "message": "This thermostat entity cannot be set to both heat and off. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_relay_used_by_zone": {
-      "message": "A Versatile Thermostat zone already switches this entity. Other reasons: {others}."
+      "message": "A Versatile Thermostat zone already switches this entity. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_relay_of_boiler_interface": {
-      "message": "This entity belongs to the boiler's or VT's own integration, not to a relay. Other reasons: {others}."
+      "message": "This entity belongs to the boiler's or VT's own integration, not to a relay. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_relay_in_another_role": {
-      "message": "The relay is an entity the options already use in another role or as a signal. Other reasons: {others}."
+      "message": "The relay is an entity the options already use in another role or as a signal. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_flame_signal": {
-      "message": "Water-temperature control needs the flame mapped in the signals. Other reasons: {others}."
+      "message": "Water-temperature control needs the flame mapped in the signals. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_flow_signal": {
-      "message": "Water-temperature control needs the flow temperature mapped in the signals. Other reasons: {others}."
+      "message": "Water-temperature control needs the flow temperature mapped in the signals. Other reasons: {count} (all are listed on the control state)."
     }
   },
   "issues": {
@@ -2050,6 +2665,10 @@
     "installation_underfloor_without_max_flow": {
       "title": "Underfloor heating without a water limit",
       "description": "These circuits feed underfloor heating straight from the boiler, without a mixing valve, and have no maximum flow temperature: {circuits}. Water that is too hot can damage a floor. Enter each circuit's maximum flow temperature — the floor's limit from its installer or manual — in the integration's options; until then control stays blocked."
+    },
+    "learning_not_resumed": {
+      "title": "The plugin could not switch learning back on in some zones",
+      "description": "Control paused SmartPI's learning in these zones and has not been able to switch it back on for a day, so it no longer tries: {zones}. SmartPI keeps learning off until it is switched on — in SmartPI's own settings, or with its service \"set_smartpi_learning\". If you switched it off yourself, nothing needs doing. This notice goes once learning is on again."
     }
   }
 }

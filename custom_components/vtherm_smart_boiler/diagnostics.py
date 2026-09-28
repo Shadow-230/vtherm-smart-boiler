@@ -1,9 +1,13 @@
 """Diagnostics download, redacted: entity IDs are replaced by stable placeholders and the
-gateway's identifiers hidden; what is not personal — service names, versions — stays readable."""
+gateway's identifiers hidden; what is not personal — service names, versions — stays readable.
+An entry whose setup failed has no runtime data: its diagnostics give the options, its state and
+the control state read from its store, redacted alike (review question 20)."""
 
 from __future__ import annotations
 
+import logging
 import re
+from collections.abc import Mapping
 from dataclasses import asdict
 from typing import Any
 
@@ -12,8 +16,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from . import feature_manager
-from .coordinator import SmartBoilerCoordinator
+from .coordinator import SmartBoilerCoordinator, async_read_control_state
 from .core.parameters import ParameterKey, Source
+
+_LOGGER = logging.getLogger(__name__)
 
 ENTITY_ID = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
 # Identifiers of the user's devices (an MQTT node name often holds a MAC address).
@@ -41,7 +47,7 @@ class _Redactor:
     def __call__(self, value: Any) -> Any:
         if isinstance(value, str) and self._is_entity(value):
             return self._names.setdefault(value, f"entity_{len(self._names) + 1}")
-        if isinstance(value, dict):
+        if isinstance(value, Mapping):
             return {
                 self(key): "**redacted**" if key in REDACTED_KEYS and item else self(item)
                 for key, item in value.items()
@@ -91,9 +97,15 @@ def _parameters(coordinator: SmartBoilerCoordinator) -> dict[str, Any]:
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, Any]:
-    coordinator: SmartBoilerCoordinator = entry.runtime_data
+    coordinator = getattr(entry, "runtime_data", None)
+    if not isinstance(coordinator, SmartBoilerCoordinator):
+        return await _async_not_running(hass, entry)
     data = coordinator.data
-    redact = _Redactor(hass, _named_entities(entry.options))
+    # Every entity the options name — and those the stored control state names, such as the
+    # options the boiler was taken with — also one that is away now (P-30).
+    unit = coordinator.control or coordinator.hand_back_unit
+    stored = unit.stored() if unit is not None else coordinator.stored_control
+    redact = _Redactor(hass, _named_entities(entry.options) | _named_entities(stored))
     analysis = data.analysis
     summary: dict[str, Any] | None = None
     if analysis is not None:
@@ -135,7 +147,10 @@ async def async_get_config_entry_diagnostics(
             }
             | {"weather": len(coordinator.history.weather)},
             "signals": {s.value: asdict(h) for s, h in data.health.items()},
+            # Y4: by what the configuration gives (the entities follow it), and by what is
+            # known now (the "Features" sensor).
             "features": {f.value: asdict(state) for f, state in data.features.items()},
+            "features_now": {f.value: asdict(state) for f, state in data.features_now.items()},
             "parameters": _parameters(coordinator),
             # P-90: where the user reset a measured building value, the moment it happened.
             "fit_since": {key.value: at for key, at in coordinator.fit_since.items()},
@@ -167,6 +182,29 @@ async def async_get_config_entry_diagnostics(
     return document
 
 
+async def _async_not_running(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
+    """Question 20: an entry without runtime data — its setup failed, or it is not loaded —
+    gives its options, its state and the control state its store holds, all redacted."""
+    try:
+        read = await async_read_control_state(hass, entry.entry_id, entry.options)
+    except Exception:  # the diagnostics still answer, with what could be read
+        _LOGGER.exception("Could not read the stored control state for the diagnostics")
+        state: dict[str, Any] = {}
+        readable = False
+    else:
+        state, readable = dict(read.state), read.readable
+    redact = _Redactor(hass, _named_entities(entry.options) | _named_entities(state))
+    document: dict[str, Any] = redact(
+        {
+            "options": dict(entry.options),
+            "state": entry.state.value,
+            "control_state": state,
+            "control_readable": readable,
+        }
+    )
+    return document
+
+
 def _feature_manager(hass: HomeAssistant) -> dict[str, Any]:
     registration = feature_manager.registration(hass)
     if registration is None:
@@ -175,11 +213,13 @@ def _feature_manager(hass: HomeAssistant) -> dict[str, Any]:
 
 
 def _named_entities(value: Any) -> frozenset[str]:
-    """Every entity ID the options name — also one that is away now."""
+    """Every entity ID the options name — also one that is away now — in any mapping, its keys
+    too (the stored control state keys the zones it paused by their IDs): the entry's options
+    are a read-only mapping (P-30)."""
     if isinstance(value, str):
         return frozenset({value}) if ENTITY_ID.match(value) else frozenset()
-    if isinstance(value, dict):
-        value = list(value.values())
+    if isinstance(value, Mapping):
+        value = [*value.keys(), *value.values()]
     if isinstance(value, list | tuple):
         return frozenset().union(*(_named_entities(item) for item in value))
     return frozenset()

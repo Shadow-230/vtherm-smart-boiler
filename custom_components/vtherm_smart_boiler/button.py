@@ -9,14 +9,13 @@ control.
 from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .coordinator import SmartBoilerCoordinator
+from .coordinator import SmartBoilerConfigEntry, SmartBoilerCoordinator
 from .core.parameters import ParameterKey
-from .entity import ControlEntity, SmartBoilerEntity
+from .entity import ControlEntity, SmartBoilerEntity, feature_configured
 
 PARALLEL_UPDATES = 1  # one press at a time
 
@@ -29,14 +28,18 @@ RESET_BUTTONS = (
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: SmartBoilerConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    coordinator: SmartBoilerCoordinator = entry.runtime_data
+    coordinator = entry.runtime_data
     entities: list[ButtonEntity] = [
         ResetMeasuredButton(coordinator, key, parameter) for key, parameter in RESET_BUTTONS
     ]
-    if coordinator.control is not None:
+    if coordinator.control is not None and feature_configured(
+        coordinator, "reset_comfort_correction"
+    ):
+        # Only where there is a correction to reset: control that sets the water, with zones
+        # and the correction on (the missing-data rule, Y4).
         entities.append(ResetCorrectionButton(coordinator))
     coordinator.expect_entities(entities)
     async_add_entities(entities)

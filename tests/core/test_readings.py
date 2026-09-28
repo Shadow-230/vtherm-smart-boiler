@@ -9,7 +9,6 @@ from custom_components.vtherm_smart_boiler.core.readings import (
     BoilerSnapshot,
     Reading,
     ZoneState,
-    plausible_reading,
 )
 from custom_components.vtherm_smart_boiler.core.signals import (
     LINK_SIGNALS,
@@ -35,26 +34,6 @@ def test_unknown_reading_is_never_fresh() -> None:
     assert not UNKNOWN.is_fresh(0.0, None)
     assert not Reading(None, 100.0).is_fresh(100.0, None)
     assert UNKNOWN.age(5.0) is None
-
-
-@pytest.mark.parametrize(
-    ("signal", "raw", "expected"),
-    [
-        (Signal.FLOW, 45, 45.0),
-        (Signal.FLOW, 150.0, None),  # above the plausible range
-        (Signal.FLOW, float("nan"), None),
-        (Signal.FLOW, True, None),  # a bool is not a temperature
-        (Signal.FLAME, True, True),
-        (Signal.FLAME, 1.0, None),  # a number is not a flame state
-        (Signal.MODULATION, -1.0, None),
-        (Signal.PRESSURE, 1.4, 1.4),
-        (Signal.OUTDOOR, None, None),
-    ],
-)
-def test_plausible_reading(signal: Signal, raw: float | bool | None, expected: object) -> None:
-    reading = plausible_reading(signal, raw, reported_at=5.0)
-    assert reading.value == expected
-    assert reading.reported_at == 5.0
 
 
 def test_snapshot_typed_access_and_freshness() -> None:

@@ -35,6 +35,9 @@ CRITERIA_JUDGED_CONDENSING = 3  # of 4
 CRITERIA_JUDGED_NON_CONDENSING = 2  # of 3: condensing is no criterion
 # S-17: the load was not judged because the building model is only an estimate.
 ESTIMATE_ONLY = "estimate_only"
+# Y4: low condensing is not changed because control does not set the water temperature here —
+# a relay, or no water-temperature control — not because anti-cycling comes later.
+WATER_NOT_CONTROLLED = "water_not_controlled"
 
 
 class Verdict(StrEnum):
@@ -75,7 +78,8 @@ class Reason:
     limit: float | None = None
     # S-22: for a problem, whether 0.2.2's control changes it; ``None`` for any other reason.
     changed_by_control: bool | None = None
-    # Why a criterion was not judged, where a code says more (``ESTIMATE_ONLY``).
+    # Where a code says more: why a criterion was not judged (``ESTIMATE_ONLY``), or why a
+    # problem is not changed (``WATER_NOT_CONTROLLED``).
     detail: str | None = None
 
 
@@ -256,6 +260,7 @@ def assess(
                         opts.low_condensing_share,
                         # Lower water from the curve: only where control sets the water.
                         changed_by_control=opts.control_sets_water,
+                        detail=None if opts.control_sets_water else WATER_NOT_CONTROLLED,
                     )
                 )
             elif condensing.value >= opts.good_condensing_share:

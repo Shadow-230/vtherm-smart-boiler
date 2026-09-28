@@ -11,6 +11,7 @@ from custom_components.vtherm_smart_boiler.core.metrics import CycleStats, Share
 from custom_components.vtherm_smart_boiler.core.series import Series
 from custom_components.vtherm_smart_boiler.core.verdict import (
     ESTIMATE_ONLY,
+    WATER_NOT_CONTROLLED,
     Reason,
     ReasonCode,
     ReasonKind,
@@ -340,3 +341,19 @@ def test_the_load_share_uses_the_current_model_on_stored_days() -> None:
     assert DaySummary.from_dict(days[0].to_dict()) == days[0]
     legacy = {k: v for k, v in days[0].to_dict().items() if k != "outdoor_s"}
     assert DaySummary.from_dict(legacy).outdoor_s is None
+
+
+def test_low_condensing_not_changed_says_why_for_the_path() -> None:
+    """Y4 (the Y3 carry-over): where control does not set the water temperature — a relay, or
+    no water-temperature control — low condensing is "not changed" for that reason, not for
+    anti-cycling planned later: its ``detail`` says so. Where control sets the water, and for
+    the cycling problems, no such detail."""
+    low = (stats(1.0, 0.1), Share(0.2, DAY), Share(0.05, DAY))
+    relay = reason(assess(10 * DAY, *low, RELAY), ReasonCode.LOW_CONDENSING)
+    assert (relay.changed_by_control, relay.detail) == (False, WATER_NOT_CONTROLLED)
+    unknown = reason(assess(10 * DAY, *low), ReasonCode.LOW_CONDENSING)
+    assert unknown.detail == WATER_NOT_CONTROLLED
+    water = reason(assess(10 * DAY, *low, FLOW_SETPOINT), ReasonCode.LOW_CONDENSING)
+    assert (water.changed_by_control, water.detail) == (True, None)
+    cycling = assess(10 * DAY, stats(4.5, 0.7), Share(0.9, DAY), Share(0.05, DAY), RELAY)
+    assert reason(cycling, ReasonCode.FREQUENT_STARTS).detail is None

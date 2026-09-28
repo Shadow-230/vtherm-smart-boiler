@@ -58,27 +58,98 @@ def test_compact_round_trip_through_json() -> None:
 
 def test_store_trims_sorts_and_prunes() -> None:
     store = ForecastStore()
-    store.add(hourly(T0 + 2 * DAY, [1.0] * 60))
-    store.add(hourly(T0, [1.0] * 60))
-    assert [s.taken_at for s in store.snapshots()] == [T0, T0 + 2 * DAY]
+    week = partition_of(T0) * PARTITION_S
+    store.add(hourly(week + 2 * DAY, [1.0] * 60))
+    store.add(hourly(week, [1.0] * 60))
+    assert [s.taken_at for s in store.snapshots()] == [week, week + 2 * DAY]
     assert all(len(s.points) <= 48 for s in store.snapshots())
     assert store.snapshots(ForecastKind.DAILY) == []
-    assert len(store.snapshots(since=T0 + DAY)) == 1
-    assert store.prune(now=T0 + 91 * DAY) == 1
-    assert [s.taken_at for s in store.snapshots()] == [T0 + 2 * DAY]
+    assert len(store.snapshots(since=week + DAY)) == 1
+    assert store.prune(now=week + 91 * DAY) == 1
+    assert [s.taken_at for s in store.snapshots()] == [week + 2 * DAY]
+    assert store.count() == 1
 
 
-def test_partitions_round_trip_and_skip_broken_entries() -> None:
+def test_only_the_current_week_is_kept_in_memory() -> None:
+    """P-23: the snapshots of the week being written stay in memory; the older weeks only as a
+    count — which is all this release uses — pruned with the retention as before."""
     store = ForecastStore()
-    store.add(hourly(T0, [1.0, 2.0]))
-    store.add(hourly(T0 + PARTITION_S, [3.0], first=T0 + PARTITION_S))
-    parts = store.partitions()
-    assert sorted(parts) == [partition_of(T0), partition_of(T0) + 1]
+    week = partition_of(T0) * PARTITION_S
+    store.add(hourly(week, [1.0]))
+    store.add(hourly(week + HOUR, [2.0], first=week + HOUR))
+    store.add(hourly(week + PARTITION_S, [3.0], first=week + PARTITION_S))
+    assert [s.taken_at for s in store.snapshots()] == [week + PARTITION_S]
+    assert store.in_partition(partition_of(week)) == []  # the older week: counted only
+    assert [s.taken_at for s in store.in_partition(partition_of(week) + 1)] == [week + PARTITION_S]
+    assert store.count() == 3
+    assert store.prune(now=week + HOUR + 90 * DAY + 1) == 2
+    assert store.count() == 1
+
+
+def test_a_snapshot_of_an_older_week_is_not_stored() -> None:
+    """Negative: with the clock set back past the start of the week in memory, a snapshot of
+    the older week is refused — that week is no longer in memory, and its file must not be
+    rewritten with this one snapshot alone."""
+    store = ForecastStore()
+    week = partition_of(T0) * PARTITION_S
+    store.add(hourly(week + PARTITION_S, [3.0], first=week + PARTITION_S))
+    assert store.add(hourly(week + DAY, [1.0], first=week + DAY)) is None
+    assert store.count() == 1
+    assert [s.taken_at for s in store.snapshots()] == [week + PARTITION_S]
+
+
+def test_partitions_load_the_current_week_and_count_the_others() -> None:
+    """P-23: stored weeks are parsed apart — the current one in full, the older ones only far
+    enough to count what they hold; an unreadable entry is skipped and counted as such."""
+    week = partition_of(T0) * PARTITION_S
+    older = ForecastStore()
+    older.add(hourly(week, [1.0, 2.0]))
+    older.add(hourly(week + HOUR, [1.5], first=week + HOUR))
+    current = ForecastStore()
+    current.add(hourly(week + PARTITION_S, [3.0], first=week + PARTITION_S))
     restored = ForecastStore()
-    skipped = restored.load([*parts.values(), [{"broken": True}]])
-    assert skipped == 1
-    assert [s.taken_at for s in restored.snapshots()] == [T0, T0 + PARTITION_S]
-    assert restored.snapshots()[0].points[1].temperature == 2.0
+    skipped = restored.load(
+        {
+            partition_of(week): [*older.partitions()[partition_of(week)], {"broken": True}],
+            partition_of(week) + 1: [
+                *current.partitions()[partition_of(week) + 1],
+                {"at": "not a number"},
+            ],
+        },
+        current=partition_of(week) + 1,
+    )
+    assert skipped == 2
+    assert [s.taken_at for s in restored.snapshots()] == [week + PARTITION_S]
+    assert restored.snapshots()[0].points[0].temperature == 3.0
+    assert restored.count() == 3
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        None,
+        "text",
+        {},
+        {"at": None, "kind": "hourly", "dt": []},
+        {"at": float("nan"), "kind": "hourly", "dt": []},
+        {"at": True, "kind": "hourly", "dt": []},
+        {"at": T0, "kind": "weekly", "dt": []},
+        {"at": T0, "kind": "hourly", "dt": "not a list"},
+    ],
+    ids=["none", "text", "empty", "no_time", "nan", "bool", "unknown_kind", "no_offsets"],
+)
+def test_an_unreadable_older_entry_is_not_counted(entry: object) -> None:
+    """Negative: an older week's entry is counted only when it could be read."""
+    store = ForecastStore()
+    week = partition_of(T0)
+    assert store.load({week: [entry]}, current=week + 1) == 1
+    assert store.count() == 0
+
+
+def test_loading_nothing_leaves_an_empty_store() -> None:
+    store = ForecastStore()
+    assert store.load({}, current=partition_of(T0)) == 0
+    assert (store.count(), store.snapshots()) == (0, [])
 
 
 def test_one_partition_alone() -> None:

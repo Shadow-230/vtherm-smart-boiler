@@ -20,6 +20,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
 from custom_components.vtherm_smart_boiler.const import DOMAIN
+from custom_components.vtherm_smart_boiler.core.alarms import AlarmKind
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 
 from .harness import BOILER_ENTITIES, FakeBoiler
@@ -134,7 +135,10 @@ async def test_zero_pressure_from_a_non_gateway_sensor_raises_add_water(
     low = rig.state("binary_sensor", "alarm_pressure_low")
     assert low.state == "on"
     assert low.attributes["level"] == "alarm"
-    assert low.attributes["value"] == 0.0
+    assert "value" not in low.attributes  # P-72: the diagnostics keep it
+    assert rig.entry is not None
+    shown = rig.entry.runtime_data.data.alarms[AlarmKind.PRESSURE_LOW]
+    assert shown.value == 0.0
     found = issue(rig, "add_water")
     assert found is not None
     assert found.translation_placeholders == {"value": "0.00", "threshold": "0.8"}
@@ -277,7 +281,7 @@ async def test_without_a_threshold_there_is_no_add_water(rig: Rig) -> None:
     from custom_components.vtherm_smart_boiler.core.signal_check import Feature
 
     state = rig.entry.runtime_data.data.features[Feature.ADD_WATER]
-    assert state.reason == "no_threshold"
+    assert state.missing == ("add_water_threshold",)  # Y4: named as a missing input
 
 
 # --- boiler protection: the boiler's own fault -------------------------------------------------

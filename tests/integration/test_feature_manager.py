@@ -288,7 +288,6 @@ async def test_registration_errors_never_reach_vt(
     await entry.runtime_data.async_refresh()  # the check at each update
     assert entry.runtime_data.last_update_success
     assert registration.state is expected
-    assert registration.registered is (fail == "unregister")
     assert len(api.registered) == (1 if fail == "unregister" else 0)
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

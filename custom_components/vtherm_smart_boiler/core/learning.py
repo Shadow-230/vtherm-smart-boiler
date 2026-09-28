@@ -75,6 +75,9 @@ class LearningState:
     causes: Mapping[str, tuple[PauseCause, ...]] = field(default_factory=dict)
     # A paused zone whose hot water has ended: since when — its flow wait is capped from then.
     dhw_ended: Mapping[str, float] = field(default_factory=dict)
+    # Resumes given up a day after the first one (Y4): since when; shown until the zone's flag
+    # reads on again or the plugin pauses it again.
+    given_up: Mapping[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,16 +107,21 @@ def follow_resumes(
     resuming = dict(state.resuming)
     # A resume stored without its start (by 0.2.1) counts from its last send.
     since = {zone_id: state.resume_since.get(zone_id, sent) for zone_id, sent in resuming.items()}
+    # A zone given up whose flag reads on again — switched back on, say by the user — is done.
+    given_up = {z: t for z, t in state.given_up.items() if flags.get(z) is not True}
     again: list[str] = []
     for zone_id, sent_at in state.resuming.items():
         flag = flags.get(zone_id)
         if flag is True or now - since[zone_id] >= config.give_up_s:
             resuming.pop(zone_id)
             since.pop(zone_id)
+            if flag is not True:
+                given_up[zone_id] = now  # Y4: recorded, to be told once and shown
         elif flag is False and now - sent_at >= config.check_s:
             again.append(zone_id)
             resuming[zone_id] = now
-    return replace(state, resuming=resuming, resume_since=since), tuple(again)
+    followed = replace(state, resuming=resuming, resume_since=since, given_up=given_up)
+    return followed, tuple(again)
 
 
 def plan_learning(
@@ -149,6 +157,7 @@ def plan_learning(
     resume_since = dict(state.resume_since)
     kept = {z: c for z, c in state.causes.items() if z in paused}
     ended = {z: t for z, t in state.dhw_ended.items() if z in paused}
+    given_up = dict(state.given_up)
     pause: list[str] = []
     resume: list[str] = list(again)
     causes: dict[str, tuple[PauseCause, ...]] = {}
@@ -186,6 +195,7 @@ def plan_learning(
             paused[zone_id] = now
             toggles[zone_id] = now
             kept[zone_id] = tuple(reasons)
+            given_up.pop(zone_id, None)  # a new pause: an earlier give-up is over
         elif (
             not reasons
             and since is not None
@@ -201,7 +211,7 @@ def plan_learning(
             ended.pop(zone_id, None)
             toggles[zone_id] = now
     return LearningPlan(
-        LearningState(paused, setpoints, toggles, resuming, resume_since, kept, ended),
+        LearningState(paused, setpoints, toggles, resuming, resume_since, kept, ended, given_up),
         tuple(pause),
         tuple(resume),
         causes,
@@ -232,7 +242,8 @@ def release_all(state: LearningState, now: float) -> tuple[LearningState, tuple[
     toggles.update(dict.fromkeys(state.paused, now))
     resuming = {**state.resuming, **dict.fromkeys(state.paused, now)}
     since = {**dict.fromkeys(state.paused, now), **state.resume_since}
-    released = LearningState({}, state.setpoints, toggles, resuming, since)  # causes forgotten
+    # The causes are forgotten; what was given up stays shown.
+    released = LearningState({}, state.setpoints, toggles, resuming, since, given_up=state.given_up)
     return released, tuple(state.paused)
 
 
@@ -251,6 +262,7 @@ def rename_zone(state: LearningState, old: str, new: str) -> LearningState:
         state.resume_since,
         state.causes,
         state.dhw_ended,
+        state.given_up,
     )
     if not any(old in values for values in keyed):
         return state
@@ -262,4 +274,5 @@ def rename_zone(state: LearningState, old: str, new: str) -> LearningState:
         resume_since=moved(state.resume_since),
         causes=moved(state.causes),
         dhw_ended=moved(state.dhw_ended),
+        given_up=moved(state.given_up),
     )

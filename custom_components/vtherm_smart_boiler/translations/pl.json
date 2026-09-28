@@ -348,6 +348,27 @@
           "low_pressure_fault": "Usterka niskiego ciśnienia wody (z kotła)",
           "boiler_lockout": "Blokada kotła",
           "fault_indication": "Sygnalizacja usterki kotła"
+        },
+        "data_description": {
+          "flame": "Płomień: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą. Sterowanie czyta ten sygnał według tego limitu: nieświeży przez pięć minut w ciągu dziesięciu oznacza oddanie kotła.",
+          "flow": "Temperatura zasilania: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą. Sterowanie czyta ten sygnał według tego limitu: nieświeży przez pięć minut w ciągu dziesięciu oznacza oddanie kotła.",
+          "return": "Temperatura powrotu: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "modulation": "Modulacja: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "dhw_active": "Ciepła woda użytkowa (c.w.u.) aktywna: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "pressure": "Ciśnienie wody: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "outdoor": "Temperatura zewnętrzna (czujnik kotła): limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "ch_setpoint": "Nastawa c.o.: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "ch_active": "C.o. aktywne: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "pump_running": "Pompa pracuje: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "flue_gas": "Temperatura spalin: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "gas_meter": "Licznik gazu: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "room_setpoint": "Nastawa termostatu przewodowego: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "room_temperature": "Temperatura z termostatu przewodowego: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "weather": "Własny limit wieku encji pogody, w minutach, nigdy czujnika zewnętrznego: dłużej niezgłaszana temperatura liczy się jako nieznana. Puste (domyślnie): liczy się tylko dostępność encji.",
+          "boiler_power": "Moc elektryczna kotła: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "low_pressure_fault": "Usterka niskiego ciśnienia wody (z kotła): limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "boiler_lockout": "Blokada kotła: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "fault_indication": "Sygnalizacja usterki kotła: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą."
         }
       },
       "boiler": {
@@ -603,7 +624,7 @@
           "room": "Temperatura pokoju, dla której zbudowano krzywą, w °C. Domyślnie 20 °C. Za wysoka podnosi całą krzywą i marnuje gaz.",
           "exponent": "Jak wygina się krzywa. Puste pole bierze go z grzejników: grzejniki 1,3, konwektory 1,4, podłogówka 1,1. Złe wygięcie niedogrzewa w mrozy albo przegrzewa przy łagodnej pogodzie.",
           "offset": "Przesuwa całą krzywą w górę albo w dół, w K. Domyślnie 0. W górę marnuje gaz; w dół zostawia zimne pokoje.",
-          "ceiling_band": "Jak wysoko ponad krzywą może pójść korekta komfortu, w K. Domyślnie 10 K; 0 w praktyce wyłącza korektę. Większa pozwala jednemu zimnemu pokojowi podnieść wodę dla wszystkich.",
+          "ceiling_band": "Jak wysoko ponad krzywą korekta komfortu może podnieść wodę, w K. Sama korekta zatrzymuje się na 3 K: zapas 3 K lub większy zostawia jej tę granicę, mniejszy ją obniża, a 0 w praktyce wyłącza korektę. Domyślnie 10 K. Ryzyko: mały zapas daje mniej pomocy pokojowi, który pozostaje zimny.",
           "fallback_setpoint": "Używana, gdy temperatura zewnętrzna jest nieznana — czujnik zawiódł albo monitor uznał go za zawieszony lub odbiegający od pogody, a encji pogody też brak — po trzech godzinach trzymania ostatniej temperatury efektywnej, w °C. Puste (domyślnie): krzywa w punkcie projektowym, najwięcej ciepła, jakie daje: nigdy za mało ciepła, zawory chronią pomieszczenia przed przegrzaniem.",
           "frost_limit": "Pilnowana strefa zimniejsza niż ta wartość uruchamia grzanie, bez względu na resztę, jeśli ciepło może do niej dotrzeć — zawór otwarty albo urządzenie włączone — w °C. Domyślnie 5 °C. Za niska grozi zamarznięciem rur; za wysoka grzeje pokoje, które trzymasz wyłączone.",
           "frost_release": "Ochrona przed mrozem kończy się, gdy każda pilnowana strefa jest powyżej tej wartości, w °C. Domyślnie 7 °C, powyżej progu. Blisko progu grzanie przeciwmrozowe włącza się i wyłącza częściej.",
@@ -1027,6 +1048,18 @@
           "reasons": {
             "name": "Powody",
             "state": {
+              "monitored_days": "Dni monitorowania",
+              "heating_burns": "Policzone palenia c.o.",
+              "frequent_starts": "Częste starty",
+              "few_starts": "Mało startów",
+              "short_burns": "Głównie krótkie palenia",
+              "long_burns": "Palenia dość długie",
+              "low_condensing": "Mało kondensacji",
+              "good_condensing": "Dobra kondensacja",
+              "condensing_unknown": "Kondensacja nieznana: brak temperatury powrotu albo za mało jej danych",
+              "load_often_below_min_power": "Obciążenie budynku często poniżej mocy minimalnej kotła",
+              "load_rarely_below_min_power": "Obciążenie budynku rzadko poniżej mocy minimalnej kotła",
+              "load_unknown": "Obciążenie budynku nieznane",
               "criteria_judged": "Za mało kryteriów udało się ocenić, by uznać, że sterowania nie warto włączać",
               "no_burner_signal": "Nie wskazano sygnału palnika (płomienia): bez niego nie ma werdyktu"
             }
@@ -1039,10 +1072,17 @@
             }
           },
           "detail": {
-            "name": "Dlaczego nieoceniony",
+            "name": "Szczegół",
             "state": {
-              "estimate_only": "Tylko szacunek: model budynku opiera się na zgrubnych wartościach domyślnych, a nie na wpisanych lub pewnie zmierzonych"
+              "estimate_only": "Tylko szacunek: model budynku opiera się na zgrubnych wartościach domyślnych, a nie na wpisanych lub pewnie zmierzonych",
+              "water_not_controlled": "Bez zmian: sterowanie nie ustawia tu temperatury wody — przez przekaźnik albo bez sterowania temperaturą wody"
             }
+          },
+          "reasons_text": {
+            "name": "Powody (tekst)"
+          },
+          "monitoring_since": {
+            "name": "Monitorowanie od"
           }
         }
       },
@@ -1172,7 +1212,7 @@
         "name": "Migawki prognozy"
       },
       "critical_zone": {
-        "name": "Strefa krytyczna {circuit}",
+        "name": "Strefa krytyczna, obieg {circuit}",
         "state_attributes": {
           "status": {
             "name": "Stan",
@@ -1182,6 +1222,10 @@
               "no_valid_measurement": "Brak poprawnego pomiaru"
             }
           }
+        },
+        "state": {
+          "no_active_zone": "Żadna strefa nie grzeje",
+          "no_valid_measurement": "Brak poprawnego pomiaru"
         }
       },
       "emitter_power_factor": {
@@ -1278,6 +1322,121 @@
               "not_seen": "Na razie brak oznak grzania",
               "unverified": "Bez potwierdzenia, że kocioł grzeje"
             }
+          },
+          "reasons": {
+            "name": "Powody",
+            "state": {
+              "control_off": "Sterowanie wyłączone",
+              "precondition": "Blokada nie pozwala sterować (zobacz blokady)",
+              "alarm_hand_back": "Alarm oddał kocioł i zablokował sterowanie: wyłącz i włącz sterowanie",
+              "boiler_link_stale": "Dane kotła nie są aktualne: nic nie jest zapisywane",
+              "read_back_unknown": "Czeka na odczyt zwrotny: oddania nie dałoby się jeszcze zobaczyć",
+              "outdoor_sensor": "Temperatura zewnętrzna z czujnika kotła",
+              "outdoor_weather": "Temperatura zewnętrzna z encji pogody",
+              "outdoor_held": "Temperatura zewnętrzna zachowana sprzed chwili",
+              "outdoor_unknown": "Temperatura zewnętrzna nieznana",
+              "demand": "Strefa prosi o ciepło",
+              "no_demand": "Żadna strefa nie prosi o ciepło",
+              "zones_unknown": "Stan żadnej strefy nie jest znany",
+              "zones_recognition": "Strefy jeszcze się zgłaszają: nic nowego nie jest ustalane",
+              "frost": "Ochrona przed mrozem",
+              "ramp": "Nastawa zmienia się stopniowo (rampa)",
+              "limit_hard_min": "Utrzymana na najniższej temperaturze wody",
+              "limit_hard_max": "Ograniczona do najwyższej temperatury wody",
+              "limit_circuit_max": "Ograniczona do maksimum obiegu",
+              "limit_boiler_max": "Ograniczona do maksimum kotła",
+              "limit_ceiling": "Ograniczona do krzywej z zapasem na korektę",
+              "limit_fixed_circuit": "Podniesiona dla obiegu ze stałym zaworem mieszającym",
+              "comfort_correction": "Zastosowana korekta komfortu",
+              "activation_delay": "Czeka na opóźnienie aktywacji",
+              "boiler_fault": "Kocioł zgłasza własną usterkę: grzanie wyłączone"
+            }
+          },
+          "reasons_text": {
+            "name": "Powody (tekst)"
+          },
+          "blockers": {
+            "name": "Blokady",
+            "state": {
+              "no_write_path": "Sterowanie nie jest skonfigurowane",
+              "boiler_class_no_control": "Tej klasy kotła nie da się sterować",
+              "path_not_for_boiler_class": "Ścieżka zapisu nie pasuje do klasy kotła",
+              "no_setpoint_entity": "Nie wybrano encji nastawy",
+              "write_type_not_supported": "Typu zapisu encji nastawy nie można użyć",
+              "no_hand_back": "Nie wybrano sposobu oddania",
+              "timeout_needs_expiring_writes": "Oddanie przez limit czasu wymaga zapisów wygasających",
+              "no_gateway": "Brak ID bramki OpenTherm",
+              "no_mqtt_topic": "Brak prefiksu tematu MQTT lub nazwy węzła",
+              "no_confirmed_setpoint": "Nie wybrano odczytu zwrotnego nastawy",
+              "no_topology": "Nie zadeklarowano podłączenia bramki",
+              "topology_no_control": "Bramka działa w trybie monitora",
+              "curve_not_entered": "Nie wpisano krzywej grzewczej",
+              "one_direct_circuit_only": "Sterować można tylko jednym obiegiem zasilanym wprost z kotła",
+              "underfloor_without_max_flow": "Ogrzewanie podłogowe na obiegu bez mieszania nie ma ustawionego maksimum",
+              "no_zones": "Brak strefy Versatile Thermostat",
+              "count_threshold_above_zones": "Próg zapotrzebowania wymaga więcej stref, niż jest",
+              "off_setpoint_not_below_hard_min": "„Wyłączone” nie jest poniżej najniższej temperatury wody",
+              "hand_back_switch_not_writable": "Typu zapisu przełącznika sterowania zewnętrznego nie można użyć",
+              "hand_back_value_above_max": "Wartość oddania przekracza maksimum",
+              "off_setpoint_near_hand_back_value": "„Wyłączone” jest za blisko wartości oddania",
+              "hand_back_switch_is_heating_switch": "Przełącznik sterowania zewnętrznego pełni też inną rolę",
+              "entity_for_two_signals": "Jedna encja zasila dwa sygnały",
+              "topology_not_for_path": "Podłączenie bramki nie pasuje do ścieżki zapisu",
+              "design_flow_too_low": "Projektowa temperatura zasilania jest za niska",
+              "design_flow_above_hard_max": "Projektowa temperatura zasilania przekracza najwyższą temperaturę wody",
+              "design_outdoor_too_warm": "Projektowa temperatura zewnętrzna jest za wysoka",
+              "hard_min_not_below_design_flow": "Najniższa temperatura wody nie jest poniżej projektowej temperatury zasilania",
+              "no_heating_switch": "Brak przełącznika ogrzewania, którego wtyczka może użyć",
+              "thermostat_on_off": "Styk wł./wył. na zaciskach termostatu bramki",
+              "thermostat_kind_unknown": "Brak odpowiedzi: co jest podłączone do zacisków termostatu bramki",
+              "thermostat_kind_contradicts_topology": "Odpowiedź o zaciskach termostatu nie pasuje do podłączenia bramki",
+              "no_flame_signal": "Brak sygnału płomienia",
+              "no_flow_signal": "Brak sygnału temperatury zasilania",
+              "no_relay_entity": "Nie wybrano przekaźnika",
+              "relay_domain_not_supported": "Przekaźnik nie jest ani przełącznikiem, ani encją termostatu kotła",
+              "relay_in_another_role": "Przekaźnik pełni też inną rolę",
+              "relay_contact_not_confirmed": "Nie potwierdzono, że przekaźnik to osobny styk",
+              "ha_starting": "Home Assistant się uruchamia",
+              "monitoring_period": "Okres monitorowania jeszcze nie minął",
+              "vt_central_boiler_active": "Skonfigurowano własny kocioł centralny Versatile Thermostat",
+              "vt_central_boiler_unknown": "Nie da się jeszcze wykluczyć kotła centralnego Versatile Thermostat",
+              "setpoint_outside_entity_range": "Encja nastawy nie przyjmuje każdej wartości, którą sterowanie może zapisać",
+              "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury",
+              "setpoint_step_too_coarse": "Krok encji nastawy jest za duży",
+              "control_error": "Zatrzymane po błędzie wewnętrznym: wyłącz i włącz sterowanie",
+              "monitor_failed": "Monitor wtyczki stale zawodzi",
+              "heating_off_ignored": "Kocioł nie przyjął „wyłącz grzanie”: wyłącz i włącz sterowanie",
+              "gateway_not_set_up": "Integracja bramki jest usunięta lub wyłączona",
+              "mqtt_not_set_up": "Integracja MQTT jest usunięta lub wyłączona",
+              "zone_not_vt": "Strefa nie jest termostatem Versatile Thermostat",
+              "zone_on_boiler_thermostat": "Strefa jest zbudowana na własnym termostacie kotła",
+              "relay_used_by_zone": "Strefa już przełącza ten przekaźnik",
+              "relay_of_boiler_interface": "Przekaźnik należy do integracji kotła lub VT",
+              "relay_climate_modes": "Encji termostatu nie da się ustawić na grzanie i na wyłączenie"
+            }
+          },
+          "blockers_text": {
+            "name": "Blokady (tekst)"
+          },
+          "blockers_waiting": {
+            "name": "Blokady w oczekiwaniu"
+          },
+          "blockers_waiting_text": {
+            "name": "Blokady w oczekiwaniu (tekst)"
+          },
+          "latched_by": {
+            "name": "Zablokowane przez",
+            "state": {
+              "outside_change": "Inny sterownik zmienił wartość: wtyczka się wycofała",
+              "write_ignored": "Kocioł ignoruje wartość zapisywaną przez sterowanie (ustawione na oddanie)",
+              "heating_off_ignored": "Kocioł od początku nie przyjął „wyłącz grzanie”"
+            }
+          },
+          "latched_by_text": {
+            "name": "Zablokowane przez (tekst)"
+          },
+          "learning_not_resumed": {
+            "name": "Nauka niewłączona ponownie"
           }
         }
       },
@@ -1297,11 +1456,401 @@
             }
           }
         }
+      },
+      "features": {
+        "name": "Funkcje",
+        "state_attributes": {
+          "cycles": {
+            "name": "Cykle palnika",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "cycles_missing": {
+            "name": "Cykle palnika: brakuje"
+          },
+          "cycles_missing_text": {
+            "name": "Cykle palnika: czego brakuje"
+          },
+          "condensing": {
+            "name": "Udział kondensacji",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "condensing_missing": {
+            "name": "Udział kondensacji: brakuje"
+          },
+          "condensing_missing_text": {
+            "name": "Udział kondensacji: czego brakuje"
+          },
+          "dhw_detection": {
+            "name": "Wykrywanie ciepłej wody",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "dhw_detection_missing": {
+            "name": "Wykrywanie ciepłej wody: brakuje"
+          },
+          "dhw_detection_missing_text": {
+            "name": "Wykrywanie ciepłej wody: czego brakuje"
+          },
+          "gas": {
+            "name": "Zużycie gazu",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "gas_missing": {
+            "name": "Zużycie gazu: brakuje"
+          },
+          "gas_missing_text": {
+            "name": "Zużycie gazu: czego brakuje"
+          },
+          "degree_days": {
+            "name": "Stopniodni",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "degree_days_missing": {
+            "name": "Stopniodni: brakuje"
+          },
+          "degree_days_missing_text": {
+            "name": "Stopniodni: czego brakuje"
+          },
+          "hot_water": {
+            "name": "Ciepło dostępne w strefach",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "hot_water_missing": {
+            "name": "Ciepło dostępne w strefach: brakuje"
+          },
+          "hot_water_missing_text": {
+            "name": "Ciepło dostępne w strefach: czego brakuje"
+          },
+          "emitter_factor": {
+            "name": "Moc grzejników",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "emitter_factor_missing": {
+            "name": "Moc grzejników: brakuje"
+          },
+          "emitter_factor_missing_text": {
+            "name": "Moc grzejników: czego brakuje"
+          },
+          "flue_gas_warning": {
+            "name": "Ostrzeżenia o spalinach",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "flue_gas_warning_missing": {
+            "name": "Ostrzeżenia o spalinach: brakuje"
+          },
+          "flue_gas_warning_missing_text": {
+            "name": "Ostrzeżenia o spalinach: czego brakuje"
+          },
+          "pressure_warning": {
+            "name": "Wysokie ciśnienie wody",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "pressure_warning_missing": {
+            "name": "Wysokie ciśnienie wody: brakuje"
+          },
+          "pressure_warning_missing_text": {
+            "name": "Wysokie ciśnienie wody: czego brakuje"
+          },
+          "outdoor_check": {
+            "name": "Sprawdzanie czujnika zewnętrznego",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "outdoor_check_missing": {
+            "name": "Sprawdzanie czujnika zewnętrznego: brakuje"
+          },
+          "outdoor_check_missing_text": {
+            "name": "Sprawdzanie czujnika zewnętrznego: czego brakuje"
+          },
+          "low_flow": {
+            "name": "Ostrzeżenie o braku przepływu",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "low_flow_missing": {
+            "name": "Ostrzeżenie o braku przepływu: brakuje"
+          },
+          "low_flow_missing_text": {
+            "name": "Ostrzeżenie o braku przepływu: czego brakuje"
+          },
+          "boiler_fault_stop": {
+            "name": "Zatrzymanie przy usterce kotła",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "boiler_fault_stop_missing": {
+            "name": "Zatrzymanie przy usterce kotła: brakuje"
+          },
+          "boiler_fault_stop_missing_text": {
+            "name": "Zatrzymanie przy usterce kotła: czego brakuje"
+          },
+          "add_water": {
+            "name": "Powiadomienie „uzupełnij wodę”",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "add_water_missing": {
+            "name": "Powiadomienie „uzupełnij wodę”: brakuje"
+          },
+          "add_water_missing_text": {
+            "name": "Powiadomienie „uzupełnij wodę”: czego brakuje"
+          },
+          "pressure_trend": {
+            "name": "Trend ciśnienia (ryzyko wycieku)",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "pressure_trend_missing": {
+            "name": "Trend ciśnienia (ryzyko wycieku): brakuje"
+          },
+          "pressure_trend_missing_text": {
+            "name": "Trend ciśnienia (ryzyko wycieku): czego brakuje"
+          },
+          "unstable_ignition": {
+            "name": "Niestabilny zapłon",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "unstable_ignition_missing": {
+            "name": "Niestabilny zapłon: brakuje"
+          },
+          "unstable_ignition_missing_text": {
+            "name": "Niestabilny zapłon: czego brakuje"
+          },
+          "hysteresis_drift": {
+            "name": "Dryf histerezy",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "hysteresis_drift_missing": {
+            "name": "Dryf histerezy: brakuje"
+          },
+          "hysteresis_drift_missing_text": {
+            "name": "Dryf histerezy: czego brakuje"
+          },
+          "verdict": {
+            "name": "Werdykt sterowania",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "verdict_missing": {
+            "name": "Werdykt sterowania: brakuje"
+          },
+          "verdict_missing_text": {
+            "name": "Werdykt sterowania: czego brakuje"
+          },
+          "comfort_correction": {
+            "name": "Korekta komfortu",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "comfort_correction_missing": {
+            "name": "Korekta komfortu: brakuje"
+          },
+          "comfort_correction_missing_text": {
+            "name": "Korekta komfortu: czego brakuje"
+          },
+          "frost_protection": {
+            "name": "Ochrona przed mrozem",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "frost_protection_missing": {
+            "name": "Ochrona przed mrozem: brakuje"
+          },
+          "frost_protection_missing_text": {
+            "name": "Ochrona przed mrozem: czego brakuje"
+          },
+          "activation_delay": {
+            "name": "Opóźnienie aktywacji",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "activation_delay_missing": {
+            "name": "Opóźnienie aktywacji: brakuje"
+          },
+          "activation_delay_missing_text": {
+            "name": "Opóźnienie aktywacji: czego brakuje"
+          },
+          "circuit_overshoot_alarm": {
+            "name": "Alarm za gorącej wody w obiegu",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "circuit_overshoot_alarm_missing": {
+            "name": "Alarm za gorącej wody w obiegu: brakuje"
+          },
+          "circuit_overshoot_alarm_missing_text": {
+            "name": "Alarm za gorącej wody w obiegu: czego brakuje"
+          },
+          "lowest_water_suggestion": {
+            "name": "Propozycja najniższej temperatury wody",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "lowest_water_suggestion_missing": {
+            "name": "Propozycja najniższej temperatury wody: brakuje"
+          },
+          "lowest_water_suggestion_missing_text": {
+            "name": "Propozycja najniższej temperatury wody: czego brakuje"
+          },
+          "wall_thermostat_fallback": {
+            "name": "Termostat ścienny po oddaniu sterowania",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "wall_thermostat_fallback_missing": {
+            "name": "Termostat ścienny po oddaniu sterowania: brakuje"
+          },
+          "wall_thermostat_fallback_missing_text": {
+            "name": "Termostat ścienny po oddaniu sterowania: czego brakuje"
+          },
+          "relay_proof": {
+            "name": "Dowód, że kocioł grzeje (przekaźnik)",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "relay_proof_missing": {
+            "name": "Dowód, że kocioł grzeje (przekaźnik): brakuje"
+          },
+          "relay_proof_missing_text": {
+            "name": "Dowód, że kocioł grzeje (przekaźnik): czego brakuje"
+          },
+          "forecasts": {
+            "name": "Zapis prognoz",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "forecasts_missing": {
+            "name": "Zapis prognoz: brakuje"
+          },
+          "forecasts_missing_text": {
+            "name": "Zapis prognoz: czego brakuje"
+          },
+          "missing": {
+            "name": "Brakujące dane",
+            "state": {
+              "flame": "Płomień",
+              "flow": "Temperatura zasilania",
+              "return": "Temperatura powrotu",
+              "dhw_active": "Ciepła woda użytkowa (c.w.u.) aktywna",
+              "pressure": "Ciśnienie wody",
+              "outdoor": "Temperatura zewnętrzna (czujnik kotła)",
+              "ch_setpoint": "Nastawa c.o.",
+              "ch_active": "C.o. aktywne",
+              "pump_running": "Pompa pracuje",
+              "flue_gas": "Temperatura spalin",
+              "gas_meter": "Licznik gazu",
+              "boiler_power": "Moc elektryczna kotła",
+              "room_setpoint": "Nastawa termostatu przewodowego",
+              "low_pressure_fault": "Usterka niskiego ciśnienia wody (z kotła)",
+              "boiler_lockout": "Blokada kotła",
+              "fault_indication": "Sygnalizacja usterki kotła",
+              "add_water_threshold": "Próg „uzupełnij wodę”, z instrukcji kotła",
+              "condensing_boiler": "Kocioł kondensacyjny, zadeklarowany w opcjach kotła",
+              "zone_data": "Strefy Versatile Thermostat z danymi",
+              "valve_openings": "Otwarcie zaworu każdej strefy",
+              "no_bypass": "Brak obejścia lub sprzęgła hydraulicznego (zadeklarowano je)",
+              "weather_entity": "Encja pogody",
+              "control": "Sterowanie, ustawione w opcjach",
+              "water_control": "Sterowanie, które ustawia temperaturę wody, nie przekaźnik",
+              "relay_control": "Sterowanie przekaźnikiem",
+              "wall_thermostat": "Sterowanie przez bramkę z termostatem ściennym OpenTherm",
+              "circuit_maximum": "Maksymalna temperatura zasilania obiegu",
+              "turned_off": "Wyłączona w opcjach",
+              "entity_for_two_signals": "ta sama encja zasila już sygnał",
+              "unavailable_now": "chwilowo brak odczytu"
+            }
+          }
+        }
       }
     },
     "binary_sensor": {
       "connection": {
-        "name": "Sygnały kotła"
+        "name": "Sygnały"
       },
       "hot_water": {
         "name": "{zone} ciepło dostępne",
@@ -1605,7 +2154,7 @@
     },
     "switch": {
       "control": {
-        "name": "Sterowanie kotłem (eksperymentalne)",
+        "name": "Sterowanie (eksperymentalne)",
         "state_attributes": {
           "hand_back_effect": {
             "name": "Po oddaniu sterowania",
@@ -1666,6 +2215,72 @@
               "not_worth_it": "Nie warto włączać: sterowanie wciąż można włączyć",
               "not_enough_data": "Za mało danych: sterowanie może ruszyć bez werdyktu"
             }
+          },
+          "blockers": {
+            "name": "Blokady",
+            "state": {
+              "no_write_path": "Sterowanie nie jest skonfigurowane",
+              "boiler_class_no_control": "Tej klasy kotła nie da się sterować",
+              "path_not_for_boiler_class": "Ścieżka zapisu nie pasuje do klasy kotła",
+              "no_setpoint_entity": "Nie wybrano encji nastawy",
+              "write_type_not_supported": "Typu zapisu encji nastawy nie można użyć",
+              "no_hand_back": "Nie wybrano sposobu oddania",
+              "timeout_needs_expiring_writes": "Oddanie przez limit czasu wymaga zapisów wygasających",
+              "no_gateway": "Brak ID bramki OpenTherm",
+              "no_mqtt_topic": "Brak prefiksu tematu MQTT lub nazwy węzła",
+              "no_confirmed_setpoint": "Nie wybrano odczytu zwrotnego nastawy",
+              "no_topology": "Nie zadeklarowano podłączenia bramki",
+              "topology_no_control": "Bramka działa w trybie monitora",
+              "curve_not_entered": "Nie wpisano krzywej grzewczej",
+              "one_direct_circuit_only": "Sterować można tylko jednym obiegiem zasilanym wprost z kotła",
+              "underfloor_without_max_flow": "Ogrzewanie podłogowe na obiegu bez mieszania nie ma ustawionego maksimum",
+              "no_zones": "Brak strefy Versatile Thermostat",
+              "count_threshold_above_zones": "Próg zapotrzebowania wymaga więcej stref, niż jest",
+              "off_setpoint_not_below_hard_min": "„Wyłączone” nie jest poniżej najniższej temperatury wody",
+              "hand_back_switch_not_writable": "Typu zapisu przełącznika sterowania zewnętrznego nie można użyć",
+              "hand_back_value_above_max": "Wartość oddania przekracza maksimum",
+              "off_setpoint_near_hand_back_value": "„Wyłączone” jest za blisko wartości oddania",
+              "hand_back_switch_is_heating_switch": "Przełącznik sterowania zewnętrznego pełni też inną rolę",
+              "entity_for_two_signals": "Jedna encja zasila dwa sygnały",
+              "topology_not_for_path": "Podłączenie bramki nie pasuje do ścieżki zapisu",
+              "design_flow_too_low": "Projektowa temperatura zasilania jest za niska",
+              "design_flow_above_hard_max": "Projektowa temperatura zasilania przekracza najwyższą temperaturę wody",
+              "design_outdoor_too_warm": "Projektowa temperatura zewnętrzna jest za wysoka",
+              "hard_min_not_below_design_flow": "Najniższa temperatura wody nie jest poniżej projektowej temperatury zasilania",
+              "no_heating_switch": "Brak przełącznika ogrzewania, którego wtyczka może użyć",
+              "thermostat_on_off": "Styk wł./wył. na zaciskach termostatu bramki",
+              "thermostat_kind_unknown": "Brak odpowiedzi: co jest podłączone do zacisków termostatu bramki",
+              "thermostat_kind_contradicts_topology": "Odpowiedź o zaciskach termostatu nie pasuje do podłączenia bramki",
+              "no_flame_signal": "Brak sygnału płomienia",
+              "no_flow_signal": "Brak sygnału temperatury zasilania",
+              "no_relay_entity": "Nie wybrano przekaźnika",
+              "relay_domain_not_supported": "Przekaźnik nie jest ani przełącznikiem, ani encją termostatu kotła",
+              "relay_in_another_role": "Przekaźnik pełni też inną rolę",
+              "relay_contact_not_confirmed": "Nie potwierdzono, że przekaźnik to osobny styk",
+              "ha_starting": "Home Assistant się uruchamia",
+              "monitoring_period": "Okres monitorowania jeszcze nie minął",
+              "vt_central_boiler_active": "Skonfigurowano własny kocioł centralny Versatile Thermostat",
+              "vt_central_boiler_unknown": "Nie da się jeszcze wykluczyć kotła centralnego Versatile Thermostat",
+              "setpoint_outside_entity_range": "Encja nastawy nie przyjmuje każdej wartości, którą sterowanie może zapisać",
+              "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury",
+              "setpoint_step_too_coarse": "Krok encji nastawy jest za duży",
+              "control_error": "Zatrzymane po błędzie wewnętrznym: wyłącz i włącz sterowanie",
+              "monitor_failed": "Monitor wtyczki stale zawodzi",
+              "heating_off_ignored": "Kocioł nie przyjął „wyłącz grzanie”: wyłącz i włącz sterowanie",
+              "gateway_not_set_up": "Integracja bramki jest usunięta lub wyłączona",
+              "mqtt_not_set_up": "Integracja MQTT jest usunięta lub wyłączona",
+              "zone_not_vt": "Strefa nie jest termostatem Versatile Thermostat",
+              "zone_on_boiler_thermostat": "Strefa jest zbudowana na własnym termostacie kotła",
+              "relay_used_by_zone": "Strefa już przełącza ten przekaźnik",
+              "relay_of_boiler_interface": "Przekaźnik należy do integracji kotła lub VT",
+              "relay_climate_modes": "Encji termostatu nie da się ustawić na grzanie i na wyłączenie"
+            }
+          },
+          "blockers_text": {
+            "name": "Blokady (tekst)"
+          },
+          "blocked_by_text": {
+            "name": "Zablokowane przez (tekst)"
           }
         }
       }
@@ -1684,175 +2299,175 @@
   },
   "exceptions": {
     "invalid_options": {
-      "message": "Tej konfiguracji nie da się użyć ({code}: {subject}). Otwórz opcje i popraw ją."
+      "message": "Tej konfiguracji nie da się użyć ({subject}): {reason} Otwórz opcje i popraw ją."
     },
     "blocked_no_write_path": {
-      "message": "Sterowanie nie jest skonfigurowane: wybierz w opcjach, jak wtyczka zapisuje do kotła. Inne powody: {others}."
+      "message": "Sterowanie nie jest skonfigurowane: wybierz w opcjach, jak wtyczka zapisuje do kotła. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_setpoint_entity": {
-      "message": "Wybierz encję, która przyjmuje nastawę zasilania. Inne powody: {others}."
+      "message": "Wybierz encję, która przyjmuje nastawę zasilania. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_write_type_not_supported": {
-      "message": "Encja nastawy jest zadeklarowana jako trwała lub o nieznanym typie zapisu, a wtyczka nigdy nie zapisuje trwałej pamięci kotła: zadeklaruj ją w opcjach jako wygasającą lub trzymaną. Inne powody: {others}."
+      "message": "Encja nastawy jest zadeklarowana jako trwała lub o nieznanym typie zapisu, a wtyczka nigdy nie zapisuje trwałej pamięci kotła: zadeklaruj ją w opcjach jako wygasającą lub trzymaną. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_hand_back": {
-      "message": "Wybierz, jak sterowanie wraca do kotła: wartość, własny limit czasu urządzenia albo przełącznik. Inne powody: {others}."
+      "message": "Wybierz, jak sterowanie wraca do kotła: wartość, własny limit czasu urządzenia albo przełącznik. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_gateway": {
-      "message": "Podaj identyfikator bramki OpenTherm Gateway. Inne powody: {others}."
+      "message": "Podaj identyfikator bramki OpenTherm Gateway. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_mqtt_topic": {
-      "message": "Podaj prefiks tematu MQTT bramki i nazwę węzła. Inne powody: {others}."
+      "message": "Podaj prefiks tematu MQTT bramki i nazwę węzła. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_confirmed_setpoint": {
-      "message": "Wybierz encję, która pokazuje nastawę odebraną przez kocioł (odczyt zwrotny). Inne powody: {others}."
+      "message": "Wybierz encję, która pokazuje nastawę odebraną przez kocioł (odczyt zwrotny). Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_topology": {
-      "message": "Określ, jak podłączona jest bramka. Inne powody: {others}."
+      "message": "Określ, jak podłączona jest bramka. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_topology_no_control": {
-      "message": "Bramka pracuje w trybie monitora i nie może sterować kotłem. Inne powody: {others}."
+      "message": "Bramka pracuje w trybie monitora i nie może sterować kotłem. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_curve_not_entered": {
-      "message": "Wpisz krzywą grzewczą, co najmniej projektową temperaturę zasilania. Inne powody: {others}."
+      "message": "Wpisz krzywą grzewczą, co najmniej projektową temperaturę zasilania. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_one_direct_circuit_only": {
-      "message": "Ta wersja steruje tylko jednym obiegiem zasilanym wprost z kotła (bez mieszania albo z termostatycznym zaworem mieszającym). Inne powody: {others}."
+      "message": "Ta wersja steruje tylko jednym obiegiem zasilanym wprost z kotła (bez mieszania albo z termostatycznym zaworem mieszającym). Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_underfloor_without_max_flow": {
-      "message": "Ogrzewanie podłogowe na obiegu bez mieszania wymaga maksymalnej temperatury zasilania tego obiegu. Inne powody: {others}."
+      "message": "Ogrzewanie podłogowe na obiegu bez mieszania wymaga maksymalnej temperatury zasilania tego obiegu. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_count_threshold_above_zones": {
-      "message": "Próg zapotrzebowania wymaga więcej stref, niż jest skonfigurowanych, więc grzanie nigdy nie zostałoby wezwane: obniż go w opcjach. Inne powody: {others}."
+      "message": "Próg zapotrzebowania wymaga więcej stref, niż jest skonfigurowanych, więc grzanie nigdy nie zostałoby wezwane: obniż go w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_zones": {
-      "message": "Sterowanie wymaga co najmniej jednej strefy Versatile Thermostat: dodaj je w opcjach. Inne powody: {others}."
+      "message": "Sterowanie wymaga co najmniej jednej strefy Versatile Thermostat: dodaj je w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_ha_starting": {
-      "message": "Home Assistant jeszcze się uruchamia. Inne powody: {others}."
+      "message": "Home Assistant jeszcze się uruchamia. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_monitoring_period": {
-      "message": "Sterowanie będzie dostępne po okresie monitorowania. Inne powody: {others}."
+      "message": "Sterowanie będzie dostępne po okresie monitorowania. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_vt_central_boiler_active": {
-      "message": "Skonfigurowany jest kocioł centralny Versatile Thermostat. Najpierw go usuń, żeby kotłem sterował tylko jeden sterownik, a potem uruchom ponownie Home Assistant: dopiero wtedy VT przestaje wysyłać polecenia kotła centralnego. Sterowanie czeka do ponownego uruchomienia Home Assistant, nawet po odznaczeniu. Inne powody: {others}."
+      "message": "Skonfigurowany jest kocioł centralny Versatile Thermostat. Najpierw go usuń, żeby kotłem sterował tylko jeden sterownik, a potem uruchom ponownie Home Assistant: dopiero wtedy VT przestaje wysyłać polecenia kotła centralnego. Sterowanie czeka do ponownego uruchomienia Home Assistant, nawet po odznaczeniu. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_vt_central_boiler_unknown": {
-      "message": "Nie da się jeszcze wykluczyć centralnego kotła Versatile Thermostat: nie udało się załadować centralnej konfiguracji VT (zobacz Ustawienia → Urządzenia i usługi) albo jej ustawienia nie mówią, czy kocioł centralny jest włączony. Sterowanie czeka. Inne powody: {others}."
+      "message": "Nie da się jeszcze wykluczyć centralnego kotła Versatile Thermostat: nie udało się załadować centralnej konfiguracji VT (zobacz Ustawienia → Urządzenia i usługi) albo jej ustawienia nie mówią, czy kocioł centralny jest włączony. Sterowanie czeka. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_control_error": {
-      "message": "Sterowanie zatrzymało się po błędzie wewnętrznym. Sprawdź log, potem wyłącz i włącz sterowanie. Inne powody: {others}."
+      "message": "Sterowanie zatrzymało się po błędzie wewnętrznym. Sprawdź log, potem wyłącz i włącz sterowanie. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_monitor_failed": {
-      "message": "Monitor wtyczki zawodzi od 5 minut, więc sterowanie oddało kocioł; wróci samo, gdy monitor znów zadziała. Sprawdź log. Inne powody: {others}."
+      "message": "Monitor wtyczki zawodzi od 5 minut, więc sterowanie oddało kocioł; wróci samo, gdy monitor znów zadziała. Sprawdź log. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_timeout_needs_expiring_writes": {
-      "message": "Limit czasu urządzenia oddaje sterowanie tylko przy zapisach wygasających: wybierz w opcjach wartość oddania albo przełącznik. Inne powody: {others}."
+      "message": "Limit czasu urządzenia oddaje sterowanie tylko przy zapisach wygasających: wybierz w opcjach wartość oddania albo przełącznik. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_setpoint_outside_entity_range": {
-      "message": "Encja nastawy nie przyjmuje każdej wartości, którą sterowanie może zapisać (limitu, nastawy „wyłączone” albo wartości oddania): dopasuj je w opcjach do jej zakresu. Inne powody: {others}."
+      "message": "Encja nastawy nie przyjmuje każdej wartości, którą sterowanie może zapisać (limitu, nastawy „wyłączone” albo wartości oddania): dopasuj je w opcjach do jej zakresu. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_off_setpoint_not_below_hard_min": {
-      "message": "Nastawa „wyłączone” nie jest co najmniej 1 °C poniżej najniższej temperatury wody: obniż ją w opcjach. Inne powody: {others}."
+      "message": "Nastawa „wyłączone” nie jest co najmniej 1 °C poniżej najniższej temperatury wody: obniż ją w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_setpoint_unit_not_supported": {
-      "message": "Jednostka encji nastawy nie jest jednostką temperatury (°C, °F lub K), więc zapisana wartość znaczyłaby dla niej coś innego: wybierz w opcjach encję nastawy temperatury zasilania kotła. Inne powody: {others}."
+      "message": "Jednostka encji nastawy nie jest jednostką temperatury (°C, °F lub K), więc zapisana wartość znaczyłaby dla niej coś innego: wybierz w opcjach encję nastawy temperatury zasilania kotła. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_hand_back_switch_not_writable": {
-      "message": "Zadeklaruj przełącznik sterowania zewnętrznego jako wygasający albo trzymany: wtyczka nigdy nie zapisuje do trwałej pamięci kotła. Inne powody: {others}."
+      "message": "Zadeklaruj przełącznik sterowania zewnętrznego jako wygasający albo trzymany: wtyczka nigdy nie zapisuje do trwałej pamięci kotła. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_hand_back_value_above_max": {
-      "message": "Wartość oddania jest wyższa niż najwyższa nastawa zasilania albo maksimum obiegu: kocioł dostałby cieplejszą wodę, niż obieg dopuszcza. Inne powody: {others}."
+      "message": "Wartość oddania jest wyższa niż najwyższa nastawa zasilania albo maksimum obiegu: kocioł dostałby cieplejszą wodę, niż obieg dopuszcza. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_off_setpoint_near_hand_back_value": {
-      "message": "„Wyłączone” różni się od wartości oddania o mniej niż 0,5 K, a ta wartość oddaje kotłowi własne sterowanie: „wyłączone” oddałoby kocioł zamiast wyłączyć grzanie. Wybierz inną wartość. Inne powody: {others}."
+      "message": "„Wyłączone” różni się od wartości oddania o mniej niż 0,5 K, a ta wartość oddaje kotłowi własne sterowanie: „wyłączone” oddałoby kocioł zamiast wyłączyć grzanie. Wybierz inną wartość. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "monitor_refresh_failed": {
       "message": "Monitor wtyczki nie mógł obliczyć swoich danych; szczegóły są w logu."
     },
     "blocked_setpoint_step_too_coarse": {
-      "message": "Encja nastawy przyjmuje teraz wartości co ponad 1 °C, więc odczyt zwrotny nie potwierdzi wartości: wybierz inną encję w opcjach. Inne powody: {others}."
+      "message": "Encja nastawy przyjmuje teraz wartości co ponad 1 °C, więc odczyt zwrotny nie potwierdzi wartości: wybierz inną encję w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_heating_off_ignored": {
-      "message": "Od początku sesji kocioł nie przyjął polecenia wtyczki „wyłącz grzanie” — albo przekaźnik polecenia „wyłącz” — więc wtyczka nie mogła wyłączyć ogrzewania. Sterowanie się zatrzymało, a kocioł został oddany. Sprawdź przełącznik ogrzewania albo przekaźnik wybrany w opcjach i ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej. Inne powody: {others}."
+      "message": "Od początku sesji kocioł nie przyjął polecenia wtyczki „wyłącz grzanie” — albo przekaźnik polecenia „wyłącz” — więc wtyczka nie mogła wyłączyć ogrzewania. Sterowanie się zatrzymało, a kocioł został oddany. Sprawdź przełącznik ogrzewania albo przekaźnik wybrany w opcjach i ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_hand_back_switch_is_heating_switch": {
-      "message": "Przełącznik sterowania zewnętrznego jest też przełącznikiem ogrzewania albo encją nastawy: oddawanie sterowania przełączałoby go bez końca. Wybierz w opcjach inną encję. Inne powody: {others}."
+      "message": "Przełącznik sterowania zewnętrznego jest też przełącznikiem ogrzewania albo encją nastawy: oddawanie sterowania przełączałoby go bez końca. Wybierz w opcjach inną encję. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_entity_for_two_signals": {
-      "message": "Jedna encja zasila dwa sygnały, więc późniejszy nie jest używany. Wybierz dla niego inną encję w opcjach sygnałów. Inne powody: {others}."
+      "message": "Jedna encja zasila dwa sygnały, więc późniejszy nie jest używany. Wybierz dla niego inną encję w opcjach sygnałów. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_topology_not_for_path": {
-      "message": "Podłączenie bramki nie pasuje do ścieżki zapisu: wybierz inne w opcjach. Inne powody: {others}."
+      "message": "Podłączenie bramki nie pasuje do ścieżki zapisu: wybierz inne w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_heating_switch": {
-      "message": "Sterowanie wymaga przełącznika ogrzewania, którego kocioł nie zapisuje w pamięci. Bez niego „wyłączone” byłoby niską nastawą, a nie wiadomo jeszcze, czy to zatrzymuje kocioł i jego pompę. Monitor działa dalej. Inne powody: {others}."
+      "message": "Sterowanie wymaga przełącznika ogrzewania, którego kocioł nie zapisuje w pamięci. Bez niego „wyłączone” byłoby niską nastawą, a nie wiadomo jeszcze, czy to zatrzymuje kocioł i jego pompę. Monitor działa dalej. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_gateway_not_set_up": {
-      "message": "Integracja OpenTherm Gateway wybranej bramki jest usunięta albo wyłączona: polecenia nie trafiłyby nigdzie. Skonfiguruj ją lub włącz albo wybierz w opcjach inną bramkę. Inne powody: {others}."
+      "message": "Integracja OpenTherm Gateway wybranej bramki jest usunięta albo wyłączona: polecenia nie trafiłyby nigdzie. Skonfiguruj ją lub włącz albo wybierz w opcjach inną bramkę. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_mqtt_not_set_up": {
-      "message": "Integracja MQTT jest usunięta albo wyłączona: polecenia nie trafiłyby nigdzie. Skonfiguruj ją lub włącz. Inne powody: {others}."
+      "message": "Integracja MQTT jest usunięta albo wyłączona: polecenia nie trafiłyby nigdzie. Skonfiguruj ją lub włącz. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_zone_not_vt": {
-      "message": "Jedna ze stref nie jest termostatem Versatile Thermostat, a tylko one mogą być strefami: usuń ją w opcjach. Inne powody: {others}."
+      "message": "Jedna ze stref nie jest termostatem Versatile Thermostat, a tylko one mogą być strefami: usuń ją w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_zone_on_boiler_thermostat": {
-      "message": "Strefa Versatile Thermostat jest zbudowana na encji termostatu samego kotła lub bramki: prosiłaby o ciepło zawsze, gdy pali się płomień. Zbuduj strefę na czujniku pokojowym i jej zaworach albo głowicach. Inne powody: {others}."
+      "message": "Strefa Versatile Thermostat jest zbudowana na encji termostatu samego kotła lub bramki: prosiłaby o ciepło zawsze, gdy pali się płomień. Zbuduj strefę na czujniku pokojowym i jej zaworach albo głowicach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_design_flow_too_low": {
-      "message": "Projektowa temperatura zasilania musi być co najmniej 5 K wyższa od temperatury pokojowej krzywej. Popraw to w opcjach. Inne powody: {others}."
+      "message": "Projektowa temperatura zasilania musi być co najmniej 5 K wyższa od temperatury pokojowej krzywej. Popraw to w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_design_flow_above_hard_max": {
-      "message": "Projektowa temperatura zasilania jest wyższa od najwyższej temperatury wody, więc w mróz krzywa zostałaby obcięta. Podnieś w opcjach najwyższą temperaturę wody albo obniż temperaturę projektową. Inne powody: {others}."
+      "message": "Projektowa temperatura zasilania jest wyższa od najwyższej temperatury wody, więc w mróz krzywa zostałaby obcięta. Podnieś w opcjach najwyższą temperaturę wody albo obniż temperaturę projektową. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_design_outdoor_too_warm": {
-      "message": "Projektowa temperatura zewnętrzna musi być co najmniej 10 K niższa od temperatury pokojowej krzywej. Popraw to w opcjach. Inne powody: {others}."
+      "message": "Projektowa temperatura zewnętrzna musi być co najmniej 10 K niższa od temperatury pokojowej krzywej. Popraw to w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_hard_min_not_below_design_flow": {
-      "message": "Najniższa temperatura wody musi być niższa od projektowej temperatury zasilania. Popraw to w opcjach. Inne powody: {others}."
+      "message": "Najniższa temperatura wody musi być niższa od projektowej temperatury zasilania. Popraw to w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_thermostat_on_off": {
-      "message": "Do zacisków termostatu bramki podłączony jest styk wł./wył.: „wyłączone ogrzewanie” bramki blokowałoby go po awarii Home Assistant, więc sterowanie nie jest dostępne. Monitor działa dalej. Inne powody: {others}."
+      "message": "Do zacisków termostatu bramki podłączony jest styk wł./wył.: „wyłączone ogrzewanie” bramki blokowałoby go po awarii Home Assistant, więc sterowanie nie jest dostępne. Monitor działa dalej. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_thermostat_kind_unknown": {
-      "message": "Sterowanie czeka, aż w opcjach sterowania podasz, co jest podłączone do zacisków termostatu bramki. Inne powody: {others}."
+      "message": "Sterowanie czeka, aż w opcjach sterowania podasz, co jest podłączone do zacisków termostatu bramki. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_thermostat_kind_contradicts_topology": {
-      "message": "Ta odpowiedź nie pasuje do podłączenia bramki: termostat OpenTherm oznacza „Bramka z termostatem”, brak termostatu oznacza pracę samodzielną. Wybierz drugie podłączenie. Inne powody: {others}."
+      "message": "Ta odpowiedź nie pasuje do podłączenia bramki: termostat OpenTherm oznacza „Bramka z termostatem”, brak termostatu oznacza pracę samodzielną. Wybierz drugie podłączenie. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_boiler_class_no_control": {
-      "message": "Sterowanie wymaga kotła klasy „Nastawa zasilania” albo „Wł./wył. (przekaźnik)”. Inne powody: {others}."
+      "message": "Sterowanie wymaga kotła klasy „Nastawa zasilania” albo „Wł./wył. (przekaźnik)”. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_path_not_for_boiler_class": {
-      "message": "Ścieżka zapisu nie pasuje do klasy kotła: przekaźnik dla kotła wł./wył., ścieżka nastawy dla kotła z nastawą zasilania. Inne powody: {others}."
+      "message": "Ścieżka zapisu nie pasuje do klasy kotła: przekaźnik dla kotła wł./wył., ścieżka nastawy dla kotła z nastawą zasilania. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_relay_entity": {
-      "message": "Wybierz przekaźnik w opcjach sterowania. Inne powody: {others}."
+      "message": "Wybierz przekaźnik w opcjach sterowania. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_relay_contact_not_confirmed": {
-      "message": "Sterowanie czeka, aż w opcjach przekaźnika potwierdzisz, że przekaźnik jest osobnym stykiem, a nie ustawieniem zapisywanym w pamięci kotła. Inne powody: {others}."
+      "message": "Sterowanie czeka, aż w opcjach przekaźnika potwierdzisz, że przekaźnik jest osobnym stykiem, a nie ustawieniem zapisywanym w pamięci kotła. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_relay_domain_not_supported": {
-      "message": "Przekaźnik musi być przełącznikiem albo encją termostatu kotła, nie pomocnikiem. Inne powody: {others}."
+      "message": "Przekaźnik musi być przełącznikiem albo encją termostatu kotła, nie pomocnikiem. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_relay_climate_modes": {
-      "message": "Tej encji termostatu nie da się ustawić zarówno na grzanie, jak i na wyłączenie. Inne powody: {others}."
+      "message": "Tej encji termostatu nie da się ustawić zarówno na grzanie, jak i na wyłączenie. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_relay_used_by_zone": {
-      "message": "Tę encję przełącza już strefa Versatile Thermostat. Inne powody: {others}."
+      "message": "Tę encję przełącza już strefa Versatile Thermostat. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_relay_of_boiler_interface": {
-      "message": "Ta encja należy do integracji kotła albo VT, nie do przekaźnika. Inne powody: {others}."
+      "message": "Ta encja należy do integracji kotła albo VT, nie do przekaźnika. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_relay_in_another_role": {
-      "message": "Przekaźnik jest encją, której opcje już używają w innej roli albo jako sygnału. Inne powody: {others}."
+      "message": "Przekaźnik jest encją, której opcje już używają w innej roli albo jako sygnału. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_flame_signal": {
-      "message": "Sterowanie temperaturą wody wymaga przypisania płomienia w sygnałach. Inne powody: {others}."
+      "message": "Sterowanie temperaturą wody wymaga przypisania płomienia w sygnałach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_flow_signal": {
-      "message": "Sterowanie temperaturą wody wymaga przypisania temperatury zasilania w sygnałach. Inne powody: {others}."
+      "message": "Sterowanie temperaturą wody wymaga przypisania temperatury zasilania w sygnałach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     }
   },
   "issues": {
@@ -2050,6 +2665,10 @@
     "installation_underfloor_without_max_flow": {
       "title": "Ogrzewanie podłogowe bez limitu temperatury wody",
       "description": "Te obiegi zasilają ogrzewanie podłogowe prosto z kotła, bez zaworu mieszającego, i nie mają maksymalnej temperatury zasilania: {circuits}. Zbyt gorąca woda może uszkodzić podłogę. Wpisz maksymalną temperaturę zasilania każdego z nich — limit podłogi od instalatora lub z instrukcji — w opcjach integracji; do tego czasu sterowanie pozostaje zablokowane."
+    },
+    "learning_not_resumed": {
+      "title": "Wtyczka nie mogła ponownie włączyć nauki w części stref",
+      "description": "Sterowanie wstrzymało naukę SmartPI w tych strefach i od doby nie może jej ponownie włączyć, więc już nie próbuje: {zones}. SmartPI trzyma naukę wyłączoną, dopóki się jej nie włączy — w ustawieniach samego SmartPI albo jego usługą „set_smartpi_learning”. Jeśli wyłączyłeś ją sam, nic nie trzeba robić. To powiadomienie zniknie, gdy nauka znów będzie włączona."
     }
   }
 }

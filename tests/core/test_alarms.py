@@ -267,7 +267,7 @@ def test_unstable_ignition_without_flow_or_setpoint_counts_as_before() -> None:
     full = features(frozenset({Signal.FLAME, Signal.FLOW, Signal.CH_SETPOINT}), False, False)
     assert full[Feature.UNSTABLE_IGNITION].status is FeatureStatus.AVAILABLE
     none = features(frozenset(), False, False)[Feature.UNSTABLE_IGNITION]
-    assert (none.status, none.missing) == (FeatureStatus.UNAVAILABLE, (Signal.FLAME,))
+    assert (none.status, none.missing) == (FeatureStatus.INACTIVE, (Signal.FLAME,))
 
 
 def test_counting_alarms_need_the_flame_known_for_half_their_window() -> None:

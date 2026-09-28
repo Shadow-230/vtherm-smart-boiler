@@ -910,7 +910,7 @@ async def test_only_allowed_services_are_called(rig: Rig) -> None:
 
 
 async def test_the_switch_comes_back_after_a_restart(hass: HomeAssistant, rig: Rig) -> None:
-    mock_restore_cache(hass, [State("switch.boiler_boiler_control_experimental", "on")])
+    mock_restore_cache(hass, [State("switch.boiler_control_experimental", "on")])
     await start(rig)
     assert rig.state("switch", "control").state == "on"
     await rig.advance(10)
@@ -1385,7 +1385,7 @@ async def test_an_unclean_restart_with_control_on_hands_back_first_then_resumes(
 ) -> None:
     """The last run held the boiler and ended without a hand-back, and control is to stay on:
     what that run left is given back in full first, then control takes the boiler afresh."""
-    mock_restore_cache(rig.hass, [State("switch.boiler_boiler_control_experimental", "on")])
+    mock_restore_cache(rig.hass, [State("switch.boiler_control_experimental", "on")])
     await start_with_stored(rig, hass_storage, {"controlling": True}, layout)
     await rig.advance(20)
     calls = rig.gateway.calls
@@ -2379,7 +2379,7 @@ async def test_the_one_rewrite_is_remembered_across_a_restart(
     """An outside change was rewritten an hour before the restart: within the day another one is
     not fought, even in the new run."""
     now = START.timestamp()
-    mock_restore_cache(rig.hass, [State("switch.boiler_boiler_control_experimental", "on")])
+    mock_restore_cache(rig.hass, [State("switch.boiler_control_experimental", "on")])
     await start_with_stored(rig, hass_storage, {"rewritten_at": now - 3600.0})
     await rig.advance(20)
     assert rig.gateway.setpoints()[-1] == EXPECTED
@@ -2395,7 +2395,7 @@ async def test_a_day_after_the_one_rewrite_another_outside_change_is_rewritten(
     """The one rewrite is per day: more than a day after it, an outside change is rewritten
     once again before it counts as another controller."""
     now = START.timestamp()
-    mock_restore_cache(rig.hass, [State("switch.boiler_boiler_control_experimental", "on")])
+    mock_restore_cache(rig.hass, [State("switch.boiler_control_experimental", "on")])
     await start_with_stored(rig, hass_storage, {"rewritten_at": now - 25 * 3600.0})
     await rig.advance(20)
     rig.gateway.forced = 60.0
@@ -2539,13 +2539,18 @@ async def test_a_stuck_outdoor_sensor_leaves_the_curve(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The monitor found the sensor stuck (or far from the weather): the curve holds its last
-    value, then the fallback, and the user is told."""
+    value, then the fallback, and the user is told. The check needs a weather entity (Y4: its
+    alarm exists only with one); it is unavailable now, so the weather cannot stand in."""
     from custom_components.vtherm_smart_boiler.core.signal_check import (
         OutdoorCheck,
         OutdoorStatus,
     )
 
-    await start(rig)
+    entry = add_entry(rig, options(rig.zones) | {"weather": "weather.fake_home"})
+    rig.hass.states.async_set("weather.fake_home", "unavailable", {})
+    assert await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    rig.entry = entry
     await rig.switch(True)
     assert rig.entry is not None
     from dataclasses import replace as replaced
@@ -2994,7 +2999,7 @@ async def test_a_corrupt_store_file_hands_back_first(
 
 async def _corrupt_store_file_hands_back_first(rig: Rig, storage: Path) -> None:
     hass = rig.hass
-    mock_restore_cache(hass, [State("switch.boiler_boiler_control_experimental", "on")])
+    mock_restore_cache(hass, [State("switch.boiler_control_experimental", "on")])
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
     entry.add_to_hass(hass)
     main = {
@@ -3120,6 +3125,8 @@ async def test_a_0_2_1_store_moves_to_the_control_store(
         "relay_restarts": [],
         # Y1: what another controller showed when the plugin stepped aside (none here).
         "step_aside_seen": None,
+        # Y4: the SmartPI resumes given up after a day (none here).
+        "resume_given_up": {},
     }
     assert hass_storage[control_key(entry)]["data"] == moved
     main = hass_storage[main_key(entry)]["data"]
@@ -3265,7 +3272,7 @@ async def test_a_lost_monitoring_start_falls_back_to_the_entry_creation(
     await start_created(rig, hass_storage, created)
     assert not monitoring_blocked(rig)
     verdict = rig.state("sensor", "verdict")
-    assert verdict.attributes["monitoring_since"] == created.timestamp()
+    assert verdict.attributes["monitoring_since"] == created.isoformat()  # P-78: ISO 8601
 
 
 async def test_monitoring_counts_from_the_entry_creation_even_after_a_restarted_start(
@@ -3569,10 +3576,10 @@ async def test_an_unreadable_forecast_partition_does_not_fail_setup(
     assert "1" in warnings[0].getMessage()  # how many weeks were skipped
     recorder = entry.runtime_data.forecasts
     assert recorder is not None
-    loaded = {s.taken_at for s in recorder.store.snapshots()}
-    assert taken[current - 2] in loaded
-    assert taken[current] in loaded
-    assert taken[current - 1] not in loaded
+    # P-23: the current week in memory, the older readable one counted, the unreadable one not.
+    in_memory = recorder.store.snapshots()
+    assert taken[current] in {s.taken_at for s in in_memory}
+    assert recorder.store.count() - len(in_memory) == 1  # the week before last, counted
 
 
 @pytest.mark.parametrize(
@@ -3711,7 +3718,7 @@ async def test_a_failure_after_the_platforms_still_stops_everything(
         raise RuntimeError("the background jobs could not start")
 
     monkeypatch.setattr(SmartBoilerCoordinator, "async_start_background", fail)
-    mock_restore_cache(rig.hass, [State("switch.boiler_boiler_control_experimental", "on")])
+    mock_restore_cache(rig.hass, [State("switch.boiler_control_experimental", "on")])
     entry = add_entry(rig, options(rig.zones))
     assert not await rig.hass.config_entries.async_setup(entry.entry_id)
     await rig.hass.async_block_till_done()
@@ -3833,7 +3840,7 @@ async def test_forecasts_that_cannot_be_loaded_at_all_do_not_fail_setup(
 
 # --- V3: saved at once — last command, SmartPI pause, on/off wish, error latch ------------------
 
-SWITCH = "switch.boiler_boiler_control_experimental"
+SWITCH = "switch.boiler_control_experimental"
 
 
 def only_saves_made_at_once(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4232,6 +4239,60 @@ async def test_a_resume_that_did_not_take_is_followed_after_control_leaves_the_o
     assert len(calls) == count  # given up a day after the first resume
     assert stored_control(hass_storage, rig)["resuming"] == {}
     assert rig.gateway.calls[-1] == ("setpoint", 0.0)  # nothing but the hand-back written
+
+
+async def test_a_resume_given_up_is_told_once_and_shown(
+    rig: Rig, hass_storage: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Y4 (the V3 carry-over): control switched off resumes a SmartPI zone it paused, and the
+    resume never takes. A day after the first resume it is given up: told once in the log, shown
+    on the control state and by a warning repair issue naming the zone, stored — a restart shows
+    it again, without telling it again. Learning switched back on, the notice goes."""
+    import logging
+
+    hass = rig.hass
+    zone = rig.zones.entities["living"]
+    skipping = True
+
+    async def set_learning(call: ServiceCall) -> None:
+        enabled = call.data["learning_enabled"]
+        if not enabled or not skipping:
+            smartpi_zone(rig, enabled)
+
+    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    smartpi_zone(rig, True)
+    await start(rig)
+    await rig.switch(True)
+    rig.dhw = True
+    await rig.advance(10)  # paused for hot water
+    await rig.switch(False)  # released: resumed, and the resume is skipped
+    await rig.advance(3600, step=600.0)
+    assert issue(rig, "learning_not_resumed") is None  # not before a day
+    with caplog.at_level(logging.WARNING):
+        await rig.advance(86400, step=600.0)
+    told = [r for r in caplog.records if "could not be switched back on" in r.getMessage()]
+    assert len(told) == 1
+    found = issue(rig, "learning_not_resumed")
+    assert found is not None
+    assert found.severity is ir.IssueSeverity.WARNING
+    assert found.translation_placeholders == {"zones": rig.entry.runtime_data.link.zone_name(zone)}  # type: ignore[union-attr]
+    state = rig.state("sensor", "control_state")
+    assert state.attributes["learning_not_resumed"] == [zone]
+    assert zone in stored_control(hass_storage, rig)["resume_given_up"]
+    # A restart shows it again, without telling it again.
+    assert rig.entry is not None
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        assert await hass.config_entries.async_reload(rig.entry.entry_id)
+        await hass.async_block_till_done()
+    assert issue(rig, "learning_not_resumed") is not None
+    assert not [r for r in caplog.records if "could not be switched back on" in r.getMessage()]
+    # Switched back on by the user: the notice goes.
+    smartpi_zone(rig, True)
+    await rig.advance(20)
+    assert issue(rig, "learning_not_resumed") is None
+    assert rig.state("sensor", "control_state").attributes["learning_not_resumed"] == []
+    assert stored_control(hass_storage, rig)["resume_given_up"] == {}
 
 
 @pytest.mark.parametrize("paused", [False, True], ids=["no_unit", "learning_unit"])
@@ -5929,17 +5990,19 @@ async def refresh(rig: Rig) -> None:
 
 def control_entities() -> list[tuple[str, str]]:
     """The switch, control's state and setpoint, the "Reset comfort correction" button and
-    every control alarm."""
+    every control alarm the rig has: the gateway path's — the relay's exist on the relay path
+    only (X8, R15) — without the outdoor sensor's, whose check needs a weather entity the rig
+    does not have (the missing-data rule, Y4)."""
     return [
         ("switch", "control"),
         ("sensor", "control_state"),
         ("sensor", "control_setpoint"),
         ("button", "reset_comfort_correction"),
-        # The gateway path's alarms: the relay's exist on the relay path only (X8, R15).
         *(
             ("binary_sensor", f"alarm_{kind.value}")
             for kind in control_module.ControlAlarm
             if kind not in control_module.RELAY_ONLY_ALARMS
+            and kind is not control_module.ControlAlarm.OUTDOOR_SENSOR_SUSPECT
         ),
     ]
 
@@ -8441,7 +8504,8 @@ async def test_the_circuit_too_hot_alarm_is_information_on_the_measured_flow(rig
     await rig.advance(90, step=30)
     alarm = rig.state("binary_sensor", "alarm_circuit_too_hot")
     assert alarm.state == "on"
-    assert (alarm.attributes["value"], alarm.attributes["limit"]) == (46.0, 45.0)
+    assert alarm.attributes["limit"] == 45.0
+    assert entry.runtime_data.data.alarms[AlarmKind.CIRCUIT_TOO_HOT].value == 46.0  # P-72
     assert 0.0 not in rig.gateway.setpoints()  # information only: no hand-back
     assert rig.state("switch", "control").state == "on"
     rig.flow = 44.0
@@ -8586,7 +8650,7 @@ async def test_a_fixed_circuit_is_judged_by_its_own_flow_sensor(rig: Rig, own_se
     alarm = rig.state("binary_sensor", "alarm_circuit_too_hot")
     if own_sensor:
         assert alarm.state == "on"
-        assert alarm.attributes["value"] == 46.0
+        assert entry.runtime_data.data.alarms[AlarmKind.CIRCUIT_TOO_HOT].value == 46.0
     else:
         assert alarm.state == "off"
         assert alarm.attributes["reason"] == "circuit_not_measured"
@@ -9777,10 +9841,14 @@ async def test_boiler_not_responding_after_thirty_minutes(rig: Rig, relay: FakeR
 
 
 async def test_no_heat_alarm_without_a_proof_input(rig: Rig, relay: FakeRelay) -> None:
+    """Without a proof input the proof is inactive (the missing-data rule, Y4): no alarm entity,
+    the boiler's heat shown unverified, and control "without heat confirmation"."""
     await start_relay(rig, (Signal.OUTDOOR,))
     await rig.switch(True)
     await rig.advance(2100)
-    assert control_alarm(rig, "boiler_not_responding") == "off"
+    assert rig.entry is not None
+    key = f"{rig.entry.entry_id}_alarm_boiler_not_responding"
+    assert er.async_get(rig.hass).async_get_entity_id("binary_sensor", DOMAIN, key) is None
     assert rig.state("sensor", "control_state").attributes["boiler_heats"] == "unverified"
     switch = rig.state("switch", "control")
     assert switch.attributes["confirmation"] == "without_heat_confirmation"
@@ -10108,3 +10176,127 @@ async def test_days_under_control_are_read_back_from_the_control_state_sensor(
     ]  # the day before yesterday
     assert day.controlled_s == pytest.approx(2 * 3600.0 + 1.5 * 3600.0)
     assert day.under_control
+
+
+# --- Y4: the coded lists' texts (P-39) and the switch's refusal (P-74) -------------------------
+
+EN_TEXTS = json.loads(
+    (
+        Path(__file__).resolve().parents[2]
+        / "custom_components/vtherm_smart_boiler/translations/en.json"
+    ).read_text(encoding="utf-8")
+)
+
+
+def _attribute_text(platform: str, key: str, attribute: str, code: str) -> str:
+    entity = EN_TEXTS["entity"][platform][key]
+    return entity["state_attributes"][attribute]["state"][code]
+
+
+async def test_blocked_switch_error_counts_the_others(rig: Rig) -> None:
+    """P-74: switching on with two blockers is refused with the first blocker's own text and
+    the count of the others — no raw code in the message; both are named, translated, on the
+    switch and on the control state."""
+    await start(rig, curve={}, count_threshold=5)
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)
+    assert err.value.translation_key == "blocked_curve_not_entered"
+    assert err.value.translation_placeholders == {"count": "1"}
+    await rig.advance(10)  # the next step shows them
+    switch = rig.state("switch", "control")
+    assert switch.attributes["blockers"] == ["curve_not_entered", "count_threshold_above_zones"]
+    expected = ", ".join(
+        _attribute_text("switch", "control", "blockers", code)
+        for code in ("curve_not_entered", "count_threshold_above_zones")
+    )
+    assert switch.attributes["blockers_text"] == expected
+    state = rig.state("sensor", "control_state")
+    assert state.attributes["blockers_text"] == ", ".join(
+        _attribute_text("sensor", "control_state", "blockers", code)
+        for code in ("curve_not_entered", "count_threshold_above_zones")
+    )
+
+
+async def test_one_blocker_alone_counts_no_others(rig: Rig) -> None:
+    """Negative: a single blocker gives a count of 0."""
+    await start(rig, curve={})
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)
+    assert err.value.translation_placeholders == {"count": "0"}
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+async def test_coded_lists_come_with_their_text(
+    rig: Rig, hass_storage: dict[str, Any], layout: str
+) -> None:
+    """P-39: the codes stay, for automations, and each list has its text in Home Assistant's
+    language beside it — control's reasons and latch here; a code without a text (a latch an
+    earlier version stored for an alarm this one does not have) is shown as itself."""
+    await start_with_stored(
+        rig,
+        hass_storage,
+        {"latched": True, "latched_by": ["outside_change", "pressure_low"]},
+        layout,
+    )
+    await rig.advance(120)
+    state = rig.state("sensor", "control_state")
+    assert state.attributes["latched_by"] == ["outside_change", "pressure_low"]
+    outside = _attribute_text("sensor", "control_state", "latched_by", "outside_change")
+    assert state.attributes["latched_by_text"] == f"{outside}, pressure_low"
+    reasons = state.attributes["reasons"]
+    assert reasons
+    assert state.attributes["reasons_text"] == ", ".join(
+        _attribute_text("sensor", "control_state", "reasons", code) for code in reasons
+    )
+    assert state.attributes["blockers_text"] == ""  # nothing blocks: an empty text
+
+
+async def test_the_verdict_reasons_come_with_their_text(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P-39 and the Y3 carry-over: each verdict reason with its text; low condensing where
+    control does not set the water temperature says so, not "anti-cycling is planned"."""
+    from dataclasses import replace
+
+    from custom_components.vtherm_smart_boiler.core.verdict import (
+        WATER_NOT_CONTROLLED,
+        Reason,
+        ReasonCode,
+        ReasonKind,
+        Verdict,
+        VerdictResult,
+    )
+
+    await start(rig)
+    assert rig.entry is not None
+    coordinator = rig.entry.runtime_data
+    await rig.hass.async_block_till_done(wait_background_tasks=True)  # the first analysis
+    await coordinator.async_run_analysis()
+    analysis = coordinator.analysis
+    assert analysis is not None
+
+    async def no_analysis(*_args: Any) -> None:
+        return None  # the monitor's own analysis would replace the verdict meanwhile
+
+    monkeypatch.setattr(coordinator, "async_run_analysis", no_analysis)
+    reasons = (
+        Reason(ReasonCode.FREQUENT_STARTS, ReasonKind.PROBLEM, 4.0, 3.0, changed_by_control=False),
+        Reason(
+            ReasonCode.LOW_CONDENSING,
+            ReasonKind.PROBLEM,
+            0.2,
+            0.5,
+            changed_by_control=False,
+            detail=WATER_NOT_CONTROLLED,
+        ),
+    )
+    coordinator.analysis = replace(analysis, verdict=VerdictResult(Verdict.NOT_WORTH_IT, reasons))
+    await coordinator.async_refresh()
+    await rig.hass.async_block_till_done()
+    text = rig.state("sensor", "verdict").attributes["reasons_text"]
+    starts = _attribute_text("sensor", "verdict", "reasons", "frequent_starts")
+    not_yet = _attribute_text("sensor", "verdict", "changed_by_control", "false")
+    low = _attribute_text("sensor", "verdict", "reasons", "low_condensing")
+    water = _attribute_text("sensor", "verdict", "detail", WATER_NOT_CONTROLLED)
+    assert text == f"{starts} ({not_yet}), {low} ({water})"
+    assert "anti-cycling" not in text.split(", ", 1)[1]

@@ -1,11 +1,11 @@
-"""The control switch: off by default, experimental, and refused while control is not allowed."""
+"""The control switch: off by default, experimental, and refused while control is not allowed —
+the refusal naming the first blocker in its own text and counting the others (P-74)."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
@@ -15,8 +15,8 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .control_config import WritePath, hand_back_effect, wall_thermostat_applies
-from .coordinator import SmartBoilerCoordinator
-from .entity import ControlEntity
+from .coordinator import SmartBoilerConfigEntry, SmartBoilerCoordinator
+from .entity import ControlEntity, coded_text
 
 # Blockers that pass on their own; control switched on waits for them instead of refusing.
 TRANSIENT_BLOCKERS = frozenset({"ha_starting", "vt_central_boiler_unknown", "monitor_failed"})
@@ -33,10 +33,10 @@ PARALLEL_UPDATES = 1  # one switch action at a time
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: SmartBoilerConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    coordinator: SmartBoilerCoordinator = entry.runtime_data
+    coordinator = entry.runtime_data
     if coordinator.control is not None:
         entities = [ControlSwitch(coordinator)]
         coordinator.expect_entities(entities)
@@ -52,8 +52,11 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
     a blocker that needs the user remains. The monitoring period counts calendar days from the
     entry's creation (answer K): once it has passed, control may start without a verdict —
     off-season the monitor may have too little data for one — and the switch shows the verdict
-    so that this is said (S-43).
+    so that this is said (S-43). Its blockers, and the alarm that keeps it from writing, come
+    with their text (P-39).
     """
+
+    _unrecorded_attributes = frozenset({"blockers_text", "blocked_by_text"})
 
     def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
         super().__init__(coordinator, "control")
@@ -75,9 +78,11 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
         return {
             "experimental": True,
             "blockers": list(status.blockers),
+            "blockers_text": self._text("blockers", status.blockers),
             # Decision 7 (Y1): an allowed alarm active while control is on keeps it from writing
             # — the lost boiler link, until it has been fresh for a minute.
             "blocked_by": list(status.blocked_by),
+            "blocked_by_text": self._text("blocked_by", status.blocked_by),
             "hand_back_effect": None if effect is None else effect.value,
             # Who keeps frost protection now: the plugin while it controls, else whoever the
             # hand-back leaves the boiler with — after a stand-alone hand-back, the boiler's own,
@@ -94,6 +99,9 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
             # S-43: the monitor's verdict; "not enough data" says control starts without one.
             "verdict": self._verdict(),
         }
+
+    def _text(self, attribute: str, codes: tuple[str, ...]) -> str:
+        return coded_text(self.coordinator, "switch", "control", attribute, codes)
 
     def _verdict(self) -> str | None:
         """The verdict of the last analysis; ``None`` before the first."""
@@ -134,10 +142,12 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
             b for b in self.control.blockers(dt_util.utcnow().timestamp()) if b not in passing
         ]
         if blockers:
+            # P-74: the first blocker's own text, and how many more — each named, translated,
+            # on the switch's and the control state's ``blockers_text``.
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
                 translation_key=f"blocked_{blockers[0]}",
-                translation_placeholders={"others": ", ".join(blockers[1:]) or "-"},
+                translation_placeholders={"count": str(len(blockers) - 1)},
             )
         await self.control.async_set_enabled(True)
         self.async_write_ha_state()

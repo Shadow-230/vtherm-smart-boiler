@@ -422,10 +422,6 @@ class VThermLink:
         — once, in the executor: package metadata is read from disk."""
         self._api_version = await self._hass.async_add_executor_job(_vtherm_api_version)
 
-    @property
-    def zone_entities(self) -> tuple[str, ...]:
-        return self._zones
-
     def zone(self, entity_id: str) -> ZoneState:
         zone = self.zone_from_state(entity_id, self._hass.states.get(entity_id))
         lost = zone.safety_on or self._room_sensor_lost(entity_id)
