@@ -15,7 +15,7 @@
       },
       "signals": {
         "title": "Sygnały kotła",
-        "description": "Wskaż encję, która podaje każdy sygnał. Płomień i temperatura zasilania są wymagane; każdy kolejny sygnał rozszerza monitor. Wtyczka tylko czyta te encje.",
+        "description": "Wskaż encję, która podaje każdy sygnał. Płomień i temperatura zasilania są wymagane; każdy kolejny sygnał rozszerza monitor. Wtyczka tylko czyta te encje. Jedna encja zasila tylko jeden sygnał.",
         "data": {
           "flame": "Płomień",
           "flow": "Temperatura zasilania",
@@ -94,7 +94,7 @@
         "data_description": {
           "control": "Bez mieszania, prosto z kotła; mieszany przez kocioł (drugi obieg mieszany przez kocioł); mieszany przez osobny sterownik; albo termostatyczny zawór mieszający (stały). Sterowanie działa tylko dla jednego obiegu zasilanego prosto z kotła albo przez stały zawór. Zły typ sprawia, że sterowanie odmawia albo źle ocenia, co dociera do pokoi.",
           "max_flow": "Najwyższa temperatura dla tego obiegu, w °C, np. podłogówka bez mieszacza: sterowanie nigdy nie prosi o więcej, ale kocioł może ją przekroczyć o własną histerezę — ustaw alarm poniżej, aby o tym wiedzieć. Wymagane dla podłogówki bez mieszacza. Za wysoka przegrzewa podłogę.",
-          "fixed_temperature": "Potrzebna dla termostatycznego zaworu mieszającego (stałego): jego nastawa w °C. Sterowanie utrzymuje zasilanie kotła co najmniej tak ciepłe; wyższa niż nastawa zaworu sprawia, że woda jest cieplejsza niż trzeba.",
+          "fixed_temperature": "Potrzebna dla termostatycznego zaworu mieszającego (stałego): jego nastawa w °C. Woda z kotła jest utrzymywana co najmniej 5 K wyżej, żeby zawór mieszający mógł ją osiągnąć; wyższa niż nastawa zaworu sprawia, że woda jest cieplejsza niż trzeba.",
           "max_flow_alarm": "Alarm informacyjny, gdy zmierzone zasilanie utrzymuje się powyżej tej wartości, w °C. Na start maksimum + 5 °C. Wymaga odczytu zasilania. Za wysoko przepuszcza prawdziwe przegrzanie bez zgłoszenia.",
           "max_flow_alarm_min": "Po ilu minutach alarm się podnosi. Na start 10. Za krótko zgłasza każde przekroczenie z histerezy kotła.",
           "flow_entity": "Własna temperatura zasilania obiegu mieszanego. Bez niej nie da się stwierdzić, czy ciepło do niego dociera.",
@@ -108,7 +108,7 @@
           "zones": "Strefy"
         },
         "data_description": {
-          "zones": "Oferowane są tylko encje klimatu VT. Wtyczka je odczytuje; przy włączonym sterowaniu i wstrzymywaniu nauki także wstrzymuje i wznawia ich naukę SmartPI. Pominięta strefa nie zgłasza zapotrzebowania i nie jest pilnowana przed mrozem."
+          "zones": "Oferowane są tylko encje klimatu VT. Wtyczka je odczytuje; przy włączonym sterowaniu i wstrzymywaniu nauki także wstrzymuje i wznawia ich naukę SmartPI. Pominięta strefa nie zgłasza zapotrzebowania i nie jest pilnowana przed mrozem. Strefa zbudowana na encji termostatu samego kotła lub bramki jest odrzucana: prosiłaby o ciepło zawsze, gdy pali się płomień."
         }
       },
       "zone": {
@@ -121,7 +121,8 @@
           "reference_output_w": "Moc grzejników",
           "exponent": "Wykładnik grzejnika",
           "power_threshold": "Próg mocy",
-          "temperature_threshold": "Próg temperatury"
+          "temperature_threshold": "Próg temperatury",
+          "closes_when_off": "Zamyka się, gdy VT ją wyłącza"
         },
         "data_description": {
           "circuit": "Obieg grzewczy tej strefy. Zły obieg przypisuje ciepło strefy niewłaściwej wodzie.",
@@ -130,7 +131,8 @@
           "reference_output_w": "Moc grzejników w warunkach odniesienia, w W. Tylko do bezwzględnego szacunku mocy; zła wartość wypacza tylko ten szacunek.",
           "exponent": "Zastępuje wykładnik EN 442 typu grzejnika. Zły wykładnik wypacza współczynnik mocy grzejnika.",
           "power_threshold": "Źródło mocy liczy się jako grzejące powyżej tej wartości, w W. Domyślnie 100 W. Za niska liczy czuwanie jako grzanie; za wysoka pomija mały grzejnik.",
-          "temperature_threshold": "Potrzebna dla źródła temperatury: liczy się jako grzejące powyżej tej wartości, w °C. Za niska liczy zimny piec jako grzejący; za wysoka go pomija."
+          "temperature_threshold": "Potrzebna dla źródła temperatury: liczy się jako grzejące powyżej tej wartości, w °C. Za niska liczy zimny piec jako grzejący; za wysoka go pomija.",
+          "closes_when_off": "Zaznacz, jeśli zawór lub grzejnik tej strefy zamyka się zawsze, gdy Versatile Thermostat wyłącza strefę, choć VT nie podaje jej otwarcia (np. głowica, którą VT wyłącza). Ochrona przed mrozem nie grzeje wtedy dla tej strefy, dopóki VT trzyma ją wyłączoną, i zamiast tego zgłasza problem do naprawy. Wyłączone (domyślnie): strefa jest grzana w mróz jak dotąd, co może pracować kotłem na zamknięty zawór."
         }
       },
       "building": {
@@ -224,14 +226,27 @@
       "invalid_control": "Ustawień sterowania nie da się użyć.",
       "alarm_limits_out_of_order": "Próg alarmu musi leżeć za progiem ostrzeżenia.",
       "modulation_not_percent": "Modulacja to procent zakresu kotła: wybierz czujnik w %.",
-      "max_flow_alarm_not_above_max": "Temperatura alarmu musi być wyższa niż maksimum obiegu."
+      "max_flow_alarm_not_above_max": "Temperatura alarmu musi być wyższa niż maksimum obiegu.",
+      "entity_not_suitable": "Ta encja nie jest rodzaju, który przyjmuje to pole.",
+      "zone_not_vt": "Strefą może być tylko termostat Versatile Thermostat.",
+      "entity_for_two_signals": "Jedna encja może zasilać tylko jeden sygnał: wybierz inną encję albo zostaw to pole puste.",
+      "zone_on_boiler_thermostat": "Strefa Versatile Thermostat {zone} jest zbudowana na encji termostatu samego kotła lub bramki: prosiłaby o ciepło zawsze, gdy pali się płomień. Zbuduj strefę na czujniku pokojowym i jej zaworach albo głowicach.",
+      "circuit_has_zones": "Strefy nadal używają pominiętego obiegu: najpierw przenieś je do innego obiegu w kroku stref.",
+      "invalid_boiler": "Zapisana tu wartość jest nieznana tej wersji; wybierz ją ponownie.",
+      "invalid_circuit": "Zapisana tu wartość jest nieznana tej wersji; wybierz ją ponownie.",
+      "invalid_zone": "Zapisana tu wartość jest nieznana tej wersji; wybierz ją ponownie.",
+      "invalid_reference": "Zapisana tu wartość jest nieznana tej wersji; wybierz ją ponownie.",
+      "invalid_monitor": "Zapisana tu wartość jest nieznana tej wersji; wybierz ją ponownie.",
+      "invalid_building": "Zapisana tu wartość jest nieznana tej wersji; wybierz ją ponownie.",
+      "invalid_freshness": "Zapisana tu wartość jest nieznana tej wersji; wybierz ją ponownie.",
+      "unreadable_options": "Zapisana tu wartość jest nieznana tej wersji; wybierz ją ponownie."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Opcje VTherm Smart Boiler",
-        "description": "Zmień jedną sekcję; wszystkie inne ustawienia zostają bez zmian.",
+        "description": "Zmień jedną sekcję; wszystkie inne ustawienia zostają bez zmian. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "menu_options": {
           "signals": "Sygnały kotła",
           "freshness": "Limity świeżości",
@@ -248,19 +263,19 @@
       },
       "level": {
         "title": "Poziom szczegółowości",
-        "description": "Poziom zmienia tylko to, co widzisz, nigdy działanie wtyczki.",
+        "description": "Poziom zmienia tylko to, co widzisz, nigdy działanie wtyczki; sama jego zmiana niczego nie przeładowuje. Po przywróceniu ustawień domyślnych zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "level": "Poziom szczegółowości",
           "restore_defaults": "Przywróć domyślne ustawienia zaawansowane"
         },
         "data_description": {
           "level": "Prosty pokazuje to, co najważniejsze; zaawansowany pokazuje każdy parametr.",
-          "restore_defaults": "Przy przejściu na prosty: zaznacz, aby przywrócić domyślne strojenie zaawansowane — kształt krzywej, limity i zachowanie sterowania, reakcje na alarmy, progi monitora, margines pokoju odniesienia. Fakty o instalacji zostają niezależnie od wyboru: zmapowane sygnały, kocioł, obiegi, wielkości grzejników i wpisane wartości. Niezaznaczone strojenie zostaje aktywne, ale ukryte, a opcje pokazują, że część ustawień zaawansowanych jest aktywna."
+          "restore_defaults": "Przy przejściu na prosty: zaznacz, aby przywrócić domyślne strojenie zaawansowane — kształt krzywej, limity i zachowanie sterowania, reakcje na alarmy, progi monitora, margines pokoju odniesienia. Fakty o instalacji zostają niezależnie od wyboru: zmapowane sygnały, kocioł, obiegi, wielkości grzejników i wpisane wartości — a także okres monitorowania i okno werdyktu. Niezaznaczone strojenie zostaje aktywne, ale ukryte, a opcje pokazują, że część ustawień zaawansowanych jest aktywna."
         }
       },
       "signals": {
         "title": "Sygnały kotła",
-        "description": "Wskaż encję, która podaje każdy sygnał. Płomień i temperatura zasilania są wymagane; każdy kolejny sygnał rozszerza monitor. Wtyczka tylko czyta te encje.",
+        "description": "Wskaż encję, która podaje każdy sygnał. Płomień i temperatura zasilania są wymagane; każdy kolejny sygnał rozszerza monitor. Wtyczka tylko czyta te encje. Jedna encja zasila tylko jeden sygnał. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "flame": "Płomień",
           "flow": "Temperatura zasilania",
@@ -298,7 +313,7 @@
       },
       "freshness": {
         "title": "Limity świeżości",
-        "description": "Limit wieku dla każdego sygnału, w minutach: wartość niezgłoszona dłużej liczy się jako nieświeża, dla monitora i dla sterowania tak samo — bez świeżego płomienia i zasilania sterowanie nic nie zapisuje i po pięciu minutach oddaje kocioł. Puste (domyślnie): liczy się tylko dostępność encji, bo wiele źródeł (m.in. MQTT) zgłasza tylko zmiany, a stała wartość nie jest nieświeża. Ryzyko: bez limitu źródło, które zamarza, nie stając się niedostępne, nie zostanie wykryte; limit krótszy niż odstęp zgłoszeń źródła zatrzyma sterowanie przy stałej pogodzie. Sterowanie sprawdza płomień i temperaturę zasilania, każde według jego limitu; połączenie, które co chwilę znika, uznaje się za utracone, gdy przez pięć minut w ciągu dziesięciu nie ma świeżych danych. Encja pogody ma własny limit, domyślnie brak. Przy bramce OpenTherm Gateway połączonej przez MQTT jej rozłączenie widać w ciągu około 90 s (encje stają się niedostępne), ale zerwane połączenie wewnątrz niej, między modułem ESP a układem PIC, może w ogóle nie zostać wykryte: encje pozostają dostępne, a ich wartości po prostu przestają się zmieniać.",
+        "description": "Limit wieku dla każdego sygnału, w minutach: wartość niezgłoszona dłużej liczy się jako nieświeża, dla monitora i dla sterowania tak samo — bez świeżego płomienia i zasilania sterowanie nic nie zapisuje i po pięciu minutach oddaje kocioł. Puste (domyślnie): liczy się tylko dostępność encji, bo wiele źródeł (m.in. MQTT) zgłasza tylko zmiany, a stała wartość nie jest nieświeża. Ryzyko: bez limitu źródło, które zamarza, nie stając się niedostępne, nie zostanie wykryte; limit krótszy niż odstęp zgłoszeń źródła zatrzyma sterowanie przy stałej pogodzie. Sterowanie sprawdza płomień i temperaturę zasilania, każde według jego limitu; połączenie, które co chwilę znika, uznaje się za utracone, gdy przez pięć minut w ciągu dziesięciu nie ma świeżych danych. Encja pogody ma własny limit, domyślnie brak. Przy bramce OpenTherm Gateway połączonej przez MQTT jej rozłączenie widać w ciągu około 90 s (encje stają się niedostępne), ale zerwane połączenie wewnątrz niej, między modułem ESP a układem PIC, może w ogóle nie zostać wykryte: encje pozostają dostępne, a ich wartości po prostu przestają się zmieniać. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "flame": "Płomień",
           "flow": "Temperatura zasilania",
@@ -319,7 +334,7 @@
       },
       "boiler": {
         "title": "Kocioł",
-        "description": "Co wiesz o swoim kotle. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić.",
+        "description": "Co wiesz o swoim kotle. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "class": "Co potrafi integracja kotła",
           "dhw": "Ciepła woda użytkowa",
@@ -347,7 +362,7 @@
       },
       "circuit": {
         "title": "Obieg grzewczy {number}",
-        "description": "Jak ustalana jest temperatura wody w tym obiegu.",
+        "description": "Jak ustalana jest temperatura wody w tym obiegu. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "control": "Sterowanie",
           "max_flow": "Maksymalna temperatura zasilania",
@@ -360,7 +375,7 @@
         "data_description": {
           "control": "Bez mieszania, prosto z kotła; mieszany przez kocioł (drugi obieg mieszany przez kocioł); mieszany przez osobny sterownik; albo termostatyczny zawór mieszający (stały). Sterowanie działa tylko dla jednego obiegu zasilanego prosto z kotła albo przez stały zawór. Zły typ sprawia, że sterowanie odmawia albo źle ocenia, co dociera do pokoi.",
           "max_flow": "Najwyższa temperatura dla tego obiegu, w °C, np. podłogówka bez mieszacza: sterowanie nigdy nie prosi o więcej, ale kocioł może ją przekroczyć o własną histerezę — ustaw alarm poniżej, aby o tym wiedzieć. Wymagane dla podłogówki bez mieszacza. Za wysoka przegrzewa podłogę.",
-          "fixed_temperature": "Potrzebna dla termostatycznego zaworu mieszającego (stałego): jego nastawa w °C. Sterowanie utrzymuje zasilanie kotła co najmniej tak ciepłe; wyższa niż nastawa zaworu sprawia, że woda jest cieplejsza niż trzeba.",
+          "fixed_temperature": "Potrzebna dla termostatycznego zaworu mieszającego (stałego): jego nastawa w °C. Woda z kotła jest utrzymywana co najmniej 5 K wyżej, żeby zawór mieszający mógł ją osiągnąć; wyższa niż nastawa zaworu sprawia, że woda jest cieplejsza niż trzeba.",
           "max_flow_alarm": "Alarm informacyjny, gdy zmierzone zasilanie utrzymuje się powyżej tej wartości, w °C. Na start maksimum + 5 °C. Wymaga odczytu zasilania. Za wysoko przepuszcza prawdziwe przegrzanie bez zgłoszenia.",
           "max_flow_alarm_min": "Po ilu minutach alarm się podnosi. Na start 10. Za krótko zgłasza każde przekroczenie z histerezy kotła.",
           "flow_entity": "Własna temperatura zasilania obiegu mieszanego. Bez niej nie da się stwierdzić, czy ciepło do niego dociera.",
@@ -369,17 +384,17 @@
       },
       "zones": {
         "title": "Strefy VT",
-        "description": "Wybierz strefy Versatile Thermostat ogrzewane tym kotłem. Strefy niewybrane są pomijane.",
+        "description": "Wybierz strefy Versatile Thermostat ogrzewane tym kotłem. Strefy niewybrane są pomijane. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "zones": "Strefy"
         },
         "data_description": {
-          "zones": "Oferowane są tylko encje klimatu VT. Wtyczka je odczytuje; przy włączonym sterowaniu i wstrzymywaniu nauki także wstrzymuje i wznawia ich naukę SmartPI. Pominięta strefa nie zgłasza zapotrzebowania i nie jest pilnowana przed mrozem."
+          "zones": "Oferowane są tylko encje klimatu VT. Wtyczka je odczytuje; przy włączonym sterowaniu i wstrzymywaniu nauki także wstrzymuje i wznawia ich naukę SmartPI. Pominięta strefa nie zgłasza zapotrzebowania i nie jest pilnowana przed mrozem. Strefa zbudowana na encji termostatu samego kotła lub bramki jest odrzucana: prosiłaby o ciepło zawsze, gdy pali się płomień."
         }
       },
       "zone": {
         "title": "Strefa {zone}",
-        "description": "Jak ogrzewana jest ta strefa.",
+        "description": "Jak ogrzewana jest ta strefa. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "circuit": "Obieg",
           "emitter": "Typ grzejnika",
@@ -387,7 +402,8 @@
           "reference_output_w": "Moc grzejników",
           "exponent": "Wykładnik grzejnika",
           "power_threshold": "Próg mocy",
-          "temperature_threshold": "Próg temperatury"
+          "temperature_threshold": "Próg temperatury",
+          "closes_when_off": "Zamyka się, gdy VT ją wyłącza"
         },
         "data_description": {
           "circuit": "Obieg grzewczy tej strefy. Zły obieg przypisuje ciepło strefy niewłaściwej wodzie.",
@@ -396,12 +412,13 @@
           "reference_output_w": "Moc grzejników w warunkach odniesienia, w W. Tylko do bezwzględnego szacunku mocy; zła wartość wypacza tylko ten szacunek.",
           "exponent": "Zastępuje wykładnik EN 442 typu grzejnika. Zły wykładnik wypacza współczynnik mocy grzejnika.",
           "power_threshold": "Źródło mocy liczy się jako grzejące powyżej tej wartości, w W. Domyślnie 100 W. Za niska liczy czuwanie jako grzanie; za wysoka pomija mały grzejnik.",
-          "temperature_threshold": "Potrzebna dla źródła temperatury: liczy się jako grzejące powyżej tej wartości, w °C. Za niska liczy zimny piec jako grzejący; za wysoka go pomija."
+          "temperature_threshold": "Potrzebna dla źródła temperatury: liczy się jako grzejące powyżej tej wartości, w °C. Za niska liczy zimny piec jako grzejący; za wysoka go pomija.",
+          "closes_when_off": "Zaznacz, jeśli zawór lub grzejnik tej strefy zamyka się zawsze, gdy Versatile Thermostat wyłącza strefę, choć VT nie podaje jej otwarcia (np. głowica, którą VT wyłącza). Ochrona przed mrozem nie grzeje wtedy dla tej strefy, dopóki VT trzyma ją wyłączoną, i zamiast tego zgłasza problem do naprawy. Wyłączone (domyślnie): strefa jest grzana w mróz jak dotąd, co może pracować kotłem na zamknięty zawór."
         }
       },
       "building": {
         "title": "Budynek",
-        "description": "Pierwszy szacunek strat ciepła domu; zapisane dni grzania go poprawiają. Czego nie wiesz, zostaw puste.",
+        "description": "Pierwszy szacunek strat ciepła domu; zapisane dni grzania go poprawiają. Czego nie wiesz, zostaw puste. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "floor_area": "Powierzchnia ogrzewana",
           "insulation": "Izolacja",
@@ -423,7 +440,7 @@
       },
       "reference": {
         "title": "Pokój odniesienia",
-        "description": "Jedna temperatura i nastawa pokoju dla sterowników, które potrzebują jednego pomieszczenia.",
+        "description": "Jedna temperatura i nastawa pokoju dla sterowników, które potrzebują jednego pomieszczenia. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "strategy": "Strategia",
           "zone": "Wybrana strefa",
@@ -437,7 +454,7 @@
       },
       "monitor": {
         "title": "Monitor",
-        "description": "Progi analizy.",
+        "description": "Progi analizy. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "condensing_return": "Próg powrotu dla kondensacji",
           "short_burn_min": "Krótkie palenie",
@@ -473,7 +490,7 @@
       },
       "control": {
         "title": "Sterowanie (eksperymentalne)",
-        "description": "Jak wtyczka zapisuje do kotła nastawę zasilania. Sterowanie pozostaje wyłączone, dopóki go nie włączysz, i działa dopiero po okresie monitorowania. Wybierz „Bez sterowania”, żeby tylko monitorować.",
+        "description": "Jak wtyczka zapisuje do kotła nastawę zasilania. Sterowanie pozostaje wyłączone, dopóki go nie włączysz, i działa dopiero po okresie monitorowania. Wybierz „Bez sterowania”, żeby tylko monitorować. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "write_path": "Ścieżka zapisu",
           "topology": "Podłączenie bramki",
@@ -493,7 +510,7 @@
       },
       "control_entity": {
         "title": "Encja do zapisu",
-        "description": "Encja, która przyjmuje nastawę zasilania, i sposób oddawania sterowania.",
+        "description": "Encja, która przyjmuje nastawę zasilania, i sposób oddawania sterowania. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "setpoint_entity": "Encja nastawy",
           "write_type": "Typ zapisu",
@@ -508,30 +525,30 @@
         },
         "data_description": {
           "setpoint_entity": "Liczba (number albo input_number), która ustawia temperaturę zasilania kotła.",
-          "write_type": "Wygasający: urządzenie porzuca wartość, jeśli nie jest powtarzana; jest powtarzana co 30 s. Trzymany: urządzenie zachowuje wartość i samo ją przekazuje; zapis tylko przy zmianie. Trwały lub nieznany (domyślnie): zapisywany w pamięci kotła albo może być — wtyczka nigdy nie zapisuje trwałej pamięci kotła, więc sterowanie z taką encją jest niedostępne. Ryzyko: parametr zapisywany w pamięci, zadeklarowany jako wygasający, byłby zapisywany co 30 s, około 2900 razy na dobę, i zużyłby pamięć kotła.",
-          "ch_entity": "Opcjonalny: przełącznik, który włącza i wyłącza grzanie, włączany z powrotem przy oddaniu tam, gdzie kocioł wraca do własnego sterowania albo termostatu, a zostawiany bez zmian tam, gdzie oddanie zatrzymuje grzanie; poniżej trzeba podać jego typ zapisu. Bez przełącznika „wyłącz” jest zapisywane jako niska nastawa. Nigdy nie wybieraj przełącznika zapisywanego w pamięci kotła (np. parametru kotła „grzanie aktywne”): każde przełączenie by ją zużywało. Włączony ma pozwalać grzać: flaga, która włączona zatrzymuje grzanie (jak „heating off” w EMS-ESP), odwraca każde polecenie i nie może być tu użyta.",
-          "ch_write_type": "Potrzebny przy przełączniku grzania: co urządzenie robi z jego stanem. Wygasający: porzucany, jeśli nie jest powtarzany; powtarzany co 30 s. Trzymany: urządzenie go zachowuje. Wtyczka nigdy nie zapisuje trwałej pamięci kotła, więc przełącznik zadeklarowany jako trwały lub nieznany jest odrzucany.",
+          "write_type": "Wygasający: urządzenie porzuca wartość, jeśli nie jest powtarzana; jest powtarzana co 30 s. Trzymany: zapis przy zmianie oraz ponownie co 5 minut i po powrocie urządzenia. Trwały lub nieznany (domyślnie): zapisywany w pamięci kotła albo może być — wtyczka nigdy nie zapisuje trwałej pamięci kotła, więc sterowanie z taką encją jest niedostępne. Ryzyko: parametr zapisywany w pamięci, zadeklarowany jako wygasający, byłby zapisywany co 30 s, około 2900 razy na dobę, i zużyłby pamięć kotła. Trzymany: urządzenie zachowuje ostatnią podaną wartość (ESPHome, DIYLess i podobne). Nastawa zasilania EMS-ESP (selflowtemp) nie jest trzymana — wygasa po mniej więcej minucie — więc zadeklaruj ją jako wygasającą. Trzymany: ryzyka — parametr zapisywany w pamięci kotła, a zadeklarowany jako trzymany, jest zapisywany przy każdej zmianie i co 5 minut, i zużywa pamięć (np. parametr temperatury grzania w EMS-ESP); a ostatnia trzymana wartość, także „wyłączone”, zostaje w kotle, gdy Home Assistant nie działa.",
+          "ch_entity": "Przełącznik, który włącza i wyłącza grzanie — potrzebny do sterowania w tej wersji: bez niego „wyłącz” byłoby niską nastawą, a nie wiadomo jeszcze, czy to zatrzymuje kocioł i jego pompę, więc sterowanie pozostaje zablokowane i działa tylko monitor. Jest włączany z powrotem przy oddaniu tam, gdzie kocioł wraca do własnego sterowania albo termostatu, a zostawiany bez zmian tam, gdzie oddanie zatrzymuje grzanie; poniżej trzeba podać jego typ zapisu. Nie może być przełącznikiem sterowania zewnętrznego. Nigdy nie wybieraj przełącznika zapisywanego w pamięci kotła (np. parametru kotła „grzanie aktywne”): każde przełączenie by ją zużywało. Włączony ma pozwalać grzać: flaga, która włączona zatrzymuje grzanie (jak „heating off” w EMS-ESP), odwraca każde polecenie i nie może być tu użyta.",
+          "ch_write_type": "Potrzebny przy przełączniku grzania: co urządzenie robi z jego stanem. Wygasający: porzucany, jeśli nie jest powtarzany; powtarzany co 30 s. Trzymany: zapis przy zmianie oraz ponownie co 5 minut i po powrocie urządzenia. Wtyczka nigdy nie zapisuje trwałej pamięci kotła, więc przełącznik zadeklarowany jako trwały lub nieznany jest odrzucany. Trzymany: urządzenie zachowuje ostatnią podaną wartość (ESPHome, DIYLess i podobne). Nastawa zasilania EMS-ESP (selflowtemp) nie jest trzymana — wygasa po mniej więcej minucie — więc zadeklaruj ją jako wygasającą. Trzymany: ryzyka — parametr zapisywany w pamięci kotła, a zadeklarowany jako trzymany, jest zapisywany przy każdej zmianie i co 5 minut, i zużywa pamięć (np. parametr temperatury grzania w EMS-ESP); a ostatnia trzymana wartość, także „wyłączone”, zostaje w kotle, gdy Home Assistant nie działa.",
           "hand_back": "Jak sterowanie wraca do kotła przy każdym wyjściu. Każde oddanie najpierw zapisuje najniższą temperaturę wody, potem włącza z powrotem przełącznik grzania tam, gdzie kocioł wraca do własnego sterowania albo termostatu, a potem wykonuje wybrany tu sposób: zapis wartości oddania; zaprzestanie zapisów, po którym przejmuje własny limit czasu urządzenia (tylko dla zapisów wygasających); albo wyłączenie przełącznika, który włącza sterowanie zewnętrzne. Wymagany; bez niego sterowania nie da się włączyć.",
           "hand_back_value": "Nastawa zapisywana przy oddaniu, w °C, dla metody wartości: wartość, która przywraca kotłowi własne sterowanie, albo ta, którą ma zachować. 0 na jednych urządzeniach znaczy „własne sterowanie”, na innych „bez grzania”. Wymagana przy metodzie wartości. Nie może przekraczać najwyższej nastawy zasilania ani maksimum obiegu i nigdy nie jest do nich przycinana; oddanie liczy się jako wykonane, gdy pokaże ją odczyt zwrotny.",
           "hand_back_value_effect": "Wymagane przy metodzie wartości: co urządzenie robi z wartością oddania — wraca jego własne sterowanie albo grzanie ustaje. Przełącznik sterowania pokazuje to jako skutek oddania.",
           "hand_back_entity": "Dla sposobu „przełącznik”: przełącznik, który włącza sterowanie zewnętrzne. Jest włączany na początku sterowania i wyłączany przy oddaniu — więc nigdy ustawienie, które urządzenie zapisuje w pamięci; poniżej trzeba podać jego typ zapisu.",
-          "hand_back_entity_write_type": "Potrzebny przy metodzie przełącznika: co urządzenie robi ze stanem przełącznika. Wygasający: znika, jeśli nie jest powtarzany — włączany ponownie co 30 s, dopóki sterowanie trzyma kocioł. Trzymany: urządzenie go zachowuje — włączany raz za każdym razem, gdy sterowanie przejmuje kocioł. Trwały albo nieznany (domyślnie): może być zapisywany w pamięci kotła, którą każde przełączenie zużywa, więc sterowanie z nim jest niedostępne.",
+          "hand_back_entity_write_type": "Potrzebny przy metodzie przełącznika: co urządzenie robi ze stanem przełącznika. Wygasający: znika, jeśli nie jest powtarzany — włączany ponownie co 30 s, dopóki sterowanie trzyma kocioł. Trzymany: urządzenie go zachowuje — włączany za każdym razem, gdy sterowanie przejmuje kocioł, oraz ponownie co 5 minut i po powrocie urządzenia. Trwały albo nieznany (domyślnie): może być zapisywany w pamięci kotła, którą każde przełączenie zużywa, więc sterowanie z nim jest niedostępne.",
           "own_room_controller": "Zaznacz tylko wtedy, gdy kocioł ma własny regulator pokojowy, który sam prosi o ciepło, gdy wtyczka odda sterowanie — na przykład panel pokojowy na magistrali kotła (EMS). Jeśli Versatile Thermostat w ogóle nie odpowiada, wtyczka odda mu wtedy kocioł; bez zaznaczenia kocioł nie grzeje, a alarm i zgłoszenie do naprawy powiedzą dlaczego. Każde inne oddanie sterowania też trafia do tego regulatora. Przy przekaźniku liczy się to tylko wtedy, gdy stan przekaźnika po oddaniu sterowania to „włączony”; przy „wyłączony” kocioł nie grzeje, gdy Versatile Thermostat nie odpowiada. Domyślnie wyłączone. Ryzyko: bez takiego regulatora kocioł zostałby na własnym pokrętle i grzałby bez kontroli temperatury w pokojach."
         }
       },
       "control_gateway": {
         "title": "OpenTherm Gateway",
-        "description": "Bramka skonfigurowana w integracji OpenTherm Gateway w Home Assistant.",
+        "description": "Bramka skonfigurowana w integracji OpenTherm Gateway w Home Assistant. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "gateway_id": "Identyfikator bramki"
         },
         "data_description": {
-          "gateway_id": "Identyfikator nadany bramce w integracji OpenTherm Gateway. Nastawa sterowania jest powtarzana co 30 s; przy oddaniu sterowania ustawiana na 0, co oddaje sterowanie termostatowi, a bez termostatu kończy grzanie."
+          "gateway_id": "Bramka skonfigurowana w integracji OpenTherm Gateway; proponowane są tylko bramki tam skonfigurowane i włączone. Nastawa sterowania jest powtarzana co 30 s; przy oddaniu sterowania ustawiana na 0, co oddaje sterowanie termostatowi, a bez termostatu kończy grzanie."
         }
       },
       "control_mqtt": {
         "title": "Firmware OTGW przez MQTT",
-        "description": "Polecenia są publikowane w temacie prefiks/set/węzeł/polecenie, z prefiksem i nazwą węzła podanymi niżej.",
+        "description": "Polecenia są publikowane w temacie prefiks/set/węzeł/polecenie, z prefiksem i nazwą węzła podanymi niżej. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "mqtt_top": "Prefiks tematu",
           "mqtt_node": "Nazwa węzła"
@@ -543,7 +560,7 @@
       },
       "control_curve": {
         "title": "Krzywa grzewcza i limity",
-        "description": "Temperatura zasilania potrzebna domowi przy każdej temperaturze zewnętrznej, limity, których żadna nastawa nie przekroczy, i jak długo grzanie czeka na wolne zawory.",
+        "description": "Temperatura zasilania potrzebna domowi przy każdej temperaturze zewnętrznej, limity, których żadna nastawa nie przekroczy, i jak długo grzanie czeka na wolne zawory. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "design_outdoor": "Projektowa temperatura zewnętrzna",
           "design_flow": "Projektowa temperatura zasilania",
@@ -577,7 +594,7 @@
       },
       "control_behaviour": {
         "title": "Zachowanie sterowania",
-        "description": "Rampa, interwał decyzji, nastawa „wyłącz”, progi zapotrzebowania i pauzy nauki. Grzanie włącza się i wyłącza razem ze strefami Versatile Thermostat, od razu: nic, co wtyczka liczy lub odmierza, go nie wstrzymuje. Każda wartość domyślna jest ostrożna.",
+        "description": "Rampa, interwał decyzji, nastawa „wyłącz”, progi zapotrzebowania i pauzy nauki. Grzanie włącza się i wyłącza razem ze strefami Versatile Thermostat, od razu: nic, co wtyczka liczy lub odmierza, go nie wstrzymuje. Każda wartość domyślna jest ostrożna. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "ramp_k_per_min": "Rampa nastawy",
           "decision_interval_min": "Odstęp decyzji",
@@ -591,7 +608,7 @@
         "data_description": {
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
           "decision_interval_min": "Jak często temperatura wody jest wyznaczana na nowo, w minutach; domyślnie 5, domyślny cykl VT. Włączanie i wyłączanie ogrzewania nadąża za strefami co 10 s niezależnie od tej wartości; wtyczka nie odczytuje własnych cykli stref. Krócej: woda szybciej podąża za pogodą i pokojami, ale algorytmy stref częściej widzą jej zmiany; dłużej: spokojniejsza woda, która wolniej nadąża.",
-          "off_setpoint": "Nastawa zapisywana jako „wyłącz”, gdy nie ma przełącznika grzania, w °C. Domyślnie 10: dużo poniżej każdej wartości grzania i poniżej najniższej nastawy zasilania. Ryzyko: niska nastawa nie wyłącza grzania w kotle — mastery ESPHome i DIYLess zostawiają CH włączone, a kotły według zgłoszeń dalej pracują pompą CH; przełącznik grzania albo CH=0 bramki OpenTherm naprawdę wyłącza grzanie.",
+          "off_setpoint": "Nastawa zapisywana jako „wyłącz”, gdy nie ma przełącznika grzania, w °C. Domyślnie 10: dużo poniżej każdej wartości grzania i poniżej najniższej nastawy zasilania. Ryzyko: niska nastawa nie wyłącza grzania w kotle — mastery ESPHome i DIYLess zostawiają CH włączone, a kotły według zgłoszeń dalej pracują pompą CH; przełącznik grzania albo CH=0 bramki OpenTherm naprawdę wyłącza grzanie. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc ta nastawa nie jest jeszcze zapisywana.",
           "count_threshold": "Ogrzewanie jest potrzebne, gdy co najmniej tyle stref zgłasza zapotrzebowanie. Domyślnie 1; najwyżej liczba stref. 0 wyłącza liczenie, zostawiając sam próg mocy albo otwarcia, jak w Versatile Thermostat. Wyższa zostawia pojedynczy wołający pokój bez ciepła.",
           "power_threshold_kw": "Opcjonalnie: grzanie jest potrzebne, gdy średnia moc stref w cyklu, liczona jak w Versatile Thermostat, osiągnie tę wartość, w kW — liczona tylko wtedy, gdy choć jedna z nich ma otwarty zawór albo włączone urządzenie. Za wysoki próg zostawia małe pokoje bez ciepła.",
           "opening_threshold": "Opcjonalnie: ogrzewanie jest potrzebne, gdy największe otwarcie zaworu wśród wołających stref osiąga tę wartość, w %. Za wysoka zostawia bez ciepła pokój, który otwiera zawór tylko trochę.",
@@ -601,7 +618,7 @@
       },
       "control_alarms": {
         "title": "Reakcje na alarmy",
-        "description": "Co robi sterowanie, gdy alarm jest aktywny: tylko informuje albo oddaje sterowanie kotłowi, dopóki nie wyłączysz i nie włączysz go ponownie. Inny sterownik piszący do kotła zawsze sprawia, że wtyczka ustępuje; nigdy z nim nie walczy.",
+        "description": "Co robi sterowanie, gdy alarm jest aktywny: tylko informuje albo oddaje sterowanie kotłowi, dopóki nie wyłączysz i nie włączysz go ponownie. Inny sterownik piszący do kotła zawsze sprawia, że wtyczka ustępuje; nigdy z nim nie walczy. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "pressure_low": "Niskie ciśnienie",
           "pressure_high": "Wysokie ciśnienie",
@@ -633,12 +650,22 @@
       },
       "control_return_confirm": {
         "title": "Potwierdź samodzielny powrót",
-        "description": "Wtyczka sama przejmie kocioł godzinę po ostatnim zapisie innego sterownika. Jeśli ten sterownik nadal działa, oba będą sterować kotłem na zmianę. Zaznacz, aby potwierdzić.",
+        "description": "Wtyczka sama przejmie kocioł godzinę po ostatnim zapisie innego sterownika. Jeśli ten sterownik nadal działa, oba będą sterować kotłem na zmianę. Zaznacz, aby potwierdzić. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "understood": "Rozumiem"
         },
         "data_description": {
           "understood": "Zaznacz, aby włączyć samodzielny powrót; bez zaznaczenia pozostaje wyłączony."
+        }
+      },
+      "confirm_blocking": {
+        "title": "Ta zmiana zatrzymuje sterowanie",
+        "description": "Po tej zmianie sterowanie nie może działać: {first} (innych powodów: {more}). Zapisanie od razu oddaje kocioł.",
+        "data": {
+          "save_anyway": "Zapisz mimo to"
+        },
+        "data_description": {
+          "save_anyway": "Zaznacz, aby mimo to zapisać zmianę. Bez zaznaczenia (domyślnie) nic nie zostanie zapisane i wrócisz do menu."
         }
       }
     },
@@ -693,7 +720,27 @@
       "thermostat_setpoint_same_as_read_back": "Wybierz encję termostatu, nie odczyt zwrotny nastawy.",
       "return_needs_confirmation": "Zaznacz pole, aby to włączyć, albo wróć.",
       "setpoint_step_too_coarse": "Ta encja przyjmuje wartości co ponad 1 °C: zaokrąglona wartość wyglądałaby na zignorowaną. Wybierz encję o drobniejszym kroku.",
-      "max_flow_alarm_not_above_max": "Temperatura alarmu musi być wyższa niż maksimum obiegu."
+      "max_flow_alarm_not_above_max": "Temperatura alarmu musi być wyższa niż maksimum obiegu.",
+      "entity_not_suitable": "Ta encja nie jest rodzaju, który przyjmuje to pole.",
+      "zone_not_vt": "Strefą może być tylko termostat Versatile Thermostat.",
+      "entity_for_two_signals": "Jedna encja może zasilać tylko jeden sygnał: wybierz inną encję albo zostaw to pole puste.",
+      "zone_on_boiler_thermostat": "Strefa Versatile Thermostat {zone} jest zbudowana na encji termostatu samego kotła lub bramki: prosiłaby o ciepło zawsze, gdy pali się płomień. Zbuduj strefę na czujniku pokojowym i jej zaworach albo głowicach.",
+      "circuit_has_zones": "Strefy nadal używają pominiętego obiegu: najpierw przenieś je do innego obiegu w kroku stref.",
+      "invalid_boiler": "Zapisana tu wartość jest nieznana tej wersji; wybierz ją ponownie.",
+      "invalid_circuit": "Zapisana tu wartość jest nieznana tej wersji; wybierz ją ponownie.",
+      "invalid_zone": "Zapisana tu wartość jest nieznana tej wersji; wybierz ją ponownie.",
+      "invalid_reference": "Zapisana tu wartość jest nieznana tej wersji; wybierz ją ponownie.",
+      "invalid_monitor": "Zapisana tu wartość jest nieznana tej wersji; wybierz ją ponownie.",
+      "invalid_building": "Zapisana tu wartość jest nieznana tej wersji; wybierz ją ponownie.",
+      "invalid_freshness": "Zapisana tu wartość jest nieznana tej wersji; wybierz ją ponownie.",
+      "unreadable_options": "Zapisana tu wartość jest nieznana tej wersji; wybierz ją ponownie.",
+      "hand_back_switch_is_heating_switch": "Przełącznik sterowania zewnętrznego nie może być przełącznikiem ogrzewania ani encją nastawy: oddawanie sterowania przełączałoby go bez końca.",
+      "gateway_not_set_up": "Integracja OpenTherm Gateway tej bramki nie jest skonfigurowana, nie działa albo jest wyłączona.",
+      "mqtt_not_set_up": "Integracja MQTT nie jest skonfigurowana: polecenia nie trafiłyby nigdzie.",
+      "design_flow_too_low": "Projektowa temperatura zasilania musi być co najmniej 5 K wyższa od temperatury pokojowej krzywej.",
+      "design_flow_above_hard_max": "Projektowa temperatura zasilania jest wyższa od najwyższej temperatury wody, więc w mróz krzywa zostałaby obcięta. Podnieś najwyższą temperaturę wody albo obniż temperaturę projektową.",
+      "design_outdoor_too_warm": "Projektowa temperatura zewnętrzna musi być co najmniej 10 K niższa od temperatury pokojowej krzywej.",
+      "hard_min_not_below_design_flow": "Najniższa temperatura wody musi być niższa od projektowej temperatury zasilania."
     }
   },
   "selector": {
@@ -1371,6 +1418,42 @@
     },
     "blocked_heating_off_ignored": {
       "message": "Od początku sesji kocioł nie przyjął polecenia wtyczki „wyłącz grzanie”, więc wtyczka nie mogła wyłączyć ogrzewania. Sterowanie się zatrzymało, a kocioł został oddany. Sprawdź przełącznik ogrzewania wybrany w opcjach i ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej. Inne powody: {others}."
+    },
+    "blocked_hand_back_switch_is_heating_switch": {
+      "message": "Przełącznik sterowania zewnętrznego jest też przełącznikiem ogrzewania albo encją nastawy: oddawanie sterowania przełączałoby go bez końca. Wybierz w opcjach inną encję. Inne powody: {others}."
+    },
+    "blocked_entity_for_two_signals": {
+      "message": "Jedna encja zasila dwa sygnały, więc późniejszy nie jest używany. Wybierz dla niego inną encję w opcjach sygnałów. Inne powody: {others}."
+    },
+    "blocked_topology_not_for_path": {
+      "message": "Podłączenie bramki nie pasuje do ścieżki zapisu: wybierz inne w opcjach. Inne powody: {others}."
+    },
+    "blocked_no_heating_switch": {
+      "message": "Sterowanie wymaga przełącznika ogrzewania, którego kocioł nie zapisuje w pamięci. Bez niego „wyłączone” byłoby niską nastawą, a nie wiadomo jeszcze, czy to zatrzymuje kocioł i jego pompę. Monitor działa dalej. Inne powody: {others}."
+    },
+    "blocked_gateway_not_set_up": {
+      "message": "Integracja OpenTherm Gateway wybranej bramki jest usunięta albo wyłączona: polecenia nie trafiłyby nigdzie. Skonfiguruj ją lub włącz albo wybierz w opcjach inną bramkę. Inne powody: {others}."
+    },
+    "blocked_mqtt_not_set_up": {
+      "message": "Integracja MQTT jest usunięta albo wyłączona: polecenia nie trafiłyby nigdzie. Skonfiguruj ją lub włącz. Inne powody: {others}."
+    },
+    "blocked_zone_not_vt": {
+      "message": "Jedna ze stref nie jest termostatem Versatile Thermostat, a tylko one mogą być strefami: usuń ją w opcjach. Inne powody: {others}."
+    },
+    "blocked_zone_on_boiler_thermostat": {
+      "message": "Strefa Versatile Thermostat jest zbudowana na encji termostatu samego kotła lub bramki: prosiłaby o ciepło zawsze, gdy pali się płomień. Zbuduj strefę na czujniku pokojowym i jej zaworach albo głowicach. Inne powody: {others}."
+    },
+    "blocked_design_flow_too_low": {
+      "message": "Projektowa temperatura zasilania musi być co najmniej 5 K wyższa od temperatury pokojowej krzywej. Popraw to w opcjach. Inne powody: {others}."
+    },
+    "blocked_design_flow_above_hard_max": {
+      "message": "Projektowa temperatura zasilania jest wyższa od najwyższej temperatury wody, więc w mróz krzywa zostałaby obcięta. Podnieś w opcjach najwyższą temperaturę wody albo obniż temperaturę projektową. Inne powody: {others}."
+    },
+    "blocked_design_outdoor_too_warm": {
+      "message": "Projektowa temperatura zewnętrzna musi być co najmniej 10 K niższa od temperatury pokojowej krzywej. Popraw to w opcjach. Inne powody: {others}."
+    },
+    "blocked_hard_min_not_below_design_flow": {
+      "message": "Najniższa temperatura wody musi być niższa od projektowej temperatury zasilania. Popraw to w opcjach. Inne powody: {others}."
     }
   },
   "issues": {

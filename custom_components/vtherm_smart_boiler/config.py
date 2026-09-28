@@ -2,14 +2,19 @@
 
 The config flow writes one options dictionary; everything else reads it through
 ``EntryConfig.from_options``, so there is a single definition of what each key means and of its
-cautious default.
+cautious default. A stored value this version does not know raises a ``ConfigError`` naming its
+section (``invalid_boiler``, ``invalid_circuit``, ...), which the options flow shows on that
+section's step (P-70). One entity mapped to two signals is kept for the first in the form's
+order; the later signal is dropped and recorded in ``shared_signals`` — control gets a blocker,
+the monitor runs (X5.2).
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, SupportsFloat
 
 from .const import (
@@ -61,7 +66,7 @@ from .core.metrics import DEFAULT_CONDENSING_RETURN, ModulationScale
 from .core.monitor import MonitorOptions
 from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
 from .core.reference_room import DEFAULT_SWITCH_MARGIN_K, Strategy
-from .core.signals import REQUIRED_SIGNALS, Signal
+from .core.signals import REQUIRED_SIGNALS, SIGNAL_PRECEDENCE, Signal
 from .core.verdict import VerdictOptions
 
 
@@ -124,6 +129,9 @@ class EntryConfig:
     # The weather entity's own age limit (X2): none by default — availability only; never the
     # outdoor sensor's.
     weather_max_age_s: float | None = None
+    # Signals dropped because their entity feeds an earlier signal, each with the signal that
+    # kept it (X5.2): inactive and named; control is blocked.
+    shared_signals: Mapping[Signal, Signal] = field(default_factory=dict)
 
     @property
     def zone_entities(self) -> tuple[str, ...]:
@@ -147,11 +155,11 @@ class EntryConfig:
         """The entry's configuration. ``strict_control=False`` (at setup): a control section that
         cannot be used leaves control out with ``control_problem`` set instead of failing, so
         the monitor keeps running and a hand-back still owed can go out."""
-        signals = _signals(options.get(SIGNALS, {}))
+        signals, shared = _signals(options.get(SIGNALS, {}))
         boiler_data = options.get(BOILER, {})
         boiler = Boiler(
-            BoilerClass(boiler_data.get("class", BoilerClass.READ_ONLY)),
-            DhwType(boiler_data.get("dhw", DhwType.NONE)),
+            _enum(BoilerClass, boiler_data, "class", BoilerClass.READ_ONLY, "invalid_boiler"),
+            _enum(DhwType, boiler_data, "dhw", DhwType.NONE, "invalid_boiler"),
             bool(boiler_data.get("condensing", True)),
             bool(boiler_data.get("bypass", False)),
         )
@@ -185,11 +193,23 @@ class EntryConfig:
             control=control,
             control_problem=control_problem,
             weather_max_age_s=weather_max_age,
+            shared_signals=shared,
         )
 
 
-def _signals(data: Mapping[str, Any]) -> dict[Signal, str]:
-    signals: dict[Signal, str] = {}
+def _enum[E: StrEnum](kind: type[E], data: Mapping[str, Any], key: str, default: E, code: str) -> E:
+    """A stored choice; one this version does not know raises ``ConfigError(code, key)``."""
+    try:
+        return kind(data.get(key, default))
+    except ValueError as err:
+        raise ConfigError(code, key) from err
+
+
+def _signals(data: Mapping[str, Any]) -> tuple[dict[Signal, str], dict[Signal, Signal]]:
+    """The mapped signals, in the form's order, and those dropped because their entity feeds an
+    earlier one (each with the signal that kept it): one entity feeds one signal (X5.2). A field
+    left empty maps nothing."""
+    given: dict[Signal, str] = {}
     for key, entity in data.items():
         if not entity:
             continue
@@ -197,11 +217,47 @@ def _signals(data: Mapping[str, Any]) -> dict[Signal, str]:
             signal = Signal(key)
         except ValueError as err:
             raise ConfigError("unknown_signal", key) from err
-        signals[signal] = str(entity)
+        given[signal] = str(entity)
+    signals: dict[Signal, str] = {}
+    shared: dict[Signal, Signal] = {}
+    owner: dict[str, Signal] = {}
+    for signal in SIGNAL_PRECEDENCE:
+        entity = given.get(signal)
+        if entity is None:
+            continue
+        if entity in owner:
+            shared[signal] = owner[entity]
+            continue
+        owner[entity] = signal
+        signals[signal] = entity
     for signal in sorted(REQUIRED_SIGNALS):
         if signal not in signals:
+            # A required signal lost to an earlier one's entity is missing too (a hand edit: the
+            # form's domains keep flame and flow apart).
             raise ConfigError("missing_signal", signal.value)
-    return signals
+    return signals, shared
+
+
+def _read[T](code: str, key: str, read: Callable[[], T]) -> T:
+    """A stored value read by ``read``; one that cannot be read — of a kind this version does
+    not know, not a number, missing where required — raises ``ConfigError(code, key)``."""
+    try:
+        return read()
+    except (KeyError, TypeError, ValueError) as err:
+        raise ConfigError(code, key) from err
+
+
+def _item_text(item: Any, key: str, code: str) -> str:
+    """A list item's required text (a circuit's ID, a zone's entity); missing or of another
+    shape, ``ConfigError(code, key)``."""
+    try:
+        return str(item[key])
+    except (KeyError, TypeError, IndexError) as err:
+        raise ConfigError(code, key) from err
+
+
+def _circuit_number(item: Mapping[str, Any], key: str) -> float | None:
+    return _read("invalid_circuit", key, lambda: _float_or_none(item.get(key)))
 
 
 def _circuits(data: Any) -> tuple[tuple[Circuit, ...], dict[str, str]]:
@@ -210,22 +266,28 @@ def _circuits(data: Any) -> tuple[tuple[Circuit, ...], dict[str, str]]:
     circuits: list[Circuit] = []
     flow_entities: dict[str, str] = {}
     for item in data:
-        circuit_id = str(item["id"])
-        max_flow = _float_or_none(item.get("max_flow"))
+        circuit_id = _item_text(item, "id", "invalid_circuit")
+        max_flow = _circuit_number(item, "max_flow")
         alarm_at = alarm_s = None
         if max_flow is not None:
             # Decision 10: the too-hot alarm's temperature and time, pre-filled with the maximum
             # + 5 K and 10 minutes where none is stored — never empty.
-            alarm_at = _float_or_none(item.get("max_flow_alarm"))
+            alarm_at = _circuit_number(item, "max_flow_alarm")
             if alarm_at is None:
                 alarm_at = max_flow + CIRCUIT_ALARM_RISE_K
-            minutes = _float_or_none(item.get("max_flow_alarm_min"))
+            minutes = _circuit_number(item, "max_flow_alarm_min")
             alarm_s = (CIRCUIT_ALARM_MIN if minutes is None else minutes) * 60.0
         circuits.append(
             Circuit(
                 circuit_id,
-                CircuitControl(item.get("control", CircuitControl.UNMIXED_SHARED)),
-                _float_or_none(item.get("fixed_temperature")),
+                _enum(
+                    CircuitControl,
+                    item,
+                    "control",
+                    CircuitControl.UNMIXED_SHARED,
+                    "invalid_circuit",
+                ),
+                _circuit_number(item, "fixed_temperature"),
                 max_flow,
                 alarm_at,
                 alarm_s,
@@ -236,27 +298,13 @@ def _circuits(data: Any) -> tuple[tuple[Circuit, ...], dict[str, str]]:
     return tuple(circuits), flow_entities
 
 
-def _zones(data: Any, circuit_ids: set[str]) -> tuple[tuple[Zone, ...], list[ZoneConfig]]:
-    zones: list[Zone] = []
-    configs: list[ZoneConfig] = []
-    default_circuit = sorted(circuit_ids)[0] if len(circuit_ids) == 1 else None
-    for item in data or []:
-        entity_id = str(item["entity_id"])
-        circuit = item.get("circuit") or default_circuit
-        if circuit is None:
-            raise ConfigError("zone_without_circuit", entity_id)
-        zones.append(
-            Zone(
-                entity_id,
-                str(circuit),
-                EmitterType(item.get("emitter", EmitterType.RADIATOR)),
-                _float_or_none(item.get("reference_output_w")),
-                _float_or_none(item.get("exponent")),
-                # Decision 4: only a clear "yes" counts; the form shows it from X5.
-                closes_when_off=item.get("closes_when_off") is True,
-            )
-        )
-        sources = tuple(
+def _zone_number(item: Mapping[str, Any], key: str) -> float | None:
+    return _read("invalid_zone", key, lambda: _float_or_none(item.get(key)))
+
+
+def _sources(item: Mapping[str, Any]) -> tuple[ForeignHeatSource, ...]:
+    def read() -> tuple[ForeignHeatSource, ...]:
+        return tuple(
             ForeignHeatSource(
                 str(source["entity_id"]),
                 SourceKind(source.get("kind", SourceKind.SWITCH)),
@@ -264,7 +312,31 @@ def _zones(data: Any, circuit_ids: set[str]) -> tuple[tuple[Zone, ...], list[Zon
             )
             for source in item.get("foreign_heat", [])
         )
-        configs.append(ZoneConfig(entity_id, sources))
+
+    return _read("invalid_zone", "foreign_heat", read)
+
+
+def _zones(data: Any, circuit_ids: set[str]) -> tuple[tuple[Zone, ...], list[ZoneConfig]]:
+    zones: list[Zone] = []
+    configs: list[ZoneConfig] = []
+    default_circuit = sorted(circuit_ids)[0] if len(circuit_ids) == 1 else None
+    for item in data or []:
+        entity_id = _item_text(item, "entity_id", "invalid_zone")
+        circuit = item.get("circuit") or default_circuit
+        if circuit is None:
+            raise ConfigError("zone_without_circuit", entity_id)
+        zones.append(
+            Zone(
+                entity_id,
+                str(circuit),
+                _enum(EmitterType, item, "emitter", EmitterType.RADIATOR, "invalid_zone"),
+                _zone_number(item, "reference_output_w"),
+                _zone_number(item, "exponent"),
+                # Decision 4: only a clear "yes" counts; the zone step shows it (X5).
+                closes_when_off=item.get("closes_when_off") is True,
+            )
+        )
+        configs.append(ZoneConfig(entity_id, _sources(item)))
     return tuple(zones), configs
 
 
@@ -283,6 +355,18 @@ def _parameters(data: Mapping[str, Any], building: Mapping[str, Any]) -> Paramet
             raise ConfigError("implausible_parameter", key) from err
     design_outdoor = _value_or(parameters.value(ParameterKey.DESIGN_OUTDOOR), -15.0)
     indoor = _value_or(parameters.value(ParameterKey.INDOOR_REFERENCE), 20.0)
+    # The building's choices first: one this version does not know is named, not taken for an
+    # implausible house.
+    insulation = (
+        _enum(InsulationClass, building, "insulation", InsulationClass.AVERAGE, "invalid_building")
+        if building.get("insulation")
+        else None
+    )
+    mass = (
+        _enum(ThermalMass, building, "thermal_mass", ThermalMass.MEDIUM, "invalid_building")
+        if building.get("thermal_mass")
+        else None
+    )
     if parameters.get(ParameterKey.LOSS_COEFFICIENT).estimate(Source.ENTERED) is None:
         loss: Estimate | None = None
         source = "design_load_kw" if building.get("design_load_kw") else "floor_area"
@@ -291,42 +375,56 @@ def _parameters(data: Mapping[str, Any], building: Mapping[str, Any]) -> Paramet
                 loss = loss_from_design_load(
                     float(building["design_load_kw"]), design_outdoor, indoor
                 )
-            elif building.get("floor_area") and building.get("insulation"):
+            elif building.get("floor_area") and insulation is not None:
                 loss = loss_from_coarse_answers(
-                    float(building["floor_area"]),
-                    InsulationClass(building["insulation"]),
-                    design_outdoor,
-                    indoor,
+                    float(building["floor_area"]), insulation, design_outdoor, indoor
                 )
             if loss is not None:
                 parameters = parameters.with_estimate(ParameterKey.LOSS_COEFFICIENT, loss)
-        except ValueError as err:  # a heat loss no house has: the answers do not fit together
+        except (TypeError, ValueError) as err:  # a heat loss no house has: they do not fit
             raise ConfigError("implausible_parameter", source) from err
-    if building.get("thermal_mass"):
+    if mass is not None:
         parameters = parameters.with_estimate(
-            ParameterKey.THERMAL_TIME_CONSTANT,
-            time_constant_from_mass(ThermalMass(building["thermal_mass"])),
+            ParameterKey.THERMAL_TIME_CONSTANT, time_constant_from_mass(mass)
         )
     return parameters
 
 
 def _reference(data: Mapping[str, Any], zone_ids: list[str]) -> ReferenceRoomConfig:
-    strategy = Strategy(data.get("strategy", Strategy.LARGEST_DEFICIT))
+    strategy = _enum(Strategy, data, "strategy", Strategy.LARGEST_DEFICIT, "invalid_reference")
     zone = data.get("zone") or None
     if strategy is Strategy.CHOSEN_ZONE and zone not in zone_ids:
         raise ConfigError("reference_zone_unknown", zone)
-    return ReferenceRoomConfig(
-        strategy, zone, float(data.get("switch_margin", DEFAULT_SWITCH_MARGIN_K))
+    margin = _read(
+        "invalid_reference",
+        "switch_margin",
+        lambda: float(data.get("switch_margin", DEFAULT_SWITCH_MARGIN_K)),
     )
+    return ReferenceRoomConfig(strategy, zone, margin)
+
+
+def _monitor_value(data: Mapping[str, Any], key: str, default: float | None) -> float:
+    return _read("invalid_monitor", key, lambda: float(data.get(key, default)))
 
 
 def _monitor(data: Mapping[str, Any], boiler: Mapping[str, Any]) -> MonitorConfig:
-    monitoring_days = float(data.get("monitoring_days", 7.0))
+    monitoring_days = _monitor_value(data, "monitoring_days", 7.0)
+    window = _read(
+        "invalid_monitor",
+        "verdict_window_days",
+        lambda: (
+            None
+            if data.get("verdict_window_days") in (None, "")
+            else int(data["verdict_window_days"])
+        ),
+    )
     return MonitorConfig(
         monitor=MonitorOptions(
-            condensing_return=float(data.get("condensing_return", DEFAULT_CONDENSING_RETURN)),
-            short_burn_s=float(data.get("short_burn_min", 10.0)) * 60.0,
-            modulation_scale=ModulationScale(boiler.get("modulation_scale", ModulationScale.RANGE)),
+            condensing_return=_monitor_value(data, "condensing_return", DEFAULT_CONDENSING_RETURN),
+            short_burn_s=_monitor_value(data, "short_burn_min", 10.0) * 60.0,
+            modulation_scale=_enum(
+                ModulationScale, boiler, "modulation_scale", ModulationScale.RANGE, "invalid_boiler"
+            ),
             # Declared without hot water: every burn heats. Never declared: burns are told apart.
             has_dhw=boiler.get("dhw") != DhwType.NONE,
             verdict=VerdictOptions(
@@ -334,21 +432,20 @@ def _monitor(data: Mapping[str, Any], boiler: Mapping[str, Any]) -> MonitorConfi
             ),
             # Never shorter than the monitoring period: the verdict could not be reached.
             verdict_window_days=(
-                None
-                if data.get("verdict_window_days") in (None, "")
-                else max(int(data["verdict_window_days"]), math.ceil(monitoring_days))
+                None if window is None else max(window, math.ceil(monitoring_days))
             ),
         ),
         monitoring_days=monitoring_days,
-        near_room_k=float(data.get("near_room_k", DEFAULT_NEAR_ROOM_K)),
-        foreign_heat_hold_s=float(data.get("foreign_heat_hold_min", DEFAULT_HOLD_S / 60.0)) * 60.0,
+        near_room_k=_monitor_value(data, "near_room_k", DEFAULT_NEAR_ROOM_K),
+        foreign_heat_hold_s=_monitor_value(data, "foreign_heat_hold_min", DEFAULT_HOLD_S / 60.0)
+        * 60.0,
         alarms=_alarm_thresholds(data),
     )
 
 
 def _band(data: Mapping[str, Any], name: str, default: Band) -> Band:
-    warning = float(data.get(f"{name}_warning", default.warning))
-    alarm = float(data.get(f"{name}_alarm", default.alarm))
+    warning = _monitor_value(data, f"{name}_warning", default.warning)
+    alarm = _monitor_value(data, f"{name}_alarm", default.alarm)
     # The alarm limit lies beyond the warning limit, on the dangerous side.
     if (alarm <= warning) if default.rising else (alarm >= warning):
         raise ConfigError("alarm_limits_out_of_order", name)
@@ -356,13 +453,18 @@ def _band(data: Mapping[str, Any], name: str, default: Band) -> Band:
 
 
 def _alarm_thresholds(data: Mapping[str, Any]) -> AlarmThresholds:
+    starts, burns = "starts_per_hour_limit", "unstable_burns_limit"
     return AlarmThresholds(
         pressure_low=_band(data, "pressure_low", PRESSURE_LOW_BAND),
         pressure_high=_band(data, "pressure_high", PRESSURE_HIGH_BAND),
         flue_gas=_band(data, "flue_gas", FLUE_GAS_CONDENSING_BAND),
-        starts_per_hour=int(data.get("starts_per_hour_limit", DEFAULT_FREQUENT_STARTS_PER_HOUR)),
-        unstable_burns_per_day=int(
-            data.get("unstable_burns_limit", DEFAULT_UNSTABLE_BURNS_PER_DAY)
+        starts_per_hour=_read(
+            "invalid_monitor",
+            starts,
+            lambda: int(data.get(starts, DEFAULT_FREQUENT_STARTS_PER_HOUR)),
+        ),
+        unstable_burns_per_day=_read(
+            "invalid_monitor", burns, lambda: int(data.get(burns, DEFAULT_UNSTABLE_BURNS_PER_DAY))
         ),
     )
 
@@ -370,7 +472,10 @@ def _alarm_thresholds(data: Mapping[str, Any]) -> AlarmThresholds:
 def _freshness(data: Mapping[str, Any]) -> tuple[dict[Signal, float | None], float | None]:
     """The age limit of each signal, and the weather entity's own, stored under ``weather`` beside
     them and taken out first: it is no signal. ``None``: no limit — availability only."""
-    weather = data.get(WEATHER)
+
+    def limit(key: str, value: Any) -> float | None:
+        return _read("invalid_freshness", key, lambda: None if value is None else float(value))
+
     result: dict[Signal, float | None] = {}
     for key, value in data.items():
         if key == WEATHER:
@@ -379,8 +484,8 @@ def _freshness(data: Mapping[str, Any]) -> tuple[dict[Signal, float | None], flo
             signal = Signal(key)
         except ValueError as err:
             raise ConfigError("unknown_signal", key) from err
-        result[signal] = None if value is None else float(value)
-    return result, None if weather is None else float(weather)
+        result[signal] = limit(key, value)
+    return result, limit(WEATHER, data.get(WEATHER))
 
 
 def _control(

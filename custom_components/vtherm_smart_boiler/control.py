@@ -39,9 +39,12 @@ How control resumes after it stopped (``SCOPE.md`` §7):
   once the data has been fresh for a minute without a break (X2);
 - the plugin's own monitor failing for five minutes: on its own, once it has worked for a minute
   without a failure, with an information note (the user's answer I);
-- a blocker: on its own, once it is gone. Where a hand-back stops heating, a blocker that ended
-  a session holding the boiler and still holds a minute later raises a repair issue (S-10) — a
-  session a clean restart carried over included: one whose restore a blocker stopped;
+- a blocker: on its own, once it is gone — the configuration's own (``config_blockers``) and those
+  found at every step: the gateway's or MQTT's integration removed or disabled, a zone that is
+  no VT climate, a zone VT builds on the boiler's own thermostat (X5). Where a hand-back stops
+  heating, a blocker that ended a session holding the boiler and still holds a minute later
+  raises a repair issue (S-10) — a session a clean restart carried over included: one whose
+  restore a blocker stopped;
 - every zone unknown (decision 3): on its own, the step a zone answers again.
 
 Decision 3 at a start: where control held the boiler before — a clean restart that handed it
@@ -101,7 +104,13 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.async_ import create_eager_task
 from homeassistant.util.unit_conversion import TemperatureConverter
 
-from .const import CONTROL_TICK_SECONDS, DOMAIN, stored_flag
+from .const import (
+    CONTROL_TICK_SECONDS,
+    DOMAIN,
+    MQTT_DOMAIN,
+    OPENTHERM_GW_DOMAIN,
+    stored_flag,
+)
 from .control_config import (
     OTGW_PATHS,
     AlarmReaction,
@@ -275,6 +284,12 @@ RUNTIME_BLOCKERS = (
     "control_error",
     "monitor_failed",
     HEATING_OFF_IGNORED,
+    # X5: the gateway's or MQTT's integration gone or disabled (X5.5); a zone that is not a VT
+    # climate (X5.7); a zone VT built on the boiler's own thermostat (X5.19).
+    "gateway_not_set_up",
+    "mqtt_not_set_up",
+    "zone_not_vt",
+    "zone_on_boiler_thermostat",
 )
 CONFIRMED_BY_GATEWAY = "confirmed_by_gateway"
 _SHOWN_CONFIRMED = frozenset({Confirmation.CONFIRMED.value, CONFIRMED_BY_GATEWAY})
@@ -1043,7 +1058,16 @@ class ControlUnit:
     def blockers(self, now: float) -> tuple[str, ...]:
         """Why control may not run now (translation keys); empty when it may."""
         config = self._coordinator.config
-        found = config_blockers(self.options, config.installation)
+        found = config_blockers(self.options, config.installation, config.shared_signals)
+        if (missing := self._integration_missing()) is not None:
+            found.append(missing)
+        link = self._coordinator.link
+        if link.zones_of_another_kind():
+            found.append("zone_not_vt")  # a hand edit: only VT climates are zones (X5.7)
+        if link.zones_on_boiler_thermostat([*config.signals.values(), *self.options.entities]):
+            # X5.19: it would ask for heat whenever the flame burns; VT's entries are read at
+            # every step, as VT can be reconfigured without the options changing.
+            found.append("zone_on_boiler_thermostat")
         if self._hass.state is not CoreState.running:
             # VT starts its thermostats only once Home Assistant has started; `is_running` is
             # already true while it starts.
@@ -1076,6 +1100,26 @@ class ControlUnit:
             # blocked until the user switches control off and on after fixing it (X5.21).
             found.append(HEATING_OFF_IGNORED)
         return tuple(found)
+
+    def _integration_missing(self) -> str | None:
+        """X5.5 (P-69): the integration a gateway path writes through is gone or disabled — the
+        ``opentherm_gw`` entry of the gateway picked, or every MQTT entry. One merely not loaded
+        yet at a start is Home Assistant starting; one offline later fails its writes."""
+        path = self.options.write_path
+        entries = self._hass.config_entries.async_entries
+        if path is WritePath.OPENTHERM_GW and self.options.gateway_id:
+            gateway = self.options.gateway_id
+            if not any(
+                entry.disabled_by is None
+                for entry in entries(OPENTHERM_GW_DOMAIN, include_ignore=False)
+                if str(entry.data.get("id")) == gateway
+            ):
+                return "gateway_not_set_up"
+        elif path is WritePath.OTGW_MQTT and not any(
+            entry.disabled_by is None for entry in entries(MQTT_DOMAIN, include_ignore=False)
+        ):
+            return "mqtt_not_set_up"
+        return None
 
     def _vt_boiler_in_grace(self, now: float) -> bool:
         """P-105: VT's central boiler unknown — its central entry reloading — does not count as

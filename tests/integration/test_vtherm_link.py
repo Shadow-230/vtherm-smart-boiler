@@ -279,3 +279,101 @@ async def test_vts_activation_delay_is_read_from_its_central_entry(
 
 async def test_without_vt_there_is_no_activation_delay_to_offer(hass: HomeAssistant) -> None:
     assert VThermLink(hass, []).vt_central_activation_delay() is None
+
+
+# --- X5: a zone's underlying entities (X5.19), zones of another kind (X5.7) ---------------------
+
+
+async def test_a_zones_underlying_entities_are_read_from_its_vt_entry(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """VT 10.4.0 keeps what a thermostat drives in its entry's data. Negative: a zone not
+    registered, without an entry, whose entry is gone, or without the list (an older VT) cannot
+    be read — ``None``; items that are not entity IDs are left out."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import zone_underlying_entities
+
+    registry = er.async_get(hass)
+    living = zones.add("living")
+    assert zone_underlying_entities(hass, "climate.not_registered") is None
+    assert zone_underlying_entities(hass, living) is None  # no entry
+    entry = MockConfigEntry(
+        domain=VT_PLATFORM, data={"underlying_entity_ids": ["switch.valve", "", 7, None]}
+    )
+    entry.add_to_hass(hass)
+    registry.async_update_entity(living, config_entry_id=entry.entry_id)
+    assert zone_underlying_entities(hass, living) == ("switch.valve",)
+    hass.config_entries.async_update_entry(entry, data={"underlying_entity_ids": "switch.valve"})
+    assert zone_underlying_entities(hass, living) is None  # not a list
+    hass.config_entries.async_update_entry(entry, data={})
+    assert zone_underlying_entities(hass, living) is None  # an older VT: no list
+    await hass.config_entries.async_remove(entry.entry_id)
+    assert zone_underlying_entities(hass, living) is None
+
+
+async def test_only_climates_of_the_boilers_devices_count_as_its_thermostat(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """X5.19: an ``opentherm_gw`` climate, or a climate on a device that carries a boiler
+    entity, among a zone's underlying entities. Negative: a switch of the gateway, a climate of
+    another device, an underlying climate not registered."""
+    from homeassistant.helpers import device_registry as dr
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import zones_on_boiler_thermostat
+
+    registry = er.async_get(hass)
+    owner = MockConfigEntry(domain="mqtt")
+    owner.add_to_hass(hass)
+    boiler = dr.async_get(hass).async_get_or_create(
+        config_entry_id=owner.entry_id, identifiers={("mqtt", "boiler")}
+    )
+    room = dr.async_get(hass).async_get_or_create(
+        config_entry_id=owner.entry_id, identifiers={("mqtt", "room")}
+    )
+    flame = registry.async_get_or_create(
+        "binary_sensor", "mqtt", "flame", device_id=boiler.id
+    ).entity_id
+    gateway = registry.async_get_or_create("climate", "opentherm_gw", "gw").entity_id
+    gateway_switch = registry.async_get_or_create("switch", "opentherm_gw", "gw-ch").entity_id
+    on_boiler = registry.async_get_or_create("climate", "mqtt", "thermostat", device_id=boiler.id)
+    elsewhere = registry.async_get_or_create("climate", "mqtt", "trv", device_id=room.id)
+    cases = {
+        "gateway": [gateway],
+        "boiler_device": [on_boiler.entity_id],
+        "switch_of_gateway": [gateway_switch],
+        "other_device": [elsewhere.entity_id],
+        "not_registered": ["climate.nowhere"],
+    }
+    found: dict[str, list[str]] = {}
+    for name, underlying in cases.items():
+        zone = zones.add(name)
+        entry = MockConfigEntry(domain=VT_PLATFORM, data={"underlying_entity_ids": underlying})
+        entry.add_to_hass(hass)
+        registry.async_update_entity(zone, config_entry_id=entry.entry_id)
+        found[name] = zones_on_boiler_thermostat(hass, [zone], [flame])
+    assert {name for name, zones_found in found.items() if zones_found} == {
+        "gateway",
+        "boiler_device",
+    }
+    zone = zones.entities["boiler_device"]
+    assert zones_on_boiler_thermostat(hass, [zone], []) == []  # no boiler entity on that device
+
+
+async def test_zones_of_another_kind(hass: HomeAssistant, zones: FakeZones) -> None:
+    """X5.7: a zone registered by another integration, or of another domain, or reported but
+    not registered, is not a VT climate. Negative: a zone neither registered nor reported is
+    unknown (VT away), not of another kind."""
+    from custom_components.vtherm_smart_boiler.vtherm_link import is_vt_climate
+
+    registry = er.async_get(hass)
+    living = zones.add("living")
+    other = registry.async_get_or_create("climate", "generic_thermostat", "hall").entity_id
+    wrong_domain = registry.async_get_or_create("switch", VT_PLATFORM, "lock").entity_id
+    hass.states.async_set("climate.template_room", "heat")
+    link = VThermLink(hass, [living, other, wrong_domain, "climate.template_room", "climate.away"])
+    assert link.zones_of_another_kind() == [other, wrong_domain, "climate.template_room"]
+    assert is_vt_climate(hass, living)
+    assert not is_vt_climate(hass, other)
+    assert not is_vt_climate(hass, "climate.away")

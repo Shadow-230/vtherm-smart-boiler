@@ -80,3 +80,25 @@ SIGNAL_SPECS: dict[Signal, SignalSpec] = {
 REQUIRED_SIGNALS: frozenset[Signal] = frozenset(
     signal for signal, spec in SIGNAL_SPECS.items() if spec.required
 )
+
+# The order the form asks for the signals in, which is also their precedence: one entity feeds
+# one signal only (X5.2, P-16; which pairs may share one is empty in 0.2.2 — provisional, K4),
+# and where stored options map one entity to several, the first here keeps it and the later ones
+# are dropped. A shared entity would otherwise, e.g., never let hot water be told apart from
+# heating ("flame on, heating off").
+SIGNAL_PRECEDENCE: tuple[Signal, ...] = (
+    Signal.FLAME,
+    Signal.FLOW,
+    Signal.RETURN,
+    Signal.MODULATION,
+    Signal.DHW_ACTIVE,
+    Signal.PRESSURE,
+    Signal.OUTDOOR,
+    Signal.CH_SETPOINT,
+    Signal.CH_ACTIVE,
+    Signal.PUMP_RUNNING,
+    Signal.FLUE_GAS,
+    Signal.GAS_METER,
+    Signal.ROOM_SETPOINT,
+    Signal.ROOM_TEMPERATURE,
+)

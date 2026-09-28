@@ -869,3 +869,44 @@ async def test_the_hand_back_puts_its_values_on_the_entitys_grid(hass: HomeAssis
     (check,) = checks
     assert check.expected == pytest.approx(50.25)
     assert check.lowest == pytest.approx(25.25)
+
+
+@pytest.mark.parametrize(
+    "roles",
+    [
+        {"ch_entity": "switch.ch", "hand_back": "switch", "hand_back_entity": "switch.ch"},
+        {"hand_back": "switch", "hand_back_entity": "number.flow"},
+        {"ch_entity": "number.flow"},
+    ],
+    ids=["heating_and_external", "setpoint_and_external", "setpoint_and_heating"],
+)
+async def test_an_entity_writer_refuses_one_entity_in_two_roles(
+    hass: HomeAssistant, roles: dict[str, Any]
+) -> None:
+    """X5.1 (P-03): each hand-back would switch such an entity on and off for ever — the writer
+    is not built, so a hand-back through such options fails and stays owed. Negative: every role
+    its own entity, or one left empty, builds."""
+    base = {
+        "write_path": "entity",
+        "setpoint_entity": "number.flow",
+        "write_type": "held",
+        "ch_write_type": "held",
+        "hand_back_entity_write_type": "held",
+        "hand_back": "value",
+        "hand_back_value": 30,
+        "hand_back_value_effect": "own_control",
+    }
+    with pytest.raises(ValueError, match="two roles"):
+        make_writer(hass, options(**base | roles))
+    make_writer(hass, options(**base | {"ch_entity": "switch.ch"}))
+    make_writer(
+        hass,
+        options(
+            **base
+            | {"ch_entity": "switch.ch", "hand_back": "switch", "hand_back_entity": "switch.ext"}
+        ),
+    )
+    make_writer(
+        hass,
+        options(**base | {"ch_entity": "", "hand_back": "switch", "hand_back_entity": "switch.ch"}),
+    )

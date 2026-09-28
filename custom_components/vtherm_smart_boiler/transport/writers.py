@@ -45,6 +45,7 @@ from ..control_config import (
     WritePath,
     hand_back_heating_on,
     highest_water_temperature,
+    one_entity_in_two_roles,
 )
 from ..core.guards import HELD_REFRESH_S, WriteType
 from ..core.hand_back import CheckKind, CheckSource, ReleaseRule
@@ -273,12 +274,18 @@ class EntityWriter(_ServiceWriter):
     while control holds it (P-40) — and off to hand back. The hand-back turns a heating switch
     back on where the boiler returns to a thermostat or its own control, and leaves it as it is
     where the hand-back stops heating (S-27).
+
+    One entity in two roles — the heating switch as the external-control switch, say — is
+    refused (P-03): every hand-back would switch it on and off for ever. A hand-back through such
+    options fails instead, stays owed and is shown, to be settled by hand.
     """
 
     def __init__(self, hass: HomeAssistant, options: ControlOptions) -> None:
         super().__init__(hass)
         if not options.setpoint_entity:
             raise ValueError("no setpoint entity")
+        if one_entity_in_two_roles(options):
+            raise ValueError("one entity in two roles")
         self._options = options
         self._setpoint = options.setpoint_entity
         self._switch = options.ch_entity if options.loop.ch_writes else None

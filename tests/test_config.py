@@ -278,3 +278,137 @@ def test_the_zone_option_closes_when_off_is_read_from_the_zone_item() -> None:
     ]
     installation = EntryConfig.from_options(MINIMAL | {"zones": zones}).installation
     assert [z.closes_when_off for z in installation.zones] == [True, False, False]
+
+
+# --- X5: one entity, one signal (P-16, T-32); unknown stored values (P-70) -----------------------
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        {"flame": "binary_sensor.flame", "flow": "sensor.flow", "return": "sensor.flow"},
+        # Stored in another order: the form's order still decides which signal keeps it.
+        {"return": "sensor.flow", "flame": "binary_sensor.flame", "flow": "sensor.flow"},
+    ],
+    ids=["form_order", "stored_reversed"],
+)
+def test_one_entity_for_two_signals_drops_the_later_one(stored: dict) -> None:
+    """X5.2: the first signal in the form's order keeps a shared entity and the later one is
+    dropped — absent from the signals, so the feature that needs it is inactive and names it —
+    and control gets the blocker ``entity_for_two_signals``. No ``ConfigError``: the monitor
+    runs."""
+    from custom_components.vtherm_smart_boiler.control_config import config_blockers
+    from custom_components.vtherm_smart_boiler.core.signal_check import (
+        Feature,
+        FeatureStatus,
+        features,
+    )
+
+    options = {
+        "signals": stored,
+        "boiler": {"class": "flow_setpoint"},
+        "zones": [{"entity_id": "climate.a"}],
+        "control": {
+            "write_path": "opentherm_gw",
+            "gateway_id": "gw",
+            "confirmed_entity": "sensor.setpoint",
+            "topology": "gateway_with_thermostat",
+            "curve": {"design_outdoor": -15, "design_flow": 55},
+        },
+    }
+    config = EntryConfig.from_options(options)
+    assert config.signals == {Signal.FLAME: "binary_sensor.flame", Signal.FLOW: "sensor.flow"}
+    assert config.shared_signals == {Signal.RETURN: Signal.FLOW}
+    condensing = features(frozenset(config.signals), False, False)[Feature.CONDENSING]
+    assert condensing.status is FeatureStatus.UNAVAILABLE
+    assert condensing.missing == (Signal.RETURN,)
+    blockers = config_blockers(config.control, config.installation, config.shared_signals)
+    assert blockers == ["entity_for_two_signals"]
+    assert config.watched_entities == ("binary_sensor.flame", "sensor.flow", "climate.a")
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"return": "sensor.return"}, {"return": ""}, {"return": None}, {}],
+    ids=["different", "empty", "none", "absent"],
+)
+def test_different_or_empty_signal_entities_are_kept(extra: dict) -> None:
+    """Negative: two different entities are both kept; a field left empty is never a
+    duplicate."""
+    config = EntryConfig.from_options({"signals": MINIMAL["signals"] | extra})
+    assert config.shared_signals == {}
+    assert (Signal.RETURN in config.signals) is bool(extra.get("return"))
+
+
+def test_the_form_lists_the_signals_in_their_precedence() -> None:
+    """The form's order and the parser's precedence are one list."""
+    from custom_components.vtherm_smart_boiler.config_flow import SIGNAL_FIELDS
+    from custom_components.vtherm_smart_boiler.core.signals import SIGNAL_PRECEDENCE
+
+    assert tuple(SIGNAL_FIELDS) == tuple(signal.value for signal in SIGNAL_PRECEDENCE)
+    assert set(SIGNAL_PRECEDENCE) == set(Signal)
+
+
+@pytest.mark.parametrize(
+    ("options", "code", "subject"),
+    [
+        (MINIMAL | {"boiler": {"class": "steam"}}, "invalid_boiler", "class"),
+        (MINIMAL | {"boiler": {"dhw": "tea"}}, "invalid_boiler", "dhw"),
+        (MINIMAL | {"boiler": {"modulation_scale": "loud"}}, "invalid_boiler", "modulation_scale"),
+        (
+            MINIMAL | {"circuits": [{"id": "main", "control": "magic"}]},
+            "invalid_circuit",
+            "control",
+        ),
+        (
+            MINIMAL | {"circuits": [{"id": "main", "max_flow": "hot"}]},
+            "invalid_circuit",
+            "max_flow",
+        ),
+        (MINIMAL | {"circuits": [{"control": "unmixed_shared"}]}, "invalid_circuit", "id"),
+        (
+            MINIMAL | {"zones": [{"entity_id": "climate.a", "emitter": "fireplace"}]},
+            "invalid_zone",
+            "emitter",
+        ),
+        (
+            MINIMAL
+            | {
+                "zones": [
+                    {
+                        "entity_id": "climate.a",
+                        "foreign_heat": [{"entity_id": "x.y", "kind": "dragon"}],
+                    }
+                ]
+            },
+            "invalid_zone",
+            "foreign_heat",
+        ),
+        (MINIMAL | {"zones": [{"emitter": "radiator"}]}, "invalid_zone", "entity_id"),
+        (MINIMAL | {"reference_room": {"strategy": "loudest"}}, "invalid_reference", "strategy"),
+        (
+            MINIMAL | {"reference_room": {"switch_margin": "wide"}},
+            "invalid_reference",
+            "switch_margin",
+        ),
+        (
+            MINIMAL | {"monitor": {"monitoring_days": "a week"}},
+            "invalid_monitor",
+            "monitoring_days",
+        ),
+        (MINIMAL | {"building": {"thermal_mass": "granite"}}, "invalid_building", "thermal_mass"),
+        (
+            MINIMAL | {"building": {"floor_area": 120, "insulation": "straw"}},
+            "invalid_building",
+            "insulation",
+        ),
+        (MINIMAL | {"freshness": {"flow": "soon"}}, "invalid_freshness", "flow"),
+    ],
+)
+def test_unknown_stored_values_name_their_section(options: dict, code: str, subject: str) -> None:
+    """P-70: a value this version does not know — a hand edit, an option of another version —
+    raises a ``ConfigError`` naming its section (the form shows it on that section's step),
+    never a bare ``ValueError``."""
+    with pytest.raises(ConfigError) as err:
+        EntryConfig.from_options(options)
+    assert (err.value.code, err.value.subject) == (code, subject)

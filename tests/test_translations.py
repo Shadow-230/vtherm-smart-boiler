@@ -97,6 +97,8 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "control_curve": flow.control_curve_schema(options),
         "control_behaviour": flow.control_behaviour_schema(options),
         "control_alarms": flow.control_alarms_schema(options),
+        "control_return_confirm": flow.control_return_confirm_schema(),
+        "confirm_blocking": flow.confirm_blocking_schema(),  # X5.12
     }
     for section in ("config", "options"):
         steps = schemas | (options_only if section == "options" else {})
@@ -134,9 +136,42 @@ def test_every_config_error_code_can_be_shown() -> None:
         if code.value not in ("empty_circuit", "underfloor_without_max_flow")
     }
     codes |= {"invalid_control", "alarm_limits_out_of_order"}
+    # X5: a stored value this version does not know, shown on its section's step (P-70); what
+    # every form checks on submit (P-79, P-16, X5.19, P-64).
+    codes |= {
+        "invalid_boiler",
+        "invalid_circuit",
+        "invalid_zone",
+        "invalid_reference",
+        "invalid_monitor",
+        "invalid_building",
+        "invalid_freshness",
+        "unreadable_options",
+        "entity_not_suitable",
+        "zone_not_vt",
+        "entity_for_two_signals",
+        "zone_on_boiler_thermostat",
+        "circuit_has_zones",
+    }
     for section in ("config", "options"):
         errors = set(SOURCE[section]["error"])  # shown on the step that can fix them
         assert codes <= errors, sorted(codes - errors)
+    from custom_components.vtherm_smart_boiler.config_flow import _PROBLEM_STEPS
+
+    assert set(_PROBLEM_STEPS) <= set(SOURCE["options"]["error"])
+    options_only = {
+        "hand_back_switch_is_heating_switch",
+        "gateway_not_set_up",
+        "mqtt_not_set_up",
+        "design_flow_too_low",
+        "design_flow_above_hard_max",
+        "design_outdoor_too_warm",
+        "hard_min_not_below_design_flow",
+        "off_setpoint_not_below_hard_min",
+    }
+    assert options_only <= set(SOURCE["options"]["error"])
+    zone = SOURCE["config"]["error"]["zone_on_boiler_thermostat"]
+    assert set(PLACEHOLDER.findall(zone)) == {"zone"}  # the zones step names the zone
 
 
 def test_every_control_entity_blocker_and_issue_is_translated() -> None:

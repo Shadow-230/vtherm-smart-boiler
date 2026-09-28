@@ -194,6 +194,9 @@ async def start(
         "monitor": {"monitoring_days": 0} | (monitor or {}),
         "control": GATEWAY_CONTROL | control,
     }
+    # The simulated gateway's entry in the OpenTherm Gateway integration: control writes through
+    # a gateway set up in Home Assistant (X5.5).
+    MockConfigEntry(domain="opentherm_gw", data={"id": "sim"}).add_to_hass(hass)
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
     entry.add_to_hass(hass)
     if stored is not None:
@@ -345,7 +348,9 @@ async def test_keep_alive_loss_lets_the_gateway_fall_back(rig: Rig) -> None:
 
 
 async def test_hard_limits_hold_in_hard_frost(rig: Rig) -> None:
-    await start(rig, hard_max=48)
+    # Below the design outdoor temperature the curve asks for more than its design flow, which
+    # the hard maximum cuts (a design flow above the maximum itself is refused, P-68).
+    await start(rig, hard_max=48, curve={"design_outdoor": -15, "design_flow": 48})
     await rig.hass.services.async_call(SIM, "set_outdoor", {"temperature": -25}, blocking=True)
     await rig.switch(True)
     await rig.advance(1800, step=30.0)
@@ -499,6 +504,8 @@ async def test_control_is_refused_without_a_hand_back(rig: Rig) -> None:
         write_path="entity",
         setpoint_entity="number.boiler_sim_flow_setpoint",
         write_type="held",
+        ch_entity="switch.boiler_sim_ch_enable",
+        ch_write_type="held",
         topology="virtual",
     )
     with pytest.raises(ServiceValidationError) as err:
@@ -848,6 +855,10 @@ ENTITY_CONTROL = {
     "write_path": "entity",
     "setpoint_entity": "number.boiler_sim_flow_setpoint",
     "write_type": "held",
+    # Decision 11: control needs a heating switch the boiler does not store (the simulated
+    # device keeps its state).
+    "ch_entity": "switch.boiler_sim_ch_enable",
+    "ch_write_type": "held",
     "hand_back": "value",
     "hand_back_value": 0,
     "hand_back_value_effect": "own_control",

@@ -15,7 +15,7 @@
       },
       "signals": {
         "title": "Boiler signals",
-        "description": "Pick the entity that provides each signal. Flame and flow temperature are required; every other signal enables more of the monitor. The plugin only reads these entities.",
+        "description": "Pick the entity that provides each signal. Flame and flow temperature are required; every other signal enables more of the monitor. The plugin only reads these entities. One entity feeds one signal only.",
         "data": {
           "flame": "Flame",
           "flow": "Flow temperature",
@@ -94,7 +94,7 @@
         "data_description": {
           "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); mixed by a separate controller; or a thermostatic mixing valve (fixed). Control runs only for one circuit fed straight from the boiler, or through a fixed valve. The wrong type makes control refuse, or misjudge what reaches the rooms.",
           "max_flow": "The most this circuit may receive, in °C, e.g. underfloor heating on an unmixed loop: control never asks for more, but the boiler may overshoot it by its own hysteresis — set the alarm below to be told. Needed for underfloor on an unmixed loop. Too high overheats the floor.",
-          "fixed_temperature": "Needed for a thermostatic mixing valve (fixed): its setting in °C. Control keeps the boiler's flow at least this warm; set higher than the valve's setting, the water runs hotter than needed.",
+          "fixed_temperature": "Needed for a thermostatic mixing valve (fixed): its setting in °C. The boiler's water is kept at least 5 K above it, so the mixing valve can reach it; set higher than the valve's setting, the water runs hotter than needed.",
           "max_flow_alarm": "Information alarm when the measured flow stays above this, in °C. Starts at the maximum + 5 °C. Needs a flow reading. Too high lets a real overshoot pass unreported.",
           "max_flow_alarm_min": "How long, in minutes, before the alarm rises. Starts at 10. Too short reports every overshoot of the boiler's hysteresis.",
           "flow_entity": "A mixed circuit's own flow temperature. Without it the heat reaching that circuit cannot be told.",
@@ -108,7 +108,7 @@
           "zones": "Zones"
         },
         "data_description": {
-          "zones": "Only VT climate entities are offered. The plugin reads them; with control and learning pauses on, it also pauses and resumes their SmartPI learning. A zone left out neither calls for heat nor is watched for frost."
+          "zones": "Only VT climate entities are offered. The plugin reads them; with control and learning pauses on, it also pauses and resumes their SmartPI learning. A zone left out neither calls for heat nor is watched for frost. A zone built on the boiler's or gateway's own thermostat entity is refused: it would ask for heat whenever the flame burns."
         }
       },
       "zone": {
@@ -121,7 +121,8 @@
           "reference_output_w": "Emitter output",
           "exponent": "Emitter exponent",
           "power_threshold": "Power threshold",
-          "temperature_threshold": "Temperature threshold"
+          "temperature_threshold": "Temperature threshold",
+          "closes_when_off": "Closes when VT switches it off"
         },
         "data_description": {
           "circuit": "The heating circuit this zone is on. The wrong circuit attributes the zone's heat to the wrong water.",
@@ -130,7 +131,8 @@
           "reference_output_w": "The emitters' output at their reference condition, in W. Only for an absolute output estimate; a wrong value only skews that estimate.",
           "exponent": "Overrides the EN 442 exponent of the emitter type. A wrong exponent skews the emitter power factor.",
           "power_threshold": "A power source counts as heating above this, in W. Default 100 W. Too low counts standby as heating; too high misses a small heater.",
-          "temperature_threshold": "Needed for a temperature source: it counts as heating above this, in °C. Too low counts a cold stove as heating; too high misses it."
+          "temperature_threshold": "Needed for a temperature source: it counts as heating above this, in °C. Too low counts a cold stove as heating; too high misses it.",
+          "closes_when_off": "Tick if this zone's valve or emitter closes whenever Versatile Thermostat switches the zone off, although VT does not report its opening (e.g. a radiator thermostat VT turns off). Frost protection then does not heat for this zone while VT keeps it off, and raises a repair issue instead. Off (default): the zone is heated in frost as before, which may run the boiler against a closed valve."
         }
       },
       "building": {
@@ -224,14 +226,27 @@
       "invalid_control": "The control settings cannot be used.",
       "alarm_limits_out_of_order": "An alarm limit must lie beyond its warning limit.",
       "modulation_not_percent": "Modulation is a percentage of the boiler's range: pick a sensor in %.",
-      "max_flow_alarm_not_above_max": "The alarm temperature must be above the circuit's maximum."
+      "max_flow_alarm_not_above_max": "The alarm temperature must be above the circuit's maximum.",
+      "entity_not_suitable": "This entity is not of a kind this field takes.",
+      "zone_not_vt": "Only Versatile Thermostat thermostats can be zones.",
+      "entity_for_two_signals": "One entity can feed only one signal: pick another entity, or leave this field empty.",
+      "zone_on_boiler_thermostat": "The Versatile Thermostat zone {zone} is built on the boiler's or gateway's own thermostat entity: it would ask for heat whenever the flame burns. Build the zone on a room sensor and its valves or radiator thermostats instead.",
+      "circuit_has_zones": "Zones still use a circuit you left out: move them to another circuit in the zones step first.",
+      "invalid_boiler": "A value saved here is not one this version knows; choose it again.",
+      "invalid_circuit": "A value saved here is not one this version knows; choose it again.",
+      "invalid_zone": "A value saved here is not one this version knows; choose it again.",
+      "invalid_reference": "A value saved here is not one this version knows; choose it again.",
+      "invalid_monitor": "A value saved here is not one this version knows; choose it again.",
+      "invalid_building": "A value saved here is not one this version knows; choose it again.",
+      "invalid_freshness": "A value saved here is not one this version knows; choose it again.",
+      "unreadable_options": "A value saved here is not one this version knows; choose it again."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "VTherm Smart Boiler options",
-        "description": "Change one section; every other setting stays as it is.",
+        "description": "Change one section; every other setting stays as it is. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "menu_options": {
           "signals": "Boiler signals",
           "freshness": "Freshness limits",
@@ -248,19 +263,19 @@
       },
       "level": {
         "title": "Level of detail",
-        "description": "The level changes only what you see, never how the plugin behaves.",
+        "description": "The level changes only what you see, never how the plugin behaves; switching it alone reloads nothing. With the defaults restored, saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "level": "Level of detail",
           "restore_defaults": "Restore advanced settings to their defaults"
         },
         "data_description": {
           "level": "Simple shows the essentials; advanced shows every parameter.",
-          "restore_defaults": "When switching to simple: tick to reset the advanced tuning — control's curve shape, limits and behaviour, the alarm reactions, the monitor's thresholds, the reference room's margin — to its defaults. Facts about your installation stay whatever you choose: mapped signals, the boiler, circuits, emitter sizes and values you entered. Left unticked, the tuning stays active but hidden, and the options show that some advanced settings are active."
+          "restore_defaults": "When switching to simple: tick to reset the advanced tuning — control's curve shape, limits and behaviour, the alarm reactions, the monitor's thresholds, the reference room's margin — to its defaults. Facts about your installation stay whatever you choose: mapped signals, the boiler, circuits, emitter sizes and values you entered — and the monitoring period and verdict window. Left unticked, the tuning stays active but hidden, and the options show that some advanced settings are active."
         }
       },
       "signals": {
         "title": "Boiler signals",
-        "description": "Pick the entity that provides each signal. Flame and flow temperature are required; every other signal enables more of the monitor. The plugin only reads these entities.",
+        "description": "Pick the entity that provides each signal. Flame and flow temperature are required; every other signal enables more of the monitor. The plugin only reads these entities. One entity feeds one signal only. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "flame": "Flame",
           "flow": "Flow temperature",
@@ -298,7 +313,7 @@
       },
       "freshness": {
         "title": "Freshness limits",
-        "description": "An age limit per signal, in minutes: a value not reported for longer counts as stale, for the monitor and for control alike — without a fresh flame and flow, control writes nothing and hands back after five minutes. Empty (default): only whether the entity is available counts, since many sources (MQTT among them) report only on change and a steady value is not a stale one. Risk: without a limit, a source that freezes without going unavailable is not caught; a limit shorter than a source's reporting interval stops control in steady weather. Control reads the flame and the flow each by its own limit; a link that keeps dropping in and out counts as lost once it has been stale for five minutes within ten. The weather entity has its own limit, none by default. On an OpenTherm Gateway over MQTT, the gateway dropping off shows within about 90 s (its entities turn unavailable), but a broken link inside it, between its ESP and its PIC, may not be seen at all: its entities stay available and their values simply stop changing.",
+        "description": "An age limit per signal, in minutes: a value not reported for longer counts as stale, for the monitor and for control alike — without a fresh flame and flow, control writes nothing and hands back after five minutes. Empty (default): only whether the entity is available counts, since many sources (MQTT among them) report only on change and a steady value is not a stale one. Risk: without a limit, a source that freezes without going unavailable is not caught; a limit shorter than a source's reporting interval stops control in steady weather. Control reads the flame and the flow each by its own limit; a link that keeps dropping in and out counts as lost once it has been stale for five minutes within ten. The weather entity has its own limit, none by default. On an OpenTherm Gateway over MQTT, the gateway dropping off shows within about 90 s (its entities turn unavailable), but a broken link inside it, between its ESP and its PIC, may not be seen at all: its entities stay available and their values simply stop changing. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "flame": "Flame",
           "flow": "Flow temperature",
@@ -319,7 +334,7 @@
       },
       "boiler": {
         "title": "Boiler",
-        "description": "What you know about your boiler. Leave unknown values empty: the plugin then says what it cannot judge.",
+        "description": "What you know about your boiler. Leave unknown values empty: the plugin then says what it cannot judge. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "class": "What the boiler's integration can do",
           "dhw": "Domestic hot water",
@@ -347,7 +362,7 @@
       },
       "circuit": {
         "title": "Heating circuit {number}",
-        "description": "How this circuit's water temperature is set.",
+        "description": "How this circuit's water temperature is set. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "control": "Control",
           "max_flow": "Maximum flow temperature",
@@ -360,7 +375,7 @@
         "data_description": {
           "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); mixed by a separate controller; or a thermostatic mixing valve (fixed). Control runs only for one circuit fed straight from the boiler, or through a fixed valve. The wrong type makes control refuse, or misjudge what reaches the rooms.",
           "max_flow": "The most this circuit may receive, in °C, e.g. underfloor heating on an unmixed loop: control never asks for more, but the boiler may overshoot it by its own hysteresis — set the alarm below to be told. Needed for underfloor on an unmixed loop. Too high overheats the floor.",
-          "fixed_temperature": "Needed for a thermostatic mixing valve (fixed): its setting in °C. Control keeps the boiler's flow at least this warm; set higher than the valve's setting, the water runs hotter than needed.",
+          "fixed_temperature": "Needed for a thermostatic mixing valve (fixed): its setting in °C. The boiler's water is kept at least 5 K above it, so the mixing valve can reach it; set higher than the valve's setting, the water runs hotter than needed.",
           "max_flow_alarm": "Information alarm when the measured flow stays above this, in °C. Starts at the maximum + 5 °C. Needs a flow reading. Too high lets a real overshoot pass unreported.",
           "max_flow_alarm_min": "How long, in minutes, before the alarm rises. Starts at 10. Too short reports every overshoot of the boiler's hysteresis.",
           "flow_entity": "A mixed circuit's own flow temperature. Without it the heat reaching that circuit cannot be told.",
@@ -369,17 +384,17 @@
       },
       "zones": {
         "title": "VT zones",
-        "description": "Pick the Versatile Thermostat zones heated by this boiler. Zones not picked are ignored.",
+        "description": "Pick the Versatile Thermostat zones heated by this boiler. Zones not picked are ignored. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "zones": "Zones"
         },
         "data_description": {
-          "zones": "Only VT climate entities are offered. The plugin reads them; with control and learning pauses on, it also pauses and resumes their SmartPI learning. A zone left out neither calls for heat nor is watched for frost."
+          "zones": "Only VT climate entities are offered. The plugin reads them; with control and learning pauses on, it also pauses and resumes their SmartPI learning. A zone left out neither calls for heat nor is watched for frost. A zone built on the boiler's or gateway's own thermostat entity is refused: it would ask for heat whenever the flame burns."
         }
       },
       "zone": {
         "title": "Zone {zone}",
-        "description": "How this zone is heated.",
+        "description": "How this zone is heated. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "circuit": "Circuit",
           "emitter": "Emitter type",
@@ -387,7 +402,8 @@
           "reference_output_w": "Emitter output",
           "exponent": "Emitter exponent",
           "power_threshold": "Power threshold",
-          "temperature_threshold": "Temperature threshold"
+          "temperature_threshold": "Temperature threshold",
+          "closes_when_off": "Closes when VT switches it off"
         },
         "data_description": {
           "circuit": "The heating circuit this zone is on. The wrong circuit attributes the zone's heat to the wrong water.",
@@ -396,12 +412,13 @@
           "reference_output_w": "The emitters' output at their reference condition, in W. Only for an absolute output estimate; a wrong value only skews that estimate.",
           "exponent": "Overrides the EN 442 exponent of the emitter type. A wrong exponent skews the emitter power factor.",
           "power_threshold": "A power source counts as heating above this, in W. Default 100 W. Too low counts standby as heating; too high misses a small heater.",
-          "temperature_threshold": "Needed for a temperature source: it counts as heating above this, in °C. Too low counts a cold stove as heating; too high misses it."
+          "temperature_threshold": "Needed for a temperature source: it counts as heating above this, in °C. Too low counts a cold stove as heating; too high misses it.",
+          "closes_when_off": "Tick if this zone's valve or emitter closes whenever Versatile Thermostat switches the zone off, although VT does not report its opening (e.g. a radiator thermostat VT turns off). Frost protection then does not heat for this zone while VT keeps it off, and raises a repair issue instead. Off (default): the zone is heated in frost as before, which may run the boiler against a closed valve."
         }
       },
       "building": {
         "title": "Building",
-        "description": "A first estimate of your house's heat loss; recorded heating days refine it. Leave empty what you do not know.",
+        "description": "A first estimate of your house's heat loss; recorded heating days refine it. Leave empty what you do not know. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "floor_area": "Heated floor area",
           "insulation": "Insulation",
@@ -423,7 +440,7 @@
       },
       "reference": {
         "title": "Reference room",
-        "description": "One room temperature and setpoint for controllers that need a single room.",
+        "description": "One room temperature and setpoint for controllers that need a single room. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "strategy": "Strategy",
           "zone": "Chosen zone",
@@ -437,7 +454,7 @@
       },
       "monitor": {
         "title": "Monitor",
-        "description": "Thresholds of the analysis.",
+        "description": "Thresholds of the analysis. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "condensing_return": "Condensing return threshold",
           "short_burn_min": "Short burn",
@@ -473,7 +490,7 @@
       },
       "control": {
         "title": "Control (experimental)",
-        "description": "How the plugin writes the flow setpoint to the boiler. Control stays off until you switch it on, and only after the monitoring period. Choose \"No control\" to keep monitoring only.",
+        "description": "How the plugin writes the flow setpoint to the boiler. Control stays off until you switch it on, and only after the monitoring period. Choose \"No control\" to keep monitoring only. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "write_path": "Write path",
           "topology": "Gateway connection",
@@ -493,7 +510,7 @@
       },
       "control_entity": {
         "title": "Writable entity",
-        "description": "The entity that takes the flow setpoint, and how control is handed back.",
+        "description": "The entity that takes the flow setpoint, and how control is handed back. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "setpoint_entity": "Setpoint entity",
           "write_type": "Write type",
@@ -508,30 +525,30 @@
         },
         "data_description": {
           "setpoint_entity": "A number or input_number that sets the boiler's flow temperature.",
-          "write_type": "Expiring: the device drops the value unless it is repeated; it is repeated every 30 s. Held: the device keeps the value and sends it on itself; written on change only. Persistent or unknown (default): stored in the boiler's memory, or it may be — the plugin never writes to the boiler's persistent memory, so control is not available with such an entity. Risk: a stored parameter declared expiring would be written every 30 s, about 2,900 times a day, and wear the boiler's memory out.",
-          "ch_entity": "Optional: a switch that turns heating on and off, turned back on at hand-back where the boiler returns to its own control or a thermostat, and left as it is where the hand-back stops heating; its write type is needed below. Without a switch, \"off\" is written as a low setpoint. Never pick a switch that is stored in the boiler's memory (e.g. a boiler's \"heating activated\" parameter): every switching would wear it. On must allow heating: a flag that stops heating while on (such as EMS-ESP's \"heating off\") turns every command round and must not be used here.",
-          "ch_write_type": "Needed with a heating switch: what the device does with its state. Expiring: dropped unless repeated; repeated every 30 s. Held: the device keeps it. The plugin never writes to the boiler's persistent memory, so a switch declared persistent or unknown is refused.",
+          "write_type": "Expiring: the device drops the value unless it is repeated; it is repeated every 30 s. Held: written on change, and again every 5 minutes and when the device returns. Persistent or unknown (default): stored in the boiler's memory, or it may be — the plugin never writes to the boiler's persistent memory, so control is not available with such an entity. Risk: a stored parameter declared expiring would be written every 30 s, about 2,900 times a day, and wear the boiler's memory out. Held: the device keeps the last value it was given (ESPHome, DIYLess and the like). EMS-ESP's flow setpoint (selflowtemp) is not held — it expires within about a minute — so declare it expiring. Held: risks — a boiler parameter kept in its memory but declared held is written at every change and every 5 minutes, and wears the memory (e.g. EMS-ESP's heating temperature parameter); and the last held value, \"off\" included, stays on the boiler while Home Assistant is down.",
+          "ch_entity": "A switch that turns heating on and off — needed for control in this version: without it, \"off\" would be a low setpoint, and whether that stops the boiler and its pump is not known yet, so control stays blocked and only the monitor runs. It is turned back on at hand-back where the boiler returns to its own control or a thermostat, and left as it is where the hand-back stops heating; its write type is needed below. It must not be the external control switch. Never pick a switch that is stored in the boiler's memory (e.g. a boiler's \"heating activated\" parameter): every switching would wear it. On must allow heating: a flag that stops heating while on (such as EMS-ESP's \"heating off\") turns every command round and must not be used here.",
+          "ch_write_type": "Needed with a heating switch: what the device does with its state. Expiring: dropped unless repeated; repeated every 30 s. Held: written on change, and again every 5 minutes and when the device returns. The plugin never writes to the boiler's persistent memory, so a switch declared persistent or unknown is refused. Held: the device keeps the last value it was given (ESPHome, DIYLess and the like). EMS-ESP's flow setpoint (selflowtemp) is not held — it expires within about a minute — so declare it expiring. Held: risks — a boiler parameter kept in its memory but declared held is written at every change and every 5 minutes, and wears the memory (e.g. EMS-ESP's heating temperature parameter); and the last held value, \"off\" included, stays on the boiler while Home Assistant is down.",
           "hand_back": "How control returns to the boiler on every exit. Every hand-back first writes the lowest water temperature, then turns the heating switch back on where the boiler returns to its own control or a thermostat, then follows the method chosen here: write a hand-back value; stop writing and let the device's own timeout take over, for expiring writes only; or turn off a switch that enables external control. Required; control cannot be switched on without it.",
           "hand_back_value": "The setpoint written on hand-back, in °C, for the value method: the value that returns the boiler to its own control, or the one it should keep. 0 means \"own control\" on some devices and \"no heat\" on others. Required for the value method. It must not exceed the highest flow setpoint or the circuit's maximum, and is never cut down to them; it counts as done once the read-back shows it.",
           "hand_back_value_effect": "Required with the value method: what the device does with the hand-back value — its own control resumes, or heating stops. The control switch shows it as what hand-back leads to.",
           "hand_back_entity": "For the switch method: the switch that enables external control. It is turned on when control starts and off on hand-back — so never a setting the device stores in its memory; its write type is needed below.",
-          "hand_back_entity_write_type": "Needed with the switch method: what the device does with the switch's state. Expiring: dropped unless repeated — turned on again every 30 s while control holds the boiler. Held: the device keeps it — turned on once each time control takes the boiler. Persistent or unknown (default): it may be stored in the boiler's memory, which every switching would wear, so control is not available with it.",
+          "hand_back_entity_write_type": "Needed with the switch method: what the device does with the switch's state. Expiring: dropped unless repeated — turned on again every 30 s while control holds the boiler. Held: the device keeps it — turned on each time control takes the boiler, and again every 5 minutes and when the device returns. Persistent or unknown (default): it may be stored in the boiler's memory, which every switching would wear, so control is not available with it.",
           "own_room_controller": "Tick only if the boiler has a room controller of its own that asks for heat by itself once the plugin lets go — for example a room unit on the boiler's bus (EMS). If Versatile Thermostat gives no answer at all, the plugin then hands the boiler back to it; without the tick the boiler does not heat, and an alarm and a repair notice tell you why. Every other hand-back also goes to that controller. With a relay it counts only when the relay's state after hand-back is \"on\"; with \"off\", the boiler does not heat when Versatile Thermostat gives no answer. Off by default. Risk: without such a controller, the boiler would be left on its own dial, heating with no room in charge."
         }
       },
       "control_gateway": {
         "title": "OpenTherm Gateway",
-        "description": "The gateway set up in Home Assistant's OpenTherm Gateway integration.",
+        "description": "The gateway set up in Home Assistant's OpenTherm Gateway integration. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "gateway_id": "Gateway ID"
         },
         "data_description": {
-          "gateway_id": "The ID you gave the gateway in the OpenTherm Gateway integration. The control setpoint is repeated every 30 s; on hand-back it is set to 0, which returns control to the thermostat, or ends heating without one."
+          "gateway_id": "The gateway set up in the OpenTherm Gateway integration; only gateways set up and enabled there are offered. The control setpoint is repeated every 30 s; on hand-back it is set to 0, which returns control to the thermostat, or ends heating without one."
         }
       },
       "control_mqtt": {
         "title": "OTGW firmware over MQTT",
-        "description": "Commands are published on the topic prefix/set/node/command, with the prefix and node name given below.",
+        "description": "Commands are published on the topic prefix/set/node/command, with the prefix and node name given below. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "mqtt_top": "Topic prefix",
           "mqtt_node": "Node name"
@@ -543,7 +560,7 @@
       },
       "control_curve": {
         "title": "Heating curve and limits",
-        "description": "The flow temperature the house needs at each outdoor temperature, the limits no setpoint may pass, and how long heating waits for slow valves.",
+        "description": "The flow temperature the house needs at each outdoor temperature, the limits no setpoint may pass, and how long heating waits for slow valves. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "design_outdoor": "Design outdoor temperature",
           "design_flow": "Design flow temperature",
@@ -577,7 +594,7 @@
       },
       "control_behaviour": {
         "title": "Control behaviour",
-        "description": "The ramp, the decision interval, the \"off\" setpoint, demand thresholds and learning pauses. Heating goes on and off with Versatile Thermostat's zones, at once: nothing counted or timed holds it. Every default is the cautious one.",
+        "description": "The ramp, the decision interval, the \"off\" setpoint, demand thresholds and learning pauses. Heating goes on and off with Versatile Thermostat's zones, at once: nothing counted or timed holds it. Every default is the cautious one. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "ramp_k_per_min": "Setpoint ramp",
           "decision_interval_min": "Decision interval",
@@ -591,7 +608,7 @@
         "data_description": {
           "ramp_k_per_min": "The fastest setpoint change, in K per minute. Default 1. Faster changes stress the boiler and make zones overshoot.",
           "decision_interval_min": "How often the water temperature is decided anew, in minutes; default 5, VT's default cycle. Heating on and off follows the zones at every 10 s step, whatever this is; the plugin does not read the zones' own cycles. Shorter: the water follows the weather and the rooms sooner, but the zones' algorithms see it move more often; longer: steadier water that follows more slowly.",
-          "off_setpoint": "The setpoint written for \"off\" when there is no heating switch, in °C. Default 10: far below any heating value, and below the lowest flow setpoint. Risk: a low setpoint does not switch the boiler's heating off — ESPHome and DIYLess masters keep CH enabled, and boilers are reported to keep their CH pump running; a heating switch, or an OpenTherm Gateway's CH=0, really turns heating off.",
+          "off_setpoint": "The setpoint written for \"off\" when there is no heating switch, in °C. Default 10: far below any heating value, and below the lowest flow setpoint. Risk: a low setpoint does not switch the boiler's heating off — ESPHome and DIYLess masters keep CH enabled, and boilers are reported to keep their CH pump running; a heating switch, or an OpenTherm Gateway's CH=0, really turns heating off. Control without a heating switch is blocked in this version, so this setpoint is not written yet.",
           "count_threshold": "Heating is needed when at least this many zones call for heat. Default 1; at most the number of zones. 0 turns the count off, leaving the power or opening threshold alone, as in Versatile Thermostat. Higher leaves a single calling room without heat.",
           "power_threshold_kw": "Optional: heating is needed when the zones' mean power over their cycle, as Versatile Thermostat counts it, reaches this, in kW — counted only while at least one of them has its valve open or its device on. Too high leaves small rooms without heat.",
           "opening_threshold": "Optional: heating is needed when the widest valve opening among the calling zones reaches this, in %. Too high leaves a room that opens a little without heat.",
@@ -601,7 +618,7 @@
       },
       "control_alarms": {
         "title": "Alarm reactions",
-        "description": "What control does while an alarm is active: information only, or hand control back to the boiler until you switch control off and on again. Another controller writing to the boiler always makes the plugin step aside; it never fights it.",
+        "description": "What control does while an alarm is active: information only, or hand control back to the boiler until you switch control off and on again. Another controller writing to the boiler always makes the plugin step aside; it never fights it. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "pressure_low": "Low pressure",
           "pressure_high": "High pressure",
@@ -633,12 +650,22 @@
       },
       "control_return_confirm": {
         "title": "Confirm the return by itself",
-        "description": "The plugin will take the boiler back by itself an hour after another controller last wrote to it. If that controller is still there, both will control the boiler in turns. Tick to confirm.",
+        "description": "The plugin will take the boiler back by itself an hour after another controller last wrote to it. If that controller is still there, both will control the boiler in turns. Tick to confirm. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "understood": "I understand"
         },
         "data_description": {
           "understood": "Tick to switch the return by itself on; without the tick it stays off."
+        }
+      },
+      "confirm_blocking": {
+        "title": "This change stops control",
+        "description": "With this change control cannot run: {first} ({more} other reasons). Saving hands the boiler back now.",
+        "data": {
+          "save_anyway": "Save anyway"
+        },
+        "data_description": {
+          "save_anyway": "Tick to save the change all the same. Left unticked (default), nothing is saved and the menu shows again."
         }
       }
     },
@@ -693,7 +720,27 @@
       "thermostat_setpoint_same_as_read_back": "Pick the thermostat's own entity, not the setpoint read-back.",
       "return_needs_confirmation": "Tick the box to switch this on, or go back.",
       "setpoint_step_too_coarse": "This entity takes values in steps above 1 °C: a rounded value would read back as ignored. Pick an entity with a finer step.",
-      "max_flow_alarm_not_above_max": "The alarm temperature must be above the circuit's maximum."
+      "max_flow_alarm_not_above_max": "The alarm temperature must be above the circuit's maximum.",
+      "entity_not_suitable": "This entity is not of a kind this field takes.",
+      "zone_not_vt": "Only Versatile Thermostat thermostats can be zones.",
+      "entity_for_two_signals": "One entity can feed only one signal: pick another entity, or leave this field empty.",
+      "zone_on_boiler_thermostat": "The Versatile Thermostat zone {zone} is built on the boiler's or gateway's own thermostat entity: it would ask for heat whenever the flame burns. Build the zone on a room sensor and its valves or radiator thermostats instead.",
+      "circuit_has_zones": "Zones still use a circuit you left out: move them to another circuit in the zones step first.",
+      "invalid_boiler": "A value saved here is not one this version knows; choose it again.",
+      "invalid_circuit": "A value saved here is not one this version knows; choose it again.",
+      "invalid_zone": "A value saved here is not one this version knows; choose it again.",
+      "invalid_reference": "A value saved here is not one this version knows; choose it again.",
+      "invalid_monitor": "A value saved here is not one this version knows; choose it again.",
+      "invalid_building": "A value saved here is not one this version knows; choose it again.",
+      "invalid_freshness": "A value saved here is not one this version knows; choose it again.",
+      "unreadable_options": "A value saved here is not one this version knows; choose it again.",
+      "hand_back_switch_is_heating_switch": "The external control switch must not be the heating switch or the setpoint entity: handing back would switch it on and off for ever.",
+      "gateway_not_set_up": "This gateway's OpenTherm Gateway integration is not set up, not running or disabled.",
+      "mqtt_not_set_up": "The MQTT integration is not set up: the commands would go nowhere.",
+      "design_flow_too_low": "The design flow temperature must be at least 5 K above the curve's room temperature.",
+      "design_flow_above_hard_max": "The design flow temperature is above the highest water temperature, so the curve would be cut off in frost. Raise the highest water temperature or lower the design flow.",
+      "design_outdoor_too_warm": "The design outdoor temperature must be at least 10 K below the curve's room temperature.",
+      "hard_min_not_below_design_flow": "The lowest water temperature must be below the design flow temperature."
     }
   },
   "selector": {
@@ -1371,6 +1418,42 @@
     },
     "blocked_heating_off_ignored": {
       "message": "From the start of the session the boiler did not take the plugin's \"heating off\", so the plugin could not switch heating off. Control stopped and the boiler was handed back. Check the heating switch picked in the options and the boiler's settings, then switch control off and on. The monitor keeps running. Other reasons: {others}."
+    },
+    "blocked_hand_back_switch_is_heating_switch": {
+      "message": "The external control switch is also the heating switch or the setpoint entity: handing back would switch it on and off for ever. Pick another entity in the options. Other reasons: {others}."
+    },
+    "blocked_entity_for_two_signals": {
+      "message": "One entity feeds two signals, so the later one is not used. Pick another entity for it in the signals options. Other reasons: {others}."
+    },
+    "blocked_topology_not_for_path": {
+      "message": "The gateway connection does not suit the write path: choose another in the options. Other reasons: {others}."
+    },
+    "blocked_no_heating_switch": {
+      "message": "Control needs a heating switch that the boiler does not store in its memory. Without one, \"off\" would be a low setpoint, and whether that stops the boiler and its pump is not known yet. The monitor keeps running. Other reasons: {others}."
+    },
+    "blocked_gateway_not_set_up": {
+      "message": "The OpenTherm Gateway integration of the gateway picked is removed or disabled: the commands would go nowhere. Set it up or enable it, or pick another gateway in the options. Other reasons: {others}."
+    },
+    "blocked_mqtt_not_set_up": {
+      "message": "The MQTT integration is removed or disabled: the commands would go nowhere. Set it up or enable it. Other reasons: {others}."
+    },
+    "blocked_zone_not_vt": {
+      "message": "A zone is not a Versatile Thermostat thermostat, and only those can be zones: remove it in the options. Other reasons: {others}."
+    },
+    "blocked_zone_on_boiler_thermostat": {
+      "message": "A Versatile Thermostat zone is built on the boiler's or gateway's own thermostat entity: it would ask for heat whenever the flame burns. Build the zone on a room sensor and its valves or radiator thermostats instead. Other reasons: {others}."
+    },
+    "blocked_design_flow_too_low": {
+      "message": "The design flow temperature must be at least 5 K above the curve's room temperature. Correct it in the options. Other reasons: {others}."
+    },
+    "blocked_design_flow_above_hard_max": {
+      "message": "The design flow temperature is above the highest water temperature, so the curve would be cut off in frost. Raise the highest water temperature or lower the design flow in the options. Other reasons: {others}."
+    },
+    "blocked_design_outdoor_too_warm": {
+      "message": "The design outdoor temperature must be at least 10 K below the curve's room temperature. Correct it in the options. Other reasons: {others}."
+    },
+    "blocked_hard_min_not_below_design_flow": {
+      "message": "The lowest water temperature must be below the design flow temperature. Correct it in the options. Other reasons: {others}."
     }
   },
   "issues": {

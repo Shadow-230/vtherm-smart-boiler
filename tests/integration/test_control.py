@@ -20,6 +20,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import EVENT_CALL_SERVICE
 from homeassistant.core import Event, HomeAssistant, ServiceCall, State
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -274,8 +275,29 @@ def options(zones: FakeZones, **control: Any) -> dict[str, Any]:
 
 
 @pytest.fixture
-async def rig(hass: HomeAssistant, freezer, zones: FakeZones, hass_storage: dict[str, Any]) -> Rig:
+def low_setpoint_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Decision 11 blocks control without a heating switch until the user lifts it at K4. A test
+    of that path's mechanics — kept for then, and for a hand-back an earlier version left owed —
+    lifts the block in its one place."""
+    from custom_components.vtherm_smart_boiler import control_config
+
+    monkeypatch.setattr(control_config, "OFF_AS_LOW_SETPOINT_ALLOWED", True)
+
+
+def integrations_running(rig: Rig) -> None:
+    """The gateway's and MQTT's entries shown as running, as the control forms need (P-69)."""
+    for domain in ("opentherm_gw", "mqtt"):
+        for entry in rig.hass.config_entries.async_entries(domain):
+            entry.mock_state(rig.hass, ConfigEntryState.LOADED)
+
+
+@pytest.fixture
+async def rig(hass: HomeAssistant, freezer, zones: FakeZones, hass_storage: dict[str, Any]):
     freezer.move_to(START)
+    # The integrations the gateway paths write through, set up (X5.5): the gateway's entry and
+    # MQTT's. Control needs them there and enabled.
+    MockConfigEntry(domain="opentherm_gw", data={"id": "gw"}).add_to_hass(hass)
+    MockConfigEntry(domain="mqtt").add_to_hass(hass)
     boiler = FakeBoiler(hass, SIGNALS)
     gateway = FakeGateway(hass)
     gateway.register()
@@ -288,7 +310,11 @@ async def rig(hass: HomeAssistant, freezer, zones: FakeZones, hass_storage: dict
         rig.services.append((data["domain"], data["service"], dict(data["service_data"])))
 
     hass.bus.async_listen(EVENT_CALL_SERVICE, record)
-    return rig
+    yield rig
+    for entry in hass.config_entries.async_entries():
+        # Marks only: not running when Home Assistant stops, so it does not unload them.
+        if entry.domain in ("opentherm_gw", "mqtt") and entry.state is ConfigEntryState.LOADED:
+            entry.mock_state(hass, ConfigEntryState.NOT_LOADED)
 
 
 def control_key(entry: MockConfigEntry) -> str:
@@ -1014,6 +1040,7 @@ def held_entity(number: FakeNumber, **extra: Any) -> dict[str, Any]:
     } | extra
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_held_setpoint_is_written_on_change_only(rig: Rig) -> None:
     number = FakeNumber(rig.hass)
     number.register()
@@ -1124,6 +1151,7 @@ async def test_a_failed_write_is_retried_at_the_next_step(rig: Rig) -> None:
     assert rig.state("binary_sensor", "alarm_write_failed").state == "off"  # cleared again
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_timeout_hand_back_needs_expiring_writes(rig: Rig) -> None:
     number = FakeNumber(rig.hass)
     number.register()
@@ -1158,6 +1186,7 @@ async def test_the_shutdown_hand_back_lets_the_next_shutdown_job_run(rig: Rig) -
     assert ran == ["other"]  # removing our job while Home Assistant ran the list skipped this
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_setpoint_entity_that_rejects_a_limit_blocks_control(rig: Rig) -> None:
     number = FakeNumber(rig.hass)
     number.register()
@@ -1193,6 +1222,7 @@ async def test_nothing_is_handed_back_twice_without_a_write_in_between(rig: Rig)
     assert rig.gateway.setpoints().count(0.0) == 1  # already handed back, nothing written since
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_an_entity_hand_back_to_an_unavailable_target_is_retried_until_confirmed(
     rig: Rig,
 ) -> None:
@@ -1313,6 +1343,7 @@ async def owe_a_hand_back(rig: Rig) -> FakeNumber:
     return number
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_no_control_while_a_hand_back_is_owed_keeps_handing_back(rig: Rig) -> None:
     """Control removed from the options while its hand-back cannot get through: a unit that only
     hands back keeps retrying, with a repair issue, until the boiler has it."""
@@ -1362,6 +1393,7 @@ async def test_a_broken_control_section_keeps_monitoring_and_handing_back(
     assert issue(rig, "hand_back_owed") is None
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_changing_the_write_path_is_refused_while_a_hand_back_is_owed(rig: Rig) -> None:
     await owe_a_hand_back(rig)
     await rig.switch(False)
@@ -1477,6 +1509,7 @@ async def test_a_late_confirmation_leaves_a_session_that_has_the_boiler_alone(ri
     assert rig.gateway.calls[-3:] == HAND_BACK
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_choosing_no_control_while_a_hand_back_is_owed_keeps_handing_back(
     rig: Rig,
 ) -> None:
@@ -1544,6 +1577,7 @@ async def test_clearing_the_heating_switch_is_refused_while_a_hand_back_is_owed(
     assert rig.entry.options["control"]["ch_entity"] == "input_boolean.fake_ch"
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_an_owed_hand_back_can_be_settled_by_hand(rig: Rig) -> None:
     """C7: the device a hand-back is owed to is gone for good. A fixable repair issue lets the
     user say they returned the boiler to its own control by hand: retrying stops, and the
@@ -1613,6 +1647,7 @@ async def test_a_session_that_retakes_the_boiler_still_owes_the_switch_it_left_o
     assert switch.on is True
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_what_control_writes_to_cannot_change_while_it_holds_the_boiler(rig: Rig) -> None:
     """C2: the hand-back must go through the device that has the boiler. Changed while control
     holds it, a failed hand-back to the old device would be retried through the new one — and
@@ -1646,6 +1681,7 @@ async def test_what_control_writes_to_cannot_change_while_it_holds_the_boiler(ri
     assert result["step_id"] == "control_curve"
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_disabling_the_entry_with_a_hand_back_owed_keeps_the_issue(
     rig: Rig, hass_storage: dict[str, Any]
 ) -> None:
@@ -1700,6 +1736,7 @@ async def test_options_that_cannot_be_read_still_tell_of_a_held_boiler(
     assert found.is_persistent
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_value_hand_back_echoed_on_a_later_tick_is_done_then(rig: Rig) -> None:
     """T6: ESPHome and MQTT entities show a new value when the device next reports. The value
     hand-back is owed until the entity shows it, and done at the tick it does — without the
@@ -1720,6 +1757,7 @@ async def test_a_value_hand_back_echoed_on_a_later_tick_is_done_then(rig: Rig) -
     assert number.writes.count(50.0) == 1
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_switch_that_stays_on_is_no_hand_back(rig: Rig) -> None:
     """T6: the switch hand-back counts once the switch shows "off"; one that stays on is sent
     again every minute and shown as failed."""
@@ -1815,6 +1853,7 @@ async def test_vt_central_boiler_unknown_from_the_start_blocks_without_a_grace(r
     assert rig.gateway.setpoints() == []
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_removing_the_entry_with_a_hand_back_owed_raises_a_repair_issue(rig: Rig) -> None:
     await owe_a_hand_back(rig)
     assert rig.entry is not None
@@ -2448,6 +2487,7 @@ async def test_keep_alives_do_not_move_the_last_change(rig: Rig) -> None:
     assert rig.state("sensor", "control_setpoint").attributes["last_change"] == first
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_read_back_from_the_written_entity_confirms_nothing(rig: Rig) -> None:
     """P75: the setpoint entity read back as its own echo is shown unverified, and the plugin's
     setpoint entity stays unknown."""
@@ -2462,6 +2502,7 @@ async def test_a_read_back_from_the_written_entity_confirms_nothing(rig: Rig) ->
     assert setpoint.attributes["requested"] == EXPECTED
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_fahrenheit_setpoint_entity_gets_fahrenheit(rig: Rig) -> None:
     """P11: the entity's own unit on write and in the range check — 45 °C is not 45 °F."""
     number = FakeNumber(
@@ -2478,6 +2519,7 @@ async def test_a_fahrenheit_setpoint_entity_gets_fahrenheit(rig: Rig) -> None:
     assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_setpoint_entity_in_another_unit_blocks_control(rig: Rig) -> None:
     number = FakeNumber(rig.hass, unit="%")
     number.register()
@@ -4203,8 +4245,8 @@ async def test_gateway_id_cannot_change_while_a_hand_back_is_owed(
     before the save, the unit starts owing a hand-back through gw1. The save goes back to the
     control step with the reason, the options stay, and the hand-back goes on through gw1.
     Negative: with nothing owed at the save, gw2 is saved."""
-    for gateway in ("gw", "gw2"):
-        MockConfigEntry(domain="opentherm_gw", data={"id": gateway}).add_to_hass(rig.hass)
+    MockConfigEntry(domain="opentherm_gw", data={"id": "gw2"}).add_to_hass(rig.hass)
+    integrations_running(rig)
     await start(rig)
     assert rig.entry is not None
     flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": CONFIRMED})
@@ -4262,6 +4304,7 @@ async def test_mqtt_topics_cannot_change_while_control_holds_the_boiler(
             rig.gateway.publish()
 
     rig.hass.services.async_register("mqtt", "publish", publish)
+    integrations_running(rig)
     # Without the opentherm_gw path's gateway: the flow drops what another path left.
     await start(rig, write_path="otgw_mqtt", mqtt_top="OTGW", mqtt_node="otgw-1", gateway_id=None)
     assert rig.entry is not None
@@ -4292,7 +4335,7 @@ async def test_the_gateways_read_back_cannot_change_at_the_save(rig: Rig) -> Non
     """R4: the gateway's read-back, which judges its release, re-picked while nothing was owed;
     owed before the save: refused there. Negative, a missing control section: "no control"
     stays possible at the save, the hand-back going through what took the boiler."""
-    MockConfigEntry(domain="opentherm_gw", data={"id": "gw"}).add_to_hass(rig.hass)
+    integrations_running(rig)
     await start(rig)
     assert rig.entry is not None
     other = "sensor.somewhere_else_temperature"
@@ -4357,6 +4400,7 @@ async def test_a_stop_during_the_save_leaves_no_unawaited_write(
     [(3.0, "value", True), (8.0, "value", False), (3.0, "unknown", False)],
     ids=["within_the_wait", "after_it", "unknown"],
 )
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_late_echo_at_stop_counts_within_the_wait(
     rig: Rig, hass_storage: dict[str, Any], after_s: float, shown: str, done: bool
 ) -> None:
@@ -4831,6 +4875,7 @@ async def test_an_unknown_gateway_read_back_while_controlling_is_not_a_hand_back
 
 
 @pytest.mark.parametrize("read_back", ["the_entity", "a_separate_one"])
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_an_optimistic_setpoint_entity_does_not_confirm_a_hand_back(
     rig: Rig, read_back: str
 ) -> None:
@@ -4858,6 +4903,7 @@ async def test_an_optimistic_setpoint_entity_does_not_confirm_a_hand_back(
     assert alarm(rig) == "off"
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_an_optimistic_entity_away_at_the_hand_back_is_retried(rig: Rig) -> None:
     """T-30, negative: an optimistic target counts once written — a write to it while it is
     away fails, so the hand-back stays owed, is shown and sent again; once it is back and
@@ -4879,6 +4925,7 @@ async def test_an_optimistic_entity_away_at_the_hand_back_is_retried(rig: Rig) -
     assert alarm(rig) == "off"
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_held_release_not_confirmed_raises_the_alarm_at_once(rig: Rig) -> None:
     """The decision "Safe hand-back": a device that keeps its last value (declared held) refuses
     the release — its write fails. The boiler is left at the lowest water temperature the
@@ -4909,6 +4956,7 @@ async def test_a_held_release_not_confirmed_raises_the_alarm_at_once(rig: Rig) -
 @pytest.mark.parametrize(
     ("write_type", "alarm_at_s"), [("held", 10), ("expiring", 60)], ids=["held", "expiring"]
 )
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_an_unconfirmed_release_leaves_the_lowest_water_temperature_and_alarms(
     rig: Rig, write_type: str, alarm_at_s: int
 ) -> None:
@@ -4964,6 +5012,7 @@ TIMEOUT_PATH = {"write_path": "entity", "write_type": "expiring", "hand_back": "
 
 
 @pytest.mark.parametrize("baseline", [45.0, None], ids=["baseline_known", "baseline_unknown"])
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_timeout_hand_back_is_confirmed_when_the_read_back_returns_to_the_baseline(
     rig: Rig, hass_storage: dict[str, Any], baseline: float | None
 ) -> None:
@@ -5001,6 +5050,7 @@ async def test_a_timeout_hand_back_is_confirmed_when_the_read_back_returns_to_th
     assert len(number.writes) == count
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_timeout_hand_back_not_released_alarms_after_three_minutes(rig: Rig) -> None:
     """S-20, negative: the read-back stays at the lowest — the device's timer did not release.
     No rewrite retries; ``hand_back_failed`` rises after three minutes, and the hand-back stays
@@ -5032,6 +5082,7 @@ async def test_a_timeout_hand_back_not_released_alarms_after_three_minutes(rig: 
     ("effect", "severity"),
     [("own_control", ir.IssueSeverity.WARNING), ("heating_stops", ir.IssueSeverity.ERROR)],
 )
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_target_another_controller_holds_counts_as_handed_back(
     rig: Rig, caplog: pytest.LogCaptureFixture, effect: str, severity: ir.IssueSeverity
 ) -> None:
@@ -5075,6 +5126,7 @@ async def test_a_target_another_controller_holds_counts_as_handed_back(
 
 
 @pytest.mark.parametrize("hot_water", ["draw", "unknown"])
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_third_value_during_hot_water_is_judged_later(rig: Rig, hot_water: str) -> None:
     """W6, negatives: during a hot-water draw, and for 120 s after it, the boiler's read-back
     may show another value — no judgement, and the retry write is held back while it is shown.
@@ -5274,6 +5326,7 @@ def switch_method(number: FakeNumber, external: str, write_type: str | None) -> 
 
 
 @pytest.mark.parametrize("write_type", [None, "unknown", "persistent"])
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_an_external_switch_of_unknown_write_type_blocks_control(
     rig: Rig, write_type: str | None
 ) -> None:
@@ -5310,6 +5363,7 @@ async def test_an_external_switch_of_unknown_write_type_blocks_control(
     assert flow["step_id"] == "control_curve"
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_an_expiring_external_switch_is_turned_on_every_keep_alive(rig: Rig) -> None:
     """P-40: declared expiring, the external-control switch lapses unless repeated: turned on
     again every 30 s while control holds the boiler — a held setpoint written once meanwhile —
@@ -5331,6 +5385,7 @@ async def test_an_expiring_external_switch_is_turned_on_every_keep_alive(rig: Ri
     assert len(external.writes) == count  # nothing after the hand-back
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_held_external_switch_is_turned_on_once_per_take(rig: Rig) -> None:
     """P-40: declared held, the device keeps the external-control switch's state: turned on once
     each time control takes the boiler, off at each hand-back."""
@@ -5351,6 +5406,7 @@ async def test_a_held_external_switch_is_turned_on_once_per_take(rig: Rig) -> No
 ENTITY_ANSWER = {"write_path": "entity", "topology": "virtual"}
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_hand_back_value_above_the_maximum_is_refused(rig: Rig) -> None:
     """S-21: the hand-back value is exempt only from the lowest water temperature. Above the
     highest the plugin may write it is refused at the step, and at the save when a later step
@@ -5395,6 +5451,7 @@ async def test_a_hand_back_value_above_the_maximum_is_refused(rig: Rig) -> None:
     ],
     ids=["own_control", "heating_stops", "heating_switch"],
 )
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_off_near_an_own_control_hand_back_value_is_refused(
     rig: Rig, changes: dict[str, Any], blocked: bool
 ) -> None:
@@ -5473,6 +5530,7 @@ async def test_a_target_another_controller_holds_stays_so_after_a_restart(
         assert warned == 1
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_failed_lowest_does_not_keep_a_shown_release_owed(
     rig: Rig, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -6043,6 +6101,7 @@ async def start_stopping_heating(rig: Rig, installation: str) -> FakeNumber:
 
 
 @pytest.mark.parametrize("installation", ["standalone", "value_stops_heating"])
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_blocker_that_stops_a_stand_alone_session_raises_an_issue(
     rig: Rig, caplog: pytest.LogCaptureFixture, installation: str
 ) -> None:
@@ -6089,6 +6148,7 @@ async def test_a_blocker_that_stops_a_stand_alone_session_raises_an_issue(
         "cleared_within_a_minute",
     ],
 )
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_no_stopped_heating_issue_where_the_blocker_has_its_own_or_heating_goes_on(
     rig: Rig, monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
@@ -6243,6 +6303,7 @@ async def test_the_switch_says_the_plugin_keeps_frost_protection_only_while_it_c
         ("timeout", "device"),  # the virtual topology: the device decides
     ],
 )
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_the_switch_says_who_keeps_frost_protection(
     rig: Rig, installation: str, handed_back: str
 ) -> None:
@@ -6721,6 +6782,7 @@ async def _external_switch_rig(rig: Rig) -> tuple[FakeNumber, FakeSwitch]:
     return number, external
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_the_external_control_switch_switched_off_steps_aside_without_a_rewrite(
     rig: Rig,
 ) -> None:
@@ -6746,6 +6808,7 @@ async def test_the_external_control_switch_switched_off_steps_aside_without_a_re
 
 
 @pytest.mark.parametrize("minutes", [4, 6])
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_the_external_control_switch_off_after_its_device_restart_is_switched_on_again(
     rig: Rig, minutes: int
 ) -> None:
@@ -6816,6 +6879,7 @@ async def test_the_return_by_itself_after_an_hour_without_a_foreign_value(
     assert issue(rig, "control_latched") is not None
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_setpoint_step_over_1k_is_refused_or_compared_after_rounding(rig: Rig) -> None:
     """T-55 (P-15, P-98): a setpoint entity with a step of 0.5 from 0.25 and the hard maximum
     70: 70 is sent as 69.75, read back as 69.75 it confirms — no false "ignored" — and the
@@ -6826,7 +6890,9 @@ async def test_setpoint_step_over_1k_is_refused_or_compared_after_rounding(rig: 
     number.register()
     rig.outdoor = -30.0
     rig.live()
-    control = held_entity(number, curve={"design_outdoor": -15, "design_flow": 75})
+    # At −30 °C the curve asks for more than its 70 °C design flow: the hard maximum cuts it
+    # (a design flow above the maximum itself is refused, P-68).
+    control = held_entity(number, curve={"design_outdoor": -15, "design_flow": 70})
     await start(rig, **control)
     await rig.switch(True)
     assert number.writes == [69.75]
@@ -6920,6 +6986,7 @@ async def test_frequent_lost_commands_raise_commands_lost_never_a_hold(rig: Rig)
 
 
 @pytest.mark.parametrize("path", ["value", "thermostat"])
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_the_return_by_itself_knows_each_hand_back_state(rig: Rig, path: str) -> None:
     """The return by itself on other paths: a held setpoint entity given back to its own control
     with a value — quiet while it shows that value; a gateway with an OpenTherm thermostat —
@@ -7633,6 +7700,7 @@ async def test_the_switch_shows_the_boilers_own_room_controller(rig: Rig) -> Non
     assert attributes["frost_protection_by"] == "device"
 
 
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_a_restore_waits_for_its_setpoint_entity(
     rig: Rig, hass_storage: dict[str, Any]
 ) -> None:
@@ -8143,3 +8211,222 @@ async def test_a_reset_once_the_unit_stops_does_nothing(rig: Rig) -> None:
     await unit.async_stop()
     await unit.async_reset_correction()  # no error, and nothing to do
     assert unit.status.correction == before
+
+
+# --- X5: configuration refused among the blockers (run time) ------------------------------------
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+async def test_a_boiler_ignoring_heating_off_shows_the_blocker_until_off_and_on(
+    rig: Rig, hass_storage: dict[str, Any], layout: str
+) -> None:
+    """X5.21 (answer O, with decision 11): X1's latch with its cause ``heating_off_ignored``,
+    as a restart finds it stored: the blocker names it, and switching on while control is on is
+    refused with its text; switching control off and on clears it and control runs again. With
+    control off, switching on is the second half of that off and on — never refused for it, so
+    the user cannot be left unable to clear it."""
+    stored = {"latched": True, "latched_by": ["heating_off_ignored"], "enabled": True}
+    await start_with_stored(rig, hass_storage, stored, layout)
+    await rig.advance(120)
+    assert "heating_off_ignored" in rig.state("switch", "control").attributes["blockers"]
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["heating_off_ignored"]
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)  # on already: refused, with the reason
+    assert err.value.translation_key == "blocked_heating_off_ignored"
+    assert str(err.value).startswith("From the start of the session the boiler did not take")
+    assert rig.gateway.setpoints() == []  # nothing written
+    await rig.switch(False)
+    await rig.switch(True)
+    assert "heating_off_ignored" not in rig.state("switch", "control").attributes["blockers"]
+    assert rig.gateway.setpoints() == [EXPECTED]
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+async def test_a_latch_stored_with_control_off_can_still_be_cleared(
+    rig: Rig, hass_storage: dict[str, Any], layout: str
+) -> None:
+    """The latch stored with the wish "off" (the switch was disabled, say): switching on is not
+    refused for it; the latch holds, nothing is written, and the next off and on clears it."""
+    stored = {"latched": True, "latched_by": ["heating_off_ignored"], "enabled": False}
+    await start_with_stored(rig, hass_storage, stored, layout)
+    await rig.advance(120)
+    assert rig.state("switch", "control").state == "off"
+    await rig.switch(True)  # not refused
+    await rig.advance(20)
+    assert "heating_off_ignored" in rig.state("switch", "control").attributes["blockers"]
+    assert rig.gateway.setpoints() == []
+    await rig.switch(False)
+    await rig.switch(True)
+    assert rig.gateway.setpoints() == [EXPECTED]
+
+
+@pytest.mark.parametrize("latched_by", [None, [], ["pressure_low"]], ids=["none", "empty", "other"])
+async def test_a_stored_latch_without_its_cause_is_no_heating_off_blocker(
+    rig: Rig, hass_storage: dict[str, Any], latched_by: list[str] | None
+) -> None:
+    """Negative (X5.21): a stored latch without the cause ``heating_off_ignored`` is read as
+    today's latch — control stays handed back until off and on — never as this blocker."""
+    stored: dict[str, Any] = {"latched": True, "enabled": True}
+    if latched_by is not None:
+        stored["latched_by"] = latched_by
+    await start_with_stored(rig, hass_storage, stored, "0.2.2")
+    await rig.advance(120)
+    assert "heating_off_ignored" not in rig.state("switch", "control").attributes["blockers"]
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    assert rig.gateway.setpoints() == []
+    await rig.switch(False)
+    await rig.switch(True)
+    assert rig.gateway.setpoints() == [EXPECTED]
+
+
+def vt_thermostat(rig: Rig, zone_id: str, *underlying: str) -> MockConfigEntry:
+    """The zone's VT thermostat entry, listing what it drives (VT 10.4.0 keeps the list in its
+    entry's data)."""
+    entry = MockConfigEntry(domain=VT_PLATFORM, data={"underlying_entity_ids": list(underlying)})
+    entry.add_to_hass(rig.hass)
+    er.async_get(rig.hass).async_update_entity(
+        rig.zones.entities[zone_id], config_entry_id=entry.entry_id
+    )
+    return entry
+
+
+async def test_a_zone_reconfigured_onto_the_boilers_thermostat_blocks_control(rig: Rig) -> None:
+    """X5.19 at run time: VT is reconfigured — the plugin's options unchanged — so the zone is
+    built on the gateway's own thermostat climate: at the next step the blocker
+    ``zone_on_boiler_thermostat`` stops control with the safe hand-back; VT set back, control
+    resumes by itself. Negative: the zone's VT entry gone (cannot be read) — no blocker."""
+    registry = er.async_get(rig.hass)
+    thermostat = registry.async_get_or_create(
+        "climate", "opentherm_gw", "gw-thermostat", suggested_object_id="gateway_thermostat"
+    ).entity_id
+    vt = vt_thermostat(rig, "living", "switch.living_valve")
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.gateway.setpoints() == [EXPECTED]
+    rig.hass.config_entries.async_update_entry(vt, data={"underlying_entity_ids": [thermostat]})
+    await rig.advance(20)
+    assert "zone_on_boiler_thermostat" in rig.state("switch", "control").attributes["blockers"]
+    assert rig.gateway.calls[-3:] == HAND_BACK
+    count = len(rig.gateway.calls)
+    await rig.advance(60)
+    assert len(rig.gateway.calls) == count  # nothing written while it holds
+    rig.hass.config_entries.async_update_entry(vt, data={"underlying_entity_ids": []})
+    await rig.advance(20)
+    assert "zone_on_boiler_thermostat" not in rig.state("switch", "control").attributes["blockers"]
+    assert rig.gateway.setpoints()[-1] == EXPECTED  # resumed by itself
+    registry.async_update_entity(rig.zones.entities["living"], config_entry_id=None)
+    rig.hass.config_entries.async_update_entry(vt, data={"underlying_entity_ids": [thermostat]})
+    await rig.advance(20)
+    assert "zone_on_boiler_thermostat" not in rig.state("switch", "control").attributes["blockers"]
+
+
+async def test_a_zone_that_is_not_a_vt_climate_blocks_control(rig: Rig) -> None:
+    """X5.7: a hand-edited zone of another integration blocks control (``zone_not_vt``).
+    Negative: a zone neither registered nor reported is unknown (VT away), not of another
+    kind."""
+    other = (
+        er.async_get(rig.hass)
+        .async_get_or_create("climate", "generic_thermostat", "hall", suggested_object_id="hall")
+        .entity_id
+    )
+    rig.hass.states.async_set(other, "heat")
+    entry_options = options(rig.zones)
+    entry_options["zones"].append({"entity_id": other})
+    entry = add_entry(rig, entry_options)
+    assert await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    rig.entry = entry
+    await rig.advance(10)
+    assert "zone_not_vt" in rig.state("switch", "control").attributes["blockers"]
+    with pytest.raises(ServiceValidationError):
+        await rig.switch(True)
+    ghost = options(rig.zones)
+    ghost["zones"].append({"entity_id": "climate.not_there_yet"})
+    rig.hass.config_entries.async_update_entry(entry, options=ghost)
+    await rig.hass.async_block_till_done()
+    await rig.advance(10)
+    assert "zone_not_vt" not in rig.state("switch", "control").attributes["blockers"]
+
+
+async def test_a_gateway_entry_removed_or_disabled_blocks_control(rig: Rig) -> None:
+    """X5.5 at run time: the ``opentherm_gw`` entry of the gateway picked disabled while control
+    runs — the blocker ``gateway_not_set_up`` hands back; enabled again, control resumes by
+    itself. Missing from the start: the blocker too. Negative: an entry only not loaded is Home
+    Assistant starting's case, no blocker of its own."""
+    from homeassistant.config_entries import ConfigEntryDisabler
+
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.gateway.setpoints() == [EXPECTED]
+    gateway = rig.hass.config_entries.async_entries("opentherm_gw")[0]
+    assert gateway.state is ConfigEntryState.NOT_LOADED  # not running: no blocker
+    assert "gateway_not_set_up" not in rig.state("switch", "control").attributes["blockers"]
+    await rig.hass.config_entries.async_set_disabled_by(gateway.entry_id, ConfigEntryDisabler.USER)
+    await rig.advance(20)
+    assert "gateway_not_set_up" in rig.state("switch", "control").attributes["blockers"]
+    assert rig.gateway.calls[-3:] == HAND_BACK
+    await rig.hass.config_entries.async_set_disabled_by(gateway.entry_id, None)
+    await rig.advance(20)
+    assert "gateway_not_set_up" not in rig.state("switch", "control").attributes["blockers"]
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+    assert rig.entry is not None
+    control = dict(rig.entry.options["control"]) | {"gateway_id": "another_gw"}
+    rig.hass.config_entries.async_update_entry(
+        rig.entry, options=dict(rig.entry.options) | {"control": control}
+    )
+    await rig.hass.async_block_till_done()
+    await rig.advance(10)
+    assert "gateway_not_set_up" in rig.state("switch", "control").attributes["blockers"]
+
+
+@pytest.mark.parametrize("mqtt", ["missing", "disabled", "set_up"])
+async def test_the_mqtt_path_needs_the_mqtt_integration(rig: Rig, mqtt: str) -> None:
+    """X5.5 at run time: the OTGW firmware's path with no MQTT entry, or a disabled one, is
+    blocked (``mqtt_not_set_up``); with one, not."""
+    from homeassistant.config_entries import ConfigEntryDisabler
+
+    for entry in rig.hass.config_entries.async_entries("mqtt"):
+        await rig.hass.config_entries.async_remove(entry.entry_id)
+    if mqtt == "disabled":
+        MockConfigEntry(domain="mqtt", disabled_by=ConfigEntryDisabler.USER).add_to_hass(rig.hass)
+    elif mqtt == "set_up":
+        MockConfigEntry(domain="mqtt").add_to_hass(rig.hass)
+    await start(rig, write_path="otgw_mqtt", mqtt_top="OTGW", mqtt_node="otgw-1", gateway_id=None)
+    await rig.advance(10)
+    blockers = rig.state("switch", "control").attributes["blockers"]
+    assert ("mqtt_not_set_up" in blockers) is (mqtt != "set_up")
+
+
+async def test_an_entity_writer_refuses_one_switch_in_two_roles(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """X5.1 (P-03): options where the heating switch is also the external-control switch — a
+    hand edit, or left from an earlier version — while a hand-back is owed: the hand-back fails
+    at once, stays owed and is shown for the user to settle, and the switch is not toggled every
+    minute. Control itself is blocked (``hand_back_switch_is_heating_switch``)."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    switch = FakeSwitch(rig.hass)
+    switch.register()
+    control = held_entity(
+        number,
+        ch_entity=switch.entity_id,
+        ch_write_type="held",
+        hand_back="switch",
+        hand_back_entity=switch.entity_id,
+        hand_back_entity_write_type="held",
+    )
+    entry = owed_entry(rig, hass_storage, control=options(rig.zones, **control)["control"])
+    assert await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    await rig.advance(300)
+    assert switch.writes == []  # never switched on and off
+    assert number.writes == []
+    assert unit_of(rig).hand_back_owed
+    assert issue(rig, "hand_back_owed") is not None
+    assert (
+        "hand_back_switch_is_heating_switch"
+        in (rig.state("switch", "control").attributes["blockers"])
+    )

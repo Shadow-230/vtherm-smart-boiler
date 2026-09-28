@@ -6,6 +6,10 @@ from collections.abc import Mapping
 
 DOMAIN = "vtherm_smart_boiler"
 VT_DOMAIN = "versatile_thermostat"
+# The integrations the gateway paths write through: Home Assistant's OpenTherm Gateway, and MQTT
+# for the OTGW firmware's commands.
+OPENTHERM_GW_DOMAIN = "opentherm_gw"
+MQTT_DOMAIN = "mqtt"
 STORAGE_VERSION = 1  # the entry's store, ``<DOMAIN>.<entry_id>``
 # The control store, ``<DOMAIN>.<entry_id>.control``: the control state alone, written at once.
 CONTROL_STORE_VERSION = 1

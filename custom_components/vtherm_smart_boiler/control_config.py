@@ -10,6 +10,12 @@ lowest water temperature, or the boiler would not see a change (P-43). Provision
 decisions of phase F (to be confirmed at the review, `docs/plan-0.2.md` K4): control only for an
 installation with one circuit fed by the boiler flow (unmixed, or passive fixed); the curve must
 be entered, never silently defaulted; VT's central boiler must not run alongside.
+
+What the form refuses is a blocker too, for options that reach the plugin without it (a hand
+edit, an older version's options — X5): one entity in two roles (P-03), one entity for two
+signals (P-16), a topology that does not suit the path (P-44), a curve whose values do not fit
+together (P-68), and — decision 11, until the user lifts it at K4 — control without a heating
+switch the boiler does not store, where "off" would be a low setpoint (S-39).
 """
 
 from __future__ import annotations
@@ -28,6 +34,7 @@ from .core.installation import BoilerClass, CircuitControl, EmitterType, Install
 from .core.learning import LearningConfig
 from .core.limits import FlowLimits, FrostConfig
 from .core.loop import DEFAULT_OFF_SETPOINT, LoopConfig
+from .core.signals import Signal
 
 MINUTE = 60.0
 KEEPALIVE_S = 30.0
@@ -121,6 +128,15 @@ CONFIG_BLOCKERS = (
     "hand_back_switch_not_writable",
     "hand_back_value_above_max",
     "off_setpoint_near_hand_back_value",
+    # X5: what the form refuses, for options that reach the plugin without it.
+    "hand_back_switch_is_heating_switch",
+    "entity_for_two_signals",
+    "topology_not_for_path",
+    "design_flow_too_low",
+    "design_flow_above_hard_max",
+    "design_outdoor_too_warm",
+    "hard_min_not_below_design_flow",
+    "no_heating_switch",
 )
 OTGW_PATHS = frozenset({WritePath.OPENTHERM_GW, WritePath.OTGW_MQTT})
 # Write types control may use: nothing the boiler stores in its memory.
@@ -128,6 +144,45 @@ WRITABLE_TYPES = frozenset({WriteType.EXPIRING, WriteType.HELD})
 CONTROLLABLE_TOPOLOGIES = frozenset(
     {Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT, Topology.VIRTUAL}
 )
+# The topologies each write path can control with (P-44): the paths through a built-in OTGW need
+# a gateway topology; "virtual" is a controller on the Home Assistant side, reached through an
+# entity. X8 adds the relay path, which has no topology.
+PATH_TOPOLOGIES: Mapping[WritePath, frozenset[Topology]] = MappingProxyType(
+    {
+        WritePath.OPENTHERM_GW: frozenset(
+            {Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT}
+        ),
+        WritePath.OTGW_MQTT: frozenset(
+            {Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT}
+        ),
+        WritePath.ENTITY: frozenset(CONTROLLABLE_TOPOLOGIES),
+    }
+)
+# The answers of the writable-entity step — what control writes to, and how it hands back —
+# dropped when the write path changes (P-71: one list; X6 and X8 add their keys here).
+TARGET_KEYS = (
+    "setpoint_entity", "write_type", "ch_entity", "ch_write_type", "hand_back",
+    "hand_back_value", "hand_back_value_effect", "hand_back_entity", "hand_back_entity_write_type",
+    "gateway_id", "mqtt_top", "mqtt_node", "own_room_controller",
+)  # fmt: skip
+# What a hand-back goes through: fixed while one is owed.
+HAND_BACK_KEYS = (
+    "setpoint_entity", "ch_entity", "hand_back", "hand_back_value", "hand_back_value_effect",
+    "hand_back_entity", "hand_back_entity_write_type", "gateway_id", "mqtt_top", "mqtt_node",
+)  # fmt: skip
+# Decision 11 (S-39; provisional until the user lifts it at K4, even where the research is
+# favourable): control without a heating switch the boiler does not store is blocked — "off"
+# would be a low setpoint, and whether that stops the boiler and its pump is not known. Such
+# installations get the monitor. The one place that lifts the block.
+OFF_AS_LOW_SETPOINT_ALLOWED = False
+# A thermostatic mixing valve needs supply water above its own temperature: the boiler's flow is
+# kept at least this far above a passive fixed circuit's temperature (S-42; provisional, K4).
+FIXED_CIRCUIT_MARGIN_K = 5.0
+# The curve's values must fit together (P-68; provisional, K4): the design flow at least this far
+# above the curve's room temperature, and the design outdoor temperature at least this far below
+# it.
+DESIGN_FLOW_OVER_ROOM_K = 5.0
+DESIGN_OUTDOOR_UNDER_ROOM_K = 10.0
 # Alarms that stay information: nothing the plugin counts may hold heating against VT, so many
 # starts never hand back (``SCOPE.md`` principle 12); a circuit's water above its alarm
 # temperature tells the user of the boiler's overshoot (decision 10).
@@ -259,10 +314,14 @@ def parse_control(
         ch_write_type = WriteType(data.get("ch_write_type", WriteType.UNKNOWN))
     circuit_max = circuit.max_flow if circuit is not None else None
     circuit_floor = None
-    if circuit is not None and circuit.control is CircuitControl.PASSIVE_FIXED:
-        # The mixing valve needs at least its temperature from the boiler; a maximum the user
-        # declared still applies.
-        circuit_floor = circuit.fixed_temperature
+    if (
+        circuit is not None
+        and circuit.control is CircuitControl.PASSIVE_FIXED
+        and circuit.fixed_temperature is not None
+    ):
+        # The mixing valve needs supply water above its own temperature (S-42); a maximum the
+        # user declared still applies, and wins.
+        circuit_floor = circuit.fixed_temperature + FIXED_CIRCUIT_MARGIN_K
     ramp = _float(value, "ramp_k_per_min", None)
     frost_zone = data.get("frost_zone") or None
     control = ControlConfig(
@@ -501,19 +560,90 @@ def hand_back_value_problems(control: ControlOptions) -> list[str]:
     return found
 
 
-def config_blockers(control: ControlOptions, installation: Installation) -> list[str]:
-    """What the configuration still lacks for control (translation keys)."""
+def heating_writes(data: Mapping[str, Any]) -> bool:
+    """Whether stored control options switch heating with a heating switch — the gateway paths
+    always, with CH; the entity path with a heating switch declared expiring or held — rather
+    than sending "off" as a low setpoint. A write type this version does not know counts as
+    none."""
+    if data.get("write_path") in OTGW_PATHS:
+        return True
+    try:
+        ch_write_type = WriteType(data.get("ch_write_type") or WriteType.UNKNOWN)
+    except ValueError:
+        return False
+    return bool(data.get("ch_entity")) and ch_write_type in WRITABLE_TYPES
+
+
+def _roles(control: ControlOptions) -> list[str]:
+    """The entities control writes to, one per role in use: the setpoint entity, the heating
+    switch (whatever its write type: declared as the heating switch, it is that), and the
+    external-control switch where the hand-back uses it."""
+    found = [control.setpoint_entity, control.ch_entity]
+    if control.hand_back is HandBack.SWITCH:
+        found.append(control.hand_back_entity)
+    return [entity for entity in found if entity]
+
+
+def one_entity_in_two_roles(control: ControlOptions) -> bool:
+    """X5.1 (P-03): one entity picked for two roles — the heating switch as the external-control
+    switch, say — would be switched on and off by every hand-back for ever. A role left empty is
+    no duplicate."""
+    roles = _roles(control)
+    return len(roles) != len(set(roles))
+
+
+def curve_problems(
+    design_flow: float | None,
+    design_outdoor: float,
+    room: float,
+    hard_min: float,
+    hard_max: float,
+) -> list[tuple[str, str]]:
+    """X5.8 (P-68; provisional, K4): what does not fit together in the curve and its limits, as
+    (field, translation key) in the form's order. The design flow at least
+    ``DESIGN_FLOW_OVER_ROOM_K`` above the curve's room temperature, and not above the highest
+    water temperature — the curve would be cut off in frost; the design outdoor temperature at
+    least ``DESIGN_OUTDOOR_UNDER_ROOM_K`` below the room; the lowest water temperature below the
+    design flow. Nothing is checked before a design flow is entered ("curve_not_entered")."""
+    if design_flow is None:
+        return []
+    found: list[tuple[str, str]] = []
+    if design_flow < room + DESIGN_FLOW_OVER_ROOM_K:
+        found.append(("design_flow", "design_flow_too_low"))
+    if design_flow > hard_max:
+        found.append(("design_flow", "design_flow_above_hard_max"))
+    if design_outdoor > room - DESIGN_OUTDOOR_UNDER_ROOM_K:
+        found.append(("design_outdoor", "design_outdoor_too_warm"))
+    if hard_min >= design_flow:
+        found.append(("hard_min", "hard_min_not_below_design_flow"))
+    return found
+
+
+def config_blockers(
+    control: ControlOptions,
+    installation: Installation,
+    shared_signals: Mapping[Signal, Signal] | None = None,
+) -> list[str]:
+    """What the configuration still lacks for control (translation keys). ``shared_signals``:
+    signals dropped because their entity feeds an earlier one (``EntryConfig.shared_signals``,
+    X5.2)."""
     if not control.configured:
         return ["no_write_path"]
     found: list[str] = []
     if installation.boiler.boiler_class is not BoilerClass.FLOW_SETPOINT:
         found.append("boiler_not_flow_setpoint")
+    if shared_signals:
+        found.append("entity_for_two_signals")
     path = control.write_path
+    if one_entity_in_two_roles(control):
+        found.append("hand_back_switch_is_heating_switch")
     if path is WritePath.ENTITY:
         if not control.setpoint_entity:
             found.append("no_setpoint_entity")
         if control.write_type not in WRITABLE_TYPES:
             found.append("write_type_not_supported")
+        if not control.loop.ch_writes and not OFF_AS_LOW_SETPOINT_ALLOWED:
+            found.append("no_heating_switch")  # decision 11: the monitor only, until K4
         if (
             control.hand_back is None
             or (control.hand_back is HandBack.SWITCH and not control.hand_back_entity)
@@ -543,8 +673,16 @@ def config_blockers(control: ControlOptions, installation: Installation) -> list
         found.append("no_topology")
     elif control.topology not in CONTROLLABLE_TOPOLOGIES:
         found.append("topology_no_control")
+    elif path is not None and control.topology not in PATH_TOPOLOGIES[path]:
+        found.append("topology_not_for_path")
     if not control.curve_entered:
         found.append("curve_not_entered")
+    else:
+        curve, limits = control.loop.control.curve, control.loop.control.limits
+        problems = curve_problems(
+            curve.design_flow, curve.design_outdoor, curve.room, limits.hard_min, limits.hard_max
+        )
+        found += [key for _field, key in problems]
     circuits = installation.circuits
     if len(circuits) != 1 or circuits[0].control not in (
         CircuitControl.UNMIXED_SHARED,

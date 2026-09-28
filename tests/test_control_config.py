@@ -77,14 +77,15 @@ def test_entity_path_with_a_held_setpoint() -> None:
     assert not options.loop.ch_writes  # no heating switch: "off" is a low setpoint
     assert options.hand_back is HandBack.VALUE
     assert options.entities == ("number.boiler_flow", "sensor.boiler_flow_setpoint")
-    assert config_blockers(options, RADIATORS) == []
+    # Decision 11: without a heating switch control is blocked until K4 lifts it.
+    assert config_blockers(options, RADIATORS) == ["no_heating_switch"]
 
 
 @pytest.mark.parametrize("write_type", ["persistent", "unknown"])
 def test_nothing_goes_to_the_boilers_persistent_memory(write_type: str) -> None:
     """A setpoint the boiler stores, or might, keeps control off: it is never written."""
     options = parse_control(ENTITY | {"write_type": write_type}, RADIATORS, None)
-    assert config_blockers(options, RADIATORS) == ["write_type_not_supported"]
+    assert config_blockers(options, RADIATORS) == ["write_type_not_supported", "no_heating_switch"]
     assert not options.loop.setpoint_guard.writable
     default = parse_control({k: v for k, v in ENTITY.items() if k != "write_type"}, RADIATORS, None)
     assert default.write_type is WriteType.UNKNOWN
@@ -188,9 +189,18 @@ def test_every_blocker_is_listed() -> None:
         (ENTITY | {"hand_back": "switch", "hand_back_entity": "switch.external"}, RADIATORS),
         (ENTITY | {"hand_back_value": 75}, RADIATORS),
         (ENTITY | {"hand_back_value": 10}, RADIATORS),
+        # X5: one entity in two roles; a topology the path cannot use; the curve's checks.
+        (ENTITY | {"ch_entity": "number.boiler_flow"}, RADIATORS),
+        (OTGW | {"topology": "virtual"}, RADIATORS),
+        (OTGW | {"curve": {"design_outdoor": 12, "design_flow": 24}, "hard_min": 25}, RADIATORS),
+        (OTGW | {"curve": {"design_outdoor": -15, "design_flow": 75}}, RADIATORS),
     ]
     for data, installation in cases:
         found |= set(config_blockers(parse_control(data, RADIATORS, None), installation))
+    from custom_components.vtherm_smart_boiler.core.signals import Signal
+
+    shared = {Signal.RETURN: Signal.FLOW}
+    found |= set(config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS, shared))
     assert found == set(CONFIG_BLOCKERS)
 
 
@@ -225,7 +235,8 @@ def test_a_heating_switch_only_with_writes_that_do_not_wear(
         data["ch_write_type"] = ch_write_type
     options = parse_control(data, RADIATORS, None)
     assert options.loop.ch_writes is switched
-    assert config_blockers(options, RADIATORS) == []
+    # Decision 11: a heating switch left alone is no heating switch — control is blocked.
+    assert config_blockers(options, RADIATORS) == ([] if switched else ["no_heating_switch"])
 
 
 @pytest.mark.parametrize(
@@ -350,7 +361,10 @@ def test_the_new_options_are_read_with_cautious_defaults() -> None:
 def test_off_as_a_low_setpoint_must_be_below_the_hard_minimum() -> None:
     """Else "off" would heat; with a heating switch the low setpoint is not used for "off"."""
     options = parse_control(ENTITY | {"off_setpoint": 30}, RADIATORS, None)
-    assert config_blockers(options, RADIATORS) == ["off_setpoint_not_below_hard_min"]
+    assert config_blockers(options, RADIATORS) == [
+        "no_heating_switch",  # decision 11; the check stays for when K4 lifts it
+        "off_setpoint_not_below_hard_min",
+    ]
     otgw = parse_control(OTGW | {"off_setpoint": 30}, RADIATORS, None)
     assert config_blockers(otgw, RADIATORS) == []
 
@@ -362,7 +376,7 @@ def test_a_passive_fixed_circuit_sets_the_floor_and_keeps_its_maximum() -> None:
         (Zone("climate.a", "main"),),
     )
     control = parse_control(OTGW, fixed, None).loop.control
-    assert control.circuit_floor == 40.0
+    assert control.circuit_floor == 45.0  # its temperature and the valve's margin (S-42)
     assert control.circuit_max == 55.0
 
 
@@ -582,7 +596,7 @@ def test_the_own_room_controller_tick_makes_a_working_thermostat() -> None:
         assert options.loop.control.working_thermostat
         assert hand_back_heating_on(options)  # like "device decides": the heating switch on
         assert frost_protection_by(options, controlling=False) is FrostProtection.DEVICE
-        assert config_blockers(options, RADIATORS) == []
+        assert config_blockers(options, RADIATORS) == ["no_heating_switch"]  # decision 11
 
 
 @pytest.mark.parametrize(
@@ -707,3 +721,215 @@ def test_the_circuit_too_hot_alarm_is_information_only() -> None:
         OTGW | {"alarm_reactions": {"circuit_too_hot": "hand_back"}}, RADIATORS, None
     )
     assert options.reaction("circuit_too_hot") is AlarmReaction.INFO
+
+
+# --- X5: configuration refused among the blockers (hand-edited options) --------------------------
+
+SWITCHES = ENTITY | {
+    "ch_entity": "switch.ch",
+    "ch_write_type": "held",
+    "hand_back": "switch",
+    "hand_back_entity_write_type": "held",
+}
+
+
+@pytest.mark.parametrize(
+    ("data", "blocked"),
+    [
+        (SWITCHES | {"hand_back_entity": "switch.ch"}, True),  # T-38: heating and external
+        (ENTITY | {"hand_back": "switch", "hand_back_entity": "number.boiler_flow"}, True),
+        (ENTITY | {"ch_entity": "number.boiler_flow", "ch_write_type": "held"}, True),
+        (SWITCHES | {"hand_back_entity": "switch.external"}, False),
+        (SWITCHES | {"hand_back_entity": "switch.ch", "ch_entity": ""}, False),  # left empty
+        (SWITCHES | {"hand_back_entity": "switch.ch", "ch_entity": None}, False),
+        (SWITCHES | {"hand_back_entity": ""}, False),  # missing: "no_hand_back", not a duplicate
+        # A switch stored for another method is not used: no second role.
+        (SWITCHES | {"hand_back_entity": "switch.ch", "hand_back": "value"}, False),
+    ],
+)
+def test_a_hand_back_switch_that_is_the_heating_switch_blocks(data: dict, blocked: bool) -> None:
+    """X5.1 (P-03, T-38): the heating switch, the external-control switch and the setpoint
+    entity are pairwise different — one entity in two roles would be switched on and off by
+    every hand-back for ever. Hand-edited options get the blocker; a role left empty or not in
+    use is no duplicate."""
+    from custom_components.vtherm_smart_boiler.control_config import one_entity_in_two_roles
+
+    options = parse_control(data, RADIATORS, None)
+    blockers = config_blockers(options, RADIATORS)
+    assert ("hand_back_switch_is_heating_switch" in blockers) is blocked
+    assert one_entity_in_two_roles(options) is blocked
+
+
+@pytest.mark.parametrize(
+    ("path", "topology", "blocked"),
+    [
+        ("opentherm_gw", "virtual", True),
+        ("otgw_mqtt", "virtual", True),
+        ("opentherm_gw", "gateway_standalone", False),
+        ("otgw_mqtt", "gateway_with_thermostat", False),
+        ("entity", "virtual", False),
+        ("entity", "gateway_standalone", False),
+        ("entity", "gateway_with_thermostat", False),
+        ("opentherm_gw", "monitor_mode", False),  # "topology_no_control" says it
+        ("opentherm_gw", "", False),  # "no_topology" says it
+    ],
+)
+def test_the_topology_must_suit_the_path(path: str, topology: str, blocked: bool) -> None:
+    """X5.4 (P-44): the pairing the form checks is a blocker too, from one table."""
+    from custom_components.vtherm_smart_boiler.control_config import PATH_TOPOLOGIES
+
+    assert set(PATH_TOPOLOGIES) == set(WritePath)  # every path has its topologies
+    data = (
+        (ENTITY | {"ch_entity": "switch.ch", "ch_write_type": "held"}) if path == "entity" else OTGW
+    )
+    options = parse_control(data | {"write_path": path, "topology": topology}, RADIATORS, None)
+    assert ("topology_not_for_path" in config_blockers(options, RADIATORS)) is blocked
+
+
+@pytest.mark.parametrize(
+    ("changes", "blocked"),
+    [
+        ({}, True),  # no heating switch: "off" would be a low setpoint
+        ({"ch_entity": ""}, True),
+        ({"ch_entity": None}, True),
+        ({"ch_entity": "switch.ch"}, True),  # its write type not declared: unknown
+        ({"ch_entity": "switch.ch", "ch_write_type": "unknown"}, True),
+        ({"ch_entity": "switch.ch", "ch_write_type": "persistent"}, True),
+        ({"ch_entity": "switch.ch", "ch_write_type": "held"}, False),
+        ({"ch_entity": "switch.ch", "ch_write_type": "expiring"}, False),
+    ],
+)
+def test_control_without_a_heating_switch_is_blocked(changes: dict, blocked: bool) -> None:
+    """Decision 11 (S-39): until the user lifts it at K4, control needs a heating switch the
+    boiler does not store; without one, "off" would be a low setpoint, and whether that stops
+    the boiler and its pump is not known — such installations get the monitor. The gateway paths
+    always switch heating with CH; the block is lifted in one place."""
+    from custom_components.vtherm_smart_boiler import control_config
+
+    options = parse_control(ENTITY | changes, RADIATORS, None)
+    assert ("no_heating_switch" in config_blockers(options, RADIATORS)) is blocked
+    for path in ("opentherm_gw", "otgw_mqtt"):
+        data = OTGW | {"write_path": path, "mqtt_top": "t", "mqtt_node": "n"}
+        gateway = parse_control(data, RADIATORS, None)
+        assert "no_heating_switch" not in config_blockers(gateway, RADIATORS)
+    assert control_config.OFF_AS_LOW_SETPOINT_ALLOWED is False  # K4 decides
+
+
+def test_the_heating_switch_block_is_lifted_in_one_place(monkeypatch: pytest.MonkeyPatch) -> None:
+    from custom_components.vtherm_smart_boiler import control_config
+
+    monkeypatch.setattr(control_config, "OFF_AS_LOW_SETPOINT_ALLOWED", True)
+    assert config_blockers(parse_control(ENTITY, RADIATORS, None), RADIATORS) == []
+
+
+@pytest.mark.parametrize(
+    ("changes", "blocker"),
+    [
+        ({"curve": {"design_outdoor": -15, "design_flow": 24.5}}, "design_flow_too_low"),
+        ({"curve": {"design_outdoor": -15, "design_flow": 26, "room": 22}}, "design_flow_too_low"),
+        ({"curve": {"design_outdoor": -15, "design_flow": 72}}, "design_flow_above_hard_max"),
+        ({"curve": CURVE, "hard_max": 50}, "design_flow_above_hard_max"),
+        ({"curve": {"design_outdoor": 12, "design_flow": 55}}, "design_outdoor_too_warm"),
+        (
+            {"curve": {"design_outdoor": 9, "design_flow": 55, "room": 18}},
+            "design_outdoor_too_warm",
+        ),
+        ({"curve": CURVE, "hard_min": 55}, "hard_min_not_below_design_flow"),
+        (
+            {"curve": {"design_outdoor": -15, "design_flow": 40}, "hard_min": 45},
+            "hard_min_not_below_design_flow",
+        ),
+    ],
+)
+def test_curve_cross_field_blockers(changes: dict, blocker: str) -> None:
+    """X5.8 (P-68; provisional, K4): the design flow at least 5 K above the curve's room and not
+    above the highest water temperature (the curve would be cut off in frost), the design
+    outdoor temperature at least 10 K below the room, the lowest water temperature below the
+    design flow."""
+    options = parse_control(OTGW | changes, RADIATORS, None)
+    assert blocker in config_blockers(options, RADIATORS)
+
+
+def test_the_curve_defaults_pass_the_cross_field_checks() -> None:
+    """Negative: the defaults with a design flow of 55 °C pass every check; a curve without a
+    design flow keeps today's "curve_not_entered" alone."""
+    from custom_components.vtherm_smart_boiler.control_config import curve_problems
+
+    checks = {
+        "design_flow_too_low",
+        "design_flow_above_hard_max",
+        "design_outdoor_too_warm",
+        "hard_min_not_below_design_flow",
+    }
+    assert config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS) == []
+    edges = OTGW | {"curve": {"design_outdoor": 10, "design_flow": 25}, "hard_min": 24.5}
+    assert not checks & set(config_blockers(parse_control(edges, RADIATORS, None), RADIATORS))
+    unset = config_blockers(parse_control(OTGW | {"curve": {}}, RADIATORS, None), RADIATORS)
+    assert unset == ["curve_not_entered"]
+    assert curve_problems(None, -15.0, 20.0, 25.0, 70.0) == []  # nothing entered: nothing checked
+
+
+def test_a_passive_fixed_circuit_floor_has_a_margin() -> None:
+    """S-42 (provisional, K4): the boiler's water at least 5 K above a thermostatic mixing
+    valve's temperature, so the valve can reach it. Negative: no fixed temperature stays the
+    configuration error it is today."""
+    from custom_components.vtherm_smart_boiler.config import ConfigError, EntryConfig
+    from custom_components.vtherm_smart_boiler.control_config import FIXED_CIRCUIT_MARGIN_K
+
+    assert FIXED_CIRCUIT_MARGIN_K == 5.0
+    fixed = Installation(
+        Boiler(BoilerClass.FLOW_SETPOINT),
+        (Circuit("main", CircuitControl.PASSIVE_FIXED, 45.0),),
+        (Zone("climate.a", "main"),),
+    )
+    assert parse_control(OTGW, fixed, None).loop.control.circuit_floor == 50.0
+    assert parse_control(OTGW, RADIATORS, None).loop.control.circuit_floor is None
+    missing = {
+        "signals": {"flame": "binary_sensor.flame", "flow": "sensor.flow"},
+        "circuits": [{"id": "main", "control": "passive_fixed"}],
+    }
+    with pytest.raises(ConfigError) as err:
+        EntryConfig.from_options(missing)
+    assert err.value.code == "fixed_temperature_missing"
+
+
+def test_one_entity_for_two_signals_is_a_blocker() -> None:
+    """X5.2: a signal dropped because its entity feeds an earlier one blocks control."""
+    from custom_components.vtherm_smart_boiler.core.signals import Signal
+
+    options = parse_control(OTGW, RADIATORS, None)
+    assert config_blockers(options, RADIATORS, {Signal.RETURN: Signal.FLOW}) == [
+        "entity_for_two_signals"
+    ]
+    assert config_blockers(options, RADIATORS, {}) == []
+
+
+def test_the_option_key_lists_are_one_each() -> None:
+    """P-71: the writable-entity step's answers and what a hand-back goes through are listed
+    once, in the control options."""
+    from custom_components.vtherm_smart_boiler import config_flow
+    from custom_components.vtherm_smart_boiler.control_config import HAND_BACK_KEYS, TARGET_KEYS
+
+    assert set(HAND_BACK_KEYS) <= set(TARGET_KEYS)
+    assert config_flow.HAND_BACK_KEYS is HAND_BACK_KEYS
+    assert config_flow.TARGET_KEYS is TARGET_KEYS
+    assert not hasattr(config_flow, "ENTITY_STEP_KEYS")
+
+
+@pytest.mark.parametrize(
+    ("data", "writes"),
+    [
+        ({"write_path": "opentherm_gw"}, True),
+        ({"write_path": "otgw_mqtt"}, True),
+        ({"write_path": "entity", "ch_entity": "switch.ch", "ch_write_type": "held"}, True),
+        ({"write_path": "entity", "ch_entity": "switch.ch", "ch_write_type": "sometimes"}, False),
+        ({"write_path": "entity", "ch_entity": "switch.ch", "ch_write_type": None}, False),
+        ({"write_path": "entity", "ch_write_type": "held"}, False),
+    ],
+)
+def test_heating_writes_are_read_from_the_stored_options(data: dict, writes: bool) -> None:
+    """The form's reading of whether "off" is a low setpoint (P-25): a write type this version
+    does not know counts as none."""
+    from custom_components.vtherm_smart_boiler.control_config import heating_writes
+
+    assert heating_writes(data) is writes

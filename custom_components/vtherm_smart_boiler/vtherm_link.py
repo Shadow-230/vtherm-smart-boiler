@@ -20,7 +20,7 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_loaded_integration
 
-from .const import VT_DOMAIN
+from .const import OPENTHERM_GW_DOMAIN, VT_DOMAIN
 from .core.readings import ZoneState
 from .transport.entities import reported_at
 from .vtherm_attributes import CentralMode, central_mode, zone_values
@@ -38,6 +38,9 @@ CENTRAL_CONFIG = "thermostat_central_config"
 ACTIVATION_DELAY = "central_boiler_activation_delay_sec"
 VT_ACTIVATION_DELAY_MAX_S = 600.0
 ROOM_SENSOR = "temperature_sensor_entity_id"  # in a thermostat's entry data (VT 10.4.0)
+# The entities a thermostat drives — switches, valves or climates — in its entry's data (VT 10.4.0
+# ``const.py:63``, ``CONF_UNDERLYING_LIST``; migrated there from the older per-slot keys).
+UNDERLYING = "underlying_entity_ids"
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +68,78 @@ def room_sensor(hass: HomeAssistant, entity_id: str) -> str | None:
     entry = hass.config_entries.async_get_entry(registered.config_entry_id)
     sensor = entry.data.get(ROOM_SENSOR) if entry is not None else None
     return sensor if isinstance(sensor, str) and sensor else None
+
+
+def zone_underlying_entities(hass: HomeAssistant, entity_id: str) -> tuple[str, ...] | None:
+    """The entities VT drives for a zone, from the thermostat's entry (VT 10.4.0 keeps them in
+    the entry's data); ``None`` where they cannot be read — the thermostat not registered, its
+    entry away, or an entry without the list (an older VT)."""
+    registered = er.async_get(hass).async_get(entity_id)
+    if registered is None or registered.config_entry_id is None:
+        return None
+    entry = hass.config_entries.async_get_entry(registered.config_entry_id)
+    raw = entry.data.get(UNDERLYING) if entry is not None else None
+    if not isinstance(raw, list | tuple):
+        return None
+    return tuple(item for item in raw if isinstance(item, str) and item)
+
+
+def zones_on_boiler_thermostat(
+    hass: HomeAssistant, zones: Sequence[str], boiler_entities: Sequence[str]
+) -> list[str]:
+    """X5.19, the wall-thermostat decision: the zones VT builds on the boiler's or the gateway's
+    own thermostat — a climate among the zone's underlying entities that ``opentherm_gw``
+    registered, or that sits on the same device as an entity the plugin maps as a boiler signal
+    or controls through (``boiler_entities``; provisional, K4: also the OTGW firmware's MQTT
+    climate and an EMS thermostat's). Such a zone would ask for heat whenever the flame burns. A
+    zone whose VT entry cannot be read is not counted: the check repeats at every step."""
+    registry = er.async_get(hass)
+    devices = {
+        registered.device_id
+        for entity in boiler_entities
+        if (registered := registry.async_get(entity)) is not None and registered.device_id
+    }
+    found: list[str] = []
+    for zone in zones:
+        for underlying in zone_underlying_entities(hass, zone) or ():
+            if not underlying.startswith("climate."):
+                continue
+            registered = registry.async_get(underlying)
+            if registered is None:
+                continue
+            if registered.platform == OPENTHERM_GW_DOMAIN or (
+                registered.device_id is not None and registered.device_id in devices
+            ):
+                found.append(zone)
+                break
+    return found
+
+
+def is_vt_climate(hass: HomeAssistant, entity_id: str) -> bool:
+    """Whether an entity is a climate Versatile Thermostat registered — what a zone must be
+    (review question 19, provisional, K4)."""
+    registered = er.async_get(hass).async_get(entity_id)
+    return (
+        registered is not None
+        and registered.domain == "climate"
+        and registered.platform == VT_DOMAIN
+    )
+
+
+def zones_of_another_kind(hass: HomeAssistant, zones: Sequence[str]) -> list[str]:
+    """Zones known not to be VT climates (a hand edit): registered by another integration or of
+    another domain, or not registered at all yet reported — VT registers every thermostat. A
+    zone neither registered nor reported is unknown, not of another kind (VT away)."""
+    registry = er.async_get(hass)
+    found: list[str] = []
+    for zone in zones:
+        registered = registry.async_get(zone)
+        if registered is None:
+            if hass.states.get(zone) is not None:
+                found.append(zone)
+        elif registered.domain != "climate" or registered.platform != VT_DOMAIN:
+            found.append(zone)
+    return found
 
 
 def zone_name(hass: HomeAssistant, entity_id: str) -> str:
@@ -150,6 +225,15 @@ class VThermLink:
 
     def zone_name(self, entity_id: str) -> str:
         return zone_name(self._hass, entity_id)
+
+    def zones_of_another_kind(self) -> list[str]:
+        """The zones known not to be VT climates (a hand edit, X5.7)."""
+        return zones_of_another_kind(self._hass, self._zones)
+
+    def zones_on_boiler_thermostat(self, boiler_entities: Sequence[str]) -> list[str]:
+        """The zones built on the boiler's or the gateway's own thermostat (X5.19), as VT's
+        entries say now: VT can be reconfigured without the plugin's options changing."""
+        return zones_on_boiler_thermostat(self._hass, self._zones, boiler_entities)
 
     def recorded_state(self, entity_id: str) -> State | None:
         """A zone's current state as the history records it."""

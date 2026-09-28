@@ -3,12 +3,21 @@
 The level (simple or advanced) changes which fields are shown, never how the plugin behaves:
 a field that is not shown keeps its cautious default. Every step reads and writes one part of
 the options dictionary that ``config.EntryConfig`` interprets.
+
+What the forms offer is checked again on submit (P-79): each entity field's domain, integration
+and — for an entity that has reported — device class, zones being Versatile Thermostat climates
+only; one entity for one signal and one role; the gateway or MQTT integration set up; the
+curve's values fitting together. A value stored that this version does not know shows on its
+section's step, never as an exception (P-70). An options edit that would add a blocker to
+control asks for confirmation first (Open after R6 #3); every save but the level's reloads the
+integration, which hands the boiler back while control holds it (P-67, provisional, K4).
 """
 
 from __future__ import annotations
 
 import copy
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
+from enum import StrEnum
 from typing import Any
 
 import voluptuous as vol
@@ -19,8 +28,11 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlow,
 )
-from homeassistant.core import callback
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
+from homeassistant.helpers.translation import async_get_translations
 from homeassistant.util import dt as dt_util
 
 from .config import ConfigError, EntryConfig
@@ -35,6 +47,8 @@ from .const import (
     LEVEL_ADVANCED,
     LEVEL_SIMPLE,
     MONITOR,
+    MQTT_DOMAIN,
+    OPENTHERM_GW_DOMAIN,
     PARAMETERS,
     REFERENCE_ROOM,
     SIGNALS,
@@ -45,15 +59,21 @@ from .const import (
 from .control_config import (
     CONTROL_DEFAULTS,
     CURVE_DEFAULTS,
+    HAND_BACK_KEYS,
     INFO_ONLY_ALARMS,
     OTGW_PATHS,
+    PATH_TOPOLOGIES,
+    TARGET_KEYS,
     AlarmReaction,
     ControlOptions,
     HandBack,
     Topology,
     ValueEffect,
     WritePath,
+    config_blockers,
+    curve_problems,
     hand_back_value_problems,
+    heating_writes,
     off_too_close_to_lowest,
     own_room_controller_offered,
 )
@@ -75,14 +95,15 @@ from .core.installation import BoilerClass, CircuitControl, DhwType, EmitterType
 from .core.metrics import ModulationScale
 from .core.reference_room import Strategy
 from .transport.entities import read_bounds, read_grid, temperature_unit_of
-from .vtherm_link import VThermLink, zone_name
+from .vtherm_link import VThermLink, is_vt_climate, zone_name, zones_on_boiler_thermostat
 
 # --- field definitions ----------------------------------------------------------------------
 
 _BINARY = {"domain": "binary_sensor"}
 _TEMPERATURE = {"domain": "sensor", "device_class": "temperature"}
 
-# signal -> (entity filter, shown at the simple level)
+# signal -> (entity filter, shown at the simple level), in the signals' precedence
+# (``core.signals.SIGNAL_PRECEDENCE``): where one entity is picked for two, the later is refused.
 SIGNAL_FIELDS: dict[str, tuple[dict[str, Any], bool]] = {
     "flame": (_BINARY, True),
     "flow": (_TEMPERATURE, True),
@@ -139,6 +160,77 @@ def _advanced(options: dict[str, Any]) -> bool:
     return options.get(LEVEL) == LEVEL_ADVANCED
 
 
+def _choice(stored: Any, kind: type[StrEnum], default: Any) -> Any:
+    """A stored choice as its field's default; one this version does not know is offered to be
+    chosen again (no default), never passed off as a known one (P-70)."""
+    if stored is None:
+        return default
+    return stored if stored in {member.value for member in kind} else vol.UNDEFINED
+
+
+# --- what the forms offer, checked again on submit (P-79) ---------------------------------------
+
+type EntityFilter = Mapping[str, Any] | Sequence[Mapping[str, Any]]
+
+
+def _listed(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    return list(value) if isinstance(value, list | tuple | set | frozenset) else [value]
+
+
+def entity_suitable(hass: HomeAssistant, entity_id: object, filters: EntityFilter) -> bool:
+    """Whether an entity passes a field's selector filter as the form offers it: its domain, from
+    the entity ID, always; its integration from the entity registry; its device class only once
+    it has reported — an entity with no state yet, or unavailable or unknown without a device
+    class, passes on its domain."""
+    if not isinstance(entity_id, str) or "." not in entity_id:
+        return False
+    domain = entity_id.split(".", 1)[0]
+    registered = er.async_get(hass).async_get(entity_id)
+    state = hass.states.get(entity_id)
+    device_class = None if state is None else state.attributes.get("device_class")
+    reported = device_class is not None or (
+        state is not None and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN)
+    )
+    for filter_ in [filters] if isinstance(filters, Mapping) else filters:
+        if "domain" in filter_ and domain not in _listed(filter_["domain"]):
+            continue
+        if "integration" in filter_ and (
+            registered is None or registered.platform != filter_["integration"]
+        ):
+            continue
+        if (
+            "device_class" in filter_
+            and reported
+            and device_class not in _listed(filter_["device_class"])
+        ):
+            continue
+        return True
+    return False
+
+
+def entity_errors(
+    hass: HomeAssistant, user_input: Mapping[str, Any], fields: Mapping[str, EntityFilter]
+) -> dict[str, str]:
+    """``entity_not_suitable`` on each field whose entity — or one of whose entities — the form
+    would not have offered; a field left empty is no answer, never an error."""
+    errors: dict[str, str] = {}
+    for key, filters in fields.items():
+        picked = _listed(user_input.get(key))
+        if any(entity not in (None, "") for entity in picked) and not all(
+            entity_suitable(hass, entity, filters) for entity in picked
+        ):
+            errors[key] = "entity_not_suitable"
+    return errors
+
+
+def zones_not_vt(hass: HomeAssistant, entities: Iterable[object]) -> bool:
+    """Whether any of the picked zones is not a Versatile Thermostat climate (question 19,
+    provisional, K4: zones are VT climates only)."""
+    return any(not isinstance(e, str) or not is_vt_climate(hass, e) for e in entities)
+
+
 # --- schemas ----------------------------------------------------------------------------------
 
 
@@ -165,8 +257,15 @@ def level_schema(options: dict[str, Any]) -> vol.Schema:
     )
 
 
+def _stored_signals(options: Mapping[str, Any]) -> dict[str, Any]:
+    """The stored signals; a section of another shape entirely reads as none, so the signals
+    step can show and replace it (P-70)."""
+    signals = options.get(SIGNALS)
+    return dict(signals) if isinstance(signals, Mapping) else {}
+
+
 def signals_schema(options: dict[str, Any]) -> vol.Schema:
-    current = {**options.get(SIGNALS, {}), WEATHER: options.get(WEATHER)}
+    current = {**_stored_signals(options), WEATHER: options.get(WEATHER)}
     fields: dict[Any, Any] = {}
     for key, (filter_, simple) in SIGNAL_FIELDS.items():
         if not simple and not _advanced(options):
@@ -214,11 +313,11 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
     params = options.get(PARAMETERS, {})
     current = {**boiler, **params}
     fields: dict[Any, Any] = {
-        vol.Required("class", default=boiler.get("class", BoilerClass.READ_ONLY.value)): _select(
-            "boiler_class", [c.value for c in BoilerClass]
-        ),
+        vol.Required(
+            "class", default=_choice(boiler.get("class"), BoilerClass, BoilerClass.READ_ONLY.value)
+        ): _select("boiler_class", [c.value for c in BoilerClass]),
         # No default: "none" makes every burn heating, a wrong guess on a combi boiler.
-        vol.Required("dhw", default=boiler.get("dhw", vol.UNDEFINED)): _select(
+        vol.Required("dhw", default=_choice(boiler.get("dhw"), DhwType, vol.UNDEFINED)): _select(
             "dhw_type", [d.value for d in DhwType]
         ),
         vol.Required(
@@ -235,7 +334,11 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
                 _optional("gas_at_max_power", current): _number(0, 500, 0.01),
                 vol.Required(
                     "modulation_scale",
-                    default=boiler.get("modulation_scale", ModulationScale.RANGE.value),
+                    default=_choice(
+                        boiler.get("modulation_scale"),
+                        ModulationScale,
+                        ModulationScale.RANGE.value,
+                    ),
                 ): _select("modulation_scale", [m.value for m in ModulationScale]),
                 vol.Required("bypass", default=boiler.get("bypass", False)): (
                     selector.BooleanSelector()
@@ -253,7 +356,10 @@ def circuit_schema(
     offered as stored — pre-filled once the maximum is entered."""
     fields: dict[Any, Any] = {
         vol.Required(
-            "control", default=current.get("control", CircuitControl.UNMIXED_SHARED.value)
+            "control",
+            default=_choice(
+                current.get("control"), CircuitControl, CircuitControl.UNMIXED_SHARED.value
+            ),
         ): _select("circuit_control", [c.value for c in CircuitControl]),
         _optional("max_flow", current): _number(20, 90, 1, "°C"),
         _optional("fixed_temperature", current): _number(20, 70, 1, "°C"),
@@ -279,15 +385,27 @@ def circuit_alarm_error(circuit: Mapping[str, Any], advanced: bool) -> dict[str,
     return {MAX_FLOW_ALARM if advanced else "max_flow": "max_flow_alarm_not_above_max"}
 
 
+_ZONE_FILTER = {"domain": "climate", "integration": VT_DOMAIN}
+CLOSES_WHEN_OFF = "closes_when_off"
+
+
 def zones_schema(options: dict[str, Any]) -> vol.Schema:
     current = [z["entity_id"] for z in options.get(ZONES, [])]
     return vol.Schema(
-        {
-            vol.Optional("zones", default=current): _entity(
-                {"domain": "climate", "integration": VT_DOMAIN}, multiple=True
-            )
-        }
+        {vol.Optional("zones", default=current): _entity(_ZONE_FILTER, multiple=True)}
     )
+
+
+def foreign_heat_filters(options: dict[str, Any]) -> list[dict[str, Any]]:
+    """What a zone's other heat sources may be; a temperature sensor needs its threshold,
+    entered at the advanced level only."""
+    offered: list[dict[str, Any]] = [
+        {"domain": ["switch", "binary_sensor"]},
+        {"domain": "sensor", "device_class": "power"},
+    ]
+    if _advanced(options):
+        offered.append({"domain": "sensor", "device_class": "temperature"})
+    return offered
 
 
 def zone_schema(options: dict[str, Any], current: dict[str, Any]) -> vol.Schema:
@@ -302,18 +420,17 @@ def zone_schema(options: dict[str, Any], current: dict[str, Any]) -> vol.Schema:
             )
         )
     # No default: underfloor needs its own maximum flow, and a wrong type would hide that.
-    fields[vol.Required("emitter", default=current.get("emitter", vol.UNDEFINED))] = _select(
-        "emitter", [e.value for e in EmitterType]
+    fields[
+        vol.Required("emitter", default=_choice(current.get("emitter"), EmitterType, vol.UNDEFINED))
+    ] = _select("emitter", [e.value for e in EmitterType])
+    # Decision 4 (provisional, K4): at both levels, off unless the user ticked it.
+    fields[vol.Required(CLOSES_WHEN_OFF, default=current.get(CLOSES_WHEN_OFF) is True)] = (
+        selector.BooleanSelector()
     )
     sources = [s["entity_id"] for s in current.get("foreign_heat", [])]
-    # A temperature sensor needs its threshold, entered at the advanced level only.
-    offered: list[dict[str, Any]] = [
-        {"domain": ["switch", "binary_sensor"]},
-        {"domain": "sensor", "device_class": "power"},
-    ]
-    if _advanced(options):
-        offered.append({"domain": "sensor", "device_class": "temperature"})
-    fields[vol.Optional("foreign_heat", default=sources)] = _entity(offered, multiple=True)
+    fields[vol.Optional("foreign_heat", default=sources)] = _entity(
+        foreign_heat_filters(options), multiple=True
+    )
     if _advanced(options):
         fields[_optional("reference_output_w", current)] = _number(50, 20000, 10, "W")
         fields[_optional("exponent", current)] = _number(1.0, 2.0, 0.01)
@@ -365,13 +482,12 @@ def reference_schema(options: dict[str, Any]) -> vol.Schema:
         strategies.insert(1, Strategy.CHOSEN_ZONE.value)
     fields: dict[Any, Any] = {
         vol.Required(
-            "strategy", default=reference.get("strategy", Strategy.LARGEST_DEFICIT.value)
+            "strategy",
+            default=_choice(reference.get("strategy"), Strategy, Strategy.LARGEST_DEFICIT.value),
         ): _select("strategy", strategies),
     }
     if zones:
-        fields[_optional("zone", reference)] = _entity(
-            {"domain": "climate", "integration": VT_DOMAIN}
-        )
+        fields[_optional("zone", reference)] = _entity(_ZONE_FILTER)
     if _advanced(options):
         fields[vol.Required("switch_margin", default=reference.get("switch_margin", 0.3))] = (
             _number(0.1, 3.0, 0.1, "K")
@@ -463,20 +579,10 @@ CONTROL_ADVANCED_KEYS = (
     "return_after_outside_change",
 )
 CURVE_KEYS = ("design_outdoor", "design_flow", "room", "exponent", "offset")
-# What a hand-back goes through: fixed while one is owed.
-HAND_BACK_KEYS = (
-    "setpoint_entity", "ch_entity", "hand_back", "hand_back_value", "hand_back_value_effect",
-    "hand_back_entity", "hand_back_entity_write_type", "gateway_id", "mqtt_top", "mqtt_node",
-)  # fmt: skip
 # What an absent hand-back answer means: the form fills in this default (an entry saved before
-# the answer existed has none).
+# the answer existed has none). What a hand-back goes through (``HAND_BACK_KEYS``) and the
+# writable-entity step's answers (``TARGET_KEYS``) are listed once, in the control options.
 _HAND_BACK_DEFAULTS = {"hand_back_entity_write_type": WriteType.UNKNOWN.value}
-# The answers of the writable-entity step, dropped when the write path changes.
-ENTITY_STEP_KEYS = (
-    "setpoint_entity", "write_type", "ch_entity", "ch_write_type", "hand_back",
-    "hand_back_value", "hand_back_value_effect", "hand_back_entity", "hand_back_entity_write_type",
-    "gateway_id", "mqtt_top", "mqtt_node", "own_room_controller",
-)  # fmt: skip
 OWN_ROOM_CONTROLLER = "own_room_controller"
 # A demand threshold no zone can feed (P-14): the field, and what the form says.
 _UNFED = {
@@ -555,8 +661,9 @@ def control_gateway_schema(options: dict[str, Any], gateways: list[str]) -> vol.
     current = control.get("gateway_id") or (gateways[0] if len(gateways) == 1 else vol.UNDEFINED)
     field: Any = (
         selector.SelectSelector(
+            # Only a gateway set up and enabled in Home Assistant can take a write (P-106).
             selector.SelectSelectorConfig(
-                options=gateways, custom_value=True, mode=selector.SelectSelectorMode.DROPDOWN
+                options=gateways, custom_value=False, mode=selector.SelectSelectorMode.DROPDOWN
             )
         )
         if gateways
@@ -682,6 +789,11 @@ def control_return_confirm_schema() -> vol.Schema:
     return vol.Schema({vol.Required("understood", default=False): selector.BooleanSelector()})
 
 
+def confirm_blocking_schema() -> vol.Schema:
+    """Saving an edit that keeps control from running: off by default, nothing saved."""
+    return vol.Schema({vol.Required("save_anyway", default=False): selector.BooleanSelector()})
+
+
 CONTROL_STEP_KEYS = (
     "write_path",
     "topology",
@@ -699,7 +811,7 @@ def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
         return
     control = dict(options.get(CONTROL, {}))
     if control.get("write_path") != user_input["write_path"]:
-        for key in ENTITY_STEP_KEYS:
+        for key in TARGET_KEYS:
             control.pop(key, None)
     _set_or_drop(control, user_input, CONTROL_STEP_KEYS)
     options[CONTROL] = control
@@ -707,7 +819,7 @@ def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
 
 def apply_control_details(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     control = dict(options.get(CONTROL, {}))
-    keys = ENTITY_STEP_KEYS
+    keys = TARGET_KEYS
     _set_or_drop(control, user_input, tuple(k for k in keys if k in user_input or k in control))
     options[CONTROL] = control
 
@@ -755,22 +867,25 @@ def _set_or_drop(target: dict[str, Any], user_input: dict[str, Any], keys: tuple
             target[key] = value
 
 
-# Write paths through a built-in OTGW need a gateway topology; "virtual" is a controller on the
-# Home Assistant side, reached through an entity.
-_PATH_TOPOLOGIES = {
-    WritePath.OPENTHERM_GW: {Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT},
-    WritePath.OTGW_MQTT: {Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT},
-    WritePath.ENTITY: {
-        Topology.GATEWAY_STANDALONE,
-        Topology.GATEWAY_WITH_THERMOSTAT,
-        Topology.VIRTUAL,
-    },
+# The first control step's entity fields and what each takes (checked again on submit, P-79).
+CONTROL_ENTITY_FIELDS: Mapping[str, EntityFilter] = {
+    "confirmed_entity": _READ_BACK_ENTITY,
+    "ch_confirmed_entity": _ECHO_ENTITY,
+    "thermostat_setpoint_entity": _THERMOSTAT_SETPOINT_ENTITY,
+    "restart_entity": _RESTART_ENTITY,
+}
+# The writable-entity step's entity fields.
+TARGET_ENTITY_FIELDS: Mapping[str, EntityFilter] = {
+    "setpoint_entity": _SETPOINT_ENTITY,
+    "ch_entity": _ON_OFF_ENTITY,
+    "hand_back_entity": _ON_OFF_ENTITY,
 }
 
 
 def control_error(user_input: dict[str, Any]) -> dict[str, str]:
     """What the first control step needs: every write is checked against a read-back, and the
-    topology decides what a hand-back does — both required, and suited to the write path."""
+    topology decides what a hand-back does — both required, and suited to the write path (one
+    table with the blockers, P-44)."""
     path = user_input.get("write_path")
     if path in (None, NO_CONTROL):
         return {}
@@ -781,13 +896,23 @@ def control_error(user_input: dict[str, Any]) -> dict[str, str]:
         return {"topology": "topology_missing"}
     if Topology(topology) is Topology.MONITOR_MODE:
         return {"topology": "topology_no_control"}
-    if Topology(topology) not in _PATH_TOPOLOGIES[WritePath(path)]:
+    if Topology(topology) not in PATH_TOPOLOGIES[WritePath(path)]:
         return {"topology": "topology_not_for_path"}
     thermostat = user_input.get("thermostat_setpoint_entity")
     if thermostat and thermostat == user_input.get("confirmed_entity"):
         # The boiler's read-back shows the plugin's value, not the thermostat's own request.
         return {"thermostat_setpoint_entity": "thermostat_setpoint_same_as_read_back"}
     return {}
+
+
+def mqtt_set_up(hass: HomeAssistant) -> bool:
+    """P-69: the MQTT integration is set up and running, so a published command goes out."""
+    return any(
+        entry.state is ConfigEntryState.LOADED
+        for entry in hass.config_entries.async_entries(
+            MQTT_DOMAIN, include_ignore=False, include_disabled=False
+        )
+    )
 
 
 def mqtt_topic_valid(value: object) -> bool:
@@ -823,6 +948,12 @@ def control_details_error(
     if method == HandBack.SWITCH:
         if not user_input.get("hand_back_entity"):
             return {"hand_back_entity": "hand_back_entity_missing"}
+        if user_input["hand_back_entity"] in (
+            user_input.get("ch_entity"),
+            user_input.get("setpoint_entity"),
+        ):
+            # One entity, one role (P-03, T-38): each hand-back would switch it on and off.
+            return {"hand_back_entity": "hand_back_switch_is_heating_switch"}
         if user_input.get("hand_back_entity_write_type") not in writable:
             # Turned on at every take and off at every hand-back: never a stored setting (P-40).
             return {"hand_back_entity_write_type": "hand_back_entity_write_type_not_supported"}
@@ -846,6 +977,36 @@ def control_of(options: dict[str, Any]) -> ControlOptions | None:
         return EntryConfig.from_options(options).control
     except ConfigError, KeyError, TypeError, ValueError:
         return None
+
+
+def off_too_close_in(options: Mapping[str, Any], hard_min: float | None = None) -> bool:
+    """P-25: on a path without heating writes, "off" (stored, else its default) must stay at
+    least 1 K below the lowest water temperature (``hard_min``: as entered, else stored). With a
+    heating switch "off" is no setpoint: nothing to check. Decision 11 blocks control without
+    one in 0.2.2; the check stays for when K4 lifts the block."""
+    control = options.get(CONTROL)
+    if not isinstance(control, Mapping) or not control.get("write_path"):
+        return False
+    if heating_writes(control):
+        return False
+    try:
+        off = float(control.get("off_setpoint", CONTROL_DEFAULTS["off_setpoint"]))
+        lowest = float(control.get("hard_min", CONTROL_DEFAULTS["hard_min"]))
+    except TypeError, ValueError:
+        return False  # the save's own check names options that cannot be read
+    return off_too_close_to_lowest(off, lowest if hard_min is None else hard_min)
+
+
+def options_blockers(options: Mapping[str, Any]) -> list[str] | None:
+    """The blockers the configuration itself gives control (no run-time ones); ``None`` without
+    a control section, or where the options cannot be read."""
+    try:
+        config = EntryConfig.from_options(options)
+    except AttributeError, KeyError, TypeError, ValueError:
+        return None
+    if not config.control.configured:
+        return None
+    return config_blockers(config.control, config.installation, config.shared_signals)
 
 
 def hand_back_value_problem(options: dict[str, Any], problem: str) -> bool:
@@ -877,7 +1038,7 @@ BUILDING_PARAMETER_KEYS = ("loss_coefficient", "heating_threshold", "design_outd
 
 
 def apply_signals(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    signals = dict(options.get(SIGNALS, {}))
+    signals = _stored_signals(options)
     for key, (_filter, simple) in SIGNAL_FIELDS.items():
         if simple or _advanced(options):
             if user_input.get(key):
@@ -886,6 +1047,37 @@ def apply_signals(options: dict[str, Any], user_input: dict[str, Any]) -> None:
                 signals.pop(key, None)
     options[SIGNALS] = signals
     options[WEATHER] = user_input.get(WEATHER) or None
+
+
+def signal_fields(options: dict[str, Any]) -> dict[str, EntityFilter]:
+    """The signals step's entity fields at the options' level, and what each takes."""
+    fields: dict[str, EntityFilter] = {
+        key: filter_
+        for key, (filter_, simple) in SIGNAL_FIELDS.items()
+        if simple or _advanced(options)
+    }
+    fields[WEATHER] = {"domain": "weather"}  # no signal: it may be any weather entity
+    return fields
+
+
+def shared_signal_error(options: dict[str, Any], user_input: dict[str, Any]) -> dict[str, str]:
+    """X5.2 (P-16, T-32): one entity feeds one signal — no pair may share one in 0.2.2
+    (provisional, K4). Refused on the later field in the form's order; where that field is not
+    shown at this level (a stored advanced signal), on the earlier one, which is. A field left
+    empty is never a duplicate."""
+    candidate = copy.deepcopy(options)
+    apply_signals(candidate, user_input)
+    shown = set(signal_fields(options))
+    owner: dict[str, str] = {}
+    for key in SIGNAL_FIELDS:
+        entity = candidate[SIGNALS].get(key)
+        if not entity:
+            continue
+        first = owner.setdefault(str(entity), key)
+        if first != key:
+            field = key if key in shown else first if first in shown else "base"
+            return {field: "entity_for_two_signals"}
+    return {}
 
 
 def apply_boiler(options: dict[str, Any], user_input: dict[str, Any]) -> None:
@@ -943,6 +1135,40 @@ def circuit_from_input(
     return circuit
 
 
+def circuit_left_with_zones(options: dict[str, Any], circuits: list[dict[str, Any]]) -> bool:
+    """P-64: whether a zone still names a circuit the new list leaves out (a zone naming none
+    takes the one circuit there is)."""
+    ids = {str(circuit.get("id")) for circuit in circuits}
+    return any(
+        zone.get("circuit") not in (None, "") and str(zone["circuit"]) not in ids
+        for zone in options.get(ZONES, [])
+        if isinstance(zone, Mapping)
+    )
+
+
+# The control options that name an entity control writes to or reads (``ControlOptions.entities``).
+CONTROL_ENTITY_KEYS = (
+    "setpoint_entity",
+    "ch_entity",
+    "hand_back_entity",
+    "confirmed_entity",
+    "ch_confirmed_entity",
+    "thermostat_setpoint_entity",
+    "restart_entity",
+)
+
+
+def boiler_side_entities(options: Mapping[str, Any]) -> list[str]:
+    """What the plugin maps as a boiler signal, or control writes to or reads: a zone built on a
+    climate of one of their devices would be the boiler's own thermostat (X5.19)."""
+    signals = options.get(SIGNALS) or {}
+    control = options.get(CONTROL) or {}
+    found = [str(e) for e in signals.values() if e] if isinstance(signals, Mapping) else []
+    if isinstance(control, Mapping):
+        found += [str(control[key]) for key in CONTROL_ENTITY_KEYS if control.get(key)]
+    return found
+
+
 def _circuit_alarm_hidden(circuit: Mapping[str, Any]) -> bool:
     """A circuit's too-hot alarm set otherwise than its pre-fill (an advanced setting)."""
     maximum = circuit.get("max_flow")
@@ -970,12 +1196,22 @@ def apply_monitor(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     options[MONITOR] = dict(user_input)
 
 
+# The monitor's periods: how long the plugin has been watching, and over what the verdict is
+# judged — "restore defaults" keeps them, as it keeps the facts (P-65).
+MONITOR_KEPT = ("monitoring_days", "verdict_window_days")
+
+
 def restore_advanced_defaults(options: dict[str, Any]) -> None:
     """Drop every tuning value only the advanced level shows, so its default applies again.
     Facts about the installation — what is mapped, the boiler, circuits, emitter sizes, values
-    the user entered — stay (``SCOPE.md`` principle 10)."""
+    the user entered — stay (``SCOPE.md`` principle 10), and so do the monitor's periods."""
     options.get(REFERENCE_ROOM, {}).pop("switch_margin", None)
-    options.pop(MONITOR, None)
+    monitor = options.get(MONITOR, {})
+    kept = {key: monitor[key] for key in MONITOR_KEPT if key in monitor}
+    if kept:
+        options[MONITOR] = kept
+    else:
+        options.pop(MONITOR, None)
     control = options.get(CONTROL, {})
     for key in CONTROL_ADVANCED_KEYS:
         control.pop(key, None)
@@ -1065,11 +1301,15 @@ def validate(options: dict[str, Any]) -> str | None:
 
 
 def validate_problem(options: dict[str, Any]) -> tuple[str, str | None] | None:
-    """The first problem as a translation key and what it concerns, or None."""
+    """The first problem as a translation key and what it concerns, or None. Options this
+    version cannot read at all are a problem too, shown on the signals step — never an
+    exception at a save (P-70)."""
     try:
         EntryConfig.from_options(options)
     except ConfigError as err:
         return err.code, err.subject
+    except AttributeError, KeyError, TypeError, ValueError:
+        return "unreadable_options", None
     return None
 
 
@@ -1084,6 +1324,15 @@ _PROBLEM_STEPS = {
     "zone_without_circuit": "zones",
     "reference_zone_unknown": "reference",
     "alarm_limits_out_of_order": "monitor",
+    # A stored value this version does not know: its section's step (P-70).
+    "invalid_boiler": "boiler",
+    "invalid_circuit": "circuit",
+    "invalid_zone": "zones",
+    "invalid_reference": "reference",
+    "invalid_monitor": "monitor",
+    "invalid_building": "building",
+    "invalid_freshness": "freshness",
+    "unreadable_options": "signals",
     "invalid_control": "control",
     # Found at the save (P-12): control took the boiler, or began to owe it a hand-back, after
     # the control steps were answered; what the hand-back goes through is picked there.
@@ -1146,6 +1395,8 @@ class _Steps:
     async def _back_to_problem(self, code: str, subject: str | None) -> ConfigFlowResult:
         """The answers stay: the step that can fix the problem is shown again, with it."""
         step = problem_step(code, subject)
+        if not hasattr(self, f"async_step_{step}"):
+            step = "signals"  # a section this flow does not have (the setup has no freshness)
         self._problem = (step, {"base": code})
         return await self._goto(step)
 
@@ -1163,9 +1414,13 @@ class _Steps:
         if user_input is not None:
             modulation = user_input.get("modulation")
             state = self.hass.states.get(modulation) if modulation else None  # type: ignore[attr-defined]
-            if state is not None and state.attributes.get("unit_of_measurement") not in (None, "%"):
-                errors["modulation"] = "modulation_not_percent"  # e.g. a power sensor
-            else:
+            errors = entity_errors(self.hass, user_input, signal_fields(self.options))  # type: ignore[attr-defined]
+            unit = None if state is None else state.attributes.get("unit_of_measurement")
+            if not errors and unit not in (None, "%"):
+                errors = {"modulation": "modulation_not_percent"}  # e.g. a power sensor
+            if not errors:
+                errors = shared_signal_error(self.options, user_input)
+            if not errors:
                 apply_signals(self.options, user_input)
                 return await self._goto(self._next_after("signals"))
         return self._form(
@@ -1206,14 +1461,23 @@ class _Steps:
                 errors["fixed_temperature"] = "fixed_temperature_missing"
             elif alarm_error := circuit_alarm_error(circuit, advanced):
                 errors = alarm_error
+            elif flow := entity_errors(self.hass, user_input, {"flow_entity": _TEMPERATURE}):  # type: ignore[attr-defined]
+                errors = flow
             else:
                 self._circuits_done.append(circuit)
                 if user_input.get("add_another"):
                     return await self.async_step_circuit()
                 kept = [] if _advanced(self.options) else existing[len(self._circuits_done) :]
-                self.options[CIRCUITS] = [*self._circuits_done, *kept]
-                self._circuits_done = []
-                return await self._goto(self._next_after("circuit"))
+                circuits = [*self._circuits_done, *kept]
+                if circuit_left_with_zones(self.options, circuits):
+                    # P-64: a zone would be left on a circuit that is gone; nothing is saved and
+                    # this circuit's form shows again, where another can be added.
+                    self._circuits_done.pop()
+                    errors = {"base": "circuit_has_zones"}
+                else:
+                    self.options[CIRCUITS] = circuits
+                    self._circuits_done = []
+                    return await self._goto(self._next_after("circuit"))
         return self._form(
             step_id="circuit",
             data_schema=circuit_schema(self.options, current, more=index + 1 < len(existing)),
@@ -1222,11 +1486,33 @@ class _Steps:
         )
 
     async def async_step_zones(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        placeholders = {"zone": "-"}
         if user_input is not None:
-            self._zone_queue = list(user_input.get("zones", []))
-            self._zones_done = []
-            return await self.async_step_zone()
-        return self._form(step_id="zones", data_schema=zones_schema(self.options))
+            picked = _listed(user_input.get("zones"))
+            on_thermostat: list[str] = []
+            if zones_not_vt(self.hass, picked):  # type: ignore[attr-defined]
+                errors = {"zones": "zone_not_vt"}  # question 19: VT climates only
+            elif on_thermostat := zones_on_boiler_thermostat(
+                self.hass,  # type: ignore[attr-defined]
+                [str(zone) for zone in picked],
+                boiler_side_entities(self.options),
+            ):
+                # X5.19: it would ask for heat whenever the flame burns.
+                errors = {"zones": "zone_on_boiler_thermostat"}
+                placeholders = {
+                    "zone": ", ".join(zone_name(self.hass, z) for z in on_thermostat)  # type: ignore[attr-defined]
+                }
+            else:
+                self._zone_queue = [str(zone) for zone in picked]
+                self._zones_done = []
+                return await self.async_step_zone()
+        return self._form(
+            step_id="zones",
+            data_schema=zones_schema(self.options),
+            errors=errors,
+            description_placeholders=placeholders,
+        )
 
     async def async_step_zone(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if not self._zone_queue:
@@ -1238,9 +1524,9 @@ class _Steps:
         errors: dict[str, str] = {}
         if user_input is not None:
             zone: dict[str, Any] = {"entity_id": entity_id, "emitter": user_input["emitter"]}
-            if current.get("closes_when_off") is not None:
-                # Decision 4's per-zone option: not shown before X5, kept as stored.
-                zone["closes_when_off"] = current["closes_when_off"]
+            if user_input.get(CLOSES_WHEN_OFF) is True:
+                # Decision 4's per-zone option, stored when ticked; off is its default.
+                zone[CLOSES_WHEN_OFF] = True
             circuits = [c["id"] for c in self.options.get(CIRCUITS, [])] or ["main"]
             zone["circuit"] = user_input.get("circuit", current.get("circuit", circuits[0]))
             for key in ("reference_output_w", "exponent"):
@@ -1274,6 +1560,12 @@ class _Steps:
                     break
                 sources.append(source)
             if not errors:
+                errors = entity_errors(
+                    self.hass,  # type: ignore[attr-defined]
+                    user_input,
+                    {"foreign_heat": foreign_heat_filters(self.options)},
+                )
+            if not errors:
                 zone["foreign_heat"] = sources
                 self._zones_done.append(zone)
                 self._zone_queue.pop(0)
@@ -1303,7 +1595,9 @@ class _Steps:
             if not _advanced(self.options) and margin is not None:
                 reference["switch_margin"] = margin  # not shown: kept
             zones = [z["entity_id"] for z in self.options.get(ZONES, [])]
-            if (
+            if reference.get("zone") and zones_not_vt(self.hass, [reference["zone"]]):  # type: ignore[attr-defined]
+                errors["zone"] = "zone_not_vt"
+            elif (
                 reference.get("strategy") == Strategy.CHOSEN_ZONE
                 and reference.get("zone") not in zones
             ):
@@ -1373,6 +1667,9 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         self._circuits_done = []
         self._options: dict[str, Any] | None = None
         self._alarms_answer: dict[str, Any] | None = None  # awaiting the return's confirmation
+        # Blockers the edit would add to control, awaiting confirmation; confirmed: saved anyway.
+        self._blocking: list[str] = []
+        self._blocking_confirmed = False
 
     @property
     def options(self) -> dict[str, Any]:  # type: ignore[override]
@@ -1466,12 +1763,22 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         return await self.async_step_level(user_input)
 
     async def async_step_level(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            if user_input[LEVEL] == LEVEL_SIMPLE and user_input.get("restore_defaults"):
-                restore_advanced_defaults(self.options)
-            self.options[LEVEL] = user_input[LEVEL]
-            return await self.async_step_save()
-        return self.async_show_form(step_id="level", data_schema=level_schema(self.options))
+            candidate = copy.deepcopy(self.options)
+            restoring = user_input[LEVEL] == LEVEL_SIMPLE and user_input.get("restore_defaults")
+            if restoring:
+                restore_advanced_defaults(candidate)
+            if restoring and off_too_close_in(candidate):
+                # P-25: the default "off" next to the lowest water temperature kept.
+                errors = {"base": "off_setpoint_not_below_hard_min"}
+            else:
+                self._options = candidate
+                self.options[LEVEL] = user_input[LEVEL]
+                return await self.async_step_save()
+        return self.async_show_form(
+            step_id="level", data_schema=level_schema(self.options), errors=errors
+        )
 
     async def async_step_freshness(
         self, user_input: dict[str, Any] | None = None
@@ -1482,6 +1789,9 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         return self._form(step_id="freshness", data_schema=freshness_schema(self.options))
 
     async def async_step_save(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        # A confirmation holds for the save right after it only: any way back to a step asks
+        # again at the next save.
+        confirmed, self._blocking_confirmed = self._blocking_confirmed, False
         problem = validate_problem(self.options)
         if problem is not None:
             return await self._back_to_problem(*problem)
@@ -1497,6 +1807,10 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             blocker = await self._async_hand_back_blocker()
             if blocker is not None:
                 return await self._back_to_problem(blocker, None)
+        if not confirmed and (blocking := self._new_blockers()):
+            # Open after R6 #3: an edit that would keep control from running is confirmed first.
+            self._blocking = blocking
+            return await self.async_step_confirm_blocking()
         entry = self.config_entry
         if entry.state in (ConfigEntryState.SETUP_ERROR, ConfigEntryState.SETUP_RETRY):
             # The failed setup left no update listener to reload it (H9): the new options are
@@ -1504,6 +1818,54 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             self.hass.config_entries.async_update_entry(entry, options=self.options)
             self.hass.config_entries.async_schedule_reload(entry.entry_id)
         return self.async_create_entry(data=self.options)
+
+    def _new_blockers(self) -> list[str]:
+        """The configuration blockers the options to be saved give control that the stored ones
+        do not — only where both hold a control section (adding control stops nothing; taking it
+        out is its own choice). Run-time blockers are not compared."""
+        new = options_blockers(self.options)
+        old = options_blockers(self.config_entry.options)
+        if new is None or old is None:
+            return []
+        return [blocker for blocker in new if blocker not in old]
+
+    async def async_step_confirm_blocking(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Open after R6 #3: the first new blocker's text and how many more; saved only when the
+        user ticks "save anyway", else nothing is saved and the menu shows again."""
+        if user_input is not None:
+            if user_input.get("save_anyway") is True and self._blocking:
+                self._blocking_confirmed = True
+                return await self.async_step_save()
+            self._options = None  # the answers of this edit go: nothing saved
+            self._blocking = []
+            return await self.async_step_init()
+        first, *others = self._blocking
+        return self.async_show_form(
+            step_id="confirm_blocking",
+            data_schema=confirm_blocking_schema(),
+            description_placeholders={
+                "first": await self._async_blocker_text(first),
+                "more": str(len(others)),
+            },
+        )
+
+    async def _async_blocker_text(self, blocker: str) -> str:
+        """A blocker's text as the control switch gives it, in Home Assistant's language,
+        without its sentence naming the other reasons — the form counts them; its key where
+        there is none."""
+        texts = await async_get_translations(
+            self.hass, self.hass.config.language, "exceptions", [DOMAIN]
+        )
+        text = texts.get(f"component.{DOMAIN}.exceptions.blocked_{blocker}.message")
+        if not text:
+            return blocker
+        at = text.find("{others}")
+        if at < 0:
+            return text
+        start = text.rfind(". ", 0, at)
+        return text[: start + 1] if start >= 0 else text.replace("{others}", "-")
 
     # --- control: path and topology → path details → curve and limits → (advanced) behaviour
     # → alarm reactions → save
@@ -1515,6 +1877,8 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             path = user_input["write_path"]
             current = self.config_entry.options.get(CONTROL, {}).get("write_path")
             errors = control_error(user_input)
+            if not errors and path != NO_CONTROL:
+                errors = entity_errors(self.hass, user_input, CONTROL_ENTITY_FIELDS)
             if not errors and path != NO_CONTROL and not _zone_entities(self.options):
                 errors = {"base": "no_zones"}  # nothing could ever ask for heat (S-04)
             blocker = await self._async_hand_back_blocker()
@@ -1545,7 +1909,9 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             grid = read_grid(self.hass, user_input["setpoint_entity"])
-            if temperature_unit_of(self.hass, user_input["setpoint_entity"]) is False:
+            if found := entity_errors(self.hass, user_input, TARGET_ENTITY_FIELDS):
+                errors = found
+            elif temperature_unit_of(self.hass, user_input["setpoint_entity"]) is False:
                 errors = {"setpoint_entity": "setpoint_unit_not_supported"}
             elif grid is not None and grid.too_coarse:
                 # A value rounded to so coarse a step could read back as ignored (P-15).
@@ -1580,14 +1946,21 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
-        gateways = sorted(
-            str(entry.data["id"])
-            for entry in self.hass.config_entries.async_entries("opentherm_gw")
-            if entry.data.get("id")
+        # Only gateways enabled in Home Assistant are offered (P-69).
+        entries = self.hass.config_entries.async_entries(
+            OPENTHERM_GW_DOMAIN, include_ignore=False, include_disabled=False
         )
+        gateways = sorted({str(entry.data["id"]) for entry in entries if entry.data.get("id")})
         if user_input is not None:
-            if user_input["gateway_id"] not in gateways:
+            picked = str(user_input["gateway_id"])
+            if picked not in gateways:
                 errors = {"gateway_id": "gateway_unknown"}  # every write would fail
+            elif not any(
+                entry.state is ConfigEntryState.LOADED
+                for entry in entries
+                if str(entry.data.get("id")) == picked
+            ):
+                errors = {"gateway_id": "gateway_not_set_up"}  # not running: nothing arrives
             elif (blocker := await self._async_hand_back_blocker()) and self._changes_hand_back(
                 user_input, control_gateway_schema(self.options, gateways)
             ):
@@ -1611,6 +1984,8 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 for key in ("mqtt_top", "mqtt_node")
                 if not mqtt_topic_valid(user_input.get(key))
             }
+            if not mqtt_set_up(self.hass):
+                errors = {"base": "mqtt_not_set_up"}  # the commands would go nowhere (P-69)
             blocker = await self._async_hand_back_blocker()
             # Spaces around a valid topic level are dropped, not published to.
             user_input = {
@@ -1648,6 +2023,14 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 "frost_release", CONTROL_DEFAULTS["frost_release"]
             ):
                 errors["frost_release"] = "frost_release_not_above_limit"
+            elif problems := self._curve_problems(user_input):
+                field, key = problems[0]
+                errors[field] = key
+            elif off_too_close_in(self.options, user_input["hard_min"]):
+                # P-25, at both levels: "off" as a low setpoint next to the lowest water.
+                errors["hard_min"] = "off_setpoint_not_below_hard_min"
+            elif found := self._frost_zone_error(user_input):
+                errors = found
             else:
                 apply_control_curve(self.options, user_input)
                 if _advanced(self.options):
@@ -1693,6 +2076,28 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             data_schema=control_behaviour_schema(self.options),
             errors=errors,
         )
+
+    def _curve_problems(self, user_input: dict[str, Any]) -> list[tuple[str, str]]:
+        """X5.8 (P-68) at both levels: the curve's room as entered, else as stored, else its
+        default."""
+        stored = self.options.get(CONTROL, {}).get("curve", {})
+        room = user_input.get("room", stored.get("room", CURVE_DEFAULTS["room"]))
+        return curve_problems(
+            user_input.get("design_flow"),
+            float(user_input["design_outdoor"]),
+            float(room),
+            float(user_input["hard_min"]),
+            float(user_input["hard_max"]),
+        )
+
+    def _frost_zone_error(self, user_input: dict[str, Any]) -> dict[str, str]:
+        """The frost zone is one of the configured zones, as the form offers (P-79)."""
+        zone = user_input.get("frost_zone")
+        if zone in (None, "") or zone in _zone_entities(self.options):
+            return {}
+        if zones_not_vt(self.hass, [zone]):
+            return {"frost_zone": "zone_not_vt"}
+        return {"frost_zone": "entity_not_suitable"}
 
     def _criterion_no_zone_feeds(self, user_input: dict[str, Any]) -> str | None:
         """P-14: a power or opening threshold no zone can feed could never be reached — VT

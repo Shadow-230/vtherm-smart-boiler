@@ -22,6 +22,10 @@ from .entity import ControlEntity
 TRANSIENT_BLOCKERS = frozenset({"ha_starting", "vt_central_boiler_unknown", "monitor_failed"})
 # Blockers the switch change itself clears.
 CLEARED_BY_SWITCHING = frozenset({"control_error"})
+# Latches that switching control off and on clears (answer O): switching on is refused, with
+# their text, only while control is on — with control off, on is the second half of "off and
+# on", and the next off and on clears the latch as for any other.
+CLEARED_BY_OFF_AND_ON = frozenset({"heating_off_ignored"})
 
 
 PARALLEL_UPDATES = 1  # one switch action at a time
@@ -85,10 +89,11 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
         await self.control.async_restore_enabled(wish)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
+        passing = TRANSIENT_BLOCKERS | CLEARED_BY_SWITCHING
+        if not self.control.enabled:
+            passing |= CLEARED_BY_OFF_AND_ON
         blockers = [
-            b
-            for b in self.control.blockers(dt_util.utcnow().timestamp())
-            if b not in TRANSIENT_BLOCKERS | CLEARED_BY_SWITCHING
+            b for b in self.control.blockers(dt_util.utcnow().timestamp()) if b not in passing
         ]
         if blockers:
             raise ServiceValidationError(
