@@ -82,6 +82,14 @@ class Feature(StrEnum):
     FLUE_GAS_WARNING = "flue_gas_warning"
     PRESSURE_WARNING = "pressure_warning"
     OUTDOOR_CHECK = "outdoor_check"
+    # Y1: the low-flow warning (P-99), the stop on the boiler's own fault, the "add water"
+    # notification, the pressure trend, unstable ignition (P-81) and hysteresis drift (P-29).
+    LOW_FLOW = "low_flow"
+    BOILER_FAULT_STOP = "boiler_fault_stop"
+    ADD_WATER = "add_water"
+    PRESSURE_TREND = "pressure_trend"
+    UNSTABLE_IGNITION = "unstable_ignition"
+    HYSTERESIS_DRIFT = "hysteresis_drift"
 
 
 class FeatureStatus(StrEnum):
@@ -94,14 +102,31 @@ class FeatureStatus(StrEnum):
 class FeatureState:
     status: FeatureStatus
     missing: tuple[Signal, ...] = ()  # what to map for the full feature
+    reason: str | None = None  # why it is inactive where no signal would help
+
+
+# The boiler's own fault signals (Y1), in the order the form asks for them.
+FAULT_SIGNALS = (Signal.LOW_PRESSURE_FAULT, Signal.BOILER_LOCKOUT)
 
 
 def features(
     mapped: frozenset[Signal],
     has_weather: bool,
     has_gas_rates: bool,
+    *,
+    add_water: bool = False,
+    bypass: bool = False,
+    zone_valves: bool | None = None,
+    zone_data: bool = True,
+    gateway: frozenset[Signal] = frozenset(),
+    has_dhw: bool = False,
 ) -> dict[Feature, FeatureState]:
-    """What the mapped signals enable; ``has_gas_rates``: gas at min and max power are known."""
+    """What the mapped signals enable; ``has_gas_rates``: gas at min and max power are known.
+    Y1: ``add_water`` — the user entered the "add water" threshold; ``bypass`` — a bypass or a
+    low-loss header is declared; ``zone_valves`` — whether every zone reports a valve opening
+    (``None``: not known yet); ``zone_data`` — zones are configured; ``gateway`` — the mapped
+    signals the OpenTherm Gateway reports, whose fault flags need the fault indication (Q3.9);
+    ``has_dhw`` — the boiler heats hot water, which the low-flow warning must tell apart."""
 
     def need(*signals: Signal) -> FeatureState:
         missing = tuple(s for s in signals if s not in mapped)
@@ -142,7 +167,59 @@ def features(
         FeatureStatus.AVAILABLE if outdoor_check else FeatureStatus.UNAVAILABLE,
         () if Signal.OUTDOOR in mapped else (Signal.OUTDOOR,),
     )
+    result[Feature.LOW_FLOW] = _low_flow_feature(mapped, bypass, zone_valves, has_dhw)
+    result[Feature.BOILER_FAULT_STOP] = _fault_feature(mapped, gateway)
+    add = need(Signal.PRESSURE)
+    if add.status is FeatureStatus.AVAILABLE and not add_water:
+        add = FeatureState(FeatureStatus.UNAVAILABLE, reason="no_threshold")
+    result[Feature.ADD_WATER] = add
+    result[Feature.PRESSURE_TREND] = need(Signal.PRESSURE, Signal.FLAME, Signal.FLOW)
+    if Signal.FLAME not in mapped:
+        result[Feature.UNSTABLE_IGNITION] = need(Signal.FLAME)
+    else:
+        # P-81: without flow and CH setpoint every short burn counts, as before.
+        ignition = need(Signal.FLOW, Signal.CH_SETPOINT)
+        if ignition.missing:
+            ignition = FeatureState(FeatureStatus.DEGRADED, ignition.missing)
+        result[Feature.UNSTABLE_IGNITION] = ignition
+    drift = need(Signal.FLAME, Signal.FLOW)
+    if drift.status is FeatureStatus.AVAILABLE and not zone_data:
+        drift = FeatureState(FeatureStatus.UNAVAILABLE, reason="no_zone_data")
+    result[Feature.HYSTERESIS_DRIFT] = drift
     return result
+
+
+def _low_flow_feature(
+    mapped: frozenset[Signal], bypass: bool, zone_valves: bool | None, has_dhw: bool
+) -> FeatureState:
+    """P-99: the low-flow warning needs a pump-running or CH-active signal and zones that report
+    a valve opening — and, on a boiler with hot water, the hot-water signal: with hot water
+    unknown it is not judged (P-27); with a bypass or a low-loss header it does not apply."""
+    if Signal.PUMP_RUNNING not in mapped and Signal.CH_ACTIVE not in mapped:
+        return FeatureState(FeatureStatus.UNAVAILABLE, (Signal.PUMP_RUNNING, Signal.CH_ACTIVE))
+    if bypass:
+        return FeatureState(FeatureStatus.UNAVAILABLE, reason="bypass")
+    if has_dhw and Signal.DHW_ACTIVE not in mapped:
+        return FeatureState(FeatureStatus.UNAVAILABLE, (Signal.DHW_ACTIVE,))
+    if zone_valves is False:
+        return FeatureState(FeatureStatus.UNAVAILABLE, reason="zone_without_valve")
+    return FeatureState(FeatureStatus.AVAILABLE)
+
+
+def _fault_feature(mapped: frozenset[Signal], gateway: frozenset[Signal]) -> FeatureState:
+    """Y1: the stop on the boiler's own fault needs one of its fault signals; a flag the
+    OpenTherm Gateway reports counts only with the boiler's fault indication mapped (Q3.9) —
+    without it, that flag stops nothing."""
+    flags = [s for s in FAULT_SIGNALS if s in mapped]
+    if not flags:
+        return FeatureState(FeatureStatus.UNAVAILABLE, FAULT_SIGNALS)
+    if Signal.FAULT_INDICATION in mapped:
+        return FeatureState(FeatureStatus.AVAILABLE)
+    gated = [s for s in flags if s in gateway]
+    if not gated:
+        return FeatureState(FeatureStatus.AVAILABLE)
+    status = FeatureStatus.UNAVAILABLE if len(gated) == len(flags) else FeatureStatus.DEGRADED
+    return FeatureState(status, (Signal.FAULT_INDICATION,))
 
 
 class OutdoorStatus(StrEnum):
@@ -172,35 +249,55 @@ def check_outdoor(
     end: float,
     max_deviation: float = DEFAULT_MAX_DEVIATION_K,
 ) -> OutdoorCheck:
-    """Compare the boiler's outdoor sensor with the weather entity over ``[start, end)``."""
+    """Compare the boiler's outdoor sensor with the weather entity over ``[start, end)``.
+
+    Stuck (P-26): the sensor has held one value since its last change — a stretch without a
+    value neither ends that tail nor counts toward it — for at least ``STUCK_WINDOW_S``, while
+    the weather moved at least ``STUCK_WEATHER_RANGE_K`` over that same tail. Judged on the tail,
+    a sensor that changed earlier in the window and then froze is caught twelve hours after it
+    froze, not only once the whole window is flat."""
     overlap = 0.0
     total_difference = 0.0
-    sensor_values: set[float] = set()
-    sensor_known = 0.0
-    weather_values: list[float] = []
     for segment in sensor.segments(start, end):
         if segment.value is None:
             continue
-        sensor_values.add(segment.value)
-        sensor_known += segment.duration
         for part in weather.segments(segment.start, segment.end):
             if part.value is None:
                 continue
             overlap += part.duration
             total_difference += (segment.value - part.value) * part.duration
-            weather_values.append(part.value)
     if overlap < MIN_OVERLAP_S:
         return OutdoorCheck(OutdoorStatus.UNKNOWN, None, overlap)
     mean_difference = total_difference / overlap
-    if (
-        len(sensor_values) == 1
-        and sensor_known >= STUCK_WINDOW_S
-        and max(weather_values) - min(weather_values) >= STUCK_WEATHER_RANGE_K
-    ):
+    if _stuck(sensor, weather, start, end):
         return OutdoorCheck(OutdoorStatus.STUCK, mean_difference, overlap)
     if abs(mean_difference) > max_deviation:
         return OutdoorCheck(OutdoorStatus.DEVIATES, mean_difference, overlap)
     return OutdoorCheck(OutdoorStatus.OK, mean_difference, overlap)
+
+
+def _stuck(sensor: Series[float], weather: Series[float], start: float, end: float) -> bool:
+    """The tail since the sensor's last change, within ``[start, end)``: its value known for
+    ``STUCK_WINDOW_S`` at least, and the weather over those stretches spanning
+    ``STUCK_WEATHER_RANGE_K`` or more."""
+    tail: list[tuple[float, float]] = []  # the stretches holding the tail's value
+    value: float | None = None
+    for segment in reversed(list(sensor.segments(start, end))):
+        if segment.value is None:
+            continue  # no value: neither a change nor held
+        if value is not None and segment.value != value:
+            break  # the last change
+        value = segment.value
+        tail.append((segment.start, segment.end))
+    if value is None or sum(stop - begin for begin, stop in tail) < STUCK_WINDOW_S:
+        return False
+    moved = [
+        part.value
+        for begin, stop in tail
+        for part in weather.segments(begin, stop)
+        if part.value is not None
+    ]
+    return bool(moved) and max(moved) - min(moved) >= STUCK_WEATHER_RANGE_K
 
 
 def curve_sensor(

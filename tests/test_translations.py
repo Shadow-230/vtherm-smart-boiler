@@ -219,7 +219,8 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
     assert set(PLACEHOLDER.findall(frost["description"])) == {"zones"}
     assert SOURCE["entity"]["button"]["reset_comfort_correction"]["name"]  # answer J (X4)
     too_hot = SOURCE["entity"]["binary_sensor"]["alarm_circuit_too_hot"]["state_attributes"]
-    assert set(too_hot["reason"]["state"]) == {"no_flow_reading", "circuit_not_measured"}
+    # Y1 (S-16): held through a gap in the flow, then unknown with its reason.
+    assert set(too_hot["reason"]["state"]) == {"no_flow_reading", "circuit_not_measured", "held"}
 
 
 def _values(entity: dict, attribute: str) -> set[str]:
@@ -423,3 +424,54 @@ def test_x8_texts_are_translated() -> None:
     for signals in (SOURCE["config"]["step"]["signals"], step["signals"]):
         assert "None is required" in signals["description"]
         assert signals["data"]["boiler_power"]
+
+
+def test_y1_texts_are_translated() -> None:
+    """Y1: the notifications, the hand-back issues and every latch cause's issue, each with the
+    placeholders the code fills in; the reasons an alarm cannot be judged; the fault signals and
+    the "add water" threshold with their risks; the words the plan asks for — "there is a risk
+    of a leak", never "likely"; the safety valve's rating read on the valve."""
+    from custom_components.vtherm_smart_boiler.core.alarms import HOT_WATER_UNKNOWN, NO_ZONE_DATA
+    from custom_components.vtherm_smart_boiler.core.controller import ControlMode
+
+    issues = SOURCE["issues"]
+    for key, placeholders in (
+        ("add_water", {"value", "threshold"}),
+        ("pressure_high", {"value", "limit"}),
+        ("flue_gas_high", {"value", "limit"}),
+        ("pressure_falling", {"change"}),
+        ("boiler_fault", {"entity"}),
+        ("control_latched", {"target", "value"}),
+        ("control_latched_write_ignored", set()),
+        ("control_latched_heating_off_ignored", set()),
+        ("control_latched_other", {"alarm"}),
+        ("hand_back_boiler_link_lost", set()),
+        ("hand_back_control_error", set()),
+        ("reactions_removed", {"alarms"}),
+    ):
+        issue = issues[key]
+        assert issue["title"], key
+        assert set(PLACEHOLDER.findall(issue["description"])) == placeholders, key
+    falling = issues["pressure_falling"]["description"]
+    assert "there is a risk of a leak" in falling
+    assert "likely" not in falling
+    assert (
+        "read on the valve"
+        in SOURCE["config"]["step"]["monitor"]["data_description"]["pressure_high_alarm"]
+    )
+    binary = SOURCE["entity"]["binary_sensor"]
+    for kind in ("pressure_low", "pressure_high", "flue_gas_high", "frequent_starts"):
+        assert {"held", "unknown_input"} <= _values(binary[f"alarm_{kind}"], "reason"), kind
+    assert HOT_WATER_UNKNOWN in _values(binary["alarm_low_flow"], "reason")
+    assert NO_ZONE_DATA in _values(binary["alarm_hysteresis_drift"], "reason")
+    assert SOURCE["entity"]["sensor"]["control_state"]["state"][ControlMode.BOILER_FAULT.value]
+    switch = SOURCE["entity"]["switch"]["control"]
+    assert _values(switch, "blocked_by") == {"boiler_link_lost"}
+    for flow in ("config", "options"):
+        steps = SOURCE[flow]["step"]
+        for key in ("low_pressure_fault", "boiler_lockout", "fault_indication"):
+            assert steps["signals"]["data"][key], key
+            assert "Optional" in steps["signals"]["data_description"][key], key
+        monitor = steps["monitor"]
+        assert "Empty by default" in monitor["data_description"]["add_water_below"]
+        assert "pressure_low_warning" not in monitor["data"]

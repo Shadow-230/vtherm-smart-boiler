@@ -101,9 +101,14 @@ def parse_binary(state: object) -> bool | None:
     return None
 
 
-def signal_value(signal: Signal, state: object, unit: str | None) -> float | bool | None:
+def signal_value(
+    signal: Signal, state: object, unit: str | None, *, zero_is_unknown: bool = False
+) -> float | bool | None:
     """A boiler signal's value from an entity state, in core units and within the plausible
-    range; ``None`` when unknown, unavailable, in an unknown unit or implausible."""
+    range; ``None`` when unknown, unavailable, in an unknown unit or implausible.
+    ``zero_is_unknown``: the entity is the OpenTherm Gateway's, whose pressure reads 0 after a
+    reset until a real reading (P-17) — decided from the registries at setup; from any other
+    source 0 bar is a reading."""
     spec = SIGNAL_SPECS[signal]
     if spec.kind is SignalKind.BINARY:
         return parse_binary(state)
@@ -121,7 +126,7 @@ def signal_value(signal: Signal, state: object, unit: str | None) -> float | boo
         converted = number
     if converted is None or not spec.plausible(converted):
         return None
-    if signal is Signal.PRESSURE and converted == 0.0:
+    if signal is Signal.PRESSURE and converted == 0.0 and zero_is_unknown:
         # An OpenTherm Gateway reports 0 until a real reading after each reset (L3).
         return None
     if signal is Signal.GAS_METER and converted == 0.0:

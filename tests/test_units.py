@@ -108,12 +108,17 @@ def test_every_home_assistant_power_unit(value: float, unit: str) -> None:
     assert power_to_kw(value, unit) == pytest.approx(1.5, rel=1e-3)
 
 
-def test_a_pressure_of_zero_is_unknown() -> None:
-    """L3: an OpenTherm Gateway reports 0 bar after a reset until a real reading — with a
-    thermostat perhaps for good; no heating system runs at 0 bar."""
-    assert signal_value(Signal.PRESSURE, "0", "bar") is None
-    assert signal_value(Signal.PRESSURE, "0.0", "bar") is None
-    assert signal_value(Signal.PRESSURE, "1.2", "bar") == 1.2
+def test_a_pressure_of_zero_is_unknown_only_from_the_gateway() -> None:
+    """P-17, the review's question 8: an OpenTherm Gateway reports 0 bar after a reset until a
+    real reading (L3) — from it, 0 is unknown. From any other source 0 bar is a reading: a
+    sensor that falls to 0, or an empty system, must show (an "add water" notification)."""
+    assert signal_value(Signal.PRESSURE, "0", "bar", zero_is_unknown=True) is None
+    assert signal_value(Signal.PRESSURE, "0.0", "bar", zero_is_unknown=True) is None
+    assert signal_value(Signal.PRESSURE, "1.2", "bar", zero_is_unknown=True) == 1.2
+    assert signal_value(Signal.PRESSURE, "0", "bar") == 0.0
+    assert signal_value(Signal.PRESSURE, "0.0", "kPa") == 0.0
+    assert signal_value(Signal.PRESSURE, "-0.1", "bar") is None  # below the plausible range
+    assert signal_value(Signal.FLOW, "0", "°C", zero_is_unknown=True) == 0.0  # pressure only
 
 
 def test_a_gas_meter_at_zero_is_unknown() -> None:

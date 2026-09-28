@@ -115,9 +115,14 @@ async def test_setup_creates_entities_and_reads_signals(
     critical = hass.states.get(entity_id(hass, entry, "sensor", "critical_zone_main"))
     assert critical is not None
     assert critical.attributes["zone"] == living
-    low = hass.states.get(entity_id(hass, entry, "binary_sensor", "alarm_pressure_low"))
-    assert low is not None
-    assert low.state == "off"
+    high = hass.states.get(entity_id(hass, entry, "binary_sensor", "alarm_pressure_high"))
+    assert high is not None
+    assert high.state == "off"
+    # Y1: no "add water" threshold by default — no low-pressure alarm at all.
+    unique = {
+        e.unique_id for e in registry.entities.values() if e.config_entry_id == entry.entry_id
+    }
+    assert f"{entry.entry_id}_alarm_pressure_low" not in unique
     # no return mapped would mean no condensing sensor; here it exists
     entity_id(hass, entry, "sensor", "condensing_share")
 
@@ -657,9 +662,94 @@ async def test_an_entry_from_before_drops_the_options_that_are_gone(
         minor_version=1,
     )
     await setup(hass, entry)
-    assert entry.minor_version == 3
+    assert entry.minor_version == 4
     # Minor version 3 (X6): the lowest water temperature 0.2.1 used, kept.
     assert entry.options["control"] == {"write_path": "entity", "hard_min": 25.0}
+
+
+@pytest.mark.parametrize(
+    ("monitor", "threshold"),
+    [
+        ({"pressure_low_warning": 1.0, "pressure_low_alarm": 0.7}, None),  # 0.2.1's defaults
+        ({"pressure_low_warning": 0.8, "pressure_low_alarm": 0.5}, 0.8),  # the warning, set
+        ({"pressure_low_warning": 1.0, "pressure_low_alarm": 0.6}, 0.6),  # the alarm, set
+        ({"pressure_low_warning": 0.8, "add_water_below": 1.2}, 1.2),  # already there: kept
+        ({"pressure_low_warning": "broken"}, None),  # unreadable: nothing carried over
+        ({}, None),
+    ],
+)
+async def test_the_alarm_migration_moves_to_the_add_water_threshold(
+    hass: HomeAssistant, monitor: dict[str, Any], threshold: float | None
+) -> None:
+    """Y1 (minor version 4; feeds P-124): 0.2.1's two low-pressure limits go; one stored other
+    than its default — the warning, else the alarm — becomes the "add water" threshold (none at
+    the defaults). Stored alarm reactions decision 7 no longer offers go, and one warning issue
+    names those that were set to hand back; the ignored write's stays where it is offered."""
+    from homeassistant.helpers import issue_registry as ir
+
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    options = dict(entry_for(boiler).options)
+    options["monitor"] = {"monitoring_days": 7, **monitor}
+    options["control"] = {
+        "write_path": "opentherm_gw",
+        "gateway_id": "gw",
+        "topology": "gateway_standalone",
+        "thermostat_kind": "none",
+        "hard_min": 25.0,
+        "alarm_reactions": {
+            "pressure_low": "hand_back",
+            "write_ignored": "hand_back",
+            "frequent_starts": "info",
+            "outside_change": "info",
+        },
+    }
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=3
+    )
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.minor_version == 4
+    stored = entry.options["monitor"]
+    assert "pressure_low_warning" not in stored
+    assert "pressure_low_alarm" not in stored
+    assert stored.get("add_water_below") == threshold
+    assert stored["monitoring_days"] == 7
+    assert entry.options["control"]["alarm_reactions"] == {}  # stand-alone: none is offered
+    found = ir.async_get(hass).async_get_issue(DOMAIN, f"reactions_removed_{entry.entry_id}")
+    assert found is not None
+    assert found.translation_placeholders == {"alarms": "pressure_low, write_ignored"}
+    assert found.severity is ir.IssueSeverity.WARNING
+
+
+async def test_the_alarm_migration_keeps_an_offered_reaction_and_raises_no_issue(
+    hass: HomeAssistant,
+) -> None:
+    """Negative: with a thermostat to take over, the ignored write's reaction is kept; reactions
+    that were information only go without an issue."""
+    from homeassistant.helpers import issue_registry as ir
+
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    options = dict(entry_for(boiler).options)
+    options["control"] = {
+        "write_path": "opentherm_gw",
+        "gateway_id": "gw",
+        "topology": "gateway_with_thermostat",
+        "thermostat_kind": "opentherm",
+        "hard_min": 25.0,
+        "alarm_reactions": {"write_ignored": "hand_back", "low_flow": "info"},
+    }
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=3
+    )
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.minor_version == 4
+    assert entry.options["control"]["alarm_reactions"] == {"write_ignored": "hand_back"}
+    assert ir.async_get(hass).async_get_issue(DOMAIN, f"reactions_removed_{entry.entry_id}") is None
 
 
 @pytest.mark.parametrize(
@@ -692,7 +782,7 @@ async def test_migration_keeps_the_floor_of_a_control_section_without_it(
     entry.add_to_hass(hass)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 3
+    assert entry.minor_version == 4
     stored = entry.options.get("control")
     if hard_min is None:
         assert stored == control
@@ -882,6 +972,8 @@ async def test_short_hot_water_draws_are_no_ignition_problem(
     options = {**entry.options, "boiler": {"class": "read_only", "dhw": "combi"}}
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
     await setup(hass, entry)
+    # Y1: a count is judged with the flame known for half its window at least (12 h a day).
+    freezer.tick(timedelta(hours=7))
     for _ in range(12):  # twelve 40-second burns
         freezer.tick(timedelta(minutes=30))
         boiler.set_many({Signal.DHW_ACTIVE: hot_water, Signal.FLAME: True})
@@ -908,6 +1000,8 @@ async def test_a_tpi_zones_short_pulses_are_no_ignition_problem(
     zones.add("living", on_percent=0.1)
     await setup(hass, entry_for(boiler, zones))
     entry = hass.config_entries.async_entries(DOMAIN)[0]
+    # Y1: a count is judged with the flame known for half its window at least (12 h a day).
+    freezer.tick(timedelta(hours=12))
     for _ in range(12):  # twelve five-minute cycles, 30 s on each
         zones.set("living", hvac_action="heating", on_percent=0.1)
         freezer.tick(timedelta(seconds=10))

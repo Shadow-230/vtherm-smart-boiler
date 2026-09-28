@@ -79,6 +79,9 @@ ENTITY = {
     "topology": "virtual",
     "curve": CURVE,
 }
+# The entity path with the virtual topology and answer F's tick "the boiler has its own room
+# controller".
+TICKED = ENTITY | {"hand_back": "timeout", "write_type": "expiring", "own_room_controller": True}
 
 
 def test_entity_path_with_a_held_setpoint() -> None:
@@ -404,7 +407,8 @@ def test_a_value_hand_back_is_declared_with_its_effect(missing: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("effect", "shown"), [("own_control", "device_decides"), ("heating_stops", "heating_stops")]
+    ("effect", "shown"),
+    [("own_control", "own_control_resumes"), ("heating_stops", "heating_stops")],
 )
 def test_the_declared_effect_is_what_the_switch_shows(effect: str, shown: str) -> None:
     from custom_components.vtherm_smart_boiler.control_config import hand_back_effect
@@ -630,21 +634,176 @@ def test_an_outside_change_always_hands_back_whatever_is_stored(reactions: objec
     assert config_blockers(options, RADIATORS) == []
 
 
-def test_other_alarms_keep_their_stored_reaction_beside_the_outside_change() -> None:
-    """Negative: only the outside change is fixed; the others keep what the user chose, and an
-    alarm without a stored reaction informs."""
-    data = OTGW | {
-        "alarm_reactions": {
-            "outside_change": "info",
-            "pressure_low": "hand_back",
-            "write_ignored": "info",
-        }
+# --- Y1: decision 7's allow-list (S-30, S-62) ---------------------------------------------------
+
+# Every alarm but those decision 7 lets hand back, each stored as "hand back" — as 0.2.1's form,
+# an older version or a hand edit could leave them.
+NOT_ALLOWED = (
+    "pressure_low",
+    "pressure_high",
+    "flue_gas_high",
+    "frequent_starts",
+    "unstable_ignition",
+    "pressure_falling",
+    "flue_gas_rising",
+    "hysteresis_drift",
+    "low_flow",
+    "circuit_too_hot",
+    "write_failed",
+    "hand_back_failed",
+    "zone_unknown",
+    "frost_not_warming",
+    "correction_at_limit",
+    "outdoor_sensor_suspect",
+    "handed_back_in_frost",
+    "commands_lost",
+    "confirmation_missing",
+    "no_zone_known",
+    "demand_criterion_no_data",
+    "relay_unreachable",
+    "boiler_not_responding",
+    "an alarm this version does not know",
+)
+ALWAYS = ("control_error", "boiler_link_lost", "outside_change", "monitor_failed")
+
+
+@pytest.mark.parametrize("data", [OTGW, OTGW | WITH_THERMOSTAT, ENTITY])
+def test_only_allow_listed_alarms_may_hand_back(data: dict) -> None:
+    """Decision 7: an allow-list in the code. A stored "hand back" for any other alarm — low
+    pressure, a failed write, an alarm this version does not know — gives information, whatever
+    the hand-back's effect; it is not even kept. Always: an internal error, the lost boiler link,
+    another controller, the monitor failing, heating off ignored from the start."""
+    from custom_components.vtherm_smart_boiler.control_config import (
+        ALWAYS_HAND_BACK_ALARMS,
+        OPTIONAL_HAND_BACK_ALARMS,
+    )
+
+    assert set(ALWAYS) | {"heating_off_ignored"} == ALWAYS_HAND_BACK_ALARMS
+    assert OPTIONAL_HAND_BACK_ALARMS == {"write_ignored"}
+    stored = dict.fromkeys(NOT_ALLOWED, "hand_back")
+    options = parse_control(data | {"alarm_reactions": stored}, RADIATORS, None)
+    for alarm in NOT_ALLOWED:
+        assert options.reaction(alarm) is AlarmReaction.INFO, alarm
+    for alarm in (*ALWAYS, "heating_off_ignored"):
+        assert options.reaction(alarm) is AlarmReaction.HAND_BACK, alarm
+    assert options.alarm_reactions == {}
+    assert options.reaction("pressure_low") is AlarmReaction.INFO  # the default too
+
+
+def test_a_relay_never_hands_back_for_its_link() -> None:
+    """X8: a relay out of reach informs ("relay unreachable"); the lost boiler link hands back
+    only on the setpoint paths."""
+    options = parse_control(RELAY | {"alarm_reactions": {"boiler_link_lost": "info"}}, ON_OFF, None)
+    assert options.reaction("boiler_link_lost") is AlarmReaction.INFO
+    assert options.reaction("relay_unreachable") is AlarmReaction.INFO
+    for alarm in ("control_error", "outside_change", "monitor_failed", "heating_off_ignored"):
+        assert options.reaction(alarm) is AlarmReaction.HAND_BACK, alarm
+
+
+def test_own_control_resumes_is_its_own_effect() -> None:
+    """Y1 rule 2: a hand-back value declared "own control", or answer F's tick on the entity
+    path — the boiler's own control resumes. A gateway with an OpenTherm thermostat stays
+    "thermostat takes over", a tick stored there ignored (answer M); a relay goes by its rest
+    state; an undeclared virtual topology is "device decides"; stand-alone, heating stops."""
+    from custom_components.vtherm_smart_boiler.control_config import (
+        HandBackEffect,
+        hand_back_effect,
+    )
+
+    for data, effect in (
+        (ENTITY, HandBackEffect.OWN_CONTROL_RESUMES),  # a value declared "own control"
+        (TICKED, HandBackEffect.OWN_CONTROL_RESUMES),  # answer F's tick
+        (OTGW | WITH_THERMOSTAT, HandBackEffect.THERMOSTAT_TAKES_OVER),
+        (
+            OTGW | WITH_THERMOSTAT | {"own_room_controller": True},
+            HandBackEffect.THERMOSTAT_TAKES_OVER,
+        ),
+        (
+            ENTITY | {"hand_back": "timeout", "write_type": "expiring"},
+            HandBackEffect.DEVICE_DECIDES,
+        ),
+        (OTGW, HandBackEffect.HEATING_STOPS),
+        (ENTITY | {"hand_back_value_effect": "heating_stops"}, HandBackEffect.HEATING_STOPS),
+    ):
+        assert hand_back_effect(parse_control(data, RADIATORS, None)) is effect, data
+    for rest, effect in (
+        ("off", HandBackEffect.RELAY_RESTS_OFF),
+        ("on", HandBackEffect.RELAY_RESTS_ON),
+    ):
+        for tick in (False, True):
+            data = RELAY | {"relay_rest_state": rest, "own_room_controller": tick}
+            assert hand_back_effect(parse_control(data, ON_OFF, None)) is effect
+
+
+@pytest.mark.parametrize(
+    ("data", "installation", "reaction"),
+    [
+        (OTGW, RADIATORS, AlarmReaction.INFO),  # stand-alone: heating would stop
+        (OTGW | WITH_THERMOSTAT, RADIATORS, AlarmReaction.HAND_BACK),
+        (
+            OTGW | {"topology": "gateway_with_thermostat", "thermostat_kind": "on_off"},
+            RADIATORS,
+            AlarmReaction.INFO,  # no OpenTherm thermostat declared (control is blocked too)
+        ),
+        (ENTITY, RADIATORS, AlarmReaction.HAND_BACK),  # a value declared "own control"
+        (TICKED, RADIATORS, AlarmReaction.HAND_BACK),  # answer F's tick
+        (
+            ENTITY | {"hand_back": "timeout", "write_type": "expiring"},
+            RADIATORS,
+            AlarmReaction.INFO,
+        ),
+        (ENTITY | {"hand_back_value_effect": "heating_stops"}, RADIATORS, AlarmReaction.INFO),
+        (RELAY, ON_OFF, AlarmReaction.INFO),
+        (RELAY | {"relay_rest_state": "on"}, ON_OFF, AlarmReaction.INFO),
+        (
+            RELAY | {"relay_rest_state": "on", "own_room_controller": True},
+            ON_OFF,
+            AlarmReaction.INFO,
+        ),
+    ],
+)
+def test_write_ignored_may_hand_back_only_where_a_thermostat_or_own_control_takes_over(
+    data: dict, installation: Installation, reaction: AlarmReaction
+) -> None:
+    """Decision 7's one optional reaction: a write the boiler ignores hands back only where
+    the user chose it and a thermostat or the boiler's own control takes over; stand-alone, with
+    an undeclared effect and on the relay path — either rest state — it informs, whatever is
+    stored. Without a stored choice it informs everywhere."""
+    from custom_components.vtherm_smart_boiler.control_config import write_ignored_offered
+
+    stored = data | {"alarm_reactions": {"write_ignored": "hand_back"}}
+    options = parse_control(stored, installation, None)
+    assert options.reaction("write_ignored") is reaction
+    assert write_ignored_offered(stored) is (reaction is AlarmReaction.HAND_BACK)
+    assert parse_control(data, installation, None).reaction("write_ignored") is AlarmReaction.INFO
+
+
+@pytest.mark.parametrize("data", [OTGW, OTGW | WITH_THERMOSTAT, ENTITY, TICKED, RELAY])
+def test_heating_off_ignored_from_the_start_always_hands_back(data: dict) -> None:
+    """Answer O: the heating switch's "off" ignored from the start hands back and latches
+    whatever is stored — "information" included — and whatever the effect, stand-alone
+    included. Negative: only "on" ignored is the optional rule above — stand-alone it informs."""
+    installation = ON_OFF if data is RELAY else RADIATORS
+    stored = data | {
+        "alarm_reactions": {"heating_off_ignored": "info", "write_ignored": "hand_back"}
     }
-    options = parse_control(data, RADIATORS, None)
-    assert options.reaction("pressure_low") is AlarmReaction.HAND_BACK
-    assert options.reaction("write_ignored") is AlarmReaction.INFO
-    assert options.reaction("pressure_high") is AlarmReaction.INFO
-    assert options.reaction("an alarm this version does not know") is AlarmReaction.INFO
+    options = parse_control(stored, installation, None)
+    assert options.reaction("heating_off_ignored") is AlarmReaction.HAND_BACK
+    assert "heating_off_ignored" not in options.alarm_reactions
+    if data is OTGW:
+        assert options.reaction("write_ignored") is AlarmReaction.INFO
+
+
+def test_the_offered_reaction_is_read_from_raw_options() -> None:
+    """The form's question: offered where the hand-back returns the boiler to a thermostat or
+    its own control; never for a section it cannot read."""
+    from custom_components.vtherm_smart_boiler.control_config import write_ignored_offered
+
+    assert write_ignored_offered(OTGW | WITH_THERMOSTAT)
+    assert not write_ignored_offered(OTGW)
+    assert not write_ignored_offered({})
+    assert not write_ignored_offered({"write_path": "no such path"})
+    assert not write_ignored_offered(ENTITY | {"hand_back_value_effect": "no such effect"})
 
 
 @pytest.mark.parametrize(
@@ -684,9 +843,6 @@ def test_control_needs_at_least_one_zone() -> None:
     none = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
     assert config_blockers(parse_control(OTGW, none, None), none) == ["no_zones"]
     assert "no_zones" not in config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS)
-
-
-TICKED = ENTITY | {"hand_back": "timeout", "write_type": "expiring", "own_room_controller": True}
 
 
 def test_the_own_room_controller_tick_makes_a_working_thermostat() -> None:
@@ -733,7 +889,14 @@ def test_an_own_control_hand_back_value_without_the_tick_is_not_a_working_thermo
     )
 
     options = parse_control(data, RADIATORS, None)
-    assert hand_back_effect(options) is HandBackEffect.DEVICE_DECIDES
+    # Y1: a value declared "own control" is its own effect; still no working thermostat
+    # without the tick (answer F).
+    expected = (
+        HandBackEffect.OWN_CONTROL_RESUMES
+        if data.get("hand_back") == "value"
+        else HandBackEffect.DEVICE_DECIDES
+    )
+    assert hand_back_effect(options) is expected
     assert not working_thermostat(options)
     assert not options.loop.control.working_thermostat
 
@@ -1448,7 +1611,7 @@ def test_no_return_by_itself_and_no_hand_back_for_an_ignored_write_on_the_relay_
     options = parse_control(data, ON_OFF, None)
     assert not options.return_after_outside_change
     assert options.reaction("write_ignored") is AlarmReaction.INFO
-    assert options.reaction("pressure_low") is AlarmReaction.HAND_BACK
+    assert options.reaction("pressure_low") is AlarmReaction.INFO  # Y1: not on the allow-list
 
 
 def test_the_relay_is_named_among_the_entities_control_uses() -> None:

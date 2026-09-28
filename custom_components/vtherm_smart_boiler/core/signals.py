@@ -40,6 +40,14 @@ class Signal(StrEnum):
     # The boiler's electric power, e.g. from a plug that measures it: only a relay's proof that
     # the boiler heats (X8).
     BOILER_POWER = "boiler_power"
+    # Boiler protection (Y1): the boiler's own low-water-pressure fault, and another fault the
+    # boiler reports as stopping it (a lockout) — each optional, a binary sensor the user picks;
+    # while either reads a known "on" for five minutes, control sends its usual "off". The
+    # boiler's general fault indication gates both where they come from the OpenTherm Gateway,
+    # which reads the fault details once per new fault and never after it clears (Q3.9).
+    LOW_PRESSURE_FAULT = "low_pressure_fault"
+    BOILER_LOCKOUT = "boiler_lockout"
+    FAULT_INDICATION = "fault_indication"
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +92,10 @@ SIGNAL_SPECS: dict[Signal, SignalSpec] = {
     Signal.PUMP_RUNNING: SignalSpec(SignalKind.BINARY),
     Signal.GAS_METER: SignalSpec(SignalKind.COUNTER, low=0.0),
     Signal.BOILER_POWER: SignalSpec(SignalKind.POWER, low=0.0, high=100000.0),
+    # Not part of the boiler link (X2): a fault signal gone or stale is no fault.
+    Signal.LOW_PRESSURE_FAULT: SignalSpec(SignalKind.BINARY),
+    Signal.BOILER_LOCKOUT: SignalSpec(SignalKind.BINARY),
+    Signal.FAULT_INDICATION: SignalSpec(SignalKind.BINARY),
 }
 
 # The boiler link's signals: water-temperature control needs them mapped (``no_flame_signal``,
@@ -113,4 +125,8 @@ SIGNAL_PRECEDENCE: tuple[Signal, ...] = (
     Signal.BOILER_POWER,
     Signal.ROOM_SETPOINT,
     Signal.ROOM_TEMPERATURE,
+    # Y1: the low-pressure fault before the lockout; one entity for both keeps the first.
+    Signal.LOW_PRESSURE_FAULT,
+    Signal.BOILER_LOCKOUT,
+    Signal.FAULT_INDICATION,
 )

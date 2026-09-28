@@ -35,14 +35,15 @@ from .const import (
 )
 from .control_config import ControlOptions, map_control_entities, parse_control
 from .core.alarms import (
+    ADD_WATER_RANGE_BAR,
     CIRCUIT_ALARM_MIN,
     CIRCUIT_ALARM_RISE_K,
     DEFAULT_FREQUENT_STARTS_PER_HOUR,
     DEFAULT_UNSTABLE_BURNS_PER_DAY,
     FLUE_GAS_CONDENSING_BAND,
     PRESSURE_HIGH_BAND,
-    PRESSURE_LOW_BAND,
     Band,
+    add_water_band,
 )
 from .core.building import (
     InsulationClass,
@@ -95,13 +96,20 @@ class ReferenceRoomConfig:
 
 @dataclass(frozen=True, slots=True)
 class AlarmThresholds:
-    """Limits of the current alarms (advanced options)."""
+    """Limits of the current alarms (advanced options). ``pressure_low``: the "add water" band
+    from the threshold the user took from the boiler's manual — none by default, and then no
+    low-pressure alarm at all (Y1)."""
 
-    pressure_low: Band = PRESSURE_LOW_BAND
+    pressure_low: Band | None = None
     pressure_high: Band = PRESSURE_HIGH_BAND
     flue_gas: Band = FLUE_GAS_CONDENSING_BAND
     starts_per_hour: int = DEFAULT_FREQUENT_STARTS_PER_HOUR
     unstable_burns_per_day: int = DEFAULT_UNSTABLE_BURNS_PER_DAY
+
+    @property
+    def add_water_below(self) -> float | None:
+        """The "add water" threshold, bar; ``None``: not entered."""
+        return None if self.pressure_low is None else self.pressure_low.alarm
 
 
 @dataclass(frozen=True, slots=True)
@@ -548,10 +556,50 @@ def _band(data: Mapping[str, Any], name: str, default: Band) -> Band:
     return Band(warning, alarm, default.rising, default.hysteresis)
 
 
+# 0.2.1's low-pressure limits and their defaults (Y1's migration).
+OLD_LOW_PRESSURE = (("pressure_low_warning", 1.0), ("pressure_low_alarm", 0.7))
+
+
+def migrated_monitor(monitor: Mapping[str, Any]) -> dict[str, Any]:
+    """Y1's entry migration of the monitor section: 0.2.1's two low-pressure limits go; the
+    first of them stored with a value other than its default — the warning, else the alarm —
+    becomes the "add water" threshold, where it lies within 0.1–2.0 bar (provisional, K4);
+    at their defaults (1.0 / 0.7 bar) nothing is carried over: none by default. A threshold
+    already stored is kept."""
+    result = {k: v for k, v in monitor.items() if k not in dict(OLD_LOW_PRESSURE)}
+    if result.get("add_water_below") not in (None, ""):
+        return result
+    for key, default in OLD_LOW_PRESSURE:
+        try:
+            value = _float_or_none(monitor.get(key))
+        except TypeError, ValueError:
+            continue
+        if value is None or not math.isfinite(value) or value == default:
+            continue
+        low, high = ADD_WATER_RANGE_BAR
+        if low <= value <= high:
+            result["add_water_below"] = round(value, 1)
+        break
+    return result
+
+
+def _add_water(data: Mapping[str, Any]) -> Band | None:
+    """The "add water" band (Y1): none without a threshold; one outside 0.1–2.0 bar — a hand
+    edit — cannot be used. 0.2.1's two low-pressure limits are no longer read."""
+    key = "add_water_below"
+    threshold = _read("invalid_monitor", key, lambda: _float_or_none(data.get(key)))
+    if threshold is None:
+        return None
+    low, high = ADD_WATER_RANGE_BAR
+    if not low <= threshold <= high:
+        raise ConfigError("invalid_monitor", key)
+    return add_water_band(threshold)
+
+
 def _alarm_thresholds(data: Mapping[str, Any]) -> AlarmThresholds:
     starts, burns = "starts_per_hour_limit", "unstable_burns_limit"
     return AlarmThresholds(
-        pressure_low=_band(data, "pressure_low", PRESSURE_LOW_BAND),
+        pressure_low=_add_water(data),
         pressure_high=_band(data, "pressure_high", PRESSURE_HIGH_BAND),
         flue_gas=_band(data, "flue_gas", FLUE_GAS_CONDENSING_BAND),
         starts_per_hour=_read(

@@ -294,19 +294,26 @@ FIXED_CIRCUIT_MARGIN_K = 5.0
 # it.
 DESIGN_FLOW_OVER_ROOM_K = 5.0
 DESIGN_OUTDOOR_UNDER_ROOM_K = 10.0
-# Alarms that stay information: nothing the plugin counts may hold heating against VT, so many
-# starts never hand back (``SCOPE.md`` principle 12); a circuit's water above its alarm
-# temperature tells the user of the boiler's overshoot (decision 10).
-INFO_ONLY_ALARMS = frozenset({"frequent_starts", "circuit_too_hot"})
-# Alarms that always hand control back, with no reaction to choose (decision 7): another
-# controller writing to the boiler makes the plugin step aside — the whole safe hand-back, then a
-# latch (decision 6, the user's answer H) — and a boiler that ignores "heating off" from the start
-# of the session is blocked and handed back like an installation without a working heating switch
-# (answer O). A stored reaction for them is neutralised (S-11).
-ALWAYS_HAND_BACK_ALARMS = frozenset({"outside_change", "heating_off_ignored"})
-# On the relay path an ignored write gets no reaction to choose (decision 7: offered only where a
-# thermostat or the boiler's own control takes over, never on the relay path): information.
-_RELAY_INFO_ONLY = frozenset({"write_ignored"})
+# Decision 7's allow-list (S-30, S-62), the one place that says which alarms may hand back.
+# Always, with no reaction to choose: an internal error and the plugin's own monitor failing for
+# five minutes (runtime blockers: control hands back, and resumes once they are gone — answer I);
+# the lost boiler link (X2's stale-link rule, resuming by itself; not for a relay, whose own
+# alarm only informs, X8); another controller writing to the boiler, which makes the plugin step
+# aside — the whole safe hand-back, then a latch (decision 6, answer H); and heating off ignored
+# from the start of the session, blocked and handed back like an installation without a working
+# heating switch (answer O). A stored reaction for them is neutralised (S-11).
+ALWAYS_HAND_BACK_ALARMS = frozenset(
+    {"control_error", "boiler_link_lost", "outside_change", "monitor_failed", "heating_off_ignored"}
+)
+# Optional, information by default: the boiler ignoring any other write — offered only where a
+# thermostat or the boiler's own control takes over (``write_ignored_offered``), never on the
+# relay path.
+OPTIONAL_HAND_BACK_ALARMS = frozenset({"write_ignored"})
+# Every other alarm informs — every monitor alarm, a failed write, and each alarm added later
+# (a new alarm informs by default): nothing the plugin counts, times or measures holds heating
+# against VT (principle 12). Stopping heating for a boiler fault follows the boiler's own logic
+# (boiler protection), not an alarm.
+_NOT_FOR_RELAY = frozenset({"boiler_link_lost"})
 # "Off" sent as a low setpoint at least this far below the lowest water temperature (P-43,
 # decided): the boiler sees a change, and the guard's 0.5 K tolerance tells the two apart.
 OFF_BELOW_LOWEST_K = 1.0
@@ -395,13 +402,15 @@ class ControlOptions:
         return self.write_path is not None
 
     def reaction(self, alarm: str) -> AlarmReaction:
-        """What an active alarm does: a fixed reaction where there is one, else the user's
-        choice; an alarm without one informs."""
-        if alarm in ALWAYS_HAND_BACK_ALARMS:
+        """What an active alarm does (decision 7): the allow-list's fixed hand-backs; the user's
+        choice for an ignored write, where it is offered; information for anything else,
+        whatever is stored — this is how stored reactions no longer allowed are neutralised."""
+        relay = self.write_path is WritePath.RELAY
+        if alarm in ALWAYS_HAND_BACK_ALARMS and not (relay and alarm in _NOT_FOR_RELAY):
             return AlarmReaction.HAND_BACK
-        if alarm in INFO_ONLY_ALARMS:
-            return AlarmReaction.INFO
-        return self.alarm_reactions.get(alarm, AlarmReaction.INFO)
+        if alarm in OPTIONAL_HAND_BACK_ALARMS and _write_ignored_offered(self):
+            return self.alarm_reactions.get(alarm, AlarmReaction.INFO)
+        return AlarmReaction.INFO
 
     @property
     def entities(self) -> tuple[str, ...]:
@@ -609,13 +618,12 @@ def parse_control(
         off_setpoint=float(value["off_setpoint"]),
         relay=relay.config if on_off else None,
     )
-    fixed = ALWAYS_HAND_BACK_ALARMS | (_RELAY_INFO_ONLY if on_off else frozenset())
     reactions = {
         str(alarm): AlarmReaction(reaction)
         for alarm, reaction in (data.get("alarm_reactions") or {}).items()
-        # A fixed reaction leaves nothing to choose: a stored one is neutralised, whatever it
-        # holds (0.2.1's form offered "information" for an outside change, S-11).
-        if str(alarm) not in fixed
+        # Only the optional reaction is kept; a fixed one leaves nothing to choose, and any other
+        # is no longer offered — a stored one is neutralised, whatever it holds (S-11, S-30).
+        if str(alarm) in OPTIONAL_HAND_BACK_ALARMS and not on_off
     }
     options = ControlOptions(
         write_path=path,
@@ -693,26 +701,76 @@ def relay_working_thermostat(*, ticked: bool, rests_on: bool) -> bool:
     return ticked and rests_on
 
 
-# Hand-back effects that leave a working thermostat heating the house (decision 3).
-_WORKING_THERMOSTAT_EFFECTS = frozenset(
-    {HandBackEffect.THERMOSTAT_TAKES_OVER, HandBackEffect.OWN_CONTROL_RESUMES}
-)
-
-
 def working_thermostat(control: ControlOptions) -> bool:
     """Decision 3 (answers F, M): with every zone unknown, is there something to hand the boiler
     to that heats by the rooms? A gateway with an OpenTherm thermostat declared on its
     terminals, or the boiler's own room controller where the tick counts. Not a hand-back value
-    declared "own control" without the tick, nor "device decides", nor a stand-alone gateway,
-    nor a gateway whose terminals hold something else or were not answered for. On the relay
-    path the tick itself is read, with the rest state (answer M): its hand-back effect is the
-    rest state either way."""
+    declared "own control" without the tick — its effect is "own control resumes" (Y1), but
+    nothing says a room controller heats by the rooms then — nor "device decides", nor a
+    stand-alone gateway, nor a gateway whose terminals hold something else or were not answered
+    for. On the relay path the tick itself is read, with the rest state (answer M): its hand-back
+    effect is the rest state either way."""
     if control.write_path is WritePath.RELAY:
         return own_room_controller_counts(control)
+    if hand_back_effect(control) is HandBackEffect.THERMOSTAT_TAKES_OVER:
+        return control.thermostat_kind is ThermostatKind.OPENTHERM
+    return own_room_controller_counts(control)
+
+
+def _write_ignored_offered(control: ControlOptions) -> bool:
+    """Decision 7: the reaction to an ignored write is offered where a hand-back returns the
+    boiler to a thermostat — an OpenTherm thermostat declared on the gateway's terminals — or to
+    the boiler's own control; never stand-alone, with an undeclared effect ("device decides"),
+    or on the relay path, whatever its rest state (X8: an ignored relay command informs)."""
+    if control.write_path is WritePath.RELAY:
+        return False
     effect = hand_back_effect(control)
     if effect is HandBackEffect.THERMOSTAT_TAKES_OVER:
         return control.thermostat_kind is ThermostatKind.OPENTHERM
-    return effect in _WORKING_THERMOSTAT_EFFECTS
+    return effect is HandBackEffect.OWN_CONTROL_RESUMES
+
+
+def migrated_reactions(control: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Y1's entry migration of the stored alarm reactions: only the one decision 7 still
+    offers stays — an ignored write's, where it is offered; and the names of those that were
+    set to hand back and now only inform (the fixed hand-backs are not among them)."""
+    stored = control.get("alarm_reactions")
+    if not isinstance(stored, Mapping):
+        return {}, []
+    offered = write_ignored_offered(control)
+    kept: dict[str, Any] = {}
+    removed: list[str] = []
+    for alarm, reaction in stored.items():
+        name = str(alarm)
+        if name in OPTIONAL_HAND_BACK_ALARMS and offered:
+            kept[name] = reaction
+        elif reaction == AlarmReaction.HAND_BACK.value and name not in ALWAYS_HAND_BACK_ALARMS:
+            removed.append(name)
+    return kept, sorted(removed)
+
+
+def write_ignored_offered(data: Mapping[str, Any] | None) -> bool:
+    """The form's question, from a stored control section: is the reaction to an ignored write
+    offered? A section that cannot be read offers nothing."""
+    if not isinstance(data, Mapping):
+        return False
+    try:
+        path = WritePath(str(data["write_path"]))
+        control = ControlOptions(
+            write_path=path,
+            hand_back=HandBack(data["hand_back"]) if data.get("hand_back") else None,
+            hand_back_value_effect=(
+                ValueEffect(data["hand_back_value_effect"])
+                if data.get("hand_back_value_effect")
+                else None
+            ),
+            topology=Topology(data["topology"]) if data.get("topology") else None,
+            thermostat_kind=parse_thermostat_kind(data.get("thermostat_kind")),
+            own_room_controller=data.get("own_room_controller") is True,
+        )
+    except KeyError, TypeError, ValueError:
+        return False
+    return _write_ignored_offered(control)
 
 
 def thermostat_kind_blocker(control: ControlOptions) -> str | None:
@@ -762,7 +820,8 @@ def wall_thermostat_applies(control: ControlOptions) -> bool:
 def hand_back_effect(control: ControlOptions) -> HandBackEffect | None:
     """The effect of a hand-back: a relay's rest state (X8, R9); the boiler's own room controller
     where the user ticked it (and it counts); for a hand-back value, what the user declared it
-    does; else what the declared topology leads to. ``None`` where control cannot run."""
+    does — "own control" is its own effect (Y1); else what the declared topology leads to.
+    ``None`` where control cannot run."""
     if control.write_path is WritePath.RELAY:
         if control.relay.rests_on:
             return HandBackEffect.RELAY_RESTS_ON
@@ -772,7 +831,7 @@ def hand_back_effect(control: ControlOptions) -> HandBackEffect | None:
     if control.hand_back is HandBack.VALUE and control.hand_back_value_effect is not None:
         if control.hand_back_value_effect is ValueEffect.HEATING_STOPS:
             return HandBackEffect.HEATING_STOPS
-        return HandBackEffect.DEVICE_DECIDES
+        return HandBackEffect.OWN_CONTROL_RESUMES
     return (
         {
             Topology.GATEWAY_WITH_THERMOSTAT: HandBackEffect.THERMOSTAT_TAKES_OVER,

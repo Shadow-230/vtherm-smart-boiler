@@ -184,16 +184,16 @@ def test_unusable_options(options: dict, code: str) -> None:
 def test_alarm_thresholds_default_and_options() -> None:
     from custom_components.vtherm_smart_boiler.core.alarms import (
         DEFAULT_FREQUENT_STARTS_PER_HOUR,
-        PRESSURE_LOW_BAND,
+        add_water_band,
     )
 
     defaults = EntryConfig.from_options(MINIMAL).monitor.alarms
-    assert defaults.pressure_low == PRESSURE_LOW_BAND
+    assert defaults.pressure_low is None  # Y1: no "add water" threshold by default
+    assert defaults.add_water_below is None
     assert defaults.starts_per_hour == DEFAULT_FREQUENT_STARTS_PER_HOUR
     options = MINIMAL | {
         "monitor": {
-            "pressure_low_warning": 1.2,
-            "pressure_low_alarm": 0.9,
+            "add_water_below": 0.8,
             "pressure_high_warning": 2.2,
             "pressure_high_alarm": 2.6,
             "flue_gas_warning": 70,
@@ -203,16 +203,31 @@ def test_alarm_thresholds_default_and_options() -> None:
         }
     }
     alarms = EntryConfig.from_options(options).monitor.alarms
-    assert (alarms.pressure_low.warning, alarms.pressure_low.alarm) == (1.2, 0.9)
+    assert alarms.pressure_low == add_water_band(0.8)
+    assert alarms.add_water_below == 0.8
     assert (alarms.pressure_high.warning, alarms.pressure_high.alarm) == (2.2, 2.6)
     assert (alarms.flue_gas.warning, alarms.flue_gas.alarm) == (70.0, 90.0)
     assert (alarms.starts_per_hour, alarms.unstable_burns_per_day) == (8, 5)
 
 
+def test_the_old_low_pressure_limits_are_no_longer_read() -> None:
+    """Y1: 0.2.1's warning and alarm below 1.0 / 0.7 bar are gone — stored ones (the entry
+    migration drops them) give no low-pressure alarm."""
+    options = MINIMAL | {"monitor": {"pressure_low_warning": 1.0, "pressure_low_alarm": 0.7}}
+    assert EntryConfig.from_options(options).monitor.alarms.pressure_low is None
+
+
+@pytest.mark.parametrize("value", [0.05, 2.5, "a lot", -1])
+def test_an_add_water_threshold_outside_its_range_cannot_be_used(value: object) -> None:
+    """A hand edit outside 0.1–2.0 bar is shown on the monitor step (P-70)."""
+    with pytest.raises(ConfigError) as err:
+        EntryConfig.from_options(MINIMAL | {"monitor": {"add_water_below": value}})
+    assert (err.value.code, err.value.subject) == ("invalid_monitor", "add_water_below")
+
+
 @pytest.mark.parametrize(
     "monitor",
     [
-        {"pressure_low_warning": 0.8, "pressure_low_alarm": 0.9},
         {"pressure_high_warning": 2.9, "pressure_high_alarm": 2.8},
         {"flue_gas_warning": 100, "flue_gas_alarm": 90},
     ],

@@ -72,6 +72,9 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
         return {
             "experimental": True,
             "blockers": list(status.blockers),
+            # Decision 7 (Y1): an allowed alarm active while control is on keeps it from writing
+            # — the lost boiler link, until it has been fresh for a minute.
+            "blocked_by": list(status.blocked_by),
             "hand_back_effect": None if effect is None else effect.value,
             # Who keeps frost protection now: the plugin while it controls, else whoever the
             # hand-back leaves the boiler with — after a stand-alone hand-back, the boiler's own,

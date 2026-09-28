@@ -67,7 +67,6 @@ from .control_config import (
     CURVE_DEFAULTS,
     GATEWAY_TOPOLOGIES,
     HAND_BACK_KEYS,
-    INFO_ONLY_ALARMS,
     OTGW_PATHS,
     PATH_TOPOLOGIES,
     RELAY_DEFAULTS,
@@ -89,16 +88,16 @@ from .control_config import (
     off_too_close_to_lowest,
     own_room_controller_offered,
     parse_thermostat_kind,
+    write_ignored_offered,
 )
 from .core.alarms import (
+    ADD_WATER_RANGE_BAR,
     CIRCUIT_ALARM_MIN,
     CIRCUIT_ALARM_RISE_K,
     DEFAULT_FREQUENT_STARTS_PER_HOUR,
     DEFAULT_UNSTABLE_BURNS_PER_DAY,
     FLUE_GAS_CONDENSING_BAND,
     PRESSURE_HIGH_BAND,
-    PRESSURE_LOW_BAND,
-    AlarmKind,
 )
 from .core.building import InsulationClass, ThermalMass
 from .core.demand import feeds_opening, feeds_power
@@ -145,6 +144,12 @@ SIGNAL_FIELDS: dict[str, tuple[dict[str, Any], bool]] = {
     "boiler_power": ({"domain": "sensor", "device_class": "power"}, False),
     "room_setpoint": (_TEMPERATURE, False),
     "room_temperature": (_TEMPERATURE, False),
+    # Y1, boiler protection: the boiler's own low-water-pressure fault (simple level) and
+    # another fault it reports as stopping it (advanced), each a binary sensor; the boiler's
+    # general fault indication, which the gateway's fault flags need (Q3.9).
+    "low_pressure_fault": (_BINARY, True),
+    "boiler_lockout": (_BINARY, False),
+    "fault_indication": (_BINARY, True),
 }
 
 
@@ -535,8 +540,8 @@ def monitor_schema(options: dict[str, Any]) -> vol.Schema:
             vol.Required(
                 "foreign_heat_hold_min", default=monitor.get("foreign_heat_hold_min", 60.0)
             ): _number(0, 720, 5, "min"),
-            **_limit(monitor, "pressure_low_warning", PRESSURE_LOW_BAND.warning, 0.3, 2.0, "bar"),
-            **_limit(monitor, "pressure_low_alarm", PRESSURE_LOW_BAND.alarm, 0.1, 2.0, "bar"),
+            # Y1: one optional "add water" threshold from the boiler's manual — none by default.
+            _optional("add_water_below", monitor): _number(*ADD_WATER_RANGE_BAR, 0.1, "bar"),
             **_limit(monitor, "pressure_high_warning", PRESSURE_HIGH_BAND.warning, 1.5, 4, "bar"),
             **_limit(monitor, "pressure_high_alarm", PRESSURE_HIGH_BAND.alarm, 1.5, 4, "bar"),
             **_limit(monitor, "flue_gas_warning", FLUE_GAS_CONDENSING_BAND.warning, 40, 200, "°C"),
@@ -570,14 +575,12 @@ _READ_BACK_ENTITY = {"domain": ["sensor", "number", "input_number"]}
 _ECHO_ENTITY = {"domain": ["binary_sensor", "switch", "input_boolean"]}
 _THERMOSTAT_SETPOINT_ENTITY = {"domain": ["sensor", "number"], "device_class": "temperature"}
 _RESTART_ENTITY = {"domain": "sensor"}
-# Alarms whose reaction the user may choose (an internal error always hands back; frequent starts
-# stay information, as nothing counted may hold heating against VT). Another controller writing
-# to the boiler is not among them: it always makes the plugin step aside (S-11).
-REACTION_ALARMS = (
-    *(kind.value for kind in AlarmKind if kind.value not in INFO_ONLY_ALARMS),
-    "write_failed",
-    "write_ignored",
-)
+# The one alarm whose reaction the user may choose (decision 7, Y1): a write the boiler ignores,
+# offered only where a thermostat or the boiler's own control takes over, at both levels. The
+# others are the allow-list's to decide: an internal error, the lost link, another controller,
+# the monitor failing and heating off ignored from the start always hand back; every other alarm
+# informs.
+REACTION_ALARMS = ("write_ignored",)
 # Control fields only the advanced level shows; at the simple level they keep their defaults.
 CONTROL_ADVANCED_KEYS = (
     "room",
@@ -996,14 +999,17 @@ def _relay_path(options: Mapping[str, Any]) -> bool:
 
 
 def reaction_alarms(options: Mapping[str, Any]) -> tuple[str, ...]:
-    """The alarms whose reaction the form offers: on the relay path not an ignored write, which
-    may hand back only where a thermostat or the boiler's own control takes over (decision 7)."""
-    if _relay_path(options):
-        return tuple(alarm for alarm in REACTION_ALARMS if alarm != "write_ignored")
-    return REACTION_ALARMS
+    """The alarms whose reaction the form offers (decision 7): an ignored write, only where a
+    hand-back returns the boiler to a thermostat or its own control — never stand-alone, with an
+    undeclared effect, or on the relay path."""
+    control = options.get(CONTROL)
+    return REACTION_ALARMS if write_ignored_offered(control) else ()
 
 
 def control_alarms_schema(options: dict[str, Any]) -> vol.Schema:
+    """The alarm step: the reaction to an ignored write where it is offered, at both levels —
+    a reaction stored earlier is never hidden (Y1); and, at the advanced level, the return by
+    itself after another controller (not for relays)."""
     control = options.get(CONTROL, {})
     reactions = control.get("alarm_reactions", {})
     choices = [r.value for r in AlarmReaction]
@@ -1013,12 +1019,17 @@ def control_alarms_schema(options: dict[str, Any]) -> vol.Schema:
         )
         for alarm in reaction_alarms(options)
     }
-    if not _relay_path(options):
+    if _advanced(options) and not _relay_path(options):
         # Off by default, confirmed twice (decision 6); not offered for relays.
         fields[vol.Required(RETURN_KEY, default=control.get(RETURN_KEY) is True)] = (
             selector.BooleanSelector()
         )
     return vol.Schema(fields)
+
+
+def alarm_step_offered(options: Mapping[str, Any]) -> bool:
+    """Whether the alarm step has anything to ask at the options' level."""
+    return bool(control_alarms_schema(dict(options)).schema)
 
 
 def control_return_confirm_schema() -> vol.Schema:
@@ -1112,12 +1123,17 @@ def apply_control_behaviour(options: dict[str, Any], user_input: dict[str, Any])
 
 
 def apply_control_alarms(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    """The alarm step's answers: only the fields it showed are changed (Y1)."""
+    shown = {str(marker) for marker in control_alarms_schema(options).schema}
     control = dict(options.get(CONTROL, {}))
-    control["alarm_reactions"] = {alarm: user_input[alarm] for alarm in reaction_alarms(options)}
-    if user_input.get(RETURN_KEY) is True and not _relay_path(options):
-        control[RETURN_KEY] = True
-    else:
-        control.pop(RETURN_KEY, None)  # off: the default
+    control["alarm_reactions"] = {
+        alarm: user_input[alarm] for alarm in reaction_alarms(options) if alarm in user_input
+    }
+    if RETURN_KEY in shown:
+        if user_input.get(RETURN_KEY) is True:
+            control[RETURN_KEY] = True
+        else:
+            control.pop(RETURN_KEY, None)  # off: the default
     options[CONTROL] = control
 
 
@@ -1529,13 +1545,12 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
     control = options.get(CONTROL, {})
     monitor = options.get(MONITOR, {})
     curve_defaults = _schema_defaults(control_curve_schema(advanced))
-    alarm_defaults = _schema_defaults(control_alarms_schema({}))
+    alarm_defaults = _schema_defaults(control_alarms_schema(advanced))
     control_defaults = (
         curve_defaults
         | _schema_defaults(control_behaviour_schema({}))
         | {RETURN_KEY: alarm_defaults[RETURN_KEY]}
     )
-    reactions = {alarm: alarm_defaults[alarm] for alarm in REACTION_ALARMS}
     return bool(
         any(key in options.get(SIGNALS, {}) for key in ADVANCED_SIGNALS)
         or _differ(
@@ -1567,10 +1582,8 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
         or _differ(
             control, control_defaults, [k for k in CONTROL_ADVANCED_KEYS if k != "alarm_reactions"]
         )
-        or any(
-            control.get("alarm_reactions", {}).get(alarm, default) != default
-            for alarm, default in reactions.items()
-        )
+        # The ignored write's reaction is shown at both levels, and a stored one it does not
+        # offer only informs (decision 7, Y1): none is hidden.
         or _differ(control.get("curve", {}), curve_defaults, ("room", "exponent", "offset"))
     )
 
@@ -1904,8 +1917,9 @@ class _Steps:
 class SmartBoilerConfigFlow(_Steps, ConfigFlow, domain=DOMAIN):
     VERSION = 1
     # 2: the options 0.2.1 removed are gone; 3: a control section without the lowest water
-    # temperature keeps 25 °C (see async_migrate_entry).
-    MINOR_VERSION = 3
+    # temperature keeps 25 °C; 4: the "add water" threshold replaces the low-pressure limits, and
+    # alarm reactions no longer offered go (see async_migrate_entry).
+    MINOR_VERSION = 4
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}
@@ -2359,7 +2373,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 errors = self._relay_behaviour_error(user_input)
             if not errors:
                 apply_control_relay_behaviour(self.options, user_input)
-                if _advanced(self.options):
+                if alarm_step_offered(self.options):  # nothing is offered for relays (Y1)
                     return await self.async_step_control_alarms()
                 return await self.async_step_save()
         return self._form(
@@ -2414,6 +2428,9 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 apply_control_curve(self.options, user_input)
                 if _advanced(self.options):
                     return await self.async_step_control_behaviour()
+                if alarm_step_offered(self.options):
+                    # Y1: the reaction to an ignored write, where offered, at both levels.
+                    return await self.async_step_control_alarms()
                 return await self.async_step_save()
         # VT's own activation delay, where VT kept one, is offered for the user to confirm.
         vt_delay = VThermLink(self.hass, _zone_entities(self.options)).vt_central_activation_delay()
@@ -2449,7 +2466,9 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 errors[unfed] = _UNFED[unfed]
             else:
                 apply_control_behaviour(self.options, user_input)
-                return await self.async_step_control_alarms()
+                if alarm_step_offered(self.options):
+                    return await self.async_step_control_alarms()
+                return await self.async_step_save()
         return self._form(
             step_id="control_behaviour",
             data_schema=control_behaviour_schema(self.options),

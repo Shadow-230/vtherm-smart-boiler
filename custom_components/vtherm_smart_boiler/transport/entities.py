@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
+from ..const import MQTT_DOMAIN, OPENTHERM_GW_DOMAIN
 from ..core.foreign_heat import SourceKind
 from ..core.hand_back import RestartKind
 from ..core.limits import Grid
@@ -30,21 +31,75 @@ def reported_at(state: State) -> float:
     return moment.timestamp()
 
 
-def reading_from_state(signal: Signal, state: State | None) -> Reading:
-    """A signal's reading from its entity's state; a missing entity is unknown."""
+def reading_from_state(
+    signal: Signal, state: State | None, *, from_gateway: bool = False
+) -> Reading:
+    """A signal's reading from its entity's state; a missing entity is unknown.
+    ``from_gateway``: the entity is the OpenTherm Gateway's — its 0 bar is unknown (P-17)."""
     if state is None:
         return Reading(None, None)
     unit = state.attributes.get("unit_of_measurement")
-    return Reading(signal_value(signal, state.state, unit), reported_at(state))
+    value = signal_value(signal, state.state, unit, zero_is_unknown=from_gateway)
+    return Reading(value, reported_at(state))
+
+
+def gateway_signals(
+    hass: HomeAssistant,
+    mapping: Mapping[Signal, str],
+    write_path: str | None = None,
+    read_back: str | None = None,
+) -> frozenset[Signal]:
+    """The mapped signals whose entity the OpenTherm Gateway reports (P-17, Q3.9): registered by
+    ``opentherm_gw``, or by ``mqtt`` on the Home Assistant device of the OTGW firmware's setpoint
+    read-back where the write path is ``otgw_mqtt`` — the firmware's discovery puts a gateway's
+    entities on one device (assumed, supported by its source:
+    ``research/2026-09-28-y1-otgw-discovery-device.md``; provisional, K4). An entity not in the
+    registry counts as none, and so does every MQTT entity on another path: its 0 bar is a
+    reading. Their fault flags count only with the boiler's fault indication on — except
+    ``opentherm_gw``'s boiler "Fault indication" itself (OpenTherm ID 0, in every status
+    report), which is that indication and needs no gate. Read at setup, in the event loop."""
+    from homeassistant.helpers import entity_registry as er
+
+    registry = er.async_get(hass)
+    device: str | None = None
+    if write_path == "otgw_mqtt" and read_back:
+        found = registry.async_get(read_back)
+        if found is not None and found.platform == MQTT_DOMAIN:
+            device = found.device_id
+    result: set[Signal] = set()
+    for signal, entity_id in mapping.items():
+        entry = registry.async_get(entity_id)
+        if entry is None:
+            continue
+        if entry.platform == OPENTHERM_GW_DOMAIN:
+            if not entry.unique_id.endswith(OTGW_FAULT_INDICATION):
+                result.add(signal)
+        elif device is not None and entry.platform == MQTT_DOMAIN and entry.device_id == device:
+            result.add(signal)
+    return frozenset(result)
+
+
+# ``opentherm_gw``'s boiler "Fault indication": its unique ID ends so — the boiler device
+# (``OpenThermDeviceIdentifier.BOILER``) and pyotgw's ``DATA_SLAVE_FAULT_IND`` (pyotgw 2.2.3,
+# Home Assistant 2026.9.3).
+OTGW_FAULT_INDICATION = "-boiler-slave_fault_indication"
 
 
 class EntityTransport:
-    """Reads the mapped boiler entities from Home Assistant's state machine."""
+    """Reads the mapped boiler entities from Home Assistant's state machine. ``gateway``: the
+    signals the OpenTherm Gateway reports (``gateway_signals``, read at setup): their 0 bar is
+    unknown, and their fault flags count only with the boiler's fault indication on."""
 
-    def __init__(self, hass: HomeAssistant, mapping: Mapping[Signal, str]) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        mapping: Mapping[Signal, str],
+        gateway: frozenset[Signal] = frozenset(),
+    ) -> None:
         self._hass = hass
         self._mapping = dict(mapping)
         self._by_entity = {entity: signal for signal, entity in self._mapping.items()}
+        self.gateway = frozenset(gateway)
 
     @property
     def mapping(self) -> dict[Signal, str]:
@@ -58,7 +113,11 @@ class EntityTransport:
         return self._by_entity.get(entity_id)
 
     def reading(self, signal: Signal) -> Reading:
-        return reading_from_state(signal, self._hass.states.get(self._mapping[signal]))
+        return self.reading_of(signal, self._hass.states.get(self._mapping[signal]))
+
+    def reading_of(self, signal: Signal, state: State | None) -> Reading:
+        """A state of the signal's entity as a reading — the live one, or a recorded one."""
+        return reading_from_state(signal, state, from_gateway=signal in self.gateway)
 
     def snapshot(self, now: float) -> BoilerSnapshot:
         """Every mapped signal at ``now``; an unmapped signal is absent."""

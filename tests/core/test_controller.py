@@ -8,6 +8,12 @@ from itertools import pairwise
 
 import pytest
 
+from custom_components.vtherm_smart_boiler.core.alarms import (
+    BOILER_FAULT_HOLD_S,
+    fault_counts,
+    fault_holds,
+    follow_fault,
+)
 from custom_components.vtherm_smart_boiler.core.controller import (
     _LIMIT_REASON,
     CORRECTION_DAY_K,
@@ -2085,3 +2091,148 @@ def test_on_off_mode_waits_the_activation_delay_and_restores_at_once() -> None:
     )
     assert kept.command == restored
     assert kept.reasons == (Reason.ZONES_RECOGNITION,)
+
+
+# --- Y1: boiler protection — the boiler's own fault (a stated exception of principle 12) -------
+
+
+def fault_steps(
+    readings: Iterable[tuple[float, bool | None]],
+    *,
+    gated: bool = False,
+    gate: bool | None = None,
+    **kw,
+) -> list[ControlInputs]:
+    """Control's inputs from a fault signal's readings, the five-minute hold measured on the
+    control clock as the control unit does (``core.alarms``)."""
+    since: float | None = None
+    steps = []
+    for t, flag in readings:
+        since = follow_fault(since, fault_counts(flag, gated=gated, gate=gate), t)
+        steps.append(inputs(t, boiler_fault=fault_holds(since, t), **kw))
+    return steps
+
+
+def test_a_boiler_fault_sends_off_without_hand_back_or_latch() -> None:
+    """Control holding, the boiler's own fault on for 5 min: the usual "off" — heating off,
+    the water as decided — mode ``boiler_fault``, with no hand-back and no latch. When the
+    fault clears, heating follows the zones in the same step."""
+    assert BOILER_FAULT_HOLD_S == 300.0
+    steps = fault_steps([(t, t >= 10.0) for t in stepped(0.0, 320.0)])
+    steps.append(inputs(320.0))  # the fault reads off
+    state, decisions = run(steps)
+    at = {s.now: d for s, d in zip(steps, decisions, strict=True)}
+    assert at[300.0].command == BoilerCommand(True, pytest.approx(CURVE.flow(5.0)))  # 4:50
+    fault = at[310.0]  # five minutes on
+    assert fault.mode is ControlMode.BOILER_FAULT
+    assert fault.command == BoilerCommand(False, pytest.approx(CURVE.flow(5.0)))
+    assert Reason.BOILER_FAULT in fault.reasons
+    assert not any(d.hand_back for d in decisions)
+    back = at[320.0]
+    assert back.mode is ControlMode.HEATING
+    assert back.command == BoilerCommand(True, pytest.approx(CURVE.flow(5.0)))
+    assert not state.latched
+    assert state.controlling
+
+
+def test_the_fault_stop_ends_at_once_when_the_signal_is_unknown() -> None:
+    """Unknown or unavailable counts as no fault: the stop ends in that very step, with no
+    hold at its end — a broken or silent signal never keeps heating off."""
+    readings = [(t, True) for t in stepped(0.0, 310.0)] + [(310.0, None), (320.0, True)]
+    steps = fault_steps(readings)
+    _state, decisions = run(steps)
+    assert decisions[-3].mode is ControlMode.BOILER_FAULT  # 300 s
+    assert decisions[-2].mode is ControlMode.HEATING  # unknown: heating at once
+    assert decisions[-1].mode is ControlMode.HEATING  # on again: five more minutes first
+    assert fault_counts(None, gated=False, gate=None) is False
+    assert follow_fault(250.0, False, 310.0) is None
+
+
+def test_frost_heating_waits_while_the_boiler_reports_its_fault() -> None:
+    """The boiler cannot heat while it reports a fault that stops it: frost heating waits too,
+    and starts again once the fault clears; nothing is reported as frost not warming."""
+    cold = (zone(0.0, temperature=3.0),)
+    steps = fault_steps([(t, True) for t in stepped(0.0, 320.0)], zones=cold)
+    steps.append(inputs(320.0, zones=cold))
+    _state, decisions = run(steps)
+    assert decisions[0].mode is ControlMode.FROST
+    fault = decisions[-2]
+    assert fault.mode is ControlMode.BOILER_FAULT
+    assert fault.command is not None
+    assert not fault.command.ch_enable
+    assert not fault.frost_stuck
+    assert decisions[-1].mode is ControlMode.FROST
+    assert decisions[-1].command is not None
+    assert decisions[-1].command.ch_enable
+
+
+def test_a_fault_shorter_than_five_minutes_changes_nothing() -> None:
+    """Negative: on for 4 min 59 s, then off — heating follows the zones throughout."""
+    readings = [(t, True) for t in (0.0, 60.0, 120.0, 180.0, 240.0, 299.0)] + [(300.0, False)]
+    _state, decisions = run(fault_steps(readings))
+    assert all(d.mode is ControlMode.HEATING for d in decisions)
+    assert all(d.command is not None and d.command.ch_enable for d in decisions)
+
+
+def test_no_fault_signal_mapped_changes_nothing() -> None:
+    """Negative: without a fault signal nothing is known of a fault — heating is decided as
+    usual; an unknown flag counts as no fault, however long."""
+    _state, decisions = run([inputs(t) for t in stepped(0.0, 600.0)])
+    assert all(d.mode is ControlMode.HEATING for d in decisions)
+    assert ControlInputs(now=0.0, enabled=True).boiler_fault is False
+    _state, decisions = run(fault_steps([(t, None) for t in stepped(0.0, 600.0)]))
+    assert all(d.mode is ControlMode.HEATING for d in decisions)
+
+
+def test_a_gateway_fault_flag_counts_only_with_the_fault_indication_on() -> None:
+    """Q3.9: a flag the OpenTherm Gateway reports may be stale — it read the fault details once
+    and never after the fault cleared: it counts only while the boiler's fault indication reads
+    a known "on"; off or unknown, the flag changes nothing."""
+    readings = [(t, True) for t in stepped(0.0, 320.0)]
+    for gate, mode in (
+        (True, ControlMode.BOILER_FAULT),
+        (False, ControlMode.HEATING),
+        (None, ControlMode.HEATING),
+    ):
+        _state, decisions = run(fault_steps(readings, gated=True, gate=gate))
+        assert decisions[-1].mode is mode, gate
+
+
+def test_the_relay_is_switched_off_for_a_boiler_fault() -> None:
+    """On the relay path "off" is the relay off (X8)."""
+    steps = fault_steps([(t, True) for t in stepped(0.0, 320.0)])
+    _state, decisions = run(steps, ON_OFF)
+    assert decisions[-1].mode is ControlMode.BOILER_FAULT
+    assert decisions[-1].command == BoilerCommand(False, None)
+    assert not any(d.hand_back for d in decisions)
+
+
+def test_a_boiler_fault_in_the_recognition_period_takes_nothing() -> None:
+    """Decision 3: in the recognition period nothing new is taken — with a fault and no command
+    held, nothing is written; a command restored after a restart goes out as "off"."""
+    zones = (placeholder("a", 0.0),)
+    _state, [nothing] = run([inputs(0.0, zones=zones, boiler_fault=True)])
+    assert nothing.command is None
+    assert Reason.BOILER_FAULT in nothing.reasons
+    restored = BoilerCommand(True, 45.0)
+    _state, [kept] = run([inputs(0.0, zones=zones, boiler_fault=True, restored_command=restored)])
+    assert kept.command == BoilerCommand(False, 45.0)
+    assert kept.mode is ControlMode.BOILER_FAULT
+    assert not kept.hand_back
+
+
+def test_switched_on_with_the_link_lost_control_shows_handed_back_at_once() -> None:
+    """Y1 (decision 7): an allow-listed alarm active when control is switched on — after the
+    allow-list only the lost boiler link can be — keeps control from writing: mode
+    ``handed_back`` at once, with no latch; it resumes by itself once the link has been fresh
+    for a minute (X2). A stale spell short of a loss only waits."""
+    stale = [inputs(t, enabled=False, boiler_link=False) for t in stepped(0.0, 310.0)]
+    state, decisions = run(stale)
+    assert decisions[-1].link_lost
+    state, [switched_on] = run([inputs(310.0, boiler_link=False)], state=state)
+    assert switched_on.mode is ControlMode.HANDED_BACK
+    assert switched_on.command is None
+    assert not switched_on.hand_back
+    assert not state.latched
+    _state, [short] = run([inputs(0.0, boiler_link=False)])
+    assert short.mode is ControlMode.WAITING_DATA

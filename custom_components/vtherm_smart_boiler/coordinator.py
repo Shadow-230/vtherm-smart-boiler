@@ -12,6 +12,12 @@ With the analysis it judges the lowest water temperature's evidence and shows a 
 never applied (X6, decision 2); the quick path shows what the wall thermostat on a gateway keeps
 after a hand-back. Each has its repair issue, raised here.
 
+Y1's notifications are raised here too, control or not: "add water" below the threshold the user
+took from the boiler's manual, high pressure and hot flue gas at their alarm level held five
+minutes, the pressure trend's "risk of a leak", and the boiler's own fault — repair issues, each
+saying what to do, closing after an hour of known readings in the normal range (the fault's when
+it clears). An alarm that cannot judge holds its state for an hour, then shows unknown (S-16).
+
 The control state — whether the boiler may hold a value of ours, an owed hand-back, latches —
 lives in a store of its own, written at once and atomically; the entry's store keeps a copy.
 One function reads it for every place that asks (``async_read_control_state``): a state that
@@ -67,13 +73,21 @@ from .const import (
 )
 from .control_config import Topology, WritePath, wall_thermostat_applies
 from .core.alarms import (
+    HELD,
     Alarm,
     AlarmKind,
+    Level,
+    Notice,
     banded_alarm,
     circuit_flow,
     circuit_too_hot,
+    fault_counts,
+    fault_holds,
+    follow_fault,
+    follow_notice,
     frequent_starts,
     low_flow,
+    pressure_alarms,
     unstable_ignition,
 )
 from .core.analysis import Analysis, analyse
@@ -106,8 +120,9 @@ from .core.monitor import dhw_inputs
 from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
 from .core.readings import BoilerSnapshot, ZoneState
 from .core.reference_room import ReferenceRoom, select_reference
-from .core.series import Series
+from .core.series import Series, known_duration
 from .core.signal_check import (
+    FAULT_SIGNALS,
     Feature,
     FeatureState,
     SignalHealth,
@@ -121,6 +136,7 @@ from .core.zone_watch import every_zone_unknown_since, issue_due
 from .forecasts import ForecastRecorder
 from .transport.entities import (
     EntityTransport,
+    gateway_signals,
     read_source,
     read_temperature,
     reading_from_state,
@@ -133,6 +149,7 @@ if TYPE_CHECKING:
     from .control import ControlUnit
 
 _LOGGER = logging.getLogger(__name__)
+HOUR = 3600.0
 DAY = 86400.0
 # Decision 3: every configured zone unknown for ten minutes — a repair issue in every mode, the
 # monitor only included; its text follows what control does then (translation keys
@@ -144,7 +161,42 @@ NO_ZONE_KNOWN_ISSUE = "no_zone_known"
 WALL_ISSUE = "wall_thermostat_fallback"
 LOWEST_WATER_ISSUE = "lowest_water_suggestion"
 ZONE_MAX_AGE_S: float | None = None  # one freshness rule: a steady room is not a stale one
+# Y1's notifications: repair issues the plugin raises itself — warnings, not fixable
+# (provisional, K4) — one per cause per entry, each saying what to do. They stay through a reload;
+# the entry's removal takes them.
+ADD_WATER_ISSUE = "add_water"
+PRESSURE_HIGH_ISSUE = "pressure_high"
+FLUE_GAS_HIGH_ISSUE = "flue_gas_high"
+PRESSURE_FALLING_ISSUE = "pressure_falling"
+BOILER_FAULT_ISSUE = "boiler_fault"
+NOTICE_ISSUES = (
+    ADD_WATER_ISSUE,
+    PRESSURE_HIGH_ISSUE,
+    FLUE_GAS_HIGH_ISSUE,
+    PRESSURE_FALLING_ISSUE,
+    BOILER_FAULT_ISSUE,
+)
+# "Add water" closes once the pressure has stayed this far above the threshold (Y1).
+ADD_WATER_CLEAR_BAR = 0.1
+# What a notification says when it is raised without a reading (none known).
+_NOTICE_DEFAULTS: dict[str, dict[str, str]] = {
+    ADD_WATER_ISSUE: {"value": "-", "threshold": "-"},
+    PRESSURE_HIGH_ISSUE: {"value": "-", "limit": "-"},
+    FLUE_GAS_HIGH_ISSUE: {"value": "-", "limit": "-"},
+    PRESSURE_FALLING_ISSUE: {"change": "-"},
+    BOILER_FAULT_ISSUE: {"entity": "-"},
+}
 SAVE_DELAY_S = 120
+
+
+def _bar(value: float | None) -> str:
+    return "-" if value is None else f"{value:.2f}"
+
+
+def _degrees(value: float | None) -> str:
+    return "-" if value is None else f"{value:.0f}"
+
+
 # An emitter factor is recomputed at every update while its zone heats: saved at this pace, so
 # the store is not rewritten every two minutes all winter.
 FACTOR_SAVE_DELAY_S = 15 * 60
@@ -206,7 +258,15 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self.config = config
         # The options this instance runs with: another value of them is what needs a reload.
         self.options: dict[str, Any] = copy.deepcopy(dict(entry.options))
-        self.transport = EntityTransport(hass, config.signals)
+        control = config.control
+        # P-17, Q3.9: the signals the OpenTherm Gateway reports, from the registries, once.
+        gateway = gateway_signals(
+            hass,
+            config.signals,
+            None if control.write_path is None else control.write_path.value,
+            control.confirmed_entity,
+        )
+        self.transport = EntityTransport(hass, config.signals, gateway)
         self.link = VThermLink(hass, config.zone_entities)
         self.history = self._empty_history()
         self.parameters = config.parameters
@@ -235,6 +295,11 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._critical: dict[str, CriticalZone] = {}
         self._alarms: dict[AlarmKind, Alarm] = {}
         self._circuit_alarms: dict[str, Alarm] = {}  # each circuit's too-hot alarm (decision 10)
+        # Y1: since when each mapped fault signal has counted (the notification's own clock;
+        # control keeps its own), the notifications' states, and what each open issue shows.
+        self._fault_since: dict[Signal, float | None] = {}
+        self._notices: dict[str, Notice] = {}
+        self._notice_shown: dict[str, dict[str, str] | None] = {}
         self._analysing = False
         # A lasting failure of a periodic job is logged once, with its trace, and its end once.
         self._failing: set[str] = set()
@@ -285,6 +350,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         ``async_load``)."""
         now = dt_util.utcnow().timestamp()
         await self.link.async_detect()
+        self._restore_notices()
         # Current states seed the history too: without the recorder they are all there is, and
         # an entity that does not change would otherwise never enter it.
         zones = set(self.config.zone_entities)
@@ -684,7 +750,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         history = self.history if history is None else history
         signal = self.transport.signal_of(entity_id)
         if signal is not None:
-            _append(history.signals[signal], t, reading_from_state(signal, state).value)
+            _append(history.signals[signal], t, self.transport.reading_of(signal, state).value)
         if entity_id in history.zones:
             zone = self.link.zone_from_state(entity_id, state)
             series = history.zones[entity_id]
@@ -774,7 +840,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             self.parameters.value(key) is not None
             for key in (ParameterKey.GAS_AT_MIN_POWER, ParameterKey.GAS_AT_MAX_POWER)
         )
-        feature_states = features(mapped, config.weather is not None, has_rates)
         flow = snapshot.number(Signal.FLOW)
         flow_fresh = snapshot.reading(Signal.FLOW).is_fresh(now, self._max_age(Signal.FLOW))
         return_temp = snapshot.number(Signal.RETURN, self._max_age(Signal.RETURN))
@@ -858,6 +923,20 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 self._critical.get(circuit.circuit_id),
             )
 
+        known_zones = [z for z in zone_states.values() if z.is_fresh(now, ZONE_MAX_AGE_S)]
+        feature_states = features(
+            mapped,
+            config.weather is not None,
+            has_rates,
+            add_water=config.monitor.alarms.add_water_below is not None,
+            bypass=config.installation.boiler.bypass,
+            zone_valves=(
+                all(z.valve_open is not None for z in known_zones) if known_zones else None
+            ),
+            zone_data=bool(zone_states),
+            gateway=self.transport.gateway,
+            has_dhw=config.monitor.monitor.has_dhw,
+        )
         self._alarms = self._current_alarms(snapshot, now, list(zone_states.values()))
         self._zones_unknown_since = every_zone_unknown_since(
             self._zones_unknown_since, list(zone_states.values()), now, ZONE_MAX_AGE_S
@@ -869,6 +948,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         alarms = dict(self._alarms)
         if self.analysis is not None:
             alarms.update(self.analysis.trends)
+        self._follow_notices(snapshot, alarms, now)
         wall = self._follow_wall_thermostat(snapshot, now)
         return MonitorData(
             now=now,
@@ -967,19 +1047,22 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     def _current_alarms(
         self, snapshot: BoilerSnapshot, now: float, zones: list[ZoneState]
     ) -> dict[AlarmKind, Alarm]:
+        """The monitor's current alarms, each from readings within their own age limits. What
+        cannot be judged holds its state for an hour, then shows unknown (S-16)."""
         alarms: dict[AlarmKind, Alarm] = {}
         limits = self.config.monitor.alarms
-        pressure = snapshot.number(Signal.PRESSURE, self._max_age(Signal.PRESSURE))
+        previous = self._alarms
         if snapshot.is_mapped(Signal.PRESSURE):
-            for kind, band in (
-                (AlarmKind.PRESSURE_LOW, limits.pressure_low),
-                (AlarmKind.PRESSURE_HIGH, limits.pressure_high),
-            ):
-                alarms[kind] = banded_alarm(kind, pressure, band, self._alarms.get(kind))
+            pressure = snapshot.number(Signal.PRESSURE, self._max_age(Signal.PRESSURE))
+            alarms.update(
+                pressure_alarms(
+                    pressure, limits.add_water_below, limits.pressure_high, previous, now
+                )
+            )
         if snapshot.is_mapped(Signal.FLUE_GAS) and self.config.installation.boiler.condensing:
             flue = snapshot.number(Signal.FLUE_GAS, self._max_age(Signal.FLUE_GAS))
             kind = AlarmKind.FLUE_GAS_HIGH
-            alarms[kind] = banded_alarm(kind, flue, limits.flue_gas, self._alarms.get(kind))
+            alarms[kind] = banded_alarm(kind, flue, limits.flue_gas, previous.get(kind), now)
         # Heating burns only: a combi's short hot-water draws are no ignition problem, and a
         # burn of unknown kind is counted apart (P47).
         options = self.config.monitor.monitor
@@ -990,30 +1073,233 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             for burn in classify_burns(find_burns(flame, now - DAY, now), inputs)
             if burn.kind in CH_KINDS
         ]
-        alarms[AlarmKind.FREQUENT_STARTS] = frequent_starts(burns, now, limits.starts_per_hour)
-        alarms[AlarmKind.UNSTABLE_IGNITION] = unstable_ignition(
+        kind = AlarmKind.FREQUENT_STARTS
+        alarms[kind] = frequent_starts(
+            burns,
+            now,
+            limits.starts_per_hour,
+            previous.get(kind),
+            known_s=known_duration(flame, now - HOUR, now),
+        )
+        kind = AlarmKind.UNSTABLE_IGNITION
+        alarms[kind] = unstable_ignition(
             burns,
             now,
             limit=limits.unstable_burns_per_day,
             demand=self.history.zone_calling(now - DAY, now),
+            # P-81: mapped, the burns the boiler's own hysteresis ends are left out.
+            flow=self.history.signals.get(Signal.FLOW),
+            setpoint=self.history.signals.get(Signal.CH_SETPOINT),
+            previous=previous.get(kind),
+            known_s=known_duration(flame, now - DAY, now),
         )
         too_hot = self._circuit_too_hot(snapshot, now)
         if too_hot is not None:
             alarms[AlarmKind.CIRCUIT_TOO_HOT] = too_hot
         if snapshot.is_mapped(Signal.PUMP_RUNNING) or snapshot.is_mapped(Signal.CH_ACTIVE):
-            pump = snapshot.flag(Signal.PUMP_RUNNING)
+            # Each flag by its own age limit (X2): a stale one is unknown.
+            pump = snapshot.flag(Signal.PUMP_RUNNING, self._max_age(Signal.PUMP_RUNNING))
             if pump is None:
-                pump = snapshot.flag(Signal.CH_ACTIVE)
+                pump = snapshot.flag(Signal.CH_ACTIVE, self._max_age(Signal.CH_ACTIVE))
             alarms[AlarmKind.LOW_FLOW] = low_flow(
                 zones,
                 pump,
                 now,
                 ZONE_MAX_AGE_S,
-                self._alarms.get(AlarmKind.LOW_FLOW),
+                previous.get(AlarmKind.LOW_FLOW),
                 self.dhw_now(snapshot),
                 self.config.installation.boiler.bypass,
+                has_dhw=options.has_dhw,
             )
         return alarms
+
+    # --- Y1: the boiler's own fault, and the notifications ------------------------------
+
+    def fault_flags(self, snapshot: BoilerSnapshot) -> dict[Signal, bool]:
+        """Whether each mapped fault signal of the boiler's counts now (boiler protection): a
+        known "on" within its own age limit — on the OpenTherm Gateway only while the boiler's
+        fault indication reads a known "on" too (Q3.9). Unknown, unavailable or stale counts as
+        no fault. Control and the notification read it alike."""
+        gate = snapshot.flag(Signal.FAULT_INDICATION, self._max_age(Signal.FAULT_INDICATION))
+        return {
+            signal: fault_counts(
+                snapshot.flag(signal, self._max_age(signal)),
+                gated=signal in self.transport.gateway,
+                gate=gate,
+            )
+            for signal in FAULT_SIGNALS
+            if snapshot.is_mapped(signal)
+        }
+
+    def _restore_notices(self) -> None:
+        """At a start: a notification the last run left open (a reload keeps them) goes on, to
+        close by its rule; one whose cause this configuration no longer has goes."""
+        registry = ir.async_get(self.hass)
+        applies = self._notices_that_apply()
+        for key in NOTICE_ISSUES:
+            issue_id = f"{key}_{self.config_entry.entry_id}"
+            found = registry.async_get_issue(DOMAIN, issue_id)
+            if found is None or not found.active:
+                continue
+            if key not in applies:
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+                continue
+            self._notices[key] = Notice(open=True)
+            self._notice_shown[key] = None  # shown, with what it said then
+
+    def _notices_that_apply(self) -> set[str]:
+        """The notifications this configuration can raise."""
+        config = self.config
+        found: set[str] = set()
+        if Signal.PRESSURE in config.signals:
+            found.add(PRESSURE_HIGH_ISSUE)
+            if config.monitor.alarms.add_water_below is not None:
+                found.add(ADD_WATER_ISSUE)
+            if Signal.FLAME in config.signals and Signal.FLOW in config.signals:
+                found.add(PRESSURE_FALLING_ISSUE)
+        if Signal.FLUE_GAS in config.signals and config.installation.boiler.condensing:
+            found.add(FLUE_GAS_HIGH_ISSUE)
+        if any(signal in config.signals for signal in FAULT_SIGNALS):
+            found.add(BOILER_FAULT_ISSUE)
+        return found
+
+    def _follow_notices(
+        self, snapshot: BoilerSnapshot, alarms: dict[AlarmKind, Alarm], now: float
+    ) -> None:
+        """Y1's notifications. "Add water", high pressure and hot flue gas open at their alarm
+        level — held five minutes of known readings, hot-water draws included — and close
+        after an hour of known readings in the normal range: above the threshold + 0.1 bar;
+        below the warning limit less its hysteresis. The trend's opens while it is exceeded and
+        closes after an hour of it not. An unknown reading keeps an open one open. The boiler's
+        fault opens once it has counted five minutes and closes when it no longer counts. Only
+        information: none changes control."""
+        limits = self.config.monitor.alarms
+        applies = self._notices_that_apply()
+        pressure = snapshot.number(Signal.PRESSURE, self._max_age(Signal.PRESSURE))
+        flue = snapshot.number(Signal.FLUE_GAS, self._max_age(Signal.FLUE_GAS))
+        threshold = limits.add_water_below
+        high, gas = limits.pressure_high, limits.flue_gas
+
+        def above(value: float | None, limit: float) -> bool | None:
+            return None if value is None else value > limit
+
+        def below(value: float | None, limit: float) -> bool | None:
+            return None if value is None else value < limit
+
+        banded: list[tuple[str, AlarmKind, bool | None, dict[str, str]]] = []
+        if threshold is not None:
+            banded.append(
+                (
+                    ADD_WATER_ISSUE,
+                    AlarmKind.PRESSURE_LOW,
+                    above(pressure, threshold + ADD_WATER_CLEAR_BAR),
+                    {"value": _bar(pressure), "threshold": f"{threshold:.1f}"},
+                )
+            )
+        for key, kind, band, value, shown in (
+            (PRESSURE_HIGH_ISSUE, AlarmKind.PRESSURE_HIGH, high, pressure, _bar),
+            (FLUE_GAS_HIGH_ISSUE, AlarmKind.FLUE_GAS_HIGH, gas, flue, _degrees),
+        ):
+            if band.warning is None or band.alarm is None:
+                continue
+            limit = f"{band.alarm:.1f}" if shown is _bar else f"{band.alarm:.0f}"
+            banded.append(
+                (
+                    key,
+                    kind,
+                    below(value, band.warning - band.hysteresis),
+                    {"value": shown(value), "limit": limit},
+                )
+            )
+        for key, kind, normal, placeholders in banded:
+            if key not in applies:
+                continue
+            alarm = alarms.get(kind)
+            raised = (
+                alarm is not None
+                and alarm.active is True
+                and alarm.level is Level.ALARM
+                and alarm.reason != HELD
+            )
+            self._follow_notice(key, raised, normal, now, placeholders)
+        if PRESSURE_FALLING_ISSUE in applies:
+            trend = alarms.get(AlarmKind.PRESSURE_FALLING)
+            judged = trend is not None and trend.active is not None and trend.reason != HELD
+            exceeded = judged and trend is not None and trend.active is True
+            change = None if trend is None else trend.value
+            self._follow_notice(
+                PRESSURE_FALLING_ISSUE,
+                exceeded,
+                (not exceeded) if judged else None,
+                now,
+                {"change": "-" if change is None else f"{abs(change):.2f}"},
+            )
+        if BOILER_FAULT_ISSUE in applies:
+            self._follow_fault_notice(snapshot, now)
+
+    def _follow_notice(
+        self,
+        key: str,
+        raised: bool,
+        normal: bool | None,
+        now: float,
+        placeholders: dict[str, str],
+    ) -> None:
+        notice = follow_notice(self._notices.get(key, Notice()), raised, normal, now)
+        self._notices[key] = notice
+        # What it says is what raised it: kept while it counts down in the normal range.
+        self._show_notice(key, notice.open, placeholders if raised else None)
+
+    def _follow_fault_notice(self, snapshot: BoilerSnapshot, now: float) -> None:
+        """The boiler's own fault (boiler protection): the notification once a fault has
+        counted for five minutes, naming the fault signals that count; gone the moment none
+        does — an unknown one counts as none. Without control configured it opens all the
+        same; nothing is written then."""
+        flags = self.fault_flags(snapshot)
+        self._fault_since = {
+            signal: follow_fault(self._fault_since.get(signal), on, now)
+            for signal, on in flags.items()
+        }
+        counting = [signal for signal, on in flags.items() if on]
+        held = any(fault_holds(since, now) for since in self._fault_since.values())
+        notice = self._notices.get(BOILER_FAULT_ISSUE, Notice())
+        open_ = held or (notice.open and bool(counting))
+        self._notices[BOILER_FAULT_ISSUE] = Notice(open=open_)
+        names = ", ".join(self._entity_name(self.config.signals[s]) for s in counting) or "-"
+        self._show_notice(BOILER_FAULT_ISSUE, open_, {"entity": names} if counting else None)
+
+    def _entity_name(self, entity_id: str) -> str:
+        state = self.hass.states.get(entity_id)
+        name = state.name if state is not None else None
+        return f"{name} ({entity_id})" if name and name != entity_id else entity_id
+
+    def _show_notice(self, key: str, open_: bool, placeholders: dict[str, str] | None) -> None:
+        """The notification's repair issue: raised, updated when what it says changes, or
+        deleted. ``placeholders`` ``None``: what it shows stays."""
+        issue_id = f"{key}_{self.config_entry.entry_id}"
+        shown = key in self._notice_shown
+        if not open_:
+            if shown:
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+                del self._notice_shown[key]
+            return
+        if placeholders is None:
+            if shown:
+                return
+            placeholders = _NOTICE_DEFAULTS[key]
+        if shown and self._notice_shown[key] == placeholders:
+            return
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=key,
+            translation_placeholders=placeholders,
+        )
+        self._notice_shown[key] = placeholders
 
     def _circuit_too_hot(self, snapshot: BoilerSnapshot, now: float) -> Alarm | None:
         """Decision 10: a circuit's water above its alarm temperature for its time — information
@@ -1148,6 +1434,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 days,
                 tuple(self.daily.values()),
                 self.settings_key,
+                # A trend that cannot be judged now keeps its last state for an hour (S-16).
+                None if self.analysis is None else dict(self.analysis.trends),
             )
             if self._stopped:
                 return  # a reload came meanwhile: the new installation analyses for itself

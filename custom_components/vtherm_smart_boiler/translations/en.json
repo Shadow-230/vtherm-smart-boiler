@@ -32,7 +32,10 @@
           "room_setpoint": "Wired thermostat setpoint",
           "room_temperature": "Wired thermostat room temperature",
           "weather": "Weather entity",
-          "boiler_power": "Boiler electric power"
+          "boiler_power": "Boiler electric power",
+          "low_pressure_fault": "Boiler's low-water-pressure fault",
+          "boiler_lockout": "Boiler lockout (a fault that stops the boiler)",
+          "fault_indication": "Boiler fault indication"
         },
         "data_description": {
           "flame": "On while the burner burns. Every burner-cycle metric comes from it: the wrong entity gives wrong starts and burn times.",
@@ -40,7 +43,7 @@
           "return": "Water coming back to the boiler. Enables the condensing share; without it condensing cannot be judged. The wrong entity gives a wrong condensing share.",
           "modulation": "Burner modulation in percent. With the boiler's power range it estimates heat output and gas use. A sensor in another unit is refused.",
           "dhw_active": "On while the boiler heats domestic hot water. Without it DHW runs are inferred with less certainty and some may count as heating; with control, hot-water charging is then less sure to pause learning.",
-          "pressure": "Enables the pressure alarms and the falling-pressure warning. The wrong entity gives false alarms or none.",
+          "pressure": "Enables the high-pressure and \"add water\" notifications and the falling-pressure warning. From an OpenTherm Gateway a reading of 0 bar counts as unknown (the gateway shows 0 after a restart); from any other sensor it is a reading. The wrong entity gives false alarms or none.",
           "outdoor": "The boiler's own outdoor sensor. Used for degree-days, for control's curve, and checked against the weather entity: one found stuck or far off is left out of the curve. A wrong sensor bends the curve until the check catches it.",
           "ch_setpoint": "The flow setpoint the boiler works to, a temperature. Helps tell DHW runs from heating.",
           "ch_active": "On while the boiler heats the rooms. Helps tell DHW from heating when there is no DHW signal.",
@@ -50,7 +53,10 @@
           "room_setpoint": "The room setpoint of a wall thermostat on the gateway, from the thermostat's side — e.g. \"Room setpoint 1\" on the gateway's thermostat device, or the firmware's TrSet_thermostat with separate sources on; not the gateway's climate target. Shown as the temperature the wall thermostat keeps after a hand-back.",
           "room_temperature": "The room temperature a wired thermostat sends to the boiler, if there is one. Recorded for the assessment.",
           "weather": "Its forecasts are recorded for later forecast features, and its temperature stands in for a missing or suspect outdoor sensor — for degree-days and control's curve. No data leaves your Home Assistant.",
-          "boiler_power": "Optional: the boiler's electric power, e.g. from a plug that measures it; used only as proof that a relay-driven boiler heats."
+          "boiler_power": "Optional: the boiler's electric power, e.g. from a plug that measures it; used only as proof that a relay-driven boiler heats.",
+          "low_pressure_fault": "Optional: the boiler's own low-water-pressure fault, e.g. the gateway's \"Low water pressure\" on its boiler device. While it reads on for 5 minutes, control switches heating off — without handing the boiler back — and on again when it clears, as the boiler itself does. Unknown or unavailable counts as no fault. Pick only the boiler's own report: a wrong pick stops heating while the boiler could heat. On an OpenTherm Gateway it counts only while the boiler's fault indication (below) is on: the gateway reads the fault details only when a fault appears, and shows them unknown after a restart until the next fault.",
+          "boiler_lockout": "Optional: a fault your boiler's manual says stops the boiler (a lockout); not a general fault or service indication, which would stop heating needlessly — on some boilers even the fault indication is only a warning. While it reads on for 5 minutes, control switches heating off — without handing the boiler back — and on again when it clears, as the boiler itself does. Unknown or unavailable counts as no fault. Pick only the boiler's own report: a wrong pick stops heating while the boiler could heat. EMS-ESP has no such signal: it needs a template binary sensor built from your boiler's service codes. On an OpenTherm Gateway a fault detail such as \"Gas fault\" counts only while the boiler's fault indication (below) is on; its \"Fault indication\" itself, picked here, counts alone.",
+          "fault_indication": "Optional: the boiler's general fault indication, e.g. the gateway's \"Fault indication\" on its boiler device. It stops nothing by itself. On an OpenTherm Gateway the two fault signals above count only while it reads on — the gateway reads their details once per new fault and never after it clears, so alone they could keep heating off after the boiler has recovered; without it they are not used there. Elsewhere it is not needed."
         }
       },
       "boiler": {
@@ -182,8 +188,7 @@
           "monitoring_days": "Monitoring period",
           "near_room_k": "Near room temperature",
           "foreign_heat_hold_min": "Foreign heat hold",
-          "pressure_low_warning": "Low pressure warning",
-          "pressure_low_alarm": "Low pressure alarm",
+          "add_water_below": "Add water below",
           "pressure_high_warning": "High pressure warning",
           "pressure_high_alarm": "High pressure alarm",
           "flue_gas_warning": "Flue gas warning",
@@ -198,10 +203,9 @@
           "monitoring_days": "Days of data before the verdict is given, and later before control can be enabled. Default 7; shorter is not allowed.",
           "near_room_k": "Water within this of the room counts as no hot water, in K. Default 3. Larger says 'no hot water' sooner.",
           "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60. Longer keeps learning paused longer after a fire.",
-          "pressure_low_warning": "Pressure below this raises a warning, in bar. Default 1.0. Take the value from your boiler's manual: too low warns too late.",
-          "pressure_low_alarm": "Pressure below this raises an alarm, in bar. Default 0.7. Must be below the warning.",
+          "add_water_below": "Optional: below this pressure you are told to add water, in bar — take it from your boiler's manual (its minimum operating pressure). Empty by default: no notification. It only informs; heating stops only while the boiler itself reports a fault that stops it. Too low tells you late; too high tells you while the pressure is fine.",
           "pressure_high_warning": "Pressure above this raises a warning, in bar. Default 2.5. Too high warns too late.",
-          "pressure_high_alarm": "Pressure above this raises an alarm, in bar. Default 2.8, below a typical 3 bar safety valve. Must be above the warning.",
+          "pressure_high_alarm": "Pressure above this raises an alarm, in bar, and a notification after 5 minutes. Default 2.8, below your safety valve's rating, read on the valve (often 3 bar in Europe, about 2.1 bar / 30 psi in North America). Must be above the warning.",
           "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C. Too high warns too late.",
           "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
           "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12. Too high hides short-cycling.",
@@ -294,7 +298,10 @@
           "room_setpoint": "Wired thermostat setpoint",
           "room_temperature": "Wired thermostat room temperature",
           "weather": "Weather entity",
-          "boiler_power": "Boiler electric power"
+          "boiler_power": "Boiler electric power",
+          "low_pressure_fault": "Boiler's low-water-pressure fault",
+          "boiler_lockout": "Boiler lockout (a fault that stops the boiler)",
+          "fault_indication": "Boiler fault indication"
         },
         "data_description": {
           "flame": "On while the burner burns. Every burner-cycle metric comes from it: the wrong entity gives wrong starts and burn times.",
@@ -302,7 +309,7 @@
           "return": "Water coming back to the boiler. Enables the condensing share; without it condensing cannot be judged. The wrong entity gives a wrong condensing share.",
           "modulation": "Burner modulation in percent. With the boiler's power range it estimates heat output and gas use. A sensor in another unit is refused.",
           "dhw_active": "On while the boiler heats domestic hot water. Without it DHW runs are inferred with less certainty and some may count as heating; with control, hot-water charging is then less sure to pause learning.",
-          "pressure": "Enables the pressure alarms and the falling-pressure warning. The wrong entity gives false alarms or none.",
+          "pressure": "Enables the high-pressure and \"add water\" notifications and the falling-pressure warning. From an OpenTherm Gateway a reading of 0 bar counts as unknown (the gateway shows 0 after a restart); from any other sensor it is a reading. The wrong entity gives false alarms or none.",
           "outdoor": "The boiler's own outdoor sensor. Used for degree-days, for control's curve, and checked against the weather entity: one found stuck or far off is left out of the curve. A wrong sensor bends the curve until the check catches it.",
           "ch_setpoint": "The flow setpoint the boiler works to, a temperature. Helps tell DHW runs from heating.",
           "ch_active": "On while the boiler heats the rooms. Helps tell DHW from heating when there is no DHW signal.",
@@ -312,7 +319,10 @@
           "room_setpoint": "The room setpoint of a wall thermostat on the gateway, from the thermostat's side — e.g. \"Room setpoint 1\" on the gateway's thermostat device, or the firmware's TrSet_thermostat with separate sources on; not the gateway's climate target. Shown as the temperature the wall thermostat keeps after a hand-back.",
           "room_temperature": "The room temperature a wired thermostat sends to the boiler, if there is one. Recorded for the assessment.",
           "weather": "Its forecasts are recorded for later forecast features, and its temperature stands in for a missing or suspect outdoor sensor — for degree-days and control's curve. No data leaves your Home Assistant.",
-          "boiler_power": "Optional: the boiler's electric power, e.g. from a plug that measures it; used only as proof that a relay-driven boiler heats."
+          "boiler_power": "Optional: the boiler's electric power, e.g. from a plug that measures it; used only as proof that a relay-driven boiler heats.",
+          "low_pressure_fault": "Optional: the boiler's own low-water-pressure fault, e.g. the gateway's \"Low water pressure\" on its boiler device. While it reads on for 5 minutes, control switches heating off — without handing the boiler back — and on again when it clears, as the boiler itself does. Unknown or unavailable counts as no fault. Pick only the boiler's own report: a wrong pick stops heating while the boiler could heat. On an OpenTherm Gateway it counts only while the boiler's fault indication (below) is on: the gateway reads the fault details only when a fault appears, and shows them unknown after a restart until the next fault.",
+          "boiler_lockout": "Optional: a fault your boiler's manual says stops the boiler (a lockout); not a general fault or service indication, which would stop heating needlessly — on some boilers even the fault indication is only a warning. While it reads on for 5 minutes, control switches heating off — without handing the boiler back — and on again when it clears, as the boiler itself does. Unknown or unavailable counts as no fault. Pick only the boiler's own report: a wrong pick stops heating while the boiler could heat. EMS-ESP has no such signal: it needs a template binary sensor built from your boiler's service codes. On an OpenTherm Gateway a fault detail such as \"Gas fault\" counts only while the boiler's fault indication (below) is on; its \"Fault indication\" itself, picked here, counts alone.",
+          "fault_indication": "Optional: the boiler's general fault indication, e.g. the gateway's \"Fault indication\" on its boiler device. It stops nothing by itself. On an OpenTherm Gateway the two fault signals above count only while it reads on — the gateway reads their details once per new fault and never after it clears, so alone they could keep heating off after the boiler has recovered; without it they are not used there. Elsewhere it is not needed."
         }
       },
       "freshness": {
@@ -334,7 +344,10 @@
           "room_setpoint": "Wired thermostat setpoint",
           "room_temperature": "Wired thermostat room temperature",
           "weather": "Weather entity",
-          "boiler_power": "Boiler electric power"
+          "boiler_power": "Boiler electric power",
+          "low_pressure_fault": "Boiler's low-water-pressure fault",
+          "boiler_lockout": "Boiler lockout",
+          "fault_indication": "Boiler fault indication"
         }
       },
       "boiler": {
@@ -466,8 +479,7 @@
           "monitoring_days": "Monitoring period",
           "near_room_k": "Near room temperature",
           "foreign_heat_hold_min": "Foreign heat hold",
-          "pressure_low_warning": "Low pressure warning",
-          "pressure_low_alarm": "Low pressure alarm",
+          "add_water_below": "Add water below",
           "pressure_high_warning": "High pressure warning",
           "pressure_high_alarm": "High pressure alarm",
           "flue_gas_warning": "Flue gas warning",
@@ -482,10 +494,9 @@
           "monitoring_days": "Days of data before the verdict is given, and later before control can be enabled. Default 7; shorter is not allowed.",
           "near_room_k": "Water within this of the room counts as no hot water, in K. Default 3. Larger says 'no hot water' sooner.",
           "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60. Longer keeps learning paused longer after a fire.",
-          "pressure_low_warning": "Pressure below this raises a warning, in bar. Default 1.0. Take the value from your boiler's manual: too low warns too late.",
-          "pressure_low_alarm": "Pressure below this raises an alarm, in bar. Default 0.7. Must be below the warning.",
+          "add_water_below": "Optional: below this pressure you are told to add water, in bar — take it from your boiler's manual (its minimum operating pressure). Empty by default: no notification. It only informs; heating stops only while the boiler itself reports a fault that stops it. Too low tells you late; too high tells you while the pressure is fine.",
           "pressure_high_warning": "Pressure above this raises a warning, in bar. Default 2.5. Too high warns too late.",
-          "pressure_high_alarm": "Pressure above this raises an alarm, in bar. Default 2.8, below a typical 3 bar safety valve. Must be above the warning.",
+          "pressure_high_alarm": "Pressure above this raises an alarm, in bar, and a notification after 5 minutes. Default 2.8, below your safety valve's rating, read on the valve (often 3 bar in Europe, about 2.1 bar / 30 psi in North America). Must be above the warning.",
           "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C. Too high warns too late.",
           "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
           "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12. Too high hides short-cycling.",
@@ -510,7 +521,7 @@
           "topology": "How the gateway sits between thermostat and boiler. With a thermostat: on hand-back the thermostat takes over. Stand-alone, without a thermostat: on hand-back, and whenever Home Assistant stops for more than about a minute, the boiler stops heating. Monitor mode: the gateway only listens and control is not possible. Virtual: a controller on the Home Assistant side, e.g. ESPHome, drives the boiler. Required; declare it as it is — the plugin never changes the gateway's mode. A lost link to the boiler's data raises an alarm and hands back in every topology — stand-alone, heating stops until the data returns. With a thermostat: while the plugin controls, the wall thermostat's heating setting and its off switch do nothing — its hot-water settings still work; after a hand-back, or while Home Assistant is down, it heats by its own setting and program, so keep them at what the house should get. Not used with a relay: its state after hand-back is what a hand-back does.",
           "thermostat_kind": "Only for a gateway, with a thermostat or stand-alone. OpenTherm thermostat: it talks to the boiler and may show the water temperature. On/off contact: a simple thermostat or switch on two wires — the gateway turns it into a heating request, and the plugin's \"heating off\" would block it after a Home Assistant crash, so control is not offered. Nothing: no thermostat at all. I don't know: control is not offered until you check. With a thermostat pick OpenTherm; stand-alone pick Nothing.",
           "confirmed_entity": "The entity that reports the setpoint the boiler received, e.g. the gateway's \"Control setpoint 1\" on its boiler device — it shows what the gateway sends, so the setpoint is shown as confirmed by the gateway, not by the boiler. Required: every write is checked against it, and a write the boiler ignores or another controller overwrites is reported. The plugin's setpoint entity shows only a confirmed value, otherwise unknown. Picking the entity you write confirms nothing: the setpoint is then shown as unverified. Not used with a relay: its own state confirms it.",
-          "ch_confirmed_entity": "Optional: an entity that reports whether the boiler receives heating enabled — e.g. the gateway's \"Central heating 1\" on its boiler device, which shows what the gateway sends to the boiler. With it, heating on/off is checked like the setpoint: a switch the boiler ignores is reported, and one another controller changes is written again once, then every write stops. Without it, heating on/off is shown as unverified and another controller switching it goes unnoticed. Picking the entity you write, or the thermostat's request instead of what the boiler receives, confirms nothing or stops control.",
+          "ch_confirmed_entity": "Optional: an entity that reports whether the boiler receives heating enabled — e.g. the gateway's \"Central heating 1\" on its boiler device that reads On/Off: what the gateway sends. Not the one that reads Running/Not running: that is the boiler's own status, which goes off during hot water and would look like another controller. With it, heating on/off is checked like the setpoint: a switch the boiler ignores is reported, and one another controller changes is written again once, then every write stops. Without it, heating on/off is shown as unverified and another controller switching it goes unnoticed. Picking the entity you write, or the thermostat's request instead of what the boiler receives, confirms nothing or stops control.",
           "thermostat_setpoint_entity": "Optional, for a gateway with an OpenTherm thermostat: the water temperature the thermostat itself asks for (with opentherm_gw, the thermostat device's \"Control setpoint 1\"), not the boiler's read-back. When the boiler falls back to it after an outage, the plugin sends its command again instead of taking it for another controller. Empty (default): only the value from before the plugin counts.",
           "restart_entity": "Optional: a sensor of the gateway or boiler interface that shows its restarts — an uptime that starts again from a low value, a restart counter that goes up, or a boot time (for example the OTGW firmware's reboot count, or an EMS-ESP or ESPHome uptime sensor). A restart it shows counts for 5 minutes as a trace of an outage: the boiler falling back to its own value then is taken as a lost command and simply sent again. Empty (default): a restart is seen only when the device's entities go unavailable, and a quick restart that shows nothing is judged as a fall-back without a trace — the first within an hour is still sent again, but a second may be taken for another controller, and the plugin steps aside."
         }
@@ -625,33 +636,13 @@
       },
       "control_alarms": {
         "title": "Alarm reactions",
-        "description": "What control does while an alarm is active: information only, or hand control back to the boiler until you switch control off and on again. Another controller writing to the boiler always makes the plugin step aside; it never fights it. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "What control does when the boiler ignores a value the plugin writes. Other alarms only inform; the plugin stops heating only while the boiler itself reports a fault that stops it. Another controller writing to the boiler always makes the plugin step aside; it never fights it. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
-          "pressure_low": "Low pressure",
-          "pressure_high": "High pressure",
-          "flue_gas_high": "High flue gas temperature",
-          "frequent_starts": "Frequent starts",
-          "unstable_ignition": "Unstable ignition",
-          "pressure_falling": "Pressure falling",
-          "flue_gas_rising": "Flue gas rising",
-          "hysteresis_drift": "Hysteresis drifting",
-          "low_flow": "Low flow",
-          "write_failed": "Write failed",
-          "write_ignored": "Boiler ignores the setpoint",
+          "write_ignored": "Boiler ignores a value",
           "return_after_outside_change": "Return by itself after another controller"
         },
         "data_description": {
-          "pressure_low": "Default: information only.",
-          "pressure_high": "Default: information only.",
-          "flue_gas_high": "Default: information only.",
-          "frequent_starts": "Default: information only.",
-          "unstable_ignition": "Default: information only.",
-          "pressure_falling": "Default: information only.",
-          "flue_gas_rising": "Default: information only.",
-          "hysteresis_drift": "Default: information only.",
-          "low_flow": "Default: information only.",
-          "write_failed": "Default: information only.",
-          "write_ignored": "Default: information only.",
+          "write_ignored": "Offered only where a hand-back returns the boiler to a thermostat or to its own control. Hand back: after the boiler ignores a write, control steps aside until you switch it off and on, and the thermostat or the boiler's own control heats meanwhile. Information (default): the plugin keeps trying and tells you. If the boiler ignores \"heating off\" from the start, control always stops and hands the boiler back, whatever you choose here.",
           "return_after_outside_change": "Off (default): after another controller changed the boiler twice, the plugin hands the boiler back and steps aside until you switch control off and on. On: it takes the boiler back by itself after an hour in which nothing else wrote to it. Risk: if the other controller only pauses, the two take turns; with a thermostat that keeps changing its request, the hour never passes."
         }
       },
@@ -1160,7 +1151,8 @@
           "heating": "Heating",
           "idle": "Idle",
           "frost": "Frost protection",
-          "fallback": "Fallback setpoint"
+          "fallback": "Fallback setpoint",
+          "boiler_fault": "Boiler fault: heating off"
         },
         "state_attributes": {
           "heating_confirmation": {
@@ -1272,6 +1264,13 @@
               "warning": "Warning",
               "alarm": "Alarm"
             }
+          },
+          "reason": {
+            "name": "Why not judged",
+            "state": {
+              "held": "Held: its input is unknown for now (up to an hour)",
+              "unknown_input": "Unknown: its input is missing or not enough"
+            }
           }
         }
       },
@@ -1283,6 +1282,13 @@
             "state": {
               "warning": "Warning",
               "alarm": "Alarm"
+            }
+          },
+          "reason": {
+            "name": "Why not judged",
+            "state": {
+              "held": "Held: its input is unknown for now (up to an hour)",
+              "unknown_input": "Unknown: its input is missing or not enough"
             }
           }
         }
@@ -1296,6 +1302,13 @@
               "warning": "Warning",
               "alarm": "Alarm"
             }
+          },
+          "reason": {
+            "name": "Why not judged",
+            "state": {
+              "held": "Held: its input is unknown for now (up to an hour)",
+              "unknown_input": "Unknown: its input is missing or not enough"
+            }
           }
         }
       },
@@ -1307,6 +1320,13 @@
             "state": {
               "warning": "Warning",
               "alarm": "Alarm"
+            }
+          },
+          "reason": {
+            "name": "Why not judged",
+            "state": {
+              "held": "Held: its input is unknown for now (up to an hour)",
+              "unknown_input": "Unknown: its input is missing or not enough"
             }
           }
         }
@@ -1320,6 +1340,13 @@
               "warning": "Warning",
               "alarm": "Alarm"
             }
+          },
+          "reason": {
+            "name": "Why not judged",
+            "state": {
+              "held": "Held: its input is unknown for now (up to an hour)",
+              "unknown_input": "Unknown: its input is missing or not enough"
+            }
           }
         }
       },
@@ -1331,6 +1358,13 @@
             "state": {
               "warning": "Warning",
               "alarm": "Alarm"
+            }
+          },
+          "reason": {
+            "name": "Why not judged",
+            "state": {
+              "held": "Held: its input is unknown for now (up to an hour)",
+              "unknown_input": "Unknown: its input is missing or not enough"
             }
           }
         }
@@ -1344,6 +1378,13 @@
               "warning": "Warning",
               "alarm": "Alarm"
             }
+          },
+          "reason": {
+            "name": "Why not judged",
+            "state": {
+              "held": "Held: its input is unknown for now (up to an hour)",
+              "unknown_input": "Unknown: its input is missing or not enough"
+            }
           }
         }
       },
@@ -1355,6 +1396,14 @@
             "state": {
               "warning": "Warning",
               "alarm": "Alarm"
+            }
+          },
+          "reason": {
+            "name": "Why not judged",
+            "state": {
+              "held": "Held: its input is unknown for now (up to an hour)",
+              "unknown_input": "Unknown: its input is missing or not enough",
+              "no_zone_data": "No zone data"
             }
           }
         }
@@ -1390,7 +1439,9 @@
               "zone_without_valve": "A zone without a valve opening",
               "no_fresh_zone": "No zone reports",
               "hot_water": "Hot water is heated",
-              "bypass": "A bypass keeps water flowing"
+              "bypass": "A bypass keeps water flowing",
+              "held": "Held: its input is unknown for now (up to an hour)",
+              "hot_water_unknown": "Hot water not known on a boiler with hot water"
             }
           }
         }
@@ -1409,7 +1460,8 @@
             "name": "Why not judged",
             "state": {
               "no_flow_reading": "No flow reading",
-              "circuit_not_measured": "The circuit's own flow is not measured"
+              "circuit_not_measured": "The circuit's own flow is not measured",
+              "held": "Held: its input is unknown for now (up to an hour)"
             }
           }
         }
@@ -1532,6 +1584,12 @@
             "state": {
               "controlled_without_confirmation": "Controlled without confirmation",
               "without_heat_confirmation": "Controlled without confirmation that the boiler heats"
+            }
+          },
+          "blocked_by": {
+            "name": "Blocked by",
+            "state": {
+              "boiler_link_lost": "Boiler link lost: control waits until it has been back for a minute"
             }
           }
         }
@@ -1782,11 +1840,27 @@
     },
     "control_latched": {
       "title": "Control stepped aside: another controller writes to the boiler",
-      "description": "Another controller changed what the plugin writes to the boiler again after the plugin had written its value back once, so the plugin stepped aside and does not fight it. It handed the boiler back safely: first the lowest water temperature, then heating on where a thermostat or the boiler's own control takes over, then the release — this wrote over the other controller's value once, briefly. With a thermostat, the thermostat keeps heating; without one, the boiler heats only under the other controller. To give control back to the plugin, stop the other controller, then switch control off and on. If \"Return by itself after another controller\" is on, control also comes back on its own after an hour in which nothing else wrote to the boiler (not for relays)."
+      "description": "Another controller changed what the plugin writes to the boiler again after the plugin had written its value back once — it saw {value} on {target}, which the plugin had not written — so the plugin stepped aside and does not fight it. It handed the boiler back safely: first the lowest water temperature, then heating on where a thermostat or the boiler's own control takes over, then the release — this wrote over the other controller's value once, briefly. With a thermostat or the boiler's own control, it keeps heating; without one, the boiler heats only under the other controller. To give control back to the plugin, stop the other controller, then switch control off and on. If \"Return by itself after another controller\" is on, control also comes back on its own after an hour in which nothing else wrote to the boiler (not for relays)."
     },
     "control_latched_heating_off_ignored": {
       "title": "Control stopped: the boiler does not take \"heating off\"",
-      "description": "From the start of the session the boiler did not take the plugin's \"heating off\", so the plugin could not switch heating off. Control stopped and handed the boiler back safely: first the lowest water temperature, then heating on where a thermostat or the boiler's own control takes over, then the release. Check the heating switch picked in the options and the boiler's settings, then switch control off and on. The monitor keeps running."
+      "description": "From the start of the session the boiler did not take the plugin's \"heating off\": the plugin could not switch heating off, so it handed the boiler back safely — first the lowest water temperature, then heating on where a thermostat or the boiler's own control takes over, then the release. Where a thermostat or the boiler's own control takes over, it heats now; where a hand-back stops heating, the boiler does not heat until control resumes. Check the heating switch picked in the options and the boiler's settings, then switch control off and on. The monitor keeps running."
+    },
+    "control_latched_write_ignored": {
+      "title": "Control handed back: the boiler ignores a value the plugin writes",
+      "description": "The boiler did not take a value the plugin wrote — the alarm \"Boiler ignores a value\" names which — and you set that alarm to hand back. Control handed the boiler back safely: first the lowest water temperature, then heating on, then the release; the thermostat or the boiler's own control heats now. Check the entity picked in the options and the boiler's settings (a value outside its range, a setting that locks it), then switch control off and on to take the boiler back."
+    },
+    "control_latched_other": {
+      "title": "Control stays handed back after an earlier alarm",
+      "description": "An earlier version of the plugin handed the boiler back for an alarm that now only informs ({alarm}), and control stays handed back until you switch it off and on. Where a thermostat or the boiler's own control takes over, it heats now; where a hand-back stops heating, the boiler does not heat until control resumes. Check the alarm, then switch control off and on to take the boiler back."
+    },
+    "hand_back_boiler_link_lost": {
+      "title": "Control handed the boiler back: its data is lost",
+      "description": "The boiler's flame or flow reading was not fresh for 5 minutes within 10, so control stopped writing and handed the boiler back — nothing is written without fresh data. Where a thermostat or the boiler's own control takes over, it heats now; where a hand-back stops heating, the boiler does not heat until control resumes. Control resumes by itself once the data has been fresh for a minute. Check the gateway or device, its connection and the entities picked as flame and flow."
+    },
+    "hand_back_control_error": {
+      "title": "Control stopped after an internal error",
+      "description": "An error in the plugin stopped control, and it handed the boiler back — the log has the details. Where a thermostat or the boiler's own control takes over, it heats now; where a hand-back stops heating, the boiler does not heat until control resumes. Control stays stopped until you switch it off and on; if the error comes back, report it with the log."
     },
     "no_zone_known_off": {
       "title": "Versatile Thermostat gives no answer: the boiler is not heating",
@@ -1863,6 +1937,30 @@
     "control_latched_relay_heating_off_ignored": {
       "title": "Control stopped: the relay does not take \"off\"",
       "description": "From the start of the session {relay} did not take the plugin's \"off\": the boiler may keep heating, as the relay does not switch off. Control stopped; the relay was set once to its state after hand-back, which cannot be relied on either. Check the relay and the entity picked in the options, then switch control off and on. The monitor keeps running."
+    },
+    "add_water": {
+      "title": "Heating water pressure is low — add water",
+      "description": "The pressure is {value} bar, below the {threshold} bar you set from the boiler's manual. Add water with the filling tap as the manual describes, watching the boiler's gauge, then close the tap. If it keeps falling, look for a leak. Heating carries on; the boiler stops by itself if the pressure falls too far."
+    },
+    "pressure_high": {
+      "title": "Heating water pressure is high",
+      "description": "The pressure is {value} bar, above your alarm limit of {limit} bar. Your limit must be below the safety valve's rating, printed on the valve. Check that the filling tap is closed. To lower the pressure, switch the heating off and let the system cool, then let a little water out at a radiator's bleed valve until the gauge shows the cold pressure from the manual. If the pressure jumps each time the heating runs, have the expansion vessel checked; on a combi boiler, if it creeps up on its own, have the heat exchanger checked. Heating carries on."
+    },
+    "flue_gas_high": {
+      "title": "Flue gas too hot",
+      "description": "The flue gas is {value} °C, above your alarm limit of {limit} °C. Book a boiler service: heat exchanger, flue and condensate pipe, water circulation. The boiler's own flue protection may turn it down or lock it out. Heating carries on."
+    },
+    "pressure_falling": {
+      "title": "Heating water pressure keeps falling",
+      "description": "Your pressure keeps falling — there is a risk of a leak. Over the last days it fell by {change} bar, with the water temperature taken into account. Look for drips at radiators, valves and the boiler, and at the safety valve's outlet; if you find none, have the system checked."
+    },
+    "boiler_fault": {
+      "title": "The boiler reports a fault that stops it",
+      "description": "The boiler reports a fault that stops it ({entity}). The plugin keeps heating off while it does and switches it on again when the boiler clears it. Read the fault on the boiler and follow its manual."
+    },
+    "reactions_removed": {
+      "title": "Alarm reactions no longer offered",
+      "description": "These alarm reactions are no longer offered and now only inform: {alarms}. The plugin stops heating only while the boiler itself reports a fault that stops it; the other alarms tell you what to do."
     }
   }
 }

@@ -19,7 +19,13 @@ Order of precedence, checked on every tick:
    step short of a loss only writes nothing; the next fresh step writes at once. Before control
    takes the boiler, the read-back that would show its hand-back must hold a value (P-21):
    until then nothing is written either.
-5. Otherwise heating on or off, decided at every step from frost protection and the zones'
+5. The boiler reports its own fault that stops it — its low-water-pressure fault, or another
+   fault the user mapped as stopping it — held five minutes on the control clock (Y1, boiler
+   protection; ``ControlInputs.boiler_fault``): the usual "off" — heating off, the water as
+   decided; the relay off — with no hand-back and no latch, frost heating included, as the
+   boiler cannot heat. It ends in the step the fault reads off, unknown or unavailable. In the
+   recognition period it takes nothing new: a command held goes on as "off", none is written.
+6. Otherwise heating on or off, decided at every step from frost protection and the zones'
    demand — VT's central mode and summer or winter reach the plugin through the zones, and
    nothing counted or timed holds heating against VT but VT's own activation delay, carried
    over (decision 5); and the water temperature, decided every decision interval (and at once
@@ -150,6 +156,7 @@ class ControlMode(StrEnum):
     IDLE = "idle"
     FROST = "frost"
     FALLBACK = "fallback"
+    BOILER_FAULT = "boiler_fault"  # the boiler reports its own fault: heating off (Y1)
 
 
 class Reason(StrEnum):
@@ -176,6 +183,7 @@ class Reason(StrEnum):
     LIMIT_FIXED_CIRCUIT = "limit_fixed_circuit"
     COMFORT_CORRECTION = "comfort_correction"
     ACTIVATION_DELAY = "activation_delay"  # heating waits VT's activation delay (decision 5)
+    BOILER_FAULT = "boiler_fault"  # the boiler reports its own fault that stops it (Y1)
 
 
 _OUTDOOR_REASON = {
@@ -278,6 +286,9 @@ class ControlInputs:
     # nothing is written.
     restored_command: BoilerCommand | None = None
     target_ready: bool = True
+    # Boiler protection (Y1): the boiler has reported its own fault that stops it for five
+    # minutes — the control unit holds it on its clock; an unknown fault counts as none.
+    boiler_fault: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -566,10 +577,13 @@ def _decide(
         # Nothing is written without fresh data. A stale step short of a loss keeps control: the
         # next fresh step writes at once.
         reasons = (Reason.BOILER_LINK_STALE,)
-        # Once handed back for a lost link, that stays what is shown until the link is back.
+        # Once handed back for a lost link, that stays what is shown until the link is back; a
+        # link lost when control is switched on shows it at once (decision 7, Y1): control does
+        # not start writing until the link has been fresh for a minute.
+        handed_back = state.link.lost or state.mode is ControlMode.HANDED_BACK
         mode = (
             ControlMode.HANDED_BACK
-            if not state.controlling and state.mode is ControlMode.HANDED_BACK
+            if not state.controlling and handed_back
             else ControlMode.WAITING_DATA
         )
         waiting = replace(state, mode=mode, reasons=reasons, decided_at=None)
@@ -583,6 +597,15 @@ def _decide(
     max_age = config.zone_max_age_s
     watched = [z for z in inputs.zones if not recognition or z.is_known(now, max_age, True)]
     frost = frost_needed(watched, now, max_age, state.frost, config.frost)
+    if inputs.boiler_fault:
+        # Boiler protection (Y1): the usual "off" while the boiler reports its own fault — frost
+        # heating waits too, as the boiler cannot heat; no hand-back, no latch.
+        if recognition:
+            if not state.controlling and not inputs.target_ready:
+                held = None
+            off = None if held is None else replace(held, ch_enable=False)
+            return _keep(state, now, off, fault=True)
+        return _heating_decision(state, inputs, config, frost, demand, fault=True)
     if not frost:
         if recognition:
             if not state.controlling and not inputs.target_ready:
@@ -604,15 +627,20 @@ def _decide(
 
 
 def _keep(
-    state: ControlState, now: float, held: BoilerCommand | None
+    state: ControlState, now: float, held: BoilerCommand | None, *, fault: bool = False
 ) -> tuple[ControlState, ControlDecision]:
     """The recognition period: nothing new is decided. The command held before goes on, with
-    its keep-alives; without one nothing is written."""
-    reasons = (Reason.ZONES_RECOGNITION,)
+    its keep-alives; without one nothing is written. ``fault``: the boiler reports its own
+    fault — the command held goes on as "off" (Y1)."""
+    reasons: tuple[Reason, ...] = (Reason.ZONES_RECOGNITION,)
+    if fault:
+        reasons = (*reasons, Reason.BOILER_FAULT)
     if held is None:
         waiting = replace(state, mode=ControlMode.WAITING_DATA, reasons=reasons, decided_at=None)
         return waiting, ControlDecision(ControlMode.WAITING_DATA, None, reasons=reasons)
     mode = ControlMode.HEATING if held.ch_enable else ControlMode.IDLE
+    if fault:
+        mode = ControlMode.BOILER_FAULT
     target = state.target if state.controlling else held.setpoint
     kept = replace(
         state,
@@ -635,11 +663,14 @@ def _heating_decision(
     config: ControlConfig,
     frost: bool,
     demand: Demand,
+    *,
+    fault: bool = False,
 ) -> tuple[ControlState, ControlDecision]:
     """Heating on or off at every step — after VT's activation delay for a start — and the
-    water temperature every decision interval."""
+    water temperature every decision interval. ``fault``: the boiler reports its own fault that
+    stops it — heating off, frost included, the water decided as usual (Y1)."""
     if config.on_off:
-        return _on_off_decision(state, inputs, config, frost, demand)
+        return _on_off_decision(state, inputs, config, frost, demand, fault=fault)
     now = inputs.now
     outdoor = state.outdoor
     coldest = min(
@@ -649,7 +680,7 @@ def _heating_decision(
     # A step counts a minute at most: a wall clock jumping forward must not count an hour of
     # heat flow or of fall, which would move the comfort correction past its rate at once.
     counted_s = min(MAX_STEP_S, step_s)
-    wanted, heat_reason = _want_heat(demand, frost)
+    wanted, heat_reason = _want_heat(demand, frost, fault)
     pending, want_heat = _activation(state, inputs, config, wanted)
     waiting = pending is not None and wanted
     activation_at = None if pending is None else now + max(0.0, config.activation_delay_s - pending)
@@ -761,7 +792,9 @@ def _heating_decision(
     cap = install_cap(config.limits, config.circuit_max, config.boiler_max)
     setpoint, ramping = _ramp(previous, target, cap, step_s, config.ramp_k_per_min)
 
-    if frost_on:
+    if fault:
+        mode = ControlMode.BOILER_FAULT
+    elif frost_on:
         mode = ControlMode.FROST
     elif want_heat:
         # FALLBACK only while heating is wanted without an outdoor temperature (P-47).
@@ -806,16 +839,19 @@ def _on_off_decision(
     config: ControlConfig,
     frost: bool,
     demand: Demand,
+    *,
+    fault: bool = False,
 ) -> tuple[ControlState, ControlDecision]:
     """On/off control through a relay (class 3, X8, R5): heating on or off at every step, from
     frost protection and the zones' demand, after VT's activation delay for a start — the same
     rules as the water-temperature path, without a water temperature: the boiler sets its own.
-    Modes FROST, HEATING and IDLE; never FALLBACK, as no outdoor temperature is needed."""
+    Modes FROST, HEATING and IDLE, and BOILER_FAULT with the relay off while the boiler reports
+    its own fault (Y1); never FALLBACK, as no outdoor temperature is needed."""
     now = inputs.now
     coldest = min(
         watched_temperatures(inputs.zones, now, config.zone_max_age_s, config.frost), default=None
     )
-    wanted, heat_reason = _want_heat(demand, frost)
+    wanted, heat_reason = _want_heat(demand, frost, fault)
     pending, want_heat = _activation(state, inputs, config, wanted)
     waiting = pending is not None and wanted
     activation_at = None if pending is None else now + max(0.0, config.activation_delay_s - pending)
@@ -845,6 +881,8 @@ def _on_off_decision(
     mode = ControlMode.HEATING if want_heat else ControlMode.IDLE
     if frost_on:
         mode = ControlMode.FROST
+    if fault:
+        mode = ControlMode.BOILER_FAULT
     command = BoilerCommand(want_heat, None)
     new_state = replace(
         state,
@@ -898,10 +936,13 @@ def _activation(
     return waited, False
 
 
-def _want_heat(demand: Demand, frost: bool) -> tuple[bool, Reason]:
-    """Whether to heat now and why: frost protection, else the zones' demand — VT's central mode
-    and summer or winter act on the zones themselves. Demand unknown asks for nothing (decision
-    3): heating off, or the working thermostat's, before this."""
+def _want_heat(demand: Demand, frost: bool, fault: bool = False) -> tuple[bool, Reason]:
+    """Whether to heat now and why: never while the boiler reports its own fault that stops it
+    (Y1); frost protection, else the zones' demand — VT's central mode and summer or winter act
+    on the zones themselves. Demand unknown asks for nothing (decision 3): heating off, or the
+    working thermostat's, before this."""
+    if fault:
+        return False, Reason.BOILER_FAULT
     if frost:
         return True, Reason.FROST
     if demand.wanted is None:

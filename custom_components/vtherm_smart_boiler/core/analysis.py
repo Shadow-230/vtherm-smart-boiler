@@ -6,20 +6,21 @@ boundaries come from the caller: the core knows no time zones.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
 from .alarms import (
     DEFAULT_FLUE_RISE_K,
     DEFAULT_HYSTERESIS_DRIFT_K,
-    DEFAULT_PRESSURE_DROP_BAR,
+    NO_ZONE_DATA,
     Alarm,
     AlarmKind,
-    cold_pressure_samples,
     compare_windows,
     flue_excess_samples,
     hysteresis_samples,
+    pressure_trend,
+    settle,
     trend_warning,
 )
 from .building import LoadFit, fit_daily_load
@@ -65,11 +66,13 @@ def analyse(
     days: Sequence[tuple[float, float]] = (),
     kept: Sequence[DaySummary] = (),
     settings: str = "",
+    previous: Mapping[AlarmKind, Alarm] | None = None,
 ) -> Analysis:
     """``days``: the complete local days of the history; ``kept``: the day summaries kept from
     earlier. The verdict covers the kept days, the history's days not kept yet and today. Only
     days summarised with ``settings`` count (the key of the current settings); the history's
-    days summarised with others are summarised again."""
+    days summarised with others are summarised again. ``previous``: the trends of the last
+    analysis — a trend that cannot be judged now keeps its state for an hour (S-16)."""
     full = summarize(history, parameters, now - HISTORY_DAYS * DAY, now, options)
     kept = [day for day in kept if day.settings == settings]
     known = {day.start for day in kept}
@@ -95,7 +98,7 @@ def analyse(
         verdict=verdict_over_days(
             [*kept, *new_days], options.verdict, options.verdict_window_days, today
         ),
-        trends=_trends(history, full, now, options.verdict.condensing_boiler),
+        trends=_trends(history, full, now, options.verdict.condensing_boiler, previous or {}),
         report=report,
         report_unit=unit,
         outdoor=_outdoor(history, now),
@@ -105,26 +108,28 @@ def analyse(
 
 
 def _trends(
-    history: History, full: MonitorSummary, now: float, condensing: bool = True
+    history: History,
+    full: MonitorSummary,
+    now: float,
+    condensing: bool = True,
+    previous: Mapping[AlarmKind, Alarm] | None = None,
 ) -> dict[AlarmKind, Alarm]:
-    """Slow drifts: falling pressure, a flue gas rising over the return, the burner's
-    hysteresis. A non-condensing boiler's flue temperature follows the return, and so the
-    weather: its trend, like its absolute flue gas alarm, is left out."""
+    """Slow drifts: falling pressure — judged with the water temperature taken into account, so
+    a slow leak shows in winter too — a flue gas rising over the return, the burner's
+    hysteresis — from pauses the zones' demand filled, so the weather does not move it (P-29).
+    A non-condensing boiler's flue temperature follows the return, and so the weather: its
+    trend, like its absolute flue gas alarm, is left out. A trend that cannot be judged keeps
+    its last state for an hour, then is unknown (S-16)."""
     baseline = (now - HISTORY_DAYS * DAY, now - 4 * DAY)
     recent = (now - DAY, now)
     trends: dict[AlarmKind, Alarm] = {}
     if all(history.is_mapped(s) for s in (Signal.PRESSURE, Signal.FLAME, Signal.FLOW)):
-        pressure, flame, flow = (
+        trends[AlarmKind.PRESSURE_FALLING] = pressure_trend(
             history.signal(Signal.PRESSURE),
             history.signal(Signal.FLAME),
             history.signal(Signal.FLOW),
-        )
-        trend = compare_windows(
-            cold_pressure_samples(pressure, flame, flow, *baseline),
-            cold_pressure_samples(pressure, flame, flow, *recent),
-        )
-        trends[AlarmKind.PRESSURE_FALLING] = trend_warning(
-            AlarmKind.PRESSURE_FALLING, trend, DEFAULT_PRESSURE_DROP_BAR, direction=-1
+            baseline,
+            recent,
         )
 
     def burns_in(window: tuple[float, float]) -> list[ClassifiedBurn]:
@@ -139,18 +144,22 @@ def _trends(
         trends[AlarmKind.FLUE_GAS_RISING] = trend_warning(
             AlarmKind.FLUE_GAS_RISING, trend, DEFAULT_FLUE_RISE_K, direction=1
         )
-    if history.is_mapped(Signal.FLOW):
-        flow = history.signal(Signal.FLOW)
-        setpoint = history.signals.get(Signal.CH_SETPOINT)
-        trend = compare_windows(
-            hysteresis_samples(flow, burns_in(baseline), setpoint),
-            hysteresis_samples(flow, burns_in(recent), setpoint),
-            min_samples=10,
-        )
-        trends[AlarmKind.HYSTERESIS_DRIFT] = trend_warning(
-            AlarmKind.HYSTERESIS_DRIFT, trend, DEFAULT_HYSTERESIS_DRIFT_K, direction=0
-        )
-    return trends
+    if history.is_mapped(Signal.FLOW) and history.is_mapped(Signal.FLAME):
+        kind = AlarmKind.HYSTERESIS_DRIFT
+        demand = history.zone_calling(baseline[0], recent[1])
+        if demand is None:  # no zone data: no pause can be told from one without demand
+            trends[kind] = Alarm(kind, None, limit=DEFAULT_HYSTERESIS_DRIFT_K, reason=NO_ZONE_DATA)
+        else:
+            flow = history.signal(Signal.FLOW)
+            setpoint = history.signals.get(Signal.CH_SETPOINT)
+            trend = compare_windows(
+                hysteresis_samples(flow, burns_in(baseline), setpoint, demand=demand),
+                hysteresis_samples(flow, burns_in(recent), setpoint, demand=demand),
+                min_samples=10,
+            )
+            trends[kind] = trend_warning(kind, trend, DEFAULT_HYSTERESIS_DRIFT_K, direction=0)
+    before = previous or {}
+    return {kind: settle(alarm, before.get(kind), now) for kind, alarm in trends.items()}
 
 
 def _period(

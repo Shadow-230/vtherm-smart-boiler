@@ -19,6 +19,9 @@ flow = "sensor.boiler_flow_temperature"
 # room_temperature = "sensor.thermostat_room_temperature"
 # gas_meter = "sensor.gas_meter"
 # boiler_power = "sensor.boiler_plug_power"                  # a relay's proof of heat (W)
+# low_pressure_fault = "binary_sensor.boiler_low_water_pressure"  # the boiler's own fault
+# boiler_lockout = "binary_sensor.boiler_lockout"            # a fault that stops the boiler
+# fault_indication = "binary_sensor.boiler_fault_indication"  # the boiler's general fault bit
 
 [weather]
 # entity = "weather.home"

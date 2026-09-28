@@ -824,12 +824,16 @@ async def test_vt_central_boiler_blocks_control(rig: Rig) -> None:
     assert err.value.translation_key == "blocked_vt_central_boiler_active"
 
 
-async def test_a_monitor_alarm_set_to_hand_back_hands_back(rig: Rig) -> None:
+async def test_a_monitor_alarm_set_to_hand_back_no_longer_hands_back(rig: Rig) -> None:
+    """Decision 7 (S-30, Y1): a reaction an earlier version stored for a monitor alarm is
+    neutralised — the pressure below the "add water" threshold raises its alarm after five
+    minutes and informs; control keeps the boiler, nothing is handed back or latched."""
     rig.boiler = FakeBoiler(rig.hass, (*SIGNALS, Signal.PRESSURE))
     rig.boiler.set(Signal.PRESSURE, 1.5)
     rig.live()
     entry_options = options(rig.zones, alarm_reactions={"pressure_low": "hand_back"})
     entry_options["signals"][Signal.PRESSURE.value] = rig.boiler.entity(Signal.PRESSURE)
+    entry_options["monitor"] = entry_options.get("monitor", {}) | {"add_water_below": 0.8}
     entry = add_entry(rig, entry_options)
     assert await rig.hass.config_entries.async_setup(entry.entry_id)
     await rig.hass.async_block_till_done()
@@ -837,9 +841,12 @@ async def test_a_monitor_alarm_set_to_hand_back_hands_back(rig: Rig) -> None:
     await rig.switch(True)
     assert rig.gateway.setpoints()[-1] == EXPECTED
     rig.boiler.set(Signal.PRESSURE, 0.5)
-    await rig.advance(40)
-    assert rig.gateway.calls[-1] == ("setpoint", 0.0)
-    assert rig.state("sensor", "control_state").state == "handed_back"
+    await rig.advance(400)
+    assert rig.state("binary_sensor", "alarm_pressure_low").state == "on"
+    assert ("setpoint", 0.0) not in rig.gateway.calls
+    assert rig.state("sensor", "control_state").state == "heating"
+    assert rig.state("switch", "control").attributes["blocked_by"] == []
+    assert unit_of(rig).status.latched_by == ()
 
 
 async def test_learning_is_paused_during_hot_water_and_released_on_switch_off(
@@ -3111,6 +3118,8 @@ async def test_a_0_2_1_store_moves_to_the_control_store(
         # X8: the relay's one rewrite and the restarts it answered (answers C, N).
         "relay_rewritten_at": None,
         "relay_restarts": [],
+        # Y1: what another controller showed when the plugin stepped aside (none here).
+        "step_aside_seen": None,
     }
     assert hass_storage[control_key(entry)]["data"] == moved
     main = hass_storage[main_key(entry)]["data"]
@@ -4133,8 +4142,10 @@ async def test_the_last_command_survives_only_the_stops_hand_back(
     elif ending == "switch_off":
         await rig.switch(False)
     elif ending == "latch":
-        rig.boiler.set(Signal.PRESSURE, 0.5)
-        await rig.advance(40)
+        # Y1: a monitor alarm no longer latches (decision 7); another controller does.
+        await rig.advance(30)
+        rig.gateway.forced = 60.0
+        await rig.advance(160)
     elif ending == "internal_error":
 
         async def broken(self: Any, now: float) -> None:
@@ -4262,6 +4273,15 @@ async def test_control_added_back_after_removal_starts_off(
 # --- V4: the hand-back's bookkeeping (P-12, P-42, P-49, P-50, P-51, P-52; Open after R6 #8) -----
 
 CURVE_ANSWER = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_max": 70}
+
+
+async def _through_alarms(rig: Rig, flow: Any) -> Any:
+    """Y1 (decision 7): where a thermostat or the boiler's own control takes over, the alarm
+    step — the reaction to an ignored write — follows the curve at every level; its default
+    answer goes on to the save."""
+    if flow.get("step_id") == "control_alarms":
+        flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], {})
+    return flow
 
 
 def unit_of(rig: Rig) -> Any:
@@ -4512,6 +4532,7 @@ async def test_gateway_id_cannot_change_while_a_hand_back_is_owed(
     await rig.switch(False)
     assert unit_of(rig).hand_back_owed
     flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], CURVE_ANSWER)
+    flow = await _through_alarms(rig, flow)
     assert flow["step_id"] == "control"
     assert flow["errors"] == {"base": "hand_back_pending"}
     await rig.hass.async_block_till_done()
@@ -4531,6 +4552,7 @@ async def test_gateway_id_cannot_change_while_a_hand_back_is_owed(
         flow["flow_id"], {"gateway_id": "gw2"}
     )
     flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], CURVE_ANSWER)
+    flow = await _through_alarms(rig, flow)
     assert flow["type"] == "create_entry"
     await rig.hass.async_block_till_done()
     assert rig.entry.options["control"]["gateway_id"] == "gw2"
@@ -4571,6 +4593,7 @@ async def test_mqtt_topics_cannot_change_while_control_holds_the_boiler(
     await rig.advance(20)
     assert unit_of(rig).holding
     flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], CURVE_ANSWER)
+    flow = await _through_alarms(rig, flow)
     if saved:
         assert flow["type"] == "create_entry"
     else:
@@ -4600,6 +4623,7 @@ async def test_the_gateways_read_back_cannot_change_at_the_save(rig: Rig) -> Non
     rig.live()
     await rig.switch(False)
     flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], CURVE_ANSWER)
+    flow = await _through_alarms(rig, flow)
     assert flow["errors"] == {"base": "hand_back_pending"}
     assert rig.entry.options["control"]["confirmed_entity"] == CONFIRMED
     flow = await rig.hass.config_entries.options.async_configure(
@@ -5682,10 +5706,12 @@ async def test_a_hand_back_value_above_the_maximum_is_refused(rig: Rig) -> None:
     flow = await configure(flow["flow_id"], answer | {"hand_back_value": 60})
     assert flow["step_id"] == "control_curve"
     flow = await configure(flow["flow_id"], CURVE_ANSWER | {"hard_max": 55})
+    flow = await _through_alarms(rig, flow)
     assert flow["step_id"] == "control_entity"  # the save found the lowered maximum
     assert flow["errors"] == {"base": "hand_back_value_above_max"}
     flow = await configure(flow["flow_id"], answer | {"hand_back_value": 50})
     flow = await configure(flow["flow_id"], CURVE_ANSWER | {"hard_max": 55})
+    flow = await _through_alarms(rig, flow)
     assert flow["type"] == "create_entry"
     await rig.hass.async_block_till_done()
     assert rig.entry.options["control"]["hand_back_value"] == 50
@@ -5732,6 +5758,7 @@ async def test_off_near_an_own_control_hand_back_value_is_refused(
     configure = rig.hass.config_entries.options.async_configure
     flow = await configure(flow["flow_id"], answer)
     flow = await configure(flow["flow_id"], CURVE_ANSWER)  # the simple level: then the save
+    flow = await _through_alarms(rig, flow)
     assert flow["step_id"] == "control_behaviour"
     assert flow["errors"] == {"base": "off_setpoint_near_hand_back_value"}
     flow = await configure(flow["flow_id"], {"off_setpoint": 10.5})
@@ -6073,14 +6100,15 @@ async def test_control_hands_back_when_the_monitor_keeps_failing(
 async def test_stale_monitor_alarms_do_not_hand_back(
     rig: Rig, monkeypatch: pytest.MonkeyPatch, when: str
 ) -> None:
-    """Decision 7: while the monitor fails, the alarms of its last data are stale — unknown, and
-    unknown values never count. An alarm set to hand back that they hold hands nothing back and
-    latches nothing; once the monitor works again, the same alarm, now known, hands back."""
+    """Decision 7 (Y1): no monitor alarm hands back — a reaction an earlier version stored for
+    one is neutralised — neither while the monitor fails, its last data stale, nor once it works
+    again and the alarm is known: control keeps the boiler, nothing latches."""
     rig.boiler = FakeBoiler(rig.hass, (*SIGNALS, Signal.PRESSURE))
     rig.boiler.set(Signal.PRESSURE, 0.5 if when == "switched_on_while_failing" else 1.5)
     rig.live()
     entry_options = options(rig.zones, alarm_reactions={"pressure_low": "hand_back"})
     entry_options["signals"][Signal.PRESSURE.value] = rig.boiler.entity(Signal.PRESSURE)
+    entry_options["monitor"] = entry_options.get("monitor", {}) | {"add_water_below": 0.8}
     entry = add_entry(rig, entry_options)
     assert await rig.hass.config_entries.async_setup(entry.entry_id)
     await rig.hass.async_block_till_done()
@@ -6091,10 +6119,11 @@ async def test_stale_monitor_alarms_do_not_hand_back(
         await rig.switch(True)
         await rig.advance(30)
         rig.boiler.set(Signal.PRESSURE, 0.5)
-        await refresh(rig)  # the monitor's last data holds the alarm...
+    await rig.advance(310)  # five minutes below the threshold: the alarm level
+    await refresh(rig)
     assert coordinator.data.alarms[AlarmKind.PRESSURE_LOW].active
     breaker.failing = True
-    await refresh(rig)  # ...and then the monitor fails
+    await refresh(rig)  # the monitor fails, its last data holding the alarm
     if when == "switched_on_while_failing":
         await rig.switch(True)
     await rig.advance(200)
@@ -6106,8 +6135,8 @@ async def test_stale_monitor_alarms_do_not_hand_back(
     breaker.failing = False
     await refresh(rig)  # the monitor works again: the alarm is known
     await rig.advance(10)
-    assert rig.gateway.calls[-1] == ("setpoint", 0.0)
-    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["pressure_low"]
+    assert ("setpoint", 0.0) not in rig.gateway.calls  # it only informs
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == []
 
 
 async def test_a_lasting_control_step_error_is_logged_once(
@@ -6629,10 +6658,11 @@ async def test_handed_back_in_frost_raises_an_alarm(
     "case", ["unknown", "lost_after", "thermostat", "no_topology", "controlling"]
 )
 async def test_handed_back_in_frost_negatives(rig: Rig, case: str) -> None:
-    """S-57, negatives: a room whose temperature is not known is not counted (with none known
-    the alarm stays off, or goes); with a thermostat it never rises, nor where the hand-back's
-    effect is not known (no topology: control is blocked anyway); while control holds the
-    boiler it is off — and it rises once a switch-off hands the boiler back."""
+    """S-57, negatives: a room whose temperature is not known is not counted — with none known
+    the alarm cannot be judged: unknown at once where nothing was known before, a raised one
+    held for an hour, then unknown (Y1, S-16); with a thermostat it never rises, nor where the
+    hand-back's effect is not known (no topology: control is blocked anyway); while control
+    holds the boiler it is off — and it rises once a switch-off hands the boiler back."""
     topology = {"thermostat": "gateway_with_thermostat", "no_topology": ""}.get(
         case, "gateway_standalone"
     )
@@ -6646,13 +6676,18 @@ async def test_handed_back_in_frost_negatives(rig: Rig, case: str) -> None:
     await rig.advance(30)
     if case == "lost_after":
         assert in_frost(rig) == "on"
-        # The zone drops out: no watched room is known, so the alarm goes, and control's state
-        # names the zone it cannot see.
+        # The zone drops out: no watched room is known, so the alarm holds for an hour, then
+        # shows unknown (S-16); control's state names the zone it cannot see.
         rig.zones.set("living", "unavailable", current_temperature=None)
         await rig.advance(10)
-        assert in_frost(rig) == "off"
+        assert in_frost(rig) == "on"
         living = rig.zones.entities["living"]
         assert rig.state("sensor", "control_state").attributes["unknown_zones"] == [living]
+        await rig.advance(3600, step=300)
+        assert in_frost(rig) == "unknown"
+        return
+    if case == "unknown":
+        assert in_frost(rig) == "unknown"  # nothing known from the start: unknown at once
         return
     assert in_frost(rig) == "off"
     if case == "controlling":
@@ -6673,8 +6708,9 @@ async def test_a_stored_step_aside_raises_its_issue_at_start(
     rig: Rig, hass_storage: dict[str, Any], latched_by: list[str] | None
 ) -> None:
     """V7: while a stored latch from stepping aside holds, each start raises the entry's latch
-    issue again. Negatives: a latch by another alarm is Y1's (its text names the alarm); with
-    no latch, an issue an earlier run left is deleted."""
+    issue again. A latch an earlier version stored for an alarm that now only informs holds
+    all the same, and gets the entry's one latch issue naming it (decision 7, Y1: every latch,
+    whatever its cause). Negative: with no latch, an issue an earlier run left is deleted."""
     stored: dict[str, Any] = {}
     if latched_by is not None:
         stored = {"latched": True, "latched_by": latched_by}
@@ -6699,6 +6735,13 @@ async def test_a_stored_step_aside_raises_its_issue_at_start(
     if latched_by == ["outside_change"]:
         assert found is not None
         assert found.severity is ir.IssueSeverity.ERROR  # stand-alone: heating stops
+        assert found.translation_key == "control_latched"
+        assert found.translation_placeholders == {"target": "-", "value": "-"}  # not stored
+    elif latched_by == ["pressure_low"]:
+        assert found is not None
+        assert found.translation_key == "control_latched_other"
+        assert found.translation_placeholders == {"alarm": "pressure_low"}
+        assert found.severity is ir.IssueSeverity.ERROR
     else:
         assert found is None
 
@@ -8384,7 +8427,8 @@ def with_circuit(rig: Rig, circuit: dict[str, Any]) -> dict[str, Any]:
 async def test_the_circuit_too_hot_alarm_is_information_on_the_measured_flow(rig: Rig) -> None:
     """Decision 10: the maximum 40 °C, its alarm pre-filled at 45 °C for 10 minutes: the flow at
     46 °C rises the information alarm after 10 minutes — control goes on, whatever reaction an
-    edited option names; it goes below 44 °C. Without a flow reading it is off with its reason."""
+    edited option names; it goes below 44 °C. Without a flow reading its state is held for an
+    hour, then it is unknown with its reason (Y1, S-16)."""
     entry_options = with_circuit(rig, {"max_flow": 40})
     entry_options["control"]["alarm_reactions"] = {"circuit_too_hot": "hand_back"}
     entry = add_entry(rig, entry_options)
@@ -8408,7 +8452,11 @@ async def test_the_circuit_too_hot_alarm_is_information_on_the_measured_flow(rig
     rig.flow = None
     await rig.advance(60, step=30)
     alarm = rig.state("binary_sensor", "alarm_circuit_too_hot")
-    assert alarm.state == "off"
+    assert alarm.state == "off"  # Y1 (S-16): held an hour without a flow reading...
+    assert alarm.attributes["reason"] == "held"
+    await rig.advance(3600, step=300)
+    alarm = rig.state("binary_sensor", "alarm_circuit_too_hot")
+    assert alarm.state == "unknown"  # ...then unknown, with its reason
     assert alarm.attributes["reason"] == "no_flow_reading"
 
 

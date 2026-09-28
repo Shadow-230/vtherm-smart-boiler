@@ -315,13 +315,16 @@ def handed_back_in_frost(
     heating_stops: bool,
     controlling: bool,
     active: bool,
-) -> bool:
+) -> bool | None:
     """The alarm "handed back in frost" (S-57): control does not hold the boiler — for any
     reason, a switch-off included — where a hand-back stops heating (``heating_stops``), so
     frost protection rests on the boiler's own, if it has one, and a watched zone reads below
     the frost limit. Once raised (``active``) it holds until every watched zone with a known
-    temperature is at or above the release. A zone not known is not counted, so with none known
-    it is off. Information only: it never starts heating (principle 12)."""
+    temperature is at or above the release. A zone not known is not counted; with none known it
+    cannot be judged (``None``): the control unit holds its last state for an hour, then shows
+    it unknown (S-16, Y1). Information only: it never starts heating (principle 12)."""
     if controlling or not heating_stops:
         return False
+    if not watched_temperatures(zones, now, max_age, config, closed_too=True):
+        return None
     return frost_needed(zones, now, max_age, active, config, closed_too=True)

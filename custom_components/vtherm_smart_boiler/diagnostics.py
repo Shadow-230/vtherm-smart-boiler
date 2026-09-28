@@ -59,7 +59,11 @@ def _control(coordinator: SmartBoilerCoordinator) -> dict[str, Any] | None:
     return {
         "enabled": control.enabled,
         "allowed_services": sorted(f"{d}.{s}" for d, s in control.allowed_services),
-        "status": asdict(status) | {"alarms": sorted(a.value for a in status.alarms)},
+        "status": asdict(status)
+        | {
+            "alarms": sorted(a.value for a in status.alarms),
+            "unknown_alarms": sorted(a.value for a in status.unknown_alarms),
+        },
         # The value the session learned (P-38), in K; the status carries it too.
         "comfort_correction": status.correction,
         "stored": control.stored(),

@@ -163,7 +163,7 @@ def in_frost(
     heating_stops: bool = True,
     controlling: bool = False,
     config: FrostConfig | None = None,
-) -> bool:
+) -> bool | None:
     return handed_back_in_frost(
         zones,
         100.0,
@@ -198,14 +198,17 @@ def test_handed_back_in_frost_never_while_controlling_or_where_something_else_he
 
 def test_handed_back_in_frost_ignores_unknown_stale_and_implausible_rooms() -> None:
     """Missing data: a zone with no temperature, a stale one or a broken sensor is not counted;
-    with no watched zone known the alarm stays off, and a raised one goes off."""
-    assert not in_frost([zone(None)])
-    assert not in_frost([zone(None)], active=True)
-    assert not in_frost([zone(2.0, reported=None)])
-    assert not in_frost([zone(2.0, reported=-10_000.0)])
-    assert not in_frost([zone(-127.0)])
-    assert not in_frost([])
-    assert not in_frost([], active=True)
+    with no watched zone known the alarm cannot be judged (``None``) — the control unit holds
+    its last state for an hour, then shows it unknown (S-16, Y1). One known zone judges."""
+    assert in_frost([zone(None)]) is None
+    assert in_frost([zone(None)], active=True) is None
+    assert in_frost([zone(2.0, reported=None)]) is None
+    assert in_frost([zone(2.0, reported=-10_000.0)]) is None
+    assert in_frost([zone(-127.0)]) is None
+    assert in_frost([]) is None
+    assert in_frost([], active=True) is None
+    assert in_frost([zone(None), zone(20.0)]) is False
+    assert in_frost([zone(None)], controlling=True) is False  # does not apply: known off
 
 
 def test_handed_back_in_frost_watches_the_zones_frost_protection_watches() -> None:

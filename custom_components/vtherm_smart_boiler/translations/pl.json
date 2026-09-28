@@ -32,7 +32,10 @@
           "room_setpoint": "Nastawa termostatu przewodowego",
           "room_temperature": "Temperatura z termostatu przewodowego",
           "weather": "Encja pogody",
-          "boiler_power": "Moc elektryczna kotła"
+          "boiler_power": "Moc elektryczna kotła",
+          "low_pressure_fault": "Usterka niskiego ciśnienia wody (z kotła)",
+          "boiler_lockout": "Blokada kotła (usterka, która go zatrzymuje)",
+          "fault_indication": "Sygnalizacja usterki kotła"
         },
         "data_description": {
           "flame": "Włączony, gdy palnik pali. Z niego pochodzi każda metryka cykli: zła encja da złe starty i czasy palenia.",
@@ -40,7 +43,7 @@
           "return": "Woda wracająca do kotła. Umożliwia udział kondensacji; bez niej kondensacji nie da się ocenić. Zła encja daje zły udział kondensacji.",
           "modulation": "Modulacja palnika w procentach. Razem z zakresem mocy kotła szacuje moc cieplną i zużycie gazu. Czujnik w innej jednostce jest odrzucany.",
           "dhw_active": "Włączony, gdy kocioł grzeje ciepłą wodę użytkową. Bez niego grzanie CWU jest wnioskowane mniej pewnie i część może liczyć się jako c.o.; przy sterowaniu ładowanie CWU mniej pewnie wstrzymuje naukę.",
-          "pressure": "Umożliwia alarmy ciśnienia i ostrzeżenie o spadku ciśnienia. Zła encja daje fałszywe alarmy albo żadne.",
+          "pressure": "Włącza powiadomienia o wysokim ciśnieniu i „dolej wody” oraz ostrzeżenie o spadającym ciśnieniu. Z bramki OpenTherm odczyt 0 bar liczy się jako nieznany (bramka pokazuje 0 po restarcie); z każdego innego czujnika jest to odczyt. Zła encja daje fałszywe alarmy albo żadnych.",
           "outdoor": "Własny czujnik zewnętrzny kotła. Służy do stopniodni, krzywej sterowania i jest porównywany z encją pogody: czujnik zablokowany albo odbiegający jest pomijany w krzywej. Zły czujnik wygina krzywą, dopóki sprawdzenie tego nie wykryje.",
           "ch_setpoint": "Nastawa zasilania, do której pracuje kocioł — temperatura. Pomaga odróżnić grzanie CWU od c.o.",
           "ch_active": "Włączone, gdy kocioł grzeje pomieszczenia. Pomaga odróżnić c.w.u. od c.o., gdy nie ma sygnału c.w.u.",
@@ -50,7 +53,10 @@
           "room_setpoint": "Nastawa pokojowa termostatu ściennego przy bramce, od strony termostatu — np. „Room setpoint 1” na urządzeniu termostatu bramki albo TrSet_thermostat firmware'u z włączonymi osobnymi źródłami; nie cel encji climate bramki. Pokazywana jako temperatura, którą termostat ścienny utrzyma po oddaniu sterowania.",
           "room_temperature": "Temperatura pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
           "weather": "Jej prognozy są zapisywane na potrzeby przyszłych funkcji prognoz, a jej temperatura zastępuje brakujący albo podejrzany czujnik zewnętrzny — w stopniodniach i krzywej sterowania. Żadne dane nie opuszczają Home Assistant.",
-          "boiler_power": "Opcjonalnie: moc elektryczna kotła, np. z gniazdka z pomiarem; służy tylko jako dowód, że kocioł sterowany przekaźnikiem grzeje."
+          "boiler_power": "Opcjonalnie: moc elektryczna kotła, np. z gniazdka z pomiarem; służy tylko jako dowód, że kocioł sterowany przekaźnikiem grzeje.",
+          "low_pressure_fault": "Opcjonalnie: własna usterka kotła „niskie ciśnienie wody”, np. „Low water pressure” na urządzeniu kotła w bramce. Gdy przez 5 minut wskazuje „włączone”, sterowanie wyłącza grzanie — bez oddawania kotła — i włącza je ponownie, gdy usterka zniknie, tak jak robi to sam kocioł. Stan nieznany lub niedostępny liczy się jako brak usterki. Wybierz wyłącznie zgłoszenie samego kotła: zły wybór wyłączy grzanie, choć kocioł mógłby grzać. Na bramce OpenTherm liczy się tylko wtedy, gdy sygnalizacja usterki kotła (niżej) jest włączona: bramka odczytuje szczegóły usterki tylko wtedy, gdy usterka się pojawia, a po restarcie pokazuje je jako nieznane aż do następnej usterki.",
+          "boiler_lockout": "Opcjonalnie: usterka, która według instrukcji kotła go zatrzymuje (blokada); nie ogólna sygnalizacja usterki ani serwisu, która niepotrzebnie wyłączałaby grzanie — w niektórych kotłach nawet sygnalizacja usterki jest tylko ostrzeżeniem. Gdy przez 5 minut wskazuje „włączone”, sterowanie wyłącza grzanie — bez oddawania kotła — i włącza je ponownie, gdy usterka zniknie, tak jak robi to sam kocioł. Stan nieznany lub niedostępny liczy się jako brak usterki. Wybierz wyłącznie zgłoszenie samego kotła: zły wybór wyłączy grzanie, choć kocioł mógłby grzać. EMS-ESP nie ma takiego sygnału: potrzebny jest binarny czujnik szablonowy zbudowany z kodów serwisowych kotła. Na bramce OpenTherm szczegół usterki, taki jak „Gas fault”, liczy się tylko wtedy, gdy sygnalizacja usterki kotła (niżej) jest włączona; jej „Fault indication”, wybrana tutaj, liczy się sama.",
+          "fault_indication": "Opcjonalnie: ogólna sygnalizacja usterki kotła, np. „Fault indication” na urządzeniu kotła w bramce. Sama niczego nie wyłącza. Na bramce OpenTherm oba sygnały usterek powyżej liczą się tylko wtedy, gdy ona jest włączona — bramka odczytuje ich szczegóły raz przy każdej nowej usterce i nigdy po jej ustąpieniu, więc same mogłyby trzymać grzanie wyłączone, choć kocioł już działa; bez niej nie są tam używane. W innych przypadkach nie jest potrzebna."
         }
       },
       "boiler": {
@@ -182,8 +188,7 @@
           "monitoring_days": "Okres monitorowania",
           "near_room_k": "Blisko temperatury pokoju",
           "foreign_heat_hold_min": "Podtrzymanie obcego ciepła",
-          "pressure_low_warning": "Ostrzeżenie: niskie ciśnienie",
-          "pressure_low_alarm": "Alarm: niskie ciśnienie",
+          "add_water_below": "Dolej wody poniżej",
           "pressure_high_warning": "Ostrzeżenie: wysokie ciśnienie",
           "pressure_high_alarm": "Alarm: wysokie ciśnienie",
           "flue_gas_warning": "Ostrzeżenie: spaliny",
@@ -198,10 +203,9 @@
           "monitoring_days": "Dni danych przed werdyktem, a później przed możliwością włączenia sterowania. Domyślnie 7; krócej nie można.",
           "near_room_k": "Woda w tej odległości od temperatury pokoju liczy się jako brak ciepłej wody, w K. Domyślnie 3. Większa szybciej mówi „brak ciepłej wody”.",
           "foreign_heat_hold_min": "Jak długo pokój liczy się jako ogrzany po wyłączeniu źródła, w minutach. Domyślnie 60. Dłużej trzyma naukę wstrzymaną dłużej po kominku.",
-          "pressure_low_warning": "Ciśnienie poniżej tej wartości daje ostrzeżenie, w barach. Domyślnie 1,0. Weź wartość z instrukcji kotła: za niska ostrzega za późno.",
-          "pressure_low_alarm": "Ciśnienie poniżej tej wartości daje alarm, w barach. Domyślnie 0,7. Musi być niższe od ostrzeżenia.",
+          "add_water_below": "Opcjonalnie: poniżej tego ciśnienia dostaniesz powiadomienie, by dolać wody, w barach — weź wartość z instrukcji kotła (jego minimalne ciśnienie robocze). Domyślnie puste: bez powiadomienia. Tylko informuje; grzanie wyłącza się wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Za nisko — dowiesz się za późno; za wysoko — powiadomienie przyjdzie, choć ciśnienie jest w porządku.",
           "pressure_high_warning": "Ciśnienie powyżej tej wartości daje ostrzeżenie, w barach. Domyślnie 2,5. Za wysoka ostrzega za późno.",
-          "pressure_high_alarm": "Ciśnienie powyżej tej wartości daje alarm, w barach. Domyślnie 2,8, poniżej typowego zaworu bezpieczeństwa 3 bar. Musi być wyższe od ostrzeżenia.",
+          "pressure_high_alarm": "Ciśnienie powyżej tej wartości wywołuje alarm, w barach, a po 5 minutach powiadomienie. Domyślnie 2,8 — poniżej ciśnienia otwarcia zaworu bezpieczeństwa, odczytanego na samym zaworze (w Europie często 3 bar, w Ameryce Północnej około 2,1 bar / 30 psi). Musi być powyżej ostrzeżenia.",
           "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
           "starts_per_hour_limit": "Więcej startów palnika w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12. Za wysoka ukrywa taktowanie.",
@@ -294,7 +298,10 @@
           "room_setpoint": "Nastawa termostatu przewodowego",
           "room_temperature": "Temperatura z termostatu przewodowego",
           "weather": "Encja pogody",
-          "boiler_power": "Moc elektryczna kotła"
+          "boiler_power": "Moc elektryczna kotła",
+          "low_pressure_fault": "Usterka niskiego ciśnienia wody (z kotła)",
+          "boiler_lockout": "Blokada kotła (usterka, która go zatrzymuje)",
+          "fault_indication": "Sygnalizacja usterki kotła"
         },
         "data_description": {
           "flame": "Włączony, gdy palnik pali. Z niego pochodzi każda metryka cykli: zła encja da złe starty i czasy palenia.",
@@ -302,7 +309,7 @@
           "return": "Woda wracająca do kotła. Umożliwia udział kondensacji; bez niej kondensacji nie da się ocenić. Zła encja daje zły udział kondensacji.",
           "modulation": "Modulacja palnika w procentach. Razem z zakresem mocy kotła szacuje moc cieplną i zużycie gazu. Czujnik w innej jednostce jest odrzucany.",
           "dhw_active": "Włączony, gdy kocioł grzeje ciepłą wodę użytkową. Bez niego grzanie CWU jest wnioskowane mniej pewnie i część może liczyć się jako c.o.; przy sterowaniu ładowanie CWU mniej pewnie wstrzymuje naukę.",
-          "pressure": "Umożliwia alarmy ciśnienia i ostrzeżenie o spadku ciśnienia. Zła encja daje fałszywe alarmy albo żadne.",
+          "pressure": "Włącza powiadomienia o wysokim ciśnieniu i „dolej wody” oraz ostrzeżenie o spadającym ciśnieniu. Z bramki OpenTherm odczyt 0 bar liczy się jako nieznany (bramka pokazuje 0 po restarcie); z każdego innego czujnika jest to odczyt. Zła encja daje fałszywe alarmy albo żadnych.",
           "outdoor": "Własny czujnik zewnętrzny kotła. Służy do stopniodni, krzywej sterowania i jest porównywany z encją pogody: czujnik zablokowany albo odbiegający jest pomijany w krzywej. Zły czujnik wygina krzywą, dopóki sprawdzenie tego nie wykryje.",
           "ch_setpoint": "Nastawa zasilania, do której pracuje kocioł — temperatura. Pomaga odróżnić grzanie CWU od c.o.",
           "ch_active": "Włączone, gdy kocioł grzeje pomieszczenia. Pomaga odróżnić c.w.u. od c.o., gdy nie ma sygnału c.w.u.",
@@ -312,7 +319,10 @@
           "room_setpoint": "Nastawa pokojowa termostatu ściennego przy bramce, od strony termostatu — np. „Room setpoint 1” na urządzeniu termostatu bramki albo TrSet_thermostat firmware'u z włączonymi osobnymi źródłami; nie cel encji climate bramki. Pokazywana jako temperatura, którą termostat ścienny utrzyma po oddaniu sterowania.",
           "room_temperature": "Temperatura pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
           "weather": "Jej prognozy są zapisywane na potrzeby przyszłych funkcji prognoz, a jej temperatura zastępuje brakujący albo podejrzany czujnik zewnętrzny — w stopniodniach i krzywej sterowania. Żadne dane nie opuszczają Home Assistant.",
-          "boiler_power": "Opcjonalnie: moc elektryczna kotła, np. z gniazdka z pomiarem; służy tylko jako dowód, że kocioł sterowany przekaźnikiem grzeje."
+          "boiler_power": "Opcjonalnie: moc elektryczna kotła, np. z gniazdka z pomiarem; służy tylko jako dowód, że kocioł sterowany przekaźnikiem grzeje.",
+          "low_pressure_fault": "Opcjonalnie: własna usterka kotła „niskie ciśnienie wody”, np. „Low water pressure” na urządzeniu kotła w bramce. Gdy przez 5 minut wskazuje „włączone”, sterowanie wyłącza grzanie — bez oddawania kotła — i włącza je ponownie, gdy usterka zniknie, tak jak robi to sam kocioł. Stan nieznany lub niedostępny liczy się jako brak usterki. Wybierz wyłącznie zgłoszenie samego kotła: zły wybór wyłączy grzanie, choć kocioł mógłby grzać. Na bramce OpenTherm liczy się tylko wtedy, gdy sygnalizacja usterki kotła (niżej) jest włączona: bramka odczytuje szczegóły usterki tylko wtedy, gdy usterka się pojawia, a po restarcie pokazuje je jako nieznane aż do następnej usterki.",
+          "boiler_lockout": "Opcjonalnie: usterka, która według instrukcji kotła go zatrzymuje (blokada); nie ogólna sygnalizacja usterki ani serwisu, która niepotrzebnie wyłączałaby grzanie — w niektórych kotłach nawet sygnalizacja usterki jest tylko ostrzeżeniem. Gdy przez 5 minut wskazuje „włączone”, sterowanie wyłącza grzanie — bez oddawania kotła — i włącza je ponownie, gdy usterka zniknie, tak jak robi to sam kocioł. Stan nieznany lub niedostępny liczy się jako brak usterki. Wybierz wyłącznie zgłoszenie samego kotła: zły wybór wyłączy grzanie, choć kocioł mógłby grzać. EMS-ESP nie ma takiego sygnału: potrzebny jest binarny czujnik szablonowy zbudowany z kodów serwisowych kotła. Na bramce OpenTherm szczegół usterki, taki jak „Gas fault”, liczy się tylko wtedy, gdy sygnalizacja usterki kotła (niżej) jest włączona; jej „Fault indication”, wybrana tutaj, liczy się sama.",
+          "fault_indication": "Opcjonalnie: ogólna sygnalizacja usterki kotła, np. „Fault indication” na urządzeniu kotła w bramce. Sama niczego nie wyłącza. Na bramce OpenTherm oba sygnały usterek powyżej liczą się tylko wtedy, gdy ona jest włączona — bramka odczytuje ich szczegóły raz przy każdej nowej usterce i nigdy po jej ustąpieniu, więc same mogłyby trzymać grzanie wyłączone, choć kocioł już działa; bez niej nie są tam używane. W innych przypadkach nie jest potrzebna."
         }
       },
       "freshness": {
@@ -334,7 +344,10 @@
           "room_setpoint": "Nastawa termostatu przewodowego",
           "room_temperature": "Temperatura z termostatu przewodowego",
           "weather": "Encja pogody",
-          "boiler_power": "Moc elektryczna kotła"
+          "boiler_power": "Moc elektryczna kotła",
+          "low_pressure_fault": "Usterka niskiego ciśnienia wody (z kotła)",
+          "boiler_lockout": "Blokada kotła",
+          "fault_indication": "Sygnalizacja usterki kotła"
         }
       },
       "boiler": {
@@ -466,8 +479,7 @@
           "monitoring_days": "Okres monitorowania",
           "near_room_k": "Blisko temperatury pokoju",
           "foreign_heat_hold_min": "Podtrzymanie obcego ciepła",
-          "pressure_low_warning": "Ostrzeżenie: niskie ciśnienie",
-          "pressure_low_alarm": "Alarm: niskie ciśnienie",
+          "add_water_below": "Dolej wody poniżej",
           "pressure_high_warning": "Ostrzeżenie: wysokie ciśnienie",
           "pressure_high_alarm": "Alarm: wysokie ciśnienie",
           "flue_gas_warning": "Ostrzeżenie: spaliny",
@@ -482,10 +494,9 @@
           "monitoring_days": "Dni danych przed werdyktem, a później przed możliwością włączenia sterowania. Domyślnie 7; krócej nie można.",
           "near_room_k": "Woda w tej odległości od temperatury pokoju liczy się jako brak ciepłej wody, w K. Domyślnie 3. Większa szybciej mówi „brak ciepłej wody”.",
           "foreign_heat_hold_min": "Jak długo pokój liczy się jako ogrzany po wyłączeniu źródła, w minutach. Domyślnie 60. Dłużej trzyma naukę wstrzymaną dłużej po kominku.",
-          "pressure_low_warning": "Ciśnienie poniżej tej wartości daje ostrzeżenie, w barach. Domyślnie 1,0. Weź wartość z instrukcji kotła: za niska ostrzega za późno.",
-          "pressure_low_alarm": "Ciśnienie poniżej tej wartości daje alarm, w barach. Domyślnie 0,7. Musi być niższe od ostrzeżenia.",
+          "add_water_below": "Opcjonalnie: poniżej tego ciśnienia dostaniesz powiadomienie, by dolać wody, w barach — weź wartość z instrukcji kotła (jego minimalne ciśnienie robocze). Domyślnie puste: bez powiadomienia. Tylko informuje; grzanie wyłącza się wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Za nisko — dowiesz się za późno; za wysoko — powiadomienie przyjdzie, choć ciśnienie jest w porządku.",
           "pressure_high_warning": "Ciśnienie powyżej tej wartości daje ostrzeżenie, w barach. Domyślnie 2,5. Za wysoka ostrzega za późno.",
-          "pressure_high_alarm": "Ciśnienie powyżej tej wartości daje alarm, w barach. Domyślnie 2,8, poniżej typowego zaworu bezpieczeństwa 3 bar. Musi być wyższe od ostrzeżenia.",
+          "pressure_high_alarm": "Ciśnienie powyżej tej wartości wywołuje alarm, w barach, a po 5 minutach powiadomienie. Domyślnie 2,8 — poniżej ciśnienia otwarcia zaworu bezpieczeństwa, odczytanego na samym zaworze (w Europie często 3 bar, w Ameryce Północnej około 2,1 bar / 30 psi). Musi być powyżej ostrzeżenia.",
           "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
           "starts_per_hour_limit": "Więcej startów palnika w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12. Za wysoka ukrywa taktowanie.",
@@ -510,7 +521,7 @@
           "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Tryb monitora: bramka tylko słucha i sterowanie jest niemożliwe. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki. Utrata danych kotła podnosi alarm i oddaje sterowanie w każdej topologii — bez termostatu grzanie ustaje, dopóki dane nie wrócą. Z termostatem: gdy steruje wtyczka, nastawa ogrzewania termostatu ściennego i jego wyłącznik nic nie robią — ustawienia ciepłej wody nadal działają; po oddaniu sterowania albo gdy Home Assistant nie działa, termostat grzeje według własnej nastawy i programu, więc ustaw je tak, jak ma być w domu. Nieużywane przy przekaźniku: to, co robi oddanie sterowania, określa jego stan po oddaniu sterowania.",
           "thermostat_kind": "Tylko dla bramki, z termostatem albo samodzielnej. Termostat OpenTherm: rozmawia z kotłem i może pokazywać temperaturę wody. Styk wł./wył.: prosty termostat lub włącznik na dwóch przewodach — bramka zamienia go w żądanie grzania, a „wyłączone ogrzewanie” wtyczki blokowałoby go po awarii Home Assistant, więc sterowanie nie jest dostępne. Nic: brak termostatu. Nie wiem: sterowanie nie jest dostępne, dopóki tego nie sprawdzisz. Z termostatem wybierz OpenTherm; bez termostatu wybierz Nic.",
           "confirmed_entity": "Encja, która pokazuje nastawę odebraną przez kocioł, np. „Control setpoint 1” urządzenia kotła w bramce — pokazuje ona, co bramka wysyła, więc nastawa jest pokazywana jako potwierdzona przez bramkę, nie przez kocioł. Wymagana: każdy zapis jest z nią porównywany, a zapis zignorowany przez kocioł albo nadpisany przez inny sterownik zostaje zgłoszony. Encja nastawy wtyczki pokazuje tylko potwierdzoną wartość, w przeciwnym razie stan nieznany. Wybranie encji, do której się pisze, niczego nie potwierdza: nastawa jest wtedy pokazywana jako niezweryfikowana. Nieużywane przy przekaźniku: potwierdza go jego własny stan.",
-          "ch_confirmed_entity": "Opcjonalnie: encja, która pokazuje, czy kocioł dostaje włączone ogrzewanie — np. „Central heating 1” urządzenia kotła w bramce, pokazujące, co bramka wysyła do kotła. Z nią włączanie i wyłączanie ogrzewania jest sprawdzane jak nastawa: przełączenie zignorowane przez kocioł jest zgłaszane, a zmienione przez inny sterownik zapisywane jeszcze raz, po czym wszystkie zapisy ustają. Bez niej włączenie ogrzewania jest pokazywane jako niezweryfikowane, a przełączenie przez inny sterownik pozostaje niezauważone. Wybranie encji, do której się pisze, albo żądania termostatu zamiast tego, co dostaje kocioł, niczego nie potwierdza albo zatrzymuje sterowanie.",
+          "ch_confirmed_entity": "Opcjonalnie: encja, która pokazuje, czy kocioł dostaje włączone grzanie — np. „Central heating 1” na urządzeniu kotła w bramce, ta ze stanem On/Off (Wł./Wył.): to, co wysyła bramka. Nie ta ze stanem Running/Not running (Działa/Nie działa): to własny stan kotła, który gaśnie podczas grzania wody użytkowej i wyglądałby jak inny sterownik. Z nią włączenie i wyłączenie grzania jest sprawdzane jak nastawa: zignorowane przez kocioł jest zgłaszane, a zmienione przez inny sterownik jest raz zapisane ponownie, po czym wszystkie zapisy ustają. Bez niej włączenie grzania jest pokazywane jako niepotwierdzone, a przełączenie go przez inny sterownik przejdzie niezauważone. Wybranie encji, do której zapisujesz, albo żądania termostatu zamiast tego, co dostaje kocioł, niczego nie potwierdza albo zatrzymuje sterowanie.",
           "thermostat_setpoint_entity": "Opcjonalnie, dla bramki z termostatem OpenTherm: temperatura wody, o którą prosi sam termostat (w opentherm_gw „Control setpoint 1” urządzenia termostatu), nie odczyt zwrotny kotła. Gdy kocioł wróci do niej po przerwie, wtyczka wyśle swoje polecenie ponownie, zamiast uznać to za inny sterownik. Puste (domyślnie): liczy się tylko wartość sprzed wtyczki.",
           "restart_entity": "Opcjonalnie: czujnik bramki lub interfejsu kotła, który pokazuje jego restarty — czas pracy liczony od nowa, licznik restartów, który rośnie, albo czas uruchomienia (na przykład licznik restartów firmware OTGW albo czujnik czasu pracy EMS-ESP lub ESPHome). Pokazany przez niego restart liczy się przez 5 minut jako ślad przerwy: jeśli kocioł wróci wtedy do własnej wartości, wtyczka uzna to za utracone polecenie i po prostu wyśle je ponownie. Puste (domyślnie): restart widać tylko wtedy, gdy encje urządzenia stają się niedostępne, a szybki restart, który niczego nie pokazuje, jest oceniany jak powrót bez śladu przerwy — pierwszy w ciągu godziny wtyczka wyśle ponownie, ale drugi może zostać uznany za inny sterownik i wtyczka ustąpi."
         }
@@ -625,33 +636,13 @@
       },
       "control_alarms": {
         "title": "Reakcje na alarmy",
-        "description": "Co robi sterowanie, gdy alarm jest aktywny: tylko informuje albo oddaje sterowanie kotłowi, dopóki nie wyłączysz i nie włączysz go ponownie. Inny sterownik piszący do kotła zawsze sprawia, że wtyczka ustępuje; nigdy z nim nie walczy. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Co robi sterowanie, gdy kocioł ignoruje wartość zapisywaną przez wtyczkę. Pozostałe alarmy tylko informują; wtyczka wyłącza grzanie wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Inny sterownik piszący do kotła zawsze sprawia, że wtyczka ustępuje; nigdy z nim nie walczy. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
-          "pressure_low": "Niskie ciśnienie",
-          "pressure_high": "Wysokie ciśnienie",
-          "flue_gas_high": "Wysoka temperatura spalin",
-          "frequent_starts": "Częste starty",
-          "unstable_ignition": "Niestabilny zapłon",
-          "pressure_falling": "Spadające ciśnienie",
-          "flue_gas_rising": "Rosnąca temperatura spalin",
-          "hysteresis_drift": "Dryf histerezy",
-          "low_flow": "Brak przepływu",
-          "write_failed": "Zapis nieudany",
-          "write_ignored": "Kocioł ignoruje nastawę",
+          "write_ignored": "Kocioł ignoruje wartość",
           "return_after_outside_change": "Powrót po innym sterowniku bez udziału użytkownika"
         },
         "data_description": {
-          "pressure_low": "Domyślnie: tylko informacja.",
-          "pressure_high": "Domyślnie: tylko informacja.",
-          "flue_gas_high": "Domyślnie: tylko informacja.",
-          "frequent_starts": "Domyślnie: tylko informacja.",
-          "unstable_ignition": "Domyślnie: tylko informacja.",
-          "pressure_falling": "Domyślnie: tylko informacja.",
-          "flue_gas_rising": "Domyślnie: tylko informacja.",
-          "hysteresis_drift": "Domyślnie: tylko informacja.",
-          "low_flow": "Domyślnie: tylko informacja.",
-          "write_failed": "Domyślnie: tylko informacja.",
-          "write_ignored": "Domyślnie: tylko informacja.",
+          "write_ignored": "Dostępne tylko tam, gdzie oddanie kotła przywraca termostat albo własne sterowanie kotła. Oddaj kocioł: gdy kocioł zignoruje zapis, sterowanie ustępuje, dopóki go nie wyłączysz i nie włączysz, a w tym czasie grzeje termostat albo własne sterowanie kotła. Informacja (domyślnie): wtyczka dalej próbuje i informuje cię o tym. Jeśli kocioł od początku ignoruje „wyłącz grzanie”, sterowanie zawsze się zatrzymuje i oddaje kocioł, niezależnie od tego, co tu wybierzesz.",
           "return_after_outside_change": "Wyłączone (domyślnie): gdy inny sterownik dwa razy zmieni ustawienia kotła, wtyczka oddaje kocioł i ustępuje, dopóki nie wyłączysz i nie włączysz sterowania. Włączone: wtyczka sama przejmie kocioł po godzinie, w której nic innego do niego nie pisało. Ryzyko: jeśli inny sterownik tylko robi przerwę, będą się zmieniać; przy termostacie, który stale zmienia żądanie, ta godzina nigdy nie minie."
         }
       },
@@ -1160,7 +1151,8 @@
           "heating": "Grzanie",
           "idle": "Postój",
           "frost": "Ochrona przed mrozem",
-          "fallback": "Nastawa awaryjna"
+          "fallback": "Nastawa awaryjna",
+          "boiler_fault": "Usterka kotła: grzanie wyłączone"
         },
         "state_attributes": {
           "heating_confirmation": {
@@ -1272,6 +1264,13 @@
               "warning": "Ostrzeżenie",
               "alarm": "Alarm"
             }
+          },
+          "reason": {
+            "name": "Dlaczego nie oceniono",
+            "state": {
+              "held": "Wstrzymany: dane wejściowe chwilowo nieznane (do godziny)",
+              "unknown_input": "Nieznany: brak danych wejściowych albo jest ich za mało"
+            }
           }
         }
       },
@@ -1283,6 +1282,13 @@
             "state": {
               "warning": "Ostrzeżenie",
               "alarm": "Alarm"
+            }
+          },
+          "reason": {
+            "name": "Dlaczego nie oceniono",
+            "state": {
+              "held": "Wstrzymany: dane wejściowe chwilowo nieznane (do godziny)",
+              "unknown_input": "Nieznany: brak danych wejściowych albo jest ich za mało"
             }
           }
         }
@@ -1296,6 +1302,13 @@
               "warning": "Ostrzeżenie",
               "alarm": "Alarm"
             }
+          },
+          "reason": {
+            "name": "Dlaczego nie oceniono",
+            "state": {
+              "held": "Wstrzymany: dane wejściowe chwilowo nieznane (do godziny)",
+              "unknown_input": "Nieznany: brak danych wejściowych albo jest ich za mało"
+            }
           }
         }
       },
@@ -1307,6 +1320,13 @@
             "state": {
               "warning": "Ostrzeżenie",
               "alarm": "Alarm"
+            }
+          },
+          "reason": {
+            "name": "Dlaczego nie oceniono",
+            "state": {
+              "held": "Wstrzymany: dane wejściowe chwilowo nieznane (do godziny)",
+              "unknown_input": "Nieznany: brak danych wejściowych albo jest ich za mało"
             }
           }
         }
@@ -1320,6 +1340,13 @@
               "warning": "Ostrzeżenie",
               "alarm": "Alarm"
             }
+          },
+          "reason": {
+            "name": "Dlaczego nie oceniono",
+            "state": {
+              "held": "Wstrzymany: dane wejściowe chwilowo nieznane (do godziny)",
+              "unknown_input": "Nieznany: brak danych wejściowych albo jest ich za mało"
+            }
           }
         }
       },
@@ -1331,6 +1358,13 @@
             "state": {
               "warning": "Ostrzeżenie",
               "alarm": "Alarm"
+            }
+          },
+          "reason": {
+            "name": "Dlaczego nie oceniono",
+            "state": {
+              "held": "Wstrzymany: dane wejściowe chwilowo nieznane (do godziny)",
+              "unknown_input": "Nieznany: brak danych wejściowych albo jest ich za mało"
             }
           }
         }
@@ -1344,6 +1378,13 @@
               "warning": "Ostrzeżenie",
               "alarm": "Alarm"
             }
+          },
+          "reason": {
+            "name": "Dlaczego nie oceniono",
+            "state": {
+              "held": "Wstrzymany: dane wejściowe chwilowo nieznane (do godziny)",
+              "unknown_input": "Nieznany: brak danych wejściowych albo jest ich za mało"
+            }
           }
         }
       },
@@ -1355,6 +1396,14 @@
             "state": {
               "warning": "Ostrzeżenie",
               "alarm": "Alarm"
+            }
+          },
+          "reason": {
+            "name": "Dlaczego nie oceniono",
+            "state": {
+              "held": "Wstrzymany: dane wejściowe chwilowo nieznane (do godziny)",
+              "unknown_input": "Nieznany: brak danych wejściowych albo jest ich za mało",
+              "no_zone_data": "Brak danych stref"
             }
           }
         }
@@ -1390,7 +1439,9 @@
               "zone_without_valve": "Strefa bez otwarcia zaworu",
               "no_fresh_zone": "Żadna strefa nie raportuje",
               "hot_water": "Grzeje się ciepła woda",
-              "bypass": "Bypass utrzymuje przepływ"
+              "bypass": "Bypass utrzymuje przepływ",
+              "held": "Wstrzymany: dane wejściowe chwilowo nieznane (do godziny)",
+              "hot_water_unknown": "Nie wiadomo, czy grzeje wodę użytkową (kocioł z wodą użytkową)"
             }
           }
         }
@@ -1409,7 +1460,8 @@
             "name": "Dlaczego nie oceniono",
             "state": {
               "no_flow_reading": "Brak odczytu zasilania",
-              "circuit_not_measured": "Zasilanie obiegu nie jest mierzone"
+              "circuit_not_measured": "Zasilanie obiegu nie jest mierzone",
+              "held": "Wstrzymany: dane wejściowe chwilowo nieznane (do godziny)"
             }
           }
         }
@@ -1532,6 +1584,12 @@
             "state": {
               "controlled_without_confirmation": "Sterowany bez potwierdzenia",
               "without_heat_confirmation": "Sterowany bez potwierdzenia, że kocioł grzeje"
+            }
+          },
+          "blocked_by": {
+            "name": "Zablokowane przez",
+            "state": {
+              "boiler_link_lost": "Utracono łączność z kotłem: sterowanie czeka, aż wróci na minutę"
             }
           }
         }
@@ -1782,11 +1840,27 @@
     },
     "control_latched": {
       "title": "Sterowanie ustąpiło: do kotła pisze inny sterownik",
-      "description": "Inny sterownik znów zmienił to, co wtyczka zapisuje do kotła, po tym jak wtyczka raz przywróciła swoją wartość, więc wtyczka ustąpiła i z nim nie walczy. Oddała kocioł bezpiecznie: najpierw najniższa temperatura wody, potem włączone grzanie tam, gdzie przejmuje termostat albo własne sterowanie kotła, potem zwolnienie — przez to raz, na chwilę, nadpisała wartość innego sterownika. Z termostatem grzeje dalej termostat; bez niego kocioł grzeje tylko pod innym sterownikiem. Aby oddać sterowanie wtyczce, zatrzymaj inny sterownik, a potem wyłącz i włącz sterowanie. Jeśli włączono „Powrót po innym sterowniku bez udziału użytkownika”, sterowanie wraca też samo po godzinie, w której nic innego nie pisało do kotła (nie dotyczy przekaźników)."
+      "description": "Inny sterownik znów zmienił to, co wtyczka zapisuje do kotła, po tym jak wtyczka raz przywróciła swoją wartość — wtyczka zobaczyła {value} na {target}, czego sama nie zapisała — więc ustąpiła i z nim nie walczy. Oddała kocioł bezpiecznie: najpierw najniższa temperatura wody, potem włączone grzanie tam, gdzie przejmuje termostat albo własne sterowanie kotła, potem zwolnienie — przez to raz, na chwilę, nadpisała wartość innego sterownika. Z termostatem albo własnym sterowaniem kotła grzanie trwa dalej; bez nich kocioł grzeje tylko pod innym sterownikiem. Aby oddać sterowanie wtyczce, zatrzymaj inny sterownik, a potem wyłącz i włącz sterowanie. Jeśli włączono „Powrót po innym sterowniku bez udziału użytkownika”, sterowanie wraca też samo po godzinie, w której nic innego nie pisało do kotła (nie dotyczy przekaźników)."
     },
     "control_latched_heating_off_ignored": {
       "title": "Sterowanie zatrzymane: kocioł nie przyjmuje „wyłącz grzanie”",
-      "description": "Od początku sesji kocioł nie przyjął polecenia wtyczki „wyłącz grzanie”, więc wtyczka nie mogła wyłączyć ogrzewania. Sterowanie się zatrzymało i bezpiecznie oddało kocioł: najpierw najniższa temperatura wody, potem włączone grzanie tam, gdzie przejmuje termostat albo własne sterowanie kotła, potem zwolnienie. Sprawdź przełącznik ogrzewania wybrany w opcjach i ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej."
+      "description": "Od początku sesji kocioł nie przyjął polecenia wtyczki „wyłącz grzanie”, więc wtyczka nie mogła wyłączyć ogrzewania i oddała kocioł bezpiecznie: najpierw najniższa temperatura wody, potem włączone grzanie tam, gdzie przejmuje termostat albo własne sterowanie kotła, potem zwolnienie. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono teraz grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci. Sprawdź przełącznik ogrzewania wybrany w opcjach i ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej."
+    },
+    "control_latched_write_ignored": {
+      "title": "Sterowanie oddało kocioł: kocioł ignoruje wartość zapisywaną przez wtyczkę",
+      "description": "Kocioł nie przyjął wartości zapisanej przez wtyczkę — którą, pokazuje alarm „Kocioł ignoruje wartość” — a ten alarm ustawiono na oddanie kotła. Sterowanie bezpiecznie oddało kocioł: najpierw najniższa temperatura wody, potem włączenie grzania, potem zwolnienie; teraz grzeje termostat albo własne sterowanie kotła. Sprawdź encję wybraną w opcjach i ustawienia kotła (wartość spoza jego zakresu, ustawienie, które ją blokuje), a potem wyłącz i włącz sterowanie, by znów przejąć kocioł."
+    },
+    "control_latched_other": {
+      "title": "Sterowanie pozostaje oddane po wcześniejszym alarmie",
+      "description": "Wcześniejsza wersja wtyczki oddała kocioł z powodu alarmu, który teraz tylko informuje ({alarm}), a sterowanie pozostaje oddane, dopóki go nie wyłączysz i nie włączysz. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono teraz grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci. Sprawdź alarm, a potem wyłącz i włącz sterowanie, by znów przejąć kocioł."
+    },
+    "hand_back_boiler_link_lost": {
+      "title": "Sterowanie oddało kocioł: utracono jego dane",
+      "description": "Odczyt płomienia lub temperatury zasilania kotła nie był świeży przez 5 minut z 10, więc sterowanie przestało zapisywać i oddało kocioł — bez świeżych danych nic nie jest zapisywane. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono teraz grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci. Sterowanie wróci samo, gdy dane będą świeże przez minutę. Sprawdź bramkę lub urządzenie, jego łączność oraz encje wybrane jako płomień i zasilanie."
+    },
+    "hand_back_control_error": {
+      "title": "Sterowanie zatrzymane po błędzie wewnętrznym",
+      "description": "Błąd we wtyczce zatrzymał sterowanie, które oddało kocioł — szczegóły są w logu. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono teraz grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci. Sterowanie pozostaje zatrzymane, dopóki go nie wyłączysz i nie włączysz; jeśli błąd wróci, zgłoś go razem z logiem."
     },
     "no_zone_known_off": {
       "title": "Versatile Thermostat nie odpowiada: kocioł nie grzeje",
@@ -1863,6 +1937,30 @@
     "control_latched_relay_heating_off_ignored": {
       "title": "Sterowanie zatrzymane: przekaźnik nie przyjmuje „wyłącz”",
       "description": "Od początku sesji {relay} nie przyjął polecenia wtyczki „wyłącz”: kocioł może dalej grzać, bo przekaźnik się nie wyłącza. Sterowanie się zatrzymało; przekaźnik został raz ustawiony w stan po oddaniu sterowania, na którym też nie można polegać. Sprawdź przekaźnik i encję wybraną w opcjach, a potem wyłącz i włącz sterowanie. Monitor działa dalej."
+    },
+    "add_water": {
+      "title": "Niskie ciśnienie wody w instalacji — dolej wody",
+      "description": "Ciśnienie wynosi {value} bar, poniżej {threshold} bar ustawionych według instrukcji kotła. Dolej wody zaworem napełniającym, jak opisuje instrukcja, patrząc na manometr kotła, a potem zamknij zawór. Jeśli ciśnienie nadal spada, poszukaj wycieku. Grzanie trwa dalej; kocioł sam się zatrzyma, jeśli ciśnienie spadnie za nisko."
+    },
+    "pressure_high": {
+      "title": "Wysokie ciśnienie wody w instalacji",
+      "description": "Ciśnienie wynosi {value} bar, powyżej twojego progu alarmu {limit} bar. Próg musi być niższy niż ciśnienie otwarcia zaworu bezpieczeństwa, wydrukowane na zaworze. Sprawdź, czy zawór napełniający jest zamknięty. Aby obniżyć ciśnienie, wyłącz grzanie i poczekaj, aż instalacja ostygnie, a potem upuść trochę wody odpowietrznikiem grzejnika, aż manometr pokaże ciśnienie na zimno podane w instrukcji. Jeśli ciśnienie skacze przy każdym grzaniu, zleć sprawdzenie naczynia wzbiorczego; w kotle dwufunkcyjnym, jeśli rośnie samo, zleć sprawdzenie wymiennika. Grzanie trwa dalej."
+    },
+    "flue_gas_high": {
+      "title": "Za gorące spaliny",
+      "description": "Spaliny mają {value} °C, powyżej twojego progu alarmu {limit} °C. Umów serwis kotła: wymiennik, przewód spalinowy i odprowadzenie kondensatu, przepływ wody. Własne zabezpieczenie spalinowe kotła może zmniejszyć jego moc albo go zablokować. Grzanie trwa dalej."
+    },
+    "pressure_falling": {
+      "title": "Ciśnienie wody w instalacji ciągle spada",
+      "description": "Ciśnienie ciągle spada — istnieje ryzyko wycieku. W ostatnich dniach spadło o {change} bar, z uwzględnieniem temperatury wody. Poszukaj kapiącej wody przy grzejnikach, zaworach i kotle oraz przy wylocie zaworu bezpieczeństwa; jeśli nic nie znajdziesz, zleć sprawdzenie instalacji."
+    },
+    "boiler_fault": {
+      "title": "Kocioł zgłasza usterkę, która go zatrzymuje",
+      "description": "Kocioł zgłasza usterkę, która go zatrzymuje ({entity}). Wtyczka trzyma grzanie wyłączone, dopóki trwa usterka, i włącza je ponownie, gdy kocioł ją skasuje. Odczytaj usterkę na kotle i postępuj według jego instrukcji."
+    },
+    "reactions_removed": {
+      "title": "Reakcje na alarmy nie są już dostępne",
+      "description": "Te reakcje na alarmy nie są już dostępne i teraz tylko informują: {alarms}. Wtyczka wyłącza grzanie wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje; pozostałe alarmy mówią, co zrobić."
     }
   }
 }

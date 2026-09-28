@@ -801,24 +801,32 @@ async def test_the_comfort_correction_stays_within_3_k(rig: Rig) -> None:
     assert rig.state("binary_sensor", "alarm_correction_at_limit").state == "on"
 
 
-async def test_an_alarm_that_hands_back_does(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
-    """An alarm whose reaction is a hand-back — here the water pressure falling past its alarm
-    limit, as with a leak — gives the boiler back, and control does not take it again."""
-    await start(rig, alarm_reactions={"pressure_low": "hand_back"})
+async def test_low_pressure_informs_and_never_hands_back(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Y1 (decision 7): the water pressure falling below the "add water" threshold — as with a
+    leak — raises its alarm and the notification after five minutes, and control keeps the
+    boiler: a reaction stored earlier for it is neutralised, and heating stops only while the
+    boiler itself reports a fault that stops it (boiler protection)."""
+    from homeassistant.helpers import issue_registry as ir
+
+    await start(
+        rig, monitor={"add_water_below": 0.8}, alarm_reactions={"pressure_low": "hand_back"}
+    )
     await rig.switch(True)
     await rig.advance(60)
     assert rig.sim.plant.override_active(rig.now())
     monkeypatch.setattr(PlantOutput, "pressure", property(lambda _output: 0.4))
-    await rig.advance(60)
+    await rig.advance(360)
     assert rig.state("binary_sensor", "alarm_pressure_low").state == "on"
     control_state = rig.state("sensor", "control_state")
-    assert control_state.state == "handed_back"
-    assert "alarm_hand_back" in control_state.attributes["reasons"]
-    assert rig.setpoints()[-1] == 0.0
-    assert not rig.sim.plant.override_active(rig.now())
-    count = len(rig.gateway())
-    await rig.advance(180)
-    assert len(rig.gateway()) == count
+    assert control_state.state != "handed_back"
+    assert "alarm_hand_back" not in control_state.attributes["reasons"]
+    assert rig.sim.plant.override_active(rig.now())
+    entry = rig.hass.config_entries.async_entries(DOMAIN)[0]
+    issue = ir.async_get(rig.hass).async_get_issue(DOMAIN, f"add_water_{entry.entry_id}")
+    assert issue is not None
+    assert issue.translation_placeholders == {"value": "0.40", "threshold": "0.8"}
 
 
 async def test_a_short_cycling_boiler_is_never_held_off(rig: Rig) -> None:

@@ -24,6 +24,10 @@ PLATFORMS = ("sensor", "binary_sensor", "switch", "button")
 KIND_ISSUE = "thermostat_kind_missing"
 # An entity the options name that Home Assistant removed: one repair issue per entity (P-19).
 REMOVED_ISSUE = "entity_removed"
+# Y1's migration: stored alarm reactions decision 7 no longer offers were removed (a warning).
+REACTIONS_REMOVED_ISSUE = "reactions_removed"
+# The issues a control unit raises for a hand-back without a latch (decision 7, Y1).
+HAND_BACK_ISSUES = ("hand_back_boiler_link_lost", "hand_back_control_error")
 
 
 # Loaded through Home Assistant's import executor before first use: importing them in the event
@@ -172,7 +176,44 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ):
             options[CONTROL] = {**control, "hard_min": MIGRATED_HARD_MIN}
         hass.config_entries.async_update_entry(entry, options=options, minor_version=3)
+    if entry.minor_version < 4:
+        _migrate_alarms(hass, entry)
     return True
+
+
+def _migrate_alarms(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Y1 (minor version 4): 0.2.1's two low-pressure limits give way to the one "add water"
+    threshold — none by default; a stored value other than the old default carries over — and
+    the stored alarm reactions decision 7 no longer offers go; one warning issue names those
+    that were set to hand back and now only inform. No version with stored options was ever
+    released: this serves development entries and hand-edited options."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from .config import migrated_monitor
+    from .const import MONITOR
+    from .control_config import migrated_reactions
+
+    options = dict(entry.options)
+    monitor = options.get(MONITOR)
+    if isinstance(monitor, Mapping):
+        options[MONITOR] = migrated_monitor(monitor)
+    removed: list[str] = []
+    control = options.get(CONTROL)
+    if isinstance(control, Mapping) and "alarm_reactions" in control:
+        kept, removed = migrated_reactions(control)
+        options[CONTROL] = {**control, "alarm_reactions": kept}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=4)
+    if removed:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            f"{REACTIONS_REMOVED_ISSUE}_{entry.entry_id}",
+            is_fixable=False,
+            is_persistent=True,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=REACTIONS_REMOVED_ISSUE,
+            translation_placeholders={"alarms": ", ".join(removed)},
+        )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -218,6 +259,14 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "learning_not_paused",
         "vt_central_entry_not_running",  # VT's central entry not running (X7)
         UNREADABLE_ISSUE,
+        # Y1: the notifications (a reload keeps them), the hand-back issues, the migration's.
+        "add_water",
+        "pressure_high",
+        "flue_gas_high",
+        "pressure_falling",
+        "boiler_fault",
+        *HAND_BACK_ISSUES,
+        REACTIONS_REMOVED_ISSUE,
     ):
         ir.async_delete_issue(hass, DOMAIN, f"{key}_{entry.entry_id}")
     store = main_store(hass, entry.entry_id)
@@ -372,10 +421,11 @@ async def _async_forget_control_session(coordinator: SmartBoilerCoordinator) -> 
 
 def _forget_latch_issue(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Control is not in the options: no control switch is left to clear the latch its issue
-    tells of (V7), so the issue goes."""
+    tells of (V7), nor a hand-back without a latch to resume (Y1), so their issues go."""
     from homeassistant.helpers import issue_registry as ir
 
-    ir.async_delete_issue(hass, DOMAIN, f"control_latched_{entry.entry_id}")
+    for key in ("control_latched", *HAND_BACK_ISSUES):
+        ir.async_delete_issue(hass, DOMAIN, f"{key}_{entry.entry_id}")
 
 
 def _learning_left(stored: Mapping[str, Any]) -> bool:

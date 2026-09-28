@@ -29,15 +29,19 @@ EARLY_WARNINGS = frozenset(
 
 def _alarm_kinds(coordinator: SmartBoilerCoordinator) -> list[AlarmKind]:
     signals = coordinator.config.signals
+    condensing = coordinator.config.installation.boiler.condensing
     kinds: list[AlarmKind] = []
     if Signal.FLAME in signals:
         # Burns need the flame (X8, R4): without it these alarms could never judge anything.
         kinds += [AlarmKind.FREQUENT_STARTS, AlarmKind.UNSTABLE_IGNITION]
     if Signal.PRESSURE in signals:
-        kinds += [AlarmKind.PRESSURE_LOW, AlarmKind.PRESSURE_HIGH, AlarmKind.PRESSURE_FALLING]
-    if Signal.FLUE_GAS in signals and coordinator.config.installation.boiler.condensing:
+        if coordinator.config.monitor.alarms.add_water_below is not None:
+            kinds.append(AlarmKind.PRESSURE_LOW)  # Y1: only with the "add water" threshold
+        kinds += [AlarmKind.PRESSURE_HIGH, AlarmKind.PRESSURE_FALLING]
+    if Signal.FLUE_GAS in signals and condensing:
         kinds.append(AlarmKind.FLUE_GAS_HIGH)
-    if Signal.FLUE_GAS in signals and Signal.RETURN in signals:
+    if Signal.FLUE_GAS in signals and Signal.RETURN in signals and condensing:
+        # P-85: where the trend is computed — a non-condensing boiler's flue follows the return.
         kinds.append(AlarmKind.FLUE_GAS_RISING)
     kinds.append(AlarmKind.HYSTERESIS_DRIFT)
     if Signal.PUMP_RUNNING in signals or Signal.CH_ACTIVE in signals:
@@ -152,7 +156,9 @@ class ForeignHeatSensor(SmartBoilerEntity, BinarySensorEntity):
 class AlarmSensor(SmartBoilerEntity, BinarySensorEntity):
     _unrecorded_attributes = frozenset({"value"})
 
-    """An alarm or early warning: on while active. Information only in the monitor."""
+    """An alarm or early warning: on while active, unknown while it cannot be judged once its
+    hour's hold is over (S-16) — never "OK" for want of data. Information only: the monitor's
+    alarms never change control."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 
@@ -227,8 +233,11 @@ class ControlAlarmSensor(ControlEntity, BinarySensorEntity):
         self.kind = kind
 
     @property
-    def is_on(self) -> bool:
-        return self.kind in self.control.status.alarms
+    def is_on(self) -> bool | None:
+        status = self.control.status
+        if self.kind in status.unknown_alarms:
+            return None  # it cannot be judged, its hour's hold over (S-16)
+        return self.kind in status.alarms
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:

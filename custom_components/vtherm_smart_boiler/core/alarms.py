@@ -1,17 +1,34 @@
-"""Alarms and early warnings — information only in the monitor.
+"""Alarms and early warnings — information in the monitor; only the boiler's own fault stops
+heating (boiler protection, below).
 
-Alarms look at the current state, with hysteresis so they do not flap: water pressure too low
-or too high, flue gas too hot, starts too frequent, ignition unstable, a circuit's water too hot
-for its maximum (decision 10). Early warnings compare a recent window with a baseline window:
-pressure falling in the cold system, the flue gas running hotter above the return (a fouling heat
-exchanger), the CH hysteresis drifting.
+Alarms look at the current state, with hysteresis so they do not flap: water pressure below the
+"add water" threshold the user took from the boiler's manual (none by default) or too high, flue
+gas too hot, starts too frequent, ignition unstable, a circuit's water too hot for its maximum
+(decision 10). Early warnings compare a recent window with a baseline window: pressure falling,
+with the water temperature taken into account; the flue gas running hotter above the return (a
+fouling heat exchanger); the CH hysteresis drifting.
+
+Unknown inputs (S-16, the review's question 9): an alarm judged from a known input is known at
+that moment (``known_at``). One whose input is unknown, or which cannot be judged, keeps its last
+known state for ``UNKNOWN_HOLD_S`` (reason ``held``), then is unknown (``active is None``) with
+the reason it cannot be judged; with nothing known before, unknown at once — never "OK". An
+unknown value never raises an alarm, never completes a hold and never hands back. A banded alarm
+reaches its alarm level only after ``ALARM_HOLD_S`` of known readings beyond the alarm limit
+(decision 7); the warning level shows at once.
+
+Boiler protection (a stated exception of principle 12): while the boiler itself reports a fault
+that stops it — its own low-water-pressure fault, or another fault the user maps as stopping it —
+for ``BOILER_FAULT_HOLD_S``, control sends its usual "off", with no hand-back and no latch, and
+heats again in the step the fault reads off, unknown or unavailable. On the OpenTherm Gateway a
+fault flag counts only while the boiler's general fault indication reads "on" too: the gateway
+reads the fault details once per new fault and never again after it clears (Q3.9).
 """
 
 from __future__ import annotations
 
 import statistics
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from itertools import pairwise
 
@@ -22,6 +39,19 @@ from .readings import ZONE_OPEN, ZoneState
 from .series import Series, duration_where
 
 MIN = 60.0
+HOUR = 3600.0
+DAY = 86400.0
+# S-16, question 9: an alarm that cannot judge keeps its last known state this long, then shows
+# unknown (provisional, K4).
+UNKNOWN_HOLD_S = HOUR
+# Decision 7: a banded alarm's alarm level counts once held this long with known readings
+# (provisional, K4); the notifications and the fault stop wait as long.
+ALARM_HOLD_S = 5 * MIN
+# Reasons an alarm shows (translation keys): held through a gap, and why it cannot be judged.
+HELD = "held"
+UNKNOWN_INPUT = "unknown_input"
+HOT_WATER_UNKNOWN = "hot_water_unknown"
+NO_ZONE_DATA = "no_zone_data"
 
 
 class AlarmKind(StrEnum):
@@ -45,12 +75,32 @@ class Level(StrEnum):
 @dataclass(frozen=True, slots=True)
 class Alarm:
     kind: AlarmKind
-    active: bool
+    active: bool | None  # ``None``: it cannot be judged, and its hold is over (S-16)
     level: Level | None = None
     value: float | None = None
     limit: float | None = None
-    reason: str | None = None  # why it cannot be judged, or why it does not apply
-    since: float | None = None  # when its condition began (a warning that waits)
+    reason: str | None = None  # why it cannot be judged, why it does not apply, or ``held``
+    since: float | None = None  # when its condition began (a level or a warning that waits)
+    known_at: float | None = None  # when it was last judged from a known input
+
+
+def settle(alarm: Alarm, previous: Alarm | None, now: float) -> Alarm:
+    """S-16: an alarm judged now (``active`` known) is known now. One that cannot be judged
+    (``active is None``, its reason saying why) keeps the last known state for
+    ``UNKNOWN_HOLD_S`` after it was last known — reason ``held``, and whatever it was waiting
+    for starts again (``since``) — then is unknown; with nothing known before, unknown at once.
+    A moment known later than now (the clock set back) is held."""
+    if alarm.active is not None:
+        return replace(alarm, known_at=now)
+    known_at = None if previous is None else previous.known_at
+    if (
+        previous is not None
+        and previous.active is not None
+        and known_at is not None
+        and now - known_at < UNKNOWN_HOLD_S
+    ):
+        return replace(previous, reason=HELD, since=None)
+    return replace(alarm, known_at=known_at)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,18 +117,33 @@ class Band:
     hysteresis: float
 
 
-PRESSURE_LOW_BAND = Band(warning=1.0, alarm=0.7, rising=False, hysteresis=0.1)
+# "Add water" (Y1): one optional threshold the user takes from the boiler's manual — none by
+# default, replacing 0.2.1's 1.0 / 0.7 bar — cleared 0.1 bar above it; 0.1 to 2.0 bar.
+ADD_WATER_HYSTERESIS_BAR = 0.1
+ADD_WATER_RANGE_BAR = (0.1, 2.0)
 PRESSURE_HIGH_BAND = Band(warning=2.5, alarm=2.8, rising=True, hysteresis=0.1)
 # Flue gas of a condensing boiler; a non-condensing boiler runs far hotter and has no default.
 FLUE_GAS_CONDENSING_BAND = Band(warning=85.0, alarm=100.0, rising=True, hysteresis=5.0)
 
 
-def banded_alarm(kind: AlarmKind, value: float | None, band: Band, previous: Alarm | None) -> Alarm:
-    """Level of a value against a band. An unknown value keeps what was known, hysteresis
-    included; an active level clears only once the value is past its limit by the hysteresis —
-    from alarm to warning as from warning to none (P64)."""
+def add_water_band(threshold: float) -> Band:
+    """The "add water" band: its one level at the user's threshold, below which the pressure
+    is too low; it clears ``ADD_WATER_HYSTERESIS_BAR`` above it."""
+    return Band(warning=None, alarm=threshold, rising=False, hysteresis=ADD_WATER_HYSTERESIS_BAR)
+
+
+def banded_alarm(
+    kind: AlarmKind, value: float | None, band: Band, previous: Alarm | None, now: float
+) -> Alarm:
+    """Level of a value against a band. The warning level shows at once; the alarm level once
+    the value has stayed beyond the alarm limit for ``ALARM_HOLD_S`` of known readings
+    (``since``: the run began) — a gap restarts the count. An active level clears only once the
+    value is past its limit by the hysteresis — from alarm to warning as from warning to none
+    (P64). An unknown value keeps what was known, hysteresis included, for ``UNKNOWN_HOLD_S``,
+    then the alarm is unknown (``settle``)."""
     if value is None:
-        return previous if previous is not None else Alarm(kind, False)
+        return settle(Alarm(kind, None, reason=UNKNOWN_INPUT), previous, now)
+    prior = previous if previous is not None and previous.active is not None else None
 
     def beyond(limit: float | None) -> bool:
         if limit is None:
@@ -88,38 +153,94 @@ def banded_alarm(kind: AlarmKind, value: float | None, band: Band, previous: Ala
     def released(limit: float) -> float:
         return limit - band.hysteresis if band.rising else limit + band.hysteresis
 
+    was_alarm = prior is not None and prior.active is True and prior.level is Level.ALARM
     if beyond(band.alarm):
-        return Alarm(kind, True, Level.ALARM, value, band.alarm)
-    was_alarm = previous is not None and previous.active and previous.level is Level.ALARM
+        since = now
+        if prior is not None and prior.since is not None and prior.since <= now:
+            since = prior.since  # a clock set back starts the count again now (C9)
+        if was_alarm or now - since >= ALARM_HOLD_S:
+            return Alarm(kind, True, Level.ALARM, value, band.alarm, since=since, known_at=now)
+        if band.warning is not None:  # waiting for the alarm level: the warning meanwhile
+            return Alarm(kind, True, Level.WARNING, value, band.warning, since=since, known_at=now)
+        return Alarm(kind, False, None, value, band.alarm, since=since, known_at=now)
     if was_alarm and band.alarm is not None and beyond(released(band.alarm)):
-        return Alarm(kind, True, Level.ALARM, value, band.alarm)
+        return Alarm(kind, True, Level.ALARM, value, band.alarm, known_at=now)
     if beyond(band.warning):
-        return Alarm(kind, True, Level.WARNING, value, band.warning)
-    was_active = previous is not None and previous.active
+        return Alarm(kind, True, Level.WARNING, value, band.warning, known_at=now)
+    was_active = prior is not None and prior.active is True
     if was_active and band.warning is not None and beyond(released(band.warning)):
-        return Alarm(kind, True, Level.WARNING, value, band.warning)
-    return Alarm(kind, False, None, value)
+        return Alarm(kind, True, Level.WARNING, value, band.warning, known_at=now)
+    return Alarm(kind, False, None, value, known_at=now)
+
+
+def pressure_alarms(
+    value: float | None,
+    add_water_below: float | None,
+    high: Band,
+    previous: Mapping[AlarmKind, Alarm],
+    now: float,
+) -> dict[AlarmKind, Alarm]:
+    """The water pressure's alarms: "add water" only with the user's threshold (none by
+    default: no low-pressure alarm at all), and the high pressure. Both only inform: heating
+    stops only while the boiler itself reports a fault that stops it."""
+    alarms: dict[AlarmKind, Alarm] = {}
+    if add_water_below is not None:
+        low = AlarmKind.PRESSURE_LOW
+        band = add_water_band(add_water_below)
+        alarms[low] = banded_alarm(low, value, band, previous.get(low), now)
+    high_kind = AlarmKind.PRESSURE_HIGH
+    alarms[high_kind] = banded_alarm(high_kind, value, high, previous.get(high_kind), now)
+    return alarms
 
 
 DEFAULT_FREQUENT_STARTS_PER_HOUR = 12
 DEFAULT_UNSTABLE_BURN_S = 60.0
 DEFAULT_UNSTABLE_BURNS_PER_DAY = 10
+# P-82: a count alarm clears only at its limit minus this (provisional, K4).
+COUNT_CLEAR_MARGIN = 2
+# Y1: a count is judged only with the flame known for this share of its window (provisional,
+# K4); otherwise it cannot be judged.
+KNOWN_SHARE = 0.5
+# P-81: a short burn that ends with the flow within this of the CH setpoint then in force ended
+# on the boiler's own hysteresis, not on a lost flame (provisional, K4).
+SETPOINT_REACHED_K = 2.0
+
+
+def _count_alarm(
+    kind: AlarmKind,
+    count: int,
+    limit: int,
+    previous: Alarm | None,
+    now: float,
+) -> Alarm:
+    """A count above ``limit`` raises it; once raised, it clears only at ``limit`` minus
+    ``COUNT_CLEAR_MARGIN`` (P-82)."""
+    was = previous is not None and previous.active is True
+    active = count > limit or (was and count > limit - COUNT_CLEAR_MARGIN)
+    alarm = Alarm(kind, active, Level.WARNING if active else None, float(count), float(limit))
+    return settle(alarm, previous, now)
+
+
+def _flame_unknown(known_s: float | None, window_s: float) -> bool:
+    """The flame known for less than ``KNOWN_SHARE`` of the window: the count cannot be judged.
+    ``None``: not told — judged."""
+    return known_s is not None and known_s < KNOWN_SHARE * window_s
 
 
 def frequent_starts(
     burns: Iterable[ClassifiedBurn],
     now: float,
     limit: int = DEFAULT_FREQUENT_STARTS_PER_HOUR,
+    previous: Alarm | None = None,
+    known_s: float | None = None,
 ) -> Alarm:
-    """Seen starts in the last hour above ``limit``."""
-    starts = sum(1 for b in burns if b.burn.start_seen and now - 3600.0 <= b.burn.start < now)
-    return Alarm(
-        AlarmKind.FREQUENT_STARTS,
-        starts > limit,
-        Level.WARNING if starts > limit else None,
-        float(starts),
-        float(limit),
-    )
+    """Seen starts in the last hour above ``limit``; ``known_s``: the seconds of that hour the
+    flame was known — under half, it cannot be judged."""
+    kind = AlarmKind.FREQUENT_STARTS
+    if _flame_unknown(known_s, HOUR):
+        return settle(Alarm(kind, None, limit=float(limit), reason=UNKNOWN_INPUT), previous, now)
+    starts = sum(1 for b in burns if b.burn.start_seen and now - HOUR <= b.burn.start < now)
+    return _count_alarm(kind, starts, limit, previous, now)
 
 
 def unstable_ignition(
@@ -128,27 +249,47 @@ def unstable_ignition(
     shortest_s: float = DEFAULT_UNSTABLE_BURN_S,
     limit: int = DEFAULT_UNSTABLE_BURNS_PER_DAY,
     demand: Series[bool] | None = None,
+    flow: Series[float] | None = None,
+    setpoint: Series[float] | None = None,
+    previous: Alarm | None = None,
+    known_s: float | None = None,
 ) -> Alarm:
     """Complete burns shorter than ``shortest_s`` in the last day — flame lost soon after
     ignition — above ``limit``. A burn that ended with the zones' demand (a TPI zone's short
     on-time, followed at once) lost no flame: with ``demand`` — whether the zones ask for heat
     at each moment — only one during which, its end included, no moment is known without
-    demand counts; the boiler was told to stop at such a moment."""
+    demand counts; the boiler was told to stop at such a moment. Nor did one that ended on the
+    boiler's own hysteresis (P-81): with ``flow`` and ``setpoint`` mapped (given), only a burn
+    that ended with the flow known and more than ``SETPOINT_REACHED_K`` below the CH setpoint
+    then in force counts — either unknown at its end, it does not; with either not mapped every
+    such burn counts, as before (the feature is degraded). ``known_s``: the seconds of the day
+    the flame was known — under half, it cannot be judged."""
+    kind = AlarmKind.UNSTABLE_IGNITION
+    if _flame_unknown(known_s, DAY):
+        return settle(Alarm(kind, None, limit=float(limit), reason=UNKNOWN_INPUT), previous, now)
     count = sum(
         1
         for b in burns
         if b.burn.complete
         and b.burn.duration < shortest_s
-        and now - 86400.0 <= b.burn.start < now
+        and now - DAY <= b.burn.start < now
         and _asked_throughout(demand, b.burn.start, b.burn.end)
+        and _short_of_setpoint(flow, setpoint, b.burn.end)
     )
-    return Alarm(
-        AlarmKind.UNSTABLE_IGNITION,
-        count > limit,
-        Level.WARNING if count > limit else None,
-        float(count),
-        float(limit),
-    )
+    return _count_alarm(kind, count, limit, previous, now)
+
+
+def _short_of_setpoint(
+    flow: Series[float] | None, setpoint: Series[float] | None, end: float
+) -> bool:
+    """P-81: the burn ended with the water known short of the CH setpoint then in force — its
+    flame was lost — or, with flow or setpoint not mapped, it cannot be told (counted)."""
+    if flow is None or setpoint is None:
+        return True
+    water, target = flow.value_at(end), setpoint.value_at(end)
+    if water is None or target is None:
+        return False  # mapped but unknown at its end: not counted
+    return water < target - SETPOINT_REACHED_K
 
 
 def _asked_throughout(demand: Series[bool] | None, start: float, end: float) -> bool:
@@ -185,9 +326,10 @@ def compare_windows(
 
 
 def trend_warning(kind: AlarmKind, trend: Trend | None, max_change: float, direction: int) -> Alarm:
-    """Warning when the change exceeds ``max_change`` in ``direction`` (+1 up, −1 down, 0 any)."""
+    """Warning when the change exceeds ``max_change`` in ``direction`` (+1 up, −1 down, 0 any);
+    without a trend it cannot be judged (``settle`` holds it, then shows it unknown)."""
     if trend is None:
-        return Alarm(kind, False)
+        return Alarm(kind, None, limit=max_change, reason=UNKNOWN_INPUT)
     change = trend.change
     exceeded = abs(change) > max_change if direction == 0 else change * direction > max_change
     return Alarm(kind, exceeded, Level.WARNING if exceeded else None, change, max_change)
@@ -198,26 +340,93 @@ DEFAULT_FLUE_RISE_K = 5.0
 DEFAULT_HYSTERESIS_DRIFT_K = 3.0
 COLD_FLOW = 35.0
 STEADY_AFTER_S = 3 * MIN
+# The pressure trend with the water temperature taken into account (Open after R6 #5, Y1): a
+# sample every 10 min where the flame has been known off for the 10 min before; the pressure's
+# rise per kelvin of water fitted over the whole history and used only where the flow spans at
+# least 10 K and the fit lies within 0 to 0.05 bar/K; the pressure corrected to a 40 °C loop
+# (each provisional, K4). Without a usable slope, only cold samples count, as before.
+PRESSURE_SAMPLE_S = 10 * MIN
+QUIET_FLAME_S = 10 * MIN
+SLOPE_MIN_SPAN_K = 10.0
+SLOPE_MAX_BAR_PER_K = 0.05
+REFERENCE_FLOW = 40.0
+_EPSILON = 1e-6
 
 
-def cold_pressure_samples(
+@dataclass(frozen=True, slots=True)
+class PressureSample:
+    t: float
+    pressure: float
+    flow: float
+
+
+def pressure_samples(
     pressure: Series[float],
     flame: Series[bool],
     flow: Series[float],
     start: float,
     end: float,
-    step: float = 10 * MIN,
-) -> list[float]:
-    """Pressure sampled while the burner is off and the water cold, so temperature does not
-    move it."""
-    samples: list[float] = []
+    step: float = PRESSURE_SAMPLE_S,
+) -> list[PressureSample]:
+    """The pressure every ``step`` in ``[start, end)`` where the flame is known off and has been
+    for ``QUIET_FLAME_S`` before — no burn heating the water just then — and pressure and flow
+    are known."""
+    samples: list[PressureSample] = []
     t = start
     while t < end:
-        p, f, w = pressure.value_at(t), flame.value_at(t), flow.value_at(t)
-        if p is not None and f is False and w is not None and w < COLD_FLOW:
-            samples.append(p)
+        p, w = pressure.value_at(t), flow.value_at(t)
+        off = duration_where(flame, t - QUIET_FLAME_S, t, lambda on: on is False)
+        quiet = flame.value_at(t) is False and off >= QUIET_FLAME_S - _EPSILON
+        if p is not None and w is not None and quiet:
+            samples.append(PressureSample(t, p, w))
         t += step
     return samples
+
+
+def pressure_slope(samples: Sequence[PressureSample]) -> float | None:
+    """The pressure's rise per kelvin of water, fitted by least squares; ``None`` where the
+    flow spans less than ``SLOPE_MIN_SPAN_K`` or the fit lies outside 0 to
+    ``SLOPE_MAX_BAR_PER_K`` — heating the water never lowers the pressure, and no sealed system
+    swells that much."""
+    if len(samples) < 2:
+        return None
+    flows = [s.flow for s in samples]
+    if max(flows) - min(flows) < SLOPE_MIN_SPAN_K:
+        return None
+    mean_flow = statistics.fmean(flows)
+    mean_pressure = statistics.fmean(s.pressure for s in samples)
+    spread = sum((w - mean_flow) ** 2 for w in flows)
+    if spread <= 0.0:
+        return None
+    covariance = sum((s.flow - mean_flow) * (s.pressure - mean_pressure) for s in samples)
+    slope = covariance / spread
+    return slope if 0.0 <= slope <= SLOPE_MAX_BAR_PER_K else None
+
+
+def pressure_trend(
+    pressure: Series[float],
+    flame: Series[bool],
+    flow: Series[float],
+    baseline: tuple[float, float],
+    recent: tuple[float, float],
+) -> Alarm:
+    """ "Your pressure keeps falling — there is a risk of a leak": the median pressure of the
+    ``recent`` window against the ``baseline`` window, each with at least ``MIN_TREND_SAMPLES``
+    samples, falling by more than ``DEFAULT_PRESSURE_DROP_BAR``. With a usable slope over the
+    whole history every quiet sample counts, corrected to a ``REFERENCE_FLOW`` loop — so a slow
+    leak shows in winter too; without one only cold samples (flow below ``COLD_FLOW``). Too few
+    samples: it cannot be judged."""
+    samples = pressure_samples(pressure, flame, flow, baseline[0], recent[1])
+    slope = pressure_slope(samples)
+
+    def values(window: tuple[float, float]) -> list[float]:
+        inside = [s for s in samples if window[0] <= s.t < window[1]]
+        if slope is not None:
+            return [s.pressure - slope * (s.flow - REFERENCE_FLOW) for s in inside]
+        return [s.pressure for s in inside if s.flow < COLD_FLOW]
+
+    trend = compare_windows(values(baseline), values(recent))
+    return trend_warning(AlarmKind.PRESSURE_FALLING, trend, DEFAULT_PRESSURE_DROP_BAR, -1)
 
 
 def flue_excess_samples(
@@ -245,19 +454,29 @@ def hysteresis_samples(
     burns: Sequence[ClassifiedBurn],
     setpoint: Series[float] | None = None,
     max_setpoint_change: float = 1.0,
+    *,
+    demand: Series[bool] | None,
 ) -> list[float]:
     """Flow when the burner stopped minus flow when it restarted, for heating cycles.
 
-    Only pauses between two heating burns with both edges seen count, and — when the setpoint is
-    known — only those during which it moved less than ``max_setpoint_change``.
+    Only pauses between two heating burns with both edges seen count, during which the zones'
+    demand (``History.zone_calling``) was known "asking" throughout — a pause without demand
+    comes from the zones, not the burner's hysteresis (P-29); without zone data, none — and,
+    when the setpoint is known, only those during which it moved less than
+    ``max_setpoint_change``.
     """
     samples: list[float] = []
+    if demand is None:
+        return samples
     for before, after in pairwise(burns):
         if before.kind not in CH_KINDS or after.kind not in CH_KINDS:
             continue
         if not (before.burn.end_seen and after.burn.start_seen):
             continue
         stop, restart = before.burn.end, after.burn.start
+        asked = duration_where(demand, stop, restart, lambda calling: calling is True)
+        if asked < restart - stop - _EPSILON:
+            continue
         off_flow, on_flow = flow.value_at(stop), flow.value_at(restart)
         if off_flow is None or on_flow is None:
             continue
@@ -282,34 +501,45 @@ def low_flow(
     previous: Alarm | None = None,
     dhw: bool | None = None,
     bypass: bool = False,
+    has_dhw: bool = True,
 ) -> Alarm:
     """Warning while the pump runs and every zone's valve has been closed for a while: no path
     for the water.
 
     Only zones with a fresh, known valve opening count; a zone without one (e.g. a relay) could be
-    the open path, so it keeps the warning off. ``pump_running`` comes from a pump-running or a
-    CH-active signal. Not applied during hot water (the pump may serve it) or with a bypass or a
-    low-loss header (the water always has a path); ``reason`` says why it is off when it cannot
-    be judged or does not apply.
+    the open path, so it cannot be judged. ``pump_running`` comes from a pump-running or a
+    CH-active signal, each by its own age limit. Not judged during hot water (the pump may serve
+    it), nor on a boiler with hot water (``has_dhw``) whose hot water is unknown (P-27: storage
+    charging with the valves closed); off with a bypass or a low-loss header (the water always
+    has a path). ``reason`` says why it cannot be judged or does not apply; what cannot be
+    judged is held, then unknown (``settle``), and the wait starts again after it.
     """
     kind = AlarmKind.LOW_FLOW
     if bypass:
-        return Alarm(kind, False, reason="bypass")
-    if pump_running is None:
-        return Alarm(kind, False, reason="no_pump_signal")
-    if dhw is True:
-        return Alarm(kind, False, reason="hot_water")
+        return Alarm(kind, False, reason="bypass", known_at=now)
+    reason: str | None = None
     fresh = [z for z in zones if z.is_fresh(now, max_age)]
-    if not fresh:
-        return Alarm(kind, False, reason="no_fresh_zone")
-    if any(z.valve_open is None for z in fresh):
-        return Alarm(kind, False, reason="zone_without_valve")
+    if pump_running is None:
+        reason = "no_pump_signal"
+    elif has_dhw and dhw is None:
+        reason = HOT_WATER_UNKNOWN
+    elif has_dhw and dhw is True:
+        reason = "hot_water"
+    elif not fresh:
+        reason = "no_fresh_zone"
+    elif any(z.valve_open is None for z in fresh):
+        reason = "zone_without_valve"
+    if reason is not None:
+        return settle(Alarm(kind, None, reason=reason), previous, now)
     widest = max(z.valve_open for z in fresh if z.valve_open is not None)
     if not (pump_running and widest <= ZONE_OPEN):
-        return Alarm(kind, False, None, widest, ZONE_OPEN)
-    since = previous.since if previous is not None and previous.since is not None else now
+        return Alarm(kind, False, None, widest, ZONE_OPEN, known_at=now)
+    since = now
+    if previous is not None and previous.since is not None and previous.since <= now:
+        since = previous.since
     active = now - since >= LOW_FLOW_HOLD_S
-    return Alarm(kind, active, Level.WARNING if active else None, widest, ZONE_OPEN, since=since)
+    level = Level.WARNING if active else None
+    return Alarm(kind, active, level, widest, ZONE_OPEN, since=since, known_at=now)
 
 
 # --- decision 10: a circuit's water too hot for its maximum -------------------------------------
@@ -348,18 +578,86 @@ def circuit_too_hot(
 ) -> Alarm:
     """The circuit's water too hot (decision 10), information only: active once ``flow`` has
     stayed above ``alarm_at`` for ``hold_s``; it clears only below ``alarm_at`` by
-    ``CIRCUIT_ALARM_HYSTERESIS_K``. Without a flow reading it is inactive with its reason
-    (``reason``, else ``no_flow_reading``). A wait begun later than now — the clock set back —
-    begins now."""
+    ``CIRCUIT_ALARM_HYSTERESIS_K``. Without a flow reading (``no_flow_reading``) it cannot be
+    judged: held, then unknown (S-16, Y1); a circuit no reading can ever show
+    (``circuit_not_measured``) is inactive with that reason — the alarm does not apply. A wait
+    begun later than now — the clock set back — begins now."""
     kind = AlarmKind.CIRCUIT_TOO_HOT
     if flow is None:
-        return Alarm(kind, False, limit=alarm_at, reason=reason or NO_FLOW_READING)
-    if previous is not None and previous.active and flow >= alarm_at - CIRCUIT_ALARM_HYSTERESIS_K:
-        return Alarm(kind, True, Level.WARNING, flow, alarm_at, since=previous.since)
+        why = reason or NO_FLOW_READING
+        if why == CIRCUIT_NOT_MEASURED:
+            return Alarm(kind, False, limit=alarm_at, reason=why, known_at=now)
+        return settle(Alarm(kind, None, limit=alarm_at, reason=why), previous, now)
+    prior = previous if previous is not None and previous.active is not None else None
+    if prior is not None and prior.active and flow >= alarm_at - CIRCUIT_ALARM_HYSTERESIS_K:
+        return Alarm(kind, True, Level.WARNING, flow, alarm_at, since=prior.since, known_at=now)
     if flow <= alarm_at:
-        return Alarm(kind, False, None, flow, alarm_at)
+        return Alarm(kind, False, None, flow, alarm_at, known_at=now)
     since = now
-    if previous is not None and not previous.active and previous.since is not None:
-        since = min(previous.since, now)
+    if prior is not None and not prior.active and prior.since is not None:
+        since = min(prior.since, now)
     active = now - since >= hold_s
-    return Alarm(kind, active, Level.WARNING if active else None, flow, alarm_at, since=since)
+    level = Level.WARNING if active else None
+    return Alarm(kind, active, level, flow, alarm_at, since=since, known_at=now)
+
+
+# --- notifications (Y1) ------------------------------------------------------------------------
+
+# A notification closes after this long of known readings in the normal range (decision 7:
+# "about an hour"; provisional, K4).
+NOTICE_CLOSE_S = HOUR
+
+
+@dataclass(frozen=True, slots=True)
+class Notice:
+    """A notification — a repair issue telling the user what to do: whether it is open, and
+    since when the readings have been known and in the normal range."""
+
+    open: bool = False
+    normal_since: float | None = None
+
+
+def follow_notice(notice: Notice, raised: bool, normal: bool | None, now: float) -> Notice:
+    """Open while ``raised`` — its alarm level held, or its trend exceeded. Once open, it closes
+    after ``NOTICE_CLOSE_S`` of known readings in the normal range (``normal``): a reading
+    outside it, or an unknown one (``None``), keeps it open and starts that hour again. A moment
+    later than now (the clock set back) starts it again now."""
+    if raised:
+        return Notice(True)
+    if not notice.open:
+        return Notice()
+    if normal is not True:
+        return Notice(True)
+    since = notice.normal_since
+    since = now if since is None or since > now else since
+    if now - since >= NOTICE_CLOSE_S:
+        return Notice()
+    return Notice(True, since)
+
+
+# --- boiler protection: the boiler's own fault (Y1) -------------------------------------------
+
+# A fault the boiler reports stops heating once it has read a known "on" this long (decision 7's
+# hold; provisional, K4); it ends in the step it reads off, unknown or unavailable.
+BOILER_FAULT_HOLD_S = ALARM_HOLD_S
+
+
+def fault_counts(flag: bool | None, *, gated: bool, gate: bool | None) -> bool:
+    """A fault signal counts while it reads a known "on" — an unknown or unavailable one counts
+    as no fault. ``gated``: it comes from the OpenTherm Gateway, which reads the fault details
+    once per new fault and never again after it clears (Q3.9), so it counts only while the
+    boiler's general fault indication (``gate``) reads a known "on" too (provisional, K4)."""
+    return flag is True and (not gated or gate is True)
+
+
+def follow_fault(since: float | None, on: bool, now: float) -> float | None:
+    """Since when a fault has counted without a break; ``None`` once it does not. A moment
+    later than now (the clock set back) starts it again now."""
+    if not on:
+        return None
+    return now if since is None or since > now else since
+
+
+def fault_holds(since: float | None, now: float) -> bool:
+    """The fault has counted for ``BOILER_FAULT_HOLD_S``: control sends its usual "off"."""
+    return since is not None and now - since >= BOILER_FAULT_HOLD_S

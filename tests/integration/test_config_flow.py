@@ -375,6 +375,12 @@ async def test_control_through_the_gateway_at_the_simple_level(
             "hard_max": 65,
         },
     )
+    # Y1 (decision 7): with a thermostat to take over, the reaction to an ignored write is
+    # offered at the simple level too — alone: the return by itself is advanced.
+    assert result["step_id"] == "control_alarms"
+    assert {str(marker) for marker in result["data_schema"].schema} == {"write_ignored"}
+    assert result["data_schema"]({})["write_ignored"] == "info"  # information by default
+    result = await options_step(hass, result, {"write_ignored": "hand_back"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     control = hass.config_entries.async_get_entry(entry_id).options["control"]
@@ -389,6 +395,7 @@ async def test_control_through_the_gateway_at_the_simple_level(
         "hard_min": 25,
         "hard_max": 65,
         "activation_delay_s": 0,  # VT's delay, confirmed by saving (decision 5)
+        "alarm_reactions": {"write_ignored": "hand_back"},
     }
     switch = control_switch(hass, entry_id)
     assert switch is not None
@@ -441,6 +448,8 @@ async def test_control_with_an_entity_checks_the_hand_back(
     result = await options_step(hass, result, curve | {"hard_min": 50, "hard_max": 40})
     assert result["errors"] == {"hard_max": "hard_limits_out_of_order"}
     result = await options_step(hass, result, curve | {"hard_min": 25, "hard_max": 60})
+    assert result["step_id"] == "control_alarms"  # a value declared "own control" (Y1)
+    result = await options_step(hass, result, {"write_ignored": "info"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     control = hass.config_entries.async_get_entry(entry_id).options["control"]
@@ -493,9 +502,12 @@ async def test_control_at_the_advanced_level_and_back(
     assert result["errors"] == {"off_setpoint": "off_setpoint_not_below_hard_min"}
     result = await options_step(hass, result, {"ramp_k_per_min": 0.5, "off_setpoint": 12})
     assert result["step_id"] == "control_alarms"
-    # Another controller always makes the plugin step aside: no reaction to choose (S-11).
-    assert "outside_change" not in result["data_schema"].schema
-    result = await options_step(hass, result, {"pressure_low": "hand_back"})
+    # Another controller always makes the plugin step aside: no reaction to choose (S-11); and
+    # stand-alone an ignored write only informs (decision 7): the return by itself alone.
+    assert {str(marker) for marker in result["data_schema"].schema} == {
+        "return_after_outside_change"
+    }
+    result = await options_step(hass, result, {"return_after_outside_change": False})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     entry = hass.config_entries.async_get_entry(entry_id)
@@ -510,8 +522,7 @@ async def test_control_at_the_advanced_level_and_back(
     assert control["ramp_k_per_min"] == 0.5
     assert control["off_setpoint"] == 12
     assert "daily_cap" not in control  # nothing is written to the boiler's memory
-    assert control["alarm_reactions"]["pressure_low"] == "hand_back"
-    assert "outside_change" not in control["alarm_reactions"]
+    assert control["alarm_reactions"] == {}
     assert entry.runtime_data.config.control.loop.control.ramp_k_per_min == 0.5
 
     # Back to simple with defaults restored: only the simple control fields remain.
@@ -536,9 +547,10 @@ async def test_control_at_the_advanced_level_and_back(
 async def test_the_form_no_longer_offers_a_reaction_to_outside_changes(
     hass: HomeAssistant,
 ) -> None:
-    """S-11: another controller writing to the boiler always makes the plugin step aside. The
-    alarm reactions step offers no choice for it, even where an earlier version stored one, and
-    its description says so; saving the step drops the stored reaction and keeps the others."""
+    """S-11, S-30, S-62 (decision 7): another controller writing to the boiler always makes the
+    plugin step aside, and every monitor alarm only informs. The alarm step offers no choice for
+    them, even where an earlier version stored one, and its description says so; saving the
+    step drops them. Where a thermostat takes over, the ignored write's reaction is offered."""
     import json
     from pathlib import Path
 
@@ -548,36 +560,48 @@ async def test_the_form_no_longer_offers_a_reaction_to_outside_changes(
         "level": "advanced",
         "control": {
             "write_path": "opentherm_gw",
-            "alarm_reactions": {"outside_change": "info", "pressure_low": "hand_back"},
+            "topology": "gateway_with_thermostat",
+            "thermostat_kind": "opentherm",
+            "alarm_reactions": {
+                "outside_change": "info",
+                "pressure_low": "hand_back",
+                "write_ignored": "hand_back",
+            },
         },
     }
     schema = flow.control_alarms_schema(options)
-    assert "outside_change" not in {str(marker) for marker in schema.schema}
+    shown_fields = {str(marker) for marker in schema.schema}
+    assert shown_fields == {"write_ignored", "return_after_outside_change"}
     shown = schema({})
-    assert "outside_change" not in shown
-    assert shown["pressure_low"] == "hand_back"  # the others keep what the user chose
-    assert shown["write_ignored"] == "info"  # and inform by default
+    assert shown["write_ignored"] == "hand_back"  # the user's choice, shown
     flow.apply_control_alarms(options, shown)
-    assert "outside_change" not in options["control"]["alarm_reactions"]
-    assert options["control"]["alarm_reactions"]["pressure_low"] == "hand_back"
+    assert options["control"]["alarm_reactions"] == {"write_ignored": "hand_back"}
     translations = Path(flow.__file__).parent / "translations"
-    for language, sentence in (
+    for language, sentences in (
         (
             "en",
-            "Another controller writing to the boiler always makes the plugin step aside; it "
-            "never fights it.",
+            (
+                "Another controller writing to the boiler always makes the plugin step aside; "
+                "it never fights it.",
+                "Other alarms only inform; the plugin stops heating only while the boiler "
+                "itself reports a fault that stops it.",
+            ),
         ),
         (
             "pl",
-            "Inny sterownik piszący do kotła zawsze sprawia, że wtyczka ustępuje; nigdy z nim "
-            "nie walczy.",
+            (
+                "Inny sterownik piszący do kotła zawsze sprawia, że wtyczka ustępuje; nigdy z "
+                "nim nie walczy.",
+                "Pozostałe alarmy tylko informują;",
+            ),
         ),
     ):
         texts = json.loads((translations / f"{language}.json").read_text(encoding="utf-8"))
         step = texts["options"]["step"]["control_alarms"]
-        assert "outside_change" not in step["data"]
-        assert "outside_change" not in step["data_description"]
-        assert sentence in step["description"]
+        assert set(step["data"]) == {"write_ignored", "return_after_outside_change"}
+        assert set(step["data_description"]) == set(step["data"])
+        for sentence in sentences:
+            assert sentence in step["description"]
 
 
 MQTT_CONTROL = {
@@ -687,6 +711,8 @@ async def test_the_thermostats_own_setpoint_is_not_the_read_back(
     result = await options_step(
         hass, result, {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_max": 70}
     )
+    assert result["step_id"] == "control_alarms"  # a thermostat takes over (Y1)
+    result = await options_step(hass, result, {"write_ignored": "info"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     options = hass.config_entries.async_get_entry(entry_id).options["control"]
@@ -1232,6 +1258,8 @@ async def test_the_tick_is_refused_with_a_hand_back_value_that_stops_heating(
     result = await options_step(
         hass, result, {"design_outdoor": -15, "design_flow": 50, "hard_min": 25, "hard_max": 60}
     )
+    assert result["step_id"] == "control_alarms"  # the boiler's own control takes over (Y1)
+    result = await options_step(hass, result, {"write_ignored": "info"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     control = hass.config_entries.async_get_entry(entry_id).options["control"]
@@ -1253,6 +1281,8 @@ async def test_the_tick_is_refused_with_a_hand_back_value_that_stops_heating(
     result = await options_step(
         hass, result, {"design_outdoor": -15, "design_flow": 50, "hard_min": 25, "hard_max": 60}
     )
+    assert result["step_id"] == "control_alarms"  # a value declared "own control" (Y1)
+    result = await options_step(hass, result, {"write_ignored": "info"})
     await hass.async_block_till_done()
     control = hass.config_entries.async_get_entry(entry_id).options["control"]
     assert "own_room_controller" not in control
@@ -1273,15 +1303,17 @@ def form_default(result: dict[str, Any], key: str) -> Any:
 
 
 async def to_control_curve(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
-    """The gateway path up to its curve step."""
+    """The gateway path up to its curve step — stand-alone, so no alarm step follows at the
+    simple level (Y1: the reaction to an ignored write is offered only where a thermostat or
+    the boiler's own control takes over)."""
     result = await open_control(hass, entry_id)
     result = await options_step(
         hass,
         result,
         {
             "write_path": "opentherm_gw",
-            "topology": "gateway_with_thermostat",
-            "thermostat_kind": "opentherm",
+            "topology": "gateway_standalone",
+            "thermostat_kind": "none",
             "confirmed_entity": "sensor.gw_control_setpoint",
         },
     )
@@ -1620,6 +1652,8 @@ async def test_off_must_stay_below_the_lowest_water_temperature_at_every_level(
     result = await options_step(hass, result, curve | {"hard_min": 10.5})  # "off": 10 °C
     assert result["errors"] == {"hard_min": "off_setpoint_not_below_hard_min"}
     result = await options_step(hass, result, curve | {"hard_min": 11})
+    assert result["step_id"] == "control_alarms"  # the boiler's own control takes over (Y1)
+    result = await options_step(hass, result, {"write_ignored": "info"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     entry = hass.config_entries.async_get_entry(entry_id)
@@ -2256,6 +2290,8 @@ async def test_the_thermostat_kind_is_stored_with_a_gateway_and_offered_again(
     result = await options_step(hass, result, first)
     result = await options_step(hass, result, {"gateway_id": "living_room_gw"})
     result = await options_step(hass, result, CURVE_ANSWERS)
+    assert result["step_id"] == "control_alarms"  # Y1: offered with a thermostat, at both levels
+    result = await options_step(hass, result, {"write_ignored": "info"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     entry = hass.config_entries.async_get_entry(entry_id)
@@ -2433,14 +2469,18 @@ async def test_the_relay_path_shows_the_activation_delay(
     result = await options_step(hass, result, answer)
     assert result["errors"] == {"frost_release": "frost_release_not_above_limit"}  # T-37
     result = await options_step(hass, result, answer | {"frost_release": 9})
-    assert result["step_id"] == "control_alarms"
+    assert result["type"] is FlowResultType.CREATE_ENTRY  # no alarm step for relays (Y1)
 
 
 async def test_the_relay_path_offers_no_return_by_itself(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
     """Decision 6: the return by itself after another controller is not offered for relays; nor
-    a reaction to an ignored write (decision 7: never on the relay path)."""
+    a reaction to an ignored write (decision 7: never on the relay path) — nor any other, after
+    the allow-list (Y1): the relay path has no alarm step at all, and a reaction stored earlier
+    only informs."""
+    from custom_components.vtherm_smart_boiler import config_flow as flow
+
     entry_id = await create_entry(hass, entities, "advanced", ("living",), "on_off")
     result = await to_relay_step(hass, entry_id)
     result = await options_step(hass, result, RELAY_ANSWERS)
@@ -2449,11 +2489,13 @@ async def test_the_relay_path_offers_no_return_by_itself(
         result,
         {"activation_delay_s": 0, "count_threshold": 1, "learning_pauses": True},
     )
-    assert result["step_id"] == "control_alarms"
-    fields = {str(marker) for marker in result["data_schema"].schema}
-    assert "return_after_outside_change" not in fields
-    assert "write_ignored" not in fields
-    assert "write_failed" in fields
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    options = {
+        "level": "advanced",
+        "control": {"write_path": "relay", "alarm_reactions": {"write_ignored": "hand_back"}},
+    }
+    assert flow.control_alarms_schema(options).schema == {}
+    assert not flow.alarm_step_offered(options)
 
 
 @pytest.mark.parametrize("rest", ["off", "on"])
@@ -2811,3 +2853,214 @@ async def test_the_relay_cannot_change_while_control_holds_it(
     assert result["errors"] == {"base": "control_holds_boiler"}
     await entry.runtime_data.control.async_set_enabled(False)
     await hass.async_block_till_done()
+
+
+# --- Y1: the fault signals, the "add water" threshold, the one reaction decision 7 offers -----
+
+
+async def test_the_monitor_step_offers_add_water_and_not_the_old_low_pressure_limits(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """The monitor step (advanced) offers the optional "add water" threshold, empty by default,
+    within 0.1–2.0 bar, and no longer 0.2.1's two low-pressure limits."""
+    from custom_components.vtherm_smart_boiler import config_flow as flow
+
+    fields = {str(marker) for marker in flow.monitor_schema({}).schema}
+    assert "add_water_below" in fields
+    assert not {"pressure_low_warning", "pressure_low_alarm"} & fields
+    entry_id = await create_entry(hass, entities, "advanced")
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "monitor"})
+    assert form_default(result, "add_water_below") is None  # optional, no value offered
+    base = {
+        "condensing_return": 55,
+        "short_burn_min": 10,
+        "monitoring_days": 7,
+        "near_room_k": 3,
+        "foreign_heat_hold_min": 60,
+    }
+    for bad in (0.05, 2.5):
+        with pytest.raises(InvalidData):
+            await options_step(hass, result, base | {"add_water_below": bad})
+    result = await options_step(hass, result, base | {"add_water_below": 0.8})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    options = hass.config_entries.async_get_entry(entry_id).options
+    assert options["monitor"]["add_water_below"] == 0.8
+    assert EntryConfig.from_options(options).monitor.alarms.add_water_below == 0.8
+
+
+def _form_optional(result: dict[str, Any], key: str) -> bool:
+    return any(str(marker) == key for marker in result["data_schema"].schema)
+
+
+@pytest.mark.parametrize("level", ["simple", "advanced"])
+async def test_the_signals_step_offers_the_boiler_fault_signals(
+    hass: HomeAssistant, entities: dict[str, str], level: str
+) -> None:
+    """Boiler protection's optional signals: the low-water-pressure fault and the fault
+    indication at every level, the lockout at the advanced one — binary sensors only; one
+    entity for two of them is refused."""
+    from custom_components.vtherm_smart_boiler import config_flow as flow
+
+    assert flow.SIGNAL_FIELDS["low_pressure_fault"] == ({"domain": "binary_sensor"}, True)
+    assert flow.SIGNAL_FIELDS["boiler_lockout"] == ({"domain": "binary_sensor"}, False)
+    assert flow.SIGNAL_FIELDS["fault_indication"] == ({"domain": "binary_sensor"}, True)
+    keys = list(flow.SIGNAL_FIELDS)
+    assert keys.index("low_pressure_fault") < keys.index("boiler_lockout")
+    hass.states.async_set("binary_sensor.boiler_low_water", "off")
+    hass.states.async_set("binary_sensor.boiler_lockout", "off")
+    hass.states.async_set("sensor.not_a_fault", "1")
+    entry_id = await create_entry(hass, entities, level)
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "signals"})
+    assert _form_optional(result, "low_pressure_fault")
+    assert _form_optional(result, "fault_indication")
+    assert _form_optional(result, "boiler_lockout") is (level == "advanced")
+    base = {"flame": entities["flame"], "flow": entities["flow"]}
+    result = await options_step(hass, result, base | {"low_pressure_fault": "sensor.not_a_fault"})
+    assert result["errors"] == {"low_pressure_fault": "entity_not_suitable"}
+    if level == "advanced":
+        both = {
+            "low_pressure_fault": "binary_sensor.boiler_low_water",
+            "boiler_lockout": "binary_sensor.boiler_low_water",
+        }
+        result = await options_step(hass, result, base | both)
+        assert result["errors"] == {"boiler_lockout": "entity_for_two_signals"}
+    answer = base | {"low_pressure_fault": "binary_sensor.boiler_low_water"}
+    if level == "advanced":
+        answer["boiler_lockout"] = "binary_sensor.boiler_lockout"
+    result = await options_step(hass, result, answer)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    signals = hass.config_entries.async_get_entry(entry_id).options["signals"]
+    assert signals["low_pressure_fault"] == "binary_sensor.boiler_low_water"
+
+
+def test_stored_fault_signals_on_one_entity_block_control() -> None:
+    """In stored options one entity for both fault signals keeps the first; the later is
+    dropped, named, and control gets its blocker (X5's rule)."""
+    from custom_components.vtherm_smart_boiler.control_config import config_blockers
+
+    options = {
+        "signals": {
+            "flame": "binary_sensor.flame",
+            "flow": "sensor.flow",
+            "low_pressure_fault": "binary_sensor.fault",
+            "boiler_lockout": "binary_sensor.fault",
+        },
+        "zones": [{"entity_id": "climate.living"}],
+        "boiler": {"class": "flow_setpoint"},
+        "control": {
+            "write_path": "opentherm_gw",
+            "gateway_id": "gw",
+            "confirmed_entity": "sensor.gw_control_setpoint",
+            "topology": "gateway_standalone",
+            "thermostat_kind": "none",
+            "curve": {"design_outdoor": -15, "design_flow": 55},
+        },
+    }
+    config = EntryConfig.from_options(options)
+    assert config.signals[Signal.LOW_PRESSURE_FAULT] == "binary_sensor.fault"
+    assert Signal.BOILER_LOCKOUT not in config.signals
+    assert config.shared_signals == {Signal.BOILER_LOCKOUT: Signal.LOW_PRESSURE_FAULT}
+    found = config_blockers(config.control, config.installation, config.shared_signals)
+    assert found == ["entity_for_two_signals"]
+
+
+@pytest.mark.parametrize(
+    ("control", "offered"),
+    [
+        ({"topology": "gateway_with_thermostat", "thermostat_kind": "opentherm"}, True),
+        ({"topology": "gateway_standalone", "thermostat_kind": "none"}, False),
+    ],
+    ids=["thermostat", "stand_alone"],
+)
+@pytest.mark.parametrize("level", ["simple", "advanced"])
+async def test_the_reaction_is_offered_only_where_allowed_at_both_levels(
+    hass: HomeAssistant,
+    entities: dict[str, str],
+    level: str,
+    control: dict[str, str],
+    offered: bool,
+) -> None:
+    """Decision 7: the reaction to an ignored write — the one left to choose — is offered where
+    a thermostat takes over, at both levels (a reaction stored earlier is never hidden); stand-
+    alone it is not. The return by itself stays advanced."""
+    loaded_gateway(hass, "living_room_gw")
+    hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
+    entry_id = await create_entry(hass, entities, level, ("living",))
+    result = await open_control(hass, entry_id)
+    answer = {"write_path": "opentherm_gw", "confirmed_entity": "sensor.gw_control_setpoint"}
+    result = await options_step(hass, result, answer | control)
+    result = await options_step(hass, result, {"gateway_id": "living_room_gw"})
+    curve = CURVE_ANSWERS if level == "simple" else ADVANCED_CURVE
+    result = await options_step(hass, result, curve)
+    if level == "advanced":
+        result = await options_step(hass, result, {"off_setpoint": 10})
+    if not offered and level == "simple":
+        assert result["type"] is FlowResultType.CREATE_ENTRY  # nothing to ask
+        return
+    assert result["step_id"] == "control_alarms"
+    fields = {str(marker) for marker in result["data_schema"].schema}
+    assert ("write_ignored" in fields) is offered
+    assert ("return_after_outside_change" in fields) is (level == "advanced")
+    assert not {"pressure_low", "pressure_high", "flue_gas_high", "write_failed"} & fields
+
+
+async def test_restoring_defaults_resets_the_reaction(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """ "Restore defaults" on the way to the simple level resets the ignored write's reaction
+    to information; afterwards the simple level shows it again, at its default."""
+    loaded_gateway(hass, "living_room_gw")
+    hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
+    entry_id = await create_entry(hass, entities, "advanced", ("living",))
+    result = await open_control(hass, entry_id)
+    answer = {
+        "write_path": "opentherm_gw",
+        "confirmed_entity": "sensor.gw_control_setpoint",
+        "topology": "gateway_with_thermostat",
+        "thermostat_kind": "opentherm",
+    }
+    result = await options_step(hass, result, answer)
+    result = await options_step(hass, result, {"gateway_id": "living_room_gw"})
+    result = await options_step(hass, result, ADVANCED_CURVE)
+    result = await options_step(hass, result, {"off_setpoint": 10})
+    result = await options_step(hass, result, {"write_ignored": "hand_back"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert control["alarm_reactions"] == {"write_ignored": "hand_back"}
+    menu = await hass.config_entries.options.async_init(entry_id)
+    assert "level" in menu["menu_options"]  # shown at both levels: nothing hidden
+    result = await options_step(hass, menu, {"next_step_id": "level"})
+    result = await options_step(hass, result, {"level": "simple", "restore_defaults": True})
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert "alarm_reactions" not in control
+    result = await open_control(hass, entry_id)
+    result = await options_step(hass, result, answer)
+    result = await options_step(hass, result, {"gateway_id": "living_room_gw"})
+    result = await options_step(hass, result, CURVE_ANSWERS)
+    assert result["step_id"] == "control_alarms"
+    assert form_default(result, "write_ignored") == "info"
+
+
+def test_a_reaction_stored_at_the_simple_level_is_not_hidden() -> None:
+    """The finding of the checks: a hand-back reaction stored earlier stayed active at the
+    simple level, hidden. Now the one reaction left is shown at the simple level, and any other
+    stored one only informs — the menu does not count it as a hidden setting."""
+    from custom_components.vtherm_smart_boiler import config_flow as flow
+
+    options = {
+        "level": "simple",
+        "control": {
+            "write_path": "opentherm_gw",
+            "topology": "gateway_with_thermostat",
+            "thermostat_kind": "opentherm",
+            "alarm_reactions": {"write_ignored": "hand_back", "pressure_low": "hand_back"},
+        },
+    }
+    assert "write_ignored" in {str(m) for m in flow.control_alarms_schema(options).schema}
+    assert not flow.has_hidden_advanced(options)
