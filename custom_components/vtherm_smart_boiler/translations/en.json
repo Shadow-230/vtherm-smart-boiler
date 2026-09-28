@@ -86,13 +86,17 @@
           "control": "Control",
           "max_flow": "Maximum flow temperature",
           "fixed_temperature": "Fixed temperature",
+          "max_flow_alarm": "Too hot alarm at",
+          "max_flow_alarm_min": "For at least",
           "flow_entity": "Circuit flow sensor",
           "add_another": "Add another circuit"
         },
         "data_description": {
           "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); mixed by a separate controller; or a thermostatic mixing valve (fixed). Control runs only for one circuit fed straight from the boiler, or through a fixed valve. The wrong type makes control refuse, or misjudge what reaches the rooms.",
-          "max_flow": "The most this circuit may receive, in °C, e.g. underfloor heating on an unmixed loop. Control treats it as a hard limit — the water never goes above it; underfloor heating on an unmixed loop needs it before control can run. Too high overheats the floor.",
+          "max_flow": "The most this circuit may receive, in °C, e.g. underfloor heating on an unmixed loop: control never asks for more, but the boiler may overshoot it by its own hysteresis — set the alarm below to be told. Needed for underfloor on an unmixed loop. Too high overheats the floor.",
           "fixed_temperature": "Needed for a thermostatic mixing valve (fixed): its setting in °C. Control keeps the boiler's flow at least this warm; set higher than the valve's setting, the water runs hotter than needed.",
+          "max_flow_alarm": "Information alarm when the measured flow stays above this, in °C. Starts at the maximum + 5 °C. Needs a flow reading. Too high lets a real overshoot pass unreported.",
+          "max_flow_alarm_min": "How long, in minutes, before the alarm rises. Starts at 10. Too short reports every overshoot of the boiler's hysteresis.",
           "flow_entity": "A mixed circuit's own flow temperature. Without it the heat reaching that circuit cannot be told.",
           "add_another": "Tick to describe one more circuit after this one."
         }
@@ -219,7 +223,8 @@
       "no_circuit": "At least one circuit is needed.",
       "invalid_control": "The control settings cannot be used.",
       "alarm_limits_out_of_order": "An alarm limit must lie beyond its warning limit.",
-      "modulation_not_percent": "Modulation is a percentage of the boiler's range: pick a sensor in %."
+      "modulation_not_percent": "Modulation is a percentage of the boiler's range: pick a sensor in %.",
+      "max_flow_alarm_not_above_max": "The alarm temperature must be above the circuit's maximum."
     }
   },
   "options": {
@@ -347,13 +352,17 @@
           "control": "Control",
           "max_flow": "Maximum flow temperature",
           "fixed_temperature": "Fixed temperature",
+          "max_flow_alarm": "Too hot alarm at",
+          "max_flow_alarm_min": "For at least",
           "flow_entity": "Circuit flow sensor",
           "add_another": "Add another circuit"
         },
         "data_description": {
           "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); mixed by a separate controller; or a thermostatic mixing valve (fixed). Control runs only for one circuit fed straight from the boiler, or through a fixed valve. The wrong type makes control refuse, or misjudge what reaches the rooms.",
-          "max_flow": "The most this circuit may receive, in °C, e.g. underfloor heating on an unmixed loop. Control treats it as a hard limit — the water never goes above it; underfloor heating on an unmixed loop needs it before control can run. Too high overheats the floor.",
+          "max_flow": "The most this circuit may receive, in °C, e.g. underfloor heating on an unmixed loop: control never asks for more, but the boiler may overshoot it by its own hysteresis — set the alarm below to be told. Needed for underfloor on an unmixed loop. Too high overheats the floor.",
           "fixed_temperature": "Needed for a thermostatic mixing valve (fixed): its setting in °C. Control keeps the boiler's flow at least this warm; set higher than the valve's setting, the water runs hotter than needed.",
+          "max_flow_alarm": "Information alarm when the measured flow stays above this, in °C. Starts at the maximum + 5 °C. Needs a flow reading. Too high lets a real overshoot pass unreported.",
+          "max_flow_alarm_min": "How long, in minutes, before the alarm rises. Starts at 10. Too short reports every overshoot of the boiler's hysteresis.",
           "flow_entity": "A mixed circuit's own flow temperature. Without it the heat reaching that circuit cannot be told.",
           "add_another": "Tick to describe one more circuit after this one."
         }
@@ -534,12 +543,13 @@
       },
       "control_curve": {
         "title": "Heating curve and limits",
-        "description": "The flow temperature the house needs at each outdoor temperature, and the limits no setpoint may pass.",
+        "description": "The flow temperature the house needs at each outdoor temperature, the limits no setpoint may pass, and how long heating waits for slow valves.",
         "data": {
           "design_outdoor": "Design outdoor temperature",
           "design_flow": "Design flow temperature",
           "hard_min": "Lowest flow setpoint",
           "hard_max": "Highest flow setpoint",
+          "activation_delay_s": "Activation delay",
           "room": "Room temperature of the curve",
           "exponent": "Curve exponent",
           "offset": "Curve offset",
@@ -554,14 +564,15 @@
           "design_flow": "The flow temperature the heating needs at the design outdoor temperature, in °C, e.g. the value on your boiler's own curve. Required; there is no default. Too high wastes gas and makes the burner cycle; too low leaves rooms cold in hard frost.",
           "hard_min": "No setpoint below this, in °C. Default 25 °C. Too high heats rooms in mild weather and wastes gas; the \"off\" setpoint must stay below it.",
           "hard_max": "No setpoint above this, whatever the curve or a correction asks, in °C. Default 70 °C. Underfloor heating also needs its circuit's maximum flow.",
+          "activation_delay_s": "Seconds heating waits after the first call for heat, so slow valves (thermoelectric, underfloor) open before the boiler and its pump run — as Versatile Thermostat's central boiler did; pre-filled from VT's own setting where VT kept one. Stopping is never delayed. Default 0: at once. Risk: a zone whose heating pulse is shorter than the delay never starts the boiler, and pulses close to it give short burns; without a heating switch (\"off\" as a low setpoint) the pump may run anyway.",
           "room": "The room temperature the curve is built for, in °C. Default 20 °C. Too high raises the whole curve and wastes gas.",
           "exponent": "How the curve bends. Empty picks it from the emitters: radiators 1.3, convectors 1.4, underfloor 1.1. The wrong bend under-heats in frost or overheats in mild weather.",
           "offset": "Shifts the whole curve up or down, in K. Default 0. Up wastes gas; down leaves rooms cold.",
           "ceiling_band": "How far above the curve a comfort correction may go, in K. Default 10 K; 0 turns correction off in effect. Larger lets one cold room push the water up for every room.",
           "fallback_setpoint": "Used when no outdoor temperature is known — the sensor failed, or the monitor found it stuck or far from the weather, and the weather entity is missing too — once the last effective temperature has been held for three hours, in °C. Empty (default): the curve at its design point, the most heat the curve gives: never too little heat, the valves keep rooms from overheating.",
-          "frost_limit": "Any watched zone colder than this starts heating, whatever else applies, in °C. Default 5 °C. Too low risks frozen pipes; too high heats rooms you keep off.",
+          "frost_limit": "A watched zone colder than this starts heating, whatever else applies, where heat can reach it — its valve open or its device on — in °C. Default 5 °C. Too low risks frozen pipes; too high heats rooms you keep off.",
           "frost_release": "Frost protection ends once every watched zone is above this, in °C. Default 7 °C, above the limit. Close to the limit, frost heating starts and stops more often.",
-          "frost_zone": "Optional: watch only this zone for frost. Empty (default): every zone, those Versatile Thermostat has switched off included — an unheated room below the limit then keeps frost heating on. Frost heating that does not warm the room for two hours raises an alarm; it is never stopped."
+          "frost_zone": "Optional: watch only this zone for frost. Empty (default): every zone. Frost heating runs only for a cold room whose valve can open — Versatile Thermostat reports it open or its device on; a cold room VT keeps closed raises a repair issue instead. Frost heating that does not warm the room for two hours raises an alarm; it is never stopped."
         }
       },
       "control_behaviour": {
@@ -584,8 +595,8 @@
           "count_threshold": "Heating is needed when at least this many zones call for heat. Default 1; at most the number of zones. 0 turns the count off, leaving the power or opening threshold alone, as in Versatile Thermostat. Higher leaves a single calling room without heat.",
           "power_threshold_kw": "Optional: heating is needed when the zones' mean power over their cycle, as Versatile Thermostat counts it, reaches this, in kW — counted only while at least one of them has its valve open or its device on. Too high leaves small rooms without heat.",
           "opening_threshold": "Optional: heating is needed when the widest valve opening among the calling zones reaches this, in %. Too high leaves a room that opens a little without heat.",
-          "learning_pauses": "Pause SmartPI learning while hot water runs, while foreign heat warms a zone and while the water temperature swings, so it does not learn what the boiler did; each pause and resume is read back from SmartPI. Default on. Auto-TPI cannot be paused without resetting what it learned, so zones running it are reported instead. Off: SmartPI learns through those moments too, which can skew its model.",
-          "comfort_correction": "On (default): while a zone's valve is fully open and its room stays short of its setpoint, the water goes up to 3 K above the curve — 1 K per 30 minutes, only while heat flows — and falls twice as fast; it never rises while another zone is more than 1 K too warm, resets at hand-back, and after three hours at 3 K tells you the curve is probably too low. It acts in series with the zones' own PI (SmartPI, TPI): its slow rate lets them settle first. A zone algorithm's outdoor term (TPI's external coefficient) counts the weather a second time: keep it small while the plugin sets the water. Off: the curve alone."
+          "learning_pauses": "Pause SmartPI learning while hot water runs, while foreign heat warms a zone and while the water temperature swings, so it does not learn what the boiler did; each pause and resume is read back from SmartPI. After hot water it waits for the water to come back, at most an hour after the draw; after foreign heat or a swing, only the minimum pause. Default on. Auto-TPI cannot be paused without resetting what it learned, so zones running it are reported instead. Off: SmartPI learns through those moments too, which can skew its model.",
+          "comfort_correction": "On (default): while a zone's valve is fully open and its room stays short of its setpoint, the water goes up to 3 K above the curve — 1 K per 30 minutes, only while heat flows (the flame, where known) — and falls twice as fast; it never rises while another zone taking heat is more than 1 K too warm, nor while a limit holds the water, and at most 3 K a day; it holds during hot water and foreign heat; it is shown on the control state; it resets at hand-back and with the \"Reset comfort correction\" button, and after three hours at 3 K tells you the curve is probably too low. It acts in series with the zones' own PI (SmartPI, TPI): its slow rate lets them settle first. A zone algorithm's outdoor term (TPI's external coefficient) counts the weather a second time: keep it small while the plugin sets the water. Off: the curve alone."
         }
       },
       "control_alarms": {
@@ -681,7 +692,8 @@
       "off_setpoint_near_hand_back_value": "\"Off\" is within 0.5 K of the hand-back value, which returns the boiler to its own control: \"off\" would hand the boiler back instead of stopping heating. Pick another value.",
       "thermostat_setpoint_same_as_read_back": "Pick the thermostat's own entity, not the setpoint read-back.",
       "return_needs_confirmation": "Tick the box to switch this on, or go back.",
-      "setpoint_step_too_coarse": "This entity takes values in steps above 1 °C: a rounded value would read back as ignored. Pick an entity with a finer step."
+      "setpoint_step_too_coarse": "This entity takes values in steps above 1 °C: a rounded value would read back as ignored. Pick an entity with a finer step.",
+      "max_flow_alarm_not_above_max": "The alarm temperature must be above the circuit's maximum."
     }
   },
   "selector": {
@@ -960,6 +972,12 @@
               "not_confirmed": "Not confirmed: sent again every minute",
               "taken_by_other": "Another controller holds the value"
             }
+          },
+          "comfort_correction": {
+            "name": "Comfort correction"
+          },
+          "activation_at": {
+            "name": "Heating starts at"
           }
         }
       },
@@ -1136,6 +1154,25 @@
           }
         }
       },
+      "alarm_circuit_too_hot": {
+        "name": "Circuit water too hot",
+        "state_attributes": {
+          "level": {
+            "name": "Level",
+            "state": {
+              "warning": "Warning",
+              "alarm": "Alarm"
+            }
+          },
+          "reason": {
+            "name": "Why not judged",
+            "state": {
+              "no_flow_reading": "No flow reading",
+              "circuit_not_measured": "The circuit's own flow is not measured"
+            }
+          }
+        }
+      },
       "alarm_write_failed": {
         "name": "Control: write failed"
       },
@@ -1230,6 +1267,11 @@
             }
           }
         }
+      }
+    },
+    "button": {
+      "reset_comfort_correction": {
+        "name": "Reset comfort correction"
       }
     }
   },
@@ -1406,6 +1448,10 @@
     "no_zone_known_monitor": {
       "title": "Versatile Thermostat gives no answer",
       "description": "None of the zones answers ({zones}); the monitor cannot judge them. Check that Versatile Thermostat is loaded, its thermostats are enabled and their entity IDs are the ones in the plugin's options."
+    },
+    "frost_zone_closed": {
+      "title": "A room below the frost limit cannot get heat",
+      "description": "{zones}: Versatile Thermostat keeps the valve closed (the thermostat is off, or its target is below the frost limit), so the plugin cannot heat it and does not start the boiler for it. Use VT's frost preset instead of off; VT's central frost mode needs a frost temperature set in every thermostat."
     }
   }
 }

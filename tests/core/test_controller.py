@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import replace
+from itertools import pairwise
 
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.controller import (
     _LIMIT_REASON,
+    CORRECTION_DAY_K,
+    CORRECTION_LIMIT_S,
+    CORRECTION_MAX_K,
+    FROST_ALARM_S,
     HA_STARTING,
     MAX_STEP_S,
     OUTAGE_BACK_S,
@@ -16,6 +21,7 @@ from custom_components.vtherm_smart_boiler.core.controller import (
     OUTAGE_WINDOW_S,
     BoilerCommand,
     ControlConfig,
+    ControlDecision,
     ControlInputs,
     ControlMode,
     ControlState,
@@ -27,10 +33,11 @@ from custom_components.vtherm_smart_boiler.core.controller import (
     decide,
     fallback_setpoint,
     follow_outage,
+    reset_correction,
 )
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.demand import DemandConfig
-from custom_components.vtherm_smart_boiler.core.limits import FlowLimits, LimitCode
+from custom_components.vtherm_smart_boiler.core.limits import FlowLimits, FrostConfig, LimitCode
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 from custom_components.vtherm_smart_boiler.core.zone_watch import GRACE_S, RECOGNITION_S
 
@@ -148,7 +155,8 @@ def test_a_clip_holds_the_comfort_correction() -> None:
         t = 0.0
         while t <= 7200.0:
             short = zone(t, temperature=19.0, valve_open=1.0)
-            state, _ = decide(state, inputs(t, zones=(short,), clipped=clipped), config)
+            step = inputs(t, zones=(short,), clipped=clipped, flame=True)
+            state, _ = decide(state, step, config)
             t += 10.0
         assert (state.correction > 0.0) is rises
 
@@ -156,25 +164,31 @@ def test_a_clip_holds_the_comfort_correction() -> None:
 def test_vt_modes_act_through_the_zones() -> None:
     """VT applies its central mode to the zones; the plugin sees only their demand. With every
     zone stopped there is no demand: heating off and no hand-back — control goes on, and frost
-    protection still watches."""
+    protection still watches: a stopped zone VT keeps closed is flagged, not heated (decision 4);
+    one whose valve VT holds open (asleep) is heated."""
 
     def stopped(t: float, **kw: float) -> tuple[ZoneState, ...]:
-        return (zone(t, heating_enabled=False, **kw),)
+        kw.setdefault("valve_open", 0.0)
+        return (zone(t, heating_enabled=False, device_active=False, **kw),)
 
     _state, decisions = run(
         [
             inputs(0.0),
             inputs(10.0, zones=stopped(10.0)),
             inputs(20.0, zones=stopped(20.0, temperature=4.0)),
+            inputs(30.0, zones=stopped(30.0, temperature=4.0, valve_open=1.0)),
         ]
     )
-    assert [d.hand_back for d in decisions] == [False, False, False]
+    assert [d.hand_back for d in decisions] == [False] * 4
     assert decisions[1].mode is ControlMode.IDLE
     assert decisions[1].command is not None
     assert not decisions[1].command.ch_enable
-    assert decisions[2].mode is ControlMode.FROST
-    assert decisions[2].command is not None
-    assert decisions[2].command.ch_enable
+    assert decisions[2].mode is ControlMode.IDLE  # closed: frost heat could not reach it
+    assert decisions[2].frost_closed == ("z",)
+    assert decisions[3].mode is ControlMode.FROST
+    assert decisions[3].command is not None
+    assert decisions[3].command.ch_enable
+    assert decisions[3].frost_closed == ()
 
 
 def test_stale_boiler_link_writes_nothing_and_keeps_control() -> None:
@@ -300,7 +314,7 @@ def test_frost_does_not_wait_for_the_interval() -> None:
     _state, decisions = run(
         [
             inputs(0.0, zones=(zone(0.0, valve_open=0.0),)),
-            inputs(30.0, zones=(zone(30.0, temperature=4.0, valve_open=0.0),)),
+            inputs(30.0, zones=(zone(30.0, temperature=4.0, valve_open=0.04),)),
         ]
     )
     assert decisions[1].mode is ControlMode.FROST
@@ -369,6 +383,8 @@ def satisfied(t: float, zone_id: str = "z", **kw: float) -> ZoneState:
 
 
 def minutes(start: float, count: int, zones, **kw):
+    """A step a minute; the flame burns (heat flows, S-24) unless told otherwise."""
+    kw.setdefault("flame", True)
     return [inputs(start + m * 60.0, zones=zones(start + m * 60.0), **kw) for m in range(count)]
 
 
@@ -405,8 +421,10 @@ def test_a_zone_without_opening_data_does_not_block_the_fall() -> None:
 
 
 def test_no_rise_while_another_zone_is_too_warm() -> None:
+    """A zone more than 1 K over its setpoint while it takes heat (S-08: its valve open)."""
+
     def zones(t: float) -> tuple[ZoneState, ...]:
-        return (short(t), ZoneState("b", 22.5, 21.0, True, reported_at=t, valve_open=0.0))
+        return (short(t), ZoneState("b", 22.5, 21.0, True, reported_at=t, valve_open=0.3))
 
     state, _ = run(minutes(0.0, 31, zones), WATER)
     assert state.correction == 0.0
@@ -546,7 +564,7 @@ def test_frost_protection_sees_a_steady_cold_room() -> None:
     """T2: a room steady at 4 °C for hours is still a room at 4 °C."""
     now = 10 * HOUR
     cold = zone(
-        now, heating_enabled=False, valve_open=0.0, temperature=4.0, temperature_at=now - 3 * HOUR
+        now, heating_enabled=False, valve_open=None, temperature=4.0, temperature_at=now - 3 * HOUR
     )
     _state, [decision] = run([inputs(now, zones=(cold,))])
     assert decision.mode is ControlMode.FROST
@@ -558,10 +576,11 @@ def test_a_clock_jumping_forward_does_not_raise_the_correction_at_once() -> None
     """C9: an hour's jump of the wall clock counted as an hour of heat flow — +2 K of comfort
     correction in one step, past the ramp. A step counts for a minute at most."""
     cold = zone(0.0, valve_open=1.0, temperature=19.0, target=21.0)  # short, fully open
-    state, _ = run([inputs(0.0, zones=(cold,)), inputs(10.0, zones=(cold,))])
+    burning = {"flame": True}
+    state, _ = run([inputs(0.0, zones=(cold,), **burning), inputs(10.0, zones=(cold,), **burning)])
     jumped = zone(3610.0, valve_open=1.0, temperature=19.0, target=21.0)
-    state, _ = run([inputs(3610.0, zones=(jumped,))], state=state)
-    assert state.correction <= 0.1  # 70 s of heat flow, not an hour
+    state, _ = run([inputs(3610.0, zones=(jumped,), **burning)], state=state)
+    assert 0.0 < state.correction <= 0.1  # 70 s of heat flow, not an hour
 
 
 # --- V4, R8 (C9): a wall clock set back holds nothing up ---------------------------------------
@@ -1362,3 +1381,592 @@ def test_a_steady_unknown_zone_with_an_age_limit_set_counts_as_unknown() -> None
     assert decisions[0].reasons == (Reason.ZONES_RECOGNITION,)
     assert Reason.ZONES_UNKNOWN in decisions[-1].reasons
     assert decisions[-1].zones_unknown
+
+
+# --- X4, decision 4: frost heat only where the emitter can take it; P-45 ------------------------
+
+
+def cold(zone_id: str, t: float, temperature: float = 4.0, **kw) -> ZoneState:
+    """A started zone below the frost limit; VT's published state as given."""
+    return started(zone_id, t, temperature=temperature, **kw)
+
+
+def closed(zone_id: str, t: float, temperature: float = 4.0, **kw) -> ZoneState:
+    """A cold zone VT has off, as VT 10.4.0 shows it: opening 0, device off."""
+    kw.setdefault("heating_enabled", False)
+    return cold(zone_id, t, temperature, valve_open=0.0, device_active=False, **kw)
+
+
+def test_a_cold_off_zone_with_its_valve_closed_gets_no_frost_heat() -> None:
+    """A off, opening 0, device off, 4 °C; B heating at 20 °C, not calling: heating stays off,
+    A is flagged as closed, and nothing says frost."""
+    zones = (closed("a", 0.0), started("b", 0.0, target=19.0, valve_open=0.0))
+    _state, [decision] = run([inputs(0.0, zones=zones)])
+    assert decision.command is not None
+    assert not decision.command.ch_enable
+    assert decision.mode is ControlMode.IDLE
+    assert decision.frost_closed == ("a",)
+    assert Reason.FROST not in decision.reasons
+
+
+def test_a_call_below_the_threshold_still_gets_frost_heat() -> None:
+    """Two zones must call; one at 4.5 °C does, with its valve open: no demand, but frost
+    heat reaches it."""
+    config = replace(CONFIG, demand=DemandConfig(count_threshold=2))
+    zones = (cold("a", 0.0, 4.5, valve_open=0.6), started("b", 0.0, valve_open=0.0))
+    _state, [decision] = run([inputs(0.0, zones=zones)], config)
+    assert decision.mode is ControlMode.FROST
+    assert decision.command is not None
+    assert decision.command.ch_enable
+    assert Reason.FROST in decision.reasons
+    assert decision.frost_closed == ()
+
+
+def test_a_sleeping_valve_open_at_100_gets_frost_heat() -> None:
+    """VT's SLEEP shows the zone off, its device off and its duty 0, with the valve at 100 %."""
+    asleep = cold(
+        "a", 0.0, heating_enabled=False, valve_open=1.0, on_percent=0.0, device_active=False
+    )
+    _state, [decision] = run([inputs(0.0, zones=(asleep,))])
+    assert decision.mode is ControlMode.FROST
+    assert decision.command.ch_enable
+    assert decision.frost_closed == ()
+
+
+def test_open_and_closed_cold_zones_together() -> None:
+    """Frost heats for the open zone (its device off, its valve a little open: no demand) and
+    flags the closed one; frost ends once the open one is at 7 °C, the closed one still
+    flagged."""
+
+    def zones(t: float, open_at: float) -> tuple[ZoneState, ...]:
+        return (
+            cold("a", t, open_at, valve_open=0.04, device_active=False),
+            closed("c", t),
+        )
+
+    steps = [
+        inputs(0.0, zones=zones(0.0, 4.0)),
+        inputs(10.0, zones=zones(10.0, 6.0)),  # between the limit and the release: goes on
+        inputs(20.0, zones=zones(20.0, 7.0)),
+    ]
+    _state, decisions = run(steps)
+    assert [d.mode for d in decisions] == [ControlMode.FROST] * 2 + [ControlMode.IDLE]
+    assert [d.command.ch_enable for d in decisions] == [True, True, False]
+    assert all(d.frost_closed == ("c",) for d in decisions)
+
+
+def test_vt_closing_the_zone_mid_frost_ends_frost_heating() -> None:
+    """Frost heats for A; VT switches A off (opening 0): frost heating ends at that step, and A
+    is flagged."""
+    steps = [
+        inputs(0.0, zones=(cold("a", 0.0, valve_open=0.4, device_active=False),)),
+        inputs(10.0, zones=(closed("a", 10.0),)),
+    ]
+    _state, decisions = run(steps)
+    assert decisions[0].mode is ControlMode.FROST
+    assert decisions[1].mode is ControlMode.IDLE
+    assert not decisions[1].command.ch_enable
+    assert decisions[1].frost_closed == ("a",)
+
+
+def test_a_zone_whose_valve_state_cannot_be_read_is_heated_as_today() -> None:
+    """Negative: no opening and no device state published → frost heats; an over_climate zone
+    off with its device off and no opening → frost heats (its device may open on its own)."""
+    for zone_state in (
+        cold("a", 0.0, valve_open=None),
+        cold("a", 0.0, heating_enabled=False, valve_open=None, device_active=False),
+    ):
+        _state, [decision] = run([inputs(0.0, zones=(zone_state,))])
+        assert decision.mode is ControlMode.FROST
+        assert decision.command.ch_enable
+        assert decision.frost_closed == ()
+
+
+def test_a_heating_zone_with_a_closed_valve_cannot_take_heat() -> None:
+    """Heat mode with a closed valve (a frost preset below the limit, a TPI threshold): the
+    mode alone never counts — no frost heat, flagged."""
+    _state, [decision] = run([inputs(0.0, zones=(closed("a", 0.0, heating_enabled=True),))])
+    assert decision.command is not None
+    assert not decision.command.ch_enable
+    assert decision.frost_closed == ("a",)
+
+
+def test_closes_when_off_makes_an_off_zone_closed() -> None:
+    """The per-zone option on, the zone off, no opening published: flagged, no heat. Negative:
+    the option off, the same zone is heated as today."""
+    zone_state = cold("a", 0.0, heating_enabled=False, valve_open=None)
+    option = replace(CONFIG, frost=FrostConfig(closes_when_off=frozenset({"a"})))
+    _state, [decision] = run([inputs(0.0, zones=(zone_state,))], option)
+    assert not decision.command.ch_enable
+    assert decision.frost_closed == ("a",)
+    _state, [decision] = run([inputs(0.0, zones=(zone_state,))])
+    assert decision.mode is ControlMode.FROST
+
+
+def test_the_picked_frost_zone_closed_is_flagged() -> None:
+    """The picked zone off and closed at 4 °C, another zone — not watched — at 3 °C with its
+    valve open: no frost heating, and the picked zone is flagged."""
+    config = replace(CONFIG, frost=FrostConfig(zone="a"))
+    zones = (closed("a", 0.0), cold("b", 0.0, 3.0, valve_open=0.04, device_active=False))
+    _state, [decision] = run([inputs(0.0, zones=zones)], config)
+    assert decision.mode is not ControlMode.FROST
+    assert not decision.command.ch_enable
+    assert decision.frost_closed == ("a",)
+
+
+def test_no_zone_is_flagged_during_the_recognition_period() -> None:
+    """The closed-zone flag waits for the recognition period (the zones report one by one);
+    frost protection acts meanwhile for the zones already known that can take heat."""
+    steps = [
+        inputs(0.0, zones=(closed("a", 0.0), placeholder("b", 0.0))),
+        inputs(10.0, zones=(closed("a", 10.0), started("b", 10.0, valve_open=0.0))),
+    ]
+    _state, decisions = run(steps)
+    assert decisions[0].frost_closed == ()
+    assert decisions[0].command is None
+    assert decisions[1].frost_closed == ("a",)
+
+
+def test_frost_since_resets_at_hand_back() -> None:
+    """P-45: frost for 90 min, a hand-back (control switched off), a resume: "frost not
+    warming" only two hours after the new start — not at once for time the plugin did not
+    heat."""
+    config = replace(CONFIG, decision_interval_s=600.0)
+
+    def frosty(t: float, **kw) -> ControlInputs:
+        return inputs(t, zones=(zone(t, temperature=3.0),), **kw)
+
+    state, decisions = run([frosty(t) for t in range(0, 5401, 600)], config)
+    assert not any(d.frost_stuck for d in decisions)
+    state, [off] = run([frosty(6000.0, enabled=False)], config, state)
+    assert off.hand_back
+    assert state.frost_since is None
+    assert not state.frost
+    restart = 6600.0
+    later = [frosty(restart + k * 600.0) for k in range(13)]
+    _state, decisions = run(later, config, state)
+    stuck = [step.now for step, d in zip(later, decisions, strict=True) if d.frost_stuck]
+    assert stuck[0] == restart + FROST_ALARM_S
+
+
+# --- X4, decision 5: VT's activation delay ---------------------------------------------------
+
+DELAY = replace(CONFIG, activation_delay_s=120.0)
+
+
+def calling(t: float) -> ControlInputs:
+    return inputs(t)
+
+
+def quiet(t: float) -> ControlInputs:
+    return inputs(t, zones=(zone(t, valve_open=0.0),))
+
+
+def heating_at(steps: list[ControlInputs], decisions: list[ControlDecision]) -> list[float]:
+    return [
+        step.now
+        for step, d in zip(steps, decisions, strict=True)
+        if d.command is not None and d.command.ch_enable
+    ]
+
+
+def test_no_delay_by_default() -> None:
+    """Regression: 0 s, as VT's default — heating on at the step the zone calls."""
+    assert ControlConfig(curve=CURVE).activation_delay_s == 0.0
+    steps = [quiet(0.0), calling(10.0)]
+    _state, decisions = run(steps)
+    assert heating_at(steps, decisions) == [10.0]
+    assert decisions[1].activation_at is None
+
+
+def test_the_delay_counts_from_the_first_call() -> None:
+    """120 s: off with the reason ``activation_delay`` through t0 + 110, on at t0 + 120; the
+    decision says when heating will start."""
+    t0 = 30.0
+    steps = [quiet(0.0), quiet(10.0), quiet(20.0), *(calling(t) for t in stepped(t0, t0 + 130))]
+    _state, decisions = run(steps, DELAY)
+    at = {step.now: d for step, d in zip(steps, decisions, strict=True)}
+    for t in stepped(t0, t0 + 120):
+        assert at[t].command is not None
+        assert not at[t].command.ch_enable  # mid-session: the current "off" goes on
+        assert at[t].mode is ControlMode.IDLE
+        assert Reason.ACTIVATION_DELAY in at[t].reasons
+        assert at[t].activation_at == pytest.approx(t0 + 120.0)
+    assert at[t0 + 120.0].command.ch_enable
+    assert at[t0 + 120.0].mode is ControlMode.HEATING
+    assert Reason.ACTIVATION_DELAY not in at[t0 + 120.0].reasons
+    assert at[t0 + 120.0].activation_at is None
+
+
+def test_a_gap_neither_cancels_nor_restarts_the_wait() -> None:
+    """A call at t0, none at t0 + 60, back at t0 + 70: on at t0 + 120, as VT's timer."""
+    t0 = 10.0
+    steps = [quiet(0.0)]
+    for t in stepped(t0, t0 + 130):
+        steps.append(quiet(t) if t == t0 + 60 else calling(t))
+    _state, decisions = run(steps, DELAY)
+    assert heating_at(steps, decisions)[0] == t0 + 120.0
+
+
+def test_no_demand_at_the_end_drops_the_start() -> None:
+    """The call gone when the wait ends: no start — and a later call waits anew."""
+    t0 = 10.0
+    steps = [quiet(0.0), *(calling(t) for t in stepped(t0, t0 + 60))]
+    steps += [quiet(t) for t in stepped(t0 + 60, t0 + 200)]
+    steps += [calling(t) for t in stepped(t0 + 200, t0 + 330)]
+    state, decisions = run(steps, DELAY)
+    assert heating_at(steps, decisions) == [t0 + 320.0]
+    assert state.activation_s is None
+
+
+def test_stopping_is_never_delayed() -> None:
+    """Heating on: the call ends — off at that step."""
+    steps = [calling(t) for t in stepped(0.0, 130.0)] + [quiet(130.0)]
+    _state, decisions = run(steps, DELAY)
+    assert decisions[-2].command.ch_enable
+    assert not decisions[-1].command.ch_enable
+    assert Reason.ACTIVATION_DELAY not in decisions[-1].reasons
+
+
+def test_frost_heating_waits_too() -> None:
+    """Frost heating waits the delay like any start; "frost not warming" counts from the real
+    start."""
+    t0 = 10.0
+
+    def frosty(t: float) -> ControlInputs:
+        return inputs(t, zones=(zone(t, temperature=3.0, valve_open=0.04),))
+
+    steps = [quiet(0.0), *(frosty(t) for t in stepped(t0, t0 + 130))]
+    state, decisions = run(steps, DELAY)
+    at = {step.now: d for step, d in zip(steps, decisions, strict=True)}
+    assert at[t0 + 110.0].mode is ControlMode.IDLE
+    assert Reason.ACTIVATION_DELAY in at[t0 + 110.0].reasons
+    assert not at[t0 + 110.0].command.ch_enable
+    assert at[t0 + 120.0].mode is ControlMode.FROST
+    assert at[t0 + 120.0].command.ch_enable
+    assert state.frost_since == t0 + 120.0
+    start = t0 + 120.0
+    later = [frosty(start + k * 600.0) for k in range(1, 13)]
+    _state, decisions = run(later, DELAY, state)
+    stuck = [step.now for step, d in zip(later, decisions, strict=True) if d.frost_stuck]
+    assert stuck[0] == start + FROST_ALARM_S
+
+
+@pytest.mark.parametrize(
+    "stop",
+    [{"blockers": ("x",)}, {"enabled": False}, {"hand_back_alarms": ("pressure_low",)}],
+    ids=["blocker", "switched_off", "hand_back"],
+)
+def test_a_hand_back_a_blocker_or_switching_off_cancels_a_pending_start(stop: dict) -> None:
+    """A pending start is dropped at the release; once control resumes, the wait counts anew —
+    and, taking the boiler afresh, nothing is written meanwhile (a latch never resumes)."""
+    t0 = 10.0
+    steps = [quiet(0.0), *(calling(t) for t in stepped(t0, t0 + 60))]
+    steps.append(replace(calling(t0 + 60), **stop))
+    steps += [calling(t) for t in stepped(t0 + 70, t0 + 200)]
+    state, decisions = run(steps, DELAY)
+    at = {step.now: d for step, d in zip(steps, decisions, strict=True)}
+    assert at[t0 + 60].command is None
+    if "hand_back_alarms" in stop:
+        assert state.latched
+        assert state.activation_s is None
+        assert heating_at(steps, decisions) == []
+        return
+    assert heating_at(steps, decisions)[0] == t0 + 190.0  # 120 s from t0 + 70
+    assert all(at[t].command is None for t in stepped(t0 + 70, t0 + 190))
+
+
+def test_no_delay_for_a_command_restored_after_a_restart() -> None:
+    """Decision 5: no delay where the plugin controlled the boiler before a restart — the
+    restored "on" goes out at once and stays; a restored "off" with the zones calling at the
+    first step turns on at once too."""
+    steps = [
+        *during(0.0, 60.0, lambda t: (placeholder("a", t),), restored_command=KEPT),
+        *during(60.0, 90.0, lambda t: (started("a", t),), restored_command=KEPT),
+    ]
+    _state, decisions = run(steps, DELAY)
+    assert all(d.command is not None and d.command.ch_enable for d in decisions)
+    off = BoilerCommand(False, 45.0)
+    steps = [inputs(0.0, zones=(started("a", 0.0),), restored_command=off)]
+    _state, [decision] = run(steps, DELAY)
+    assert decision.command.ch_enable
+    assert Reason.ACTIVATION_DELAY not in decision.reasons
+
+
+def test_at_a_new_session_nothing_is_written_while_waiting() -> None:
+    """Zones calling when control is switched on: nothing is written while the delay runs —
+    ``controlling`` stays false, so switching off meanwhile owes nothing."""
+    steps = [calling(t) for t in stepped(0.0, 130.0)]
+    state, decisions = run(steps, DELAY)
+    assert all(d.command is None for d in decisions[:-1])
+    assert all(Reason.ACTIVATION_DELAY in d.reasons for d in decisions[:-1])
+    assert all(d.mode is ControlMode.IDLE for d in decisions[:-1])
+    assert decisions[-1].command.ch_enable
+    state, decisions = run(steps[:6], DELAY)
+    assert not state.controlling
+    state, [off] = run([replace(calling(60.0), enabled=False)], DELAY, state)
+    assert not off.hand_back
+
+
+def test_without_a_call_off_is_written_at_once_at_a_new_session() -> None:
+    """The delay holds only a start: with nothing calling, "off" goes out at the first step."""
+    _state, [decision] = run([quiet(0.0)], DELAY)
+    assert decision.command is not None
+    assert not decision.command.ch_enable
+    assert decision.activation_at is None
+
+
+def test_a_clock_jump_does_not_end_or_stretch_the_wait() -> None:
+    """Each step counts at most a minute (``MAX_STEP_S``): an hour's jump forward leaves the
+    wait running; a jump back counts nothing."""
+    assert MAX_STEP_S == 60.0
+    state, _ = run([quiet(0.0), calling(10.0)], DELAY)
+    state, [jumped] = run([calling(3610.0)], DELAY, state)
+    assert not jumped.command.ch_enable  # 60 s counted, not an hour
+    assert state.activation_s == 60.0
+    state, [back] = run([calling(1000.0)], DELAY, state)
+    assert not back.command.ch_enable
+    assert state.activation_s == 60.0  # nothing counted backwards
+    state, decisions = run([calling(1000.0 + k * 10.0) for k in range(1, 7)], DELAY, state)
+    assert decisions[-1].command.ch_enable  # 60 + 60 s
+
+
+def test_a_stale_link_pauses_the_wait() -> None:
+    """Stale steps write nothing and do not count: the wait goes on once the data is fresh."""
+    t0 = 10.0
+    steps = [quiet(0.0), calling(t0), calling(t0 + 10), calling(t0 + 20)]
+    steps += [replace(calling(t), boiler_link=False) for t in stepped(t0 + 30, t0 + 100)]
+    steps += [calling(t) for t in stepped(t0 + 100, t0 + 200)]
+    _state, decisions = run(steps, DELAY)
+    assert heating_at(steps, decisions)[0] == t0 + 190.0  # 20 s before, 100 s after
+
+
+def test_the_delay_waits_after_the_recognition_period() -> None:
+    """At a start nothing is decided until the zones have reported; the wait begins then."""
+    reported = 60.0
+    steps = during(
+        0.0,
+        reported + 130.0,
+        lambda t: (started("a", t) if t >= reported else placeholder("a", t),),
+    )
+    _state, decisions = run(steps, DELAY)
+    assert heating_at(steps, decisions)[0] == reported + 120.0
+
+
+def test_the_activation_delay_is_bounded_as_in_vt() -> None:
+    """0 to 600 s (VT 10.4.0); anything else is refused."""
+    for bad in (-10.0, 700.0):
+        with pytest.raises(ValueError, match="activation delay"):
+            replace(CONFIG, activation_delay_s=bad)
+    assert replace(CONFIG, activation_delay_s=600.0).activation_delay_s == 600.0
+
+
+# --- X4: fallback shown only while heating (P-47), the fixed fallback (S-26) -------------------
+
+LOST = 3 * 3600.0 + 60.0  # past the three hours the last outdoor temperature holds
+
+
+def test_fallback_is_shown_only_while_heating() -> None:
+    """P-47: without any outdoor temperature, FALLBACK only while heating is wanted; with the
+    zones satisfied the mode is IDLE."""
+    steps = [
+        inputs(0.0),
+        replace(quiet(LOST), outdoor_sensor=None),
+        replace(calling(LOST + 10.0), outdoor_sensor=None),
+    ]
+    _state, decisions = run(steps, replace(CONFIG, decision_interval_s=60.0))
+    assert decisions[1].mode is ControlMode.IDLE
+    assert Reason.OUTDOOR_UNKNOWN in decisions[1].reasons
+    assert decisions[2].mode is ControlMode.FALLBACK
+
+
+def test_the_fixed_fallback_applies_after_the_three_hour_hold() -> None:
+    """S-26, decision 9: 48 °C set, the outdoor temperature lost — the curve's last value until
+    three hours have passed, then 48 °C."""
+    config = replace(CONFIG, fallback_setpoint=48.0, decision_interval_s=60.0)
+    steps = [inputs(0.0)]
+    steps += [inputs(t, outdoor_sensor=None) for t in (3600.0, 3 * 3600.0, LOST)]
+    _state, decisions = run(steps, config)
+    for held in decisions[1:3]:
+        assert held.command == BoilerCommand(True, pytest.approx(CURVE.flow(5.0)))
+        assert Reason.OUTDOOR_HELD in held.reasons
+    assert decisions[3].command == BoilerCommand(True, 48.0)
+    assert decisions[3].mode is ControlMode.FALLBACK
+
+
+# --- X4: the ramp skipped only for installation caps (S-23) ------------------------------------
+
+
+def test_a_falling_weather_ceiling_ramps_down() -> None:
+    """S-23: the outdoor sensor back after hours at the design flow drops the curve — and its
+    ceiling — by 24 K: the setpoint comes down at the ramp's rate, 1 K a minute, not at once."""
+    config = replace(
+        CONFIG, ramp_k_per_min=1.0, decision_interval_s=60.0, outdoor_time_constant_s=1.0
+    )
+    steps = [inputs(0.0, outdoor_sensor=-15.0)]
+    steps += [inputs(t, outdoor_sensor=9.0) for t in stepped(60.0, 180.0)]
+    _state, decisions = run(steps, config)
+    assert decisions[0].command.setpoint == pytest.approx(55.0)
+    assert decisions[1].target == pytest.approx(31.0)  # the ceiling now 41: 14 K below 55
+    setpoints = [d.command.setpoint for d in decisions]
+    drops = [a - b for a, b in pairwise(setpoints)]
+    assert drops[0] == pytest.approx(1.0)  # a minute since the first step
+    assert all(drop == pytest.approx(1.0 / 6.0) for drop in drops[1:])
+    assert all(Reason.RAMP in d.reasons for d in decisions[1:])
+
+
+@pytest.mark.parametrize(
+    "cap",
+    [
+        {"limits": FlowLimits(hard_min=25.0, hard_max=40.0)},
+        {"circuit_max": 40.0},
+        {"boiler_max": 40.0},
+    ],
+    ids=["hard_max", "circuit_max", "boiler_max"],
+)
+def test_an_installation_cap_applies_at_once(cap: dict) -> None:
+    """A setpoint above an installation cap — the highest water temperature, the circuit's,
+    the boiler's — meets it at once, unramped."""
+    config = replace(CONFIG, ramp_k_per_min=0.1, decision_interval_s=60.0)
+    state, _ = run([inputs(0.0, outdoor_sensor=-10.0)], config)
+    _state, [decision] = run([inputs(60.0, outdoor_sensor=-10.0)], replace(config, **cap), state)
+    assert decision.command.setpoint == 40.0
+    assert Reason.RAMP not in decision.reasons
+
+
+# --- X4: the comfort correction (principle 13; S-08, S-24, S-25, P-46, P-38) ------------------
+
+
+def test_heat_flows_by_the_flame_when_known() -> None:
+    """S-24: the flame off while heating is commanded — no rise; the flame unknown — the
+    command decides; hot water — no rise."""
+    for kw, rises in (
+        ({"flame": False}, False),
+        ({"flame": None}, True),
+        ({"flame": True}, True),
+        ({"flame": True, "dhw": True}, False),
+        ({"flame": True, "dhw": None}, True),
+    ):
+        state, _ = run(minutes(0.0, 31, lambda t: (short(t),), **kw), WATER)
+        assert (state.correction == pytest.approx(1.0)) is rises, kw
+        assert (state.correction == 0.0) is not rises, kw
+
+
+def test_only_zones_taking_heat_stop_the_rise() -> None:
+    """S-08: a zone 2 K too warm whose valve VT closed (eco) takes no heat: the rise goes on.
+    One taking heat — its valve open, or its device on — stops it."""
+    for other, rises in (
+        ({"valve_open": 0.0}, True),
+        ({"valve_open": 0.04}, True),  # below 5 %: not taking heat
+        ({"valve_open": 0.5}, False),
+        ({"valve_open": None, "device_active": True}, False),
+    ):
+
+        def zones(t: float, other: dict = other) -> tuple[ZoneState, ...]:
+            return (short(t), ZoneState("b", 23.0, 21.0, True, reported_at=t, **other))
+
+        state, _ = run(minutes(0.0, 31, zones), WATER)
+        assert (state.correction > 0.0) is rises, other
+
+
+def test_the_correction_stays_while_a_cap_holds_the_setpoint() -> None:
+    """T-48 (S-25): the circuit maximum equal to the curve and a saturated cold zone: 200 min
+    of steps — no rise, and no "at limit". At its edge already, a cap pauses the "at limit"
+    timer. Negative: without the cap the correction rises, and at its edge the timer runs."""
+    capped = replace(WATER, circuit_max=CURVE.flow(5.0))
+    state, decisions = run(minutes(0.0, 200, lambda t: (short(t),)), capped)
+    assert state.correction == 0.0
+    assert not any(d.correction_at_limit for d in decisions)
+    edge = replace(ControlState(), correction=CORRECTION_MAX_K)
+    state, decisions = run(minutes(0.0, 241, lambda t: (short(t),)), capped, edge)
+    assert state.correction == CORRECTION_MAX_K
+    assert not any(d.correction_at_limit for d in decisions)
+    assert state.correction_limit_s == 0.0  # paused while the cap held
+    state, decisions = run(minutes(0.0, 241, lambda t: (short(t),)), WATER, edge)
+    assert decisions[-1].correction_at_limit
+    assert state.correction_limit_s >= CORRECTION_LIMIT_S
+
+
+def test_the_correction_does_not_rise_when_the_clock_goes_back() -> None:
+    """T-18 (P-46): after a decision at 10000 s (correction 0) — one zone 1.5 K too warm,
+    another at 8 °C — a step at 6400 s with the second zone at 4.5 °C (frost starts): the
+    correction stays 0, and no reason says comfort correction."""
+
+    def zones(t: float, second: float) -> tuple[ZoneState, ...]:
+        return (
+            ZoneState("a", 22.5, 21.0, True, reported_at=t, valve_open=0.3),
+            ZoneState("b", second, 21.0, True, reported_at=t, valve_open=1.0),
+        )
+
+    state, _ = run([inputs(10000.0, zones=zones(10000.0, 8.0), flame=True)], WATER)
+    assert state.correction == 0.0
+    state, [decision] = run([inputs(6400.0, zones=zones(6400.0, 4.5), flame=True)], WATER, state)
+    assert decision.mode is ControlMode.FROST
+    assert state.correction == 0.0
+    assert Reason.COMFORT_CORRECTION not in decision.reasons
+
+
+def test_the_correction_rises_at_most_3_k_a_day() -> None:
+    """Principle 13's daily rate (provisional, K4): 3 K up, back down, and no more rise within
+    24 h of the first; a day later it rises again."""
+    assert CORRECTION_DAY_K == 3.0
+    state, _ = run(minutes(0.0, 91, lambda t: (short(t),)), WATER)
+    assert state.correction == pytest.approx(3.0)
+    state, _ = run(minutes(5460.0, 46, lambda t: (satisfied(t),)), WATER, state)
+    assert state.correction == pytest.approx(0.0)
+    state, _ = run(minutes(8220.0, 60, lambda t: (short(t),)), WATER, state)
+    assert state.correction == 0.0  # the day's rise is spent
+    next_day = 86400.0 + 5460.0
+    state, _ = run(minutes(next_day, 30, lambda t: (short(t),)), WATER, state)
+    assert state.correction == pytest.approx(1.0)
+
+
+def test_the_correction_freezes_during_hot_water_and_foreign_heat() -> None:
+    """Principle 13 (5): neither rise nor fall while hot water runs or foreign heat warms a
+    zone. Negative: foreign heat unknown freezes nothing."""
+    start = replace(ControlState(), correction=2.0)
+    for kw in ({"dhw": True}, {"foreign_heat": True}):
+        state, _ = run(minutes(0.0, 30, lambda t: (satisfied(t),), **kw), WATER, start)
+        assert state.correction == 2.0, kw  # no fall
+        state, _ = run(minutes(0.0, 30, lambda t: (short(t),), **kw), WATER, start)
+        assert state.correction == 2.0, kw  # no rise
+    for kw in ({"foreign_heat": None}, {"foreign_heat": False}):
+        state, _ = run(minutes(0.0, 31, lambda t: (satisfied(t),), **kw), WATER, start)
+        assert state.correction == pytest.approx(0.0), kw
+
+
+def test_the_correction_does_not_rise_while_the_boiler_clips() -> None:
+    """A clipped read-back holds the setpoint as a cap does: no rise, and at the edge the "at
+    limit" timer pauses."""
+    state, _ = run(minutes(0.0, 60, lambda t: (short(t),), clipped=True), WATER)
+    assert state.correction == 0.0
+    edge = replace(ControlState(), correction=3.0)
+    _state, decisions = run(minutes(0.0, 241, lambda t: (short(t),), clipped=True), WATER, edge)
+    assert not any(d.correction_at_limit for d in decisions)
+
+
+def test_reset_correction_clears_the_value_and_its_timers() -> None:
+    """Answer J: the pure reset — correction 0, the "at limit" timer and the heat counted
+    cleared, the water decided anew at the next step; the rise may start again under its
+    rules (the day's 3 K counts what rose before)."""
+    state, _ = run(minutes(0.0, 61, lambda t: (short(t),)), WATER)
+    assert state.correction == pytest.approx(2.0)
+    reset = reset_correction(replace(state, correction_limit_s=100.0, heat_s=50.0))
+    assert reset.correction == 0.0
+    assert reset.correction_limit_s == 0.0
+    assert reset.heat_s == 0.0
+    assert reset.decided_at is None
+    assert reset.rises == state.rises
+    state, decisions = run(minutes(3660.0, 1, lambda t: (short(t),)), WATER, reset)
+    assert Reason.COMFORT_CORRECTION not in decisions[0].reasons  # the water decided anew
+    state, _ = run(minutes(3720.0, 60, lambda t: (short(t),)), WATER, state)
+    assert state.correction == pytest.approx(1.0)  # what is left of the day's 3 K
+
+
+def test_the_decision_carries_the_correction() -> None:
+    """P-38: the correction is published — each decision carries its value; a hand-back
+    resets it."""
+    state, decisions = run(minutes(0.0, 31, lambda t: (short(t),)), WATER)
+    assert decisions[-1].correction == pytest.approx(1.0) == state.correction
+    _state, [off] = run([inputs(1900.0, enabled=False)], WATER, state)
+    assert off.correction == 0.0

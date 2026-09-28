@@ -1,9 +1,10 @@
 """Alarms and early warnings — information only in the monitor.
 
 Alarms look at the current state, with hysteresis so they do not flap: water pressure too low
-or too high, flue gas too hot, starts too frequent, ignition unstable. Early warnings compare a
-recent window with a baseline window: pressure falling in the cold system, the flue gas running
-hotter above the return (a fouling heat exchanger), the CH hysteresis drifting.
+or too high, flue gas too hot, starts too frequent, ignition unstable, a circuit's water too hot
+for its maximum (decision 10). Early warnings compare a recent window with a baseline window:
+pressure falling in the cold system, the flue gas running hotter above the return (a fouling heat
+exchanger), the CH hysteresis drifting.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from enum import StrEnum
 from itertools import pairwise
 
 from .cycles import ClassifiedBurn
+from .installation import Circuit, CircuitControl
 from .metrics import CH_KINDS
 from .readings import ZONE_OPEN, ZoneState
 from .series import Series, duration_where
@@ -32,6 +34,7 @@ class AlarmKind(StrEnum):
     FLUE_GAS_RISING = "flue_gas_rising"
     HYSTERESIS_DRIFT = "hysteresis_drift"
     LOW_FLOW = "low_flow"
+    CIRCUIT_TOO_HOT = "circuit_too_hot"
 
 
 class Level(StrEnum):
@@ -307,3 +310,56 @@ def low_flow(
     since = previous.since if previous is not None and previous.since is not None else now
     active = now - since >= LOW_FLOW_HOLD_S
     return Alarm(kind, active, Level.WARNING if active else None, widest, ZONE_OPEN, since=since)
+
+
+# --- decision 10: a circuit's water too hot for its maximum -------------------------------------
+
+# The circuit's maximum limits the setpoint; the boiler may overshoot it by its own hysteresis.
+# Once the measured flow has stayed above the user's alarm temperature for the user's time, an
+# information alarm; it clears below the alarm temperature by this much (provisional, K4).
+CIRCUIT_ALARM_HYSTERESIS_K = 1.0
+CIRCUIT_ALARM_RISE_K = 5.0  # the alarm temperature's starting value: the maximum + 5 K (decided)
+CIRCUIT_ALARM_MIN = 10.0  # the time's starting value, in minutes (decided)
+NO_FLOW_READING = "no_flow_reading"
+CIRCUIT_NOT_MEASURED = "circuit_not_measured"
+
+
+def circuit_flow(
+    circuit: Circuit, boiler_flow: float | None, own_flow: float | None, *, own_mapped: bool = False
+) -> tuple[float | None, str | None]:
+    """The flow a circuit's emitters get, as the too-hot alarm judges it, or why it is not
+    known: the circuit's own flow sensor where it reads, else the boiler's flow for an unmixed
+    circuit; a passive fixed or mixed circuit without its own reading is not measured —
+    ``own_mapped``: it has a sensor that does not read now. Readings are fresh or ``None``."""
+    if own_flow is not None:
+        return own_flow, None
+    if circuit.control is CircuitControl.UNMIXED_SHARED:
+        return (boiler_flow, None) if boiler_flow is not None else (None, NO_FLOW_READING)
+    return None, NO_FLOW_READING if own_mapped else CIRCUIT_NOT_MEASURED
+
+
+def circuit_too_hot(
+    flow: float | None,
+    alarm_at: float,
+    hold_s: float,
+    now: float,
+    previous: Alarm | None,
+    reason: str | None = None,
+) -> Alarm:
+    """The circuit's water too hot (decision 10), information only: active once ``flow`` has
+    stayed above ``alarm_at`` for ``hold_s``; it clears only below ``alarm_at`` by
+    ``CIRCUIT_ALARM_HYSTERESIS_K``. Without a flow reading it is inactive with its reason
+    (``reason``, else ``no_flow_reading``). A wait begun later than now — the clock set back —
+    begins now."""
+    kind = AlarmKind.CIRCUIT_TOO_HOT
+    if flow is None:
+        return Alarm(kind, False, limit=alarm_at, reason=reason or NO_FLOW_READING)
+    if previous is not None and previous.active and flow >= alarm_at - CIRCUIT_ALARM_HYSTERESIS_K:
+        return Alarm(kind, True, Level.WARNING, flow, alarm_at, since=previous.since)
+    if flow <= alarm_at:
+        return Alarm(kind, False, None, flow, alarm_at)
+    since = now
+    if previous is not None and not previous.active and previous.since is not None:
+        since = min(previous.since, now)
+    active = now - since >= hold_s
+    return Alarm(kind, active, Level.WARNING if active else None, flow, alarm_at, since=since)

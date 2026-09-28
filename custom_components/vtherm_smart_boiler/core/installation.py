@@ -50,13 +50,17 @@ class Circuit:
     """A heating circuit.
 
     ``fixed_temperature`` is the declared water temperature of a passive fixed circuit.
-    ``max_flow`` caps the water temperature this circuit may receive (e.g. underfloor).
+    ``max_flow`` caps the setpoint this circuit may receive (e.g. underfloor); the boiler may
+    overshoot it by its own hysteresis, so an information alarm rises once the measured flow
+    has stayed above ``max_flow_alarm`` for ``max_flow_alarm_s`` (decision 10).
     """
 
     circuit_id: str
     control: CircuitControl = CircuitControl.UNMIXED_SHARED
     fixed_temperature: float | None = None
     max_flow: float | None = None
+    max_flow_alarm: float | None = None  # °C; only with a maximum
+    max_flow_alarm_s: float | None = None  # seconds above it before the alarm rises
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +69,9 @@ class Zone:
 
     ``reference_output_w`` is the emitter size: its output at the emitter type's reference
     condition, when the user knows it. ``exponent`` overrides the emitter type's EN 442 exponent
-    (advanced).
+    (advanced). ``closes_when_off``: the user's declaration that the zone's emitter closes while
+    VT has it off, for a zone whose valve state VT does not publish (decision 4; off by
+    default).
     """
 
     zone_id: str
@@ -73,6 +79,7 @@ class Zone:
     emitter: EmitterType = EmitterType.RADIATOR
     reference_output_w: float | None = None
     exponent: float | None = None
+    closes_when_off: bool = False
 
 
 class IssueCode(StrEnum):

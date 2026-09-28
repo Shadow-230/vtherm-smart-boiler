@@ -468,6 +468,8 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "room_sensor_lost_zones",
             "learning_paused",
             "hand_back_confirmation",
+            "comfort_correction",
+            "activation_at",
         }
     )
 
@@ -500,6 +502,10 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "learning_paused": list(status.paused_zones),
             "writes_stopped": status.writes_stopped,
             "monitor_failed_since": _time(status.monitor_failed_since),
+            # The comfort correction the session learned, K (P-38); the button resets it.
+            "comfort_correction": _round(status.correction, 2),
+            # A start waiting VT's activation delay is due then (decision 5).
+            "activation_at": _time(status.activation_at),
         }
 
 

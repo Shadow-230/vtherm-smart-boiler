@@ -29,6 +29,8 @@ from .const import (
 )
 from .control_config import ControlOptions, parse_control
 from .core.alarms import (
+    CIRCUIT_ALARM_MIN,
+    CIRCUIT_ALARM_RISE_K,
     DEFAULT_FREQUENT_STARTS_PER_HOUR,
     DEFAULT_UNSTABLE_BURNS_PER_DAY,
     FLUE_GAS_CONDENSING_BAND,
@@ -209,12 +211,24 @@ def _circuits(data: Any) -> tuple[tuple[Circuit, ...], dict[str, str]]:
     flow_entities: dict[str, str] = {}
     for item in data:
         circuit_id = str(item["id"])
+        max_flow = _float_or_none(item.get("max_flow"))
+        alarm_at = alarm_s = None
+        if max_flow is not None:
+            # Decision 10: the too-hot alarm's temperature and time, pre-filled with the maximum
+            # + 5 K and 10 minutes where none is stored — never empty.
+            alarm_at = _float_or_none(item.get("max_flow_alarm"))
+            if alarm_at is None:
+                alarm_at = max_flow + CIRCUIT_ALARM_RISE_K
+            minutes = _float_or_none(item.get("max_flow_alarm_min"))
+            alarm_s = (CIRCUIT_ALARM_MIN if minutes is None else minutes) * 60.0
         circuits.append(
             Circuit(
                 circuit_id,
                 CircuitControl(item.get("control", CircuitControl.UNMIXED_SHARED)),
                 _float_or_none(item.get("fixed_temperature")),
-                _float_or_none(item.get("max_flow")),
+                max_flow,
+                alarm_at,
+                alarm_s,
             )
         )
         if item.get("flow_entity"):
@@ -238,6 +252,8 @@ def _zones(data: Any, circuit_ids: set[str]) -> tuple[tuple[Zone, ...], list[Zon
                 EmitterType(item.get("emitter", EmitterType.RADIATOR)),
                 _float_or_none(item.get("reference_output_w")),
                 _float_or_none(item.get("exponent")),
+                # Decision 4: only a clear "yes" counts; the form shows it from X5.
+                closes_when_off=item.get("closes_when_off") is True,
             )
         )
         sources = tuple(

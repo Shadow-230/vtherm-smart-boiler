@@ -246,3 +246,35 @@ def test_the_verdict_knows_whether_the_boiler_condenses() -> None:
     options = MINIMAL | {"boiler": {"condensing": False}}
     verdict = EntryConfig.from_options(options).monitor.monitor.verdict
     assert verdict.condensing_boiler is False
+
+
+# --- X4: the circuit maximum's alarm (decision 10), the zone's "closes when off" (decision 4) ---
+
+
+def test_a_circuit_with_a_maximum_gets_its_alarm_temperature_and_time() -> None:
+    """Pre-filled when absent — the maximum + 5 K and 10 minutes — so never empty; a stored
+    value wins; a circuit without a maximum has no alarm."""
+    options = MINIMAL | {"circuits": [{"id": "main", "max_flow": 40}]}
+    circuit = EntryConfig.from_options(options).installation.circuits[0]
+    assert (circuit.max_flow_alarm, circuit.max_flow_alarm_s) == (45.0, 600.0)
+    stored = {"id": "main", "max_flow": 40, "max_flow_alarm": 48, "max_flow_alarm_min": 20}
+    circuit = EntryConfig.from_options(MINIMAL | {"circuits": [stored]}).installation.circuits[0]
+    assert (circuit.max_flow_alarm, circuit.max_flow_alarm_s) == (48.0, 1200.0)
+    plain = EntryConfig.from_options(MINIMAL | {"circuits": [{"id": "main"}]})
+    assert plain.installation.circuits[0].max_flow_alarm is None
+    assert plain.installation.circuits[0].max_flow_alarm_s is None
+    # Negative: a stored alarm left behind without its maximum raises nothing.
+    orphan = {"id": "main", "max_flow_alarm": 48, "max_flow_alarm_min": 20}
+    circuit = EntryConfig.from_options(MINIMAL | {"circuits": [orphan]}).installation.circuits[0]
+    assert circuit.max_flow_alarm is None
+
+
+def test_the_zone_option_closes_when_off_is_read_from_the_zone_item() -> None:
+    """Decision 4: off unless stored as a clear true (the form shows it from X5)."""
+    zones = [
+        {"entity_id": "climate.a", "closes_when_off": True},
+        {"entity_id": "climate.b", "closes_when_off": "yes"},
+        {"entity_id": "climate.c"},
+    ]
+    installation = EntryConfig.from_options(MINIMAL | {"zones": zones}).installation
+    assert [z.closes_when_off for z in installation.zones] == [True, False, False]

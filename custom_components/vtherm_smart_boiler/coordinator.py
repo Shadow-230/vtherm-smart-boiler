@@ -65,6 +65,8 @@ from .core.alarms import (
     Alarm,
     AlarmKind,
     banded_alarm,
+    circuit_flow,
+    circuit_too_hot,
     frequent_starts,
     low_flow,
     unstable_ignition,
@@ -200,6 +202,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._reference: ReferenceRoom | None = None
         self._critical: dict[str, CriticalZone] = {}
         self._alarms: dict[AlarmKind, Alarm] = {}
+        self._circuit_alarms: dict[str, Alarm] = {}  # each circuit's too-hot alarm (decision 10)
         self._analysing = False
         # A lasting failure of a periodic job is logged once, with its trace, and its end once.
         self._failing: set[str] = set()
@@ -868,6 +871,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             limit=limits.unstable_burns_per_day,
             demand=self.history.zone_calling(now - DAY, now),
         )
+        too_hot = self._circuit_too_hot(snapshot, now)
+        if too_hot is not None:
+            alarms[AlarmKind.CIRCUIT_TOO_HOT] = too_hot
         if snapshot.is_mapped(Signal.PUMP_RUNNING) or snapshot.is_mapped(Signal.CH_ACTIVE):
             pump = snapshot.flag(Signal.PUMP_RUNNING)
             if pump is None:
@@ -882,6 +888,41 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 self.config.installation.boiler.bypass,
             )
         return alarms
+
+    def _circuit_too_hot(self, snapshot: BoilerSnapshot, now: float) -> Alarm | None:
+        """Decision 10: a circuit's water above its alarm temperature for its time — information
+        only, for circuits with a maximum; ``None`` without one. The flow is the circuit's own
+        sensor where mapped, else the boiler's for an unmixed circuit, each by the flow's age
+        limit; without it the alarm is inactive with its reason. With several such circuits, one
+        in alarm is shown, else one that could be judged."""
+        found: list[Alarm] = []
+        boiler_flow = snapshot.number(Signal.FLOW, self._max_age(Signal.FLOW))
+        for circuit in self.config.installation.circuits:
+            if circuit.max_flow_alarm is None or circuit.max_flow_alarm_s is None:
+                continue
+            entity = self.config.circuit_flow_entities.get(circuit.circuit_id)
+            own: float | None = None
+            if entity is not None:
+                reading = read_temperature(self.hass, entity)
+                value = reading.value
+                if reading.is_fresh(now, self._max_age(Signal.FLOW)) and isinstance(value, float):
+                    own = value
+            flow, reason = circuit_flow(circuit, boiler_flow, own, own_mapped=entity is not None)
+            alarm = circuit_too_hot(
+                flow,
+                circuit.max_flow_alarm,
+                circuit.max_flow_alarm_s,
+                now,
+                self._circuit_alarms.get(circuit.circuit_id),
+                reason,
+            )
+            self._circuit_alarms[circuit.circuit_id] = alarm
+            found.append(alarm)
+        if not found:
+            return None
+        active = [alarm for alarm in found if alarm.active]
+        judged = [alarm for alarm in found if alarm.reason is None]
+        return (active or judged or found)[0]
 
     # --- analysis -------------------------------------------------------------------------
 

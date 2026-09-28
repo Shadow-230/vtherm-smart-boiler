@@ -60,6 +60,8 @@ def _control(coordinator: SmartBoilerCoordinator) -> dict[str, Any] | None:
         "enabled": control.enabled,
         "allowed_services": sorted(f"{d}.{s}" for d, s in control.allowed_services),
         "status": asdict(status) | {"alarms": sorted(a.value for a in status.alarms)},
+        # The value the session learned (P-38), in K; the status carries it too.
+        "comfort_correction": status.correction,
         "stored": control.stored(),
     }
 

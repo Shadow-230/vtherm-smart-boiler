@@ -2182,16 +2182,30 @@ async def test_control_waits_while_home_assistant_is_starting(rig: Rig) -> None:
     assert rig.gateway.setpoints() == [EXPECTED]
 
 
+def asleep(rig: Rig, temperature: float) -> None:
+    """VT's SLEEP: the thermostat shows "off", its valve held at 100 % — frost heat reaches the
+    room (decision 4)."""
+    rig.zones.set(
+        "living",
+        "off",
+        current_temperature=temperature,
+        hvac_action="off",
+        valve_open_percent=100,
+        on_percent=0.0,
+        specific_states={"is_device_active": False},
+    )
+
+
 async def test_frost_heating_that_does_not_warm_the_room_raises_an_alarm(rig: Rig) -> None:
     """Frost protection is never stopped; heating that leaves the room as cold for two hours is
     reported."""
 
     async def cold_for(seconds: int) -> None:
         for _ in range(seconds // 60):  # VT keeps reporting the room, as cold as it was
-            rig.zones.set("living", "off", current_temperature=3.0, hvac_action="off")
+            asleep(rig, 3.0)
             await rig.advance(60, step=60)
 
-    rig.zones.set("living", "off", current_temperature=3.0, hvac_action="off")
+    asleep(rig, 3.0)
     await start(rig)
     await rig.switch(True)
     await cold_for(3600)
@@ -2200,7 +2214,7 @@ async def test_frost_heating_that_does_not_warm_the_room_raises_an_alarm(rig: Ri
     await cold_for(3660)
     assert rig.state("binary_sensor", "alarm_frost_not_warming").state == "on"
     assert rig.gateway.calls[-1] != ("setpoint", 0.0)  # still heating
-    rig.zones.set("living", "off", current_temperature=8.0, hvac_action="off")
+    asleep(rig, 8.0)
     await rig.advance(60, step=60)
     assert rig.state("binary_sensor", "alarm_frost_not_warming").state == "off"
 
@@ -2791,11 +2805,13 @@ async def test_a_0_2_1_store_moves_to_the_control_store(
     # setpoint a gateway's release must leave, none while nothing is owed (V4); the value a
     # timeout hand-back releases back to, and the targets another controller holds (V5);
     # whether a blocker stopped heating (V7); each guard's value from before the plugin and its
-    # last fall-back without a trace (X1).
+    # last fall-back without a trace (X1); each pause's causes and the end of its hot water (X4).
     moved = control | {
         "enabled": False,
         "last_command": None,
         "resume_since": {},
+        "pause_causes": {},
+        "dhw_ended": {},
         "release_from": None,
         "release_baseline": None,
         "taken_by_other": [],
@@ -5577,11 +5593,13 @@ async def refresh(rig: Rig) -> None:
 
 
 def control_entities() -> list[tuple[str, str]]:
-    """The switch, control's state and setpoint, and every control alarm."""
+    """The switch, control's state and setpoint, the "Reset comfort correction" button and
+    every control alarm."""
     return [
         ("switch", "control"),
         ("sensor", "control_state"),
         ("sensor", "control_setpoint"),
+        ("button", "reset_comfort_correction"),
         *(("binary_sensor", f"alarm_{kind.value}") for kind in control_module.ControlAlarm),
     ]
 
@@ -6299,6 +6317,9 @@ async def test_handed_back_in_frost_negatives(rig: Rig, case: str) -> None:
     if case == "controlling":
         await rig.switch(True)
     room(rig, None if case == "unknown" else 4.0)
+    if case == "controlling":
+        # Its valve a little open: frost heat can reach the room (decision 4).
+        rig.zones.set("living", current_temperature=4.0, hvac_action="idle", valve_open_percent=4)
     await rig.advance(30)
     if case == "lost_after":
         assert in_frost(rig) == "on"
@@ -7673,3 +7694,452 @@ async def test_a_blocker_while_the_restore_waits_hands_back_and_tells_where_heat
     await rig.advance(70)
     found = stopped_heating(rig)
     assert found is not None
+
+
+# --- X4: frost for rooms VT keeps closed (decision 4); the comfort correction published and reset
+# (P-38, answer J); VT's activation delay (decision 5); the circuit alarm (decision 10); learning
+# pauses by cause and the flow's own age limit (P-89) ---------------------------------------------
+
+
+def closed_room(rig: Rig, zone: str, temperature: float) -> None:
+    """VT keeps the zone off: valve closed, device off (as VT 10.4.0 shows it)."""
+    rig.zones.set(
+        zone,
+        "off",
+        current_temperature=temperature,
+        hvac_action="off",
+        valve_open_percent=0,
+        on_percent=0.0,
+        specific_states={"is_device_active": False},
+    )
+
+
+def satisfied_room(rig: Rig, zone: str = "living") -> None:
+    rig.zones.set(
+        zone,
+        hvac_action="idle",
+        valve_open_percent=0,
+        on_percent=0.0,
+        specific_states={"is_device_active": False},
+    )
+
+
+def frost_issue(rig: Rig) -> ir.IssueEntry | None:
+    return issue(rig, "frost_zone_closed")
+
+
+def heating(rig: Rig) -> bool:
+    """Heating on/off as last written to the gateway."""
+    return [value for kind, value in rig.gateway.calls if kind == "ch"][-1]
+
+
+async def test_a_cold_zone_vt_keeps_closed_raises_a_repair_issue(rig: Rig) -> None:
+    """Decision 4: a watched room below the frost limit that VT keeps closed raises a repair
+    issue at the next step, naming the room and its temperature; the boiler is not started for
+    it. It clears at the release temperature, or once the zone can take heat — which frost
+    heating then reaches."""
+    rig.zones.add("garage")
+    satisfied_room(rig)
+    closed_room(rig, "garage", 4.0)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(10)
+    found = frost_issue(rig)
+    assert found is not None
+    assert found.translation_key == "frost_zone_closed"
+    assert found.severity is ir.IssueSeverity.WARNING
+    assert found.translation_placeholders == {"zones": "fake garage (4.0 °C)"}
+    assert not heating(rig)
+    assert rig.state("sensor", "control_state").state == "idle"
+    closed_room(rig, "garage", 6.0)  # between the limit and the release: still flagged
+    await rig.advance(10)
+    assert frost_issue(rig) is not None
+    closed_room(rig, "garage", 7.0)
+    await rig.advance(10)
+    assert frost_issue(rig) is None
+    closed_room(rig, "garage", 4.0)
+    await rig.advance(10)
+    assert frost_issue(rig) is not None
+    rig.zones.set(  # VT's SLEEP: shown "off", the valve held at 100 %
+        "garage",
+        "off",
+        current_temperature=4.0,
+        hvac_action="off",
+        valve_open_percent=100,
+        on_percent=0.0,
+        specific_states={"is_device_active": False},
+    )
+    await rig.advance(10)
+    assert frost_issue(rig) is None
+    assert rig.state("sensor", "control_state").state == "frost"
+    assert heating(rig)
+
+
+async def test_no_closed_zone_issue_during_recognition(rig: Rig) -> None:
+    """The zones report one by one after a start: the issue waits for the recognition period."""
+    rig.zones.add("garage")
+    rig.zones.set("living", is_ready=False)  # VT has not started it yet
+    closed_room(rig, "garage", 4.0)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(60)
+    assert frost_issue(rig) is None
+    satisfied_room(rig)  # started now: the recognition period ends
+    await rig.advance(10)
+    assert frost_issue(rig) is not None
+
+
+async def test_the_frost_preset_clears_the_issue(rig: Rig) -> None:
+    """VT's frost preset instead of "off": the zone heats with a frost target, its valve open —
+    it takes heat, the issue goes, and heating runs for its demand."""
+    rig.zones.add("garage")
+    satisfied_room(rig)
+    closed_room(rig, "garage", 4.0)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(10)
+    assert frost_issue(rig) is not None
+    rig.zones.set(
+        "garage",
+        "heat",
+        current_temperature=6.0,
+        temperature=7.0,
+        hvac_action="heating",
+        valve_open_percent=100,
+        on_percent=1.0,
+        specific_states={"is_device_active": True},
+    )
+    await rig.advance(10)
+    assert frost_issue(rig) is None
+    assert heating(rig)
+    state = rig.state("sensor", "control_state")
+    assert state.state == "heating"
+    assert "demand" in state.attributes["reasons"]
+
+
+async def test_the_frost_issue_needs_control_switched_on(rig: Rig) -> None:
+    """Provisional (K4): with control off the plugin does no frost heating, so no issue; it
+    rises once control is switched on, and goes when it is switched off."""
+    rig.zones.add("garage")
+    satisfied_room(rig)
+    closed_room(rig, "garage", 4.0)
+    await start(rig)
+    await rig.advance(60)
+    assert frost_issue(rig) is None
+    await rig.switch(True)
+    await rig.advance(10)
+    assert frost_issue(rig) is not None
+    await rig.switch(False)
+    assert frost_issue(rig) is None
+
+
+def short_room(rig: Rig) -> None:
+    """A room short of its setpoint with its valve fully open, the burner on: the comfort
+    correction rises 1 K per 30 minutes of heat flow."""
+    rig.zones.set(
+        "living",
+        current_temperature=19.0,
+        temperature=21.0,
+        hvac_action="heating",
+        valve_open_percent=100,
+        on_percent=1.0,
+    )
+    rig.flame = True
+
+
+def correction(rig: Rig) -> float:
+    return float(rig.state("sensor", "control_state").attributes["comfort_correction"])
+
+
+async def test_the_comfort_correction_is_published(rig: Rig) -> None:
+    """P-38: the correction shows as the attribute ``comfort_correction`` of the control state,
+    and in diagnostics."""
+    from custom_components.vtherm_smart_boiler.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+
+    short_room(rig)
+    await start(rig)
+    await rig.switch(True)
+    assert correction(rig) == 0.0
+    await rig.advance(3600, step=60)
+    shown = correction(rig)
+    assert 1.5 <= shown <= 2.0
+    assert rig.entry is not None
+    result = await async_get_config_entry_diagnostics(rig.hass, rig.entry)
+    assert result["control"]["comfort_correction"] == pytest.approx(shown, abs=0.01)
+    assert result["control"]["status"]["correction"] == pytest.approx(shown, abs=0.01)
+
+
+async def press_reset(rig: Rig) -> None:
+    await rig.hass.services.async_call(
+        "button",
+        "press",
+        {"entity_id": rig.entity("button", "reset_comfort_correction")},
+        blocking=True,
+    )
+    await rig.hass.async_block_till_done()
+
+
+async def test_the_reset_button_resets_the_comfort_correction(rig: Rig) -> None:
+    """P-38, answer J: correction 2 K → press → 0 at once in the running control unit, shown at
+    once; no hand-back, no reload, no option saved. The rise may start again under its rules —
+    what is left of the day's 3 K."""
+    short_room(rig)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(3600, step=60)
+    assert correction(rig) >= 1.5
+    assert rig.entry is not None
+    entry = rig.entry
+    coordinator, options_before = entry.runtime_data, dict(entry.options)
+    unit = coordinator.control
+    count = len(rig.gateway.calls)
+    await press_reset(rig)
+    assert correction(rig) == 0.0  # at once, before any step
+    assert unit.status.correction == 0.0
+    assert unit.enabled
+    assert entry.runtime_data is coordinator  # not reloaded
+    assert dict(entry.options) == options_before  # nothing saved
+    await rig.advance(10)
+    assert 0.0 not in rig.gateway.setpoints()[count:]  # nothing handed back
+    assert rig.state("sensor", "control_state").state == "heating"
+    await rig.advance(3600, step=60)
+    assert 0.5 <= correction(rig) <= 1.5  # rising again, within the day's 3 K
+
+
+async def test_the_reset_button_exists_only_with_control_configured(rig: Rig) -> None:
+    """Without control, no button; with control switched off (the correction already 0) a
+    press changes nothing and raises no error."""
+    monitor_only = options(rig.zones)
+    del monitor_only["control"]
+    entry = add_entry(rig, monitor_only)
+    assert await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    registry = er.async_get(rig.hass)
+    key = f"{entry.entry_id}_reset_comfort_correction"
+    assert registry.async_get_entity_id("button", DOMAIN, key) is None
+    assert await rig.hass.config_entries.async_unload(entry.entry_id)
+    await rig.hass.async_block_till_done()
+
+
+async def test_a_press_with_control_off_changes_nothing(rig: Rig) -> None:
+    await start(rig)
+    await press_reset(rig)
+    assert correction(rig) == 0.0
+    assert rig.gateway.calls == []
+    assert rig.state("switch", "control").state == "off"
+
+
+async def test_the_activation_delay_holds_a_new_start_and_says_when(rig: Rig) -> None:
+    """Decision 5: 120 s. The zones call when control is switched on: nothing is written while
+    the delay runs — idle, with the reason and when heating starts; then the setpoint and
+    heating on. Stopping is not delayed."""
+    await start(rig, activation_delay_s=120)
+    started = datetime.now(UTC).timestamp()
+    await rig.switch(True)
+    state = rig.state("sensor", "control_state")
+    assert state.state == "idle"
+    assert "activation_delay" in state.attributes["reasons"]
+    due = datetime.fromisoformat(state.attributes["activation_at"]).timestamp()
+    assert due == pytest.approx(started + 120.0, abs=1.0)
+    await rig.advance(110)
+    assert rig.gateway.calls == []  # nothing taken, nothing owed
+    await rig.advance(10)
+    assert rig.gateway.calls[:2] == [("setpoint", EXPECTED), ("ch", True)]
+    state = rig.state("sensor", "control_state")
+    assert state.state == "heating"
+    assert state.attributes["activation_at"] is None
+    satisfied_room(rig)
+    await rig.advance(10)
+    assert not heating(rig)  # at once
+
+
+async def test_switching_off_during_the_delay_owes_nothing(rig: Rig) -> None:
+    await start(rig, activation_delay_s=120)
+    await rig.switch(True)
+    await rig.advance(60)
+    await rig.switch(False)
+    assert rig.gateway.calls == []  # never taken: no hand-back
+    assert issue(rig, "hand_back_owed") is None
+
+
+def with_circuit(rig: Rig, circuit: dict[str, Any]) -> dict[str, Any]:
+    main = {"id": "main", "control": "unmixed_shared"} | circuit
+    return options(rig.zones) | {"circuits": [main]}
+
+
+async def test_the_circuit_too_hot_alarm_is_information_on_the_measured_flow(rig: Rig) -> None:
+    """Decision 10: the maximum 40 °C, its alarm pre-filled at 45 °C for 10 minutes: the flow at
+    46 °C rises the information alarm after 10 minutes — control goes on, whatever reaction an
+    edited option names; it goes below 44 °C. Without a flow reading it is off with its reason."""
+    entry_options = with_circuit(rig, {"max_flow": 40})
+    entry_options["control"]["alarm_reactions"] = {"circuit_too_hot": "hand_back"}
+    entry = add_entry(rig, entry_options)
+    await set_up(rig, entry)
+    await rig.switch(True)
+    rig.flow = 46.0
+    await rig.advance(540, step=30)
+    assert rig.state("binary_sensor", "alarm_circuit_too_hot").state == "off"
+    await rig.advance(90, step=30)
+    alarm = rig.state("binary_sensor", "alarm_circuit_too_hot")
+    assert alarm.state == "on"
+    assert (alarm.attributes["value"], alarm.attributes["limit"]) == (46.0, 45.0)
+    assert 0.0 not in rig.gateway.setpoints()  # information only: no hand-back
+    assert rig.state("switch", "control").state == "on"
+    rig.flow = 44.0
+    await rig.advance(60, step=30)
+    assert rig.state("binary_sensor", "alarm_circuit_too_hot").state == "on"
+    rig.flow = 43.5
+    await rig.advance(60, step=30)
+    assert rig.state("binary_sensor", "alarm_circuit_too_hot").state == "off"
+    rig.flow = None
+    await rig.advance(60, step=30)
+    alarm = rig.state("binary_sensor", "alarm_circuit_too_hot")
+    assert alarm.state == "off"
+    assert alarm.attributes["reason"] == "no_flow_reading"
+
+
+async def test_no_circuit_alarm_without_a_circuit_maximum(rig: Rig) -> None:
+    await start(rig)
+    assert rig.entry is not None
+    key = f"{rig.entry.entry_id}_alarm_circuit_too_hot"
+    assert er.async_get(rig.hass).async_get_entity_id("binary_sensor", DOMAIN, key) is None
+
+
+def smartpi_learner(rig: Rig) -> list[tuple[str, bool]]:
+    """SmartPI's service, answering like SmartPI: its flag follows each call."""
+    calls: list[tuple[str, bool]] = []
+
+    async def set_learning(call: ServiceCall) -> None:
+        calls.append((call.data["entity_id"], call.data["learning_enabled"]))
+        smartpi_zone(rig, call.data["learning_enabled"])
+
+    rig.hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    smartpi_zone(rig, True)
+    return calls
+
+
+@pytest.mark.parametrize("limit", [120.0, None], ids=["flow_limit", "no_limit"])
+async def test_learning_reads_the_flow_by_its_own_age_limit(
+    rig: Rig,
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    limit: float | None,
+) -> None:
+    """X2 carried to the learning pauses: after hot water the flow must come back near its
+    setpoint; a flow reading older than its own age limit is unknown — the flow wait passes, as
+    the rule for an unknown flow says. Today a stale flow also makes the boiler link stale; the
+    link is stood in for here as one judged by something else (X8's relay, where the flow is
+    optional), so the step keeps its setpoint. Negative: without a limit the same old reading
+    keeps the pause."""
+    monkeypatch.setattr(control_module.ControlUnit, "_boiler_link", lambda _self, _snap: True)
+    calls = smartpi_learner(rig)
+    entry_options = options(rig.zones)
+    if limit is not None:
+        entry_options["freshness"] = {"flow": limit}
+    entry = add_entry(rig, entry_options)
+    await set_up(rig, entry)
+    await rig.switch(True)
+    zone = rig.zones.entities["living"]
+    rig.dhw = True
+    await rig.advance(10)
+    assert calls == [(zone, False)]
+    stored = stored_control(hass_storage, rig)
+    assert stored["pause_causes"] == {zone: ["dhw"]}
+    rig.dhw = False
+    rig.flow = 25.0  # far below the setpoint: the water has not come back
+    await rig.advance(600)
+    assert calls == [(zone, False)]  # the minimum pause, then the flow wait
+    rig.flow_reported = False  # the flow sensor stops reporting: its value is kept
+    await rig.advance(180)
+    assert rig.state("sensor", "control_state").state == "heating"  # the setpoint is known
+    resumed = calls[1:] == [(zone, True)]
+    assert resumed is (limit is not None)
+
+
+async def test_the_correction_freezes_while_foreign_heat_warms_a_zone(rig: Rig) -> None:
+    """Principle 13 (5): foreign heat — the monitor's view of a zone's source — freezes the
+    comfort correction. Negative: the source off, it rises."""
+    rig.hass.states.async_set("switch.fireplace", "on")
+    entry_options = options(rig.zones)
+    entry_options["zones"][0]["foreign_heat"] = [
+        {"entity_id": "switch.fireplace", "kind": "switch"}
+    ]
+    short_room(rig)
+    entry = add_entry(rig, entry_options)
+    await set_up(rig, entry)
+    await rig.switch(True)
+    await rig.advance(2400, step=60)
+    assert correction(rig) == 0.0
+    rig.hass.states.async_set("switch.fireplace", "off")
+    await rig.advance(3600 + 2400, step=60)  # its hold of an hour, then heat flows
+    assert correction(rig) > 0.5
+
+
+@pytest.mark.parametrize(
+    ("causes", "resumed"),
+    [(["foreign_heat"], True), (None, False), (["a_cause_of_a_later_version"], False)],
+    ids=["foreign_heat", "not_stored", "unknown"],
+)
+async def test_a_pauses_causes_come_back_after_a_restart(
+    rig: Rig, hass_storage: dict[str, Any], causes: list[str] | None, resumed: bool
+) -> None:
+    """P-89 with V3: the causes of a pause are stored, and a restart resumes by them — after
+    foreign heat once it is gone and the minimum pause has passed, whatever the flow. A pause
+    stored without its causes, or with causes this version does not know, is taken for hot
+    water: it waits for the flow to come back."""
+    calls = smartpi_learner(rig)
+    smartpi_zone(rig, False)  # paused by the last run
+    zone = rig.zones.entities["living"]
+    paused_at = datetime.now(UTC).timestamp() - 900.0
+    stored: dict[str, Any] = {"enabled": True, "paused": {zone: paused_at}}
+    if causes is not None:
+        stored["pause_causes"] = {zone: causes}
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.add_to_hass(rig.hass)
+    seed_stores(hass_storage, entry, stored, "0.2.2")
+    rig.flow = 25.0  # far below the setpoint
+    await set_up(rig, entry)
+    await rig.advance(20)
+    assert rig.state("switch", "control").state == "on"
+    assert ((zone, True) in calls) is resumed
+
+
+@pytest.mark.parametrize("own_sensor", [True, False], ids=["own_sensor", "not_measured"])
+async def test_a_fixed_circuit_is_judged_by_its_own_flow_sensor(rig: Rig, own_sensor: bool) -> None:
+    """Decision 10: the circuit's own flow sensor where mapped — here 46 °C behind a
+    thermostatic valve while the boiler's flow reads 35 °C; without one, a passive fixed circuit
+    is not measured: the alarm is off, with its reason."""
+    circuit: dict[str, Any] = {"control": "passive_fixed", "fixed_temperature": 35, "max_flow": 40}
+    if own_sensor:
+        circuit["flow_entity"] = "sensor.floor_flow"
+        rig.hass.states.async_set(
+            "sensor.floor_flow",
+            "46.0",
+            {"unit_of_measurement": "°C", "device_class": "temperature"},
+        )
+    entry = add_entry(rig, with_circuit(rig, circuit))
+    await set_up(rig, entry)
+    await rig.advance(660, step=30)
+    alarm = rig.state("binary_sensor", "alarm_circuit_too_hot")
+    if own_sensor:
+        assert alarm.state == "on"
+        assert alarm.attributes["value"] == 46.0
+    else:
+        assert alarm.state == "off"
+        assert alarm.attributes["reason"] == "circuit_not_measured"
+
+
+async def test_a_reset_once_the_unit_stops_does_nothing(rig: Rig) -> None:
+    short_room(rig)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(1860, step=60)
+    assert rig.entry is not None
+    unit = rig.entry.runtime_data.control
+    before = unit.status.correction
+    assert before > 0.0
+    await unit.async_stop()
+    await unit.async_reset_correction()  # no error, and nothing to do
+    assert unit.status.correction == before

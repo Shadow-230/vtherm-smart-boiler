@@ -141,11 +141,13 @@ def test_the_flow_must_come_back_within_a_tolerance_either_way() -> None:
 
 
 def test_learning_resumes_after_the_longest_pause_whatever_the_flow() -> None:
-    """S20: a boiler that cannot reach the setpoint must not keep learning paused for ever."""
+    """S20, P-89: a boiler that cannot reach the setpoint must not keep learning paused for
+    ever — an hour after the draw ended (provisional, K4), whatever the flow."""
     state = plan(LearningState(), [zone("a")], 0, dhw=True).state
-    waiting = plan(state, [zone("a", learning=False)], 30, flow=30.0, setpoint=45.0)
-    assert waiting.resume == ()
-    late = plan(state, [zone("a", learning=False)], 61, flow=30.0, setpoint=45.0)
+    state = plan(state, [zone("a", learning=False)], 30, flow=30.0, setpoint=45.0).state
+    waiting = plan(state, [zone("a", learning=False)], 89, flow=30.0, setpoint=45.0)
+    assert waiting.resume == ()  # 59 min after the draw ended at 30
+    late = plan(waiting.state, [zone("a", learning=False)], 90, flow=30.0, setpoint=45.0)
     assert late.resume == ("a",)
 
 
@@ -225,3 +227,93 @@ def test_a_resume_planned_by_a_step_keeps_its_start() -> None:
     again = plan(result.state, [zone("a", learning=False)], 14)
     assert again.resume == ("a",)
     assert again.state.resume_since == {"a": 12 * MIN}
+
+
+# --- X4: learning pauses per cause (P-89, S-41) ------------------------------------------------
+
+
+def test_the_flow_condition_applies_to_hot_water_only() -> None:
+    """P-89: after foreign heat — or a water swing — learning resumes once the cause is gone
+    and the minimum pause has passed, whatever the flow; after hot water the flow must be back
+    first."""
+    state = plan(LearningState(), [zone("a", foreign=True)], 0).state
+    assert state.causes == {"a": (PauseCause.FOREIGN_HEAT,)}
+    early = plan(state, [zone("a", learning=False)], 5, flow=30.0, setpoint=45.0)
+    assert early.resume == ()  # the minimum pause
+    done = plan(state, [zone("a", learning=False)], 10, flow=30.0, setpoint=45.0)
+    assert done.resume == ("a",)
+    assert done.state.causes == {}
+    swing = plan(LearningState(), [zone("a")], 0, setpoint=35.0).state
+    swing = plan(swing, [zone("a")], 1, setpoint=45.0, flow=40.0).state
+    assert swing.causes == {"a": (PauseCause.WATER_SWING,)}
+    after = plan(swing, [zone("a", learning=False)], 40, flow=30.0, setpoint=45.0)
+    assert after.resume == ("a",)  # the swing is out of its window: no flow condition
+    hot = plan(LearningState(), [zone("a")], 0, dhw=True).state
+    cold = plan(hot, [zone("a", learning=False)], 12, flow=30.0, setpoint=45.0)
+    assert cold.resume == ()
+
+
+def test_the_hot_water_flow_wait_is_capped_an_hour_after_the_draw_ended() -> None:
+    """A draw of 50 min, then the flow stays low: learning resumes 60 min after the draw ended
+    — not 60 min after the pause began."""
+    state = plan(LearningState(), [zone("a")], 0, dhw=True).state
+    for minute in range(1, 50):
+        state = plan(state, [zone("a", learning=False)], minute, dhw=True, flow=30.0).state
+    ended = 50
+    for minute in range(ended, ended + 60):
+        result = plan(state, [zone("a", learning=False)], minute, flow=30.0, setpoint=45.0)
+        assert result.resume == (), minute
+        state = result.state
+    assert state.dhw_ended == {"a": ended * MIN}
+    late = plan(state, [zone("a", learning=False)], ended + 60, flow=30.0, setpoint=45.0)
+    assert late.resume == ("a",)
+    assert late.state.dhw_ended == {}
+
+
+def test_a_new_draw_during_the_flow_wait_starts_its_hour_again() -> None:
+    state = plan(LearningState(), [zone("a")], 0, dhw=True).state
+    state = plan(state, [zone("a", learning=False)], 10, flow=30.0).state  # the draw ended
+    state = plan(state, [zone("a", learning=False)], 40, dhw=True, flow=30.0).state
+    assert state.dhw_ended == {}
+    state = plan(state, [zone("a", learning=False)], 45, flow=30.0).state
+    assert plan(state, [zone("a", learning=False)], 70, flow=30.0).resume == ()
+    assert plan(state, [zone("a", learning=False)], 105, flow=30.0).resume == ("a",)
+
+
+def test_hot_water_among_the_causes_keeps_its_flow_condition() -> None:
+    """A pause for foreign heat that also saw a draw ends by the hot-water rules."""
+    state = plan(LearningState(), [zone("a", foreign=True)], 0).state
+    state = plan(state, [zone("a", learning=False, foreign=True)], 5, dhw=True).state
+    assert set(state.causes["a"]) == {PauseCause.FOREIGN_HEAT, PauseCause.DHW}
+    cold = plan(state, [zone("a", learning=False)], 20, flow=30.0, setpoint=45.0)
+    assert cold.resume == ()
+
+
+def test_unknown_causes_after_a_restart_are_treated_as_hot_water() -> None:
+    """Negative: a pause stored without its causes (0.2.1, a damaged store) waits for the flow,
+    at most an hour from the first step seen without a cause."""
+    state = LearningState(paused={"a": 0.0}, last_toggle={"a": 0.0})
+    cold = plan(state, [zone("a", learning=False)], 20, flow=30.0, setpoint=45.0)
+    assert cold.resume == ()
+    assert cold.state.dhw_ended == {"a": 20 * MIN}
+    late = plan(cold.state, [zone("a", learning=False)], 80, flow=30.0, setpoint=45.0)
+    assert late.resume == ("a",)
+
+
+def test_a_short_draw_still_pauses_smartpi() -> None:
+    """S-41: every draw pauses the zones calling for heat, however short and on a combi boiler
+    too — they get no heat meanwhile."""
+    result = plan(LearningState(), [zone("a")], 0, dhw=True)
+    assert result.pause == ("a",)
+    assert result.state.causes == {"a": (PauseCause.DHW,)}
+    after = plan(result.state, [zone("a", learning=False)], 1, flow=45.0)
+    assert "a" in after.state.paused  # the minimum pause holds
+
+
+def test_a_release_forgets_the_causes() -> None:
+    state = plan(LearningState(), [zone("a")], 0, dhw=True).state
+    state = plan(state, [zone("a", learning=False)], 5, flow=30.0).state
+    released, zones = release_all(state, 6 * MIN)
+    assert zones == ("a",)
+    assert released.causes == {}
+    assert released.dhw_ended == {}

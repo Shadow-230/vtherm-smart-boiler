@@ -14,6 +14,8 @@ from custom_components.vtherm_smart_boiler.core.alarms import (
     Level,
     Trend,
     banded_alarm,
+    circuit_flow,
+    circuit_too_hot,
     cold_pressure_samples,
     compare_windows,
     flue_excess_samples,
@@ -203,3 +205,76 @@ def test_a_burn_counts_only_when_heat_was_asked_for_all_through_it() -> None:
     assert unstable_ignition(burns, now=24 * HOUR, demand=handover).value == 0
     unknown = Series([(-5.0, None)])  # nothing known of the demand: counted, as without it
     assert unstable_ignition(burns, now=24 * HOUR, demand=unknown).value == 12
+
+
+# --- X4, decision 10: the circuit too hot ------------------------------------------------------
+
+
+def test_the_circuit_too_hot_alarm() -> None:
+    """Maximum 40 °C, the alarm at 45 °C for 10 min: the flow at 46 for 9 min — off; 10 min —
+    on, information; it clears only below 44 °C (1 K under the alarm temperature, provisional,
+    K4)."""
+    from custom_components.vtherm_smart_boiler.core.alarms import CIRCUIT_ALARM_HYSTERESIS_K
+
+    assert CIRCUIT_ALARM_HYSTERESIS_K == 1.0
+    alarm: Alarm | None = None
+    for minute in range(10):
+        alarm = circuit_too_hot(46.0, 45.0, 10 * MIN, minute * MIN, alarm)
+        assert not alarm.active, minute
+    assert alarm.since == 0.0
+    alarm = circuit_too_hot(46.0, 45.0, 10 * MIN, 10 * MIN, alarm)
+    assert alarm.active
+    assert alarm.level is Level.WARNING
+    assert (alarm.value, alarm.limit) == (46.0, 45.0)
+    for flow in (45.0, 44.0):  # back under the alarm temperature, not 1 K under it
+        alarm = circuit_too_hot(flow, 45.0, 10 * MIN, 11 * MIN, alarm)
+        assert alarm.active, flow
+    alarm = circuit_too_hot(43.9, 45.0, 10 * MIN, 12 * MIN, alarm)
+    assert not alarm.active
+    assert alarm.since is None
+
+
+def test_the_circuit_too_hot_wait_starts_again_after_a_dip() -> None:
+    alarm = circuit_too_hot(46.0, 45.0, 10 * MIN, 0.0, None)
+    alarm = circuit_too_hot(44.0, 45.0, 10 * MIN, 5 * MIN, alarm)  # back under: the wait resets
+    alarm = circuit_too_hot(46.0, 45.0, 10 * MIN, 6 * MIN, alarm)
+    alarm = circuit_too_hot(46.0, 45.0, 10 * MIN, 15 * MIN, alarm)
+    assert not alarm.active
+    assert circuit_too_hot(46.0, 45.0, 10 * MIN, 16 * MIN, alarm).active
+
+
+def test_the_circuit_too_hot_alarm_without_a_flow_is_inactive_with_its_reason() -> None:
+    """Negative: no flow reading — missing or stale — the alarm is inactive and says why, even
+    one that was active; a circuit the boiler flow does not show has a reason of its own."""
+    alarm = circuit_too_hot(None, 45.0, 10 * MIN, 0.0, None)
+    assert not alarm.active
+    assert alarm.reason == "no_flow_reading"
+    active = Alarm(AlarmKind.CIRCUIT_TOO_HOT, True, Level.WARNING, 46.0, 45.0, since=0.0)
+    assert not circuit_too_hot(None, 45.0, 10 * MIN, 20 * MIN, active).active
+    unmeasured = circuit_too_hot(None, 45.0, 10 * MIN, 0.0, None, "circuit_not_measured")
+    assert unmeasured.reason == "circuit_not_measured"
+    assert not unmeasured.active
+
+
+def test_a_clock_set_back_does_not_hold_up_the_circuit_alarm() -> None:
+    alarm = circuit_too_hot(46.0, 45.0, 10 * MIN, 10_000.0, None)
+    alarm = circuit_too_hot(46.0, 45.0, 10 * MIN, 5_000.0, alarm)  # an hour and more back
+    assert alarm.since == 5_000.0
+    assert circuit_too_hot(46.0, 45.0, 10 * MIN, 5_600.0, alarm).active
+
+
+def test_the_circuit_flow_comes_from_its_own_sensor_else_the_boiler_for_an_unmixed_loop() -> None:
+    """The circuit's own flow entity where mapped; else the boiler flow for an unmixed circuit;
+    a passive fixed or mixed circuit without its own sensor is not measured; a flow not fresh
+    is no reading."""
+    from custom_components.vtherm_smart_boiler.core.installation import Circuit, CircuitControl
+
+    unmixed = Circuit("main", CircuitControl.UNMIXED_SHARED, max_flow=40.0)
+    fixed = Circuit("floor", CircuitControl.PASSIVE_FIXED, 35.0, max_flow=40.0)
+    mixed = Circuit("mix", CircuitControl.SEPARATE, max_flow=40.0)
+    assert circuit_flow(unmixed, 46.0, None) == (46.0, None)
+    assert circuit_flow(unmixed, 46.0, 38.0) == (38.0, None)
+    assert circuit_flow(fixed, 46.0, None) == (None, "circuit_not_measured")
+    assert circuit_flow(fixed, 46.0, 41.0) == (41.0, None)
+    assert circuit_flow(mixed, 46.0, None) == (None, "circuit_not_measured")
+    assert circuit_flow(unmixed, None, None) == (None, "no_flow_reading")

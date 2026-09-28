@@ -175,6 +175,12 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
         no_zone = SOURCE["issues"][f"no_zone_known_{kind}"]
         assert no_zone["title"], kind
         assert set(PLACEHOLDER.findall(no_zone["description"])) == {"zones"}, kind
+    frost = SOURCE["issues"]["frost_zone_closed"]  # decision 4 (X4)
+    assert frost["title"]
+    assert set(PLACEHOLDER.findall(frost["description"])) == {"zones"}
+    assert SOURCE["entity"]["button"]["reset_comfort_correction"]["name"]  # answer J (X4)
+    too_hot = SOURCE["entity"]["binary_sensor"]["alarm_circuit_too_hot"]["state_attributes"]
+    assert set(too_hot["reason"]["state"]) == {"no_flow_reading", "circuit_not_measured"}
 
 
 def _values(entity: dict, attribute: str) -> set[str]:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.limits import (
@@ -10,8 +12,11 @@ from custom_components.vtherm_smart_boiler.core.limits import (
     Grid,
     LimitCode,
     Limited,
+    can_take_heat,
+    frost_closed,
     frost_needed,
     handed_back_in_frost,
+    install_cap,
     is_on_grid,
     limit_flow,
     on_grid,
@@ -209,3 +214,118 @@ def test_handed_back_in_frost_watches_the_zones_frost_protection_watches() -> No
     assert in_frost(zones)
     assert not in_frost(zones, config=FrostConfig(zone="living"))
     assert in_frost(zones, config=FrostConfig(zone="garage"))
+
+
+# --- X4, decision 4: frost heat only where the emitter can take it -------------------------------
+
+
+def room(
+    zid: str,
+    temp: float | None,
+    *,
+    mode: bool | None = True,
+    valve: float | None = None,
+    duty: float | None = None,
+    device: bool | None = None,
+    **kw: object,
+) -> ZoneState:
+    """A zone as VT publishes it: its mode, its opening (valve, else duty cycle) and device."""
+    return ZoneState(
+        zid,
+        temperature=temp,
+        heating_enabled=mode,
+        valve_open=valve,
+        on_percent=duty,
+        device_active=device,
+        reported_at=100.0,
+        **kw,  # type: ignore[arg-type]
+    )
+
+
+def test_a_zone_can_take_heat_by_its_opening_or_its_device_never_by_its_mode() -> None:
+    """An opening above 0 (the valve, else the duty cycle) or VT's device active; heat mode
+    with a closed valve cannot, and an off zone asleep at 100 % can."""
+    config = FrostConfig()
+    assert can_take_heat(room("a", 4.0, valve=0.3), config)
+    assert can_take_heat(room("a", 4.0, duty=0.2), config)
+    assert can_take_heat(room("a", 4.0, valve=0.0, device=True), config)
+    assert can_take_heat(room("a", 4.0, mode=False, valve=1.0, duty=0.0, device=False), config)
+    assert not can_take_heat(room("a", 4.0, valve=0.0, device=False), config)  # heat, closed
+    assert not can_take_heat(room("a", 4.0, mode=False, duty=0.0, device=False), config)
+    assert not can_take_heat(room("a", 4.0, valve=0.0), config)  # device unknown
+
+
+def test_a_zone_whose_valve_state_cannot_be_read_can_take_heat() -> None:
+    """Negative: no opening published — an older VT, an over_climate zone off with its device
+    off — is heated as today; so is a zone VT has not started (its opening is a placeholder)."""
+    config = FrostConfig()
+    assert can_take_heat(room("a", 4.0), config)
+    assert can_take_heat(room("a", 4.0, mode=False, device=False), config)
+    assert can_take_heat(room("a", 4.0, mode=None), config)
+    assert can_take_heat(room("a", 4.0, mode=False, duty=0.0, reported=False), config)
+
+
+def test_closes_when_off_counts_an_off_zone_without_an_opening_as_closed() -> None:
+    """The per-zone option (off by default): while VT has the zone off and publishes no
+    opening, it cannot take heat. In heat mode, or with an opening or device shown, the
+    published state decides."""
+    config = FrostConfig(closes_when_off=frozenset({"a"}))
+    assert not can_take_heat(room("a", 4.0, mode=False), config)
+    assert not can_take_heat(room("a", 4.0, mode=False, device=False), config)
+    assert can_take_heat(room("a", 4.0, mode=True), config)
+    assert can_take_heat(room("a", 4.0, mode=None), config)  # mode unknown: not "off"
+    assert can_take_heat(room("a", 4.0, mode=False, valve=1.0), config)  # asleep at 100 %
+    assert can_take_heat(room("a", 4.0, mode=False, device=True), config)
+    assert can_take_heat(room("b", 4.0, mode=False), config)  # another zone: as today
+
+
+def test_frost_heats_only_for_cold_zones_that_can_take_heat() -> None:
+    """Closed zones neither start frost heating nor hold it; the open ones do, with the
+    hysteresis."""
+    config = FrostConfig(room_limit=5.0, release=7.0)
+    closed = room("off", 3.0, mode=False, valve=0.0, device=False)
+    assert not frost_needed([closed], 100.0, None, False, config)
+    assert not frost_needed([closed], 100.0, None, True, config)
+    assert frost_needed([closed, room("open", 4.5, valve=0.4)], 100.0, None, False, config)
+    assert frost_needed([closed, room("open", 6.0, valve=0.4)], 100.0, None, True, config)
+    assert not frost_needed([closed, room("open", 7.0, valve=0.4)], 100.0, None, True, config)
+    assert frost_needed([closed], 100.0, None, False, config, closed_too=True)  # S-57's watch
+
+
+def test_the_closed_cold_zones_are_flagged_with_their_own_hysteresis() -> None:
+    """A watched zone below the frost limit that cannot take heat is flagged; it stays flagged
+    until it is at or above the release, or can take heat. Unknown, stale, implausible or
+    unwatched zones, and zones VT has not started, are not flagged."""
+    config = FrostConfig(room_limit=5.0, release=7.0)
+
+    def closed(temp: float | None, zid: str = "a", **kw: object) -> ZoneState:
+        return room(zid, temp, mode=False, valve=0.0, device=False, **kw)
+
+    assert frost_closed([closed(4.0)], 100.0, None, config) == ("a",)
+    assert frost_closed([closed(6.0)], 100.0, None, config) == ()  # not below the limit
+    assert frost_closed([closed(6.0)], 100.0, None, config, ("a",)) == ("a",)  # held
+    assert frost_closed([closed(7.0)], 100.0, None, config, ("a",)) == ()  # released
+    opened = room("a", 4.0, mode=False, valve=1.0)
+    assert frost_closed([opened], 100.0, None, config, ("a",)) == ()  # can take heat now
+    assert frost_closed([closed(None)], 100.0, None, config, ("a",)) == ()
+    assert frost_closed([closed(-127.0)], 100.0, None, config) == ()
+    stale = replace(closed(4.0), reported_at=-10_000.0)
+    assert frost_closed([stale], 100.0, 600.0, config) == ()
+    assert frost_closed([closed(4.0, reported=False)], 100.0, None, config) == ()
+    picked = FrostConfig(zone="b")
+    assert frost_closed([closed(4.0), closed(4.0, "b")], 100.0, None, picked) == ("b",)
+
+
+def test_handed_back_in_frost_still_watches_closed_zones() -> None:
+    """S-57 tells of a room near freezing while nothing heats, whether or not VT keeps it
+    closed: the hand-back leaves it cold either way."""
+    closed = room("a", 4.0, mode=False, valve=0.0, device=False)
+    assert in_frost([closed])
+
+
+def test_the_installation_cap_is_the_lowest_of_the_hard_circuit_and_boiler_maximum() -> None:
+    """S-23: the ramp is skipped only above this cap — never for the weather ceiling."""
+    assert install_cap(LIMITS) == 70.0
+    assert install_cap(LIMITS, circuit_max=45.0) == 45.0
+    assert install_cap(LIMITS, circuit_max=45.0, boiler_max=40.0) == 40.0
+    assert install_cap(LIMITS, boiler_max=80.0) == 70.0

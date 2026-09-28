@@ -39,6 +39,8 @@ def _alarm_kinds(coordinator: SmartBoilerCoordinator) -> list[AlarmKind]:
     kinds.append(AlarmKind.HYSTERESIS_DRIFT)
     if Signal.PUMP_RUNNING in signals or Signal.CH_ACTIVE in signals:
         kinds.append(AlarmKind.LOW_FLOW)
+    if any(c.max_flow_alarm is not None for c in coordinator.config.installation.circuits):
+        kinds.append(AlarmKind.CIRCUIT_TOO_HOT)  # only for a circuit with a maximum (decision 10)
     return kinds
 
 

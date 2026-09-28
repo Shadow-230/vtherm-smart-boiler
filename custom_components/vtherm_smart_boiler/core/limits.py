@@ -6,8 +6,13 @@ win over the hard minimum when the two conflict. The weather-dependent ceiling p
 but gas, so it never falls below the hard minimum, nor below the temperature a fixed circuit (a
 thermostatic mixing valve) needs from the boiler. A value for an entity with a step is put on its
 grid inside the limits, in the entity's own unit, before the write guard compares it (P-15, P-98).
-Frost protection watches the same rooms for the alarm "handed back in frost": a hand-back that
-stops heating leaves a room near freezing.
+
+Frost protection (decision 4) watches every zone, or the one the user picks, but heats only for a
+cold zone whose emitter can take heat: VT shows an opening above 0 or its device active — the
+mode alone never counts. A zone whose valve state cannot be read is heated as before, unless the
+user declared that it closes while VT has it off. A cold zone VT keeps closed is flagged instead:
+heat for it cannot arrive. The alarm "handed back in frost" watches every watched room: a
+hand-back that stops heating leaves a room near freezing, closed or not.
 """
 
 from __future__ import annotations
@@ -82,6 +87,14 @@ def limit_flow(
     return Limited(requested)
 
 
+def install_cap(
+    limits: FlowLimits, circuit_max: float | None = None, boiler_max: float | None = None
+) -> float:
+    """The lowest cap that protects the installation — the hard maximum, a circuit's maximum,
+    the boiler's own — which a setpoint above it meets at once, unramped (S-23)."""
+    return min(v for v in (limits.hard_max, circuit_max, boiler_max) if v is not None)
+
+
 def write_bounds(
     limits: FlowLimits,
     circuit_max: float | None = None,
@@ -90,7 +103,7 @@ def write_bounds(
 ) -> tuple[float, float]:
     """The lowest and highest heating setpoint ``limit_flow`` can give: a value put on an
     entity's grid stays inside them."""
-    high = min(v for v in (limits.hard_max, circuit_max, boiler_max) if v is not None)
+    high = install_cap(limits, circuit_max, boiler_max)
     low = limits.hard_min if floor is None else max(limits.hard_min, floor)
     return min(low, high), high
 
@@ -184,35 +197,71 @@ class Grid:
 
 
 PLAUSIBLE_ROOM = (-30.0, 45.0)  # °C: a room reading outside is a broken sensor, not a room
+FROST_OPEN = 0.0  # decided (decision 4): an opening above this can take heat
 
 
 @dataclass(frozen=True, slots=True)
 class FrostConfig:
     """Frost protection: a safety net below VT's own frost presets (°C). The one case where the
     plugin heats without VT's call; it watches every zone, VT's switched-off ones included, or
-    only the zone the user picks."""
+    only the zone the user picks — and heats only for those whose emitter can take heat."""
 
     room_limit: float = 5.0  # a watched zone below this starts frost heating
     release: float = 7.0  # frost heating ends once every watched zone is at or above this
     zone: str | None = None  # watch only this zone; None: every zone
+    # Zones the user declared closed while VT has them off ("closes when VT switches it off",
+    # off by default): without a published opening they then cannot take heat.
+    closes_when_off: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if self.release < self.room_limit:
             raise ValueError("the release temperature must not be below the frost limit")
 
 
-def watched_temperatures(
+def can_take_heat(zone: ZoneState, config: FrostConfig) -> bool:
+    """Whether heat for the zone can reach its room (decision 4): VT shows an opening above 0 —
+    its valve, else its duty cycle — or its device active; the mode alone never counts (a heat
+    mode with its valve closed cannot, an off zone asleep with its valve at 100 % can). A zone
+    whose valve state cannot be read — no opening published, or VT has not started it (what it
+    shows is a placeholder) — can, as before; unless the user declared that it closes while VT
+    has it off, and VT has it off."""
+    if zone.device_active is True:
+        return True
+    opening = zone.demand
+    if opening is None or not zone.started:
+        return not (zone.zone_id in config.closes_when_off and zone.heating_enabled is False)
+    return opening > FROST_OPEN
+
+
+def _watched(
     zones: Sequence[ZoneState], now: float, max_age: float | None, config: FrostConfig
-) -> list[float]:
-    """Fresh, plausible room temperatures of the zones frost protection watches."""
+) -> list[tuple[ZoneState, float]]:
+    """The zones frost protection watches that have a fresh, plausible room temperature."""
     low, high = PLAUSIBLE_ROOM
     return [
-        z.temperature
+        (z, z.temperature)
         for z in zones
         if (config.zone is None or z.zone_id == config.zone)
         and z.temperature is not None
         and low <= z.temperature <= high
         and z.is_fresh(now, max_age)
+    ]
+
+
+def watched_temperatures(
+    zones: Sequence[ZoneState],
+    now: float,
+    max_age: float | None,
+    config: FrostConfig,
+    *,
+    closed_too: bool = False,
+) -> list[float]:
+    """Fresh, plausible room temperatures of the watched zones that can take heat; with
+    ``closed_too``, of every watched zone."""
+    return [
+        temperature
+        for zone, temperature in _watched(zones, now, max_age, config)
+        if closed_too or can_take_heat(zone, config)
     ]
 
 
@@ -222,12 +271,39 @@ def frost_needed(
     max_age: float | None,
     active: bool,
     config: FrostConfig,
+    *,
+    closed_too: bool = False,
 ) -> bool:
-    """Whether a watched zone is cold enough for frost heating, with hysteresis."""
-    temperatures = watched_temperatures(zones, now, max_age, config)
+    """Whether a watched zone that can take heat is cold enough for frost heating, with
+    hysteresis; closed zones neither start it nor hold it. ``closed_too``: every watched zone
+    counts (the alarm "handed back in frost")."""
+    temperatures = watched_temperatures(zones, now, max_age, config, closed_too=closed_too)
     if any(t < config.room_limit for t in temperatures):
         return True
     return active and any(t < config.release for t in temperatures)
+
+
+def frost_closed(
+    zones: Sequence[ZoneState],
+    now: float,
+    max_age: float | None,
+    config: FrostConfig,
+    flagged: Sequence[str] = (),
+) -> tuple[str, ...]:
+    """The watched zones below the frost limit that cannot take heat (decision 4): VT keeps
+    them closed, so frost heat cannot reach them and does not start for them. One stays
+    flagged (``flagged``: at the step before) until it is at or above the release, or can take
+    heat. A zone VT has not started is not judged: its valve state is not known yet."""
+    return tuple(
+        zone.zone_id
+        for zone, temperature in _watched(zones, now, max_age, config)
+        if zone.started
+        and not can_take_heat(zone, config)
+        and (
+            temperature < config.room_limit
+            or (zone.zone_id in flagged and temperature < config.release)
+        )
+    )
 
 
 def handed_back_in_frost(
@@ -248,4 +324,4 @@ def handed_back_in_frost(
     it is off. Information only: it never starts heating (principle 12)."""
     if controlling or not heating_stops:
         return False
-    return frost_needed(zones, now, max_age, active, config)
+    return frost_needed(zones, now, max_age, active, config, closed_too=True)

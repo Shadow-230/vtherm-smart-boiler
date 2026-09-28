@@ -368,6 +368,7 @@ async def test_control_through_the_gateway_at_the_simple_level(
         "curve": {"design_outdoor": -18, "design_flow": 52},
         "hard_min": 25,
         "hard_max": 65,
+        "activation_delay_s": 0,  # VT's delay, confirmed by saving (decision 5)
     }
     switch = control_switch(hass, entry_id)
     assert switch is not None
@@ -1223,3 +1224,222 @@ async def test_the_tick_is_refused_with_a_hand_back_value_that_stops_heating(
     await hass.async_block_till_done()
     control = hass.config_entries.async_get_entry(entry_id).options["control"]
     assert "own_room_controller" not in control
+
+
+# --- X4: VT's activation delay (decision 5), the circuit alarm (decision 10), a zone's
+# "closes when off" kept (decision 4) ------------------------------------------------------------
+
+
+def form_default(result: dict[str, Any], key: str) -> Any:
+    """What a form offers for a field: its default, else its suggested value."""
+    for marker in result["data_schema"].schema:
+        if str(marker) == key:
+            if callable(marker.default):
+                return marker.default()
+            return (marker.description or {}).get("suggested_value")
+    raise AssertionError(f"{key} is not in the form")
+
+
+async def to_control_curve(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
+    """The gateway path up to its curve step."""
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {
+            "write_path": "opentherm_gw",
+            "topology": "gateway_with_thermostat",
+            "confirmed_entity": "sensor.gw_control_setpoint",
+        },
+    )
+    result = await options_step(hass, result, {"gateway_id": "living_room_gw"})
+    assert result["step_id"] == "control_curve"
+    return result
+
+
+@pytest.fixture
+def gateway(hass: HomeAssistant) -> None:
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    MockConfigEntry(domain="opentherm_gw", data={"id": "living_room_gw"}).add_to_hass(hass)
+    hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
+
+
+CURVE_ANSWERS = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_max": 70}
+
+
+@pytest.mark.parametrize(
+    ("vt", "offered"),
+    [
+        ({"central_boiler_activation_delay_sec": 120}, 120),
+        ({}, 0),  # the key missing
+        (None, 0),  # VT not there
+        ({"central_boiler_activation_delay_sec": "a lot"}, 0),  # not a number
+        ({"central_boiler_activation_delay_sec": 900}, 0),  # outside VT's own range
+    ],
+    ids=["vt_120", "no_key", "no_vt", "not_a_number", "out_of_range"],
+)
+@pytest.mark.usefixtures("gateway")
+async def test_the_delay_is_pre_filled_from_vts_central_entry(
+    hass: HomeAssistant, entities: dict[str, str], vt: dict[str, Any] | None, offered: int
+) -> None:
+    """Decision 5: the curve step — shown at the simple level — offers VT's stored delay, else
+    0; the user confirms it by saving, and a stored value of the plugin's wins afterwards."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    if vt is not None:
+        central = {"thermostat_type": "thermostat_central_config"}
+        MockConfigEntry(domain="versatile_thermostat", data=central | vt).add_to_hass(hass)
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
+    result = await to_control_curve(hass, entry_id)
+    assert "exponent" not in result["data_schema"].schema  # the simple level
+    assert form_default(result, "activation_delay_s") == offered
+    result = await options_step(hass, result, CURVE_ANSWERS | {"activation_delay_s": offered})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert control["activation_delay_s"] == offered
+    # The plugin's own stored value wins over VT's.
+    result = await to_control_curve(hass, entry_id)
+    result = await options_step(hass, result, CURVE_ANSWERS | {"activation_delay_s": 30})
+    await hass.async_block_till_done()
+    result = await to_control_curve(hass, entry_id)
+    assert form_default(result, "activation_delay_s") == 30
+
+
+@pytest.mark.usefixtures("gateway")
+async def test_the_delay_is_refused_outside_0_to_600(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    from homeassistant.data_entry_flow import InvalidData
+
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
+    result = await to_control_curve(hass, entry_id)
+    for bad in (-10, 610):
+        with pytest.raises(InvalidData):
+            await options_step(hass, result, CURVE_ANSWERS | {"activation_delay_s": bad})
+    result = await options_step(hass, result, CURVE_ANSWERS | {"activation_delay_s": 600})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    options = hass.config_entries.async_get_entry(entry_id).options
+    assert EntryConfig.from_options(options).control.loop.control.activation_delay_s == 600.0
+
+
+@pytest.mark.usefixtures("gateway")
+async def test_restoring_defaults_keeps_the_activation_delay(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Not an advanced setting: "restore defaults" keeps it."""
+    entry_id = await create_entry(hass, entities, "advanced", ("living",))
+    result = await to_control_curve(hass, entry_id)
+    result = await options_step(hass, result, CURVE_ANSWERS | {"activation_delay_s": 120})
+    assert result["step_id"] == "control_behaviour"
+    result = await options_step(hass, result, {})
+    result = await options_step(hass, result, {})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "level"})
+    await options_step(hass, result, {"level": "simple", "restore_defaults": True})
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert control["activation_delay_s"] == 120
+
+
+async def open_circuit(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
+    menu = await hass.config_entries.options.async_init(entry_id)
+    return await options_step(hass, menu, {"next_step_id": "circuit"})
+
+
+def circuits_of(hass: HomeAssistant, entry_id: str) -> list[dict[str, Any]]:
+    return hass.config_entries.async_get_entry(entry_id).options["circuits"]
+
+
+async def test_the_circuit_alarm_is_pre_filled_and_must_be_above_the_maximum(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 10, advanced level: the alarm temperature and time are pre-filled when the
+    maximum is first entered — the maximum + 5 K and 10 min — never empty, and not changed by
+    themselves later; the alarm must be above the maximum."""
+    entry_id = await create_entry(hass, entities, "advanced")
+    result = await open_circuit(hass, entry_id)
+    assert "max_flow_alarm" in result["data_schema"].schema
+    assert "max_flow_alarm_min" in result["data_schema"].schema
+    answer = {"control": "unmixed_shared", "add_another": False}
+    await options_step(hass, result, answer | {"max_flow": 40})
+    await hass.async_block_till_done()
+    assert circuits_of(hass, entry_id)[0] | {} == {
+        "id": "main",
+        "control": "unmixed_shared",
+        "max_flow": 40,
+        "max_flow_alarm": 45,
+        "max_flow_alarm_min": 10,
+    }
+    result = await open_circuit(hass, entry_id)
+    assert form_default(result, "max_flow_alarm") == 45
+    assert form_default(result, "max_flow_alarm_min") == 10
+    result = await options_step(hass, result, answer | {"max_flow": 40, "max_flow_alarm": 40})
+    assert result["errors"] == {"max_flow_alarm": "max_flow_alarm_not_above_max"}
+    result = await options_step(
+        hass, result, answer | {"max_flow": 40, "max_flow_alarm": 48, "max_flow_alarm_min": 20}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    circuit = circuits_of(hass, entry_id)[0]
+    assert (circuit["max_flow_alarm"], circuit["max_flow_alarm_min"]) == (48, 20)
+    # A new maximum leaves the alarm as the user set it; one not above it is refused.
+    result = await open_circuit(hass, entry_id)
+    kept = answer | {"max_flow_alarm": 48, "max_flow_alarm_min": 20}
+    result = await options_step(hass, result, kept | {"max_flow": 48})
+    assert result["errors"] == {"max_flow_alarm": "max_flow_alarm_not_above_max"}
+    result = await options_step(hass, result, kept | {"max_flow": 42})
+    await hass.async_block_till_done()
+    assert circuits_of(hass, entry_id)[0]["max_flow_alarm"] == 48
+    # Without a maximum there is no alarm.
+    result = await open_circuit(hass, entry_id)
+    await options_step(hass, result, answer)
+    await hass.async_block_till_done()
+    assert circuits_of(hass, entry_id)[0] == {"id": "main", "control": "unmixed_shared"}
+
+
+async def test_the_simple_level_pre_fills_the_circuit_alarm_it_does_not_show(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """At the simple level the alarm's fields are hidden: the pre-fill is stored with the
+    maximum, kept as it is, and a maximum that reaches the hidden alarm temperature is refused
+    on the maximum's field; the level shows hidden settings only once they differ from it."""
+    entry_id = await create_entry(hass, entities, "simple")
+    result = await open_circuit(hass, entry_id)
+    assert "max_flow_alarm" not in result["data_schema"].schema
+    await options_step(hass, result, {"control": "unmixed_shared", "max_flow": 40})
+    await hass.async_block_till_done()
+    circuit = circuits_of(hass, entry_id)[0]
+    assert (circuit["max_flow_alarm"], circuit["max_flow_alarm_min"]) == (45, 10)
+    menu = await hass.config_entries.options.async_init(entry_id)
+    assert "level" in menu["menu_options"]  # the pre-fill is no hidden setting
+    result = await open_circuit(hass, entry_id)
+    result = await options_step(hass, result, {"control": "unmixed_shared", "max_flow": 44})
+    await hass.async_block_till_done()
+    assert circuits_of(hass, entry_id)[0]["max_flow_alarm"] == 45  # not changed by itself
+    result = await open_circuit(hass, entry_id)
+    result = await options_step(hass, result, {"control": "unmixed_shared", "max_flow": 45})
+    assert result["errors"] == {"max_flow": "max_flow_alarm_not_above_max"}
+
+
+async def test_the_zone_step_keeps_a_stored_closes_when_off(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 4's per-zone option has no field before X5: the zone step keeps it."""
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
+    entry = hass.config_entries.async_get_entry(entry_id)
+    zones = [dict(zone) | {"closes_when_off": True} for zone in entry.options["zones"]]
+    hass.config_entries.async_update_entry(entry, options=dict(entry.options) | {"zones": zones})
+    await hass.async_block_till_done()
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "zones"})
+    result = await options_step(hass, result, {"zones": [entities["living"]]})
+    result = await options_step(hass, result, {"emitter": "radiator", "foreign_heat": []})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    zone = hass.config_entries.async_get_entry(entry_id).options["zones"][0]
+    assert zone["closes_when_off"] is True

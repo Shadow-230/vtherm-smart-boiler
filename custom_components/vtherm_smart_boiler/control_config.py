@@ -49,6 +49,8 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         "comfort_correction": True,
         # Without the tick, VT giving no answer at all means no heating and an alarm (answer F).
         "own_room_controller": False,
+        # VT's activation delay (decision 5): 0 s, VT's own default — heating starts at once.
+        "activation_delay_s": 0,
     }
 )
 CURVE_DEFAULTS: Mapping[str, float] = MappingProxyType(
@@ -127,8 +129,9 @@ CONTROLLABLE_TOPOLOGIES = frozenset(
     {Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT, Topology.VIRTUAL}
 )
 # Alarms that stay information: nothing the plugin counts may hold heating against VT, so many
-# starts never hand back (``SCOPE.md`` principle 12).
-INFO_ONLY_ALARMS = frozenset({"frequent_starts"})
+# starts never hand back (``SCOPE.md`` principle 12); a circuit's water above its alarm
+# temperature tells the user of the boiler's overshoot (decision 10).
+INFO_ONLY_ALARMS = frozenset({"frequent_starts", "circuit_too_hot"})
 # Alarms that always hand control back, with no reaction to choose (decision 7): another
 # controller writing to the boiler makes the plugin step aside — the whole safe hand-back, then a
 # latch (decision 6, the user's answer H) — and a boiler that ignores "heating off" from the start
@@ -277,6 +280,7 @@ def parse_control(
             release=float(value["frost_release"]),
             # A zone no longer configured must not leave frost protection watching nothing.
             zone=frost_zone if frost_zone in {z.zone_id for z in installation.zones} else None,
+            closes_when_off=frozenset(z.zone_id for z in installation.zones if z.closes_when_off),
         ),
         demand=DemandConfig(
             count_threshold=int(value["count_threshold"]),
@@ -291,6 +295,8 @@ def parse_control(
         ramp_k_per_min=ramp,
         decision_interval_s=_minutes(value, "decision_interval_min", 5.0),
         comfort_correction=bool(value["comfort_correction"]),
+        # Only what the user saved: VT's own value is a pre-fill in the form, never taken here.
+        activation_delay_s=float(value["activation_delay_s"]),
     )
     loop = LoopConfig(
         control=control,

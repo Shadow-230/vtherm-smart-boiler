@@ -45,7 +45,8 @@ def inputs(t: float, opening: float = 0.6, **kw) -> ControlInputs:
     kw.setdefault("enabled", True)
     kw.setdefault("zones", (ZoneState("z", 20.0, 21.0, True, reported_at=t, valve_open=opening),))
     kw.setdefault("outdoor_sensor", 5.0)
-    return ControlInputs(now=t, flame=False, dhw=False, **kw)
+    kw.setdefault("flame", False)
+    return ControlInputs(now=t, dhw=False, **kw)
 
 
 def test_first_step_writes_setpoint_and_heating_on() -> None:
@@ -173,7 +174,8 @@ def test_ignored_from_the_start_keeps_the_other_target_and_frost() -> None:
     state, outs = run(state, config, 370.0, 400.0, 0.0, opening=0.0)
     assert outs[0][1].ch_enable is False  # heating off goes
     assert all(out.setpoint is None for _t, out in outs)
-    cold = ZoneState("z", 4.0, 21.0, True, reported_at=410.0, valve_open=0.0)
+    # Its valve a little open: frost heat can reach it (decision 4), and it does not call.
+    cold = ZoneState("z", 4.0, 21.0, True, reported_at=410.0, valve_open=0.04)
     state, out = loop_step(state, inputs(410.0, zones=(cold,)), 0.0, config)
     assert out.decision.mode.value == "frost"
     assert out.ch_enable is True  # frost heating switches it on
@@ -262,7 +264,8 @@ def test_a_clip_is_never_learned_as_a_limit() -> None:
         state = LoopState(setpoint=GuardState(clip=clip))
         t = 0.0
         while t <= 7200.0:
-            state, _ = loop_step(state, inputs(t, zones=(short_zone(t),)), None, config)
+            step = inputs(t, zones=(short_zone(t),), flame=True)  # heat flows (S-24)
+            state, _ = loop_step(state, step, None, config)
             t += 10.0
         assert (state.control.correction > 0.0) is rises
         assert config.control.limits == FlowLimits()

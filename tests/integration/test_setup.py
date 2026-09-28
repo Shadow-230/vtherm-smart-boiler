@@ -192,7 +192,17 @@ def test_changing_attributes_stay_out_of_the_recorder() -> None:
     )
 
     for cls, changing in (
-        (ControlStateSensor, {"reasons", "target", "heating_on", "unknown_zones"}),
+        (
+            ControlStateSensor,
+            {
+                "reasons",
+                "target",
+                "heating_on",
+                "unknown_zones",
+                "comfort_correction",
+                "activation_at",
+            },
+        ),
         (ControlSetpointSensor, {"requested", "read_back", "last_change"}),
         (EmitterFactorSensor, {"computed_at", "output_w"}),
         (CriticalZoneSensor, {"demand", "deficit"}),

@@ -8,6 +8,7 @@ VT's central mode select. It detects what is installed instead of assuming it: V
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from importlib import import_module
@@ -30,6 +31,12 @@ SMARTPI_DOMAIN = "vtherm_smartpi"
 CENTRAL_MODE_UNIQUE_ID = "central_mode"
 CENTRAL_BOILER_UNIQUE_ID = "central_boiler_state"
 CENTRAL_BOILER_FEATURE = "use_central_boiler_feature"  # in VT's central entry (VT 10.4.0)
+# VT's central entry is the one whose ``thermostat_type`` is this (VT 10.4.0 ``const.py``); its
+# central boiler's activation delay, 0–600 s, stays in its data once the feature is unticked.
+THERMOSTAT_TYPE = "thermostat_type"
+CENTRAL_CONFIG = "thermostat_central_config"
+ACTIVATION_DELAY = "central_boiler_activation_delay_sec"
+VT_ACTIVATION_DELAY_MAX_S = 600.0
 ROOM_SENSOR = "temperature_sensor_entity_id"  # in a thermostat's entry data (VT 10.4.0)
 
 
@@ -207,6 +214,22 @@ class VThermLink:
         if state is None or state.state in ("unavailable", "unknown") or configured is None:
             return None
         return configured is True
+
+    def vt_central_activation_delay(self) -> float | None:
+        """VT's central boiler activation delay, in seconds, as VT keeps it in its central
+        entry — also once its central boiler is unticked (decision 5); ``None`` without VT, a
+        central entry, or a number within VT's 0–600 s. A pre-fill for the form only: the
+        plugin's own option is what counts."""
+        for entry in self._hass.config_entries.async_entries(VT_DOMAIN):
+            if entry.data.get(THERMOSTAT_TYPE) != CENTRAL_CONFIG:
+                continue
+            raw = entry.data.get(ACTIVATION_DELAY)
+            if isinstance(raw, bool) or not isinstance(raw, int | float):
+                return None
+            value = float(raw)
+            inside = math.isfinite(value) and 0.0 <= value <= VT_ACTIVATION_DELAY_MAX_S
+            return value if inside else None
+        return None
 
     def central_mode(self) -> CentralMode | None:
         """VT's central mode, or ``None`` when VT has no central configuration."""

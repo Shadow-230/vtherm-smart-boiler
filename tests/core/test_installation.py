@@ -86,3 +86,18 @@ def test_underfloor_cap_given_or_circuit_mixed_is_fine() -> None:
         ),
     )
     assert installation.issues() == []
+
+
+def test_a_circuit_carries_its_alarm_temperature_and_time() -> None:
+    """Decision 10: a circuit with a maximum carries the too-hot alarm's temperature and time;
+    none by default."""
+    circuit = Circuit("main", max_flow=40.0, max_flow_alarm=45.0, max_flow_alarm_s=600.0)
+    assert (circuit.max_flow_alarm, circuit.max_flow_alarm_s) == (45.0, 600.0)
+    assert Circuit("main").max_flow_alarm is None
+    assert Circuit("main").max_flow_alarm_s is None
+
+
+def test_a_zone_may_close_when_vt_switches_it_off() -> None:
+    """Decision 4's per-zone option: off by default."""
+    assert not Zone("a", "main").closes_when_off
+    assert Zone("a", "main", closes_when_off=True).closes_when_off

@@ -58,6 +58,8 @@ from .control_config import (
     own_room_controller_offered,
 )
 from .core.alarms import (
+    CIRCUIT_ALARM_MIN,
+    CIRCUIT_ALARM_RISE_K,
     DEFAULT_FREQUENT_STARTS_PER_HOUR,
     DEFAULT_UNSTABLE_BURNS_PER_DAY,
     FLUE_GAS_CONDENSING_BAND,
@@ -246,7 +248,9 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
 def circuit_schema(
     options: dict[str, Any], current: dict[str, Any], more: bool = False
 ) -> vol.Schema:
-    """``more``: another circuit follows this one — offered next, so none is dropped by default."""
+    """``more``: another circuit follows this one — offered next, so none is dropped by default.
+    At the advanced level the maximum's too-hot alarm (decision 10): its temperature and time,
+    offered as stored — pre-filled once the maximum is entered."""
     fields: dict[Any, Any] = {
         vol.Required(
             "control", default=current.get("control", CircuitControl.UNMIXED_SHARED.value)
@@ -255,9 +259,24 @@ def circuit_schema(
         _optional("fixed_temperature", current): _number(20, 70, 1, "°C"),
     }
     if _advanced(options):
+        fields[_optional(MAX_FLOW_ALARM, current)] = _number(20, 100, 1, "°C")
+        fields[_optional(MAX_FLOW_ALARM_MIN, current)] = _number(1, 120, 1, "min")
         fields[_optional("flow_entity", current)] = _entity(_TEMPERATURE)
         fields[vol.Required("add_another", default=more)] = selector.BooleanSelector()
     return vol.Schema(fields)
+
+
+MAX_FLOW_ALARM = "max_flow_alarm"
+MAX_FLOW_ALARM_MIN = "max_flow_alarm_min"
+
+
+def circuit_alarm_error(circuit: Mapping[str, Any], advanced: bool) -> dict[str, str]:
+    """The too-hot alarm must lie above the circuit's maximum (decision 10). At the simple level
+    its field is hidden: the maximum's field says it."""
+    maximum, alarm = circuit.get("max_flow"), circuit.get(MAX_FLOW_ALARM)
+    if maximum is None or alarm is None or alarm > maximum:
+        return {}
+    return {MAX_FLOW_ALARM if advanced else "max_flow": "max_flow_alarm_not_above_max"}
 
 
 def zones_schema(options: dict[str, Any]) -> vol.Schema:
@@ -556,7 +575,23 @@ def control_mqtt_schema(options: dict[str, Any]) -> vol.Schema:
     )
 
 
-def control_curve_schema(options: dict[str, Any]) -> vol.Schema:
+ACTIVATION_DELAY = "activation_delay_s"
+
+
+def activation_delay_field(
+    control: Mapping[str, Any], vt_delay: float | None = None
+) -> dict[Any, Any]:
+    """VT's activation delay (decision 5), 0–600 s in steps of 10, at every level: the stored
+    value, else VT's own where VT kept one (``vt_delay``, read from VT's central entry), else 0 —
+    offered for the user to confirm by saving, never taken silently. The relay path's behaviour
+    step shows the same field (X8)."""
+    stored = control.get(ACTIVATION_DELAY)
+    if stored is None:
+        stored = CONTROL_DEFAULTS[ACTIVATION_DELAY] if vt_delay is None else vt_delay
+    return {vol.Required(ACTIVATION_DELAY, default=stored): _number(0, 600, 10, "s")}
+
+
+def control_curve_schema(options: dict[str, Any], vt_delay: float | None = None) -> vol.Schema:
     control = options.get(CONTROL, {})
     curve = control.get("curve", {})
     design_outdoor = curve.get(
@@ -575,6 +610,7 @@ def control_curve_schema(options: dict[str, Any]) -> vol.Schema:
         ),
         vol.Required("hard_min", default=default("hard_min")): _number(10, 50, 0.5, "°C"),
         vol.Required("hard_max", default=default("hard_max")): _number(30, 90, 0.5, "°C"),
+        **activation_delay_field(control, vt_delay),
     }
     if _advanced(options):
         fields |= {
@@ -687,7 +723,7 @@ def apply_control_curve(options: dict[str, Any], user_input: dict[str, Any]) -> 
         else:
             curve[key] = value
     control["curve"] = curve
-    keys = ["hard_min", "hard_max"]
+    keys = ["hard_min", "hard_max", ACTIVATION_DELAY]
     if _advanced(options):
         keys += ["ceiling_band", "fallback_setpoint", "frost_limit", "frost_release", "frost_zone"]
     _set_or_drop(control, user_input, tuple(keys))
@@ -883,12 +919,39 @@ def _apply_parameters(
     options[PARAMETERS] = params
 
 
-def circuit_from_input(user_input: dict[str, Any], circuit_id: str) -> dict[str, Any]:
+def circuit_from_input(
+    user_input: dict[str, Any],
+    circuit_id: str,
+    current: Mapping[str, Any] | None = None,
+    advanced: bool = True,
+) -> dict[str, Any]:
+    """A circuit as the options store it. With a maximum, its too-hot alarm (decision 10): at
+    the advanced level as entered, at the simple level as stored (its fields are hidden); where
+    none is given, the pre-fill — the maximum + 5 K and 10 min — so never empty, and not changed
+    by itself later. Without a maximum, no alarm."""
     circuit: dict[str, Any] = {"id": circuit_id, "control": user_input["control"]}
     for key in ("max_flow", "fixed_temperature", "flow_entity"):
         if user_input.get(key) not in (None, ""):
             circuit[key] = user_input[key]
+    maximum = circuit.get("max_flow")
+    if maximum is None:
+        return circuit
+    given = user_input if advanced else (current or {})
+    alarm, minutes = given.get(MAX_FLOW_ALARM), given.get(MAX_FLOW_ALARM_MIN)
+    circuit[MAX_FLOW_ALARM] = maximum + CIRCUIT_ALARM_RISE_K if alarm in (None, "") else alarm
+    circuit[MAX_FLOW_ALARM_MIN] = CIRCUIT_ALARM_MIN if minutes in (None, "") else minutes
     return circuit
+
+
+def _circuit_alarm_hidden(circuit: Mapping[str, Any]) -> bool:
+    """A circuit's too-hot alarm set otherwise than its pre-fill (an advanced setting)."""
+    maximum = circuit.get("max_flow")
+    if maximum is None:
+        return False
+    alarm, minutes = circuit.get(MAX_FLOW_ALARM), circuit.get(MAX_FLOW_ALARM_MIN)
+    return (alarm is not None and alarm != maximum + CIRCUIT_ALARM_RISE_K) or (
+        minutes is not None and minutes != CIRCUIT_ALARM_MIN
+    )
 
 
 def source_kind(hass_state_domain: str, device_class: str | None) -> SourceKind | None:
@@ -975,6 +1038,7 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
         or "design_load_kw" in options.get(BUILDING, {})
         or len(circuits) > 1
         or any("flow_entity" in c for c in circuits)
+        or any(_circuit_alarm_hidden(c) for c in circuits)
         or any("reference_output_w" in z or "exponent" in z for z in zones)
         or any("threshold" in s for z in zones for s in z.get("foreign_heat", []))
         or _differ(
@@ -1127,16 +1191,21 @@ class _Steps:
         existing = self.options.get(CIRCUITS, [])
         current = existing[index] if index < len(existing) else {}
         if user_input is not None:
-            circuit = circuit_from_input(user_input, current.get("id", f"circuit_{index + 1}"))
+            advanced = _advanced(self.options)
+            circuit = circuit_from_input(
+                user_input, current.get("id", f"circuit_{index + 1}"), current, advanced
+            )
             if index == 0 and not current:
                 circuit["id"] = "main"
-            if not _advanced(self.options) and current.get("flow_entity"):
+            if not advanced and current.get("flow_entity"):
                 circuit["flow_entity"] = current["flow_entity"]  # not shown: kept
             if (
                 circuit["control"] == CircuitControl.PASSIVE_FIXED
                 and "fixed_temperature" not in circuit
             ):
                 errors["fixed_temperature"] = "fixed_temperature_missing"
+            elif alarm_error := circuit_alarm_error(circuit, advanced):
+                errors = alarm_error
             else:
                 self._circuits_done.append(circuit)
                 if user_input.get("add_another"):
@@ -1169,6 +1238,9 @@ class _Steps:
         errors: dict[str, str] = {}
         if user_input is not None:
             zone: dict[str, Any] = {"entity_id": entity_id, "emitter": user_input["emitter"]}
+            if current.get("closes_when_off") is not None:
+                # Decision 4's per-zone option: not shown before X5, kept as stored.
+                zone["closes_when_off"] = current["closes_when_off"]
             circuits = [c["id"] for c in self.options.get(CIRCUITS, [])] or ["main"]
             zone["circuit"] = user_input.get("circuit", current.get("circuit", circuits[0]))
             for key in ("reference_output_w", "exponent"):
@@ -1581,8 +1653,12 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 if _advanced(self.options):
                     return await self.async_step_control_behaviour()
                 return await self.async_step_save()
+        # VT's own activation delay, where VT kept one, is offered for the user to confirm.
+        vt_delay = VThermLink(self.hass, _zone_entities(self.options)).vt_central_activation_delay()
         return self._form(
-            step_id="control_curve", data_schema=control_curve_schema(self.options), errors=errors
+            step_id="control_curve",
+            data_schema=control_curve_schema(self.options, vt_delay),
+            errors=errors,
         )
 
     async def async_step_control_behaviour(

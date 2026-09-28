@@ -1,9 +1,13 @@
 """Learning pauses: keep the zone algorithms from learning what the boiler did to the rooms.
 
-A zone's learning is paused while DHW runs and its valve is open (no hot water reaches it), while
-foreign heat warms it, and while the water temperature swings widely. It resumes once the cause is
-gone for the minimum pause and — after DHW — the flow is back within a tolerance of its setpoint,
-at the latest after the longest pause.
+A zone's learning is paused while DHW runs and its valve is open (no hot water reaches it) — every
+draw, however short and on a combi boiler too, as the zone gets no heat meanwhile (S-41) — while
+foreign heat warms it, and while the water temperature swings widely. Each pause keeps its causes
+(P-89). It resumes once every cause is gone and the minimum pause has passed; after hot water the
+flow must also be back within a tolerance of its setpoint — or heating be off — at the latest an
+hour after the draw ended (the anchor provisional, K4). After foreign heat or a swing no flow
+condition applies. A pause whose causes are not known (stored by an earlier version) is taken for
+hot water: the cautious rule.
 
 The plugin only resumes what it paused itself and never touches a zone whose learning the user
 has switched off. Every toggle costs the zone algorithm its observation in progress, so the
@@ -42,7 +46,7 @@ class LearningConfig:
     swing_window_s: float = 30 * MINUTE
     min_pause_s: float = 10 * MINUTE
     resume_margin_k: float = 3.0  # after DHW, the flow must be back within this of its setpoint
-    max_pause_s: float = 60 * MINUTE  # ...or the pause this long, once its causes are gone
+    max_pause_s: float = 60 * MINUTE  # ...or this long since the draw ended (provisional, K4)
     check_s: float = MINUTE  # a pause or resume is read back after this
     give_up_s: float = DAY  # a zone gone this long after a resume is no longer followed
 
@@ -66,6 +70,11 @@ class LearningState:
     resuming: Mapping[str, float] = field(default_factory=dict)
     # ...and when it was first sent: a zone is followed for ``give_up_s`` from then at most.
     resume_since: Mapping[str, float] = field(default_factory=dict)
+    # The causes each running pause has seen (P-89); a paused zone without an entry: unknown,
+    # taken for hot water.
+    causes: Mapping[str, tuple[PauseCause, ...]] = field(default_factory=dict)
+    # A paused zone whose hot water has ended: since when — its flow wait is capped from then.
+    dhw_ended: Mapping[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,10 +147,13 @@ def plan_learning(
     toggles = dict(state.last_toggle)
     resuming = dict(state.resuming)
     resume_since = dict(state.resume_since)
+    kept = {z: c for z, c in state.causes.items() if z in paused}
+    ended = {z: t for z, t in state.dhw_ended.items() if z in paused}
     pause: list[str] = []
     resume: list[str] = list(again)
     causes: dict[str, tuple[PauseCause, ...]] = {}
     for zone in zones:
+        zone_id = zone.zone_id
         reasons: list[PauseCause] = []
         if config.pause_on_dhw and dhw is True and zone.valve_open:
             reasons.append(PauseCause.DHW)
@@ -149,37 +161,66 @@ def plan_learning(
             reasons.append(PauseCause.FOREIGN_HEAT)
         if swing:
             reasons.append(PauseCause.WATER_SWING)
-        causes[zone.zone_id] = tuple(reasons)
-        since = paused.get(zone.zone_id)
+        causes[zone_id] = tuple(reasons)
+        since = paused.get(zone_id)
         if since is not None and zone.learning is True and now - since >= config.check_s:
             # The pause did not take, or the user switched learning back on: not ours now.
-            paused.pop(zone.zone_id)
+            paused.pop(zone_id)
+            kept.pop(zone_id, None)
+            ended.pop(zone_id, None)
             since = None
-        last = toggles.get(zone.zone_id)
+        if since is not None:
+            # Every cause the pause has seen; unknown ones (an earlier version's store) are
+            # taken for hot water. The flow wait after hot water is capped from its end.
+            seen = kept.get(zone_id) or (PauseCause.DHW,)
+            kept[zone_id] = (*seen, *(r for r in reasons if r not in seen))
+            if PauseCause.DHW in reasons:
+                ended.pop(zone_id, None)
+            elif PauseCause.DHW in kept[zone_id]:
+                ended[zone_id] = min(ended.get(zone_id, now), now)
+        last = toggles.get(zone_id)
         settled = last is None or now - last >= config.min_pause_s
-        resuming_now = zone.zone_id in resuming
+        resuming_now = zone_id in resuming
         if reasons and since is None and not resuming_now and zone.learning is True and settled:
-            pause.append(zone.zone_id)
-            paused[zone.zone_id] = now
-            toggles[zone.zone_id] = now
+            pause.append(zone_id)
+            paused[zone_id] = now
+            toggles[zone_id] = now
+            kept[zone_id] = tuple(reasons)
         elif (
             not reasons
             and since is not None
             and settled
-            and (flow_recovered or now - since >= config.max_pause_s)
+            and _may_resume(kept[zone_id], ended.get(zone_id), flow_recovered, now, config)
         ):
             if zone.learning is not True:
-                resume.append(zone.zone_id)
-                resuming[zone.zone_id] = now
-                resume_since.setdefault(zone.zone_id, now)
-            paused.pop(zone.zone_id, None)
-            toggles[zone.zone_id] = now
+                resume.append(zone_id)
+                resuming[zone_id] = now
+                resume_since.setdefault(zone_id, now)
+            paused.pop(zone_id, None)
+            kept.pop(zone_id, None)
+            ended.pop(zone_id, None)
+            toggles[zone_id] = now
     return LearningPlan(
-        LearningState(paused, setpoints, toggles, resuming, resume_since),
+        LearningState(paused, setpoints, toggles, resuming, resume_since, kept, ended),
         tuple(pause),
         tuple(resume),
         causes,
     )
+
+
+def _may_resume(
+    causes: Sequence[PauseCause],
+    dhw_ended: float | None,
+    flow_recovered: bool,
+    now: float,
+    config: LearningConfig,
+) -> bool:
+    """A pause whose causes are gone and whose minimum pause has passed ends — after hot water
+    only once the flow is back (or heating is off), at the latest ``max_pause_s`` after the draw
+    ended; after foreign heat or a swing at once (P-89)."""
+    if PauseCause.DHW not in causes:
+        return True
+    return flow_recovered or (dhw_ended is not None and now - dhw_ended >= config.max_pause_s)
 
 
 def release_all(state: LearningState, now: float) -> tuple[LearningState, tuple[str, ...]]:
@@ -191,5 +232,5 @@ def release_all(state: LearningState, now: float) -> tuple[LearningState, tuple[
     toggles.update(dict.fromkeys(state.paused, now))
     resuming = {**state.resuming, **dict.fromkeys(state.paused, now)}
     since = {**dict.fromkeys(state.paused, now), **state.resume_since}
-    released = LearningState({}, state.setpoints, toggles, resuming, since)
+    released = LearningState({}, state.setpoints, toggles, resuming, since)  # causes forgotten
     return released, tuple(state.paused)

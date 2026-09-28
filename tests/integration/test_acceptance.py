@@ -81,7 +81,10 @@ class Rig:
         return round(celsius * 9.0 / 5.0 + 32.0, 1) if self.fahrenheit else round(celsius, 1)
 
     def mirror_zones(self) -> None:
-        """VT's thermostats as the plugin reads them, from the simulated rooms."""
+        """VT's thermostats as the plugin reads them, from the simulated rooms. A zone VT has
+        "off" shows its valve closed and its device off, as VT 10.4.0 does (decision 4); in
+        "sleep" it shows "off" with its valve held at 100 %. (The simulated plant still opens
+        its valve: Z3 closes it.)"""
         for zone in self.sim.zones:
             opening = self.sim.opening(zone.zone_id)
             index = [z.zone_id for z in self.sim.zones].index(zone.zone_id)
@@ -90,6 +93,11 @@ class Rig:
             if mode == "unavailable":
                 self.hass.states.async_set(entity_id, "unavailable", {})
                 continue
+            active = opening > 0.05
+            action = "heating" if active else "idle"
+            if mode in ("off", "sleep"):
+                opening = 1.0 if mode == "sleep" else 0.0
+                mode, active, action = "off", False, "off"
             if zone.zone_id in self.over_climate:
                 # It drives a device with its own regulation: no opening, only whether it heats
                 # — and, as VT 10.4.0 shows every started thermostat, that it has started.
@@ -99,9 +107,9 @@ class Rig:
                     {
                         "current_temperature": self.degrees(self.sim.room(zone.zone_id)),
                         "temperature": self.degrees(self.sim.plant.targets[index]),
-                        "hvac_action": "heating" if opening > 0.05 else "idle",
+                        "hvac_action": action,
                         "is_ready": True,
-                        "specific_states": {"is_device_active": opening > 0.05},
+                        "specific_states": {"is_device_active": active},
                     },
                 )
                 continue
@@ -110,12 +118,12 @@ class Rig:
                 mode,
                 current_temperature=self.degrees(self.sim.room(zone.zone_id)),
                 temperature=self.degrees(self.sim.plant.targets[index]),
-                hvac_action="heating" if opening > 0.05 else "idle",
+                hvac_action=action,
                 valve_open_percent=round(opening * 100),
-                on_percent=round(opening, 2),
+                on_percent=0.0 if mode == "off" else round(opening, 2),
                 # What real VT publishes for every thermostat, and what demand follows first
                 # (T4): whether its device heats now, and that it has started.
-                specific_states={"is_device_active": opening > 0.05},
+                specific_states={"is_device_active": active},
                 is_ready=True,
             )
 
@@ -391,7 +399,11 @@ async def test_a_command_never_taken_is_detected_and_not_fought(rig: Rig) -> Non
 
 async def test_vt_stopped_means_no_demand_not_a_hand_back(rig: Rig) -> None:
     """VT's central mode "Stopped" turns its zones off: the plugin sees no demand — heating off,
-    no hand-back, control goes on — and frost protection still watches."""
+    no hand-back, control goes on — and frost protection still watches: a room left to freeze
+    behind a valve VT keeps closed gets no frost heat, which could not reach it, but a repair
+    issue naming it (decision 4)."""
+    from homeassistant.helpers import issue_registry as ir
+
     hass = rig.hass
     select = er.async_get(hass).async_get_or_create("select", VT_PLATFORM, "central_mode")
     hass.states.async_set(select.entity_id, "Auto")
@@ -409,8 +421,16 @@ async def test_vt_stopped_means_no_demand_not_a_hand_back(rig: Rig) -> None:
     rig.sim.advance(rig.now())
     rig.mirror_zones()
     await rig.advance(10)
-    assert rig.state("sensor", "control_state").state == "frost"
-    assert rig.gateway("ch")[-1][2] is True
+    assert rig.state("sensor", "control_state").state == "idle"
+    assert rig.gateway("ch")[-1][2] is False  # the boiler is not run against closed valves
+    assert 0.0 not in rig.setpoints()
+    assert rig.entry is not None
+    found = ir.async_get(hass).async_get_issue(DOMAIN, f"frost_zone_closed_{rig.entry.entry_id}")
+    assert found is not None
+    assert (
+        rig.zones.entities[rig.sim.zones[0].zone_id].split(".")[1].replace("_", " ")
+        in (found.translation_placeholders["zones"])
+    )
 
 
 async def test_vt_stopped_leaves_a_zone_outside_the_central_mode_heating(rig: Rig) -> None:
@@ -437,10 +457,11 @@ async def test_vt_stopped_leaves_a_zone_outside_the_central_mode_heating(rig: Ri
 
 async def test_frost_protection_heats_while_vt_is_off(rig: Rig) -> None:
     """Summer and winter come from VT: with its zones off nothing heats, but a room close to
-    freezing still gets heat."""
+    freezing whose valve VT holds open — VT's SLEEP shows "off" with the valve at 100 % — still
+    gets heat (decision 4)."""
     await start(rig)
     await rig.hass.services.async_call(SIM, "set_outdoor", {"temperature": 24}, blocking=True)
-    rig.vt_mode = "off"
+    rig.vt_mode = "sleep"
     await rig.switch(True)
     await rig.advance(600)
     assert rig.state("sensor", "control_state").state == "idle"

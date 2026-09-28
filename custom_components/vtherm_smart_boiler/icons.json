@@ -33,6 +33,7 @@
       "alarm_flue_gas_rising": { "default": "mdi:smoke" },
       "alarm_hysteresis_drift": { "default": "mdi:chart-bell-curve" },
       "alarm_low_flow": { "default": "mdi:pump-off" },
+      "alarm_circuit_too_hot": { "default": "mdi:thermometer-high" },
       "outdoor_sensor_problem": { "default": "mdi:thermometer-alert" },
       "alarm_write_failed": { "default": "mdi:pencil-off" },
       "alarm_write_ignored": { "default": "mdi:pencil-remove" },
@@ -53,6 +54,9 @@
     },
     "switch": {
       "control": { "default": "mdi:radiator", "state": { "off": "mdi:radiator-off" } }
+    },
+    "button": {
+      "reset_comfort_correction": { "default": "mdi:restore" }
     }
   }
 }

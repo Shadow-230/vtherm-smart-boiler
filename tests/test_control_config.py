@@ -669,3 +669,41 @@ def test_a_tick_with_a_hand_back_value_that_stops_heating_is_ignored() -> None:
     options = parse_control(data, RADIATORS, None)
     assert hand_back_effect(options) is HandBackEffect.HEATING_STOPS
     assert not working_thermostat(options)
+
+
+# --- X4: VT's activation delay (decision 5), frost's closed zones (decision 4), the circuit
+# alarm information only (decision 10) ----------------------------------------------------------
+
+
+def test_the_activation_delay_is_read_with_its_cautious_default() -> None:
+    """0 s by default (VT's), the stored value otherwise; outside 0–600 s the parser raises.
+    Never taken from VT at parse time: only what the user saved counts."""
+    from custom_components.vtherm_smart_boiler.control_config import CONTROL_DEFAULTS
+
+    assert CONTROL_DEFAULTS["activation_delay_s"] == 0
+    assert parse_control(OTGW, RADIATORS, None).loop.control.activation_delay_s == 0.0
+    stored = parse_control(OTGW | {"activation_delay_s": 120}, RADIATORS, None)
+    assert stored.loop.control.activation_delay_s == 120.0
+    assert parse_control(OTGW | {"activation_delay_s": None}, RADIATORS, None).loop.control
+    for bad in (-10, 700):
+        with pytest.raises(ValueError, match="activation delay"):
+            parse_control(OTGW | {"activation_delay_s": bad}, RADIATORS, None)
+
+
+def test_zones_declared_closed_when_off_reach_frost_protection() -> None:
+    installation = Installation(
+        Boiler(BoilerClass.FLOW_SETPOINT),
+        (Circuit("main"),),
+        (Zone("climate.a", "main", closes_when_off=True), Zone("climate.b", "main")),
+    )
+    frost = parse_control(OTGW, installation, None).loop.control.frost
+    assert frost.closes_when_off == frozenset({"climate.a"})
+    assert parse_control(OTGW, RADIATORS, None).loop.control.frost.closes_when_off == frozenset()
+
+
+def test_the_circuit_too_hot_alarm_is_information_only() -> None:
+    """Decision 10: an information alarm — no hand-back, whatever an edited option says."""
+    options = parse_control(
+        OTGW | {"alarm_reactions": {"circuit_too_hot": "hand_back"}}, RADIATORS, None
+    )
+    assert options.reaction("circuit_too_hot") is AlarmReaction.INFO

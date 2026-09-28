@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from .control import ControlUnit
     from .coordinator import SmartBoilerCoordinator
 
-PLATFORMS = ("sensor", "binary_sensor", "switch")
+PLATFORMS = ("sensor", "binary_sensor", "switch", "button")
 
 
 # Loaded through Home Assistant's import executor before first use: importing them in the event
@@ -187,6 +187,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "control_stopped_heating",  # a blocker stopped heating (V7)
         "control_latched",  # the entry's one latch issue (V7)
         "no_zone_known",  # every zone unknown (decision 3, X3)
+        "frost_zone_closed",  # a cold room VT keeps closed (decision 4, X4)
         "control_options_invalid",
         "auto_tpi_blocked",
         "learning_not_paused",

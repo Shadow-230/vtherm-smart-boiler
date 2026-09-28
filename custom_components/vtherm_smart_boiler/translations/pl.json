@@ -86,13 +86,17 @@
           "control": "Sterowanie",
           "max_flow": "Maksymalna temperatura zasilania",
           "fixed_temperature": "Temperatura stała",
+          "max_flow_alarm": "Alarm za gorąco od",
+          "max_flow_alarm_min": "Przez co najmniej",
           "flow_entity": "Czujnik zasilania obiegu",
           "add_another": "Dodaj kolejny obieg"
         },
         "data_description": {
           "control": "Bez mieszania, prosto z kotła; mieszany przez kocioł (drugi obieg mieszany przez kocioł); mieszany przez osobny sterownik; albo termostatyczny zawór mieszający (stały). Sterowanie działa tylko dla jednego obiegu zasilanego prosto z kotła albo przez stały zawór. Zły typ sprawia, że sterowanie odmawia albo źle ocenia, co dociera do pokoi.",
-          "max_flow": "Najwyższa temperatura, jaką może dostać ten obieg, w °C, np. podłogówka na obiegu bez mieszania. Sterowanie traktuje ją jako twardy limit — woda nigdy jej nie przekracza; podłogówka na obiegu bez mieszania wymaga jej, zanim sterowanie ruszy. Za wysoka przegrzewa podłogę.",
+          "max_flow": "Najwyższa temperatura dla tego obiegu, w °C, np. podłogówka bez mieszacza: sterowanie nigdy nie prosi o więcej, ale kocioł może ją przekroczyć o własną histerezę — ustaw alarm poniżej, aby o tym wiedzieć. Wymagane dla podłogówki bez mieszacza. Za wysoka przegrzewa podłogę.",
           "fixed_temperature": "Potrzebna dla termostatycznego zaworu mieszającego (stałego): jego nastawa w °C. Sterowanie utrzymuje zasilanie kotła co najmniej tak ciepłe; wyższa niż nastawa zaworu sprawia, że woda jest cieplejsza niż trzeba.",
+          "max_flow_alarm": "Alarm informacyjny, gdy zmierzone zasilanie utrzymuje się powyżej tej wartości, w °C. Na start maksimum + 5 °C. Wymaga odczytu zasilania. Za wysoko przepuszcza prawdziwe przegrzanie bez zgłoszenia.",
+          "max_flow_alarm_min": "Po ilu minutach alarm się podnosi. Na start 10. Za krótko zgłasza każde przekroczenie z histerezy kotła.",
           "flow_entity": "Własna temperatura zasilania obiegu mieszanego. Bez niej nie da się stwierdzić, czy ciepło do niego dociera.",
           "add_another": "Zaznacz, aby po tym opisać jeszcze jeden obieg."
         }
@@ -219,7 +223,8 @@
       "no_circuit": "Potrzebny jest co najmniej jeden obieg.",
       "invalid_control": "Ustawień sterowania nie da się użyć.",
       "alarm_limits_out_of_order": "Próg alarmu musi leżeć za progiem ostrzeżenia.",
-      "modulation_not_percent": "Modulacja to procent zakresu kotła: wybierz czujnik w %."
+      "modulation_not_percent": "Modulacja to procent zakresu kotła: wybierz czujnik w %.",
+      "max_flow_alarm_not_above_max": "Temperatura alarmu musi być wyższa niż maksimum obiegu."
     }
   },
   "options": {
@@ -347,13 +352,17 @@
           "control": "Sterowanie",
           "max_flow": "Maksymalna temperatura zasilania",
           "fixed_temperature": "Temperatura stała",
+          "max_flow_alarm": "Alarm za gorąco od",
+          "max_flow_alarm_min": "Przez co najmniej",
           "flow_entity": "Czujnik zasilania obiegu",
           "add_another": "Dodaj kolejny obieg"
         },
         "data_description": {
           "control": "Bez mieszania, prosto z kotła; mieszany przez kocioł (drugi obieg mieszany przez kocioł); mieszany przez osobny sterownik; albo termostatyczny zawór mieszający (stały). Sterowanie działa tylko dla jednego obiegu zasilanego prosto z kotła albo przez stały zawór. Zły typ sprawia, że sterowanie odmawia albo źle ocenia, co dociera do pokoi.",
-          "max_flow": "Najwyższa temperatura, jaką może dostać ten obieg, w °C, np. podłogówka na obiegu bez mieszania. Sterowanie traktuje ją jako twardy limit — woda nigdy jej nie przekracza; podłogówka na obiegu bez mieszania wymaga jej, zanim sterowanie ruszy. Za wysoka przegrzewa podłogę.",
+          "max_flow": "Najwyższa temperatura dla tego obiegu, w °C, np. podłogówka bez mieszacza: sterowanie nigdy nie prosi o więcej, ale kocioł może ją przekroczyć o własną histerezę — ustaw alarm poniżej, aby o tym wiedzieć. Wymagane dla podłogówki bez mieszacza. Za wysoka przegrzewa podłogę.",
           "fixed_temperature": "Potrzebna dla termostatycznego zaworu mieszającego (stałego): jego nastawa w °C. Sterowanie utrzymuje zasilanie kotła co najmniej tak ciepłe; wyższa niż nastawa zaworu sprawia, że woda jest cieplejsza niż trzeba.",
+          "max_flow_alarm": "Alarm informacyjny, gdy zmierzone zasilanie utrzymuje się powyżej tej wartości, w °C. Na start maksimum + 5 °C. Wymaga odczytu zasilania. Za wysoko przepuszcza prawdziwe przegrzanie bez zgłoszenia.",
+          "max_flow_alarm_min": "Po ilu minutach alarm się podnosi. Na start 10. Za krótko zgłasza każde przekroczenie z histerezy kotła.",
           "flow_entity": "Własna temperatura zasilania obiegu mieszanego. Bez niej nie da się stwierdzić, czy ciepło do niego dociera.",
           "add_another": "Zaznacz, aby po tym opisać jeszcze jeden obieg."
         }
@@ -534,12 +543,13 @@
       },
       "control_curve": {
         "title": "Krzywa grzewcza i limity",
-        "description": "Temperatura zasilania potrzebna domowi przy każdej temperaturze zewnętrznej i limity, których żadna nastawa nie przekroczy.",
+        "description": "Temperatura zasilania potrzebna domowi przy każdej temperaturze zewnętrznej, limity, których żadna nastawa nie przekroczy, i jak długo grzanie czeka na wolne zawory.",
         "data": {
           "design_outdoor": "Projektowa temperatura zewnętrzna",
           "design_flow": "Projektowa temperatura zasilania",
           "hard_min": "Najniższa nastawa zasilania",
           "hard_max": "Najwyższa nastawa zasilania",
+          "activation_delay_s": "Opóźnienie włączenia",
           "room": "Temperatura pokojowa krzywej",
           "exponent": "Wykładnik krzywej",
           "offset": "Przesunięcie krzywej",
@@ -554,14 +564,15 @@
           "design_flow": "Temperatura zasilania potrzebna przy projektowej temperaturze zewnętrznej, w °C, np. wartość z krzywej ustawionej w kotle. Wymagana; nie ma wartości domyślnej. Za wysoka marnuje gaz i powoduje taktowanie palnika; za niska zostawia chłodne pokoje w silny mróz.",
           "hard_min": "Żadnej nastawy poniżej tej wartości, w °C. Domyślnie 25 °C. Za wysoka grzeje pokoje przy łagodnej pogodzie i marnuje gaz; nastawa „wyłączone” musi być poniżej niej.",
           "hard_max": "Żadna nastawa powyżej tej wartości, cokolwiek wyliczy krzywa lub korekta, w °C. Domyślnie 70 °C. Ogrzewanie podłogowe wymaga też maksymalnego zasilania swojego obiegu.",
+          "activation_delay_s": "Sekundy, przez które grzanie czeka po pierwszym wezwaniu, aby wolne zawory (termoelektryczne, podłogówka) otworzyły się, zanim ruszą kocioł i pompa — jak w centralnym kotle Versatile Thermostat; wstępnie wypełnione ustawieniem VT, jeśli VT je zachował. Wyłączenie nigdy nie jest opóźniane. Domyślnie 0: od razu. Ryzyko: strefa z impulsem grzania krótszym niż opóźnienie nigdy nie uruchomi kotła, a impulsy niewiele dłuższe dają krótkie palenia; bez przełącznika grzania („wyłączone” jako niska nastawa) pompa i tak może pracować.",
           "room": "Temperatura pokoju, dla której zbudowano krzywą, w °C. Domyślnie 20 °C. Za wysoka podnosi całą krzywą i marnuje gaz.",
           "exponent": "Jak wygina się krzywa. Puste pole bierze go z grzejników: grzejniki 1,3, konwektory 1,4, podłogówka 1,1. Złe wygięcie niedogrzewa w mrozy albo przegrzewa przy łagodnej pogodzie.",
           "offset": "Przesuwa całą krzywą w górę albo w dół, w K. Domyślnie 0. W górę marnuje gaz; w dół zostawia zimne pokoje.",
           "ceiling_band": "Jak wysoko ponad krzywą może pójść korekta komfortu, w K. Domyślnie 10 K; 0 w praktyce wyłącza korektę. Większa pozwala jednemu zimnemu pokojowi podnieść wodę dla wszystkich.",
           "fallback_setpoint": "Używana, gdy temperatura zewnętrzna jest nieznana — czujnik zawiódł albo monitor uznał go za zawieszony lub odbiegający od pogody, a encji pogody też brak — po trzech godzinach trzymania ostatniej temperatury efektywnej, w °C. Puste (domyślnie): krzywa w punkcie projektowym, najwięcej ciepła, jakie daje: nigdy za mało ciepła, zawory chronią pomieszczenia przed przegrzaniem.",
-          "frost_limit": "Każda pilnowana strefa zimniejsza niż ta wartość uruchamia grzanie, bez względu na resztę, w °C. Domyślnie 5 °C. Za niska grozi zamarznięciem rur; za wysoka grzeje pokoje, które trzymasz wyłączone.",
+          "frost_limit": "Pilnowana strefa zimniejsza niż ta wartość uruchamia grzanie, bez względu na resztę, jeśli ciepło może do niej dotrzeć — zawór otwarty albo urządzenie włączone — w °C. Domyślnie 5 °C. Za niska grozi zamarznięciem rur; za wysoka grzeje pokoje, które trzymasz wyłączone.",
           "frost_release": "Ochrona przed mrozem kończy się, gdy każda pilnowana strefa jest powyżej tej wartości, w °C. Domyślnie 7 °C, powyżej progu. Blisko progu grzanie przeciwmrozowe włącza się i wyłącza częściej.",
-          "frost_zone": "Opcjonalnie: pilnuj przed mrozem tylko tej strefy. Puste (domyślnie): wszystkich stref, także wyłączonych w Versatile Thermostat — nieogrzewane pomieszczenie poniżej progu podtrzymuje wtedy grzanie przeciwmrozowe. Grzanie przeciwmrozowe, które przez dwie godziny nie ogrzewa pomieszczenia, podnosi alarm; nigdy nie jest przerywane."
+          "frost_zone": "Opcjonalnie: pilnuj przed mrozem tylko tej strefy. Puste (domyślnie): wszystkich stref. Grzanie przeciwmrozowe działa tylko dla zimnego pokoju, którego zawór może się otworzyć — Versatile Thermostat podaje go jako otwarty albo urządzenie jako włączone; zimny pokój, który VT trzyma zamknięty, zgłasza zamiast tego problem do naprawy. Grzanie, które przez dwie godziny nie ogrzewa pokoju, podnosi alarm; nigdy nie jest przerywane."
         }
       },
       "control_behaviour": {
@@ -584,8 +595,8 @@
           "count_threshold": "Ogrzewanie jest potrzebne, gdy co najmniej tyle stref zgłasza zapotrzebowanie. Domyślnie 1; najwyżej liczba stref. 0 wyłącza liczenie, zostawiając sam próg mocy albo otwarcia, jak w Versatile Thermostat. Wyższa zostawia pojedynczy wołający pokój bez ciepła.",
           "power_threshold_kw": "Opcjonalnie: grzanie jest potrzebne, gdy średnia moc stref w cyklu, liczona jak w Versatile Thermostat, osiągnie tę wartość, w kW — liczona tylko wtedy, gdy choć jedna z nich ma otwarty zawór albo włączone urządzenie. Za wysoki próg zostawia małe pokoje bez ciepła.",
           "opening_threshold": "Opcjonalnie: ogrzewanie jest potrzebne, gdy największe otwarcie zaworu wśród wołających stref osiąga tę wartość, w %. Za wysoka zostawia bez ciepła pokój, który otwiera zawór tylko trochę.",
-          "learning_pauses": "Wstrzymuj naukę SmartPI podczas grzania ciepłej wody, gdy strefę grzeje obce źródło i przy dużych wahaniach temperatury wody, żeby nie uczyła się tego, co zrobił kocioł; każde wstrzymanie i wznowienie jest sprawdzane w SmartPI. Domyślnie włączone. Auto-TPI nie da się wstrzymać bez skasowania tego, czego się nauczyło, więc strefy z nim są tylko zgłaszane. Wyłączone: SmartPI uczy się także w tych chwilach, co może zafałszować jego model.",
-          "comfort_correction": "Włączona (domyślnie): gdy zawór strefy jest całkiem otwarty, a pomieszczenie nadal nie dochodzi do nastawy, woda rośnie do 3 K ponad krzywą — 1 K na 30 minut, tylko gdy płynie ciepło — i spada dwa razy szybciej; nie rośnie, gdy inna strefa jest o ponad 1 K za ciepła, zeruje się przy oddaniu sterowania, a po trzech godzinach na 3 K informuje, że krzywa jest pewnie za niska. Działa szeregowo z regulatorami PI stref (SmartPI, TPI): jej wolne tempo pozwala im najpierw się ustalić. Człon zewnętrzny algorytmu strefy (współczynnik zewnętrzny TPI) liczy pogodę drugi raz: trzymaj go mały, gdy wtyczka ustala wodę. Wyłączona: sama krzywa."
+          "learning_pauses": "Wstrzymuj naukę SmartPI podczas grzania ciepłej wody, gdy strefę grzeje obce źródło i przy dużych wahaniach temperatury wody, żeby nie uczyła się tego, co zrobił kocioł; każde wstrzymanie i wznowienie jest sprawdzane w SmartPI. Po ciepłej wodzie czeka na powrót temperatury wody, najwyżej godzinę po poborze; po obcym cieple lub wahaniu tylko minimalną przerwę. Domyślnie włączone. Auto-TPI nie da się wstrzymać bez skasowania tego, czego się nauczyło, więc strefy z nim są tylko zgłaszane. Wyłączone: SmartPI uczy się także w tych chwilach, co może zafałszować jego model.",
+          "comfort_correction": "Włączona (domyślnie): gdy zawór strefy jest całkiem otwarty, a pomieszczenie nadal nie dochodzi do nastawy, woda rośnie do 3 K ponad krzywą — 1 K na 30 minut, tylko gdy płynie ciepło (płomień, jeśli znany) — i spada dwa razy szybciej; nie rośnie, gdy inna strefa przyjmująca ciepło jest o ponad 1 K za ciepła, ani gdy limit trzyma wodę, i najwyżej 3 K na dobę; wstrzymuje się podczas ciepłej wody i obcego ciepła; jest widoczna w stanie sterowania; zeruje się przy oddaniu sterowania i przyciskiem „Wyzeruj korektę komfortu”, a po trzech godzinach na 3 K informuje, że krzywa jest pewnie za niska. Działa szeregowo z regulatorami PI stref (SmartPI, TPI): jej wolne tempo pozwala im najpierw się ustalić. Człon zewnętrzny algorytmu strefy (współczynnik zewnętrzny TPI) liczy pogodę drugi raz: trzymaj go mały, gdy wtyczka ustala wodę. Wyłączona: sama krzywa."
         }
       },
       "control_alarms": {
@@ -681,7 +692,8 @@
       "off_setpoint_near_hand_back_value": "„Wyłączone” różni się od wartości oddania o mniej niż 0,5 K, a ta wartość oddaje kotłowi własne sterowanie: „wyłączone” oddałoby kocioł zamiast wyłączyć grzanie. Wybierz inną wartość.",
       "thermostat_setpoint_same_as_read_back": "Wybierz encję termostatu, nie odczyt zwrotny nastawy.",
       "return_needs_confirmation": "Zaznacz pole, aby to włączyć, albo wróć.",
-      "setpoint_step_too_coarse": "Ta encja przyjmuje wartości co ponad 1 °C: zaokrąglona wartość wyglądałaby na zignorowaną. Wybierz encję o drobniejszym kroku."
+      "setpoint_step_too_coarse": "Ta encja przyjmuje wartości co ponad 1 °C: zaokrąglona wartość wyglądałaby na zignorowaną. Wybierz encję o drobniejszym kroku.",
+      "max_flow_alarm_not_above_max": "Temperatura alarmu musi być wyższa niż maksimum obiegu."
     }
   },
   "selector": {
@@ -960,6 +972,12 @@
               "not_confirmed": "Niepotwierdzone: wysyłane ponownie co minutę",
               "taken_by_other": "Wartość trzyma inny sterownik"
             }
+          },
+          "comfort_correction": {
+            "name": "Korekta komfortu"
+          },
+          "activation_at": {
+            "name": "Grzanie ruszy o"
           }
         }
       },
@@ -1136,6 +1154,25 @@
           }
         }
       },
+      "alarm_circuit_too_hot": {
+        "name": "Za gorąca woda w obiegu",
+        "state_attributes": {
+          "level": {
+            "name": "Poziom",
+            "state": {
+              "warning": "Ostrzeżenie",
+              "alarm": "Alarm"
+            }
+          },
+          "reason": {
+            "name": "Dlaczego nie oceniono",
+            "state": {
+              "no_flow_reading": "Brak odczytu zasilania",
+              "circuit_not_measured": "Zasilanie obiegu nie jest mierzone"
+            }
+          }
+        }
+      },
       "alarm_write_failed": {
         "name": "Sterowanie: zapis nieudany"
       },
@@ -1230,6 +1267,11 @@
             }
           }
         }
+      }
+    },
+    "button": {
+      "reset_comfort_correction": {
+        "name": "Wyzeruj korektę komfortu"
       }
     }
   },
@@ -1406,6 +1448,10 @@
     "no_zone_known_monitor": {
       "title": "Versatile Thermostat nie odpowiada",
       "description": "Żadna strefa nie odpowiada ({zones}); monitor nie może ich ocenić. Sprawdź, czy Versatile Thermostat jest załadowany, jego termostaty są włączone, a ich identyfikatory encji zgadzają się z opcjami wtyczki."
+    },
+    "frost_zone_closed": {
+      "title": "Pokój poniżej progu mrozu nie może dostać ciepła",
+      "description": "{zones}: Versatile Thermostat trzyma zawór zamknięty (termostat wyłączony albo jego nastawa jest poniżej progu mrozu), więc wtyczka nie może go ogrzać i nie włącza dla niego kotła. Użyj presetu mrozowego VT zamiast wyłączenia; centralny tryb mrozowy VT wymaga ustawienia temperatury mrozowej w każdym termostacie."
     }
   }
 }

@@ -58,7 +58,15 @@ issue (the monitor's too) tell the user; a demand criterion no zone can feed has
 
 Control never stops heating silently: where a hand-back stops heating, the control switch says
 that frost protection rests on the boiler's own, and a room near freezing while control does
-not hold the boiler raises an alarm, which never starts heating itself (S-57).
+not hold the boiler raises an alarm, which never starts heating itself (S-57). A watched room
+below the frost limit that VT keeps closed gets no frost heat — it could not reach it — and
+raises a repair issue instead, naming the room and its temperature, while control is switched on
+and outside the recognition period (decision 4).
+
+The comfort correction is shown on the control state and in diagnostics, and the "Reset comfort
+correction" button sets it to 0 in the running session — nothing saved, reloaded or handed back
+(answer J). VT's activation delay shows as the reason ``activation_delay`` and when heating will
+start (decision 5).
 
 The control switch and control's entities stay available whatever the monitor does (P-02).
 """
@@ -91,6 +99,7 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.util import dt as dt_util
 from homeassistant.util.async_ import create_eager_task
+from homeassistant.util.unit_conversion import TemperatureConverter
 
 from .const import CONTROL_TICK_SECONDS, DOMAIN, stored_flag
 from .control_config import (
@@ -116,6 +125,7 @@ from .core.controller import (
     Reason,
     clock_due,
     clock_start,
+    reset_correction,
 )
 from .core.guards import (
     TOLERANCE_K,
@@ -153,6 +163,7 @@ from .core.hand_back import (
 )
 from .core.learning import (
     LearningState,
+    PauseCause,
     ZoneLearning,
     follow_resumes,
     plan_learning,
@@ -239,6 +250,11 @@ RETURN_QUIET_S = 3600.0
 # under the same id once control has resumed (the user's answer I).
 MONITOR_ISSUE = "monitor_failed"
 MONITOR_NOTE = "monitor_recovered"
+# Decision 4: a watched room below the frost limit that VT keeps closed — a repair issue, not
+# raised while the zones report in the recognition period, and only while control is on
+# (provisional, K4). Shown again when a room's temperature has moved this much.
+FROST_CLOSED_ISSUE = "frost_zone_closed"
+FROST_CLOSED_SHOWN_K = 1.0
 ZONE_UNKNOWN_ALARM_S = 30 * 60.0  # a zone unknown this long is reported
 # VT's central boiler unknown — its central entry reloading — does not block control for this long
 # where it was known to be off at the step before (P-105; provisional, K4). A restorable store
@@ -329,10 +345,29 @@ def _memory_moved(before: LoopState, after: LoopState) -> bool:
 
 
 def _zones_changed(before: LearningState, after: LearningState) -> bool:
-    """Whether the zones paused or followed changed (not only when a resume was last sent)."""
-    return before.paused.keys() != after.paused.keys() or (
-        before.resuming.keys() != after.resuming.keys()
+    """Whether the zones paused or followed, or a pause's causes, changed (not only when a
+    resume was last sent)."""
+    return (
+        before.paused.keys() != after.paused.keys()
+        or before.resuming.keys() != after.resuming.keys()
+        or before.causes != after.causes
     )
+
+
+def _causes(raw: Any) -> dict[str, tuple[PauseCause, ...]]:
+    """Stored pause causes; a cause this version does not know is left out — a pause left with
+    none is taken for hot water."""
+    causes: dict[str, tuple[PauseCause, ...]] = {}
+    for zone_id, values in raw.items():
+        known = []
+        for value in values:
+            try:
+                known.append(PauseCause(value))
+            except ValueError:
+                continue
+        if known:
+            causes[str(zone_id)] = tuple(known)
+    return causes
 
 
 def _shown(check: Confirmation | None, gateway: bool, self_echo: bool) -> str | None:
@@ -426,6 +461,9 @@ class ControlStatus:
     # Blockers that do not count yet: VT's central boiler unknown within its grace (P-105).
     blockers_waiting: tuple[str, ...] = ()
     criteria_without_data: tuple[str, ...] = ()  # demand criteria no known zone can feed
+    correction: float = 0.0  # the comfort correction now, K (P-38)
+    activation_at: float | None = None  # when a start waiting VT's activation delay is due
+    frost_closed_zones: tuple[str, ...] = ()  # watched rooms below the frost limit VT keeps closed
 
     @property
     def confirmed_setpoint(self) -> float | None:
@@ -587,6 +625,8 @@ class ControlUnit:
         # been unknown after that.
         self._vt_boiler_off = False
         self._vt_boiler_unknown_since: float | None = None
+        # Decision 4: the rooms the frost issue shows now, with the temperature it shows.
+        self._frost_issue_shown: dict[str, float] = {}
 
     # --- status, listeners, storage -----------------------------------------------------
 
@@ -662,6 +702,12 @@ class ControlUnit:
             "controlling": self._holding,
             "taken_with": dict(self._raw) if kept and self._raw else None,
             "paused": dict(session.learning.paused),
+            # What each pause is for (P-89): a pause after hot water waits for the flow.
+            "pause_causes": {
+                zone: [cause.value for cause in causes]
+                for zone, causes in session.learning.causes.items()
+            },
+            "dhw_ended": dict(session.learning.dhw_ended),
             "resuming": dict(session.learning.resuming),
             "resume_since": dict(session.learning.resume_since),
             "latched": session.loop.control.latched,
@@ -710,6 +756,11 @@ class ControlUnit:
         resume_since: dict[str, float] = field(
             "resume_since", lambda raw: {str(z): float(t) for z, t in raw.items()}, {}
         )
+        # A pause's causes, where stored (P-89); without them it is taken for hot water.
+        causes: dict[str, tuple[PauseCause, ...]] = field("pause_causes", _causes, {})
+        dhw_ended: dict[str, float] = field(
+            "dhw_ended", lambda raw: {str(z): float(t) for z, t in raw.items()}, {}
+        )
         alarms: set[ControlAlarm] = field("alarms", _kept_alarms, set())
         latched_by: tuple[str, ...] = field(
             "latched_by", lambda raw: tuple(str(a) for a in raw), ()
@@ -740,6 +791,8 @@ class ControlUnit:
                 last_toggle=dict(paused),
                 resuming=resuming,
                 resume_since={z: t for z, t in resume_since.items() if z in resuming},
+                causes={z: c for z, c in causes.items() if z in paused},
+                dhw_ended={z: t for z, t in dhw_ended.items() if z in paused},
             ),
             alarms=alarms,
             failed=_flag(data.get("failed")),
@@ -935,8 +988,10 @@ class ControlUnit:
             # the user settles it by hand.
             self._report_owed(persistent=True)
         # The issue of a blocker that stopped heating goes with the unit; the stored flag makes
-        # the next run raise it again while a blocker holds (S-10).
+        # the next run raise it again while a blocker holds (S-10). So does the frost issue: the
+        # next run raises it again at its first step outside the recognition period.
         self._delete_stopped_heating_issue()
+        self._show_frost_closed({})
         await self._async_learning_calls(deadline)
         self._coordinator.schedule_control_save()
 
@@ -1259,6 +1314,7 @@ class ControlUnit:
             self._note_monitor_recovered(now)  # control holds the boiler again
         self._follow_stopped_heating(now, blockers)
         self._follow_frost(now, zones)
+        self._follow_frost_closed(out.decision.frost_closed, zones)
         unknown = self._follow_unknown_zones(now, zones)
         self._follow_no_zone_known(now, out.decision.reasons)
         decision = out.decision
@@ -1341,7 +1397,30 @@ class ControlUnit:
             unconfirmed_targets=out.unconfirmed,
             blockers_waiting=waiting,
             criteria_without_data=decision.criteria_without_data,
+            correction=decision.correction,
+            activation_at=decision.activation_at,
+            frost_closed_zones=tuple(self._frost_issue_shown),
         )
+
+    async def async_reset_correction(self) -> None:
+        """The "Reset comfort correction" button (answer J): the running session's correction to
+        0 at once, with its "at limit" timer; the water is decided anew at the next step. No
+        option is saved, nothing is reloaded or handed back; the rise may start again under its
+        rules. While control does not hold the boiler the correction is already 0: nothing to
+        do, and no error."""
+        async with self._lock:
+            if self._stopped or self._stopping:
+                return
+            loop = self._session.loop
+            if not loop.control.controlling:
+                return
+            was = loop.control.correction
+            self._session.loop = replace(loop, control=reset_correction(loop.control))
+            self._status = replace(self._status, correction=0.0)
+            self._session.alarms.discard(ControlAlarm.CORRECTION_AT_LIMIT)
+            self._status = replace(self._status, alarms=frozenset(self._alarms()))
+            _LOGGER.info("The comfort correction was reset by the user (it was %.1f K)", was)
+        self._notify()
 
     async def _follow_restore(self, now: float, blockers: Sequence[str], handed_back: bool) -> None:
         """Decision 3: a restore still pending once the recognition period is over, or whose
@@ -1472,6 +1551,59 @@ class ControlUnit:
         elif self._frost_alarm and not raised:
             _LOGGER.info("No room is near freezing any more, or control holds the boiler again")
         self._frost_alarm = raised
+
+    def _follow_frost_closed(self, closed: Sequence[str], zones: Sequence[ZoneState]) -> None:
+        """Decision 4: a watched room below the frost limit that VT keeps closed raises a repair
+        issue at the step that sees it — the core flags it outside the recognition period and
+        holds its flags meanwhile — while control is switched on (provisional, K4: not with
+        control off or in monitor-only mode, where the plugin does no frost heating). It names
+        each room and its temperature; it goes once no room is flagged — at or above the
+        release, or able to take heat — or control is switched off."""
+        flagged = tuple(closed) if self.enabled and self.options.configured else ()
+        temperatures = {z.zone_id: z.temperature for z in zones if z.temperature is not None}
+        self._show_frost_closed(
+            {zone: temperatures[zone] for zone in flagged if zone in temperatures}
+        )
+
+    def _show_frost_closed(self, rooms: Mapping[str, float]) -> None:
+        """The frost issue for these rooms (°C): raised, updated when the rooms change or a
+        temperature moved by ``FROST_CLOSED_SHOWN_K``, deleted when there are none."""
+        shown = self._frost_issue_shown
+        issue_id = f"{FROST_CLOSED_ISSUE}_{self._coordinator.config_entry.entry_id}"
+        if not rooms:
+            if shown:
+                ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+                _LOGGER.info("No watched room below the frost limit is kept closed any more")
+                self._frost_issue_shown = {}
+            return
+        moved = rooms.keys() != shown.keys() or any(
+            abs(rooms[zone] - shown[zone]) >= FROST_CLOSED_SHOWN_K for zone in rooms
+        )
+        if not moved:
+            return
+        if rooms.keys() != shown.keys():
+            _LOGGER.warning(
+                "A room below the frost limit cannot get heat: Versatile Thermostat keeps it "
+                "closed (%s)",
+                ", ".join(rooms),
+            )
+        unit = str(self._hass.config.units.temperature_unit)
+        named = ", ".join(
+            f"{self._coordinator.link.zone_name(zone)} "
+            f"({TemperatureConverter.convert(t, '°C', unit):.1f} {unit})"
+            for zone, t in rooms.items()
+        )
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=FROST_CLOSED_ISSUE,
+            translation_placeholders={"zones": named},
+        )
+        self._frost_issue_shown = dict(rooms)
 
     def _note_blocker_release(self, out: LoopOutput, blockers: tuple[str, ...]) -> None:
         """S-10: a blocker ends the session that held the boiler, where a hand-back stops
@@ -1662,7 +1794,21 @@ class ControlUnit:
             outdoor_sensor=sensor,
             outdoor_weather=weather,
             zones=tuple(zones),
+            foreign_heat=self._foreign_heat(),
         )
+
+    def _foreign_heat(self) -> bool | None:
+        """Foreign heat warms a zone, as the monitor sees it (the comfort correction freezes):
+        ``None`` where no zone has a source, or the monitor's data is stale — unknown freezes
+        nothing."""
+        coordinator = self._coordinator
+        data = coordinator.data
+        if data is None or coordinator.monitor_failing:
+            return None
+        states = [view.foreign_heat for view in data.zones.values() if view.foreign_heat]
+        if not states:
+            return None
+        return any(state.active for state in states)
 
     def _read_back_known(self) -> bool:
         """On a gateway path its setpoint read-back holds a value: without one, a hand-back could
@@ -2647,7 +2793,8 @@ class ControlUnit:
             self._session.learning,
             learning_zones,
             coordinator.dhw_now(snapshot),
-            snapshot.number(Signal.FLOW),
+            # The flow by its own age limit, as everywhere (X2): a stale one is unknown.
+            snapshot.number(Signal.FLOW, coordinator.config.freshness.get(Signal.FLOW)),
             heating_setpoint,  # the heating setpoint, not a low "off" value: no false swings
             now,
             self.options.learning,
@@ -2661,8 +2808,13 @@ class ControlUnit:
             # Stored before SmartPI is asked (the calls come after the step): a crash right
             # after a pause must still know the zone is the plugin's to resume (P-10).
             await self._coordinator.async_save_control_now()
-        elif plan.resume or plan.state.resuming != before.resuming:
-            self._coordinator.schedule_control_save()  # a resume sent again: only its time
+        elif (
+            plan.resume
+            or plan.state.resuming != before.resuming
+            or plan.state.dhw_ended != before.dhw_ended
+        ):
+            # A resume sent again, or when a pause's hot water ended: only times.
+            self._coordinator.schedule_control_save()
 
     async def _async_release_learning(self, now: float) -> None:
         """Resume every zone the plugin paused, and follow the resumes until SmartPI's flag

@@ -237,3 +237,45 @@ async def test_a_zone_whose_room_sensor_is_lost_says_so(hass: HomeAssistant) -> 
     assert recorded.room_sensor_lost is False  # a past state: its sensor then is not known
     hass.config_entries.async_update_entry(vt, data={})  # a VT that keeps it elsewhere
     assert link.zone(climate.entity_id).room_sensor_lost is False
+
+
+# --- X4, decision 5: VT's activation delay, from its central entry -----------------------------
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        ({"central_boiler_activation_delay_sec": 120}, 120.0),
+        ({"central_boiler_activation_delay_sec": 0}, 0.0),
+        ({"central_boiler_activation_delay_sec": 600.0}, 600.0),
+        ({}, None),  # never saved
+        ({"central_boiler_activation_delay_sec": "120"}, None),  # not a number
+        ({"central_boiler_activation_delay_sec": True}, None),
+        ({"central_boiler_activation_delay_sec": 900}, None),  # outside VT's own range
+        ({"central_boiler_activation_delay_sec": -10}, None),
+        ({"central_boiler_activation_delay_sec": float("nan")}, None),
+    ],
+)
+async def test_vts_activation_delay_is_read_from_its_central_entry(
+    hass: HomeAssistant, data: dict[str, Any], expected: float | None
+) -> None:
+    """VT keeps the delay in its central entry's data, also once its central boiler is
+    unticked (VT 10.4.0 ``config_flow.py``); the value within VT's 0–600 s, else nothing. A
+    thermostat's entry is not the central one."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    MockConfigEntry(
+        domain=VT_PLATFORM,
+        data={
+            "thermostat_type": "thermostat_over_switch",
+            "central_boiler_activation_delay_sec": 50,
+        },
+    ).add_to_hass(hass)
+    MockConfigEntry(
+        domain=VT_PLATFORM, data={"thermostat_type": "thermostat_central_config"} | data
+    ).add_to_hass(hass)
+    assert VThermLink(hass, []).vt_central_activation_delay() == expected
+
+
+async def test_without_vt_there_is_no_activation_delay_to_offer(hass: HomeAssistant) -> None:
+    assert VThermLink(hass, []).vt_central_activation_delay() is None
