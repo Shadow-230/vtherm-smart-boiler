@@ -927,7 +927,9 @@ def test_the_read_back_waiting_issue_is_translated() -> None:
 
 def test_the_ignored_command_without_heat_issue_is_translated() -> None:
     """Z4-11: the repair issue of a command ignored from the start with nothing else heating the
-    house, with a title and a text and no placeholder, in every language."""
+    house, with a title and a text and no placeholder, in every language. It says the command is
+    tried again at the next session, not at the next take (Z4R-06): "ignored from the start"
+    lasts through hand-backs inside the session."""
     from custom_components.vtherm_smart_boiler.control import WRITE_IGNORED_ISSUE
 
     for language in ALL_LANGUAGES:
@@ -935,6 +937,9 @@ def test_the_ignored_command_without_heat_issue_is_translated() -> None:
         assert issue["title"], language
         assert issue["description"], language
         assert PLACEHOLDER.findall(issue["description"]) == [], language
+    text = SOURCE["issues"][WRITE_IGNORED_ISSUE]["description"]
+    assert "at the next session" in text
+    assert "next takes the boiler" not in text
 
 
 def test_the_relay_timer_seen_issue_is_translated() -> None:

@@ -853,6 +853,56 @@ async def test_a_setpoint_ignored_from_the_start_where_nothing_else_heats_raises
     assert issue(rig, "write_ignored_no_heat") is None  # it goes with the session
 
 
+@pytest.mark.parametrize("ignored", ["on", "off"])
+async def test_heating_on_ignored_from_the_start_where_nothing_else_heats_raises_an_error(
+    rig: Rig, ignored: str
+) -> None:
+    """Z4-11's heating-switch branch (Z4R-07): stand-alone with a heating echo, the setpoint
+    confirmed; the echo never shows "on" after each of the session's first three sends of
+    CH=1 — "heating on" ignored from the start, so the boiler cannot heat and nothing else heats
+    the house: the error-level repair issue, with control going on, not latched. Variant: the
+    echo never shows "off" — "heating off" ignored from the start: answer O's latch and its issue
+    alone, not this one."""
+    stays_on = ignored == "off"
+    rig.gateway.thermostat = 0.0  # without the override a stand-alone gateway reads 0
+    rig.gateway.forced_ch = stays_on  # the echo stays where it was before the plugin
+    rig.gateway.publish()
+    if stays_on:  # no zone calls: control asks "off"
+        rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await start(
+        rig,
+        topology="gateway_standalone",
+        ch_confirmed_entity=CH_ECHO,
+        alarm_reactions={"write_ignored": "info"},
+    )
+    await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
+    await rig.switch(True)
+    await rig.advance(350)
+    assert issue(rig, "write_ignored_no_heat") is None  # two attempts
+    await rig.advance(20)  # the third, and the step after it
+    alarm = rig.state("binary_sensor", "alarm_write_ignored")
+    assert alarm.state == "on"
+    assert alarm.attributes["targets"] == ["heating"]
+    state = rig.state("sensor", "control_state")
+    found = issue(rig, "write_ignored_no_heat")
+    if stays_on:
+        assert found is None
+        assert state.state == "handed_back"
+        assert state.attributes["latched_by"] == ["heating_off_ignored"]
+        latched = issue(rig, "control_latched")
+        assert latched is not None
+        assert latched.translation_key == "control_latched_heating_off_ignored"
+        assert latched.severity is ir.IssueSeverity.ERROR  # a hand-back stops heating
+        return
+    assert found is not None
+    assert found.severity is ir.IssueSeverity.ERROR
+    assert state.state == "heating"  # no hand-back, no block
+    assert state.attributes["latched_by"] == []
+    assert issue(rig, "control_latched") is None
+    await rig.switch(False)
+    assert issue(rig, "write_ignored_no_heat") is None  # it goes with the session
+
+
 async def test_a_dropped_override_is_sent_again_not_fought(rig: Rig) -> None:
     """A boiler's Data-Invalid answer clears the gateway's override: the read-back falls back to
     the thermostat's value from before the session. In the start phase (the value never held
