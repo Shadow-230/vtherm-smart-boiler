@@ -242,14 +242,28 @@ What the plugin can do depends on what the integration can write:
     command again when it returns; no hand-back is attempted meanwhile, as it could not arrive.
     For relays this departs from "a lost link hands back" (2026-09-25).
   - Its own reported state confirms the relay, not that the boiler heats — an exception to "a
-    read-back from the written entity confirms nothing". An `assumed_state` entity confirms
-    nothing. The state is checked every 5 min (provisional, K4) and the command sent again on a
-    mismatch only; a relay that reports no state, or may have a switch-off timer, gets blind
-    repeats every repeat interval and is shown as "controlled without confirmation". With a
-    declared timer length, "on" is renewed every min(timer ÷ 2, repeat interval), and a
-    switch-off at or after max(timer − 60 s, timer ÷ 2) since the "on" that started the
-    on-period is the timer's lapse, answered with "on" and not counted; with "I don't know", a
-    switch-off at least one repeat interval after that "on" (provisional, K4).
+    read-back from the written entity confirms nothing". An `assumed_state` entity confirms nothing.
+    The state is checked every 5 min (provisional, K4) and the command sent again on a mismatch
+    only; a relay that reports no state, or may have a switch-off timer, gets blind repeats every
+    repeat interval and is shown as "controlled without confirmation". With a declared timer length,
+    "on" is renewed every min(timer ÷ 2, repeat interval), and a switch-off at or after max(timer −
+    60 s, timer ÷ 2) since the "on" that started the on-period is the timer's lapse, answered with
+    "on" and not counted; with "I don't know", a switch-off at least one repeat interval after that
+    "on" is answered with "on" too, but counted as a restart the relay did not report (answer N):
+    the fourth within 24 h makes the plugin step aside (provisional, K4; Z4-02). Switch-offs
+    recurring the same time into the on-period — within 60 s, or a whole multiple up to 3× for a
+    timer of 5 min or more — are the relay's own timer: answered, no longer counted, and a warning
+    issue asks the user to declare it; the on-period counts from the "on" that started it — the
+    plugin's, or the relay's own later switch from off to on as Home Assistant showed it; a return
+    from unavailable or unknown is no such switch and does not move it (provisional, K4; Z4R-02,
+    Z4R2-01). Once recognised, the relay's own timer is renewed as a declared one, "on" every
+    min(its length ÷ 2, repeat interval); its length and the day's switch-offs compared with it are
+    stored with the relay, so a restart, an options save or a link drop forgets neither, and a
+    switch-off at that age into an on-period the plugin saw start is never counted toward answer N
+    (one after a power cycle, an unplanned restart or a reload is counted once, Z4R3-04); they are
+    dropped when the relay or its timer answer changes. The warning says that an automation
+    switching the relay off that long after "on" (a "maximum run time") looks the same (Z4R2-02,
+    Z4R2-05).
   - Changes seen on the relay follow §7's matrix (rows R1–R9): a relay found in another state
     after a power or link loss, or back in its declared power-cut state, is sent the command
     again (a restart); 3 such restarts within 24 h raise an information warning, and a fourth
@@ -730,28 +744,43 @@ The four classes of a change seen in the read-back:
   60 min that no send explains counts as another controller; a send explains a fall-back when it
   comes before the plugin's latest send was read back as its value, or within 120 s of a send of a
   new value (answer E).
-- **Ignored from the start** — the boiler never takes the value: never read back as the plugin's
-  for longer than 120 s after each of the session's first 3 sends (provisional, K4). The plugin
-  stops sending it for the session and says "the boiler does not accept the command — check the
-  settings"; the other target and frost heating go on; no block, no latch; tried again at the
-  next session. A fall-back to the baseline without a trace after every send from the start of
-  the session stays here. Except (answer O): where the heating switch's "off" is ignored
-  from the start, control is blocked and the boiler handed back at once, with an alarm, and a
-  blocker names the reason until the user switches control off and on after fixing it; for a
-  relay, the notification says the boiler may keep heating.
+- **Ignored from the start** — the boiler never takes the value: never read back as the plugin's for
+  longer than 120 s after each of the session's first 3 sends (provisional, K4). The plugin stops
+  sending it for the session and says "the boiler does not accept the command — check the settings";
+  the other target and frost heating go on; no block, no latch; tried again at the next session.
+  Where a hand-back stops heating — stand-alone, a value declared "heating stops" — the house is
+  then not heated, and an error-level repair issue says so; it is tried again at the next session (Z4-11). A fall-back to the baseline
+  without a trace after every send from the start of the session stays here. Except (answer O):
+  where the heating switch's "off" is ignored from the start, control is blocked and the boiler
+  handed back at once, with an alarm, and a blocker names the reason until the user switches control
+  off and on after fixing it; for a relay, the notification says the boiler may keep heating.
 - **Clipped** — one lower value, within 0.5 K, whatever the plugin sends (across at least 2 sent
   values at least 1 K apart): accepted as the boiler's own limit, information only; the plugin
   keeps sending its own value and never learns the clip as a limit (provisional, K4). A clip of a
   setpoint that stays flat cannot be told from another controller (a known limit).
-- **Another controller** — a value held for 2 steps that is none of the plugin's, its previous
-  one, the baseline, the thermostat's own request or a clip: rewritten once (remembered for its
-  day, through a clean restart and through switching control off and on); a second change within
-  24 h, or the rewrite not read back within 120 s, makes the plugin step aside — the full safe
-  hand-back of every target, a relay set once to its rest state and then left alone (answers H,
-  L) — with a notification and a latch, stored through reloads and restarts, until the user
-  switches control off and on. An optional return by itself (off by default, described, confirmed
-  twice; not for relays) starts a new session once no foreign value has been seen for 60 min. The
-  reaction "information" for another controller no longer exists.
+- **Another controller** — a value held for 2 steps that is none of the plugin's, its previous one
+  while that is exempt (below), the baseline, the thermostat's own request or a clip: rewritten once
+  (remembered for its day, through a clean restart and through switching control off and on); a
+  second change within 24 h, or the rewrite not read back within 120 s, makes the plugin step aside
+  — the full safe hand-back of every target, a relay set once to its rest state and then left alone
+  (answers H, L) — with a notification and a latch, stored through reloads and restarts, until the
+  user switches control off and on. An optional return by itself (off by default, described,
+  confirmed twice; not for relays) starts a new session once no foreign value has been seen for 60
+  min. The reaction "information" for another controller no longer exists.
+
+The plugin's previous value is exempt from judgement — a late echo, or the device holding it —
+until the plugin's new value has been read back once; for a two-valued target (the heating switch,
+the external-control switch) only until then or until 120 s after the send, whichever comes first.
+After that, a read-back at the previous state is judged by these classes: back at the baseline, by
+the fall-back rules (answer E); otherwise another controller. A two-valued echo slower than 120 s
+is judged too, and so may be one 60–120 s late beside VT's short pulses — the heating read-back
+should report promptly, and its field's text says so (known limits, K4; Z4R3-01, Z4R3-03). A
+setpoint keeps the exemption — a boiler's own limit is judged clipped, a slow read-back is waited
+for. A setpoint whose new value has not been read back for 5 min, while the read-back is known and
+shows another value, raises "confirmation missing" and a repair issue (a warning; an error where a
+hand-back stops heating) saying the boiler does not show the plugin's value and what to check;
+both clear once the value is read back or control is switched off, and never make the plugin step
+aside by themselves (Z4-01, Z4R-01, Z4R2-03).
 
 | Case | What the read-back shows | Class | Reaction |
 |---|---|---|---|
@@ -769,8 +798,9 @@ The four classes of a change seen in the read-back:
 | A held release not confirmed | the lowest water temperature | — | an alarm at once; the release retried every minute |
 | The external-control switch turned off while available | off, with no trace | another controller | step aside at once, without a rewrite |
 | The external-control switch off after a device restart | off, after unavailable or unknown | lost command | switched on again |
+| The external-control switch never seen on after the plugin turned it on | off | as the two rows above | judged 120 s after the turn-on, as the two rows above (Z4R2-03) |
 | A hot-water draw | a boiler-state echo goes off | — | not judged during a draw or for 2 min after it |
-| The plugin's own lapse (silence over 60 s) | another value | — | sent again; not an outside change |
+| The plugin's own lapse (silence over 60 s), an expiring external-control switch's included | another value | — | sent again; not an outside change |
 | Changes no read-back can see (the boiler's panel, a lockout, the maker's app) | nothing | — | not an outside change; seen only through the comfort correction at its limit or "frost not warming"; a fault the boiler reports stops heating (boiler protection) |
 | The recognition period | anything | — | the last command restored under decision 3; a read-back not yet showing it is not counted |
 | VT's own central boiler configured | — | — | a blocker, never an outside change |
@@ -779,7 +809,7 @@ The four classes of a change seen in the read-back:
 | R2a: a relay found in its declared power-cut state without a trace (or, with "last" or "I don't know" declared, changed while available) | that state | lost command up to 3 within 24 h; the fourth: another controller | the command again; an information warning at 3; the fourth steps aside at once |
 | R3: a relay switched while it stayed available | the other state, no trace | another controller | rewritten once; a second change within 24 h → step aside to the rest state, then left alone |
 | R4: the periodic check finds a mismatch | not the commanded state | by its trace, as R2, R2a or R3 | as R2, R2a or R3 |
-| R5: the relay's own switch-off timer | off after its lapse time | — | "on" again, not counted |
+| R5: the relay's own switch-off timer | off after its lapse time | — | "on" again, not counted; with the timer "I don't know", counted as a restart toward answer N (Z4-02), unless it recurs at the same on-period age, which is the relay's own timer (Z4R-02) |
 | R6: a relay that reports no state | nothing | — | blind repeats; "controlled without confirmation"; a manual change is undone at the next repeat |
 | R7: the relay never takes the command | never the commanded state for more than 120 s after each of the first 3 sends | ignored from the start | not written again this session; an alarm-level issue; its "off" ignored: control blocked |
 | R8: the relay's hand-back | the rest state | — | done once read back; at a step aside written once and then left alone |
@@ -893,7 +923,7 @@ Defaults of the safety options and why (the user reviews them at K4):
 | Decision interval | 5 min | VT's default cycle |
 | Activation delay | 0 s | as in VT 10.4.0; a delay is for slow valves (decision 5) |
 | Write type of a picked target | unknown — control stays off until the user declares it expiring or held | the plugin cannot tell the type itself, and a wrong guess wears the boiler's memory |
-| "Off" setpoint | 10 °C — only where "off" sends one with the heating switch (OTGW `CS`, never below 8 °C) | far below any heating value; a low setpoint alone is not "off" (decision 11) |
+| "Off" setpoint | 10 °C — used only without a heating switch, which decision 11 blocks; with one, "off" is the switch off and the setpoint stays at the curve's value (OTGW: `CH=0`, `CS` the curve's, never below 8 °C) (Z4-07) | far below any heating value; a low setpoint alone is not "off" (decision 11) |
 | Hand-back value (entity) | none — entered with its effect | 0 may mean "no heat" on one device and "own control" on another |
 | Fallback setpoint | the last effective outdoor temperature for 3 h, then the design flow, or the user's fixed value (decision 9) | never zero heat; the valves keep rooms from overheating |
 | Frost limit / release | 5 / 7 °C | above freezing with a margin, below any comfort setpoint |
@@ -966,7 +996,6 @@ yet; the user reviews every provisional value at K4.
 | The lowest-water-temperature suggestion: the reference + 2 K, rounded up to 0.5 °C, below the caps | monitor | provisional, K4 |
 | J4's starts criterion: at most the boiler's own regulation's starts per hour × 1.10 | acceptance | provisional, K4 (S-15) |
 | The wait for a late report: 60 s at the start; at the stop the whole hand-back within 15 s, each write capped at 3 s, the read-back wait min(5 s, the time left) | hand-back | Home Assistant gives all shutdown jobs 20 s together (Q3.3); an ESPHome device reports within about 60 s of a start, up to about 74 s without mDNS — 90 s the alternative (Q3.5); provisional, K4 |
-
 | The last command saved at once on a move of 1.0 K | control state (V3) | provisional, K4 (reason to confirm) |
 | An OTGW release window of 60 s | hand-back (V4) | provisional, K4 (reason to confirm) |
 | A held release's alarm after 10 s; taken by another after 2 checks 60 s apart (3 over 120 s with hot water unknown, none within 120 s of a draw) | hand-back (V5) | provisional, K4 (reason to confirm) |
@@ -983,6 +1012,17 @@ yet; the user reviews every provisional value at K4.
 | Hot-water inference 0.35–0.65; 12 h; 6 h; 10 min; 1 h | monitor (Y2) | provisional, K4 (reason to confirm) |
 | Building model: 8 K; 12 K; 2 K; 3 of 4; 2 of 3; outdoor readings within −30…+30 °C | monitor (Y3) | provisional, K4 (reason to confirm) |
 | Forecast call timeout 30 s | forecasts (Y4) | provisional, K4 (reason to confirm) |
+| Starts and ignition alarms unknown when the last analysis is older than 15 min; the last-run record written every 10 min | monitor (Y2) | provisional, K4 (reason to confirm) |
+| The frost "closed zone" issue updated on a 1 K move; the control switch's restore waited for 60 s | control (X4, V3) | provisional, K4 (reason to confirm) |
+| A write's timeout 10 s; a control step counts 60 s at most | control | reason to confirm at K4 |
+| The "add water" threshold accepted within 0.1–2.0 bar | options (Y1) | reason to confirm at K4 |
+| A day counts when 90 % of it is known; its degree-days need 80 % | monitor (Y2) | provisional, K4 (reason to confirm) |
+| The lowest-water-temperature suggestion never above 50 °C | monitor (X6) | provisional, K4 (reason to confirm) |
+| Control waiting for the gateway's read-back: a repair issue after 5 min, at error level where a hand-back stops heating | control (Z4-10) | provisional, K4 |
+| A command ignored from the start where a hand-back stops heating: an error-level repair issue | control (Z4-11) | decision 6 kept (no hand-back, no block) |
+| An undeclared relay timer: switch-offs within 60 s of the same on-period age, or a whole multiple up to 3× of a timer of 5 min or more; once recognised, renewed every min(length ÷ 2, repeat interval), its length and switch-offs stored | control (Z4R-02, Z4R2-01, Z4R2-05) | provisional, K4 |
+| A setpoint not shown: "confirmation missing" and a repair issue after 5 min of a known read-back showing another value; an error where a hand-back stops heating | guards, control (Z4R2-03) | provisional, K4 |
+| A two-valued target's previous state exempt at most 120 s after the send | guards (Z4R2-03) | provisional, K4 |
 
 The steps of `docs/plan-0.2.2.md` that build these values record their reasons; a value a step
 finds it needs beyond this table is added with "reason to confirm at K4", as a diff for consent.
@@ -1243,9 +1283,9 @@ Starts per hour count the hours with heating.
   else the command; 5 — a corrupt or lost store is unreadable: a full hand-back first, and the
   monitoring period counts from the entry's creation; 6 — the switch comes back as the user left
   it, the wish saved at once; 8 — "pressure 0 = unknown" only for the gateway's sources; 9 — an
-  alarm with an unknown input holds its state 60 min, then shows unknown; 10 — an options save
-  that touches no control option reloads without a hand-back, and one that does says it hands
-  back; 11 — bounded learning covers what control uses, while the building model feeds the
+  alarm with an unknown input holds its state 60 min, then shows unknown; 10 — every options save
+  but the level reloads the entry, which hands back, and control then restores the boiler; the
+  options say so (as built; K4 may narrow it to saves that touch control, Z4-08); 11 — bounded learning covers what control uses, while the building model feeds the
   monitor only and is visible and resettable; 12 — an entered design load always wins; 19 — the
   zone pick accepts only VT climates, checked on the server (the warning for zones the boiler does
   not feed comes in 0.3); 20 — diagnostics work for an entry in setup error.
