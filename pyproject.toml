@@ -72,6 +72,7 @@ follow_untyped_imports = true
 
 [tool.coverage.run]
 source = ["custom_components.vtherm_smart_boiler"]
+branch = true  # P-35: CI and the local run count branches alike
 data_file = ".tmp/coverage"
 
 [tool.coverage.report]

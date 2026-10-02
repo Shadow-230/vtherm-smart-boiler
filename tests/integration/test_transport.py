@@ -135,3 +135,26 @@ def test_a_setpoint_entitys_grid_is_read_in_its_unit() -> None:
         None
     )
     assert grid_from_state(None) is None
+
+
+async def test_unreadable_or_missing_inputs_read_as_unknown(hass: HomeAssistant) -> None:
+    """P-35: what cannot be read is unknown, never a guess — a foreign-heat sensor that is not a
+    number, a missing weather entity or one reporting an implausible temperature, a missing
+    entity's bounds and unit."""
+    from homeassistant.core import State
+
+    from custom_components.vtherm_smart_boiler.core.foreign_heat import SourceKind
+    from custom_components.vtherm_smart_boiler.transport.entities import (
+        bounds_from_state,
+        read_source,
+        temperature_unit_of,
+        weather_from_state,
+    )
+
+    hass.states.async_set("sensor.stove_power", "not a number", {"unit_of_measurement": "W"})
+    assert read_source(hass, "sensor.stove_power", SourceKind.POWER) is None
+    assert weather_from_state(None).value is None
+    hot = State("weather.home", "sunny", {"temperature": 99.0, "temperature_unit": "°C"})
+    assert weather_from_state(hot).value is None  # outside -60..60 °C
+    assert bounds_from_state(None) == (None, None)
+    assert temperature_unit_of(hass, "number.gone") is None

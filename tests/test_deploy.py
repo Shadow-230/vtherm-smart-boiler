@@ -54,6 +54,49 @@ def test_the_dry_run_lists_files_and_connects_nowhere(tmp_path: Path) -> None:
     assert not [name for name in names if name.startswith(("sim/", "vendor/", "plugin/"))]
 
 
+def test_the_dry_run_reads_no_private_file(tmp_path: Path) -> None:
+    """P-107: the dry run lists what would go, and reads nothing private — a
+    ``devenv/local.env`` that fails when sourced does not stop it, and no host from it is
+    printed. The script runs from a copy of its root, so the real file is never touched."""
+    root = tmp_path / "root"
+    (root / "scripts").mkdir(parents=True)
+    script = root / "scripts/deploy_test.sh"
+    script.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    (root / "devenv/config").mkdir(parents=True)
+    (root / "devenv/compose.yaml").symlink_to(ROOT / "devenv/compose.yaml")
+    (root / "devenv/config/configuration.yaml").symlink_to(
+        ROOT / "devenv/config/configuration.yaml"
+    )
+    (root / "devenv/local.env").write_text(
+        "TEST_HA_HOST=leaked.example\necho POISONED >&2\nexit 42\n", encoding="utf-8"
+    )
+    (root / "custom_components").mkdir()
+    (root / "custom_components/vtherm_smart_boiler").symlink_to(
+        ROOT / "custom_components/vtherm_smart_boiler"
+    )
+    (root / "sim/custom_components").mkdir(parents=True)
+    (root / "sim/custom_components/boiler_sim").symlink_to(
+        ROOT / "sim/custom_components/boiler_sim"
+    )
+    for name in ("versatile_thermostat", "vtherm_smartpi"):
+        stub = root / "vendor/custom_components" / name
+        stub.mkdir(parents=True)
+        (stub / "manifest.json").write_text("{}", encoding="utf-8")
+    result = subprocess.run(
+        ["bash", str(script), "--dry-run"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "POISONED" not in result.stderr
+    assert "leaked.example" not in result.stdout + result.stderr
+    assert result.stdout.splitlines()[0] == (
+        "Would deploy to the test HA named in devenv/local.env:"
+    )
+
+
 def test_an_unknown_argument_is_refused() -> None:
     result = subprocess.run(
         ["bash", str(SCRIPT), "--now"], capture_output=True, text=True, timeout=30, check=False

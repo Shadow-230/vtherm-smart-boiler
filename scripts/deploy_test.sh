@@ -6,7 +6,8 @@
 #
 # Everything is packed here into one tar stream — links followed, so the host receives files,
 # never links into vendor/ — and unpacked there over SSH: only tar and ssh are needed on either
-# side. --dry-run packs the same stream and lists it; it reads no key and connects nowhere.
+# side. --dry-run packs the same stream and lists it; it reads no key, no devenv/local.env, and
+# connects nowhere.
 #
 # It connects only to TEST_HA_HOST from devenv/local.env, with the key and known hosts kept in
 # devenv/ssh/ (both git-ignored), so nothing in the home directory changes. It never touches
@@ -47,17 +48,18 @@ pack() {
         -C "$ROOT/sim" custom_components/boiler_sim
 }
 
+# The dry run reads nothing private (P-107): devenv/local.env is not even sourced.
+if [ "$DRY_RUN" = true ]; then
+    echo "Would deploy to the test HA named in devenv/local.env:"
+    pack | tar -t -v -f -
+    exit 0
+fi
+
 # Only devenv/local.env says where to go: nothing from the calling environment.
 unset TEST_HA_HOST TEST_HA_SSH_USER TEST_HA_DIR TEST_HA_URL TEST_HA_TOKEN TZ
 if [ -f "$ENV_FILE" ]; then
     # shellcheck disable=SC1090
     source "$ENV_FILE"
-fi
-
-if [ "$DRY_RUN" = true ]; then
-    echo "Would deploy to ${TEST_HA_HOST:-<TEST_HA_HOST, not set>}:${TEST_HA_DIR:-<TEST_HA_DIR, not set>}:"
-    pack | tar -t -v -f -
-    exit 0
 fi
 
 if [ ! -f "$ENV_FILE" ]; then

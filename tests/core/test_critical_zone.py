@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from custom_components.vtherm_smart_boiler.core.critical_zone import CriticalZone, critical_zone
+from custom_components.vtherm_smart_boiler.core.critical_zone import (
+    CriticalZone,
+    _clearly_worse,
+    critical_zone,
+)
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 from custom_components.vtherm_smart_boiler.core.zones import SelectionStatus
 
@@ -81,3 +85,13 @@ def test_a_zone_at_vts_cap_is_as_open_as_it_gets() -> None:
     """P61: one meaning of "fully open" — VT's cap on the duty cycle counts, as in control."""
     capped = ZoneState("a", 19.0, 21.0, True, on_percent=0.8, max_on_percent=0.8, reported_at=NOW)
     assert pick([capped]).saturated
+
+
+def test_the_hysteresis_compares_demand_before_deficit() -> None:
+    """The comparison behind the hysteresis, on its own: a candidate with a clearly lower demand,
+    or with no demand beside a known one, never needs heat more, however cold its room; one with
+    a known demand beside an unknown one does."""
+    current = zone("a", 20.0, 21.0, 0.8)
+    assert not _clearly_worse(zone("b", 15.0, 21.0, 0.5), current, 0.1, 0.3)
+    assert not _clearly_worse(zone("b", 15.0, 21.0, None), current, 0.1, 0.3)
+    assert _clearly_worse(zone("b", 20.0, 21.0, 0.8), zone("a", 20.0, 21.0, None), 0.1, 0.3)

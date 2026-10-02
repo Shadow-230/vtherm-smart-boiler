@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 
 import pytest
@@ -17,7 +18,9 @@ from custom_components.vtherm_smart_boiler.core.building import (
     loss_from_annual_energy,
     loss_from_coarse_answers,
     loss_from_design_load,
+    threshold_error,
     time_constant_from_mass,
+    trusted,
     trusted_load_model,
 )
 from custom_components.vtherm_smart_boiler.core.parameters import (
@@ -313,3 +316,37 @@ def test_the_load_model_decides_only_when_entered_or_confidently_measured() -> N
             estimates["heating_threshold"] = given
         assert trusted_load_model(_parameters(**estimates)) is None, (loss, given)
     assert trusted_load_model(ParameterSet()) is None  # nothing at all
+
+
+def test_nothing_to_trust_decides_nothing() -> None:
+    """Without an estimate there is nothing that may decide (Y3)."""
+    assert not trusted(None)
+
+
+def test_a_poor_fit_over_a_wide_spread_gives_none() -> None:
+    """P-31: energies that do not follow the outdoor temperature over a wide spread give no fit,
+    rather than a line through noise (R² below ``MIN_QUALITY``)."""
+    outdoor = [-5.0, -3.0, -1.0, 1.0, 3.0, 5.0, 7.0, 9.0]
+    energy = [100.0, 20.0, 95.0, 15.0, 90.0, 10.0, 85.0, 5.0]
+    days = [DayPoint(x, y) for x, y in zip(outdoor, energy, strict=True)]
+    assert fit_daily_load(days, ENTERED_15) is None
+
+
+def test_a_loss_held_at_its_bound_is_shown_never_trusted() -> None:
+    """A loss fitted alone beyond the parameter's bound is held at the bound, its confidence
+    capped at ``CLAMPED_CONFIDENCE`` — shown, never used — however many days support it."""
+    outdoor = [11.0 + 0.1 * i for i in range(31)]  # a month on a 3 K band: full coverage
+    days = [DayPoint(x, 24.0 * 6.0 * (15.0 - x)) for x in outdoor]
+    fit = fit_daily_load(days, ENTERED_15)
+    assert fit is not None
+    assert fit.loss is not None
+    assert fit.loss.value == 5.0
+    assert fit.loss.confidence == CLAMPED_CONFIDENCE
+
+
+def test_the_threshold_error_is_infinite_without_enough_to_judge() -> None:
+    """P-31: two days, a flat line, or one outdoor temperature cannot place the threshold."""
+    assert threshold_error([1.0, 2.0], [10.0, 5.0], [10.0, 5.0], -5.0, 3.0) == math.inf
+    flat = [9.0, 6.0, 3.0]
+    assert threshold_error([1.0, 2.0, 3.0], flat, flat, 0.0, 3.0) == math.inf
+    assert threshold_error([2.0, 2.0, 2.0], flat, [6.0, 6.0, 6.0], -3.0, 4.0) == math.inf

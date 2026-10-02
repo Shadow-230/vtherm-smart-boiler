@@ -1,7 +1,9 @@
 # Tests, lint, formatting and types on every push and pull request (docs/plan-0.2.md, K2;
 # docs/plan-0.2.1.md, R3), on the Home Assistant version tested and on the declared minimum
-# (hacs.json). vendor/ (VT and SmartPI) is not in the repository, so the tests that need it are
-# skipped here.
+# (hacs.json). vendor/ (VT 10.4.0 and SmartPI 0.4.0) is not in the repository: CI fetches both
+# from their release tags on GitHub's servers, checks each tag's commit, and so runs the
+# real-VT tests on every change (docs/plan-0.2.2.md, decision 14; nothing is downloaded on the
+# developer's machine). Coverage counts branches, and every module keeps its own floor (P-35).
 name: Tests
 
 on:
@@ -22,8 +24,8 @@ jobs:
         # Dependency groups in pyproject.toml.
         homeassistant: [ha, ha-minimum]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - name: Install the pinned test environment under Home Assistant's constraints
@@ -43,6 +45,31 @@ jobs:
           minimum = json.load(open("hacs.json", encoding="utf-8"))["homeassistant"]
           assert __version__ == minimum, (__version__, minimum)
           PY
+      # Decision 14 (P-119): the tags' commits are those docs/plan-0.1.md A5 checked; a tag that
+      # moved, or an archive that cannot be reached, fails the job rather than skipping tests.
+      - name: VT 10.4.0 and SmartPI 0.4.0 from their release tags
+        run: |
+          set -euo pipefail
+          fetch() {  # repository, tag, the commit the tag must point at (a prefix)
+            local repo="$1" tag="$2" commit="$3" found
+            found="$(git ls-remote --tags "https://github.com/$repo.git" \
+              | awk -v t="refs/tags/$tag" '$2 == t "^{}" {peeled = $1} $2 == t {plain = $1}
+                                            END {print (peeled != "" ? peeled : plain)}')"
+            case "$found" in
+              "$commit"*) ;;
+              *) echo "$repo tag $tag points at '$found', not $commit" >&2; exit 1 ;;
+            esac
+            curl -fsSL "https://github.com/$repo/archive/refs/tags/$tag.tar.gz" | tar -xz -C vendor
+          }
+          mkdir -p vendor/custom_components
+          fetch jmcollin78/versatile_thermostat 10.4.0 78090166e88a
+          fetch KipK/vtherm_smartpi 0.4.0 51db763bb0db
+          ln -s ../versatile_thermostat-10.4.0/custom_components/versatile_thermostat \
+            vendor/custom_components/versatile_thermostat
+          ln -s ../vtherm_smartpi-0.4.0/custom_components/vtherm_smartpi \
+            vendor/custom_components/vtherm_smartpi
+          test -f vendor/custom_components/versatile_thermostat/manifest.json
+          test -f vendor/custom_components/vtherm_smartpi/manifest.json
       - name: Ruff
         run: ruff check .
       - name: Formatting
@@ -59,3 +86,67 @@ jobs:
           python -m pytest -q -p no:homeassistant --disable-socket --allow-unix-socket --cov --cov-branch --cov-report= --cov-fail-under=0 tests/core
       - name: The other tests, with coverage of both runs
         run: python -m pytest -q --cov --cov-branch --cov-append --cov-report=term --ignore=tests/core
+      # P-35: every module at least 95 % with branches, the config and options flows 100 %.
+      - name: Coverage of each module
+        run: |
+          python -m coverage json -o .tmp/coverage-report.json
+          python - <<'PY'
+          import json, sys
+          files = json.load(open(".tmp/coverage-report.json", encoding="utf-8"))["files"]
+          package = "custom_components/vtherm_smart_boiler/"
+          floors = {package + "config_flow.py": 100.0}
+          low = [
+              f"{name}: {data['summary']['percent_covered']:.2f} % < {floors.get(name, 95.0):.0f} %"
+              for name, data in sorted(files.items())
+              if name.startswith(package)
+              and data["summary"]["percent_covered"] < floors.get(name, 95.0)
+          ]
+          print("\n".join(low) or "every module at its floor")
+          sys.exit(1 if low else 0)
+          PY
+
+  # P-109: the newest vtherm_api, beside the pinned one — a failure here is a finding: VT's API
+  # changed under the plugin.
+  latest-vtherm-api:
+    name: Tests (newest vtherm_api)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Install the pinned test environment, then the newest vtherm_api
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --group ha
+          constraints="$(python -c 'import homeassistant, pathlib; print(pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt")')"
+          python -m pip install --group test --group ha -c "$constraints"
+          python -m pip install -U vtherm-api
+          python -m pip show vtherm-api | head -2
+      - name: VT 10.4.0 and SmartPI 0.4.0 from their release tags
+        run: |
+          set -euo pipefail
+          fetch() {
+            local repo="$1" tag="$2" commit="$3" found
+            found="$(git ls-remote --tags "https://github.com/$repo.git" \
+              | awk -v t="refs/tags/$tag" '$2 == t "^{}" {peeled = $1} $2 == t {plain = $1}
+                                            END {print (peeled != "" ? peeled : plain)}')"
+            case "$found" in
+              "$commit"*) ;;
+              *) echo "$repo tag $tag points at '$found', not $commit" >&2; exit 1 ;;
+            esac
+            curl -fsSL "https://github.com/$repo/archive/refs/tags/$tag.tar.gz" | tar -xz -C vendor
+          }
+          mkdir -p vendor/custom_components
+          fetch jmcollin78/versatile_thermostat 10.4.0 78090166e88a
+          fetch KipK/vtherm_smartpi 0.4.0 51db763bb0db
+          ln -s ../versatile_thermostat-10.4.0/custom_components/versatile_thermostat \
+            vendor/custom_components/versatile_thermostat
+          ln -s ../vtherm_smartpi-0.4.0/custom_components/vtherm_smartpi \
+            vendor/custom_components/vtherm_smartpi
+      - name: All tests
+        run: |
+          mkdir -p .tmp
+          python -m pytest -q -p no:homeassistant --disable-socket --allow-unix-socket tests/core
+          python -m pytest -q --ignore=tests/core

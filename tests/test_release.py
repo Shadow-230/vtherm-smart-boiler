@@ -10,7 +10,9 @@ from __future__ import annotations
 import ast
 import json
 import re
+import shutil
 import string
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -24,7 +26,7 @@ from homeassistant.helpers import config_validation as cv
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "custom_components/vtherm_smart_boiler"
 TRANSLATIONS = sorted((COMPONENT / "translations").glob("*.json"))
-RELEASE = "0.2.1"
+RELEASE = "0.2.2b1"  # decision 16's provisional first version (Z2); K5, K7 move it
 MIN_HOME_ASSISTANT = "2026.9.0"  # the version tested (the user, 2026-09-25)
 
 
@@ -90,8 +92,23 @@ def test_manifest_version_is_this_release() -> None:
 
 
 def test_a_pre_release_version_is_one_home_assistant_accepts() -> None:
-    """T12: the planned pre-release, 0.2.1b1, is PEP 440, not SemVer."""
-    AwesomeVersion("0.2.1b1", ensure_strategy=VERSION_STRATEGIES)
+    """T12: the planned pre-release, 0.2.2b1, and the release after it, 0.2.2, are PEP 440,
+    not SemVer (decision 16, provisional)."""
+    for version in ("0.2.2b1", "0.2.2"):
+        AwesomeVersion(version, ensure_strategy=VERSION_STRATEGIES)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
+def test_session_summaries_are_ignored() -> None:
+    """P-108: a session summary is the user's own file and never enters the repository."""
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", "session-summary-x.md"],
+        cwd=ROOT,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0
 
 
 def test_requires_the_vtherm_api_its_contract_was_checked_on() -> None:

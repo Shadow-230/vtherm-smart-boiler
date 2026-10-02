@@ -432,3 +432,84 @@ def test_the_attribute_changes_only_on_a_real_change(hass: HomeAssistant) -> Non
     assert shown() is None  # not the plugin's zone any more: no attribute
     values = {"heat_available": None, "emitter_power_factor": 0.51}
     assert shown() == {"heat_available": None, "emitter_power_factor": 0.51}  # afresh
+
+
+def test_the_manager_answers_vt_without_state_of_its_own(hass: HomeAssistant) -> None:
+    """The parts of VT's feature-manager contract the plugin has nothing to do in, and a
+    lookup that keeps failing: logged once at warning level, then quietly, never into VT."""
+    calls: list[str] = []
+
+    def broken(entity_id: str) -> dict:
+        calls.append(entity_id)
+        raise RuntimeError("boom")
+
+    manager = feature_manager.SmartBoilerFeatureManager(hass, Thermostat("climate.a"), broken)
+    assert manager.hass is hass
+    assert manager.add_listener(lambda: None) is None
+    assert manager.restore_state(None) is None
+    for _ in range(2):
+        attributes: dict = {"other": 1}
+        manager.add_custom_attributes(attributes)
+        assert attributes == {"other": 1}
+    assert calls == ["climate.a", "climate.a"]
+
+
+def test_vt_api_lookups_that_fail_leave_the_registration_waiting_or_unsupported(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-53's other half: each way VT's API can be missing gives a state, never an error — an
+    older vtherm_api without its constant, no vtherm_api module, no API kept, an API lookup that
+    gives nothing."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "vtherm_api.const", None)
+    assert feature_manager._api_name() == "vtherm_api"
+    monkeypatch.undo()
+    hass.config.components.add(VT_DOMAIN)
+    assert feature_manager._api(hass) == (None, feature_manager.RegistrationState.WAITING)
+    monkeypatch.setattr(feature_manager, "_stored_api", lambda _hass: object())
+    monkeypatch.setattr(VThermAPI, "get_vtherm_api", staticmethod(lambda _hass: None))
+    assert feature_manager._api(hass) == (None, feature_manager.RegistrationState.WAITING)
+    monkeypatch.setitem(sys.modules, "vtherm_api.vtherm_api", None)
+    assert feature_manager._api(hass) == (None, feature_manager.RegistrationState.UNSUPPORTED)
+
+
+def test_a_registration_whose_lookups_fail_keeps_waiting(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Never into VT's state writes, never out of a check: an error leaves it waiting."""
+    current = feature_manager.FeatureRegistration(hass)
+
+    def boom(*_args: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(feature_manager, "_stored_api", boom)
+    current._on_climate_state(None)  # type: ignore[arg-type]
+    monkeypatch.setattr(current, "_check", boom)
+    assert current.check() is False
+    assert current.state is feature_manager.RegistrationState.WAITING
+    assert current.registered_at is None
+    current.stop()  # never registered: nothing to unregister
+
+
+async def test_installations_attach_and_detach_in_any_order(hass: HomeAssistant) -> None:
+    """The first installation registers, the last one unregisters; detaching one that is not
+    attached, or with nothing registered, changes nothing else."""
+    from types import SimpleNamespace
+
+    first = SimpleNamespace(config_entry=SimpleNamespace(entry_id="first"))
+    second = SimpleNamespace(config_entry=SimpleNamespace(entry_id="second"))
+    feature_manager.async_attach(hass, first)  # type: ignore[arg-type]
+    registered = feature_manager.registration(hass)
+    feature_manager.async_attach(hass, second)  # type: ignore[arg-type]
+    assert feature_manager.registration(hass) is registered  # registered once
+    stranger = SimpleNamespace(config_entry=SimpleNamespace(entry_id="stranger"))
+    feature_manager.async_detach(hass, stranger)  # type: ignore[arg-type]
+    feature_manager.async_detach(hass, first)  # type: ignore[arg-type]
+    assert feature_manager.registration(hass) is registered  # one still attached
+    feature_manager.async_detach(hass, second)  # type: ignore[arg-type]
+    assert feature_manager.registration(hass) is None
+    hass.data[feature_manager.DATA_KEY] = {"coordinators": [first]}  # nothing registered
+    feature_manager.async_detach(hass, first)  # type: ignore[arg-type]
+    assert feature_manager.DATA_KEY not in hass.data
+    feature_manager.async_detach(hass, first)  # type: ignore[arg-type]

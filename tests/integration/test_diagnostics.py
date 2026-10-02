@@ -209,3 +209,32 @@ async def test_diagnostics_of_an_entry_never_set_up_read_nothing_owed(
     assert result["state"] == "not_loaded"
     assert result["control_state"] == {}
     assert result["control_readable"] is False
+
+
+async def test_diagnostics_answer_when_the_stored_control_state_cannot_be_read(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Question 20, negative: reading the store fails — the diagnostics still answer, with the
+    redacted options and the entry's state, and say the control state could not be read."""
+    from custom_components.vtherm_smart_boiler import diagnostics
+
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", options={"signals": {"flame": "binary_sensor.flame"}}
+    )
+    entry.add_to_hass(hass)
+
+    async def broken(*_args: object, **_kwargs: object) -> None:
+        raise OSError("the disk failed")
+
+    monkeypatch.setattr(diagnostics, "async_read_control_state", broken)
+    result = await async_get_config_entry_diagnostics(hass, entry)
+    assert result["control_state"] == {}
+    assert result["control_readable"] is False
+    assert result["state"] == "not_loaded"
+    assert "binary_sensor.flame" not in json.dumps(result)
+
+
+async def test_diagnostics_say_when_no_feature_manager_was_registered(hass: HomeAssistant) -> None:
+    from custom_components.vtherm_smart_boiler.diagnostics import _feature_manager
+
+    assert _feature_manager(hass) == {"state": None}
