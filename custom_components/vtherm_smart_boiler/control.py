@@ -234,6 +234,7 @@ from .core.relay import (
     ProofState,
     RelaySeen,
     RelayState,
+    RelayTimer,
     follow_proof,
     relay_check,
     relay_write_failed,
@@ -269,6 +270,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 DAY = 86400.0
+MINUTE_S = 60.0
 LEARNING_TIMEOUT_S = 5.0
 # An owed hand-back is sent again this long after an attempt; a gateway's not released by then
 # counts as failed — its override's own lapse time (provisional, K4).
@@ -348,6 +350,9 @@ RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control
 RELAY_UNREACHABLE_ISSUE = "relay_unreachable"
 RELAY_IGNORED_ISSUE = "relay_ignored"
 RELAY_RESTS_OFF_ISSUE = "relay_rests_off"
+# Z4R-02: with the timer "I don't know", the relay seen switching itself off twice the same time
+# into an on-period — its own timer: a warning repair issue asks to declare it.
+RELAY_TIMER_ISSUE = "relay_timer_seen"
 # Y4 (the V3 carry-over): SmartPI zones whose learning the plugin paused and could not switch back
 # on for a day — no longer tried: a warning repair issue naming them, told once in the log, until
 # the zone's learning is on again or the plugin pauses it again.
@@ -800,6 +805,7 @@ class ControlUnit:
         self._relay_unreachable_issue: tuple[str, str] | None = None
         self._relay_ignored_issue: tuple[str, str] | None = None
         self._rests_off_issue: tuple[str, str] | None = None
+        self._relay_timer_issue: tuple[str, str] | None = None
         # Y1, boiler protection: since when each mapped fault signal has counted, on the control
         # clock; the stop follows once one has counted for five minutes.
         self._fault_since: dict[Signal, float | None] = {}
@@ -3671,9 +3677,10 @@ class ControlUnit:
     def _follow_relay_issues(self, now: float, zones: Sequence[ZoneState], out: LoopOutput) -> None:
         """The relay's repair issues (R6, R7, R10): out of reach for five minutes while control is
         switched on; the command never taken this session (an error: nothing else controls the
-        boiler; where it is "off" the boiler may keep heating); and a relay resting "off" while
-        control does not hold it, it reads off, its hand-back was not taken by another
-        controller, and a room asks for heat or is near freezing."""
+        boiler; where it is "off" the boiler may keep heating); its own timer seen while the
+        timer is declared "I don't know" (a warning asking to declare it, Z4R-02); and a relay
+        resting "off" while control does not hold it, it reads off, its hand-back was not taken
+        by another controller, and a room asks for heat or is near freezing."""
         if not self._relay_path:
             return
         entry_id = self._coordinator.config_entry.entry_id
@@ -3698,6 +3705,19 @@ class ControlUnit:
             ignored,
             ir.IssueSeverity.ERROR,
             {"relay": self._relay_name()},
+        )
+        # Z4R-02: the relay's own timer seen, its timer declared "I don't know": answered and no
+        # longer counted — the user is asked to declare it.
+        timer = state.timer_seen_s if relay.timer is RelayTimer.UNKNOWN else None
+        self._relay_timer_issue = self._show_relay_issue(
+            f"{RELAY_TIMER_ISSUE}_{entry_id}",
+            self._relay_timer_issue,
+            None if timer is None else RELAY_TIMER_ISSUE,
+            ir.IssueSeverity.WARNING,
+            {
+                "relay": self._relay_name(),
+                "minutes": "" if timer is None else f"{timer / MINUTE_S:.0f}",
+            },
         )
         asking = self._rest_off_zones(now, zones, out)
         rests_off = None if not asking else RELAY_RESTS_OFF_ISSUE
@@ -3775,11 +3795,17 @@ class ControlUnit:
 
     def _delete_relay_issues(self) -> None:
         entry_id = self._coordinator.config_entry.entry_id
-        for issue in (RELAY_UNREACHABLE_ISSUE, RELAY_IGNORED_ISSUE, RELAY_RESTS_OFF_ISSUE):
+        for issue in (
+            RELAY_UNREACHABLE_ISSUE,
+            RELAY_IGNORED_ISSUE,
+            RELAY_RESTS_OFF_ISSUE,
+            RELAY_TIMER_ISSUE,
+        ):
             ir.async_delete_issue(self._hass, DOMAIN, f"{issue}_{entry_id}")
         self._relay_unreachable_issue = None
         self._relay_ignored_issue = None
         self._rests_off_issue = None
+        self._relay_timer_issue = None
 
     # --- learning pauses ------------------------------------------------------------------
 

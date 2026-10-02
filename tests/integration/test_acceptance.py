@@ -1650,6 +1650,36 @@ async def test_relay_off_timer_lapses_without_repeats(rig: Rig, restarts: bool) 
     assert alarm(rig, "commands_lost") == "off"
     assert alarm(rig, "outside_change") == "off"
     assert rig.state("sensor", "control_state").state == "heating"
+    assert repair(rig, "relay_timer_seen") is None  # declared: nothing to ask (Z4R-02)
+
+
+async def test_an_undeclared_relay_timer_is_recognised_and_heating_goes_on(rig: Rig) -> None:
+    """Z4R-02: the timer left at "I don't know"; the relay's own 30-minute timer, which a
+    repeated "on" does not restart (a Shelly's auto-off, say), switches it off 30 min into every
+    on-period while the rooms call for hours. The first switch-off counts as a possible restart;
+    the second, at the same time into its on-period, shows the relay's own timer: answered at
+    once and no longer counted, and a warning repair issue asks to declare it, naming about 30
+    minutes. After two and a half hours control still heats — before, the fourth switch-off
+    stepped aside to the rest state "off" after two hours."""
+    from homeassistant.helpers import issue_registry as ir
+
+    await start_relay(
+        rig,
+        relay={"off_timer_min": 30, "timer_restarts_on_repeat": False},
+        relay_off_timer="unknown",
+    )
+    await relay_on_under_control(rig)
+    lapsed = relay_model(rig).own_changes
+    for _ in range(9):
+        await rig.advance(1000)
+        assert rig.state("sensor", "control_state").state == "heating"
+    assert relay_model(rig).own_changes - lapsed >= 4  # its timer, again and again
+    assert relay_model(rig).on  # each answered at once
+    assert alarm(rig, "outside_change") == "off"
+    found = repair(rig, "relay_timer_seen")
+    assert found is not None
+    assert found.severity is ir.IssueSeverity.WARNING
+    assert found.translation_placeholders["minutes"] == "30"
 
 
 async def test_relay_with_an_unknown_timer_is_kept_on_by_repeats(rig: Rig) -> None:

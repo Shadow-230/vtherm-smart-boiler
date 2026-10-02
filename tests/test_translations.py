@@ -935,3 +935,20 @@ def test_the_ignored_command_without_heat_issue_is_translated() -> None:
         assert issue["title"], language
         assert issue["description"], language
         assert PLACEHOLDER.findall(issue["description"]) == [], language
+
+
+def test_the_relay_timer_seen_issue_is_translated() -> None:
+    """Z4R-02: the warning issue asking to declare the relay's own timer, naming the relay and
+    the minutes, in every language — read in the relay's own settings, as the time seen may be a
+    whole multiple of it; the timer option's "I don't know" says that switch-offs recurring the
+    same time after "on" are taken for the relay's own timer."""
+    from custom_components.vtherm_smart_boiler.control import RELAY_TIMER_ISSUE
+
+    for language in ALL_LANGUAGES:
+        issue = _texts(language)["issues"][RELAY_TIMER_ISSUE]
+        assert issue["title"], language
+        assert set(PLACEHOLDER.findall(issue["description"])) == {"relay", "minutes"}, language
+    issue = SOURCE["issues"][RELAY_TIMER_ISSUE]["description"]
+    assert "Read the timer's length in the relay's own settings" in issue  # not the number seen
+    timer = SOURCE["options"]["step"]["control_relay"]["data_description"]["relay_off_timer"]
+    assert "the same time after" in timer

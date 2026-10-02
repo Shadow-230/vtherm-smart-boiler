@@ -37,10 +37,17 @@ order:
    max(timer − 60 s, timer ÷ 2) since the "on" that started the on-period for a declared length,
    one repeat interval for "I don't know". A declared timer's is the relay's own lapse: "on"
    again at once, not counted — no loss of any kind, so a timer that lapses all day never raises
-   "commands lost" (``SCOPE.md`` §5 class 3; Q1's matrix row R5). With "I don't know" the lapse
-   cannot be told from an automation, a person or the relay's own button switching it off: "on"
-   again at once, but counted as answer N's restart — ``RESTARTS_ANSWERED`` within a day, the
-   next one another controller, and the plugin steps aside at once (Z4-02);
+   "commands lost" (``SCOPE.md`` §5 class 3; Q1's matrix row R5). With "I don't know" one such
+   switch-off cannot be told from an automation, a person or the relay's own button: "on" again
+   at once, but counted as answer N's restart — ``RESTARTS_ANSWERED`` within a day, the next one
+   another controller, and the plugin steps aside at once (Z4-02). One that comes the same time
+   into its on-period as an earlier one, within ``TIMER_TOLERANCE_S`` — or a whole multiple of
+   it, up to ``TIMER_MULTIPLES``, where a renewal reaching the relay just after its timer had
+   switched it off restarted that timer unseen — shows the relay's own timer of that length
+   (Z4R-02): from then on a switch-off at that age, or a multiple of it, is its lapse — "on"
+   again, not counted — and the control unit asks the user to declare the timer; a switch-off
+   at another age still counts. An on-period is counted from the relay's own last "on" where
+   Home Assistant shows one later than the plugin's;
 6. never read back since a send, for longer than ``RELAY_CONFIRM_S`` → not confirmed ("write
    ignored"), sent again at the next check; after each of the session's first
    ``RELAY_START_SENDS`` sends → ignored from the start: not written again this session, repeats
@@ -92,7 +99,16 @@ REPEAT_MIN_S = 10.0
 REPEAT_MAX_S = 300.0  # a relay restarted in the wrong state stays so at most this long
 TIMER_MIN_S = 60.0  # a declared switch-off timer: 1 to 120 minutes
 TIMER_MAX_S = 7200.0
-TIMER_TOLERANCE_S = 60.0  # a declared timer's lapse at or after max(timer − 60 s, timer ÷ 2)
+# A declared timer's lapse at or after max(timer − 60 s, timer ÷ 2); with "I don't know", two
+# switch-offs this close in age into their on-periods show the relay's own timer (Z4R-02).
+TIMER_TOLERANCE_S = 60.0
+# A lapse a renewal hid — it arrived a moment after the relay's timer had switched it off, and
+# restarted the timer with no trace in Home Assistant — leaves the next one seen a whole multiple
+# of the timer into the on-period: multiples up to this count as the same timer (Z4R-02), and
+# only for a timer this long or longer, below which their tolerance windows would cover almost
+# any time.
+TIMER_MULTIPLES = 3
+TIMER_MULTIPLE_MIN_S = 300.0
 PROOF_WINDOW_S = 1800.0  # longer than a common 20-minute restart lockout
 PROOF_FLOW_RISE_K = 5.0
 CONTEXTS_KEPT = 20  # the plugin's own write contexts remembered, to tell its changes apart
@@ -244,8 +260,13 @@ class RelayState:
     # --- kept for their day, across sessions too (stored at once) ---
     rewritten_at: float | None = None  # the one rewrite (answer C)
     restarts: tuple[float, ...] = ()  # untraced restarts answered (answers D, N)
-    # --- a fact about the relay ---
+    # --- facts about the relay ---
     unreachable_since: float | None = None  # out of reach (unavailable, missing, unknown) since
+    # With the timer "I don't know" (Z4R-02): the switch-offs counted as restarts, each with how
+    # long into its on-period it came — (when, age), kept for their day — and the age at which two
+    # of them agreed: the relay's own timer, undeclared (a length, not a moment).
+    lapses: tuple[tuple[float, float], ...] = ()
+    timer_seen_s: float | None = None
 
     @property
     def off_ignored(self) -> bool:
@@ -275,6 +296,8 @@ class RelayResult:
 class _Verdict:
     judged: ChangeClass
     restart: bool = False  # rows of answers D and N
+    age: float | None = None  # an unknown timer's switch-off: how long into its on-period
+    timer: float | None = None  # the relay's own timer, seen at this switch-off (Z4R-02)
 
 
 def plan_relay(
@@ -331,11 +354,19 @@ def _classify(state: RelayState, seen: RelaySeen, now: float, config: RelayConfi
     if state.rewrite_pending:
         return _Verdict(ChangeClass.ANOTHER_CONTROLLER)  # the one rewrite did not hold
     if command is True and seen.on is False and _lapsed(state, seen, now, config):
-        if config.timer is RelayTimer.UNKNOWN:
-            # Maybe its timer, maybe an automation or a person: answered, but bounded as a
-            # restart the relay did not report (answer N), never without limit (Z4-02).
-            return _restart(state, now)
-        return _Verdict(ChangeClass.OWN_LAPSE)
+        if config.timer is not RelayTimer.UNKNOWN:
+            return _Verdict(ChangeClass.OWN_LAPSE)
+        start = state.on_since
+        assert start is not None  # the lapse window counts from it
+        age = _age(start, seen, now)
+        timer = _timer_of(state, age, now)
+        if timer is not None:
+            # The same time into its on-period as before: the relay's own timer — answered, no
+            # longer counted (Z4R-02).
+            return _Verdict(ChangeClass.OWN_LAPSE, timer=timer)
+        # Maybe its timer, maybe an automation or a person: answered, but bounded as a restart
+        # the relay did not report (answer N), never without limit (Z4-02).
+        return replace(_restart(state, now), age=age)
     if state.confirmed_at is None:
         if not state.start_done and state.attempt_at is not None:
             if state.failed_sends + 1 >= RELAY_START_SENDS:
@@ -384,15 +415,60 @@ def _lapsed(state: RelayState, seen: RelaySeen, now: float, config: RelayConfig)
     start = state.on_since
     if lapse is None or start is None:
         return False
+    return _age(start, seen, now) >= lapse
+
+
+def _age(start: float, seen: RelaySeen, now: float) -> float:
+    """How long into its on-period, begun at ``start``, the relay went off: to the moment Home
+    Assistant shows for the change — this step's, where it shows none."""
     off_at = seen.changed_at if seen.changed_at is not None else now
-    return off_at - start >= lapse
+    return off_at - start
+
+
+def _timer_of(state: RelayState, age: float, now: float) -> float | None:
+    """The relay's own timer, where this switch-off came the same time into its on-period as one
+    before it — within ``TIMER_TOLERANCE_S``, or a whole multiple of it where a renewal hid a
+    lapse in between (Z4R-02): the timer seen already (or this age, where that one was a multiple
+    of it), the two ages' mean, or the shorter of two a multiple apart; ``None`` for an irregular
+    switch-off."""
+    seen = state.timer_seen_s
+    if seen is not None:
+        if _times(age, seen) is not None:
+            return seen
+        return age if _times(seen, age) is not None else None  # shorter than seen
+    for at, earlier in state.lapses:
+        if now - at >= RESTART_WINDOW_S:
+            continue
+        short, long = sorted((age, earlier))
+        times = _times(long, short)
+        if times is not None:
+            return (age + earlier) / 2.0 if times == 1 else short
+    return None
+
+
+def _times(age: float, timer: float) -> int | None:
+    """How many timer lengths ``age`` is, where it is a whole number of them within
+    ``TIMER_TOLERANCE_S``: one, or up to ``TIMER_MULTIPLES`` for a timer of at least
+    ``TIMER_MULTIPLE_MIN_S``; ``None`` otherwise."""
+    times = round(age / timer)
+    if times < 1 or abs(age - times * timer) > TIMER_TOLERANCE_S:
+        return None
+    if times > 1 and (times > TIMER_MULTIPLES or timer < TIMER_MULTIPLE_MIN_S):
+        return None
+    return times
 
 
 def _observe(state: RelayState, seen: RelaySeen, now: float) -> RelayState:
     """The relay shows the command: confirmed, held since; held for the timeout, the start phase
-    is over and "write ignored" clears (not after "ignored from the start")."""
+    is over and "write ignored" clears (not after "ignored from the start"). Shown on since a
+    moment later than the "on" the on-period counts from, the on-period began then (Z4R-02)."""
     if seen.on is not state.written:
         return replace(state, held_since=None)
+    start, changed = state.on_since, seen.changed_at
+    if seen.on and start is not None and changed is not None and changed > start:
+        # On again since the "on" its on-period was counted from — a renewal that reached it just
+        # after its own timer had switched it off restarts that timer: the on-period began then.
+        state = replace(state, on_since=min(changed, now))
     held = now if state.held_since is None else state.held_since
     state = replace(
         state,
@@ -413,11 +489,16 @@ def _account(
     the start phase, the block. Returns the events and whether a command was lost."""
     judged = verdict.judged
     if judged is ChangeClass.OWN_LAPSE:
+        if verdict.timer is not None and verdict.timer != state.timer_seen_s:
+            state = replace(state, timer_seen_s=verdict.timer)  # an undeclared timer (Z4R-02)
         return state, (), False  # the relay's own timer: "on" again, never counted (R5)
     if judged is ChangeClass.LOST_COMMAND:
         if verdict.restart:
             kept = tuple(t for t in state.restarts if now - t < RESTART_WINDOW_S)
             state = replace(state, restarts=(*kept, now))
+        if verdict.age is not None:
+            lapses = tuple(lapse for lapse in state.lapses if now - lapse[0] < RESTART_WINDOW_S)
+            state = replace(state, lapses=(*lapses, (now, verdict.age)))
         return state, (), True
     if judged is ChangeClass.ANOTHER_CONTROLLER:
         recent = state.rewritten_at is not None and now - state.rewritten_at < REWRITE_WINDOW_S
@@ -558,6 +639,8 @@ _SESSION = (
     "rewritten_at",
     "restarts",
     "unreachable_since",
+    "lapses",
+    "timer_seen_s",
 )
 
 
@@ -568,7 +651,8 @@ def relay_write_failed(state: RelayState) -> RelayState:
 
 def after_hand_back_relay(state: RelayState) -> RelayState:
     """A hand-back inside the session: the per-send fields go; the session's memory — the block,
-    "ignored from the start", the start phase, the one rewrite, the restarts — stays."""
+    "ignored from the start", the start phase, the one rewrite, the restarts — stays, and so do
+    the facts about the relay (its reachability, its own timer seen)."""
     kept: dict[str, Any] = {name: getattr(state, name) for name in _SESSION}
     return RelayState(**kept)
 
@@ -576,13 +660,16 @@ def after_hand_back_relay(state: RelayState) -> RelayState:
 def relay_for_new_session(state: RelayState, now: float) -> RelayState:
     """A new session (control switched off and on): everything afresh but the one rewrite and the
     restarts, each kept for its day — so no relay is answered more than three untraced restarts a
-    day (answer N) — and when it went out of reach (a fact about the relay)."""
+    day (answer N) — with the switch-offs counted among them, and the facts about the relay: when
+    it went out of reach, and its own timer seen (Z4R-02)."""
     rewritten = state.rewritten_at
     keep = rewritten is not None and now - rewritten < REWRITE_WINDOW_S
     return RelayState(
         rewritten_at=rewritten if keep else None,
         restarts=tuple(t for t in state.restarts if now - t < RESTART_WINDOW_S),
         unreachable_since=state.unreachable_since,
+        lapses=tuple(lapse for lapse in state.lapses if now - lapse[0] < RESTART_WINDOW_S),
+        timer_seen_s=state.timer_seen_s,
     )
 
 
@@ -613,10 +700,14 @@ def _clock(state: RelayState, now: float) -> RelayState:
     moved: dict[str, Any] = {}
     for item in fields(state):
         value = getattr(state, item.name)
+        if item.name == "timer_seen_s":
+            continue  # a length, not a moment
         if isinstance(value, float) and value > now:
             moved[item.name] = now
     if any(t > now for t in state.restarts):
         moved["restarts"] = tuple(min(t, now) for t in state.restarts)
+    if any(at > now for at, _length in state.lapses):
+        moved["lapses"] = tuple((min(at, now), length) for at, length in state.lapses)
     return replace(state, **moved) if moved else state
 
 
