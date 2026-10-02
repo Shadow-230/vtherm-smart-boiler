@@ -793,19 +793,20 @@ def test_a_rewrite_that_does_not_hold_is_an_outside_change() -> None:
     [(HELD, 0.0, 45.0, 50.0), (ECHOED, ON, OFF, ON)],
     ids=["setpoint", "heating_switch"],
 )
-def test_a_late_echo_of_the_previous_value_is_not_judged_within_the_timeout(
+def test_a_late_echo_of_the_previous_value_is_not_judged_until_the_new_one_is_read_back(
     config: GuardConfig, first: float, previous: float, new: float
 ) -> None:
-    """Z4-01's negative (M8: "its previous one", within 120 s of the change): the plugin's
-    previous value — written long before — still read back after the plugin sent a new one is a
-    late echo, not judged while the change is at most 120 s old: no rewrite, no event, shown
-    waiting, then not confirmed once the timeout has passed. Past that window it is judged like
-    any other value: held two steps, the one rewrite."""
+    """Z4-01's negative, as Z4R-01 corrects it (M8: "its previous one", until the plugin's new
+    value has been read back): the plugin's previous value still read back after the plugin sent
+    a new one is a late echo or the device's own limit, not judged however long it lasts — no
+    rewrite, no event, shown waiting, then not confirmed once the timeout has passed. Once the
+    new value has been read back, a return to the previous one is judged like any other value:
+    held two steps, the one rewrite."""
     state = held(config, first=first, value=previous)
     state = keep(state, config, 160.0, 990.0, previous, previous)
     state, action, _ = step(state, new, previous, 1000.0, config)
     assert action == WriteAction(new, WriteKind.CHANGE)
-    for t in range(1010, 1130, 10):  # up to the change + 120 s
+    for t in range(1010, 1610, 10):  # ten minutes, far past the timeout
         result = result_of(state, new, previous, float(t), config)
         state = result.state
         assert result.judged is ChangeClass.NOT_JUDGED
@@ -814,11 +815,110 @@ def test_a_late_echo_of_the_previous_value_is_not_judged_within_the_timeout(
     assert confirmation(state, config) is Confirmation.NOT_CONFIRMED
     assert state.rewritten_at is None
     assert state.blocked is None
-    result = result_of(state, new, previous, 1130.0, config)  # the window is over: one step
-    assert result.judged is ChangeClass.NOT_JUDGED
-    result = result_of(result.state, new, previous, 1140.0, config)  # held two steps
+    state = keep(state, config, 1610.0, 1650.0, new, new)  # the new value read back at last
+    assert confirmation(state, config) is Confirmation.CONFIRMED
+    result = result_of(state, new, previous, 1660.0, config)  # back to the previous one
+    assert result.judged is ChangeClass.NOT_JUDGED  # one step (M10)
+    result = result_of(result.state, new, previous, 1670.0, config)  # held two steps
     assert result.judged is ChangeClass.ANOTHER_CONTROLLER
     assert result.action == WriteAction(new, WriteKind.REWRITE)
+
+
+@pytest.mark.parametrize("config", [HELD, EXPIRING], ids=["held", "expiring"])
+def test_a_boiler_limit_at_the_previous_value_is_clipped_not_another_controller(
+    config: GuardConfig,
+) -> None:
+    """Z4R-01 (decision 6's "clipped"): a read-back on a whole-degree grid that shows the
+    boiler's own selected water temperature, held at its dial of 55 °C (EMS-ESP's
+    ``selflowtemp``, say). 55 confirmed; the curve rises and the plugin sends 56: the read-back
+    stays at 55, the plugin's previous value — not judged for ten minutes, no rewrite, no event;
+    then 57: one lower value across sent values 1 K apart — clipped, information only, never
+    another controller."""
+    state = keep(held(config, value=55.0), config, 160.0, 590.0, 55.0, 55.0)
+    state, action, _ = step(state, 56.0, 55.0, 600.0, config)
+    assert action == WriteAction(56.0, WriteKind.CHANGE)
+    for t in range(610, 1210, 10):
+        result = result_of(state, 56.0, 55.0, float(t), config)
+        state = result.state
+        assert result.judged is ChangeClass.NOT_JUDGED
+        assert result.events == ()
+        assert result.action is None or result.action.kind is WriteKind.KEEPALIVE
+    state, action, _ = step(state, 57.0, 55.0, 1210.0, config)
+    assert action == WriteAction(57.0, WriteKind.CHANGE)
+    judged = []
+    for t in range(1220, 1400, 10):
+        result = result_of(state, 57.0, 55.0, float(t), config)
+        state = result.state
+        judged.append(result.judged)
+        assert result.events == ()
+        assert result.action is None or result.action.kind is WriteKind.KEEPALIVE
+    assert ChangeClass.CLIPPED in judged
+    assert ChangeClass.ANOTHER_CONTROLLER not in judged
+    assert state.clip == 55.0
+    assert confirmation(state, config) is Confirmation.CLIPPED
+    assert state.rewritten_at is None
+    assert state.blocked is None
+
+
+@pytest.mark.parametrize(
+    ("config", "lag"),
+    [(HELD, 150.0), (HELD, 200.0), (EXPIRING, 260.0), (ECHOED, 150.0)],
+    ids=["setpoint_150s", "setpoint_200s", "setpoint_260s_expiring", "heating_switch_150s"],
+)
+def test_a_slow_read_back_showing_the_previous_value_is_not_another_controller(
+    config: GuardConfig, lag: float
+) -> None:
+    """Z4R-01: a read-back that shows each value 150-260 s late — an integration that polls the
+    device every few minutes — while the plugin's command moves every 5 minutes (2 K for the
+    setpoint; on and off for heating): for six hours it shows the plugin's previous value after
+    each change, then the new one. Never another controller: no rewrite, no block, no event."""
+    if config.two_valued:
+
+        def desired(t: float) -> float:
+            return ON if int(t // 300) % 2 == 0 else OFF
+
+        before = OFF
+    else:
+
+        def desired(t: float) -> float:
+            return 40.0 + 2.0 * (int(t // 300) % 5)
+
+        before = 0.0
+    state = GuardState()
+    t = 0.0
+    while t <= 6 * HOUR:
+        shown = desired(t - lag) if t >= lag else before
+        result = result_of(state, desired(t), shown, t, config)
+        state = result.state
+        assert result.events == (), t
+        assert result.action is None or result.action.kind is not WriteKind.REWRITE, t
+        assert result.judged is not ChangeClass.ANOTHER_CONTROLLER, t
+        t += 10.0
+    assert state.rewritten_at is None
+    assert state.blocked is None
+    assert not state.ignored
+
+
+def test_heating_switched_back_within_120_s_of_a_confirmed_toggle_is_judged() -> None:
+    """Z4R-01: the OTGW's heating switch, its ``CH=`` refreshed every 30 s. "On" before the
+    plugin; the plugin switched heating off, then on again — read back at once. A person switches
+    heating off 40 s after that toggle: the plugin's previous state, but its new one was read back
+    — judged at once: one step not judged and nothing written over it, the second the one rewrite.
+    (Within 120 s of the toggle the refresh used to write over it, unjudged.)"""
+    otgw = GuardConfig(write_type=WriteType.HELD, two_valued=True, refresh_s=30.0)
+    state = keep(held(otgw, first=ON, value=ON), otgw, 160.0, 990.0, ON, ON)
+    state, action, _ = step(state, OFF, ON, 1000.0, otgw)
+    assert action == WriteAction(OFF, WriteKind.CHANGE)
+    state = keep(state, otgw, 1010.0, 1990.0, OFF, OFF)
+    state, action, _ = step(state, ON, OFF, 2000.0, otgw)
+    assert action == WriteAction(ON, WriteKind.CHANGE)
+    state = keep(state, otgw, 2010.0, 2030.0, ON, ON)  # read back; refreshed at 2030
+    first = result_of(state, ON, OFF, 2040.0, otgw)  # switched off by a person
+    assert first.judged is ChangeClass.NOT_JUDGED
+    assert first.action is None  # no refresh over it
+    result = result_of(first.state, ON, OFF, 2050.0, otgw)
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+    assert result.action == WriteAction(ON, WriteKind.REWRITE)
 
 
 def test_a_setpoint_back_at_the_plugins_previous_value_is_another_controller() -> None:
