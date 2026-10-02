@@ -306,6 +306,40 @@ def test_a_clip_is_never_learned_as_a_limit() -> None:
         assert config.control.limits == FlowLimits()
 
 
+def test_a_setpoint_not_shown_for_five_minutes_is_reported_not_judged() -> None:
+    """Z4R2-03: the setpoint moves once; the read-back keeps the plugin's previous value — the
+    device holds it. Nothing is judged and nothing blocked; after 5 minutes the output names the
+    setpoint as not shown (the repair issue) and as unconfirmed ("confirmation missing"). It ends
+    once the value is read back. Negative: 4 min 50 s — neither."""
+    state, out = loop_step(LoopState(), inputs(0.0), None, CONFIG)
+    assert out.setpoint is not None
+    first = out.setpoint.value
+    t = 10.0
+    while t <= 600.0:
+        state, out = loop_step(state, inputs(t), first, CONFIG)
+        t += 10.0
+    changed = None
+    while changed is None and t <= 2000.0:
+        state, out = loop_step(state, inputs(t, outdoor_sensor=-5.0), first, CONFIG)
+        if out.setpoint is not None and out.setpoint.value != first:
+            changed = t
+        t += 10.0
+    assert changed is not None  # colder: one new value, no ramp
+    new = state.setpoint.written
+    shown: dict[float, tuple[tuple[str, ...], tuple[str, ...]]] = {}
+    while t <= changed + 400.0:
+        state, out = loop_step(state, inputs(t, outdoor_sensor=-5.0), first, CONFIG)
+        assert not out.blocked
+        assert not out.events
+        shown[t] = (out.not_shown, out.unconfirmed)
+        t += 10.0
+    seen_from = changed + 10.0  # the first step that read the previous value back
+    assert shown[seen_from + 290.0] == ((), ())
+    assert shown[seen_from + 300.0] == (("setpoint",), ("setpoint",))
+    state, out = loop_step(state, inputs(t, outdoor_sensor=-5.0), new, CONFIG)
+    assert (out.not_shown, out.unconfirmed) == ((), ())
+
+
 def test_frequent_losses_raise_a_warning_while_writing_goes_on() -> None:
     """Three lost commands within a day raise "commands lost" — information: writing goes on;
     it clears after a day without a loss."""

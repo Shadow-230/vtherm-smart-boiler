@@ -170,6 +170,7 @@ from .core.controller import (
 )
 from .core.demand import zone_wants_heat
 from .core.guards import (
+    CONFIRM_TIMEOUT_S,
     TOLERANCE_K,
     Confirmation,
     GuardConfig,
@@ -219,6 +220,7 @@ from .core.loop import (
     OFF,
     ON,
     RELAY,
+    SETPOINT,
     LastCommand,
     LoopOutput,
     LoopState,
@@ -343,6 +345,10 @@ READ_BACK_WAIT_S = 300.0
 # from the start of the session leaves the house unheated: decision 6's information alarm, and a
 # repair issue at error level (Z4-11). No hand-back, no block.
 WRITE_IGNORED_ISSUE = "write_ignored_no_heat"
+# Z4R2-03: the setpoint's read-back known and showing another value than the plugin's for
+# 5 minutes — "confirmation missing", and a repair issue: a warning, an error where a hand-back
+# stops heating. Never a step aside by itself.
+NOT_SHOWN_ISSUE = "setpoint_not_shown"
 RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control counts as off
 # X8's repair issues: the relay out of reach for five minutes (one text per declared state after
 # a power cut), the relay never taking the command this session, and a relay resting "off" while
@@ -792,6 +798,10 @@ class ControlUnit:
         # Z4-11: whether the issue of a command ignored from the start, with nothing else heating
         # the house, is up.
         self._ignored_issue = False
+        # Z4R2-03: whether the issue of a setpoint the boiler does not show is up; and since when
+        # the external-control switch, turned on, has not been seen on.
+        self._not_shown_issue = False
+        self._external_unseen_since: float | None = None
         # Decision 4: the rooms the frost issue shows now, with the temperature it shows.
         self._frost_issue_shown: dict[str, float] = {}
         # X8, the relay: whether its last change carried one of the plugin's own write contexts,
@@ -1256,6 +1266,7 @@ class ControlUnit:
         self._delete_relay_issues()  # not during a planned stop; the next run tells again
         self._delete_read_back_issue()  # the next run tells again, once its wait has lasted
         self._delete_ignored_issue()  # the next session tries the command again
+        self._delete_not_shown_issue()  # the next run tells again, after its 5 minutes
         # The resumes given up: stored, the next run with a unit shows them again (Y4).
         entry_id = self._coordinator.config_entry.entry_id
         ir.async_delete_issue(self._hass, DOMAIN, f"{LEARNING_NOT_RESUMED_ISSUE}_{entry_id}")
@@ -1520,6 +1531,7 @@ class ControlUnit:
                 self._read_back_wait_since = None  # nothing waits (Z4-10)
                 self._delete_read_back_issue()
                 self._delete_ignored_issue()  # it goes with the session (Z4-11)
+                self._delete_not_shown_issue()  # and so does this one (Z4R2-03)
             # The wish is stored before anything else can fail (P-11).
             await self._coordinator.async_save_control_now()
             await self._async_run_step(now)
@@ -1544,6 +1556,7 @@ class ControlUnit:
         self._quiet_since = None
         self._external_seen_on = False
         self._external_renew = False
+        self._external_unseen_since = None
         self._forget_last_command()
         self._report_latched(anew=False)
         self._coordinator.schedule_control_save()
@@ -1652,6 +1665,7 @@ class ControlUnit:
         self._follow_decision_alarms(out, monitor_failed)
         ignored = self._follow_target_alarms(out)
         self._follow_ignored_no_heat()
+        self._follow_not_shown(out)
         if out.events or _memory_moved(before, session.loop):
             # The alarm behind a latch; the values from before the plugin and the fall-backs
             # without a trace a later judgement rests on.
@@ -2007,6 +2021,43 @@ class ControlUnit:
         if self._ignored_issue:
             self._ignored_issue = False
             ir.async_delete_issue(self._hass, DOMAIN, self._ignored_issue_id())
+
+    def _follow_not_shown(self, out: LoopOutput) -> None:
+        """Z4R2-03: the setpoint's read-back has shown another value than the plugin's for five
+        minutes — the device keeps its own, or the read-back is not the boiler's setpoint. Never
+        judged by itself (a boiler's own limit stays clipped): the information alarm "confirmation
+        missing" says it, and a repair issue — a warning, an error where a hand-back stops
+        heating — says what to check. It goes once the value is read back, or control is switched
+        off; the unit stopping takes it too."""
+        if not (self.enabled and SETPOINT in out.not_shown):
+            self._delete_not_shown_issue()
+            return
+        if self._not_shown_issue:
+            return
+        stops = self._stops_heating()
+        _LOGGER.warning(
+            "The boiler's setpoint read-back has not shown the plugin's value for 5 minutes; "
+            "control goes on%s",
+            "; with this installation the house may not get the heat it needs" if stops else "",
+        )
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            self._not_shown_issue_id(),
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.ERROR if stops else ir.IssueSeverity.WARNING,
+            translation_key=NOT_SHOWN_ISSUE,
+        )
+        self._not_shown_issue = True
+
+    def _not_shown_issue_id(self) -> str:
+        return f"{NOT_SHOWN_ISSUE}_{self._coordinator.config_entry.entry_id}"
+
+    def _delete_not_shown_issue(self) -> None:
+        if self._not_shown_issue:
+            self._not_shown_issue = False
+            ir.async_delete_issue(self._hass, DOMAIN, self._not_shown_issue_id())
 
     def _target_ready(self) -> bool:
         """The write target can take a command: on the entity path each entity written to is
@@ -3232,7 +3283,9 @@ class ControlUnit:
         change (Z4-09). Off with no trace otherwise — a person, an automation, its own button,
         while it stayed available — another controller: the plugin steps aside at once, with no
         rewrite (the whole safe hand-back; the switch, already off, counts as released). Not
-        judged while unknown, nor before it was read back on."""
+        judged while unknown, nor before it was read back on — but that only for the
+        confirmation timeout after the plugin turned it on (Z4R2-03): one never seen on, stuck or
+        put back within a step, is then judged as these rows say."""
         options = self.options
         entity = options.hand_back_entity
         returned = self._returned("external", entity)
@@ -3246,16 +3299,21 @@ class ControlUnit:
         ):
             self._external_seen_on = False
             self._external_returned = False
+            self._external_unseen_since = None
             return
         self._external_returned = self._external_returned or returned
         state = self._hass.states.get(entity)
         on = None if state is None else parse_binary(state.state)
         if on is True:
             self._external_seen_on = True
+            self._external_unseen_since = None
             return
-        if on is None or not self._external_seen_on:
+        if on is None:
             return
+        if not self._external_seen_on and not self._external_unseen_too_long(now):
+            return  # not seen on since the plugin turned it on: within the timeout
         self._external_seen_on = False
+        self._external_unseen_since = None
         traced = outage_seen(self._outages, self._trace_entities(entity), now) or trace_seen(
             self._restart_at, now
         )
@@ -3281,6 +3339,18 @@ class ControlUnit:
         )
         self._session.alarms.add(ControlAlarm.OUTSIDE_CHANGE)
         self._step_aside_seen = {"target": entity, "value": "off"}  # the latch issue names it
+
+    def _external_unseen_too_long(self, now: float) -> bool:
+        """Z4R2-03: the external-control switch not seen on since the plugin turned it on, for
+        longer than the confirmation timeout — no longer exempt. Not turned on yet: nothing to
+        judge."""
+        writer = self._writer
+        on_at = None if writer is None else writer.external_on_at
+        if on_at is None:
+            return False
+        if self._external_unseen_since is None:
+            self._external_unseen_since = on_at  # the turn-on not seen since
+        return now - self._external_unseen_since > CONFIRM_TIMEOUT_S
 
     def _external_lapsed(self, now: float) -> bool:
         """M17 for the external-control switch (Z4-09): declared expiring, and not turned on by

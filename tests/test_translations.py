@@ -957,3 +957,16 @@ def test_the_relay_timer_seen_issue_is_translated() -> None:
     assert "Read the timer's length in the relay's own settings" in issue  # not the number seen
     timer = SOURCE["options"]["step"]["control_relay"]["data_description"]["relay_off_timer"]
     assert "the same time after" in timer
+
+
+def test_the_setpoint_not_shown_issue_is_translated() -> None:
+    """Z4R2-03: the repair issue of a setpoint the boiler does not show, with a title and a text
+    and no placeholder, in every language; it says control goes on without a hand-back."""
+    from custom_components.vtherm_smart_boiler.control import NOT_SHOWN_ISSUE
+
+    for language in ALL_LANGUAGES:
+        issue = _texts(language)["issues"][NOT_SHOWN_ISSUE]
+        assert issue["title"], language
+        assert issue["description"], language
+        assert PLACEHOLDER.findall(issue["description"]) == [], language
+    assert "does not hand the boiler back" in SOURCE["issues"][NOT_SHOWN_ISSUE]["description"]

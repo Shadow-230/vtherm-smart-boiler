@@ -779,6 +779,7 @@ async def test_confirmation_missing_never_hands_back(rig: Rig, shown: str) -> No
     assert 0.0 not in rig.gateway.setpoints()[count:]  # no hand-back
     if shown == "unknown":
         assert len(rig.gateway.setpoints()) > count  # the keep-alive goes on
+    assert issue(rig, "setpoint_not_shown") is None  # unknown is not "another value" (Z4R2-03)
     rig.gateway.read_back_shown = None
     await rig.advance(10)
     assert rig.state("binary_sensor", "alarm_confirmation_missing").state == "off"
@@ -3035,6 +3036,97 @@ async def test_heating_switched_from_outside_is_written_once_then_handed_back(ri
     await rig.advance(10)
     assert rig.state("sensor", "control_state").state == "handed_back"
     assert rig.gateway.calls[-3:] == HAND_BACK  # the whole safe hand-back, the lowest first
+
+
+async def test_a_heating_switch_that_never_shows_its_new_state_is_judged(rig: Rig) -> None:
+    """Z4R2-03: OTGW with a heating echo, "on" before the plugin. The plugin switched heating off
+    (read back), then on again — and the echo never shows "on" (the switch stuck, or an
+    automation putting it back within a step of every CH=1). Within a few minutes it is judged:
+    the plugin's previous state, no longer exempt after the confirmation timeout, held — another
+    controller: CH=1 written once more, then the plugin steps aside with the safe hand-back and
+    the latch issue, instead of refreshing CH=1 every 30 s for ever, unseen."""
+    await start(rig, ch_confirmed_entity=CH_ECHO)
+    await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
+    await rig.switch(True)
+    await rig.advance(150)  # "on" confirmed and held: the start phase is over
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await rig.advance(200)
+    assert rig.gateway.ch is False  # "off" taken
+    rig.gateway.forced_ch = False  # from now on the echo never shows "on"
+    rig.zones.set("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+    await rig.advance(110)
+    assert ("ch", True) in rig.gateway.calls  # "on" sent
+    assert rig.state("sensor", "control_state").state == "heating"  # not judged yet
+    for _ in range(40):
+        await rig.advance(10)
+        if rig.state("sensor", "control_state").state == "handed_back":
+            break
+    state = rig.state("sensor", "control_state")
+    assert state.state == "handed_back"
+    assert state.attributes["latched_by"] == ["outside_change"]
+    assert unit_of(rig)._session.loop.switch.rewritten_at is not None  # one rewrite first
+    assert issue(rig, "control_latched") is not None
+    count = len(rig.gateway.calls)
+    await rig.advance(120)
+    assert len(rig.gateway.calls) == count  # no refresh for ever: left alone
+
+
+@pytest.mark.parametrize(
+    ("effect", "severity", "cleared_by"),
+    [
+        ("own_control", ir.IssueSeverity.WARNING, "read_back"),
+        ("heating_stops", ir.IssueSeverity.ERROR, "switch_off"),
+    ],
+)
+@pytest.mark.usefixtures("low_setpoint_off")
+async def test_a_setpoint_the_boiler_does_not_show_raises_an_issue(
+    rig: Rig, effect: str, severity: ir.IssueSeverity, cleared_by: str
+) -> None:
+    """Z4R2-03 for the setpoint: a held setpoint entity, the device keeping its old value after
+    the plugin's new one (Z4R-01: never judged by itself, so a boiler's own limit stays clipped).
+    After 5 minutes: "confirmation missing" names the setpoint and a repair issue says the
+    boiler does not show the plugin's value — an error where a hand-back stops heating, else a
+    warning — with no hand-back. Both go once the value is read back, or when control is
+    switched off. Negative: 4 min 50 s — neither."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(
+        rig,
+        **held_entity(
+            number, hand_back_value_effect=effect, decision_interval_min=1, ramp_k_per_min=""
+        ),
+    )
+    await rig.advance(310)
+    await rig.switch(True)
+    await rig.advance(150)  # read back and held
+    held = number.value
+    number.forced = held  # the device keeps it from now on
+    rig.outdoor = OUTDOOR - 10.0  # colder: one new value, no ramp
+    for _ in range(12):
+        await rig.advance(10)
+        if number.writes[-1] != held:
+            break
+    assert number.writes[-1] > held
+    await rig.advance(280)
+    assert rig.state("binary_sensor", "alarm_confirmation_missing").state == "off"
+    assert issue(rig, "setpoint_not_shown") is None
+    await rig.advance(30)
+    missing = rig.state("binary_sensor", "alarm_confirmation_missing")
+    assert missing.state == "on"
+    assert missing.attributes["targets"] == ["setpoint"]
+    found = issue(rig, "setpoint_not_shown")
+    assert found is not None
+    assert found.severity is severity
+    assert not found.is_fixable
+    assert rig.state("sensor", "control_state").state != "handed_back"  # never by itself
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
+    if cleared_by == "switch_off":
+        await rig.switch(False)
+    else:
+        number.forced = None  # the device takes values again
+        await rig.advance(310)  # the held refresh writes it again: read back
+        assert rig.state("binary_sensor", "alarm_confirmation_missing").state == "off"
+    assert issue(rig, "setpoint_not_shown") is None
 
 
 async def test_heating_switched_back_to_its_baseline_is_first_a_lost_command(rig: Rig) -> None:
@@ -7737,6 +7829,37 @@ async def test_the_external_control_switch_off_after_its_device_restart_is_switc
         assert external.writes.count(True) == ons
         assert rig.state("sensor", "control_state").state == "handed_back"
         assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
+
+
+@pytest.mark.parametrize("write_type", ["expiring", "held"])
+@pytest.mark.usefixtures("low_setpoint_off")
+async def test_an_external_switch_never_shown_on_is_judged_after_the_timeout(
+    rig: Rig, write_type: str
+) -> None:
+    """Z4R2-03 for the external-control switch: control turns it on, and it never shows "on"
+    (it does not take it, or something puts it back within a step). Within the confirmation
+    timeout nothing is judged; after it, it reads off with no trace of an outage — another
+    controller, as M14 says: the plugin steps aside, no fight, instead of turning it on again
+    every keep-alive for ever, unseen."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    external = FakeSwitch(
+        rig.hass, entity_id="input_boolean.fake_external", on=False, stuck_off=True
+    )
+    external.register()
+    await start(rig, **switch_method(number, external.entity_id, write_type))
+    await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
+    await rig.switch(True)
+    assert external.writes == [True]  # turned on, but it stays off
+    await rig.advance(110)
+    assert rig.state("sensor", "control_state").state != "handed_back"  # within the timeout
+    await rig.advance(30)
+    state = rig.state("sensor", "control_state")
+    assert state.state == "handed_back"
+    assert state.attributes["latched_by"] == ["outside_change"]
+    ons = external.writes.count(True)
+    await rig.advance(120)
+    assert external.writes.count(True) == ons  # left alone
 
 
 @pytest.mark.parametrize("silent", [True, False], ids=["plugin_silent", "kept_alive"])

@@ -48,6 +48,7 @@ from .guards import (
     for_new_session,
     losses_warning,
     plan_write,
+    value_not_shown,
 )
 from .limits import Grid, write_bounds
 from .relay import (
@@ -109,6 +110,9 @@ class LoopOutput:
     blocked: bool = False  # another controller has the boiler: nothing is written
     ignored: tuple[str, ...] = ()  # targets ignored from the start (``SETPOINT``, ``HEATING``)
     unconfirmed: tuple[str, ...] = ()  # targets whose read-back has been missing for long
+    # Targets whose value the read-back has not shown for long, showing another (Z4R2-03): the
+    # setpoint only — reported, never judged by itself.
+    not_shown: tuple[str, ...] = ()
     commands_lost: bool = False  # the warning: commands keep getting lost
     relay: RelayWrite | None = None  # the relay path: what to write to the relay now
     relay_unreachable: bool = False  # the relay out of reach for five minutes (its alarm)
@@ -155,14 +159,16 @@ def new_session(state: LoopState, now: float) -> LoopState:
 
 def _outputs(
     state: LoopState, config: LoopConfig, now: float
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """The targets ignored from the start, and those whose confirmation is missing."""
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """The targets ignored from the start, those whose confirmation is missing, and those whose
+    value the read-back does not show (Z4R2-03)."""
     guards = [(SETPOINT, state.setpoint)]
     if config.ch_writes:
         guards.append((HEATING, state.switch))
     ignored = tuple(name for name, guard in guards if guard.ignored)
     unconfirmed = tuple(name for name, guard in guards if confirmation_missing(guard, now))
-    return ignored, unconfirmed
+    not_shown = tuple(name for name, guard in guards if value_not_shown(guard, now))
+    return ignored, unconfirmed, not_shown
 
 
 def _gridded(value: float, grid: Grid | None, config: LoopConfig, off: bool) -> float | None:
@@ -213,23 +219,25 @@ def loop_step(
         # Whole, whatever a guard found: no target is left out, the one another controller
         # holds included (the user's answer H).
         kept = after_hand_back_loop(state, control)
-        ignored, unconfirmed = _outputs(kept, config, now)
+        ignored, unconfirmed, not_shown = _outputs(kept, config, now)
         return kept, LoopOutput(
             decision,
             hand_back=True,
             ignored=ignored,
             unconfirmed=unconfirmed,
+            not_shown=not_shown,
             commands_lost=warned,
         )
     blocked = state.setpoint.blocked is not None or state.switch.blocked is not None
     if decision.command is None or blocked:
         waiting = replace(state, control=control)
-        ignored, unconfirmed = _outputs(waiting, config, now)
+        ignored, unconfirmed, not_shown = _outputs(waiting, config, now)
         return waiting, LoopOutput(
             decision,
             blocked=blocked,
             ignored=ignored,
             unconfirmed=unconfirmed,
+            not_shown=not_shown,
             commands_lost=warned,
         )
 
@@ -271,13 +279,14 @@ def loop_step(
         setpoint = planned.state if planned.state.blocked is not None else state.setpoint
         switch = heat.state if heat.state.blocked is not None else state.switch
         stopped = LoopState(control, setpoint, switch, losses, warned)
-        ignored, unconfirmed = _outputs(stopped, config, now)
+        ignored, unconfirmed, not_shown = _outputs(stopped, config, now)
         return stopped, LoopOutput(
             decision,
             events=events,
             blocked=True,
             ignored=ignored,
             unconfirmed=unconfirmed,
+            not_shown=not_shown,
             commands_lost=warned,
         )
 
@@ -302,7 +311,7 @@ def loop_step(
         written = planned.state.written
         heating_on = None if written is None else written != off_value
     new = LoopState(control, planned.state, heat.state, losses, warned)
-    ignored, unconfirmed = _outputs(new, config, now)
+    ignored, unconfirmed, not_shown = _outputs(new, config, now)
     return new, LoopOutput(
         decision,
         planned.action,
@@ -312,6 +321,7 @@ def loop_step(
         heating_on,
         ignored=ignored,
         unconfirmed=unconfirmed,
+        not_shown=not_shown,
         commands_lost=warned,
     )
 

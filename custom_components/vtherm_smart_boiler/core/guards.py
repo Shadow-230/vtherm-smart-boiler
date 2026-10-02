@@ -39,16 +39,26 @@ setpoint (S-40, answer E):
   send not confirmed: written again once, then — a second such change within a day of it, or the
   rewrite not read back within 120 s — the guard blocks and reports; the plugin steps aside with
   the whole safe hand-back and never fights it. "Any other value" includes the plugin's previous
-  one once the value that replaced it has been read back (Z4-01, Z4R-01): for heating on/off, the
-  only other state once the plugin has switched both ways.
+  one once it is no longer exempt (below): for heating on/off, the only other state once the
+  plugin has switched both ways (Z4-01).
 
-Not judged: a difference seen for one step; the plugin's previous value until the value that
-replaced it has been read back — a late echo, or the device holding it, the boiler's own limit
-(judged "clipped" once the plugin has sent values 1 K apart) — shown "not confirmed" once the
-timeout has passed; a hot-water draw and the 120 s after it; the plugin's own expiring override
-lapsing after more than 60 s of its silence (sent again); a write of the plugin's own that failed
-(sent again). Keep-alive repeats and refreshes are not rewrites. A value shown as confirmed is one
-the read-back still shows: another value seen, even for one step, shows "not confirmed".
+The plugin's previous value is exempt — a late echo, or the device holding it — until the value
+that replaced it has been read back (Z4R-01). For heating on/off also only until the confirmation
+timeout after that send has passed (Z4R2-03): a state no step ever shows — the device stuck, an
+automation putting it back within a step — is then judged like any other (back at the value from
+before the plugin: the fall-back rows; otherwise another controller); an echo slower than the
+timeout is judged too, a known limit (K4). A setpoint has no such bound — a boiler's own limit is
+judged "clipped" once the plugin has sent values 1 K apart, and a slow read-back is waited for —
+but its value not shown for ``CONFIRMATION_MISSING_S`` while the read-back is known and shows
+another one is reported (``value_not_shown``: "confirmation missing" and its repair issue), never
+judged by itself.
+
+Not judged: a difference seen for one step; the exempt previous value (above), shown "not
+confirmed" once the timeout has passed; a hot-water draw and the 120 s after it; the plugin's own
+expiring override lapsing after more than 60 s of its silence (sent again); a write of the
+plugin's own that failed (sent again). Keep-alive repeats and refreshes are not rewrites. A value
+shown as confirmed is one the read-back still shows: another value seen, even for one step, shows
+"not confirmed".
 
 The guard's memory — the baseline, the block, its counters, the class "ignored from the start",
 the clip — lasts the session, across hand-backs inside it (``after_hand_back``); the one rewrite is
@@ -165,8 +175,9 @@ class ReadKind(StrEnum):
     OURS = "ours"  # the value written, or one sent within the confirmation timeout
     FALL_BACK = "fall_back"  # the baseline, or the thermostat's own value
     # The value written before the current one, while the current one has not been read back
-    # since it replaced it: a late echo or the device holding it, not judged. Once the current one
-    # has been read back, it is another value like any other (Z4-01, Z4R-01).
+    # since it replaced it — for heating on/off only within the confirmation timeout of that
+    # send: a late echo or the device holding it, not judged. Then it is another value like any
+    # other (Z4-01, Z4R-01, Z4R2-03).
     PREVIOUS = "previous"
     OTHER = "other"
 
@@ -223,6 +234,7 @@ class GuardState:
     confirmed_at: float | None = None  # read back as the plugin's since that send
     previous: float | None = None  # the value written before the current one
     taken: bool = False  # the current value read back itself since it replaced ``previous``
+    replaced_at: float | None = None  # when it replaced it (heating on/off: the exemption's end)
     retry: bool = False  # the last write failed, or waited: send it again
     recent: tuple[tuple[float, float], ...] = ()  # (time, value) of sends within the timeout
     change_at: float | None = None  # the latest send of a new value
@@ -240,6 +252,9 @@ class GuardState:
     held_since: float | None = None  # the read-back shows the plugin's value since
     last_kind: ReadKind | None = None  # what the last known read-back showed
     unknown_since: float | None = None  # the read-back unknown since
+    # A setpoint's read-back known and showing another value than the plugin's — not during a
+    # draw, not in the fall-back set before the start phase is over — since (Z4R2-03).
+    unshown_since: float | None = None
     # --- the session's memory: kept across hand-backs, reset at the session's end ---
     baseline: float | None = None  # the value from before the plugin
     sent_values: tuple[float, ...] = ()  # values sent, while the baseline is not known
@@ -327,12 +342,30 @@ def confirmation(state: GuardState, config: GuardConfig) -> Confirmation | None:
 
 def confirmation_missing(state: GuardState, now: float) -> bool:
     """The read-back unknown, unavailable or missing for ``CONFIRMATION_MISSING_S`` while the
-    plugin writes (M11): information only."""
-    return (
+    plugin writes (M11), or a setpoint's value not shown for as long (``value_not_shown``):
+    information only."""
+    unknown = (
         state.written is not None
         and not state.ignored
         and state.unknown_since is not None
         and now - state.unknown_since >= CONFIRMATION_MISSING_S
+    )
+    return unknown or value_not_shown(state, now)
+
+
+def value_not_shown(state: GuardState, now: float) -> bool:
+    """A setpoint the boiler does not show (Z4R2-03): its read-back known and showing another
+    value than the plugin's for ``CONFIRMATION_MISSING_S`` — the plugin's previous one held by the
+    device, say — while the plugin writes; not a clip (its own information), not "ignored from
+    the start" (its own alarm), not blocked. Reported, never judged by itself."""
+    since = state.unshown_since
+    return (
+        since is not None
+        and now - since >= CONFIRMATION_MISSING_S
+        and state.written is not None
+        and state.clip is None
+        and not state.ignored
+        and state.blocked is None
     )
 
 
@@ -446,9 +479,9 @@ def classify(
     """The class of a step's read-back — the one table of decision 6, in its order (``SCOPE.md``
     §7): unknown; confirmed; a draw; the plugin's own lapse; a held target back; the rewrite not
     read back; the fall-back set (the start phase's attempts, then lost command or another
-    controller); the previous value while the value that replaced it has not been read back;
-    clipped; another value held two steps — the previous one too, once its successor was read
-    back."""
+    controller); the previous value while it is exempt (its successor not read back; heating
+    on/off within the confirmation timeout of that send); clipped; another value held two steps —
+    the previous one too, once no longer exempt."""
     if state.written is None or not config.read_back or read_back is None or seen.kind is None:
         return ChangeClass.NOT_JUDGED
     if seen.kind is ReadKind.OURS:
@@ -578,6 +611,7 @@ def _observe(
                 unknown_at=now,
                 foreign=None,
                 foreign_steps=0,
+                unshown_since=None,  # unknown: M11's rule speaks instead
             )
         trace = trace_seen(_latest(context.outage_at, state.unknown_at), now)
         state = _note_attempt_trace(state, trace)
@@ -588,7 +622,19 @@ def _observe(
     ours = state.written is not None and _shows_ours(state, read_back, now, config)
     if not ours:
         state = _learn_baseline(state, read_back, context, quiet, config)
-    kind = _kind(state, read_back, ours, context, trace, config)
+    kind = _kind(state, read_back, ours, context, trace, now, config)
+    unshown = (
+        not config.two_valued
+        and not quiet
+        and kind is not ReadKind.OURS
+        and not (kind is ReadKind.FALL_BACK and not state.start_done)
+    )
+    state = replace(
+        state,
+        unshown_since=(now if state.unshown_since is None else state.unshown_since)
+        if unshown
+        else None,
+    )
     last = state.last_kind
     fell = kind is ReadKind.FALL_BACK and last is not None and last is not ReadKind.FALL_BACK
     if kind is ReadKind.OURS:
@@ -687,6 +733,7 @@ def _kind(
     ours: bool,
     context: GuardContext,
     trace: bool,
+    now: float,
     config: GuardConfig,
 ) -> ReadKind:
     if ours:
@@ -700,13 +747,23 @@ def _kind(
         # Two values: with a trace of an outage, the other state is the device's own — a lost
         # command, not another controller (more cautious than the table's row 13).
         return ReadKind.FALL_BACK
-    if _near(value, state.previous, tolerance) and not state.taken:
+    if _near(value, state.previous, tolerance) and not state.taken and _exempt(state, now, config):
         # The value the current one replaced, the current one not read back yet: a late echo, or
-        # the device holding it (a boiler limit, a slow read-back) — never judged for a fixed
-        # time alone (Z4R-01). Once the current one has been read back, a return to it is judged:
-        # a two-valued target's other state too, once the plugin has switched both ways (Z4-01).
+        # the device holding it — a setpoint for as long as that lasts (a boiler limit, a slow
+        # read-back: Z4R-01), heating on/off for the confirmation timeout only (Z4R2-03). Once
+        # it is no longer exempt, a return to it is judged: a two-valued target's other state
+        # too, once the plugin has switched both ways (Z4-01).
         return ReadKind.PREVIOUS
     return ReadKind.OTHER
+
+
+def _exempt(state: GuardState, now: float, config: GuardConfig) -> bool:
+    """A setpoint's previous value stays exempt until its successor is read back; heating
+    on/off's, also only within the confirmation timeout of the send that replaced it."""
+    if not config.two_valued:
+        return True
+    replaced = state.replaced_at
+    return replaced is not None and now - replaced <= config.confirm_timeout_s
 
 
 # --- what a class does -----------------------------------------------------------------------
@@ -835,6 +892,7 @@ def _send(
         confirmed_at=None,
         previous=written if new_value else state.previous,
         taken=False if new_value else state.taken,
+        replaced_at=now if new_value else state.replaced_at,
         retry=False,
         recent=(*recent, (now, value)),
         change_at=now if kind is WriteKind.CHANGE and new_value else state.change_at,

@@ -31,6 +31,7 @@ from custom_components.vtherm_smart_boiler.core.guards import (
     for_new_session,
     losses_warning,
     plan_write,
+    value_not_shown,
     write_failed,
 )
 
@@ -790,18 +791,20 @@ def test_a_rewrite_that_does_not_hold_is_an_outside_change() -> None:
 
 @pytest.mark.parametrize(
     ("config", "first", "previous", "new"),
-    [(HELD, 0.0, 45.0, 50.0), (ECHOED, ON, OFF, ON)],
-    ids=["setpoint", "heating_switch"],
+    [(HELD, 0.0, 45.0, 50.0), (EXPIRING, 0.0, 45.0, 50.0)],
+    ids=["held", "expiring"],
 )
 def test_a_late_echo_of_the_previous_value_is_not_judged_until_the_new_one_is_read_back(
     config: GuardConfig, first: float, previous: float, new: float
 ) -> None:
-    """Z4-01's negative, as Z4R-01 corrects it (M8: "its previous one", until the plugin's new
-    value has been read back): the plugin's previous value still read back after the plugin sent
-    a new one is a late echo or the device's own limit, not judged however long it lasts — no
-    rewrite, no event, shown waiting, then not confirmed once the timeout has passed. Once the
-    new value has been read back, a return to the previous one is judged like any other value:
-    held two steps, the one rewrite."""
+    """Z4-01's negative for the setpoint, as Z4R-01 corrects it (M8: "its previous one", until
+    the plugin's new value has been read back): the plugin's previous value still read back after
+    the plugin sent a new one is a late echo or the device's own limit, not judged however long
+    it lasts — no rewrite, no event, shown waiting, then not confirmed once the timeout has
+    passed. Once the new value has been read back, a return to the previous one is judged like
+    any other value: held two steps, the one rewrite. (Heating on/off's previous state is exempt
+    only within the timeout: Z4R2-03,
+    ``test_a_heating_switch_never_showing_its_new_state_is_judged_within_minutes``.)"""
     state = held(config, first=first, value=previous)
     state = keep(state, config, 160.0, 990.0, previous, previous)
     state, action, _ = step(state, new, previous, 1000.0, config)
@@ -862,16 +865,18 @@ def test_a_boiler_limit_at_the_previous_value_is_clipped_not_another_controller(
 
 @pytest.mark.parametrize(
     ("config", "lag"),
-    [(HELD, 150.0), (HELD, 200.0), (EXPIRING, 260.0), (ECHOED, 150.0)],
-    ids=["setpoint_150s", "setpoint_200s", "setpoint_260s_expiring", "heating_switch_150s"],
+    [(HELD, 150.0), (HELD, 200.0), (EXPIRING, 260.0), (ECHOED, 100.0)],
+    ids=["setpoint_150s", "setpoint_200s", "setpoint_260s_expiring", "heating_switch_100s"],
 )
 def test_a_slow_read_back_showing_the_previous_value_is_not_another_controller(
     config: GuardConfig, lag: float
 ) -> None:
-    """Z4R-01: a read-back that shows each value 150-260 s late — an integration that polls the
-    device every few minutes — while the plugin's command moves every 5 minutes (2 K for the
-    setpoint; on and off for heating): for six hours it shows the plugin's previous value after
-    each change, then the new one. Never another controller: no rewrite, no block, no event."""
+    """Z4R-01: a setpoint read-back that shows each value 150-260 s late — an integration that
+    polls the device every few minutes — while the plugin's value moves 2 K every 5 minutes: for
+    six hours it shows the plugin's previous value after each change, then the new one. Never
+    another controller: no rewrite, no block, no event. A heating echo within the confirmation
+    timeout (100 s) alike; one slower than that is judged (Z4R2-03, a known limit for K4:
+    ``test_a_two_valued_echo_slower_than_the_timeout_is_judged``)."""
     if config.two_valued:
 
         def desired(t: float) -> float:
@@ -897,6 +902,144 @@ def test_a_slow_read_back_showing_the_previous_value_is_not_another_controller(
     assert state.rewritten_at is None
     assert state.blocked is None
     assert not state.ignored
+
+
+def test_a_two_valued_echo_slower_than_the_timeout_is_judged() -> None:
+    """Z4R2-03's known limit (K4): a heating echo that shows each state 150 s late. Heating on/off
+    has no clip; its previous state is exempt only for the confirmation timeout after the send, so
+    after a toggle away from the value from before the plugin the late echo is judged as another
+    controller — the one rewrite, then, the echo still late, the guard blocks."""
+    judged = []
+    state = GuardState()
+    t = 0.0
+    while t <= 2 * HOUR:
+        desired = ON if int(t // 300) % 2 == 0 else OFF
+        shown = (ON if int((t - 150.0) // 300) % 2 == 0 else OFF) if t >= 150.0 else ON
+        result = result_of(state, desired, shown, t, ECHOED)
+        state = result.state
+        judged.append(result.judged)
+        if state.blocked is not None:
+            break
+        t += 10.0
+    assert ChangeClass.ANOTHER_CONTROLLER in judged
+    assert state.blocked is GuardEvent.OUTSIDE_CHANGE
+
+
+@pytest.mark.parametrize("case", ["stuck_on", "stuck_on_echo_unknown", "stuck_off", "reverted"])
+def test_a_heating_switch_never_showing_its_new_state_is_judged_within_minutes(case: str) -> None:
+    """Z4R2-03: heating on/off whose new state no step ever sees — the device stuck at the
+    plugin's previous state, or an automation putting it back within a step of every write — is
+    judged once the confirmation timeout after the send has passed, as decision 6 says: here the
+    previous state is not the value from before the plugin, so another controller — the one
+    rewrite, and with it still not taken, the guard blocks: the plugin steps aside within minutes.
+    Stuck on (answer O's case: "off" before the plugin, or its echo unknown, the session's first
+    "on" taken, then "off" never taken): heating without demand. Stuck off (its cold twin):
+    "on" never taken while the plugin holds the boiler. Reverted: the OTGW's 30-s refresh writes
+    "on" again and again, put back every time — no longer for good."""
+    otgw = GuardConfig(write_type=WriteType.HELD, two_valued=True, refresh_s=30.0)
+    config = otgw if case == "reverted" else ECHOED
+    if case.startswith("stuck_on"):
+        first = None if case == "stuck_on_echo_unknown" else OFF
+        state, _, _ = step(GuardState(), ON, first, 0.0, config)
+        state = keep(state, config, 10.0, 50.0, ON, ON)  # "on" taken, the start phase not over
+        changed, new, stuck = 60.0, OFF, ON
+    else:
+        state = keep(held(config, first=ON, value=ON), config, 160.0, 990.0, ON, ON)
+        state, _, _ = step(state, OFF, ON, 1000.0, config)
+        state = keep(state, config, 1010.0, 1990.0, OFF, OFF)  # "off" taken
+        changed, new, stuck = 2000.0, ON, OFF
+    state, action, _ = step(state, new, stuck, changed, config)
+    assert action == WriteAction(new, WriteKind.CHANGE)
+    seen = []
+    t = changed + 10.0
+    while t <= changed + 600.0:
+        result = result_of(state, new, stuck, t, config)
+        state = result.state
+        seen.append((t, result.judged, result.action, result.events))
+        if state.blocked is not None:
+            break
+        t += 10.0
+    rewrites = [at for at, _j, action, _e in seen if action == WriteAction(new, WriteKind.REWRITE)]
+    # Nothing before the timeout and two steps; with the echo unknown at the first send, that
+    # unknown is a trace for 5 min, in which the other state is the device's own (uncounted).
+    first_judged = changed + (260.0 if case == "stuck_on_echo_unknown" else 140.0)
+    assert rewrites == [first_judged]
+    assert all(not events for at, _j, _a, events in seen if at < first_judged)
+    assert seen[-1][3] == (GuardEvent.OUTSIDE_CHANGE,)
+    assert seen[-1][0] == first_judged + 120.0  # the rewrite not read back: within minutes
+    assert state.blocked is GuardEvent.OUTSIDE_CHANGE
+    if case == "reverted":
+        refreshes = [
+            at for at, _j, action, _e in seen if action == WriteAction(new, WriteKind.KEEPALIVE)
+        ]
+        assert refreshes  # written again meanwhile, then never more: blocked
+
+
+@pytest.mark.parametrize("cause", ["unknown", "draw"])
+def test_a_heating_switch_previous_state_is_not_judged_while_unknown_or_during_a_draw(
+    cause: str,
+) -> None:
+    """Z4R2-03's negatives: past the confirmation timeout, an unknown read-back is never judged —
+    nothing written over it, no rewrite, no block; a hot-water draw (and the 2 min after it) is
+    not judged either, the previous state shown or not. The draw over, the previous state still
+    shown is judged as usual."""
+    state = keep(held(ECHOED, first=ON, value=ON), ECHOED, 160.0, 990.0, ON, ON)
+    state, _, _ = step(state, OFF, ON, 1000.0, ECHOED)
+    state = keep(state, ECHOED, 1010.0, 1990.0, OFF, OFF)
+    state, _, _ = step(state, ON, OFF, 2000.0, ECHOED)
+    for t in range(2010, 2400, 10):
+        if cause == "unknown":
+            result = result_of(state, ON, None, float(t), ECHOED)
+        else:
+            result = result_of(state, ON, OFF, float(t), ECHOED, dhw=t < 2270)
+        state = result.state
+        assert result.judged is ChangeClass.NOT_JUDGED, t
+        assert result.events == ()
+        assert result.action is None or result.action.kind is WriteKind.KEEPALIVE
+    assert state.rewritten_at is None
+    assert state.blocked is None
+    if cause == "draw":  # 2 min after the draw: judged
+        result = result_of(state, ON, OFF, 2400.0, ECHOED)
+        assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+        assert result.action == WriteAction(ON, WriteKind.REWRITE)
+
+
+def test_a_setpoint_not_shown_for_five_minutes_raises_confirmation_missing() -> None:
+    """Z4R2-03 for the setpoint, which keeps Z4R-01's rule: its new value not read back while
+    the read-back is known and shows another value — here the plugin's previous one, held by the
+    device — is never judged by itself; after 5 minutes it is "the boiler does not show the
+    plugin's value": the information alarm "confirmation missing" and the repair issue
+    (``value_not_shown``), never a rewrite or a block. Both end once the value is read back.
+    Negatives: 4 min 50 s — neither; an unknown read-back — the alarm's own rule only, not
+    "not shown"; a hot-water draw — not counted."""
+    state = keep(held(HELD), HELD, 160.0, 990.0)
+    state, _, _ = step(state, 50.0, 45.0, 1000.0, HELD)
+    for t in range(1010, 1290, 10):
+        state, _, events = step(state, 50.0, 45.0, float(t), HELD)
+        assert events == ()
+    assert not value_not_shown(state, 1290.0)
+    assert not confirmation_missing(state, 1290.0)
+    state, _, _ = step(state, 50.0, 45.0, 1300.0, HELD)  # the read-back since 1010
+    assert value_not_shown(state, 1310.0)
+    assert confirmation_missing(state, 1310.0)
+    state = keep(state, HELD, 1310.0, 1900.0, 50.0, 45.0)  # never judged by itself
+    assert state.rewritten_at is None
+    assert state.blocked is None
+    state, _, _ = step(state, 50.0, 50.0, 1910.0, HELD)  # read back at last
+    assert not value_not_shown(state, 1910.0)
+    assert not confirmation_missing(state, 1910.0)
+
+    unknown = keep(held(HELD), HELD, 160.0, 990.0)
+    unknown, _, _ = step(unknown, 50.0, 45.0, 1000.0, HELD)
+    unknown = keep(unknown, HELD, 1010.0, 1400.0, 50.0, None)
+    assert confirmation_missing(unknown, 1400.0)  # M11: the read-back unknown
+    assert not value_not_shown(unknown, 1400.0)
+
+    draw = keep(held(HELD), HELD, 160.0, 990.0)
+    draw, _, _ = step(draw, 50.0, 45.0, 1000.0, HELD)
+    for t in range(1010, 1400, 10):
+        draw, _, _ = step(draw, 50.0, 45.0, float(t), HELD, dhw=True)
+    assert not value_not_shown(draw, 1400.0)
 
 
 def test_heating_switched_back_within_120_s_of_a_confirmed_toggle_is_judged() -> None:
