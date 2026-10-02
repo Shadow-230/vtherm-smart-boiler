@@ -816,6 +816,43 @@ async def test_a_value_never_taken_from_the_start_is_ignored_from_the_start(rig:
     assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"
 
 
+@pytest.mark.parametrize("topology", ["gateway_standalone", "gateway_with_thermostat"])
+async def test_a_setpoint_ignored_from_the_start_where_nothing_else_heats_raises_an_error(
+    rig: Rig, topology: str
+) -> None:
+    """Z4-11 (decision 6 kept): stand-alone, the boiler refuses the control setpoint from the
+    start of the session — the gateway reads its own 0 again after each of the first three
+    sends. Ignored from the start as before: "write ignored", no hand-back, no block, control
+    goes on; and as nothing else heats the house — without the setpoint the gateway gives the
+    boiler no demand — a repair issue at error level says so and what to check. It goes with the
+    session. Negative: with an OpenTherm thermostat on the gateway, which heats by its own
+    request meanwhile, the information alarm alone."""
+    standalone = topology == "gateway_standalone"
+    if standalone:
+        rig.gateway.thermostat = 0.0  # without the override a stand-alone gateway reads 0
+    rig.gateway.echo = False  # the override is never shown taken
+    rig.gateway.publish()
+    await start(rig, topology=topology)
+    await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
+    await rig.switch(True)
+    await rig.advance(250)
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"  # two attempts
+    assert issue(rig, "write_ignored_no_heat") is None
+    await rig.advance(120)
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "on"
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
+    assert rig.state("sensor", "control_state").state == "heating"  # no hand-back, no block
+    found = issue(rig, "write_ignored_no_heat")
+    if not standalone:
+        assert found is None
+        return
+    assert found is not None
+    assert found.severity is ir.IssueSeverity.ERROR
+    assert not found.is_fixable
+    await rig.switch(False)
+    assert issue(rig, "write_ignored_no_heat") is None  # it goes with the session
+
+
 async def test_a_dropped_override_is_sent_again_not_fought(rig: Rig) -> None:
     """A boiler's Data-Invalid answer clears the gateway's override: the read-back falls back to
     the thermostat's value from before the session. In the start phase (the value never held

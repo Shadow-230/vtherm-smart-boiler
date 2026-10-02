@@ -923,3 +923,15 @@ def test_the_read_back_waiting_issue_is_translated() -> None:
         assert issue["title"], language
         assert issue["description"], language
         assert PLACEHOLDER.findall(issue["description"]) == [], language
+
+
+def test_the_ignored_command_without_heat_issue_is_translated() -> None:
+    """Z4-11: the repair issue of a command ignored from the start with nothing else heating the
+    house, with a title and a text and no placeholder, in every language."""
+    from custom_components.vtherm_smart_boiler.control import WRITE_IGNORED_ISSUE
+
+    for language in ALL_LANGUAGES:
+        issue = _texts(language)["issues"][WRITE_IGNORED_ISSUE]
+        assert issue["title"], language
+        assert issue["description"], language
+        assert PLACEHOLDER.findall(issue["description"]) == [], language

@@ -337,6 +337,10 @@ VT_CENTRAL_ISSUE = "vt_central_entry_not_running"
 # provisional, K4).
 READ_BACK_WAIT_ISSUE = "read_back_waiting"
 READ_BACK_WAIT_S = 300.0
+# Where a hand-back stops heating, the boiler not taking the water temperature or "heating on"
+# from the start of the session leaves the house unheated: decision 6's information alarm, and a
+# repair issue at error level (Z4-11). No hand-back, no block.
+WRITE_IGNORED_ISSUE = "write_ignored_no_heat"
 RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control counts as off
 # X8's repair issues: the relay out of reach for five minutes (one text per declared state after
 # a power cut), the relay never taking the command this session, and a relay resting "off" while
@@ -780,6 +784,9 @@ class ControlUnit:
         # whether its repair issue is up.
         self._read_back_wait_since: float | None = None
         self._read_back_issue = False
+        # Z4-11: whether the issue of a command ignored from the start, with nothing else heating
+        # the house, is up.
+        self._ignored_issue = False
         # Decision 4: the rooms the frost issue shows now, with the temperature it shows.
         self._frost_issue_shown: dict[str, float] = {}
         # X8, the relay: whether its last change carried one of the plugin's own write contexts,
@@ -1242,6 +1249,7 @@ class ControlUnit:
         self._delete_vt_central_issue()  # the next run tells again, ten minutes on
         self._delete_relay_issues()  # not during a planned stop; the next run tells again
         self._delete_read_back_issue()  # the next run tells again, once its wait has lasted
+        self._delete_ignored_issue()  # the next session tries the command again
         # The resumes given up: stored, the next run with a unit shows them again (Y4).
         entry_id = self._coordinator.config_entry.entry_id
         ir.async_delete_issue(self._hass, DOMAIN, f"{LEARNING_NOT_RESUMED_ISSUE}_{entry_id}")
@@ -1505,6 +1513,7 @@ class ControlUnit:
                 self._delete_hand_back_issue(HAND_BACK_LINK)  # and to a lost link's (Y1)
                 self._read_back_wait_since = None  # nothing waits (Z4-10)
                 self._delete_read_back_issue()
+                self._delete_ignored_issue()  # it goes with the session (Z4-11)
             # The wish is stored before anything else can fail (P-11).
             await self._coordinator.async_save_control_now()
             await self._async_run_step(now)
@@ -1636,6 +1645,7 @@ class ControlUnit:
         self._follow_read_back_wait(now, out.decision.reasons)
         self._follow_decision_alarms(out, monitor_failed)
         ignored = self._follow_target_alarms(out)
+        self._follow_ignored_no_heat()
         if out.events or _memory_moved(before, session.loop):
             # The alarm behind a latch; the values from before the plugin and the fall-backs
             # without a trace a later judgement rests on.
@@ -1944,6 +1954,53 @@ class ControlUnit:
         if self._read_back_issue:
             self._read_back_issue = False
             ir.async_delete_issue(self._hass, DOMAIN, self._read_back_issue_id())
+
+    def _follow_ignored_no_heat(self) -> None:
+        """Z4-11: where a hand-back stops heating, nothing else heats the house while the boiler
+        does not take the plugin's water temperature, or its "heating on", from the start of the
+        session. Decision 6 stays — control goes on with the information alarm, no hand-back, no
+        block — and a repair issue at error level says the house is not heated and what to
+        check. The relay has its own issue (``RELAY_IGNORED_ISSUE``); "heating off" not taken
+        has the latch's (answer O). It goes once the target takes the value after all, with the
+        session, and with the unit."""
+        loop = self._session.loop
+        heating_on_ignored = (
+            self.options.loop.ch_writes and loop.switch.ignored and not loop.switch.off_ignored
+        )
+        shown = (
+            not self._relay_path
+            and self.enabled
+            and loop.control.controlling
+            and (loop.setpoint.ignored or heating_on_ignored)
+            and self._stops_heating()
+        )
+        if not shown:
+            self._delete_ignored_issue()
+            return
+        if self._ignored_issue:
+            return
+        _LOGGER.warning(
+            "The boiler does not take a command of the plugin's, and with this installation "
+            "nothing else heats the house: check the boiler's settings and the options"
+        )
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            self._ignored_issue_id(),
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key=WRITE_IGNORED_ISSUE,
+        )
+        self._ignored_issue = True
+
+    def _ignored_issue_id(self) -> str:
+        return f"{WRITE_IGNORED_ISSUE}_{self._coordinator.config_entry.entry_id}"
+
+    def _delete_ignored_issue(self) -> None:
+        if self._ignored_issue:
+            self._ignored_issue = False
+            ir.async_delete_issue(self._hass, DOMAIN, self._ignored_issue_id())
 
     def _target_ready(self) -> bool:
         """The write target can take a command: on the entity path each entity written to is
