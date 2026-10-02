@@ -2,11 +2,16 @@
 
 A simulated boiler, water loop, house and zones (``plant``) behind entities like a real
 installation's: boiler signals, room temperatures, zone valve switches for VT's thermostats, a
-weather entity, a writable flow setpoint with an external-control switch, and an OpenTherm
-Gateway-like command path — the ``opentherm_gw`` services, registered only while the real
-integration is not loaded, and optionally the OTGW firmware's MQTT commands. Scenario services
-change the weather, fail a signal, start hot water, let another controller write, or make the
-boiler ignore writes. Set up from YAML (``boiler_sim:``).
+weather entity, a writable flow setpoint with an external-control switch and a heating switch,
+and optionally a relay on an on/off boiler's room-thermostat terminals. The OpenTherm Gateway
+path is the test-only stub integration ``opentherm_gw`` beside this one (P-37), which forwards
+its services to this hub and shows the gateway's read-back; optionally the OTGW firmware's MQTT
+commands are taken too. Scenario services change the weather, fail a signal, start hot water,
+let another controller write, make the boiler ignore writes, refuse ID 1, clip the setpoint or
+drop the override once, switch a zone off, restart the gateway or the setpoint's device, restart
+the relay, cut its Wi-Fi or switch it from outside, change the wall thermostat's setting by hand,
+and raise a boiler fault — decision 6's classes and J4's scenarios, reachable in the test Home
+Assistant (P-114). Set up from YAML (``boiler_sim:``).
 """
 
 from __future__ import annotations
@@ -26,11 +31,22 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
 
-from .simulation import ZONE_LAYOUTS, SimConfig, Simulation, Topology, Valves, WriteType
+from .relay import RelayModel, StartUp
+from .simulation import (
+    FAULTS,
+    ZONE_LAYOUTS,
+    RelaySetup,
+    SimConfig,
+    Simulation,
+    Topology,
+    Valves,
+    WriteType,
+    ZoneMode,
+)
+from .thermostat import WallKind
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "boiler_sim"
-GATEWAY_DOMAIN = "opentherm_gw"
 PLATFORMS = ("sensor", "binary_sensor", "number", "switch", "weather")
 SIGNALS = (
     "flame",
@@ -44,6 +60,23 @@ SIGNALS = (
     "ch_active",
     "pump_running",
     "weather",
+    # The gateway out of reach: the stub's entities unavailable, its commands dropped.
+    "gateway",
+    # The relay reports no state ("unknown") while it stays available.
+    "relay",
+    # The wall thermostat's room setpoint (ID 16), as the gateway's thermostat device shows it.
+    "thermostat_setpoint",
+    *FAULTS,
+    "fault_indication",
+)
+
+_RELAY = vol.Schema(
+    {
+        vol.Optional("start_up", default=StartUp.OFF.value): vol.In([s.value for s in StartUp]),
+        vol.Optional("off_timer_min"): vol.All(vol.Coerce(float), vol.Range(min=1, max=120)),
+        vol.Optional("timer_restarts_on_repeat", default=True): cv.boolean,
+        vol.Optional("assumed_state", default=False): cv.boolean,
+    }
 )
 
 CONFIG_SCHEMA = vol.Schema(
@@ -62,18 +95,53 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional("write_type", default=WriteType.EXPIRING.value): vol.In(
                     [w.value for w in WriteType]
                 ),
+                vol.Optional("ch_write_type", default=WriteType.HELD.value): vol.In(
+                    [w.value for w in WriteType]
+                ),
                 vol.Optional("outdoor", default=3.0): vol.Coerce(float),
                 vol.Optional("step_seconds", default=10): vol.All(
                     vol.Coerce(int), vol.Range(min=1, max=60)
                 ),
-                vol.Optional("gateway", default=True): cv.boolean,
                 vol.Optional("gateway_id", default="sim"): cv.string,
                 vol.Optional("mqtt_topic"): cv.string,
+                vol.Optional("wall_thermostat"): vol.In([k.value for k in WallKind]),
+                vol.Optional("relay"): _RELAY,
+                vol.Optional("restart_lockout_s"): vol.All(
+                    vol.Coerce(float), vol.Range(min=0, max=3600)
+                ),
             }
         )
     },
     extra=vol.ALLOW_EXTRA,
 )
+
+
+def sim_config(conf: dict[str, Any]) -> SimConfig:
+    """The simulated installation from the component's YAML."""
+    relay_conf = conf.get("relay")
+    relay = None
+    if relay_conf is not None:
+        timer = relay_conf.get("off_timer_min")
+        relay = RelaySetup(
+            start_up=StartUp(relay_conf["start_up"]),
+            off_timer_s=None if timer is None else float(timer) * 60.0,
+            timer_restarts_on_repeat=relay_conf["timer_restarts_on_repeat"],
+            assumed_state=relay_conf["assumed_state"],
+        )
+    wall = conf.get("wall_thermostat")
+    return SimConfig(
+        boiler=conf["boiler"],
+        house=conf["house"],
+        zones=conf["zones"],
+        valves=Valves(conf["valves"]),
+        topology=Topology(conf["topology"]),
+        write_type=WriteType(conf["write_type"]),
+        ch_write_type=WriteType(conf["ch_write_type"]),
+        outdoor=conf["outdoor"],
+        wall_thermostat=None if wall is None else WallKind(wall),
+        relay=relay,
+        restart_lockout_s=conf.get("restart_lockout_s"),
+    )
 
 
 class SimHub:
@@ -84,6 +152,10 @@ class SimHub:
         self.sim = simulation
         self.conf = conf
         self._listeners: list[Callable[[], None]] = []
+
+    @property
+    def gateway_id(self) -> str:
+        return str(self.conf.get("gateway_id", "sim"))
 
     def add_listener(self, update: Callable[[], None]) -> Callable[[], None]:
         self._listeners.append(update)
@@ -103,16 +175,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     conf = config.get(DOMAIN)
     if conf is None:
         return True
-    sim_config = SimConfig(
-        boiler=conf["boiler"],
-        house=conf["house"],
-        zones=conf["zones"],
-        valves=Valves(conf["valves"]),
-        topology=Topology(conf["topology"]),
-        write_type=WriteType(conf["write_type"]),
-        outdoor=conf["outdoor"],
-    )
-    hub = SimHub(hass, Simulation(sim_config, dt_util.utcnow().timestamp()), conf)
+    hub = SimHub(hass, Simulation(sim_config(conf), dt_util.utcnow().timestamp()), conf)
     hass.data[DOMAIN] = hub
     stop_clock = async_track_time_interval(
         hass, hub.refresh, timedelta(seconds=conf["step_seconds"])
@@ -124,8 +187,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop)
     _register_scenario_services(hass, hub)
-    if conf["gateway"] and GATEWAY_DOMAIN not in hass.config.components:
-        _register_gateway_services(hass, hub)
     if conf.get("mqtt_topic"):
         await _async_subscribe_mqtt(hass, hub, conf["mqtt_topic"])
     for platform in PLATFORMS:
@@ -133,52 +194,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
-def _register_gateway_services(hass: HomeAssistant, hub: SimHub) -> None:
-    gateway_id = hub.conf["gateway_id"]
-
-    def check(call: ServiceCall) -> None:
-        if call.data.get("gateway_id") != gateway_id:
-            raise ServiceValidationError(f"unknown gateway {call.data.get('gateway_id')}")
-
-    async def setpoint(call: ServiceCall) -> None:
-        check(call)
-        hub.sim.gateway_setpoint(hub.now(), float(call.data["temperature"]))
-        hub.refresh()
-
-    async def heating(call: ServiceCall) -> None:
-        check(call)
-        hub.sim.gateway_heating(hub.now(), bool(call.data["ch_override"]))
-        hub.refresh()
-
-    async def hot_water(call: ServiceCall) -> None:
-        check(call)
-        hub.sim.gateway_hot_water(hub.now(), call.data.get("dhw_override"))
-        hub.refresh()
-
-    base = {vol.Required("gateway_id"): cv.string}
-    temperature = vol.All(vol.Coerce(float), vol.Range(0, 90))
-    hass.services.async_register(
-        GATEWAY_DOMAIN,
-        "set_control_setpoint",
-        setpoint,
-        vol.Schema(base | {vol.Required("temperature"): temperature}),
-    )
-    hass.services.async_register(
-        GATEWAY_DOMAIN,
-        "set_central_heating_ovrd",
-        heating,
-        vol.Schema(base | {vol.Required("ch_override"): cv.boolean}),
-    )
-    hass.services.async_register(
-        GATEWAY_DOMAIN,
-        "set_hot_water_ovrd",
-        hot_water,
-        vol.Schema(base | {vol.Required("dhw_override"): cv.string}),
-    )
-
-
 async def _async_subscribe_mqtt(hass: HomeAssistant, hub: SimHub, topic: str) -> None:
-    """The OTGW firmware's commands on ``<topic>/ctrlsetpt`` and ``<topic>/chenable``."""
+    """The OTGW firmware's commands on ``<topic>/ctrlsetpt``, ``<topic>/chenable`` and
+    ``<topic>/maxmodulation``."""
     try:
         from homeassistant.components import mqtt
     except ImportError:
@@ -189,10 +207,15 @@ async def _async_subscribe_mqtt(hass: HomeAssistant, hub: SimHub, topic: str) ->
     def on_message(message: Any) -> None:
         command = message.topic.rsplit("/", 1)[-1]
         payload = str(message.payload)
-        if command == "ctrlsetpt":
-            hub.sim.gateway_setpoint(hub.now(), float(payload))
-        elif command == "chenable":
-            hub.sim.gateway_heating(hub.now(), payload == "1")
+        try:
+            if command == "ctrlsetpt":
+                hub.sim.gateway_setpoint(hub.now(), float(payload))
+            elif command == "chenable":
+                hub.sim.gateway_heating(hub.now(), payload == "1")
+            elif command == "maxmodulation":
+                hub.sim.gateway_max_modulation(hub.now(), int(float(payload)))
+        except ValueError:
+            _LOGGER.warning("The simulated firmware ignores %s=%s", command, payload)
         hub.refresh()
 
     await mqtt.async_subscribe(hass, f"{topic.strip('/')}/+", on_message)
@@ -224,6 +247,10 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
         sim.ignore_writes = bool(call.data.get("enabled", True))
         hub.refresh()
 
+    async def refuse_id1(call: ServiceCall) -> None:
+        sim.refuses_id1 = bool(call.data.get("enabled", True))
+        hub.refresh()
+
     async def start_dhw(call: ServiceCall) -> None:
         sim.start_dhw(hub.now(), float(call.data.get("minutes", 10)))
         hub.refresh()
@@ -232,6 +259,55 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
         sim.set_topology(Topology(call.data["topology"]))
         hub.refresh()
 
+    async def set_zone_mode(call: ServiceCall) -> None:
+        sim.set_zone_mode(call.data["zone"], ZoneMode(call.data["mode"]))
+        hub.refresh()
+
+    async def reset_gateway(call: ServiceCall) -> None:
+        sim.reset_gateway(hub.now())
+        hub.refresh()
+
+    async def drop_override(call: ServiceCall) -> None:
+        sim.drop_override()
+        hub.refresh()
+
+    async def clip_setpoint(call: ServiceCall) -> None:
+        value = call.data.get("value")
+        sim.clip = None if value is None else float(value)
+        hub.refresh()
+
+    async def restart_device(call: ServiceCall) -> None:
+        sim.restart_device(hub.now(), float(call.data.get("seconds", 10)))
+        hub.refresh()
+
+    def relay() -> RelayModel:
+        if sim.relay is None:
+            raise ServiceValidationError("no relay in this installation")
+        return sim.relay
+
+    async def relay_restart(call: ServiceCall) -> None:
+        relay().restart(hub.now(), reported=bool(call.data.get("reported", True)))
+        hub.refresh()
+
+    async def relay_wifi_loss(call: ServiceCall) -> None:
+        relay().wifi_loss(hub.now(), float(call.data["minutes"]) * 60.0)
+        hub.refresh()
+
+    async def relay_switch(call: ServiceCall) -> None:
+        relay().switch(hub.now(), bool(call.data["on"]))
+        hub.refresh()
+
+    async def set_wall_setpoint(call: ServiceCall) -> None:
+        if sim.wall is None:
+            raise ServiceValidationError("no wall thermostat in this installation")
+        sim.wall.set_manual(hub.now(), float(call.data["temperature"]))
+        hub.refresh()
+
+    async def set_fault(call: ServiceCall) -> None:
+        sim.set_fault(call.data["fault"], bool(call.data.get("on", True)))
+        hub.refresh()
+
+    zone_ids = [zone.zone_id for zone in sim.zones]
     services = {
         "set_outdoor": (set_outdoor, {vol.Required("temperature"): vol.Coerce(float)}),
         "fail_signal": (
@@ -243,10 +319,42 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
             {vol.Optional("value"): vol.Any(None, vol.Coerce(float))},
         ),
         "ignore_writes": (ignore_writes, {vol.Optional("enabled"): cv.boolean}),
+        "refuse_id1": (refuse_id1, {vol.Optional("enabled"): cv.boolean}),
         "start_dhw": (start_dhw, {vol.Optional("minutes"): vol.Coerce(float)}),
         "set_topology": (
             set_topology,
             {vol.Required("topology"): vol.In([t.value for t in Topology])},
+        ),
+        "set_zone_mode": (
+            set_zone_mode,
+            {
+                vol.Required("zone"): vol.In(zone_ids),
+                vol.Required("mode"): vol.In([m.value for m in ZoneMode]),
+            },
+        ),
+        "reset_gateway": (reset_gateway, {}),
+        "drop_override": (drop_override, {}),
+        "clip_setpoint": (
+            clip_setpoint,
+            {vol.Optional("value"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(0, 90)))},
+        ),
+        "restart_device": (
+            restart_device,
+            {vol.Optional("seconds"): vol.All(vol.Coerce(float), vol.Range(min=1, max=3600))},
+        ),
+        "relay_restart": (relay_restart, {vol.Optional("reported"): cv.boolean}),
+        "relay_wifi_loss": (
+            relay_wifi_loss,
+            {vol.Required("minutes"): vol.All(vol.Coerce(float), vol.Range(min=0, max=1440))},
+        ),
+        "relay_switch": (relay_switch, {vol.Required("on"): cv.boolean}),
+        "set_wall_setpoint": (
+            set_wall_setpoint,
+            {vol.Required("temperature"): vol.All(vol.Coerce(float), vol.Range(min=5, max=30))},
+        ),
+        "set_fault": (
+            set_fault,
+            {vol.Required("fault"): vol.In(FAULTS), vol.Optional("on"): cv.boolean},
         ),
     }
     for name, (handler, schema) in services.items():

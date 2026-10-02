@@ -1,8 +1,13 @@
 """Whole scenarios on the simulated plant (``boiler_sim.plant``), producing the core's ``History``.
 
-A scenario sets the plant, the weather, hot water runs and optionally an external controller
-called every control period with what it would see; the result holds the recorded signals and
-energy totals.
+A scenario sets the plant, the weather, hot water runs, the zone valves — thermostatic heads, or
+switches driven by a TPI stand-in for VT (on for ``on_percent`` of each cycle, P-114) — and
+optionally an external controller called every control period with what it would see. The
+controller's commands reach the boiler as through a gateway: a setpoint is ``CS`` (lapsing
+unless repeated), heating on/off is the gateway's ``CH`` flag (kept until changed), a hand-back is
+``CH=1`` then ``CS=0``. Without a controller the boiler runs on its own regulation — its own
+curve, heating whenever a zone's valve is open, as VT's central boiler switches it. The result
+holds the recorded signals, energy totals and the daily sums, kept whatever the step (P-112).
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ from custom_components.boiler_sim.plant import (
 )
 from custom_components.boiler_sim.plant import reference_outputs as _reference_outputs
 from custom_components.boiler_sim.profiles import BoilerProfile, HouseProfile, ZoneProfile
+from custom_components.boiler_sim.tpi import TpiConfig, TpiZone
 
 from custom_components.vtherm_smart_boiler.core.history import History, ZoneSeries
 from custom_components.vtherm_smart_boiler.core.parameters import (
@@ -43,6 +49,7 @@ __all__ = [
     "SimResult",
     "SimView",
     "SimZoneView",
+    "TpiConfig",
     "WithoutOverride",
     "boiler_setpoint",
     "daily_cycle",
@@ -97,6 +104,7 @@ class SimZoneView:
     temperature: float
     target: float
     opening: float
+    on_percent: float | None = None  # a TPI zone's on-percent of its cycle
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +146,7 @@ class Scenario:
     control_period_s: float = 30.0
     override_expires_s: float | None = 60.0  # None: an override holds until changed
     without_override: WithoutOverride = WithoutOverride.OWN_CURVE
+    tpi: TpiConfig | None = None  # switch valves driven by TPI; None: thermostatic heads
 
 
 @dataclass
@@ -145,12 +154,18 @@ class SimResult:
     history: History
     burner_kwh: float = 0.0  # all burner output
     ch_kwh: float = 0.0  # burner output for heating
-    emitted_kwh: float = 0.0  # delivered by the emitters
+    emitted_kwh: float = 0.0  # taken from the water by the emitters
+    room_kwh: float = 0.0  # passed on by the emitters to the rooms
     water_start: float = 0.0
     water_end: float = 0.0
+    emitters_start_kwh: float = 0.0  # heat in the emitters on its way to the rooms
+    emitters_end_kwh: float = 0.0
+    # Burner output for heating per day of the run, the last one the day it ended in, complete
+    # or not: their sum is ``ch_kwh`` whatever the step (P-112).
     daily_ch_kwh: list[float] = field(default_factory=list)
     override_s: float = 0.0  # time an external override was in force
     commands: int = 0
+    ch_switchings: int = 0  # the CH enable the boiler gets turning on or off
 
 
 def reference_outputs(scenario: Scenario) -> list[float]:
@@ -171,13 +186,21 @@ def simulate(scenario: Scenario) -> SimResult:
         override_expires_s=scenario.override_expires_s,
         without_override=scenario.without_override,
     )
+    plant.settle(scenario.outdoor(0.0))
+    tpi = None if scenario.tpi is None else {z.zone_id: TpiZone(scenario.tpi) for z in zones}
 
     record = scenario.signals
     signals: dict[Signal, Series] = {s: Series() for s in record}
     zone_series = {z.zone_id: ZoneSeries(z.zone_id) for z in zones}
     weather: Series[float] = Series()
-    result = SimResult(History(signals, zone_series, weather), water_start=plant.water)
+    result = SimResult(
+        History(signals, zone_series, weather),
+        water_start=plant.water,
+        emitters_start_kwh=sum(plant.stored),
+    )
     day_ch = 0.0
+    day = 0
+    demand: bool | None = None
 
     next_control = t0
     water = plant.water
@@ -185,8 +208,18 @@ def simulate(scenario: Scenario) -> SimResult:
 
     for step in range(steps):
         t = t0 + step * dt
+        if int((t - t0) // DAY) != day:
+            result.daily_ch_kwh.append(day_ch)
+            day_ch = 0.0
+            day = int((t - t0) // DAY)
         outdoor = scenario.outdoor(t - t0)
-        openings = plant.thermostatic_openings()
+        if tpi is None:
+            openings = plant.thermostatic_openings()
+        else:
+            openings = [
+                tpi[z.zone_id].advance(t, plant.targets[i], plant.room[i], outdoor)
+                for i, z in enumerate(zones)
+            ]
         dhw = scenario.dhw is not None and scenario.dhw.active(t - t0)
         if scenario.controller is not None and t >= next_control:
             next_control = t + scenario.control_period_s
@@ -198,7 +231,13 @@ def simulate(scenario: Scenario) -> SimResult:
                 round(outdoor, 1),
                 round(view_setpoint, 1),
                 tuple(
-                    SimZoneView(z.zone_id, round(plant.room[i], 1), z.target, round(openings[i], 2))
+                    SimZoneView(
+                        z.zone_id,
+                        round(plant.room[i], 1),
+                        z.target,
+                        round(openings[i], 2),
+                        None if tpi is None else tpi[z.zone_id].percent,
+                    )
                     for i, z in enumerate(zones)
                 ),
             )
@@ -206,16 +245,24 @@ def simulate(scenario: Scenario) -> SimResult:
             if command is not None:
                 result.commands += 1
                 if command.hand_back:
+                    plant.gateway_ch_off = False  # CH=1, then CS=0
                     plant.clear_override()
                 else:
-                    plant.set_override(t, command.setpoint, command.ch_enable)
+                    if command.ch_enable is not None:
+                        plant.gateway_ch_off = not command.ch_enable
+                    if command.setpoint is not None:
+                        plant.set_setpoint(t, command.setpoint)
         out = plant.step(t, dt, outdoor, dhw, openings)
         if out.override:
             result.override_s += dt
+        if demand is not None and out.demand != demand:
+            result.ch_switchings += 1
+        demand = out.demand
         result.burner_kwh += out.power_kw * dt_h
         result.ch_kwh += out.ch_power_kw * dt_h
         day_ch += out.ch_power_kw * dt_h
         result.emitted_kwh += out.emitted_kw * dt_h
+        result.room_kwh += out.room_kw * dt_h
 
         view_flow, view_return, view_flame, view_setpoint = (
             out.flow,
@@ -239,7 +286,7 @@ def simulate(scenario: Scenario) -> SimResult:
             ),
             Signal.OUTDOOR: round(outdoor, 1),
             Signal.CH_ACTIVE: out.demand and not dhw,
-            Signal.PUMP_RUNNING: out.demand or dhw,
+            Signal.PUMP_RUNNING: out.pump or dhw,
         }
         for signal in record:
             signals[signal].append(t, values[signal])
@@ -252,11 +299,10 @@ def simulate(scenario: Scenario) -> SimResult:
             series.calling.append(t, openings[i] > DEMAND_OPENING)
             series.valve_open.append(t, round(openings[i], 2))
 
-        if (step + 1) * dt % DAY == 0:
-            result.daily_ch_kwh.append(day_ch)
-            day_ch = 0.0
-
+    if steps:
+        result.daily_ch_kwh.append(day_ch)
     result.water_end = plant.water
+    result.emitters_end_kwh = sum(plant.stored)
     return result
 
 

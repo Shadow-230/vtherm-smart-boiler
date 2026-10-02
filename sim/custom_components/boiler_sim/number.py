@@ -28,9 +28,11 @@ async def async_setup_platform(
 
 
 class FlowSetpoint(SimEntity, NumberEntity):
-    """What a controller writes; the boiler's own setpoint is the control setpoint sensor."""
+    """What a controller writes; the boiler's own setpoint is the control setpoint sensor. Its
+    device restarting, it is out of reach, and comes back with what it was given lost."""
 
     platform_domain = "number"
+    _on_device = True
     _attr_device_class = NumberDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_native_min_value = 0.0
@@ -41,9 +43,13 @@ class FlowSetpoint(SimEntity, NumberEntity):
     def __init__(self, hub: SimHub) -> None:
         super().__init__(hub, "flow_setpoint", "flow setpoint")
         self._written: float | None = None
+        self._restarts = hub.sim.device_restarts
 
     @property
     def native_value(self) -> float | None:
+        if self.hub.sim.device_restarts != self._restarts:
+            self._restarts = self.hub.sim.device_restarts
+            self._written = None  # lost in the device's restart
         return self._written
 
     @property

@@ -1,14 +1,17 @@
 """Acceptance scenarios (docs/plan-0.2.md, J4), in-process against the simulator component.
 
 The plugin controls the simulated boiler through the same paths as in the test Home Assistant:
-the gateway-like services or the writable setpoint entity, read back from the boiler's control
-setpoint. VT's zones are stood in for by climate states mirrored from the simulated rooms and
-their thermostatic valves; the test HA runs real VT instead. Nothing connects anywhere.
+the OpenTherm Gateway — the test-only stub ``opentherm_gw`` on the simulator, set up through its
+config flow and read back from its boiler device's "Control setpoint 1" (P-37) — the writable
+setpoint entity, or a relay on an on/off boiler. VT's zones are stood in for by climate states
+mirrored from the simulated rooms and their thermostatic valves, and a zone VT has off closes its
+valve in the simulator too (S-05); the test HA runs real VT instead. Nothing connects anywhere.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import pairwise
@@ -17,7 +20,9 @@ from typing import Any
 import pytest
 from custom_components.boiler_sim import SimHub
 from custom_components.boiler_sim.plant import PlantOutput
-from homeassistant.core import Event, HomeAssistant, State
+from custom_components.boiler_sim.simulation import ZoneMode
+from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
+from homeassistant.core import CoreState, Event, HomeAssistant, State
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
@@ -45,7 +50,9 @@ SIGNALS = {
     "ch_active": "binary_sensor.boiler_sim_ch_active",
     "pump_running": "binary_sensor.boiler_sim_pump_running",
 }
-CONFIRMED = "sensor.boiler_sim_ch_setpoint"
+# The gateway's read-back as opentherm_gw shows it: the stub's boiler device (P-37).
+CONFIRMED = "sensor.otgw_sim_boiler_control_setpoint"
+CH_ENABLED = "binary_sensor.otgw_sim_boiler_master_ch_enabled"
 FITTING_KIND = {"gateway_with_thermostat": "opentherm", "gateway_standalone": "none"}
 # The lowest water temperature: a test's entry is stored as minor version 1, so the entry
 # migration keeps 0.2.1's 25 °C in its control section (X6).
@@ -72,6 +79,7 @@ class Rig:
     modes: dict[str, str] = field(default_factory=dict)  # a zone's own mode, over ``vt_mode``
     fahrenheit: bool = False  # Home Assistant in US customary units: VT reports in °F
     spy: ServiceSpy | None = None  # every service call (P-118)
+    smartpi: dict[str, bool] = field(default_factory=dict)  # SmartPI zones: learning on or off
 
     @property
     def sim(self):
@@ -87,10 +95,13 @@ class Rig:
 
     def mirror_zones(self) -> None:
         """VT's thermostats as the plugin reads them, from the simulated rooms. A zone VT has
-        "off" shows its valve closed and its device off, as VT 10.4.0 does (decision 4); in
-        "sleep" it shows "off" with its valve held at 100 %. (The simulated plant still opens
-        its valve: Z3 closes it.)"""
+        "off" shows its valve closed and its device off, as VT 10.4.0 does (decision 4) — and its
+        valve is closed in the simulated plant too (S-05); in "sleep" it shows "off" with its
+        valve held at 100 %, open in the plant."""
         for zone in self.sim.zones:
+            mode = self.modes.get(zone.zone_id, self.vt_mode)
+            plant_mode = {"off": ZoneMode.OFF, "sleep": ZoneMode.SLEEP}.get(mode, ZoneMode.HEAT)
+            self.sim.set_zone_mode(zone.zone_id, plant_mode)
             opening = self.sim.opening(zone.zone_id)
             index = [z.zone_id for z in self.sim.zones].index(zone.zone_id)
             entity_id = self.zones.entities[zone.zone_id]
@@ -118,6 +129,13 @@ class Rig:
                     },
                 )
                 continue
+            # What real VT publishes for every thermostat, and what demand follows first (T4):
+            # whether its device heats now, and that it has started; a SmartPI zone, its flag.
+            specific: dict[str, Any] = {"is_device_active": active}
+            extra: dict[str, Any] = {}
+            if zone.zone_id in self.smartpi:
+                specific["smartpi_learning_enabled"] = self.smartpi[zone.zone_id]
+                extra["configuration"] = {"proportional_function": "smartpi"}
             self.zones.set(
                 zone.zone_id,
                 mode,
@@ -126,10 +144,9 @@ class Rig:
                 hvac_action=action,
                 valve_open_percent=round(opening * 100),
                 on_percent=0.0 if mode == "off" else round(opening, 2),
-                # What real VT publishes for every thermostat, and what demand follows first
-                # (T4): whether its device heats now, and that it has started.
-                specific_states={"is_device_active": active},
+                specific_states=specific,
                 is_ready=True,
+                **extra,
             )
 
     async def advance(self, seconds: float, step: float = 10.0) -> None:
@@ -189,11 +206,16 @@ async def start(
     sim: dict[str, Any] | None = None,
     stored: dict[str, Any] | None = None,
     monitor: dict[str, Any] | None = None,
+    entry_options: dict[str, Any] | None = None,
+    emitter: str | None = None,
+    with_control: bool = True,
     **control: Any,
 ) -> None:
     """The simulator, VT's zones and the plugin; ``stored``: what an earlier run left in the
     entry store (0.2.1's layout). Without it, the entry ran before and its control store owes
-    nothing: an entry with control and no stores at all would hand back first (V1)."""
+    nothing: an entry with control and no stores at all would hand back first (V1).
+    ``entry_options``: sections of the entry's options to replace (circuits, signals, the
+    boiler); ``emitter``: every zone's; ``with_control``: no control section at all."""
     hass = rig.hass
     assert await async_setup_component(hass, SIM, {SIM: {"outdoor": -2.0} | (sim or {})})
     await hass.async_block_till_done()
@@ -207,18 +229,21 @@ async def start(
     kind = FITTING_KIND.get(control_options.get("topology", ""))
     if kind is not None and "thermostat_kind" not in control_options:
         control_options["thermostat_kind"] = kind
+    zone = {} if emitter is None else {"emitter": emitter}
     options = {
         "signals": SIGNALS,
         "weather": "weather.boiler_sim_weather",
         "boiler": {"class": "flow_setpoint", "dhw": "combi"},
         "parameters": {"boiler_min_power": 2.5, "boiler_max_power": 15.0},
-        "zones": [{"entity_id": e} for e in rig.zones.entities.values()],
+        "zones": [{"entity_id": e} | zone for e in rig.zones.entities.values()],
         "monitor": {"monitoring_days": 0} | (monitor or {}),
         "control": control_options,
-    }
-    # The simulated gateway's entry in the OpenTherm Gateway integration: control writes through
-    # a gateway set up in Home Assistant (X5.5).
-    MockConfigEntry(domain="opentherm_gw", data={"id": "sim"}).add_to_hass(hass)
+    } | (entry_options or {})
+    if not with_control:
+        del options["control"]
+    # The simulated gateway, set up as a user sets up a gateway: through the config flow of the
+    # OpenTherm Gateway integration — here the test-only stub on the simulator (P-37, X5.5).
+    await setup_gateway(hass)
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
     entry.add_to_hass(hass)
     if stored is not None:
@@ -233,6 +258,16 @@ async def start(
     rig.entry = entry
 
 
+async def setup_gateway(hass: HomeAssistant) -> str:
+    """The stub gateway's config flow, as in the test Home Assistant's user interface."""
+    result = await hass.config_entries.flow.async_init(
+        "opentherm_gw", context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    await hass.async_block_till_done()
+    return str(result["result"].entry_id)
+
+
 @pytest.fixture
 async def rig(
     hass: HomeAssistant,
@@ -240,12 +275,24 @@ async def rig(
     zones: FakeZones,
     hass_storage: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
-) -> Rig:
+) -> AsyncGenerator[Rig]:
     freezer.move_to(START)
     rig = Rig(hass, freezer, zones, hass_storage, spy=ServiceSpy(hass))
     assert rig.spy is not None
     rig.spy.install(monkeypatch)
-    return rig
+    yield rig
+    # Control handed back first, while the simulated gateway is set up: the test harness unloads
+    # every entry at once at its end, and a hand-back racing the gateway's own unload would find
+    # no gateway. Switching off waits for no read-back, which the frozen clock would never bring.
+    if rig.entry is None or rig.entry.state is not ConfigEntryState.LOADED:
+        return
+    if hass.state is not CoreState.running:
+        return
+    unique_id = f"{rig.entry.entry_id}_control"
+    switch = er.async_get(hass).async_get_entity_id("switch", DOMAIN, unique_id)
+    state = hass.states.get(switch) if switch is not None else None
+    if state is not None and state.state == "on":
+        await rig.switch(False)
 
 
 # --- closed loop --------------------------------------------------------------------------
@@ -513,6 +560,9 @@ async def test_vt_stopped_means_no_demand_not_a_hand_back(rig: Rig) -> None:
     await rig.advance(10)
     assert rig.state("sensor", "control_state").state == "idle"
     assert rig.gateway("ch")[-1][2] is False  # the boiler is not run against closed valves
+    # S-05: the valve VT keeps closed is closed in the simulated plant too — its cold room
+    # would open a thermostatic head — so no heat could have reached it.
+    assert rig.sim.opening(rig.sim.zones[0].zone_id) == 0.0
     assert 0.0 not in rig.setpoints()
     assert rig.entry is not None
     found = ir.async_get(hass).async_get_issue(DOMAIN, f"frost_zone_closed_{rig.entry.entry_id}")
@@ -1020,6 +1070,28 @@ async def test_an_entity_hand_back_waits_for_its_target_and_is_stored(rig: Rig) 
     assert not rig.storage[key]["data"]["control"]["hand_back_pending"]
 
 
+async def test_a_held_device_that_restarts_gets_its_values_again(rig: Rig) -> None:
+    """S-13 (T-47), reachable at J4 (P-114): control through a held device — an ESPHome-like
+    master — which restarts: out of reach for 20 s, back with what it was given lost. Its
+    setpoint and heating switch are sent again once it is back — a lost command, with the trace
+    of its outage — with no outside change and no hand-back."""
+    await start(rig, sim={"write_type": "held"}, **ENTITY_CONTROL)
+    await rig.switch(True)
+    await rig.advance(120)
+    assert rig.sim.plant.override_active(rig.now())
+    setpoints = len(entity_setpoints(rig))
+    switches = len([1 for _t, kind, _v in rig.sim.commands.entity if kind == "ch"])
+    await rig.scenario("restart_device", seconds=20)
+    assert not rig.sim.plant.override_active(rig.now())
+    await rig.advance(60)
+    assert len(entity_setpoints(rig)) > setpoints  # sent again
+    assert len([1 for _t, kind, _v in rig.sim.commands.entity if kind == "ch"]) > switches
+    assert rig.sim.plant.override_active(rig.now())
+    for alarm_kind in ("alarm_outside_change", "alarm_write_ignored"):
+        assert rig.state("binary_sensor", alarm_kind).state == "off", alarm_kind
+    assert rig.state("sensor", "control_state").state != "handed_back"
+
+
 async def test_a_switch_hand_back_gives_the_boiler_its_own_control(rig: Rig) -> None:
     """The entity path with a switch that enables external control: taking control turns it
     on, the hand-back turns it off — confirmed by its state — and the boiler is on its own."""
@@ -1063,3 +1135,644 @@ async def test_a_timeout_hand_back_lets_the_override_lapse(rig: Rig) -> None:
     # The lowest water temperature, then nothing: the device's own timeout releases it.
     assert entity_setpoints(rig)[count:] == [LOWEST]
     assert not rig.sim.plant.override_active(rig.now())
+
+
+# --- Z3: the J4 route, hot water, the thermostat kind, the circuit maximum, the read-back -------
+
+ROOM_SETPOINT = "sensor.otgw_sim_thermostat_room_setpoint"
+
+
+async def options_step(rig: Rig, result: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+    return await rig.hass.config_entries.options.async_configure(result["flow_id"], data)
+
+
+async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> None:
+    """T-23 (P-37): the plugin past its monitoring and no control yet; the simulated gateway set
+    up through the stub's config flow, as at J4 — options → Control → OpenTherm Gateway →
+    gateway ID ``sim``: the flow completes; the plugin then controls the simulated boiler
+    through it, its setpoint confirmed by the gateway's read-back and its heating switch by the
+    boiler's "Central heating 1"."""
+    await start(rig, with_control=False)
+    assert rig.entry is not None
+    hass = rig.hass
+    menu = await hass.config_entries.options.async_init(rig.entry.entry_id)
+    assert "control" in menu["menu_options"]
+    result = await options_step(rig, menu, {"next_step_id": "control"})
+    result = await options_step(
+        rig,
+        result,
+        {
+            "write_path": "opentherm_gw",
+            "topology": "gateway_with_thermostat",
+            "thermostat_kind": "opentherm",
+            "confirmed_entity": CONFIRMED,
+            "ch_confirmed_entity": CH_ENABLED,
+        },
+    )
+    assert result["step_id"] == "control_gateway"
+    offered = next(v for m, v in result["data_schema"].schema.items() if str(m) == "gateway_id")
+    assert offered.config["options"] == ["sim"]
+    result = await options_step(rig, result, {"gateway_id": "sim"})
+    assert result["step_id"] == "control_curve"
+    curve = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_max": 70}
+    result = await options_step(rig, result, curve)
+    if result.get("step_id") == "control_alarms":
+        result = await options_step(rig, result, {})
+    assert result["type"] == "create_entry"
+    await hass.async_block_till_done()
+    control = rig.entry.options["control"]
+    assert (control["write_path"], control["gateway_id"]) == ("opentherm_gw", "sim")
+    await rig.switch(True)
+    await rig.advance(600, step=30.0)
+    assert rig.setpoints()
+    assert rig.sim.plant.override_active(rig.now())
+    for alarm in ("alarm_write_ignored", "alarm_outside_change", "alarm_write_failed"):
+        assert rig.state("binary_sensor", alarm).state == "off", alarm
+    control_state = rig.state("sensor", "control_state")
+    assert control_state.state in ("heating", "idle")
+    assert control_state.attributes["latched_by"] == []
+
+
+async def test_a_dhw_draw_under_control_raises_no_outside_change(rig: Rig) -> None:
+    """T-21 (P-36, P-22): control through the simulated gateway, its heating switch read back
+    from the boiler's "Central heating 1" (CH enable, not "running"), a SmartPI zone learning. A
+    ten-minute hot-water draw: the boiler leaves heating for the tank — no outside change, no
+    ignored write, no latch, the DHW-enable bit never written; SmartPI's learning paused for the
+    draw and resumed after it; heating back once the draw ends."""
+    hass = rig.hass
+    calls: list[tuple[str, bool]] = []
+
+    async def set_learning(call: Any) -> None:
+        calls.append((call.data["entity_id"], call.data["learning_enabled"]))
+        zone = next(z for z, e in rig.zones.entities.items() if e == call.data["entity_id"])
+        rig.smartpi[zone] = call.data["learning_enabled"]
+
+    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    learner = "zone_bath"
+    rig.smartpi[learner] = True
+    await start(rig, ch_confirmed_entity=CH_ENABLED)
+    rig.sim.plant.targets[2] = 24.0  # the bath calls, its valve open
+    await rig.switch(True)
+    await rig.advance(900, step=30.0)
+    entity = rig.zones.entities[learner]
+    assert calls == []
+    await rig.scenario("start_dhw", minutes=10)
+    await rig.advance(60)
+    assert rig.sim.last.dhw
+    assert calls == [(entity, False)]
+    assert entity in rig.state("sensor", "control_state").attributes["learning_paused"]
+    await rig.advance(540)
+    assert not rig.sim.last.dhw  # the draw is over
+    await rig.advance(1800, step=30.0)
+    assert calls[-1] == (entity, True)  # resumed
+    assert rig.smartpi[learner] is True
+    assert rig.sim.last.flame  # heating back
+    for alarm in ("alarm_outside_change", "alarm_write_ignored"):
+        assert rig.state("binary_sensor", alarm).state == "off", alarm
+    control_state = rig.state("sensor", "control_state")
+    assert control_state.attributes["latched_by"] == []
+    assert control_state.state == "heating"
+    assert rig.sim.commands.dhw_enable_writes == 0
+    assert rig.plugin_services() <= rig.entry.runtime_data.control.allowed_services | {
+        ("weather", "get_forecasts")
+    }
+
+
+@pytest.mark.parametrize("kind", ["on_off", "unknown"])
+async def test_otgw_on_off_thermostat_heats_after_an_unclean_exit_while_off(
+    rig: Rig, kind: str
+) -> None:
+    """T-07 (S-01, decision 1): an on/off contact on the gateway's thermostat terminals, or
+    "I don't know". Control is refused (the blocker), nothing is written, and the contact heats
+    the house — the gateway turns it into a demand at the boiler's maximum. Why: with the
+    session the blocker prevents, left "off" (``CH=0``) when Home Assistant vanished without a
+    hand-back, the override lapses and the thermostat closes its contact — and the boiler gets
+    no CH enable: the PIC keeps ``CH=0`` and masks the contact, until ``CH=1`` or a gateway
+    reset."""
+    await start(rig, sim={"wall_thermostat": "on_off"}, thermostat_kind=kind)
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)
+    blocker = {"on_off": "thermostat_on_off", "unknown": "thermostat_kind_unknown"}[kind]
+    assert err.value.translation_key == f"blocked_{blocker}"
+    plant = rig.sim.plant
+    plant.room[0] = 18.0  # the contact's room is cold: it closes
+    await rig.advance(60)
+    assert rig.gateway() == []
+    assert rig.sim.wall is not None
+    assert rig.sim.wall.calling
+    assert rig.sim.last.demand
+    assert rig.sim.last.setpoint == plant.boiler.max_setpoint
+    # What the blocker prevents: a session's last commands, "off", then nothing more.
+    hass = rig.hass
+    for service, data in (
+        ("set_control_setpoint", {"temperature": 55.0}),
+        ("set_central_heating_ovrd", {"ch_override": False}),
+    ):
+        await hass.services.async_call(
+            "opentherm_gw", service, {"gateway_id": "sim"} | data, blocking=True
+        )
+    await rig.advance(120)
+    assert not plant.override_active(rig.now())  # CS lapsed
+    assert rig.sim.wall.calling  # the contact asks for heat...
+    assert not rig.sim.last.demand  # ...and is masked: the house cools
+    await rig.advance(1800, step=60.0)
+    assert not rig.sim.last.demand
+    await hass.services.async_call(
+        "opentherm_gw",
+        "set_central_heating_ovrd",
+        {"gateway_id": "sim", "ch_override": True},
+        blocking=True,
+    )
+    assert rig.sim.last.demand  # CH=1: the contact heats again
+
+
+@pytest.mark.parametrize("outdoor", [5.0, -5.0])
+@pytest.mark.parametrize("layout", ["underfloor", "shared_loop"])
+async def test_underfloor_flow_stays_within_the_circuit_maximum(
+    rig: Rig, layout: str, outdoor: float
+) -> None:
+    """T-20 (S-14, decision 10): underfloor heating on an unmixed loop — alone, or sharing it
+    with radiators — the circuit's maximum 40 °C below what the curve asks in frost, six hours
+    of control at +5 °C and at −5 °C: the maximum limits every setpoint, and says so where it
+    holds one back; the boiler's own regulation lets the measured flow overshoot only by its stop
+    hysteresis — 5 K, the documented margin — so the circuit's too-hot alarm, pre-filled at
+    45 °C for 10 minutes, stays off, and judged."""
+    circuit = {"id": "main", "control": "unmixed_shared", "max_flow": 40}
+    emitters = dict.fromkeys(("zone_ground", "zone_upstairs", "zone_living"), "underfloor")
+    await start(
+        rig,
+        sim={"zones": layout, "outdoor": outdoor},
+        entry_options={"circuits": [circuit]},
+    )
+    assert rig.entry is not None
+    zones = [
+        {"entity_id": rig.zones.entities[z.zone_id], "emitter": emitters.get(z.zone_id, "radiator")}
+        for z in rig.sim.zones
+    ]
+    options = dict(rig.entry.options) | {"zones": zones}
+    rig.hass.config_entries.async_update_entry(rig.entry, options=options)
+    await rig.hass.async_block_till_done()
+    await rig.switch(True)
+    flows: list[float] = []
+    capped = False
+    for _ in range(72):  # six hours
+        await rig.advance(300, step=30.0)
+        flows.append(float(rig.hass.states.get(SIGNALS["flow"]).state))
+        reasons = rig.state("sensor", "control_state").attributes["reasons"]
+        capped = capped or "limit_circuit_max" in reasons
+    assert rig.setpoints()
+    assert max(rig.setpoints()) <= 40.0
+    # At −5 °C the curve asks for about 46 °C: the maximum holds it back, and says so.
+    assert capped is (outdoor < 0)
+    assert max(flows) <= 40.0 + 5.0
+    alarm = rig.state("binary_sensor", "alarm_circuit_too_hot")
+    assert alarm.state == "off"
+    assert alarm.attributes["limit"] == 45.0
+    assert alarm.attributes.get("reason") is None  # judged on the measured flow
+
+
+async def test_gateway_read_back_confirms_then_drops_on_a_refused_id1(rig: Rig) -> None:
+    """Open after R6 #2 (decision 6, answer E): a boiler that refuses ID 1 — the gateway drops
+    the control setpoint at the next exchange without a message, so ``opentherm_gw`` shows it
+    confirmed, then dropped, after every send from the session's start. The plugin takes it as
+    ignored from the start: reported, not sent again this session, never another controller —
+    no latch, no hand-back."""
+    await start(rig)
+    await rig.scenario("refuse_id1", enabled=True)
+    await rig.switch(True)
+    seen: list[float] = []
+    for _ in range(90):  # fifteen minutes
+        await rig.advance(10)
+        state = rig.hass.states.get(CONFIRMED)
+        assert state is not None
+        seen.append(float(state.state))
+    sent = set(rig.setpoints())
+    assert sent & set(seen)  # each send shown confirmed...
+    assert not rig.sim.plant.override_active(rig.now())  # ...and dropped
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "on"
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
+    control_state = rig.state("sensor", "control_state")
+    assert control_state.state != "handed_back"
+    assert control_state.attributes["latched_by"] == []
+    assert 0.0 not in rig.setpoints()
+    count = len(rig.setpoints())
+    await rig.advance(600, step=30.0)
+    assert len(rig.setpoints()) == count  # not sent again this session
+
+
+async def test_wall_thermostat_takes_over_after_hand_back_with_its_own_program(rig: Rig) -> None:
+    """X6, rule 9: an OpenTherm wall thermostat on the gateway, its program 21 °C from 06:00
+    to 22:00 and 17 °C otherwise. While the plugin controls it has no effect on heating, and the
+    control switch shows what it would keep after a hand-back — its room setpoint from the
+    gateway's thermostat device. Handed back, it takes over within a minute: the boiler follows
+    its own call and water setpoint; at 22:00 its program lowers the room. With its setpoint
+    unknown, the switch says so."""
+    signals = SIGNALS | {"room_setpoint": ROOM_SETPOINT}
+    await start(rig, sim={"wall_thermostat": "opentherm"}, entry_options={"signals": signals})
+    plant = rig.sim.plant
+    await rig.switch(True)
+    await rig.advance(600, step=30.0)
+    switch = rig.state("switch", "control")
+    assert switch.attributes["wall_thermostat_setpoint"] == 21.0
+    assert switch.attributes["wall_thermostat_warning"] is None
+    plant.room[0] = 25.0  # its room warm: it does not call, yet control heats the others
+    rig.mirror_zones()
+    await rig.advance(30)
+    assert rig.sim.wall is not None
+    assert not rig.sim.wall.calling
+    assert plant.override_active(rig.now())
+    await rig.switch(False)
+    await rig.advance(60)
+    assert not plant.override_active(rig.now())
+    assert not rig.sim.last.demand  # the thermostat has the boiler: it does not call
+    plant.room[0] = 19.0
+    await rig.advance(60)
+    assert rig.sim.wall.calling
+    assert rig.sim.last.demand  # within a minute of its call
+    assert float(rig.hass.states.get(CONFIRMED).state) == rig.sim.last.setpoint
+    # Past 22:00 (the run began at 06:00 UTC): 17 °C from then on.
+    await rig.advance(START.timestamp() + 16 * 3600 + 300 - rig.now(), step=120.0)
+    plant.room[0] = 19.0
+    await rig.advance(60, step=30.0)
+    assert float(rig.hass.states.get(ROOM_SETPOINT).state) == 17.0
+    assert not rig.sim.wall.calling  # 19 °C is warm enough at night
+    await rig.scenario("fail_signal", signal="thermostat_setpoint")
+    await rig.advance(30)
+    switch = rig.state("switch", "control")
+    assert switch.attributes["wall_thermostat_setpoint"] is None
+    assert switch.attributes["wall_thermostat_warning"] == "unknown"
+
+
+# --- Z3, X8: an on/off boiler switched by the simulator's relay (answers C, D, G, L, N) ---------
+
+RELAY = "switch.boiler_sim_relay"
+RELAY_SIGNALS = {key: SIGNALS[key] for key in ("flame", "flow", "return", "pressure", "outdoor")}
+# The relay path's answers: a relay that reports its state, starts off after a power cut and has
+# no timer — the separate-contact tick given (answer G).
+RELAY_CONTROL = {
+    "write_path": "relay",
+    "relay_entity": RELAY,
+    "relay_is_separate_contact": True,
+    "relay_reports_state": "yes",
+    "relay_power_on_state": "off",
+    "relay_off_timer": "none",
+}
+START_TRACE_S = 310.0  # past the five minutes a unit's start counts as a trace of an outage
+
+
+async def start_relay(
+    rig: Rig,
+    relay: dict[str, Any] | None = None,
+    signals: dict[str, str] = RELAY_SIGNALS,
+    lockout_s: float | None = None,
+    **control: Any,
+) -> None:
+    """The simulator with an on/off boiler whose room-thermostat terminals a relay closes (the
+    relay's own settings: ``relay``), and the plugin controlling it through that relay."""
+    sim: dict[str, Any] = {"relay": {"start_up": "off"} | (relay or {})}
+    if lockout_s is not None:
+        sim["restart_lockout_s"] = lockout_s
+    await start(
+        rig,
+        sim=sim,
+        entry_options={
+            "signals": signals,
+            "boiler": {"class": "on_off", "dhw": "combi"},
+            "control": RELAY_CONTROL | control,
+        },
+    )
+
+
+def relay_model(rig: Rig) -> Any:
+    relay = rig.sim.relay
+    assert relay is not None
+    return relay
+
+
+def relay_commands(rig: Rig) -> list[bool]:
+    """What the relay was told through Home Assistant — by the plugin: the test switches it only
+    through the simulator's scenario services."""
+    return [on for _t, on in relay_model(rig).commands]
+
+
+def rooms_call(rig: Rig, call: bool) -> None:
+    """Every room below its target (its valve open: the zones call) or above it."""
+    plant = rig.sim.plant
+    plant.room = [target + (-2.0 if call else 2.0) for target in plant.targets]
+    rig.sim.advance(rig.now())
+    rig.mirror_zones()
+
+
+def alarm(rig: Rig, kind: str) -> str:
+    return rig.state("binary_sensor", f"alarm_{kind}").state
+
+
+def repair(rig: Rig, key: str) -> Any:
+    from homeassistant.helpers import issue_registry as ir
+
+    assert rig.entry is not None
+    return ir.async_get(rig.hass).async_get_issue(DOMAIN, f"{key}_{rig.entry.entry_id}")
+
+
+async def relay_on_under_control(rig: Rig) -> None:
+    rooms_call(rig, True)
+    await rig.switch(True)
+    await rig.advance(30)
+    assert relay_model(rig).on
+    await rig.advance(START_TRACE_S)
+
+
+async def test_relay_restart_is_resent(rig: Rig) -> None:
+    """Answer C: the relay restarts — seen unavailable for 10 s, back in its state after a power
+    cut, off — and gets the command again at once, counted; the third within a day raises
+    "commands lost", information only, never another controller. Missing data: its state
+    unknown for 5 minutes raises "relay out of reach", with no hand-back."""
+    await start_relay(rig)
+    await relay_on_under_control(rig)
+    for n in (1, 2, 3):
+        await rig.advance(130)  # past the last send's confirmation window
+        await rig.scenario("relay_restart")
+        assert rig.hass.states.get(RELAY).state == "unavailable"
+        await rig.advance(30)
+        assert relay_commands(rig)[-1] is True, n
+        assert relay_model(rig).on, n
+        assert alarm(rig, "commands_lost") == ("on" if n == 3 else "off"), n
+    assert alarm(rig, "outside_change") == "off"
+    assert rig.state("sensor", "control_state").state == "heating"
+    count = len(relay_commands(rig))
+    await rig.scenario("fail_signal", signal="relay")
+    assert rig.hass.states.get(RELAY).state == "unknown"
+    await rig.advance(280)
+    assert alarm(rig, "relay_unreachable") == "off"
+    await rig.advance(30)
+    assert alarm(rig, "relay_unreachable") == "on"
+    assert relay_commands(rig)[count:] == []  # no rest state: nothing handed back
+    assert rig.state("sensor", "control_state").state == "heating"
+
+
+async def test_relay_restart_without_unavailability_is_resent(rig: Rig) -> None:
+    """Answer D: a relay that reports no availability restarts unseen — found in the state the
+    user declared for after a power cut, off, while commanded on, never unavailable: the command
+    goes again, counted; the third within a day raises the information warning."""
+    await start_relay(rig)
+    await relay_on_under_control(rig)
+    for n in (1, 2, 3):
+        await rig.advance(130)
+        await rig.scenario("relay_restart", reported=False)
+        assert rig.hass.states.get(RELAY).state == "off"  # at once, never unavailable
+        await rig.advance(10)
+        assert relay_commands(rig)[-1] is True, n
+        assert relay_model(rig).on, n
+        assert alarm(rig, "commands_lost") == ("on" if n == 3 else "off"), n
+    assert alarm(rig, "outside_change") == "off"
+    assert rig.state("sensor", "control_state").state == "heating"
+
+
+@pytest.mark.parametrize(
+    ("start_up", "declared"), [("off", "off"), ("last", "unknown")], ids=["declared_off", "last"]
+)
+async def test_relay_fourth_unreported_restart_in_a_day_steps_aside(
+    rig: Rig, start_up: str, declared: str
+) -> None:
+    """Answer N: found in its declared state after a power cut with no trace — or, the state
+    declared "I don't know" (its model: the last one), switched by its own button while
+    available — answered three times within a day; the fourth counts as another controller: the
+    plugin steps aside at once, with no rewrite first, the rest state set once (the relay reads
+    off already: nothing written), the latch kept with its repair issue, the relay left alone."""
+    await start_relay(rig, relay={"start_up": start_up}, relay_power_on_state=declared)
+    await relay_on_under_control(rig)
+
+    async def event() -> None:
+        if declared == "off":
+            await rig.scenario("relay_restart", reported=False)
+        else:
+            await rig.scenario("relay_switch", on=False)
+
+    for n in (1, 2, 3):
+        await event()
+        await rig.advance(10)
+        assert relay_commands(rig)[-1] is True, n
+        assert relay_model(rig).on, n
+        await rig.advance(600)
+    count = len(relay_commands(rig))
+    await event()
+    await rig.advance(20)
+    assert relay_commands(rig)[count:] == []  # no rewrite; the rest state read already
+    control_state = rig.state("sensor", "control_state")
+    assert control_state.state == "handed_back"
+    assert repair(rig, "control_latched") is not None
+    await rig.scenario("relay_switch", on=True)
+    await rig.advance(600)
+    assert relay_commands(rig)[count:] == []  # left alone
+
+
+async def test_relay_switched_while_available_is_rewritten_once_then_stepped_aside(
+    rig: Rig,
+) -> None:
+    """Answers C, H and L: commanded off, the relay is switched on by an automation while it
+    stays available — written back once; the second time within a day the plugin steps aside:
+    the rest state, off, written once over the automation's value, then nothing more, even when
+    the automation switches the relay again; latched, with its repair issue."""
+    await start_relay(rig)
+    rooms_call(rig, False)
+    await rig.switch(True)
+    await rig.advance(START_TRACE_S)
+    assert relay_commands(rig) == []  # it reads "off" already: nothing to write
+    await rig.scenario("relay_switch", on=True)
+    await rig.advance(10)
+    assert relay_commands(rig) == [False]  # rewritten once
+    assert not relay_model(rig).on
+    await rig.advance(130)
+    await rig.scenario("relay_switch", on=True)
+    await rig.advance(20)
+    assert relay_commands(rig) == [False, False]  # the rest state, once
+    assert not relay_model(rig).on
+    await rig.scenario("relay_switch", on=True)  # the automation again
+    await rig.advance(600)
+    assert relay_commands(rig) == [False, False]  # left alone
+    assert relay_model(rig).on
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    found = repair(rig, "control_latched")
+    assert found is not None
+    assert found.translation_key == "control_latched_relay_off"
+
+
+async def test_relay_wifi_loss_raises_alarm_after_5_min_and_resends(rig: Rig) -> None:
+    """R6: the relay loses its Wi-Fi for eight minutes, its contact as it was; meanwhile the
+    rooms stop calling. Nothing is written while it is out of reach, nor handed back; after five
+    minutes the alarm and its repair issue; back, it still reads on — the command, off, goes at
+    once, and the alarm clears."""
+    await start_relay(rig)
+    await relay_on_under_control(rig)
+    count = len(relay_commands(rig))
+    await rig.scenario("relay_wifi_loss", minutes=8)
+    rooms_call(rig, False)
+    await rig.advance(280)
+    assert alarm(rig, "relay_unreachable") == "off"
+    await rig.advance(30)
+    assert alarm(rig, "relay_unreachable") == "on"
+    assert repair(rig, "relay_unreachable") is not None
+    assert relay_commands(rig)[count:] == []  # nothing could reach it, no hand-back tried
+    assert relay_model(rig).on  # its contact as it was: the boiler may heat meanwhile
+    await rig.advance(160)
+    assert rig.hass.states.get(RELAY).state == "unavailable"  # 7 min 50 s
+    await rig.advance(20)
+    assert relay_commands(rig)[count:] == [False]  # back, still on: the command at once
+    assert not relay_model(rig).on
+    assert alarm(rig, "relay_unreachable") == "off"
+    assert repair(rig, "relay_unreachable") is None
+
+
+@pytest.mark.parametrize("restarts", [True, False], ids=["tasmota_like", "not_restarted"])
+async def test_relay_off_timer_lapses_without_repeats(rig: Rig, restarts: bool) -> None:
+    """R3, R7 row 5: the relay's own 10-minute switch-off timer, declared, renewed by "on" at
+    half its length. Where an "on" restarts it (Tasmota's PulseTime) it never lapses under
+    control; where it does not (a Shelly's auto-off: not documented, Q3.10) it lapses 10 minutes
+    after the on-period began, renewals or not — the plugin takes that as the relay's own lapse:
+    "on" again at once, never counted as a lost command, never another controller."""
+    await start_relay(
+        rig,
+        relay={"off_timer_min": 10, "timer_restarts_on_repeat": restarts},
+        relay_off_timer="minutes",
+        relay_off_timer_min=10,
+    )
+    await relay_on_under_control(rig)
+    lapsed = relay_model(rig).own_changes  # the relay's own switch-offs: its timer here
+    await rig.advance(3600)
+    lapses = relay_model(rig).own_changes - lapsed
+    assert relay_commands(rig).count(False) == 0
+    assert relay_commands(rig).count(True) >= 10  # renewed every five minutes
+    if restarts:
+        assert lapses == 0
+    else:
+        assert lapses >= 5
+        assert relay_model(rig).on  # each lapse answered at once
+    assert alarm(rig, "commands_lost") == "off"
+    assert alarm(rig, "outside_change") == "off"
+    assert rig.state("sensor", "control_state").state == "heating"
+
+
+async def test_relay_with_an_unknown_timer_is_kept_on_by_repeats(rig: Rig) -> None:
+    """R3, R8: the timer declared "I don't know": "on" is repeated every repeat interval
+    (300 s) while the command is on, and the relay's own 10-minute timer, restarted by each
+    "on", never lapses; "off" is not repeated — the relay reports its state."""
+    await start_relay(rig, relay={"off_timer_min": 10}, relay_off_timer="unknown")
+    await relay_on_under_control(rig)
+    for _ in range(360):  # an hour
+        await rig.advance(10)
+        assert relay_model(rig).on
+    times = [t for t, on in relay_model(rig).commands if on]
+    gaps = [b - a for a, b in pairwise(times)]
+    assert gaps
+    assert max(gaps) <= 310.0
+    rooms_call(rig, False)
+    await rig.advance(1200, step=30.0)
+    assert relay_commands(rig)[-1] is False
+    assert relay_commands(rig).count(False) == 1
+
+
+@pytest.mark.parametrize(
+    ("start_up", "commanded", "sent"),
+    [("off", True, True), ("on", False, False), ("last", True, None), ("last", False, None)],
+)
+async def test_relay_start_up_state_after_power_cut(
+    rig: Rig, start_up: str, commanded: bool, sent: bool | None
+) -> None:
+    """Rule 7: a power cut of the relay, seen as 10 s unavailable; back in its own state after a
+    power cut. Found other than commanded — off while heat is wanted, or on while it is not,
+    the boiler heating without control — the command goes at once (answer C); found as
+    commanded ("last"), nothing. Missing data: no flame or flow mapped — a home with a relay
+    alone — control runs all the same, shown without confirmation that the boiler heats."""
+    await start_relay(rig, relay={"start_up": start_up}, signals={})
+    rooms_call(rig, commanded)
+    await rig.switch(True)
+    await rig.advance(START_TRACE_S)
+    count = len(relay_commands(rig))
+    restarts = relay_model(rig).own_changes
+    await rig.scenario("relay_restart")
+    await rig.advance(40)
+    assert relay_model(rig).available
+    assert relay_model(rig).own_changes == restarts + 1  # back in its own state, then...
+    assert relay_commands(rig)[count:] == ([] if sent is None else [sent])
+    assert relay_model(rig).on is commanded
+    switch = rig.state("switch", "control")
+    assert switch.attributes["confirmation"] == "without_heat_confirmation"
+    assert rig.state("sensor", "control_state").state == ("heating" if commanded else "idle")
+
+
+async def test_an_optimistic_relay_is_controlled_without_confirmation(rig: Rig) -> None:
+    """Rule 7's ``assumed_state``: an optimistic relay entity — its state Home Assistant's own
+    guess, declared to report its state all the same — confirms nothing: control runs "without
+    confirmation", the command, on or off, repeated blindly every repeat interval, and a
+    restart nobody saw is undone within that interval."""
+    await start_relay(rig, relay={"assumed_state": True})
+    await relay_on_under_control(rig)
+    assert rig.hass.states.get(RELAY).attributes.get("assumed_state") is True
+    switch = rig.state("switch", "control")
+    assert switch.attributes["confirmation"] == "controlled_without_confirmation"
+    assert rig.state("sensor", "control_state").attributes["relay_check"] == "unverified"
+    count = len(relay_commands(rig))
+    await rig.scenario("relay_restart", reported=False)
+    assert not relay_model(rig).on
+    await rig.advance(310)
+    assert relay_commands(rig)[count:] == [True]  # the blind repeat put it back
+    assert relay_model(rig).on
+    rooms_call(rig, False)
+    await rig.advance(620)
+    assert relay_commands(rig)[-3:] == [False, False, False]  # "off" repeated too
+    assert alarm(rig, "outside_change") == "off"
+
+
+async def test_relay_path_without_the_separate_contact_tick_is_blocked(rig: Rig) -> None:
+    """Answer G: without the tick "this is a separate relay contact, not a setting stored in the
+    boiler's memory" control does not start — it says why — and nothing reaches the relay; the
+    monitor runs."""
+    await start_relay(rig, relay_is_separate_contact=False)
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)
+    assert err.value.translation_key == "blocked_relay_contact_not_confirmed"
+    rooms_call(rig, True)
+    await rig.advance(600, step=30.0)
+    assert relay_commands(rig) == []
+    assert rig.state("binary_sensor", "connection").state == "on"  # the monitor runs
+
+
+# --- Z3, rule 8: the boiler's restart lockout against the relay's proof of heat --------------
+
+
+async def test_relay_proof_of_heat_outlasts_the_restart_lockout(rig: Rig) -> None:
+    """R12 against rule 8: a boiler with a 20-minute restart lockout (test-only). The relay off
+    and on again a minute later: the burner waits out its lockout before it fires — within X8's
+    30-minute proof window, so no "boiler not responding". A boiler whose own lockout fault keeps
+    it off raises that information alarm after 30 minutes — control goes on. Missing data: the
+    boiler's lockout signal mapped but unavailable counts as no fault."""
+    signals = RELAY_SIGNALS | {"boiler_lockout": "binary_sensor.boiler_sim_boiler_lockout"}
+    await start_relay(rig, signals=signals, lockout_s=1200.0)
+    await rig.scenario("fail_signal", signal="boiler_lockout")
+    await relay_on_under_control(rig)
+    assert rig.sim.last.flame
+    rooms_call(rig, False)
+    await rig.advance(30)
+    assert not relay_model(rig).on
+    assert not rig.sim.last.flame
+    rig.sim.plant.water = 20.0  # cooled: it would fire at once but for its lockout
+    await rig.advance(30)
+    rooms_call(rig, True)
+    fired_after: float | None = None
+    for i in range(180):  # thirty minutes
+        await rig.advance(10)
+        if fired_after is None and rig.sim.last.flame:
+            fired_after = (i + 1) * 10.0
+        assert alarm(rig, "boiler_not_responding") == "off", i
+    assert fired_after is not None
+    assert 15 * 60.0 <= fired_after <= 20 * 60.0  # the lockout's end, not before
+    assert rig.state("sensor", "control_state").attributes["boiler_heats"] == "heats"
+    await rig.scenario("set_fault", fault="boiler_lockout")  # its signal unavailable all along
+    rooms_call(rig, False)
+    await rig.advance(60)
+    rooms_call(rig, True)
+    await rig.advance(1800, step=30.0)
+    assert relay_model(rig).on  # no protection stop on an unknown fault signal
+    await rig.advance(60, step=30.0)
+    assert alarm(rig, "boiler_not_responding") == "on"
+    assert rig.state("sensor", "control_state").state == "heating"  # information only

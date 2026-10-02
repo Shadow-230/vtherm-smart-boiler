@@ -6,12 +6,20 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 import pytest
-from custom_components.boiler_sim.profiles import BOILERS, HOUSES, radiator_zones
+from custom_components.boiler_sim.profiles import BOILERS, HOUSES, BoilerProfile, radiator_zones
 
+from custom_components.vtherm_smart_boiler.control_config import parse_control
 from custom_components.vtherm_smart_boiler.core.controller import ControlConfig, ControlInputs
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.cycles import find_burns
 from custom_components.vtherm_smart_boiler.core.guards import GuardConfig, WriteType
+from custom_components.vtherm_smart_boiler.core.installation import (
+    Boiler,
+    BoilerClass,
+    Circuit,
+    Installation,
+    Zone,
+)
 from custom_components.vtherm_smart_boiler.core.limits import FlowLimits
 from custom_components.vtherm_smart_boiler.core.loop import LoopConfig, LoopState, loop_step
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
@@ -21,7 +29,10 @@ from sim.simulator import (
     HOUR,
     Scenario,
     SimCommand,
+    SimResult,
     SimView,
+    SimZoneView,
+    TpiConfig,
     WithoutOverride,
     daily_cycle,
     simulate,
@@ -66,17 +77,7 @@ class LoopController:
             flame=view.flame if link else None,
             dhw=view.dhw if link else None,
             outdoor_sensor=view.outdoor if link else None,
-            zones=tuple(
-                ZoneState(
-                    z.zone_id,
-                    temperature=z.temperature,
-                    target=z.target,
-                    heating_enabled=True,
-                    valve_open=z.opening,
-                    reported_at=t,
-                )
-                for z in view.zones
-            ),
+            zones=tuple(zone_state(z, t) for z in view.zones),
         )
         confirmed = view.confirmed_setpoint if link else None
         self.state, out = loop_step(self.state, inputs, confirmed, self.config)
@@ -97,6 +98,31 @@ class LoopController:
             ch_enable=out.ch_enable,
             setpoint=out.setpoint.value if out.setpoint is not None else None,
         )
+
+
+def zone_state(zone: SimZoneView, t: float) -> ZoneState:
+    """A zone as VT publishes it: a thermostatic valve's opening; a switch zone under TPI — VT's
+    over_switch — its duty (``on_percent``) and whether its device is on now, no opening."""
+    if zone.on_percent is not None:
+        on = zone.opening > 0.5
+        return ZoneState(
+            zone.zone_id,
+            temperature=zone.temperature,
+            target=zone.target,
+            heating_enabled=True,
+            on_percent=zone.on_percent,
+            device_active=on,
+            calling=on,
+            reported_at=t,
+        )
+    return ZoneState(
+        zone.zone_id,
+        temperature=zone.temperature,
+        target=zone.target,
+        heating_enabled=True,
+        valve_open=zone.opening,
+        reported_at=t,
+    )
 
 
 def scenario(means: list[float], controller: LoopController, **changes) -> Scenario:
@@ -206,3 +232,99 @@ def test_summer_heating_follows_vt_at_the_minimum_water_temperature() -> None:
     assert controller.hand_backs == []
     flame = result.history.signal(Signal.FLAME)
     assert not [b for b in find_burns(flame, HOUR, DAY) if b.start_seen]
+
+
+# --- S-15, T-24: starts under control against the boiler's own regulation --------------------
+
+STARTS_CRITERION = 1.10  # J4's criterion (Z3 rule 6; provisional, K4)
+
+
+def own_curve_loop(boiler: BoilerProfile, comfort_correction: bool) -> LoopConfig:
+    """The control the plugin runs on an OpenTherm Gateway (``parse_control``), its curve set to
+    the boiler's own — linear (exponent 1) through the same points, shifted by the boiler's
+    offset — and its lowest water temperature the boiler's own minimum, so that the comparison
+    is of the control, not of two curves (research/2026-10-02-z3-starts-ratio.md)."""
+    room = 20.0
+    installation = Installation(
+        Boiler(BoilerClass.FLOW_SETPOINT),
+        (Circuit("main"),),
+        tuple(Zone(z.zone_id, "main") for z in radiator_zones()),
+    )
+    control = {
+        "write_path": "opentherm_gw",
+        "gateway_id": "sim",
+        "confirmed_entity": "sensor.gateway_control_setpoint",
+        "topology": "gateway_with_thermostat",
+        "thermostat_kind": "opentherm",
+        "curve": {
+            "design_outdoor": -15.0,
+            "design_flow": room + boiler.curve_slope * (room + 15.0),
+            "exponent": 1.0,
+            "offset": boiler.curve_offset - room,
+        },
+        "hard_min": boiler.min_setpoint,
+        "hard_max": boiler.max_setpoint,
+        "comfort_correction": comfort_correction,
+    }
+    return parse_control(control, installation, None).loop
+
+
+def starts(result: SimResult, start: float, end: float) -> int:
+    flame = result.history.signal(Signal.FLAME)
+    return len([burn for burn in find_burns(flame, start, end) if burn.start_seen])
+
+
+def starts_both_ways(mean: float, comfort_correction: bool) -> tuple[SimResult, SimResult]:
+    """24 h at a steady outdoor temperature (after a day to settle), in the same simulated
+    house: three radiator zones under TPI, the boiler on its own regulation — its own curve,
+    heating whenever a zone valve is open, as VT's central boiler switches it — and under the
+    plugin's control, stepped every 10 s as the control unit is."""
+    boiler = BOILERS["condensing_large"]
+    base = Scenario(
+        boiler,
+        HOUSES["average"],
+        radiator_zones(),
+        daily_cycle([mean, mean], amplitude=0.0),
+        days=2,
+        step_s=10.0,
+        control_period_s=10.0,
+        tpi=TpiConfig(),
+    )
+    own = simulate(base)
+    controlled = simulate(
+        replace(base, controller=LoopController(own_curve_loop(boiler, comfort_correction)))
+    )
+    return own, controlled
+
+
+@pytest.mark.parametrize("mean", [8.0, -5.0])
+def test_tpi_switch_zones_starts_per_hour_under_control(mean: float) -> None:
+    """S-15, T-24 (Z3 rule 6): switch zones on for their on-percent of each 5-minute TPI cycle;
+    over 24 h at +8 °C and at −5 °C the plugin's control starts the burner no more than
+    1.10 times as often per hour as the boiler's own regulation, and switches heating no more often
+    than VT's central boiler would — the plugin's curve set to the boiler's own and its comfort
+    correction off: the control path itself adds no start. (With the correction on, see the
+    next test.)"""
+    own, controlled = starts_both_ways(mean, comfort_correction=False)
+    own_starts, controlled_starts = starts(own, DAY, 2 * DAY), starts(controlled, DAY, 2 * DAY)
+    assert own_starts > 0, "the boiler must start for the comparison to mean anything"
+    assert controlled_starts / 24.0 <= STARTS_CRITERION * own_starts / 24.0
+    assert controlled.ch_switchings <= STARTS_CRITERION * own.ch_switchings
+    assert controlled.override_s > 0.95 * 2 * DAY  # the control held the boiler throughout
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "K4 (S-15): the comfort correction rises to +3 K while a TPI zone sits at full duty "
+        "short of its target, and every zone's cycle then stops the burner: x1.75 at +8 °C, "
+        "x5 at -5 °C (research/2026-10-02-z3-starts-ratio.md)"
+    ),
+)
+@pytest.mark.parametrize("mean", [8.0, -5.0])
+def test_tpi_switch_zones_starts_per_hour_with_the_defaults(mean: float) -> None:
+    """J4's criterion with the plugin's defaults — the comfort correction on — in the same
+    house: expected to fail until K4 decides the correction's rule with TPI zones, its default,
+    or the criterion."""
+    own, controlled = starts_both_ways(mean, comfort_correction=True)
+    assert starts(controlled, DAY, 2 * DAY) <= STARTS_CRITERION * starts(own, DAY, 2 * DAY)

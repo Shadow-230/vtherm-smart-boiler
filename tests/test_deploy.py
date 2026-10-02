@@ -47,6 +47,8 @@ def test_the_dry_run_lists_files_and_connects_nowhere(tmp_path: Path) -> None:
         "custom_components/vtherm_smartpi/manifest.json",
         "custom_components/boiler_sim/manifest.json",
         "custom_components/boiler_sim/plant.py",
+        "custom_components/opentherm_gw/manifest.json",
+        "custom_components/opentherm_gw/translations/en.json",
     ):
         assert expected in names, expected
     assert not [line for line in entries if line.startswith("l")], "links in the archive"
@@ -75,9 +77,8 @@ def test_the_dry_run_reads_no_private_file(tmp_path: Path) -> None:
         ROOT / "custom_components/vtherm_smart_boiler"
     )
     (root / "sim/custom_components").mkdir(parents=True)
-    (root / "sim/custom_components/boiler_sim").symlink_to(
-        ROOT / "sim/custom_components/boiler_sim"
-    )
+    for name in ("boiler_sim", "opentherm_gw"):
+        (root / "sim/custom_components" / name).symlink_to(ROOT / "sim/custom_components" / name)
     for name in ("versatile_thermostat", "vtherm_smartpi"):
         stub = root / "vendor/custom_components" / name
         stub.mkdir(parents=True)
@@ -119,3 +120,13 @@ def test_ssh_reads_no_configuration_but_its_own() -> None:
     ):
         assert option in script, option
     assert "unset TEST_HA_HOST" in script  # nothing from the calling environment
+
+
+def test_the_stub_goes_only_where_compose_mounts_it() -> None:
+    """P-37: the test-only gateway stub is packed and mounted for the test Home Assistant, as
+    every other integration under test, and the script names it among those it replaces."""
+    compose = (ROOT / "devenv/compose.yaml").read_text(encoding="utf-8")
+    assert "./custom_components/opentherm_gw:/config/custom_components/opentherm_gw:ro" in compose
+    script = SCRIPT.read_text(encoding="utf-8")
+    assert "boiler_sim opentherm_gw)" in script
+    assert "custom_components/boiler_sim custom_components/opentherm_gw" in script

@@ -12,8 +12,10 @@ class BoilerProfile:
     """A boiler with its own weather curve and on/off hysteresis around the setpoint.
 
     The burner stops when the flow exceeds the setpoint by ``hysteresis_off_k`` and restarts
-    when it falls ``hysteresis_on_k`` below, no sooner than ``anti_cycle_s`` after stopping.
-    Its curve: ``setpoint = curve_offset + curve_slope · (20 − outdoor)``, clamped.
+    when it falls ``hysteresis_on_k`` below, no sooner than ``anti_cycle_s`` after stopping (its
+    restart lockout; 5 K each side, provisional, K4). The pump runs on for ``pump_overrun_s``
+    after the heating demand ends (5 min, a common factory value; provisional, K4). Its curve:
+    ``setpoint = curve_offset + curve_slope · (20 − outdoor)``, clamped.
     """
 
     min_power_kw: float
@@ -22,6 +24,7 @@ class BoilerProfile:
     hysteresis_on_k: float = 5.0
     hysteresis_off_k: float = 5.0
     anti_cycle_s: float = 180.0
+    pump_overrun_s: float = 300.0
     condensing: bool = True
     curve_offset: float = 25.0
     curve_slope: float = 1.0
@@ -31,6 +34,11 @@ class BoilerProfile:
     dhw_changeover_s: float = 60.0  # burner off while the diverter valve switches to DHW
     pump_flow_kw_per_k: float = 1.0  # water flow times heat capacity
 
+
+# The restart lockout of the relay and boiler scenarios (Z3, rule 8): a common factory setting
+# of an on/off boiler's burner anti-cycling, adjustable 2–60 min on such boilers; test-only — the
+# profiles below keep their own.
+LONG_RESTART_LOCKOUT_S = 20 * 60.0
 
 BOILERS: dict[str, BoilerProfile] = {
     "condensing_small": BoilerProfile(2.5, 15.0, 40.0),

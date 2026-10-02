@@ -1,4 +1,4 @@
-"""Flame, hot water, heating demand, pump and the DHW-enable bit."""
+"""Flame, hot water, heating demand, pump, the DHW-enable bit and the boiler's own faults."""
 
 from __future__ import annotations
 
@@ -17,8 +17,13 @@ FLAGS: dict[str, tuple[str, Callable[[Simulation], bool]]] = {
     "flame": ("flame", lambda s: s.last.flame),
     "dhw_active": ("hot water", lambda s: s.last.dhw),
     "ch_active": ("heating demand", lambda s: s.last.demand and not s.last.dhw),
-    "pump_running": ("pump", lambda s: s.last.demand or s.last.dhw),
+    # The pump: for heating, with its overrun after the demand ends, and for hot water.
+    "pump_running": ("pump", lambda s: s.last.pump or s.last.dhw),
     "dhw_enable": ("DHW enable", lambda s: s.dhw_enable),
+    # The boiler's own faults (boiler protection): each stops it while it holds.
+    "low_pressure_fault": ("low water pressure fault", lambda s: "low_pressure_fault" in s.faults),
+    "boiler_lockout": ("lockout", lambda s: "boiler_lockout" in s.faults),
+    "fault_indication": ("fault indication", lambda s: bool(s.faults)),
 }
 
 

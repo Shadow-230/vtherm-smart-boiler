@@ -19,8 +19,13 @@ class SimEntity(Entity):
 
     platform_domain = "sensor"
 
+    # The writable setpoint's device: its entities go while it restarts (S-13).
+    _on_device = False
+
     @property
     def available(self) -> bool:
+        if self._on_device and not self.hub.sim.device_reachable():
+            return False
         return self.key not in self.hub.sim.failed
 
     async def async_added_to_hass(self) -> None:

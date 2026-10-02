@@ -43,8 +43,21 @@ def test_energy_balance() -> None:
     result = simulate(scenario([5.0, 5.0]))
     stored = (result.water_end - result.water_start) * 60.0 * WATER_KWH_PER_L_K
     assert result.burner_kwh == pytest.approx(result.emitted_kwh + stored, rel=0.01)
+    # What the emitters took from the water reached the rooms, or is still in them (P-112).
+    in_emitters = result.emitters_end_kwh - result.emitters_start_kwh
+    assert result.emitted_kwh == pytest.approx(result.room_kwh + in_emitters, rel=1e-6)
     assert result.ch_kwh == pytest.approx(result.burner_kwh)
     assert len(result.daily_ch_kwh) == 2
+
+
+@pytest.mark.parametrize("step_s", [20.0, 70.0])
+def test_daily_sums_are_kept(step_s: float) -> None:
+    """P-112: one sum per day of the run, adding up to the heating total, whether or not the
+    step divides a day (70 s does not: the sums were lost)."""
+    result = simulate(scenario([5.0, 5.0], step_s=step_s))
+    assert len(result.daily_ch_kwh) == 2
+    assert all(day > 0.0 for day in result.daily_ch_kwh)
+    assert sum(result.daily_ch_kwh) == pytest.approx(result.ch_kwh)
 
 
 def test_rooms_hold_their_setpoints() -> None:

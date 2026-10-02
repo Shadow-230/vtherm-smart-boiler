@@ -96,7 +96,8 @@ class OpeningSensor(SimEntity, SensorEntity):
 
 
 class CounterSensor(SimEntity, SensorEntity):
-    """Commands the boiler received: persistent writes wear its memory."""
+    """Commands the boiler received: writes of type persistent wear its memory (its state);
+    heating on/off writes, DHW-enable writes and each path's commands are counted apart (P-113)."""
 
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
@@ -109,10 +110,13 @@ class CounterSensor(SimEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        commands = self.hub.sim.commands
+        sim = self.hub.sim
+        commands = sim.commands
         return {
             "gateway_commands": len(commands.gateway),
             "entity_commands": len(commands.entity),
+            "relay_commands": 0 if sim.relay is None else len(sim.relay.commands),
+            "ch_writes": commands.ch_writes,
             "dhw_enable_writes": commands.dhw_enable_writes,
-            "override_active": self.hub.sim.plant.override_active(self.hub.now()),
+            "override_active": sim.plant.override_active(self.hub.now()),
         }
