@@ -954,7 +954,9 @@ def test_the_relay_timer_seen_issue_is_translated() -> None:
         assert issue["title"], language
         assert set(PLACEHOLDER.findall(issue["description"])) == {"relay", "minutes"}, language
     issue = SOURCE["issues"][RELAY_TIMER_ISSUE]["description"]
-    assert "Read the timer's length in the relay's own settings" in issue  # not the number seen
+    assert "read its length in the relay's own settings" in issue  # not the number seen
+    assert 'a "maximum run time"' in issue  # an automation looks the same (Z4R2-05)
+    assert "at least every half of that time" in issue  # the renewal, as for a declared timer
     timer = SOURCE["options"]["step"]["control_relay"]["data_description"]["relay_off_timer"]
     assert "the same time after" in timer
 

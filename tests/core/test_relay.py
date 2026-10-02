@@ -863,6 +863,34 @@ def test_whole_multiples_count_only_for_a_timer_of_five_minutes_or_more() -> Non
     assert state.timer_seen_s is None
 
 
+@pytest.mark.parametrize("restarts", [True, False], ids=["restarted_by_on", "not_restarted"])
+def test_a_recognised_timer_is_renewed_as_a_declared_one(restarts: bool) -> None:
+    """Z4R2-05: once the relay's own timer is recognised, "on" is renewed every min(its length ÷
+    2, repeat interval), as for a declared timer. A 5-min timer that a repeated "on" restarts,
+    renewed every 5 min, races the renewal and lapses every 5 min — the boiler restarted each
+    time; recognised after its second lapse, it is renewed every 150 s and lapses no more.
+    Negative: one that "on" does not restart lapses all the same, answered and uncounted."""
+    config = RelayConfig(
+        reports=RelayReports.YES, power_on=RelayPowerOn.OFF, timer=RelayTimer.UNKNOWN
+    )
+    relay = Relay(timer_s=300.0, restarts_timer=restarts)
+    state, results = drive(relay, config, True, 0.0, 3 * HOUR_S)
+    switch_offs = [
+        t for t, r in results if r.judged in (ChangeClass.LOST_COMMAND, ChangeClass.OWN_LAPSE)
+    ]
+    assert state.timer_seen_s == 300.0
+    assert lost(results) == [300.0]
+    assert events(results) == []
+    assert not state.blocked
+    if not restarts:
+        assert len(switch_offs) == 36  # every 5 min, as before: renewals cannot stop it
+        return
+    assert switch_offs == [300.0, 600.0]  # then renewed in time
+    renewals = [t for t, _on, kind in relay.writes if kind is WriteKind.KEEPALIVE]
+    assert renewals[:3] == [750.0, 900.0, 1050.0]
+    assert relay.on
+
+
 def test_an_irregular_switch_off_after_the_timer_was_seen_still_counts() -> None:
     """Z4R-02's other side: once the relay's own timer has been seen (about 10 min), a
     switch-off at another time into the on-period — an automation, a person — still counts

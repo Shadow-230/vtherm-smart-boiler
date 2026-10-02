@@ -14,7 +14,8 @@ What is written (R8):
 - a relay that reports its state is compared at every step, and at least every
   ``RELAY_CHECK_S`` even without an event; it is written only on a mismatch, and "on" is renewed
   while the command is on where its timer is declared (every min(timer ÷ 2, repeat interval)) or
-  not ruled out (every repeat interval); "off" is not repeated;
+  not ruled out (every repeat interval — every min(its length ÷ 2, repeat interval) once the
+  relay's own timer has been recognised, Z4R2-05); "off" is not repeated;
 - a relay that reports no state — declared so, not known, or an entity with ``assumed_state`` —
   gets its current command, on or off, every repeat interval, and nothing is judged from it;
 - nothing is written while it is unavailable or missing: out of reach for
@@ -566,10 +567,21 @@ def _due(
     mismatch = seen.known and seen.on is not desired
     if mismatch and judged in _CHECKED and _elapsed(state, now, config.check_s):
         return WriteKind.RESEND, False  # the check: a mismatch nothing else answered
-    renew = config.renew_s
+    renew = _renew_s(state, config)
     if desired and renew is not None and _elapsed(state, now, renew):
         return WriteKind.KEEPALIVE, False  # renews the relay's own timer; "off" not repeated
     return None, False
+
+
+def _renew_s(state: RelayState, config: RelayConfig) -> float | None:
+    """How often "on" is renewed while commanded on: as the configuration says, and for the
+    relay's own timer recognised while declared "I don't know", as for a declared one — every
+    min(its length ÷ 2, repeat interval), so a timer that a repeated "on" restarts no longer
+    races the renewal and lapses (Z4R2-05)."""
+    seen = state.timer_seen_s
+    if config.timer is RelayTimer.UNKNOWN and seen is not None:
+        return min(seen / 2.0, config.repeat_s)
+    return config.renew_s
 
 
 def _elapsed(state: RelayState, now: float, interval: float) -> bool:
