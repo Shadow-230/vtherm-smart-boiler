@@ -751,18 +751,59 @@ def test_a_rewrite_that_does_not_hold_is_an_outside_change() -> None:
         assert state.blocked is GuardEvent.OUTSIDE_CHANGE
 
 
-def test_a_new_value_of_ours_is_not_an_outside_change() -> None:
-    """The read-back still showing the plugin's previous value is not judged — only shown not
-    confirmed once the timeout has passed."""
-    state = held(HELD)
-    state, action, _ = step(state, 50.0, 45.0, 200.0, HELD)
-    assert action == WriteAction(50.0, WriteKind.CHANGE)
-    for t in range(210, 400, 10):
-        state, action, events = step(state, 50.0, 45.0, float(t), HELD)
-        assert events == ()
-        assert action is None or action.kind is WriteKind.KEEPALIVE
-    assert confirmation(state, HELD) is Confirmation.NOT_CONFIRMED
+@pytest.mark.parametrize(
+    ("config", "first", "previous", "new"),
+    [(HELD, 0.0, 45.0, 50.0), (ECHOED, ON, OFF, ON)],
+    ids=["setpoint", "heating_switch"],
+)
+def test_a_late_echo_of_the_previous_value_is_not_judged_within_the_timeout(
+    config: GuardConfig, first: float, previous: float, new: float
+) -> None:
+    """Z4-01's negative (M8: "its previous one", within 120 s of the change): the plugin's
+    previous value — written long before — still read back after the plugin sent a new one is a
+    late echo, not judged while the change is at most 120 s old: no rewrite, no event, shown
+    waiting, then not confirmed once the timeout has passed. Past that window it is judged like
+    any other value: held two steps, the one rewrite."""
+    state = held(config, first=first, value=previous)
+    state = keep(state, config, 160.0, 990.0, previous, previous)
+    state, action, _ = step(state, new, previous, 1000.0, config)
+    assert action == WriteAction(new, WriteKind.CHANGE)
+    for t in range(1010, 1130, 10):  # up to the change + 120 s
+        result = result_of(state, new, previous, float(t), config)
+        state = result.state
+        assert result.judged is ChangeClass.NOT_JUDGED
+        assert result.events == ()
+        assert result.action is None or result.action.kind is WriteKind.KEEPALIVE
+    assert confirmation(state, config) is Confirmation.NOT_CONFIRMED
+    assert state.rewritten_at is None
     assert state.blocked is None
+    result = result_of(state, new, previous, 1130.0, config)  # the window is over: one step
+    assert result.judged is ChangeClass.NOT_JUDGED
+    result = result_of(result.state, new, previous, 1140.0, config)  # held two steps
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+    assert result.action == WriteAction(new, WriteKind.REWRITE)
+
+
+def test_a_setpoint_back_at_the_plugins_previous_value_is_another_controller() -> None:
+    """Z4-01 for the setpoint: something sets the setpoint back to the plugin's previous value —
+    replaced more than 120 s before — and holds it: another controller, written again once; the
+    next such change within a day blocks. The previous value is no longer exempt for good."""
+    state = keep(held(HELD), HELD, 160.0, 990.0)
+    state, action, _ = step(state, 50.0, 45.0, 1000.0, HELD)
+    assert action == WriteAction(50.0, WriteKind.CHANGE)
+    state = keep(state, HELD, 1010.0, 1200.0, 50.0, 50.0)
+    first = result_of(state, 50.0, 45.0, 1210.0, HELD)
+    assert first.judged is ChangeClass.NOT_JUDGED  # one step (M10)
+    assert confirmation(first.state, HELD) is Confirmation.NOT_CONFIRMED  # it shows another value
+    result = result_of(first.state, 50.0, 45.0, 1220.0, HELD)
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+    assert result.action == WriteAction(50.0, WriteKind.REWRITE)
+    assert result.events == ()
+    state = keep(result.state, HELD, 1230.0, 1590.0, 50.0, 50.0)  # the rewrite holds
+    state, _, _ = step(state, 50.0, 45.0, 1600.0, HELD)
+    state, action, events = step(state, 50.0, 45.0, 1610.0, HELD)  # again within the day
+    assert (action, events) == (None, (GuardEvent.OUTSIDE_CHANGE,))
+    assert state.blocked is GuardEvent.OUTSIDE_CHANGE
 
 
 def test_a_second_outside_change_within_a_day_blocks_even_after_our_change() -> None:
@@ -917,6 +958,43 @@ def test_heating_switched_away_from_its_baseline_is_another_controller(
     state, _, _ = step(state, ON, OFF, 500.0, ECHOED)
     state, action, events = step(state, ON, OFF, 510.0, ECHOED)
     assert (action, events) == (None, (GuardEvent.OUTSIDE_CHANGE,))
+
+
+@pytest.mark.parametrize(("baseline", "other"), [(ON, OFF), (OFF, ON)], ids=["on", "off"])
+def test_heating_switched_away_after_a_toggle_is_another_controller(
+    baseline: float, other: float
+) -> None:
+    """Z4-01 (decision 6, answer E, row 13): the plugin has switched heating both ways in the
+    session — its previous state is then the only other one — and commands the state from before
+    the plugin. Something switches heating to the other state more than 120 s after the plugin's
+    last change: shown not confirmed at once; held two steps, another controller — written again
+    once; the next such change within a day blocks. Before, the previous state was never judged,
+    and the held refresh wrote the command back silently, for good."""
+    state = keep(
+        held(ECHOED, first=baseline, value=baseline), ECHOED, 160.0, 990.0, baseline, baseline
+    )
+    state, action, _ = step(state, other, baseline, 1000.0, ECHOED)  # the plugin: one way
+    assert action == WriteAction(other, WriteKind.CHANGE)
+    state = keep(state, ECHOED, 1010.0, 1990.0, other, other)
+    state, action, _ = step(state, baseline, other, 2000.0, ECHOED)  # ... and back
+    assert action == WriteAction(baseline, WriteKind.CHANGE)
+    state = keep(state, ECHOED, 2010.0, 2200.0, baseline, baseline)
+    assert state.baseline == baseline
+    assert confirmation(state, ECHOED) is Confirmation.CONFIRMED
+    first = result_of(state, baseline, other, 2210.0, ECHOED)  # switched from outside
+    assert first.judged is ChangeClass.NOT_JUDGED  # one step (M10)
+    assert first.action is None
+    assert confirmation(first.state, ECHOED) is Confirmation.NOT_CONFIRMED
+    result = result_of(first.state, baseline, other, 2220.0, ECHOED)
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+    assert result.action == WriteAction(baseline, WriteKind.REWRITE)
+    assert result.events == ()
+    assert confirmation(result.state, ECHOED) is not Confirmation.CONFIRMED
+    state = keep(result.state, ECHOED, 2230.0, 2590.0, baseline, baseline)  # the rewrite holds
+    state, _, _ = step(state, baseline, other, 2600.0, ECHOED)
+    state, action, events = step(state, baseline, other, 2610.0, ECHOED)  # again within the day
+    assert (action, events) == (None, (GuardEvent.OUTSIDE_CHANGE,))
+    assert state.blocked is GuardEvent.OUTSIDE_CHANGE
 
 
 @pytest.mark.parametrize("config", [ECHOED, EXPIRING_ECHOED], ids=["held", "expiring"])

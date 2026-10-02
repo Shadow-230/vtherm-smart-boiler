@@ -7438,6 +7438,97 @@ async def test_heating_off_ignored_from_the_start_blocks_and_hands_back(
         assert "heating_off_ignored" in rig.state("switch", "control").attributes["blockers"]
 
 
+@dataclass
+class EchoedSwitch(FakeSwitch):
+    """A held heating switch with a status entity of its own that follows it — an ESPHome
+    master's CH enable and its "CH active" status, say."""
+
+    echo: str = "binary_sensor.fake_ch_echo"
+
+    def publish(self) -> None:
+        super().publish()
+        shown = ("on" if self.on else "off") if self.available else "unavailable"
+        self.hass.states.async_set(self.echo, shown)
+
+
+async def test_heating_switched_by_hand_after_the_plugin_toggled_it_steps_aside(
+    rig: Rig,
+) -> None:
+    """Z4-01 (decision 6, answer E): entity path, a held heating switch with its own echo. The
+    plugin has switched heating both ways in the session and commands "on", the state from
+    before it. A person switches heating off more than 120 s after the plugin's last change:
+    held two steps, another controller — "on" written once again; switched off again the same
+    day, the plugin steps aside with the safe hand-back, the latch and its issue. The heating
+    confirmation is never shown confirmed while the echo shows "off"."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    switch = EchoedSwitch(rig.hass)
+    switch.register()
+    await start(
+        rig,
+        **held_entity(
+            number,
+            ch_entity=switch.entity_id,
+            ch_write_type="held",
+            ch_confirmed_entity=switch.echo,
+        ),
+    )
+    await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
+    await rig.switch(True)
+    await rig.advance(150)  # "on" confirmed and held: the start phase is over
+    assert switch.on
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await rig.advance(200)
+    assert not switch.on  # the plugin switched heating off ...
+    rig.zones.set("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+    for _ in range(6):
+        await rig.advance(10)
+        if switch.on:
+            break
+    assert switch.on  # ... and on again: its previous state is now "off"
+    await rig.advance(150)  # more than 120 s after that change
+    state = rig.state("sensor", "control_state")
+    assert state.attributes["heating_confirmation"] == "confirmed"
+    switch_guard = unit_of(rig)._session.loop.switch
+    assert switch_guard.baseline == 1.0  # "on" before the plugin
+    assert switch_guard.rewritten_at is None
+
+    def shown_while_off() -> list[str]:
+        echo = rig.hass.states.get(switch.echo)
+        assert echo is not None
+        if echo.state != "off":
+            return []
+        return [rig.state("sensor", "control_state").attributes["heating_confirmation"]]
+
+    switch.on = False  # a person switches heating off for maintenance
+    switch.publish()
+    ons = switch.writes.count(True)
+    shown: list[str] = []
+    for _ in range(2):
+        await rig.advance(10)
+        shown += shown_while_off()
+    assert switch.writes.count(True) == ons + 1  # held two steps: the one rewrite
+    assert switch.on
+    assert unit_of(rig)._session.loop.switch.rewritten_at is not None
+    assert rig.state("sensor", "control_state").state != "handed_back"
+    await rig.advance(60)
+    switch.on = False  # switched off again the same day
+    switch.publish()
+    ons = switch.writes.count(True)
+    for _ in range(4):
+        await rig.advance(10)
+        shown += shown_while_off()
+        if rig.state("sensor", "control_state").state == "handed_back":
+            break
+    state = rig.state("sensor", "control_state")
+    assert state.state == "handed_back"
+    assert state.attributes["latched_by"] == ["outside_change"]
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
+    assert issue(rig, "control_latched") is not None
+    assert "confirmed" not in shown
+    assert switch.writes.count(True) <= ons + 1  # at most the hand-back's "heating on", once
+
+
 async def _external_switch_rig(rig: Rig) -> tuple[FakeNumber, FakeSwitch]:
     """Control through a held setpoint entity, given back by switching off an external-control
     switch declared held; past the five minutes the unit's own start counts as a trace."""
