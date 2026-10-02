@@ -122,6 +122,7 @@ from homeassistant.core import (
     EventStateChangedData,
     HassJob,
     HomeAssistant,
+    State,
     callback,
 )
 from homeassistant.exceptions import HomeAssistantError
@@ -451,9 +452,14 @@ def _kept_alarms(raw: Any) -> set[ControlAlarm]:
 
 def _memory_moved(before: LoopState, after: LoopState) -> bool:
     """Whether a value stored at once changed: a guard's baseline or its last fall-back without
-    a trace; the relay's one rewrite or its restarts answered (answers C, N)."""
-    relay = before.relay.rewritten_at != after.relay.rewritten_at or (
-        before.relay.restarts != after.relay.restarts
+    a trace; the relay's one rewrite, its restarts answered (answers C, N), the switch-offs
+    compared and its own timer recognised (Z4R2-02)."""
+    old_relay, new_relay = before.relay, after.relay
+    relay = (
+        old_relay.rewritten_at != new_relay.rewritten_at
+        or old_relay.restarts != new_relay.restarts
+        or old_relay.lapses != new_relay.lapses
+        or old_relay.timer_seen_s != new_relay.timer_seen_s
     )
     return relay or any(
         old.baseline != new.baseline or _last(old.fallbacks) != _last(new.fallbacks)
@@ -466,6 +472,27 @@ def _times(raw: Any) -> tuple[float, ...]:
     if not isinstance(raw, list):
         raise ValueError(f"not a list of moments: {raw!r}")
     return tuple(_setpoint(item) for item in raw)
+
+
+def _length(raw: Any) -> float:
+    """A stored length of time: a finite number above 0; anything else raises ``ValueError``."""
+    value = _setpoint(raw)
+    if value <= 0:
+        raise ValueError(f"not a length of time: {raw!r}")
+    return value
+
+
+def _lapses(raw: Any) -> tuple[tuple[float, float], ...]:
+    """Stored switch-offs of a relay: [moment, how long into its on-period] pairs; anything else
+    raises ``ValueError``."""
+    if not isinstance(raw, list):
+        raise ValueError(f"not a list of switch-offs: {raw!r}")
+    found = []
+    for item in raw:
+        if not isinstance(item, list) or len(item) != 2:
+            raise ValueError(f"not a switch-off: {item!r}")
+        found.append((_setpoint(item[0]), _length(item[1])))
+    return tuple(found)
 
 
 def _zones_changed(before: LearningState, after: LearningState) -> bool:
@@ -810,6 +837,9 @@ class ControlUnit:
         # relay's repair issues up now.
         self._relay_ours = False
         self._relay_reported = False
+        # Z4R2-01: when the relay last switched between on and off itself or by a command, as
+        # Home Assistant showed it — a return from unavailable or unknown is not such a switch.
+        self._relay_flipped_at: float | None = None
         self._restore_gave_way = False  # R11: this step's restore gave way, the relay not there
         self._proof = ProofState()
         self._relay_unreachable_issue: tuple[str, str] | None = None
@@ -968,6 +998,12 @@ class ControlUnit:
             # (answers C, N): a restart does not give it three more answers.
             "relay_rewritten_at": session.loop.relay.rewritten_at,
             "relay_restarts": list(session.loop.relay.restarts),
+            # The relay's own timer recognised while undeclared, and the switch-offs compared
+            # with it, for their day, with the relay they belong to (Z4R2-02): a restart or an
+            # options save forgets neither, so a switch-off at that age is never counted again.
+            "relay_timer_entity": self.options.relay.entity,
+            "relay_timer_seen_s": session.loop.relay.timer_seen_s,
+            "relay_lapses": [list(lapse) for lapse in session.loop.relay.lapses],
             "failed": session.failed,
             "alarms": sorted(alarm.value for alarm in session.alarms & _KEPT_ALARMS),
             "hand_back_pending": self._hand_back_pending,
@@ -1023,6 +1059,12 @@ class ControlUnit:
         heating_fallback_at: float | None = field("heating_fallback_at", _setpoint, None)
         relay_rewritten_at: float | None = field("relay_rewritten_at", _setpoint, None)
         relay_restarts: tuple[float, ...] = field("relay_restarts", _times, ())
+        relay_timer_seen: float | None = field("relay_timer_seen_s", _length, None)
+        relay_lapses: tuple[tuple[float, float], ...] = field("relay_lapses", _lapses, ())
+        relay = self.options.relay
+        if data.get("relay_timer_entity") != relay.entity or relay.timer is not RelayTimer.UNKNOWN:
+            # Another relay's, or its timer declared since: nothing to recognise any more.
+            relay_timer_seen, relay_lapses = None, ()
         latched = _flag(data.get("latched"))
         seen = data.get("step_aside_seen")
         if latched and isinstance(seen, Mapping):
@@ -1042,7 +1084,12 @@ class ControlUnit:
                     baseline=heating_baseline,
                     fallbacks=() if heating_fallback_at is None else (heating_fallback_at,),
                 ),
-                relay=RelayState(rewritten_at=relay_rewritten_at, restarts=relay_restarts),
+                relay=RelayState(
+                    rewritten_at=relay_rewritten_at,
+                    restarts=relay_restarts,
+                    lapses=relay_lapses,
+                    timer_seen_s=relay_timer_seen,
+                ),
             ),
             learning=LearningState(
                 paused=paused,
@@ -3487,6 +3534,11 @@ class ControlUnit:
             self._relay_ours = (
                 new is not None and isinstance(writer, RelayWriter) and writer.ours(new.context.id)
             )
+            before, after = self._relay_on(entity_id, old), self._relay_on(entity_id, new)
+            if new is not None and before is not None and after is not None and before != after:
+                # Its own switch between on and off (Z4R2-01): an on-period counts from such an
+                # "on", never from a return from unavailable or unknown.
+                self._relay_flipped_at = new.last_changed.timestamp()
         if entity_id == self.options.restart_entity:
             # Q3.7: a restart the device's entities may never show as unavailable.
             value, kind = restart_reading(new)
@@ -3597,12 +3649,7 @@ class ControlUnit:
         entity = self.options.relay.entity
         state = self._hass.states.get(entity) if entity else None
         known = state is not None and state.state not in UNAVAILABLE_STATES
-        on: bool | None = None
-        if state is not None and known:
-            if entity is not None and entity.startswith("climate."):
-                on = {"heat": True, "off": False}.get(state.state)
-            else:
-                on = parse_binary(state.state)
+        on = self._relay_on(entity, state) if known else None
         first = known and not self._relay_reported
         self._relay_reported = self._relay_reported or known
         traced = entity is not None and (
@@ -3617,7 +3664,9 @@ class ControlUnit:
             trace=traced,
             ours=self._relay_ours,
             first=first,
-            changed_at=None if state is None else state.last_changed.timestamp(),
+            # Its last switch between on and off (Z4R2-01), not Home Assistant's last change,
+            # which a return from unavailable also sets: a link drop does not move the on-period.
+            changed_at=self._relay_flipped_at,
         )
 
     async def _async_follow_relay(self, now: float, out: LoopOutput) -> None:
@@ -3705,17 +3754,22 @@ class ControlUnit:
             confirmation,
         )
 
+    @staticmethod
+    def _relay_on(entity: str | None, state: State | None) -> bool | None:
+        """The relay on (a switch on, a boiler thermostat heating) or off; ``None``: neither — not
+        there, unavailable, unknown, or a boiler thermostat in another mode."""
+        if state is None or state.state in UNAVAILABLE_STATES:
+            return None
+        if entity is not None and entity.startswith("climate."):
+            return {"heat": True, "off": False}.get(state.state)
+        return parse_binary(state.state)
+
     def _relay_seen_quietly(self) -> RelaySeen:
         """The relay's state and whether it reports, without touching what the step notes."""
         entity = self.options.relay.entity
         state = self._hass.states.get(entity) if entity else None
         known = state is not None and state.state not in UNAVAILABLE_STATES
-        on: bool | None = None
-        if state is not None and known:
-            if entity is not None and entity.startswith("climate."):
-                on = {"heat": True, "off": False}.get(state.state)
-            else:
-                on = parse_binary(state.state)
+        on = self._relay_on(entity, state) if known else None
         return RelaySeen(
             on=on,
             known=known,

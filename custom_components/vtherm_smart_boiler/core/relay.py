@@ -232,7 +232,9 @@ class RelaySeen:
     trace: bool = False  # a trace of an outage within the trace window
     ours: bool = False  # its last change carried the plugin's own context
     first: bool = False  # the first state known since the unit started
-    changed_at: float | None = None  # when its state last changed
+    # When it last switched between on and off, as Home Assistant showed it — a return from
+    # unavailable or unknown is no such switch (Z4R2-01); ``None``: none seen yet.
+    changed_at: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

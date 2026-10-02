@@ -3545,6 +3545,10 @@ async def test_a_0_2_1_store_moves_to_the_control_store(
         # X8: the relay's one rewrite and the restarts it answered (answers C, N).
         "relay_rewritten_at": None,
         "relay_restarts": [],
+        # Z4R2-02: the relay's own timer recognised, the switch-offs compared, and their relay.
+        "relay_timer_entity": None,
+        "relay_timer_seen_s": None,
+        "relay_lapses": [],
         # Y1: what another controller showed when the plugin stepped aside (none here).
         "step_aside_seen": None,
         # Y4: the SmartPI resumes given up after a day (none here).
@@ -10802,6 +10806,69 @@ async def test_unreadable_relay_memory_in_the_store_is_skipped(
     loop = rig.entry.runtime_data.control._session.loop
     assert loop.relay.restarts == ()
     assert loop.relay.rewritten_at is None
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["kept", "unreadable", "not_a_list", "not_a_pair", "another_relay", "declared"],
+)
+async def test_the_relays_own_timer_is_stored_and_read_cautiously(
+    rig: Rig,
+    relay: FakeRelay,
+    hass_storage: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+    case: str,
+) -> None:
+    """Z4R2-02: the relay's own timer recognised while its timer is "I don't know", and the
+    switch-offs compared with it, are stored with the relay and read back at the next run — a
+    restart or an options save forgets neither. Read cautiously: a value of another shape is
+    skipped and logged, the rest restored; another relay's, or one kept from before the timer
+    was declared, are dropped."""
+    at = START.timestamp()
+    stored = relay_restorable(
+        rig,
+        relay_timer_entity=RELAY,
+        relay_timer_seen_s=1620.0,
+        relay_lapses=[[at, 1620.0]],
+    )
+    if case == "unreadable":
+        stored |= {"relay_timer_seen_s": "long", "relay_lapses": [[at, -5.0]]}
+    if case == "not_a_list":
+        stored |= {"relay_timer_seen_s": -60.0, "relay_lapses": "yesterday"}
+    if case == "not_a_pair":
+        stored |= {"relay_lapses": [[at]]}
+    if case == "another_relay":
+        stored |= {"relay_timer_entity": "switch.another_relay"}
+    timer = (
+        {"relay_off_timer": "minutes", "relay_off_timer_min": 27}
+        if case == "declared"
+        else {"relay_off_timer": "unknown"}
+    )
+    stored["taken_with"] = stored["taken_with"] | timer
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=relay_options(rig.zones, **timer)
+    )
+    entry.add_to_hass(rig.hass)
+    seed_stores(hass_storage, entry, stored, "0.2.2")
+    await set_up(rig, entry)
+    await rig.advance(20)
+    assert relay.calls == [True]  # the restore goes on whatever the case
+    memory = entry.runtime_data.control._session.loop.relay
+    if case == "not_a_pair":  # the timer seen restored, the switch-offs skipped
+        assert memory.timer_seen_s == 1620.0
+        assert memory.lapses == ()
+    elif case == "kept":
+        assert memory.timer_seen_s == 1620.0
+        assert memory.lapses == ((at, 1620.0),)
+        stored_now = entry.runtime_data.control.stored()
+        assert stored_now["relay_timer_seen_s"] == 1620.0
+        assert stored_now["relay_timer_entity"] == RELAY
+    else:
+        assert memory.timer_seen_s is None
+        assert memory.lapses == ()
+    if case in ("unreadable", "not_a_list"):
+        for key in ("relay_timer_seen_s", "relay_lapses"):
+            assert _logged(caplog, logging.WARNING, f"unreadable stored control data: {key}") == 1
 
 
 # --- Y2: the days under control (P-96, A12) --------------------------------------------------

@@ -1682,6 +1682,55 @@ async def test_an_undeclared_relay_timer_is_recognised_and_heating_goes_on(rig: 
     assert found.translation_placeholders["minutes"] == "30"
 
 
+@pytest.mark.parametrize("event", ["link_drop", "restart", "options_save"])
+async def test_an_undeclared_relay_timer_outlives_link_drops_restarts_and_options_saves(
+    rig: Rig, event: str
+) -> None:
+    """Z4R2-01, Z4R2-02: the timer left at "I don't know"; the relay's own 27-minute timer, which
+    a repeated "on" does not restart (27, so the 5-min renewals do not happen to hide its
+    lapses). Three times in a day, mid on-period: the relay's link drops for 20 s (back "on", its
+    timer running: the on-period still counts from its own "on"), or the entry restarts, or an
+    options save reloads it (the timer seen, and the switch-offs compared, are stored and read
+    back). A switch-off at the timer's age is never counted toward answer N, after such an event
+    too: heating goes on, never a step aside, and the issue asks to declare the timer."""
+    await start_relay(
+        rig,
+        relay={"off_timer_min": 27, "timer_restarts_on_repeat": False},
+        relay_off_timer="unknown",
+    )
+    await relay_on_under_control(rig)
+    assert rig.entry is not None
+    started = rig.now() - START_TRACE_S - 30.0  # the relay went on with control
+    repeat = 300
+    for minutes in (40, 85, 130):
+        await rig.advance(started + minutes * 60 - rig.now())
+        if event == "link_drop":
+            await rig.scenario("relay_wifi_loss", minutes=20 / 60)
+        elif event == "restart":
+            assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
+            await rig.hass.async_block_till_done()
+        else:
+            repeat -= 10
+            control = dict(rig.entry.options["control"]) | {"relay_repeat_s": repeat}
+            options = dict(rig.entry.options) | {"control": control}
+            rig.hass.config_entries.async_update_entry(rig.entry, options=options)
+            await rig.hass.async_block_till_done()
+        assert rig.state("sensor", "control_state").state != "handed_back"
+    while rig.now() < started + 300 * 60:  # five hours from the start
+        await rig.advance(900)
+        assert rig.state("sensor", "control_state").state == "heating"
+        assert alarm(rig, "outside_change") == "off"
+    assert relay_model(rig).own_changes >= 8  # its timer, again and again
+    unit = rig.entry.runtime_data.control
+    assert len(unit._session.loop.relay.restarts) <= 1  # the first lapse only
+    seen = unit._session.loop.relay.timer_seen_s
+    assert seen is not None
+    assert abs(seen - 27 * 60) <= 20.0
+    found = repair(rig, "relay_timer_seen")
+    assert found is not None
+    assert found.translation_placeholders["minutes"] == "27"
+
+
 async def test_relay_with_an_unknown_timer_is_kept_on_by_repeats(rig: Rig) -> None:
     """R3, R8: the timer declared "I don't know": "on" is repeated every repeat interval
     (300 s) while the command is on, and the relay's own 10-minute timer, restarted by each
