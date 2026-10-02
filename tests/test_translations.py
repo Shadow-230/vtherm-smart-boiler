@@ -902,3 +902,12 @@ def test_y4_texts_are_translated() -> None:
     detail = SOURCE["entity"]["sensor"]["verdict"]["state_attributes"]["detail"]["state"]
     assert "does not set the water temperature" in detail["water_not_controlled"]
     assert "anti-cycling" not in detail["water_not_controlled"]
+
+
+def test_the_unknown_relay_timer_says_what_it_costs() -> None:
+    """Z4-02: the relay timer's "I don't know" says that a switch-off after the repeat interval
+    counts like an unreported restart, the fourth in a day stepping aside, and to declare the
+    timer's length."""
+    timer = SOURCE["options"]["step"]["control_relay"]["data_description"]["relay_off_timer"]
+    assert "the fourth within a day makes the plugin step aside" in timer
+    assert "declare its length" in timer

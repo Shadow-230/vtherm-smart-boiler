@@ -35,9 +35,12 @@ order:
    the plugin steps aside (decision 6's M8, for a relay);
 5. commanded on, found off inside the window of its switch-off timer — at or after
    max(timer − 60 s, timer ÷ 2) since the "on" that started the on-period for a declared length,
-   one repeat interval for "I don't know" — the relay's own lapse: "on" again at once, not
-   counted — no loss of any kind, so a timer that lapses all day never raises "commands lost"
-   (``SCOPE.md`` §5 class 3; Q1's matrix row R5);
+   one repeat interval for "I don't know". A declared timer's is the relay's own lapse: "on"
+   again at once, not counted — no loss of any kind, so a timer that lapses all day never raises
+   "commands lost" (``SCOPE.md`` §5 class 3; Q1's matrix row R5). With "I don't know" the lapse
+   cannot be told from an automation, a person or the relay's own button switching it off: "on"
+   again at once, but counted as answer N's restart — ``RESTARTS_ANSWERED`` within a day, the
+   next one another controller, and the plugin steps aside at once (Z4-02);
 6. never read back since a send, for longer than ``RELAY_CONFIRM_S`` → not confirmed ("write
    ignored"), sent again at the next check; after each of the session's first
    ``RELAY_START_SENDS`` sends → ignored from the start: not written again this session, repeats
@@ -328,6 +331,10 @@ def _classify(state: RelayState, seen: RelaySeen, now: float, config: RelayConfi
     if state.rewrite_pending:
         return _Verdict(ChangeClass.ANOTHER_CONTROLLER)  # the one rewrite did not hold
     if command is True and seen.on is False and _lapsed(state, seen, now, config):
+        if config.timer is RelayTimer.UNKNOWN:
+            # Maybe its timer, maybe an automation or a person: answered, but bounded as a
+            # restart the relay did not report (answer N), never without limit (Z4-02).
+            return _restart(state, now)
         return _Verdict(ChangeClass.OWN_LAPSE)
     if state.confirmed_at is None:
         if not state.start_done and state.attempt_at is not None:
@@ -341,14 +348,20 @@ def _classify(state: RelayState, seen: RelaySeen, now: float, config: RelayConfi
     if power_cut is None or seen.on is power_cut:
         # Answers D and N: a restart the relay did not report — or, with "last" or "I don't
         # know" declared, any change while it stayed available — up to three a day.
-        recent = [t for t in state.restarts if now - t < RESTART_WINDOW_S]
-        judged = (
-            ChangeClass.ANOTHER_CONTROLLER
-            if len(recent) >= RESTARTS_ANSWERED
-            else ChangeClass.LOST_COMMAND
-        )
-        return _Verdict(judged, restart=True)
+        return _restart(state, now)
     return _Verdict(ChangeClass.ANOTHER_CONTROLLER)  # answer C
+
+
+def _restart(state: RelayState, now: float) -> _Verdict:
+    """A possible restart the relay did not report (answers D, N): a lost command, sent again
+    and counted, ``RESTARTS_ANSWERED`` times within a day; the next one is another controller."""
+    recent = [t for t in state.restarts if now - t < RESTART_WINDOW_S]
+    judged = (
+        ChangeClass.ANOTHER_CONTROLLER
+        if len(recent) >= RESTARTS_ANSWERED
+        else ChangeClass.LOST_COMMAND
+    )
+    return _Verdict(judged, restart=True)
 
 
 def _waiting(state: RelayState, seen: RelaySeen, now: float) -> bool:

@@ -595,14 +595,15 @@ def test_an_early_switch_off_with_a_timer_is_another_controller(
 
 
 @pytest.mark.parametrize(("switch_at", "lapse"), [(300.0, True), (290.0, False)])
-def test_an_unknown_timer_gets_on_repeats_and_a_late_switch_off_is_its_own_lapse_not_counted(
+def test_an_unknown_timer_gets_on_repeats_and_a_late_switch_off_is_answered_and_counted(
     switch_at: float, lapse: bool
 ) -> None:
     """A timer "I don't know": "on" repeated every repeat interval while commanded on; a
-    switch-off at least one repeat interval after the start of the on-period is its own lapse —
-    "on" again at once, not counted; an earlier one is still judged as any change while
-    available — with "on after a power cut" another controller. "Off" is not repeated. A relay
-    whose real timer lapses all day raises no "commands lost"."""
+    switch-off at least one repeat interval after the start of the on-period may be its lapse —
+    "on" again at once, counted as answer N's restart (Z4-02); an earlier one is judged as any
+    change while available — with "on after a power cut" another controller. "Off" is not
+    repeated. A relay whose real timer lapses all day is answered three times within the day;
+    the fourth lapse makes the plugin step aside: declare the timer's length to avoid it."""
     config = RelayConfig(
         reports=RelayReports.YES, power_on=RelayPowerOn.ON, timer=RelayTimer.UNKNOWN
     )
@@ -619,9 +620,10 @@ def test_an_unknown_timer_gets_on_repeats_and_a_late_switch_off_is_its_own_lapse
         at=lambda s: relay.switch(s, False) if s == switch_at else None,
     )
     result = dict(results)[switch_at]
-    assert not result.lost  # its own lapse is no loss; another controller is none either
+    assert result.lost is lapse  # a possible restart is counted; another controller is not
+    assert result.restart is lapse
     if lapse:
-        assert result.judged is ChangeClass.OWN_LAPSE
+        assert result.judged is ChangeClass.LOST_COMMAND
         assert result.write == RelayWrite(True, WriteKind.RESEND)
     else:
         assert result.judged is ChangeClass.ANOTHER_CONTROLLER
@@ -631,17 +633,74 @@ def test_an_unknown_timer_gets_on_repeats_and_a_late_switch_off_is_its_own_lapse
     drive(relay, config, lambda t: t < 1000, 0.0, 4000.0)
     repeats = [(t, on) for t, on, kind in relay.writes if kind is WriteKind.KEEPALIVE]
     assert repeats == [(300.0, True), (600.0, True), (900.0, True)]
-    # A real 10-min timer the repeated "on" does not restart: its lapse every 10 minutes, all
-    # day — each answered at once, none counted.
+    # A real 10-min timer the repeated "on" does not restart: it lapses 10 minutes into each
+    # on-period — answered three times, each counted; the fourth steps aside, and nothing more
+    # is written.
     relay = Relay(timer_s=10 * MIN, restarts_timer=False)
     state, results = drive(relay, config, True, 0.0, DAY)
-    lapses = [t for t, r in results if r.judged is ChangeClass.OWN_LAPSE]
-    assert len(lapses) == 144
-    assert all(dict(results)[t].write == RelayWrite(True, WriteKind.RESEND) for t in lapses)
-    assert lost(results) == []
-    assert no_warning_from(results)
-    assert events(results) == []
-    assert state.restarts == ()
+    answered = [t for t, r in results if r.judged is ChangeClass.LOST_COMMAND]
+    assert answered == [600.0, 1200.0, 1800.0]
+    assert all(dict(results)[t].write == RelayWrite(True, WriteKind.RESEND) for t in answered)
+    assert lost(results) == answered
+    assert events(results) == [(2400.0, GuardEvent.OUTSIDE_CHANGE)]
+    assert state.blocked
+    assert state.restarts == tuple(answered)
+    assert [t for t, _on, _kind in relay.writes if t >= 2400.0] == []
+
+
+@pytest.mark.parametrize("power_on", [RelayPowerOn.OFF, RelayPowerOn.ON])
+@pytest.mark.parametrize(
+    ("timer", "timer_s"),
+    [(RelayTimer.UNKNOWN, None), (RelayTimer.MINUTES, 6 * MIN)],
+    ids=["unknown", "declared"],
+)
+def test_an_unknown_timer_lapse_is_bounded_by_answer_n(
+    power_on: RelayPowerOn, timer: RelayTimer, timer_s: float | None
+) -> None:
+    """Z4-02 (answers C, D, L, N): with the timer "I don't know", a switch-off at least one
+    repeat interval into an on-period may be the timer's lapse — or an automation, a person, the
+    relay's own button. It is answered with "on" at once, but counted as answer N's restart:
+    three within a day sent again and counted, the fourth is another controller — the plugin
+    steps aside at once, with no rewrite, and writes nothing more. Negative: a declared timer's
+    lapse stays the relay's own — "on" again, never counted, all five times."""
+    config = RelayConfig(reports=RelayReports.YES, power_on=power_on, timer=timer, timer_s=timer_s)
+    relay = Relay()
+    offs = [360.0 * n for n in range(1, 6)]  # 6 min into each on-period, five times
+    state, results = drive(
+        relay,
+        config,
+        True,
+        0.0,
+        offs[-1] + 120.0,
+        at=lambda s: relay.switch(s, False) if s in offs else None,
+    )
+    seen = dict(results)
+    if timer is RelayTimer.MINUTES:
+        for t in offs:
+            assert seen[t].judged is ChangeClass.OWN_LAPSE
+            assert seen[t].write == RelayWrite(True, WriteKind.RESEND)
+            assert not seen[t].lost
+            assert not seen[t].restart
+        assert state.restarts == ()
+        assert events(results) == []
+        assert not state.blocked
+        assert relay.on
+        return
+    for t in offs[:3]:
+        assert seen[t].judged is ChangeClass.LOST_COMMAND
+        assert seen[t].write == RelayWrite(True, WriteKind.RESEND)  # "on" again at once
+        assert seen[t].lost
+        assert seen[t].restart  # stored at once
+    assert state.restarts == tuple(offs[:3])
+    fourth = seen[offs[3]]
+    assert fourth.judged is ChangeClass.ANOTHER_CONTROLLER
+    assert fourth.events == (GuardEvent.OUTSIDE_CHANGE,)
+    assert fourth.write is None  # no rewrite first: it steps aside
+    assert state.blocked
+    assert state.rewritten_at is None
+    assert events(results) == [(offs[3], GuardEvent.OUTSIDE_CHANGE)]
+    assert [t for t, on, _kind in relay.writes if t > offs[3]] == []  # left alone
+    assert not relay.on
 
 
 def test_three_losses_in_a_day_raise_commands_lost() -> None:
