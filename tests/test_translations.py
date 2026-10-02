@@ -911,3 +911,15 @@ def test_the_unknown_relay_timer_says_what_it_costs() -> None:
     timer = SOURCE["options"]["step"]["control_relay"]["data_description"]["relay_off_timer"]
     assert "the fourth within a day makes the plugin step aside" in timer
     assert "declare its length" in timer
+
+
+def test_the_read_back_waiting_issue_is_translated() -> None:
+    """Z4-10: the repair issue of control waiting for the gateway's read-back, with a title and
+    a text and no placeholder, in every language."""
+    from custom_components.vtherm_smart_boiler.control import READ_BACK_WAIT_ISSUE
+
+    for language in ALL_LANGUAGES:
+        issue = _texts(language)["issues"][READ_BACK_WAIT_ISSUE]
+        assert issue["title"], language
+        assert issue["description"], language
+        assert PLACEHOLDER.findall(issue["description"]) == [], language

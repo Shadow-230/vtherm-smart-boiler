@@ -5495,6 +5495,50 @@ async def test_otgw_control_waits_until_the_gateway_has_reported(
     assert rig.state("sensor", "control_state").state == "heating"
 
 
+@pytest.mark.parametrize("shown", ["unknown", "missing"])
+@pytest.mark.parametrize(
+    ("topology", "severity"),
+    [
+        ("gateway_standalone", ir.IssueSeverity.ERROR),
+        ("gateway_with_thermostat", ir.IssueSeverity.WARNING),
+    ],
+)
+async def test_control_waiting_for_the_gateways_read_back_raises_an_issue(
+    rig: Rig, topology: str, severity: ir.IssueSeverity, shown: str
+) -> None:
+    """Z4-10 (P-21): control is switched on, but the gateway's setpoint read-back has no value —
+    unknown, or the entity missing — while the boiler's own signals are fresh: control does not
+    take the boiler, as a hand-back could never be seen to get through. Once that wait has
+    lasted 5 minutes, a repair issue says so and what to check: an error where a hand-back stops
+    heating (stand-alone: nothing heats meanwhile), else a warning. It goes when control is
+    switched off, and once the read-back has a value. Negatives: control off — none, however
+    long; 4 min 50 s of waiting — none."""
+    rig.gateway.read_back_shown = shown
+    rig.live()
+    await start(rig, topology=topology)
+    await rig.advance(600)  # control off: nothing waits
+    assert issue(rig, "read_back_waiting") is None
+    await rig.switch(True)
+    await rig.advance(290)
+    assert rig.state("sensor", "control_state").attributes["reasons"] == ["read_back_unknown"]
+    assert issue(rig, "read_back_waiting") is None
+    await rig.advance(20)
+    found = issue(rig, "read_back_waiting")
+    assert found is not None
+    assert found.severity is severity
+    assert not found.is_fixable
+    assert rig.gateway.calls == []  # nothing written meanwhile
+    await rig.switch(False)
+    assert issue(rig, "read_back_waiting") is None
+    await rig.switch(True)
+    await rig.advance(310)  # waiting again
+    assert issue(rig, "read_back_waiting") is not None
+    rig.gateway.read_back_shown = None  # the read-back reports
+    await rig.advance(10)
+    assert issue(rig, "read_back_waiting") is None
+    assert rig.gateway.setpoints()[0] == EXPECTED  # control takes the boiler
+
+
 async def test_an_unknown_gateway_read_back_while_controlling_is_not_a_hand_back_by_itself(
     rig: Rig,
 ) -> None:

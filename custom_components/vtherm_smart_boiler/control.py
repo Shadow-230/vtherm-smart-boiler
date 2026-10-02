@@ -331,6 +331,12 @@ VT_BOILER_GRACE_S = 600.0
 # provisional, K4). Control stays blocked meanwhile: VT's manager may still switch the boiler.
 VT_CENTRAL_UNKNOWN_ISSUE_S = 600.0
 VT_CENTRAL_ISSUE = "vt_central_entry_not_running"
+# Control switched on but waiting this long for the gateway's setpoint read-back to hold a value
+# — it does not take the boiler until then (P-21) — raises a repair issue saying so and what to
+# check: an error where a hand-back stops heating, as nothing heats meanwhile (Z4-10;
+# provisional, K4).
+READ_BACK_WAIT_ISSUE = "read_back_waiting"
+READ_BACK_WAIT_S = 300.0
 RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control counts as off
 # X8's repair issues: the relay out of reach for five minutes (one text per declared state after
 # a power cut), the relay never taking the command this session, and a relay resting "off" while
@@ -770,6 +776,10 @@ class ControlUnit:
         # whether the repair issue telling of it is up.
         self._vt_central_unknown_since: float | None = None
         self._vt_central_issue = False
+        # Z4-10: since when control, switched on, has waited for the gateway's read-back, and
+        # whether its repair issue is up.
+        self._read_back_wait_since: float | None = None
+        self._read_back_issue = False
         # Decision 4: the rooms the frost issue shows now, with the temperature it shows.
         self._frost_issue_shown: dict[str, float] = {}
         # X8, the relay: whether its last change carried one of the plugin's own write contexts,
@@ -1231,6 +1241,7 @@ class ControlUnit:
         self._show_frost_closed({})
         self._delete_vt_central_issue()  # the next run tells again, ten minutes on
         self._delete_relay_issues()  # not during a planned stop; the next run tells again
+        self._delete_read_back_issue()  # the next run tells again, once its wait has lasted
         # The resumes given up: stored, the next run with a unit shows them again (Y4).
         entry_id = self._coordinator.config_entry.entry_id
         ir.async_delete_issue(self._hass, DOMAIN, f"{LEARNING_NOT_RESUMED_ISSUE}_{entry_id}")
@@ -1492,6 +1503,8 @@ class ControlUnit:
             if not enabled:
                 self._clear_stopped_heating()  # the user has seen to it (S-10)
                 self._delete_hand_back_issue(HAND_BACK_LINK)  # and to a lost link's (Y1)
+                self._read_back_wait_since = None  # nothing waits (Z4-10)
+                self._delete_read_back_issue()
             # The wish is stored before anything else can fail (P-11).
             await self._coordinator.async_save_control_now()
             await self._async_run_step(now)
@@ -1620,6 +1633,7 @@ class ControlUnit:
         self._follow_frost_closed(out.decision.frost_closed, zones)
         unknown = self._follow_unknown_zones(now, zones)
         self._follow_no_zone_known(now, out.decision.reasons)
+        self._follow_read_back_wait(now, out.decision.reasons)
         self._follow_decision_alarms(out, monitor_failed)
         ignored = self._follow_target_alarms(out)
         if out.events or _memory_moved(before, session.loop):
@@ -1879,6 +1893,57 @@ class ControlUnit:
             if Reason.ZONES_UNKNOWN in reasons:
                 kind = "handed_back" if working_thermostat(self.options) else "off"
         self._coordinator.report_no_zone_known(kind)
+
+    def _follow_read_back_wait(self, now: float, reasons: Sequence[Reason]) -> None:
+        """Z4-10 (P-21): control switched on does not take the boiler until the gateway's setpoint
+        read-back holds a value — a hand-back could never be seen to get through. Once that wait
+        has lasted ``READ_BACK_WAIT_S`` with the read-back the reason control waits, a repair
+        issue says so and what to check: an error where a hand-back stops heating, as nothing
+        heats meanwhile, else a warning. It goes once the read-back has a value, control holds
+        the boiler, or control is switched off; the unit stopping takes it too, and the next run
+        raises it again while the wait lasts."""
+        waiting = (
+            self.enabled
+            and self.options.write_path in OTGW_PATHS
+            and not self._session.loop.control.controlling
+            and self._confirmed() is None
+        )
+        if not waiting:
+            self._read_back_wait_since = None
+            self._delete_read_back_issue()
+            return
+        since = clock_start(self._read_back_wait_since, now)  # a clock set back (C9)
+        self._read_back_wait_since = since
+        if (
+            self._read_back_issue
+            or Reason.READ_BACK_UNKNOWN not in reasons
+            or now - since < READ_BACK_WAIT_S
+        ):
+            return
+        stops = self._stops_heating()
+        _LOGGER.warning(
+            "Control is switched on but waits for the gateway's setpoint read-back, which has "
+            "no value: the plugin does not take the boiler%s",
+            "; with this installation nothing heats meanwhile" if stops else "",
+        )
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            self._read_back_issue_id(),
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.ERROR if stops else ir.IssueSeverity.WARNING,
+            translation_key=READ_BACK_WAIT_ISSUE,
+        )
+        self._read_back_issue = True
+
+    def _read_back_issue_id(self) -> str:
+        return f"{READ_BACK_WAIT_ISSUE}_{self._coordinator.config_entry.entry_id}"
+
+    def _delete_read_back_issue(self) -> None:
+        if self._read_back_issue:
+            self._read_back_issue = False
+            ir.async_delete_issue(self._hass, DOMAIN, self._read_back_issue_id())
 
     def _target_ready(self) -> bool:
         """The write target can take a command: on the entity path each entity written to is

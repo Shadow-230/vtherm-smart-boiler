@@ -2594,6 +2594,10 @@
       "title": "The boiler keeps stopping at its lowest water temperature",
       "description": "In the last {days} days, {short} of {burns} heating burns at about {reference} °C were shorter than {limit} min and ended because the water was warm enough, while rooms still asked for heat. Consider raising the minimum flow temperature, or the foot point of the heating curve, of the device that sets your water temperature to about {value} °C — not the curve's parallel shift, which raises the water in frost too. Longer burns are likely; fewer starts are not guaranteed. The plugin changes nothing there."
     },
+    "read_back_waiting": {
+      "title": "Control waits for the gateway's confirmation",
+      "description": "Control is switched on, but the gateway's setpoint read-back — the entity picked as the setpoint read-back in the control options — has had no value for 5 minutes, so the plugin does not take the boiler: without it, the plugin could never see that a hand-back got through. Where a thermostat or the boiler's own control takes over, it heats meanwhile; where a hand-back stops heating, the boiler does not heat until control takes it. Check that the gateway is connected and that the entity picked reports a value — the gateway's \"Control setpoint 1\" on its boiler device. This notice goes once the entity reports a value, or when you switch control off."
+    },
     "relay_unreachable_off": {
       "title": "The relay cannot be reached",
       "description": "{relay} has been out of reach for 5 minutes. The plugin cannot switch the boiler and does not hand it back, as nothing could reach the relay; it sends its command again as soon as the relay returns. Until then the relay stays as it was, or does what its own settings say: after a power cut it starts off, as you declared, so the boiler waits off."

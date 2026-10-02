@@ -2594,6 +2594,10 @@
       "title": "Kocioł wciąż się wyłącza przy swojej najniższej temperaturze wody",
       "description": "W ostatnich {days} dniach {short} z {burns} cykli grzania przy około {reference} °C trwało krócej niż {limit} min i skończyło się, bo woda była dość ciepła, choć pokoje wciąż prosiły o ciepło. Rozważ podniesienie minimalnej temperatury zasilania albo punktu początkowego krzywej grzewczej w urządzeniu, które ustala temperaturę wody, do około {value} °C — nie równoległego przesunięcia krzywej, które podnosi też wodę w mróz. Dłuższe cykle są prawdopodobne; mniej uruchomień — nie na pewno. Wtyczka niczego tam nie zmienia."
     },
+    "read_back_waiting": {
+      "title": "Sterowanie czeka na potwierdzenie z bramki",
+      "description": "Sterowanie jest włączone, ale odczyt zwrotny nastawy z bramki — encja wybrana w opcjach sterowania jako odczyt zwrotny nastawy — od 5 minut nie podaje wartości, więc wtyczka nie przejmuje kotła: bez tego odczytu nie mogłaby zobaczyć, że oddanie kotła doszło do skutku. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono w tym czasie grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie go nie przejmie. Sprawdź, czy bramka jest połączona i czy wybrana encja podaje wartość — to „Control setpoint 1” urządzenia kotła w bramce. To powiadomienie zniknie, gdy encja poda wartość albo gdy wyłączysz sterowanie."
+    },
     "relay_unreachable_off": {
       "title": "Przekaźnik jest nieosiągalny",
       "description": "{relay} jest poza zasięgiem od 5 minut. Wtyczka nie może przełączać kotła i nie oddaje sterowania, bo nic nie dotarłoby do przekaźnika; wyśle polecenie ponownie, gdy tylko przekaźnik wróci. Do tego czasu przekaźnik zostaje, jak był, albo robi to, co mówią jego własne ustawienia: po zaniku zasilania startuje wyłączony, jak podano w opcjach, więc kocioł czeka wyłączony."
