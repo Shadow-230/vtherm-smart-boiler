@@ -18,10 +18,11 @@ Phases run in order: Q, V, X, Y, Z. Q4 waits for the user and does not hold up t
 user decides, each open decision follows the provisional option given below. Q1 and Q2 change
 documents, whose diffs wait for the user's consent; phase V may start meanwhile.
 
-Status on 2026-09-28: phases Q, V, X and Y and step Z1 are built and committed (the build reports
-in `research/2026-09-2x-*-build-report.md`; carry-over notes in `research/2026-09-28-carry-over.md`;
-the questions for K4 in `research/2026-09-27-k4-questions.md`); continue at Z2, then Z3 and Z4. Q4
-waits for K4 and K5.
+Status on 2026-10-02: 0.2.2 is built — phases Q, V, X, Y and Z committed (the build reports in
+`research/2026-09-2x-*-build-report.md` and `research/2026-10-02-*`; the independent check Z4 and
+its three re-checks in `research/2026-10-02-z4-*.md`, the last finding no critical or high
+problem); the questions for K4 in `research/2026-09-27-k4-questions.md`. Next: J2 of
+`docs/plan-0.2.md`, the user's (the test HA); then J4, K1 and K4–K7. Q4 waits for K4 and K5.
 
 ## In short
 
@@ -551,7 +552,7 @@ independent check of the fixes.
 | Z1 ✅ | tests: the §6 tests not in a step above (T-22, the MQTT hand-back before MQTT stops; T-51, cancellation); the config and options flows at 100 % (P-34); a backfill with zones (P-117); the allowed-services checks spy on `hass.services.async_call`, the switch domain included (P-118); core tests without the Home Assistant pytest plugin (P-120); weak assertions made exact (P-121); the MQTT path with `mqtt_mock` (P-122); listeners after unload (P-123); migration, and a newer entry refused (P-124); one entry per test of a single-entry integration (P-125; Open after R6 #6: T11); VT safety, shedding, window and "off" not ready as scenarios (P-126); every default of the SCOPE table pinned (P-127); a whole-value `[%key:…%]` refused (P-128); the safety-critical functions split only after table-driven precedence tests (P-115); with P-120's two pytest runs, CI and the commit rule in `CLAUDE.md` (its diff waiting for consent) name both runs, `ruff format --check` and mypy. Details: plan-0.2.2-details.md, Z1. |
 | Z2 ✅ | tools and CI: coverage with branches, per module, at least 95 % in each module and 100 % for the flows (P-35); current major versions of the actions (P-110); a job with the latest `vtherm_api` (P-109); the real-VT tests as decision 14 (P-119); the deploy's dry run does not read `devenv/local.env` (P-107); `session-summary-*.md` git-ignored (P-108); the manifest's version and `tests/test_release.py`'s `RELEASE` set to 0.2.2b1, decision 16's provisional first version (S-53). Details: plan-0.2.2-details.md, Z2. |
 | Z3 ✅ | the simulator before J4: a route for the `opentherm_gw` path in the test HA — the MQTT path, or a test-only entry — decided and documented (P-37, T-23); a boiler that regulates its own flow, emitter inertia, daily sums kept (P-112); only persistent writes counted as persistent, CH writes counted (P-113); switch zones driven by `on_percent` over a cycle, and the J4 scenarios reachable (P-114, T-24); off zones close their valves (S-05); a hot-water draw under control in a closed loop (P-36, T-21); starts under control against the boiler's own regulation (S-15); the gateway's read-back as `opentherm_gw` shows it, and a heating switch with its own write type (Open after R6 #2); the PIC's `CH=0` flag with an on/off thermostat (T-07); the circuit maximum with underfloor heating (T-20); a relay with its start-up state, a switch-off timer, a restart and a Wi-Fi loss, and a boiler with its restart lockout and pump overrun (X8); a wall thermostat with its own setting, program and override rules (X6). Details: plan-0.2.2-details.md, Z3. |
-| Z4 | an independent read-only check of 0.2.2 by a fresh subagent: each problem of the review checked against every scenario of its row, not only its test, and every decision and answer of 2026-09-26/27 (X8 included); its report kept in `research/` and summarised to the user; a finding of the check fixed with a test and checked again by another fresh subagent, until a check finds no critical or high problem. A multi-agent review only with the user's go-ahead. Details: plan-0.2.2-details.md, Z4. |
+| Z4 ✅ | an independent read-only check of 0.2.2 by a fresh subagent: each problem of the review checked against every scenario of its row, not only its test, and every decision and answer of 2026-09-26/27 (X8 included); its report kept in `research/` and summarised to the user; a finding of the check fixed with a test and checked again by another fresh subagent, until a check finds no critical or high problem. A multi-agent review only with the user's go-ahead. Details: plan-0.2.2-details.md, Z4. |
 
 Done when: the "Done for 0.2.2" list below holds.
 
@@ -588,8 +589,10 @@ Left on purpose for a later release:
 15. ~~A clean restart after which a blocker already holds at the next start raises no "blocker
     stopped heating" issue (V7)~~ — covered by X3.
 16. A heating switch that takes "on" but stops taking "off" later in a session (not from its
-    start) is sent "off" again every 2 min with "commands lost", but control is not blocked, as
-    answer O covers "ignored from the start" only (X1) — K4 decides whether it blocks too.
+    start): where "on" is its value from before the plugin, each fall-back is a lost command a
+    send explains — "off" sent again every 2 min with "commands lost", never a step aside, and
+    control is not blocked as answer O blocks "ignored from the start" (X1, Z4-01, Z4R-01) — K4
+    decides whether it blocks too.
 17. Another controller that holds the value from before the plugin keeps the plugin resending it
     as explained lost commands, a mild fight (X1) — K4.
 18. At the simple level the migration from VT's central boiler does not carry over VT's demand
@@ -614,6 +617,48 @@ Left on purpose for a later release:
     or the criterion, before anything reaches a real boiler.
 25. The simulator starts every TPI zone's cycle together (staggered cycles not modelled), and
     the wall thermostat's own overrides are not modelled (Z3) — later.
+26. A "heating stops" hand-back leaves the heating switch on where the plugin was heating, so the
+    stop rests on a low value with heating enabled, which keeps the CH pump running on the
+    boilers Q3.2 found (Z4-04) — K4 decides: switch heating off in such a hand-back, or refuse a
+    "heating stops" value above 0 unless the user confirms it stops the pump.
+27. With a ±3 K daily outdoor swing and the comfort correction off, starts under control are still
+    ×1.20 (+8 °C) and ×2.16 (−5 °C) of the boiler's own regulation: the effective outdoor
+    temperature's 3-h lag keeps the water warmer through each warm-up; J4's criterion at a
+    constant outdoor temperature cannot show it (Z4-05) — K4 decides the outdoor time constant
+    together with the correction (#24), and J4 adds a daily swing.
+28. `FlowLimits`' own default lowest water temperature, 25 °C, used only where no options are
+    given, differs from the 20 °C default (Z4-06) — aligned at K4 with the tests that use it.
+29. The advanced behaviour step still checks "off" against the lowest water temperature on paths
+    with a heating switch, where "off" is never sent as a setpoint, so with the lowest at 10 °C
+    the step cannot be saved until "off" is lowered (Z4-07) — later.
+30. On a gateway with an OpenTherm thermostat, the thermostat's own CH bit is not in the heating
+    switch's fall-back set, so an untraced PIC reset that shows it is judged as another
+    controller after a toggle — a latched step aside, the thermostat then heating (Z4 fixes) —
+    K4.
+31. A held refresh that falls on the step a foreign value is first seen writes over it before it
+    can be judged (S-12's known risk; Z4 fixes) — later.
+32. A two-valued echo slower than 120 s is judged as a change (Z4R2-03): a heating read-back
+    polled every 150 s or more makes the plugin step aside within hours on most days, and one
+    60–120 s late beside VT's pulses shorter than that does so in many 12-h runs, as a stale echo
+    from before a quick toggle counts as the read-back (Z4R3-01, Z4R3-03; no gateway path is that
+    slow); the read-back field's text does not yet ask for a prompt read-back. A setpoint reverted
+    faster than a control step is reported ("confirmation missing", an issue), not judged
+    (Z4R-01, Z4R2-03) — K4.
+33. A boiler's own minimum above the lowest water temperature is judged as another controller,
+    never as a clip (Z4R-09; the device behaviour assumed); and a command never taken after the
+    start phase leaves a stand-alone house unheated with only "commands lost" (Z4R-05) — K4.
+34. Smaller remainders of the Z4 rounds — later: Z4-09 covers only an external-control switch
+    whose own lapse is longer than 60 s (Z4R-03); Z4-03's learned
+    heating baseline can come from a person's change (Z4R-08); a slow read-back during a ramp of
+    several sends is still judged as another controller (Z4R2-04); the `relay_timer_seen` texts
+    mislead in places (Z4R2-06); a state the plugin sent within the last 120 s still counts as
+    its own after its successor was read back (Z4R2-07); a relay that comes back "on" from a
+    power cycle counts once toward answer N (Z4R3-04); a lost command is counted at every toggle
+    whose echo arrives a step late (Z4R3-05); text gaps (Z4R3-06).
+35. A short undeclared relay timer that a repeated "on" does not restart — or an automation with a
+    short "maximum run time" — is recognised as the relay's own timer and answered for ever: with
+    a 2-min timer the boiler starts about 30 times an hour (Z4R3-02) — K4 decides a shortest
+    timer the plugin recognises, below which the switch-offs keep counting toward answer N.
 
 What a step leaves open is added here by name, as the rules say.
 
