@@ -51,7 +51,7 @@ Check before starting:
 
 The user's rules of 2026-09-26/27 also hold: all findings and results are saved in the working directory; replies to the user are in plain, less technical Polish; most parameters may be missing. Earlier drafts called the first two "answer 5".
 
-On 2026-09-28 phases Q, V, X and Y and step Z1 are built and committed; the next step is Z2. Each step's build report is in `research/2026-09-2x-<step>-build-report.md`, what one step left for a later one in `research/2026-09-28-carry-over.md`, and the questions for K4 in `research/2026-09-27-k4-questions.md`. Line numbers cited in this file are those of commit d545869; the code has moved since.
+On 2026-10-02 0.2.2 is built: phases Q, V, X, Y and Z are committed, and the independent check Z4 ended with a re-check finding no critical or high problem (`research/2026-10-02-z4-*.md`). The next step is J2 of `docs/plan-0.2.md`, which is the user's. Each step's build report is in `research/2026-09-2x-<step>-build-report.md`, what one step left for a later one in `research/2026-09-28-carry-over.md`, and the questions for K4 in `research/2026-09-27-k4-questions.md`. Line numbers cited in this file are those of commit d545869; the code has moved since.
 
 **A 🔒 step that holds nothing up.** A 🔒 step waits for the user. Its plan may say it holds nothing up (`docs/plan-0.2.1.md` l.12-13 for L4; `docs/plan-0.2.2.md` l.17-19 for Q4), or, like R2, only a later step may need it (K5). In those cases:
 - note it in the step's report and carry on with the next step;
