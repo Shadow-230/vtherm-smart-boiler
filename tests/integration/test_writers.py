@@ -846,6 +846,53 @@ async def test_an_expiring_external_switch_is_due_again_every_keep_alive(
     assert calls.count(on) == 4  # found off after an outage of its device (M15)
 
 
+async def test_the_writer_tells_when_the_external_switch_was_last_turned_on(
+    hass: HomeAssistant, freezer: Any
+) -> None:
+    """Z4-09: the moment the external-control switch was last turned on — at the take, at a
+    keep-alive that turned it on, at a renewal — from which control tells the plugin's own
+    lapse (M17). Not yet turned on, or no such switch, or a path without one: ``None``."""
+    from datetime import timedelta
+
+    record(hass, *NUMBER_SERVICES)
+    present(hass, "number.flow", "switch.external")
+    base = {"write_path": "entity", "setpoint_entity": "number.flow", "write_type": "held"}
+    writer = make_writer(
+        hass,
+        options(
+            **base,
+            hand_back="switch",
+            hand_back_entity="switch.external",
+            hand_back_entity_write_type="expiring",
+        ),
+    )
+    assert writer.external_on_at is None  # not turned on yet
+    await writer.write_setpoint(40.0)
+    taken = datetime.now(UTC).timestamp()
+    assert writer.external_on_at == taken
+    freezer.tick(timedelta(seconds=10))
+    await writer.keep_alive()  # not due: not turned on
+    assert writer.external_on_at == taken
+    freezer.tick(timedelta(seconds=25))
+    await writer.keep_alive()
+    assert writer.external_on_at == datetime.now(UTC).timestamp()
+    freezer.tick(timedelta(seconds=5))
+    await writer.renew_external()
+    assert writer.external_on_at == datetime.now(UTC).timestamp()
+    without = make_writer(
+        hass,
+        options(
+            **base, hand_back="value", hand_back_value=50, hand_back_value_effect="own_control"
+        ),
+    )
+    await without.write_setpoint(40.0)
+    assert without.external_on_at is None  # no external-control switch
+    gateway = make_writer(
+        hass, options(write_path="opentherm_gw", gateway_id="gw1", confirmed_entity=READ_BACK)
+    )
+    assert gateway.external_on_at is None
+
+
 async def test_the_hand_back_puts_its_values_on_the_entitys_grid(hass: HomeAssistant) -> None:
     """P-15, P-98: the lowest water temperature and the hand-back value go on the setpoint
     entity's grid — the lowest never below itself, the hand-back value never above the highest

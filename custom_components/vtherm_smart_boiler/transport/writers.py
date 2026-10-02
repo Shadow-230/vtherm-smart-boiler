@@ -150,6 +150,12 @@ class Writer(Protocol):
         while control holds the boiler (a lost command, M15)."""
         ...
 
+    @property
+    def external_on_at(self) -> float | None:
+        """When the external-control switch was last turned on; ``None``: not yet, or there is
+        none. An expiring one found off long after it is the plugin's own lapse (M17)."""
+        ...
+
     async def hand_back(
         self,
         *,
@@ -213,6 +219,11 @@ def _as_entity_takes_it(state: State, value: float) -> float:
 class _ServiceWriter:
     def __init__(self, hass: HomeAssistant) -> None:
         self._hass = hass
+
+    @property
+    def external_on_at(self) -> float | None:
+        """No external-control switch here."""
+        return None
 
     def _check_target(self, entity_id: str) -> State:
         """Home Assistant would skip a missing or unavailable entity without an error. One whose
@@ -331,6 +342,11 @@ class EntityWriter(_ServiceWriter):
     @property
     def services(self) -> frozenset[tuple[str, str]]:
         return writer_services(self._options)
+
+    @property
+    def external_on_at(self) -> float | None:
+        """When the external-control switch was last turned on (``None``: not yet)."""
+        return self._taken_at if self._external else None
 
     def _external_due(self, returned: bool = False) -> bool:
         """The external switch is to be turned on now: control takes the boiler; declared

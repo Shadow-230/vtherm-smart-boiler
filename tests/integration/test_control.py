@@ -7608,6 +7608,52 @@ async def test_the_external_control_switch_off_after_its_device_restart_is_switc
         assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
 
 
+@pytest.mark.parametrize("silent", [True, False], ids=["plugin_silent", "kept_alive"])
+@pytest.mark.usefixtures("low_setpoint_off")
+async def test_an_expiring_external_switch_lapsing_in_the_plugins_silence_is_turned_on_again(
+    rig: Rig, silent: bool
+) -> None:
+    """Z4-09 (M17 for the external-control switch): declared expiring, it lapses unless the plugin
+    renews it. The boiler link goes stale short of a loss — its flow from a device of its own —
+    so nothing is written, the switch's renewal included; the switch lapses with no trace after
+    more than two keep-alives of that silence: the plugin's own lapse — turned on again once
+    control writes, not counted, no outside change, no latch. Negative: switched off while the
+    plugin keeps renewing it — another controller: the plugin steps aside."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    external = FakeSwitch(rig.hass, entity_id="input_boolean.fake_external", on=False)
+    external.register()
+    await start(rig, **switch_method(number, external.entity_id, "expiring"))
+    await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
+    await rig.switch(True)
+    await rig.advance(60)
+    assert external.on
+    if silent:
+        rig.flow = None  # stale, short of a loss: nothing is written
+        await rig.advance(90)  # no renewal for more than two keep-alives
+    ons = external.writes.count(True)
+    external.on = False  # its own lapse — or, kept alive, a person
+    external.publish()
+    await rig.advance(10)
+    state = rig.state("sensor", "control_state")
+    if not silent:
+        assert state.state == "handed_back"
+        assert state.attributes["latched_by"] == ["outside_change"]
+        assert external.writes.count(True) == ons  # no fight
+        return
+    assert state.state != "handed_back"
+    await rig.advance(60)  # still stale: nothing written yet
+    assert external.writes.count(True) == ons
+    rig.flow = 35.0  # the link is back: control writes
+    await rig.advance(20)
+    assert external.writes.count(True) == ons + 1  # turned on again
+    assert external.on
+    assert rig.state("sensor", "control_state").state != "handed_back"
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
+    assert unit_of(rig)._session.loop.losses == ()  # its own lapse: not counted
+    assert issue(rig, "control_latched") is None
+
+
 @pytest.mark.parametrize("case", ["returns", "option_off", "unknown"])
 async def test_the_return_by_itself_after_an_hour_without_a_foreign_value(
     rig: Rig, case: str

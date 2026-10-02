@@ -140,6 +140,7 @@ from .const import (
     stored_flag,
 )
 from .control_config import (
+    KEEPALIVE_S,
     OTGW_PATHS,
     AlarmReaction,
     ControlOptions,
@@ -3094,13 +3095,16 @@ class ControlUnit:
         )
 
     def _watch_external(self, now: float) -> None:
-        """M14, M15: while control holds the boiler through the external-control switch it
+        """M14, M15, M17: while control holds the boiler through the external-control switch it
         turned on, the switch is read at every step. Off after an outage of the switch or its
         device (unavailable, unknown or missing within five minutes, or a restart seen) — turned
-        on again at once, counted as a lost command. Off with no trace — a person, an automation,
-        its own button, while it stayed available — another controller: the plugin steps aside
-        at once, with no rewrite (the whole safe hand-back; the switch, already off, counts as
-        released). Not judged while unknown, nor before it was read back on."""
+        on again at once, counted as a lost command. Declared expiring and off after more than
+        two keep-alives in which the plugin did not turn it on (the boiler link stale, say) —
+        the plugin's own lapse: turned on again once control writes, not counted, not an outside
+        change (Z4-09). Off with no trace otherwise — a person, an automation, its own button,
+        while it stayed available — another controller: the plugin steps aside at once, with no
+        rewrite (the whole safe hand-back; the switch, already off, counts as released). Not
+        judged while unknown, nor before it was read back on."""
         options = self.options
         entity = options.hand_back_entity
         returned = self._returned("external", entity)
@@ -3136,12 +3140,29 @@ class ControlUnit:
             loop = self._session.loop
             self._session.loop = replace(loop, losses=add_loss(loop.losses, now, "external"))
             return
+        if self._external_lapsed(now):
+            _LOGGER.info(
+                "The external-control switch lapsed while the plugin was not renewing it: "
+                "switched on again once control writes"
+            )
+            self._external_renew = True
+            return
         _LOGGER.warning(
             "The external-control switch was switched off while it stayed available: control "
             "steps aside without a fight"
         )
         self._session.alarms.add(ControlAlarm.OUTSIDE_CHANGE)
         self._step_aside_seen = {"target": entity, "value": "off"}  # the latch issue names it
+
+    def _external_lapsed(self, now: float) -> bool:
+        """M17 for the external-control switch (Z4-09): declared expiring, and not turned on by
+        the plugin for more than two keep-alives — as an expiring override, it lapses in the
+        plugin's own silence. When it was last turned on not known: not taken for a lapse."""
+        writer = self._writer
+        if writer is None or self.options.hand_back_entity_write_type is not WriteType.EXPIRING:
+            return False
+        on_at = writer.external_on_at
+        return on_at is not None and now - on_at > 2 * KEEPALIVE_S
 
     def _follow_return(self, now: float) -> bool:
         """The optional return by itself (off by default; not for relays): after the plugin
