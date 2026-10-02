@@ -11,6 +11,7 @@ import pytest
 
 from custom_components.vtherm_smart_boiler.core.guards import (
     DAY,
+    HOUR,
     REACTIONS,
     ChangeClass,
     Confirmation,
@@ -388,6 +389,42 @@ def test_an_unknown_read_back_at_the_first_write_still_tells_a_drop() -> None:
     assert result.events == ()
     assert result.state.blocked is None
     assert result.state.rewritten_at is None
+
+
+def test_a_heating_echo_unknown_at_the_first_send_still_tells_a_fall_back() -> None:
+    """Z4-03 (P-07, T-02 for heating on/off): the echo unknown at the session's first send of
+    "off", then confirmed. The first known echo that is not a state the plugin sent is the value
+    from before the plugin: untraced fall-backs to "on" three hours apart are each a lost
+    command — sent again, counted, no rewrite, no block — and two within an hour another
+    controller, as with a baseline seen before the send. Negative: the plugin sent both states
+    before any known echo — none is the value from before the plugin, and the other state held
+    two steps is another controller (row 13)."""
+    state = held(ECHOED, first=None, value=OFF)
+    assert state.baseline is None
+    state = keep(state, ECHOED, 160.0, 990.0, OFF, OFF)
+    for t in (1000.0, 1000.0 + 3 * HOUR):
+        result = result_of(state, OFF, ON, t, ECHOED)
+        assert result.judged is ChangeClass.LOST_COMMAND
+        assert result.action == WriteAction(OFF, WriteKind.RESEND)
+        assert result.lost
+        assert result.events == ()
+        assert result.state.baseline == ON  # learned at the first, kept
+        state = keep(result.state, ECHOED, t + 10.0, t + 600.0, OFF, OFF)
+    assert state.rewritten_at is None
+    assert state.blocked is None
+    result = result_of(state, OFF, ON, 1000.0 + 3 * HOUR + 1200.0, ECHOED)  # within the hour
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+    assert result.action == WriteAction(OFF, WriteKind.REWRITE)
+
+    state, _, _ = step(GuardState(), OFF, None, 0.0, ECHOED)  # unknown at the first send
+    state, _, _ = step(state, ON, None, 10.0, ECHOED)  # both states sent, none read back yet
+    state = keep(state, ECHOED, 20.0, 990.0, ON, ON)
+    assert state.baseline is None
+    state, _, _ = step(state, ON, OFF, 1000.0, ECHOED)
+    assert state.baseline is None
+    result = result_of(state, ON, OFF, 1010.0, ECHOED)
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+    assert result.action == WriteAction(ON, WriteKind.REWRITE)
 
 
 # --- lost command ----------------------------------------------------------------------------
@@ -941,14 +978,13 @@ def test_heating_switched_back_without_a_trace_is_first_a_lost_command() -> None
     assert (action, events) == (None, (GuardEvent.OUTSIDE_CHANGE,))
 
 
-@pytest.mark.parametrize("first", [ON, None], ids=["baseline_on", "baseline_unknown"])
-def test_heating_switched_away_from_its_baseline_is_another_controller(
-    first: float | None,
-) -> None:
-    """Row 13: the value from before the plugin "on" (or unknown), the plugin commands "on", the
-    echo shows "off" at two consecutive steps with no trace: written again once; again within a
-    day, the guard blocks."""
-    state = held(ECHOED, first=first, value=ON)
+def test_heating_switched_away_from_its_baseline_is_another_controller() -> None:
+    """Row 13: the value from before the plugin "on", the plugin commands "on", the echo shows
+    "off" at two consecutive steps with no trace: written again once; again within a day, the
+    guard blocks. (With the echo unknown at the first send, the first other state seen is the
+    value from before the plugin — Z4-03:
+    ``test_a_heating_echo_unknown_at_the_first_send_still_tells_a_fall_back``.)"""
+    state = held(ECHOED, first=ON, value=ON)
     state, action, _ = step(state, ON, OFF, 400.0, ECHOED)
     assert action is None or action.kind is WriteKind.KEEPALIVE  # one step: not judged
     state, action, events = step(state, ON, OFF, 410.0, ECHOED)

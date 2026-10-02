@@ -177,7 +177,7 @@ class GuardConfig:
     tolerance: float = TOLERANCE_K  # on/off as 1 and 0: any tolerance below 1
     min_interval_s: float = MIN_WRITE_INTERVAL_S
     read_back: bool = True  # False: nothing echoes the value; it is never judged
-    two_valued: bool = False  # heating on/off: no clip; its baseline only from before any send
+    two_valued: bool = False  # heating on/off: no clip, no thermostat's own value
     refresh_s: float | None = HELD_REFRESH_S  # a held value sent again this often (None: never)
 
     def __post_init__(self) -> None:
@@ -659,9 +659,11 @@ def _learn_baseline(
 ) -> GuardState:
     """The baseline (P-07): the first known read-back of the session that is not within the
     tolerance of a value the plugin sent in this session, nor of its last command stored — seen
-    before the session's first send, or (a value target) after the plugin's value was read back
-    once. Heating on/off learns it only before its first send: a later other state is judged as
-    such (row 13). Not during a hot-water draw."""
+    before the session's first send, or after the plugin's value was read back once. Heating
+    on/off alike (Z4-03): with its echo unknown at the first send, the first other state seen
+    later is the one from before the plugin, as long as the plugin has sent only one state;
+    once it has sent both, none is learned, and the other state is judged as such (row 13). Not
+    during a hot-water draw."""
     if state.baseline is not None or quiet:
         return state
     if _near(value, context.last_command, config.tolerance):
@@ -669,7 +671,7 @@ def _learn_baseline(
     if any(_near(value, sent, config.tolerance) for sent in state.sent_values):
         return state
     before_any_send = not state.sent_values and state.written is None
-    if before_any_send or (state.ever_confirmed and not config.two_valued):
+    if before_any_send or state.ever_confirmed:
         return replace(state, baseline=value, sent_values=())
     return state
 
