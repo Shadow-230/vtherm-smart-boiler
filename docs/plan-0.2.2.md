@@ -613,8 +613,11 @@ Left on purpose for a later release:
     zones: the comfort correction, on by default, climbs to +3 K while a TPI zone at full duty
     stays short of its target, and the starts per hour reach ×1.75 (+8 °C) and ×5.1 (−5 °C) of
     the boiler's own regulation; with the correction off they are equal (Z3,
-    `research/2026-10-02-z3-starts-ratio.md`) — K4 decides the correction's rule, its default,
-    or the criterion, before anything reaches a real boiler.
+    `research/2026-10-02-z3-starts-ratio.md`). Decided by the user on 2026-10-03: the correction
+    is off by default (K4.1); with it off the starts equal the boiler's own at a constant outdoor
+    temperature, and a room set above the curve's room temperature stays up to about 2 K short in
+    cold weather; a rule that rises only while starts do not rise may come in 0.3 if data show a
+    need.
 25. The simulator starts every TPI zone's cycle together (staggered cycles not modelled), and
     the wall thermostat's own overrides are not modelled (Z3) — later.
 26. A "heating stops" hand-back leaves the heating switch on where the plugin was heating, so the
@@ -643,7 +646,9 @@ Left on purpose for a later release:
     from before a quick toggle counts as the read-back (Z4R3-01, Z4R3-03; no gateway path is that
     slow); the read-back field's text does not yet ask for a prompt read-back. A setpoint reverted
     faster than a control step is reported ("confirmation missing", an issue), not judged
-    (Z4R-01, Z4R2-03) — K4.
+    (Z4R-01, Z4R2-03). Decided by the user on 2026-10-03 (K4.3): the window is 5 min, a stale
+    echo never counts as the read-back, and the field asks for a prompt entity; a read-back slower
+    than 5 min remains a known limit.
 33. A boiler's own minimum above the lowest water temperature is judged as another controller,
     never as a clip (Z4R-09; the device behaviour assumed); and a command never taken after the
     start phase leaves a stand-alone house unheated with only "commands lost" (Z4R-05) — K4.
@@ -659,6 +664,23 @@ Left on purpose for a later release:
     short "maximum run time" — is recognised as the relay's own timer and answered for ever: with
     a 2-min timer the boiler starts about 30 times an hour (Z4R3-02) — K4 decides a shortest
     timer the plugin recognises, below which the switch-offs keep counting toward answer N.
+    Decided by the user on 2026-10-03 (K4.2): 10 min; shorter regular switch-offs make the plugin
+    step aside at the fourth within 24 h with an issue naming their length, and the form refuses
+    a declared timer under 10 min; a recurring switch-off from 9 min counts as a 10-min timer
+    measured a little short (KD-02).
+36. The heating switch's stuck test (KD-01): a poll locked to VT's cycle can keep sampling the same
+    phases and look stuck; pulses shorter than about a minute never count; a switch stuck before
+    three echoes were seen is left to the 5-min window; the echo delay it learns is the longest of
+    the last ten, so a late report drops out after ten prompt ones (KDF-01) — K4.
+37. A 5-min relay timer that "on" does not restart, every other lapse hidden by the 300-s renewal,
+    is recognised as a 10-min one and answered for good while the boiler stops every 5 min — vary
+    the "I don't know" renewal by 0–30 s (KD-03); with the default "reports its state: I don't
+    know" nothing about the relay is judged, so a short inching relay cycles the boiler at the
+    repeat interval for good, and the timer field should say so (KD-04) — K4.
+38. Smaller remainders of the last check (research/2026-10-03-kd-fixes-check.md) — later: once a
+    9-min relay timer is recognised, a switch-off from 8 min matches it, and the latch issue rounds
+    a refused 511–539-s switch-off up to "about every 9 min" (KDF-03); older rules still judge a
+    working slow-polled heating switch after an outage or a restart (KDF-04, pre-existing).
 
 What a step leaves open is added here by name, as the rules say.
 
