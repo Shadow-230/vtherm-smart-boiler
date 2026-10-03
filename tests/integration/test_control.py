@@ -3079,6 +3079,57 @@ async def test_a_heating_switch_that_never_shows_its_new_state_is_judged(rig: Ri
     assert len(rig.gateway.calls) == count  # no refresh for ever: left alone
 
 
+@pytest.mark.parametrize("stuck", ["off", "on"])
+async def test_a_heating_switch_stuck_under_vt_pulses_is_judged(rig: Rig, stuck: str) -> None:
+    """KD-01: OTGW with a heating echo, "on" before the plugin; VT pulses heating on for 90 s of
+    every 5 minutes. For 20 minutes the echo follows (its delay learned from its echoes); then it
+    never changes again: stuck "off" (the switch does not take "on", or an automation puts it
+    back within a step) or stuck "on". The previous state's 5 minutes start again at every send,
+    so it was never judged; the stuck test judges it within about 10 minutes. Stuck "off":
+    another controller — CH=1 written once more, then the plugin steps aside with the safe
+    hand-back and the latch. Stuck "on", the value from before the plugin: lost commands (answer
+    E) — CH=0 sent again, "commands lost" raised, no step aside."""
+    await start(rig, ch_confirmed_entity=CH_ECHO)
+    await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
+    await rig.switch(True)
+    await rig.advance(150)  # "on" confirmed and held: the start phase is over
+    ignored = ("ch", stuck == "off")  # the command the switch will not take
+    pulsing: bool | None = None
+    start_at: int | None = None
+    first: float | None = None
+    for step in range(6 * 65):  # 20 minutes working, then 45 stuck
+        if step == 6 * 20:
+            rig.gateway.forced_ch = stuck == "on"  # from now on the echo shows only this
+            start_at = len(rig.gateway.calls)
+        pulse = step * 10 % 300 < 90
+        if pulse is not pulsing:
+            pulsing = pulse
+            if pulse:
+                rig.zones.set(
+                    "living", hvac_action="heating", valve_open_percent=60, on_percent=0.6
+                )
+            else:
+                rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+        await rig.advance(10)
+        if start_at is not None and first is None and ignored in rig.gateway.calls[start_at:]:
+            first = dt_util.utcnow().timestamp()
+        if rig.state("sensor", "control_state").state == "handed_back":
+            break
+    assert first is not None
+    now = dt_util.utcnow().timestamp()
+    state = rig.state("sensor", "control_state")
+    if stuck == "off":
+        assert state.state == "handed_back"
+        assert now - first <= 15 * 60  # judged and stepped aside within a quarter of an hour
+        assert state.attributes["latched_by"] == ["outside_change"]
+        assert unit_of(rig)._session.loop.switch.rewritten_at is not None  # one rewrite first
+        assert issue(rig, "control_latched") is not None
+        return
+    assert state.state != "handed_back"
+    assert rig.state("binary_sensor", "alarm_commands_lost").state == "on"
+    assert unit_of(rig)._session.loop.switch.blocked is None
+
+
 @pytest.mark.parametrize(
     ("effect", "severity", "cleared_by"),
     [

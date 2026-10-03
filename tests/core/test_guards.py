@@ -12,6 +12,7 @@ import pytest
 
 from custom_components.vtherm_smart_boiler.core.guards import (
     DAY,
+    HELD_REFRESH_S,
     HOUR,
     PREVIOUS_EXEMPT_S,
     REACTIONS,
@@ -342,6 +343,7 @@ def test_a_clock_set_back_moves_every_moment_to_now() -> None:
         fallbacks=(9000.0,),
         recent=((9000.0, 45.0),),
         left=((9000.0, 40.0),),
+        missed=(9000.0,),
         change_at=9000.0,
         draw_at=9000.0,
     )
@@ -349,6 +351,7 @@ def test_a_clock_set_back_moves_every_moment_to_now() -> None:
     assert result.state.fallbacks == (500.0,)
     assert result.state.recent == ((500.0, 45.0),)
     assert result.state.left == ((500.0, 40.0),)  # K4.3: a replaced value's moment, not its value
+    assert result.state.missed == (500.0,)  # KD-01: a missed send's moment
     assert result.state.change_at == 500.0
     assert result.state.draw_at == 500.0
 
@@ -1183,6 +1186,202 @@ def test_a_stale_setpoint_report_is_not_the_read_back_of_a_newer_send() -> None:
         assert result.events == ()
     assert state.taken  # its own echo, once the earlier 45 can no longer be in flight
     assert state.rewritten_at is None
+
+
+MIN = 60.0
+STUCK_AT = 2 * HOUR  # the switch works until then
+# VT's pulses through the heating switch: a 2-, 5- or 10-min cycle at a duty.
+STUCK_PULSES = [(120.0, 0.5), (300.0, 0.3), (300.0, 0.5), (300.0, 0.7), (600.0, 0.5)]
+STUCK_PULSE_IDS = ["2min_50", "5min_30", "5min_50", "5min_70", "10min_50"]
+
+
+def _pulses(cycle_s: float, duty: float) -> Callable[[float], float]:
+    return lambda t: ON if t % cycle_s < duty * cycle_s else OFF
+
+
+def _stuck_run(
+    demand: Callable[[float], float],
+    case: str,
+    refresh_s: float,
+    *,
+    hours: float = 3.0,
+    unknown: tuple[float, float] | None = None,
+    draw: tuple[float, float] | None = None,
+) -> tuple[float | None, list[tuple[float, ChangeClass, tuple[GuardEvent, ...]]], GuardState]:
+    """VT's pulses through a heating switch, "off" before the plugin, whose read-back reports each
+    change 5 s after it, in order. From ``STUCK_AT`` the switch sticks (``case``): "on" whatever
+    it is told (stuck_on), "off" whatever it is told (stuck_off), or put back "on" by an
+    automation 3 s after every "off" — between two steps, so no step shows the "off" (reverted).
+    ``unknown``: the read-back unknown between the two moments; ``draw``: hot water then. Returns
+    when the switch first ignored a command, the judgements from ``STUCK_AT`` on (when, class,
+    events), and the guard's last state."""
+    config = GuardConfig(write_type=WriteType.HELD, two_valued=True, refresh_s=refresh_s)
+    state = GuardState()
+    device = shown = OFF
+    shown_at = -HOUR
+    reports: list[tuple[float, float]] = []
+    ignored: float | None = None
+    judged: list[tuple[float, ChangeClass, tuple[GuardEvent, ...]]] = []
+    t = 0.0
+    while t <= hours * HOUR and state.blocked is None:
+        reports.sort()
+        while reports and reports[0][0] <= t:
+            at, value = reports.pop(0)
+            if value != shown:
+                shown, shown_at = value, at
+        gone = unknown is not None and unknown[0] <= t < unknown[1]
+        dhw = draw is not None and draw[0] <= t < draw[1]
+        result = result_of(
+            state, demand(t), None if gone else shown, t, config, reported_at=shown_at, dhw=dhw
+        )
+        state = result.state
+        stuck = t >= STUCK_AT
+        if result.action is not None:
+            value = result.action.value
+            if stuck and case == "stuck_on" and value == OFF:
+                value, ignored = ON, ignored if ignored is not None else t
+            if stuck and case == "stuck_off" and value == ON:
+                value, ignored = OFF, ignored if ignored is not None else t
+            device = value
+            reports.append((t + 5.0, device))
+            if stuck and case == "reverted" and value == OFF:
+                device, ignored = ON, ignored if ignored is not None else t
+                reports.append((t + 8.0, ON))
+        if stuck and result.judged in (ChangeClass.LOST_COMMAND, ChangeClass.ANOTHER_CONTROLLER):
+            judged.append((t, result.judged, result.events))
+        t += 10.0
+    return ignored, judged, state
+
+
+@pytest.mark.parametrize("refresh_s", [HELD_REFRESH_S, 30.0], ids=["entity", "otgw"])
+@pytest.mark.parametrize(("cycle_s", "duty"), STUCK_PULSES, ids=STUCK_PULSE_IDS)
+@pytest.mark.parametrize("case", ["stuck_on", "stuck_off", "reverted"])
+def test_a_stuck_heating_switch_is_judged_whatever_vt_pulses(
+    case: str, cycle_s: float, duty: float, refresh_s: float
+) -> None:
+    """KD-01: while VT pulses heating every 5 min or less, the previous state's 5 minutes start
+    again at every send, so a switch stuck in one state — or put back by an automation no step
+    sees — was never judged (heating without demand for hours, or no heat and nothing said).
+    The stuck test, independent of those 5 minutes: the read-back has not changed while the
+    plugin sent the other state at least twice, each time longer than this read-back takes to
+    show a change, the first 5 minutes ago or more — then decision 6's classes judge it, here
+    within 11 minutes of the first ignored command whatever the pulses. Stuck "on", or put back
+    "on": another controller — the one rewrite, and the guard blocks within 14 minutes. Stuck
+    "off", the value from before the plugin: answer E's fall-back rules — lost commands, sent
+    again, "commands lost" within the half hour; never a block."""
+    ignored, judged, state = _stuck_run(_pulses(cycle_s, duty), case, refresh_s)
+    assert ignored is not None
+    assert judged, "never judged"
+    first, kind, _events = judged[0]
+    assert first - ignored <= 11 * MIN, (first - ignored) / MIN
+    if case == "stuck_off":
+        assert kind is ChangeClass.LOST_COMMAND
+        assert all(k is ChangeClass.LOST_COMMAND for _t, k, _e in judged)
+        assert len([t for t, _k, _e in judged if t - ignored <= 30 * MIN]) >= 3
+        assert state.blocked is None
+        return
+    assert kind is ChangeClass.ANOTHER_CONTROLLER
+    assert state.blocked is GuardEvent.OUTSIDE_CHANGE
+    last, _kind, events = judged[-1]
+    assert events == (GuardEvent.OUTSIDE_CHANGE,)
+    assert last - ignored <= 14 * MIN, (last - ignored) / MIN
+
+
+@pytest.mark.parametrize("poll_s", [150.0, 240.0], ids=["150s", "240s"])
+def test_a_polled_read_back_of_a_working_switch_is_never_judged_stuck(poll_s: float) -> None:
+    """KD-01's negative: a working switch whose read-back is polled every 150 s or 240 s, with
+    the stuck test's pulses — 2-, 5- and 10-min cycles — for 12 hours, at six poll phases. Its
+    read-back changes now and then, the delay of its echoes is learned (up to the poll
+    interval, from three echoes on), and a pulse shorter than three times that delay plus 30 s
+    never counts as missed: never judged.
+
+    The remaining risk is aliasing: a poll locked to VT's cycle — its interval a divisor or a
+    multiple of the cycle — samples the same phases of it for good, so every echo it shows comes
+    the same short time after a send, and the delay it teaches is that short time, not its
+    interval. If VT's duty then moves so that all those phases fall in one state, the other
+    state's pulses are never shown, and the switch looks stuck and is judged as a stuck one would
+    be — e.g. a 150-s poll 13 s into a 600-s cycle: at 50 % its four phases teach 13 s, at 80 %
+    they all fall while heating is on, and the 120-s "off" pulses count as missed."""
+    for cycle_s, duty in STUCK_PULSES:
+        for phase in (0.0, 37.0, 61.0, 89.0, 113.0, 140.0):
+            demand = _pulses(cycle_s, duty)
+            device = shown = OFF
+            shown_at = -HOUR
+            next_poll = phase
+            state = GuardState()
+            t = 0.0
+            while t <= 12 * HOUR:
+                if t >= next_poll:
+                    if device != shown:
+                        shown, shown_at = device, next_poll
+                    next_poll += poll_s
+                result = result_of(state, demand(t), shown, t, ECHOED, reported_at=shown_at)
+                state = result.state
+                if result.action is not None:
+                    device = result.action.value
+                assert result.judged not in (
+                    ChangeClass.ANOTHER_CONTROLLER,
+                    ChangeClass.LOST_COMMAND,
+                    ChangeClass.IGNORED_FROM_START,
+                ), (cycle_s, duty, phase, t, result.judged)
+                assert result.events == (), (cycle_s, duty, phase, t)
+                t += 10.0
+            assert state.blocked is None
+
+
+def test_one_early_poll_does_not_make_a_slow_read_back_look_prompt() -> None:
+    """KD-01's negative, from the check's probe: a working switch, its read-back polled every
+    217 s, two zones' pulses of 245 s on a 15-min cycle. The first poll comes 3 s after a send —
+    a 3-s echo delay, had one echo been trusted, would count the next two "off" pulses the polls
+    miss as missed and judge another controller 14 minutes in. The delay is trusted only from
+    three echoes on, by which time it has shown itself long: never judged in 12 hours."""
+    offsets, on_s, poll_s, phase = (545.0, 202.0), 245.0, 216.8, 213.4
+
+    def demand(t: float) -> float:
+        return ON if any((t - offset) % 900.0 < on_s for offset in offsets) else OFF
+
+    device = shown = OFF
+    shown_at = -HOUR
+    next_poll = phase
+    state = GuardState()
+    t = 0.0
+    while t <= 12 * HOUR:
+        while next_poll <= t:
+            if device != shown:
+                shown, shown_at = device, next_poll
+            next_poll += poll_s
+        result = result_of(state, demand(t), shown, t, ECHOED, reported_at=shown_at)
+        state = result.state
+        if result.action is not None:
+            device = result.action.value
+        assert result.judged is not ChangeClass.ANOTHER_CONTROLLER, t
+        assert result.events == (), t
+        t += 10.0
+    assert state.echo_s is not None
+    assert state.echo_s > 100.0  # learned: the poll interval shows
+    assert state.rewritten_at is None
+
+
+@pytest.mark.parametrize("cause", ["unknown", "draw"])
+def test_a_stuck_heating_switch_is_not_judged_while_unknown_or_during_a_draw(cause: str) -> None:
+    """KD-01's negatives: the switch stuck "on" under 5-min pulses at 30 %. Its read-back unknown
+    for half an hour from the first ignored command — nothing judged meanwhile; a hot-water draw
+    for as long — nothing judged during it or for 2 min after. Either way the missed sends are
+    counted afresh once the read-back is known, or the draw over: another controller only after
+    4 minutes or more, within 11. (Back from unknown, the read-back's outage is a trace for 5
+    minutes, in which "on" is the device's own state: lost commands, sent again — answer C.)"""
+    window = (STUCK_AT + 90.0, STUCK_AT + 90.0 + 30 * MIN)  # the first "off" ignored at +90 s
+    keyword = {"unknown": window} if cause == "unknown" else {"draw": window}
+    ignored, judged, state = _stuck_run(_pulses(300.0, 0.3), "stuck_on", HELD_REFRESH_S, **keyword)
+    assert ignored == STUCK_AT + 90.0
+    end = window[1] + (0.0 if cause == "unknown" else 120.0)
+    assert [t for t, _k, _e in judged if t < end] == []
+    others = [t for t, kind, _e in judged if kind is ChangeClass.ANOTHER_CONTROLLER]
+    assert others, "never judged"
+    assert 4 * MIN < others[0] - window[1] <= 11 * MIN  # counted afresh, not at once
+    lost = [t for t, kind, _e in judged if kind is ChangeClass.LOST_COMMAND]
+    assert all(t - window[1] <= 5 * MIN for t in lost)  # only within the outage's trace
+    assert state.blocked is GuardEvent.OUTSIDE_CHANGE
 
 
 def test_a_setpoint_not_shown_for_five_minutes_raises_confirmation_missing() -> None:

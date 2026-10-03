@@ -52,11 +52,16 @@ Home Assistant shows it). For heating on/off also only for ``PREVIOUS_EXEMPT_S``
 included — so a read-back polled up to every 5 minutes, or that late, is not judged: a state no
 step ever shows — the device stuck, an automation putting it back within a step — is then judged
 like any other (back at the value from before the plugin: the fall-back rows; otherwise another
-controller); an echo slower than 5 minutes is judged too, a known limit. A setpoint has no such
-bound — a boiler's own limit is judged "clipped" once the plugin has sent values 1 K apart, and a
-slow read-back is waited for — but its value not shown for ``CONFIRMATION_MISSING_S`` while the
-read-back is known and shows another one is reported (``value_not_shown``: "confirmation
-missing" and its repair issue), never judged by itself.
+controller); an echo slower than 5 minutes is judged too, a known limit. Those 5 minutes start
+again at every send, so while VT pulses heating every 5 minutes or less a stuck state would stay
+the exempt previous one for good: heating on/off has a stuck test of its own (KD-01) — its
+read-back has not changed while the plugin sent the other state at least twice, each time for
+longer than this read-back takes to show a change, the first 5 minutes ago or more — and is then
+judged by these classes whatever the exemption. A setpoint has no such bound — a boiler's own
+limit is judged "clipped" once the plugin has sent values 1 K apart, and a slow read-back is
+waited for — but its value not shown for ``CONFIRMATION_MISSING_S`` while the read-back is known
+and shows another one is reported (``value_not_shown``: "confirmation missing" and its repair
+issue), never judged by itself.
 
 Not judged: a difference seen for one step; the exempt previous value (above), shown "not
 confirmed" once the timeout has passed; a hot-water draw and the 120 s after it; the plugin's own
@@ -95,6 +100,17 @@ CONFIRM_TIMEOUT_S = 120.0  # a send read back within this; kept as today (reason
 # reports within it is never judged; a device stuck in that state, or an automation putting it
 # back, is judged after it. It is also as long as a stale echo is taken to stay in flight.
 PREVIOUS_EXEMPT_S = 300.0
+# KD-01 (provisional, K4): heating on/off stuck under VT's short pulses. Its read-back judged
+# stuck once it has not changed while the plugin sent the other state ``STUCK_SENDS`` times, the
+# first ``PREVIOUS_EXEMPT_S`` ago or more, each send counted only once it has gone unshown
+# ``ECHO_FACTOR`` times the longest echo delay seen this session plus ``ECHO_MARGIN_S``: a
+# read-back polled every few minutes learns a long delay, so its short pulses never count. Its
+# echo delay is known only from ``ECHOES_KNOWN`` echoes on — one poll that happened to come
+# just after a send says little — and until then it is never judged so.
+STUCK_SENDS = 2
+ECHO_FACTOR = 3.0
+ECHO_MARGIN_S = 30.0
+ECHOES_KNOWN = 3
 TOLERANCE_K = 0.5  # a read-back this close shows a value; kept as today
 # Decision 6 with the user's answer E (2026-09-27), decided:
 FALL_BACK_WINDOW_S = HOUR  # a second fall-back without a trace this soon: another controller
@@ -188,7 +204,8 @@ class ReadKind(StrEnum):
     # The value written before the current one, while the current one has not been read back
     # since it replaced it — for heating on/off only within ``PREVIOUS_EXEMPT_S`` of that send,
     # the value from before the plugin included: a late echo or the device holding it, not
-    # judged. Then it is another value like any other (Z4-01, Z4R-01, Z4R2-03, K4.3).
+    # judged. Then it is another value like any other (Z4-01, Z4R-01, Z4R2-03, K4.3) — and at
+    # once where heating on/off's read-back is stuck (KD-01).
     PREVIOUS = "previous"
     OTHER = "other"
 
@@ -255,6 +272,13 @@ class GuardState:
     # The values replaced within ``PREVIOUS_EXEMPT_S`` — (when, value): an echo of theirs may
     # still be on its way (Z4R3-01).
     left: tuple[tuple[float, float], ...] = ()
+    # KD-01, heating on/off: the read-back the steps show, and since when; the first send of
+    # another value since then (its echo delay is measured when the read-back shows it); the
+    # sends of another value that went unshown too long since then (``_follow_shown``).
+    shown: float | None = None
+    shown_since: float | None = None
+    away_since: float | None = None
+    missed: tuple[float, ...] = ()
     retry: bool = False  # the last write failed, or waited: send it again
     recent: tuple[tuple[float, float], ...] = ()  # (time, value) of sends within the timeout
     change_at: float | None = None  # the latest send of a new value
@@ -290,6 +314,9 @@ class GuardState:
     clip: float | None = None  # held lower by the boiler: its own limit, shown only
     unknown_at: float | None = None  # the read-back last unknown: a trace of an outage
     draw_at: float | None = None  # hot water last seen
+    # Heating on/off: the longest echo delay seen this session, and how many echoes (KD-01).
+    echo_s: float | None = None
+    echoes: int = 0
 
     @property
     def off_ignored(self) -> bool:
@@ -410,6 +437,8 @@ def after_hand_back(state: GuardState) -> GuardState:
             "clip",
             "unknown_at",
             "draw_at",
+            "echo_s",
+            "echoes",
         )
     }
     return GuardState(**memory)
@@ -500,8 +529,10 @@ def classify(
     §7): unknown; confirmed; a draw; the plugin's own lapse; a held target back; the rewrite not
     read back; the fall-back set (the start phase's attempts, then lost command or another
     controller); the previous value while it is exempt (its successor not read back by its own
-    echo; heating on/off within ``PREVIOUS_EXEMPT_S`` of that send, before the fall-back set);
-    clipped; another value held two steps — the previous one too, once no longer exempt."""
+    echo; heating on/off within ``PREVIOUS_EXEMPT_S`` of that send, before the fall-back set, and
+    not stuck); clipped; another value held two steps — the previous one too, once no longer
+    exempt — after a confirmation, the timeout of the first send not read back, or a stuck
+    heating read-back (KD-01)."""
     if state.written is None or not config.read_back or read_back is None or seen.kind is None:
         return ChangeClass.NOT_JUDGED
     if seen.kind is ReadKind.OURS:
@@ -526,7 +557,9 @@ def classify(
     if not config.two_valued and _clipped(state, read_back, config):
         return ChangeClass.CLIPPED
     if state.foreign_steps >= STEADY_STEPS and (
-        state.confirmed_at is not None or _overdue(state, now, config)
+        state.confirmed_at is not None
+        or _overdue(state, now, config)
+        or _stuck(state, read_back, now, config)
     ):
         return ChangeClass.ANOTHER_CONTROLLER
     return ChangeClass.NOT_JUDGED
@@ -624,6 +657,8 @@ def _observe(
         state.draw_at is not None and now - state.draw_at <= DRAW_QUIET_S
     )
     if read_back is None:
+        # Unknown: what the read-back shows is followed afresh once it is back (KD-01).
+        state = replace(state, shown=None, shown_since=None, away_since=None, missed=())
         if config.read_back:
             state = replace(
                 state,
@@ -639,7 +674,16 @@ def _observe(
     returned = context.returned or state.unknown_since is not None
     state = replace(state, unknown_since=None)
     trace = trace_seen(_latest(context.outage_at, state.unknown_at), now)
-    ours = state.written is not None and _shows_ours(state, read_back, now, config)
+    state = _follow_shown(state, read_back, context, now, config, quiet)
+    # The value written, or one sent within the timeout — not from a stuck heating read-back,
+    # whose state was also sent a moment ago (KD-01).
+    ours = state.written is not None and (
+        _near(read_back, state.written, tolerance)
+        or (
+            not _stuck(state, read_back, now, config)
+            and _sent_recently(state, read_back, now, config)
+        )
+    )
     if not ours:
         state = _learn_baseline(state, read_back, context, quiet, config)
     kind = _kind(state, read_back, ours, context, trace, now, config)
@@ -735,15 +779,80 @@ def _own_echo(
     )
 
 
+def _follow_shown(
+    state: GuardState,
+    read_back: float,
+    context: GuardContext,
+    now: float,
+    config: GuardConfig,
+    quiet: bool,
+) -> GuardState:
+    """KD-01, heating on/off: what the read-back shows at the steps. A change starts the count of
+    missed sends afresh, and where it shows the value written, measures the echo delay — from the
+    first send of that value since the read-back showed another, to the change as Home Assistant
+    shows it (else this step). While it stays, the current send of another value counts as
+    missed once it has gone unshown ``ECHO_FACTOR`` times the longest echo delay plus
+    ``ECHO_MARGIN_S`` — not before ``ECHOES_KNOWN`` echoes were seen, and not during a hot-water
+    draw, which starts the count afresh."""
+    if not config.two_valued:
+        return state
+    tolerance = config.tolerance
+    if state.shown is None or not _near(read_back, state.shown, tolerance):
+        echo, echoes, since = state.echo_s, state.echoes, state.away_since
+        if since is not None and _near(read_back, state.written, tolerance):
+            at = context.reported_at
+            delay = (at if at is not None and since <= at <= now else now) - since
+            echo = delay if echo is None else max(echo, delay)
+            echoes += 1
+        return replace(
+            state,
+            shown=read_back,
+            shown_since=now,
+            away_since=None,
+            missed=(),
+            echo_s=echo,
+            echoes=echoes,
+        )
+    if quiet:
+        return replace(state, missed=()) if state.missed else state
+    sent, echo, written = state.replaced_at, state.echo_s, state.written
+    if (
+        echo is None
+        or state.echoes < ECHOES_KNOWN
+        or len(state.missed) >= STUCK_SENDS  # enough to judge: no more to count
+        or sent is None
+        or written is None
+        or _near(written, read_back, tolerance)
+        or state.shown_since is None
+        or sent < state.shown_since
+        or now - sent < ECHO_FACTOR * echo + ECHO_MARGIN_S
+        or sent in state.missed
+    ):
+        return state
+    return replace(state, missed=(*state.missed, sent))
+
+
+def _stuck(state: GuardState, value: float, now: float, config: GuardConfig) -> bool:
+    """KD-01: heating on/off's read-back has shown ``value`` since before ``STUCK_SENDS`` missed
+    sends of the other state, the first ``PREVIOUS_EXEMPT_S`` ago or more — stuck, or put back
+    where no step sees it: judged by decision 6's classes whatever the previous state's
+    exemption."""
+    missed = state.missed
+    return (
+        config.two_valued
+        and len(missed) >= STUCK_SENDS
+        and now - missed[0] >= PREVIOUS_EXEMPT_S
+        and _near(value, state.shown, config.tolerance)
+    )
+
+
 def _latest(*moments: float | None) -> float | None:
     known = [t for t in moments if t is not None]
     return max(known) if known else None
 
 
-def _shows_ours(state: GuardState, value: float, now: float, config: GuardConfig) -> bool:
-    """Within the tolerance of the value written, or of one sent within the timeout."""
-    if _near(value, state.written, config.tolerance):
-        return True
+def _sent_recently(state: GuardState, value: float, now: float, config: GuardConfig) -> bool:
+    """Within the tolerance of a value sent within the timeout."""
     return any(
         now - t <= config.confirm_timeout_s and _near(value, sent, config.tolerance)
         for t, sent in state.recent
@@ -812,11 +921,13 @@ def _kind(
 
 
 def _previous(state: GuardState, value: float, now: float, config: GuardConfig) -> bool:
-    """``value`` is the plugin's previous one, still exempt."""
+    """``value`` is the plugin's previous one, still exempt — not from a stuck heating read-back
+    (KD-01)."""
     return (
         _near(value, state.previous, config.tolerance)
         and not state.taken
         and _exempt(state, now, config)
+        and not _stuck(state, value, now, config)
     )
 
 
@@ -947,6 +1058,12 @@ def _send(
     left = tuple((t, gone) for t, gone in state.left if now - t <= PREVIOUS_EXEMPT_S)
     if new_value and written is not None:
         left = (*left, (now, written))
+    away = state.away_since
+    shown = state.shown
+    if new_value and config.two_valued and away is None and shown is not None:
+        # The first send of another value than the read-back shows: its echo delay counts from
+        # it (KD-01).
+        away = None if _near(value, shown, config.tolerance) else now
     sent_values = state.sent_values
     if state.baseline is None and all(not _near(value, v, config.tolerance) for v in sent_values):
         sent_values = (*sent_values, value)
@@ -961,6 +1078,7 @@ def _send(
         previous_taken=state.taken if new_value else state.previous_taken,
         replaced_at=now if new_value else state.replaced_at,
         left=left,
+        away_since=away,
         retry=False,
         recent=(*recent, (now, value)),
         change_at=now if kind is WriteKind.CHANGE and new_value else state.change_at,
@@ -1001,8 +1119,17 @@ def _clock(state: GuardState, now: float, config: GuardConfig) -> GuardState:
     moved: dict[str, Any] = {}
     for item in fields(state):
         value = getattr(state, item.name)
-        if item.name in ("written", "previous", "sent_low", "sent_high", "baseline", "clip"):
-            continue  # values, not moments
+        if item.name in (
+            "written",
+            "previous",
+            "sent_low",
+            "sent_high",
+            "baseline",
+            "clip",
+            "shown",
+            "echo_s",
+        ):
+            continue  # values and lengths, not moments
         if item.name == "foreign":
             continue
         if isinstance(value, float) and value > now:
@@ -1013,4 +1140,6 @@ def _clock(state: GuardState, now: float, config: GuardConfig) -> GuardState:
         moved["recent"] = tuple((min(t, now), v) for t, v in state.recent)
     if any(t > now for t, _v in state.left):
         moved["left"] = tuple((min(t, now), v) for t, v in state.left)
+    if any(t > now for t in state.missed):
+        moved["missed"] = tuple(min(t, now) for t in state.missed)
     return replace(state, **moved) if moved else state
