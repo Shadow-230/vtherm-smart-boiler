@@ -231,10 +231,11 @@ What the plugin can do depends on what the integration can write:
     setting stored in the boiler's memory", without which control does not start, with a blocker
     naming the reason (answer G); its state after a power cut (off / on / last / I don't know;
     default "I don't know", treated as "maybe on"); its own switch-off timer (none / its length,
-    1–120 min / I don't know; default "I don't know", treated as "it may have one"); whether it
-    reports its state (yes / no / I don't know; default "I don't know", treated as "no" — an
-    entity with `assumed_state` always counts as "no"); the repeat interval, 10–300 s, default
-    300 s.
+    10–120 min — a shorter one is refused, and one stored shorter is read as "I don't know", with a
+    warning in the log (decided by the user 2026-10-03) / I don't know; default "I don't know",
+    treated as "it may have one"); whether it reports its state (yes / no / I don't know; default "I
+    don't know", treated as "no" — an entity with `assumed_state` always counts as "no"); the repeat
+    interval, 10–300 s, default 300 s.
   - Flame and flow are optional for the whole entry; water-temperature control gets a blocker
     where either is missing.
   - The link is the relay: available and, where it reports, in the commanded state. A relay out
@@ -251,19 +252,23 @@ What the plugin can do depends on what the integration can write:
     "on" and not counted; with "I don't know", a switch-off at least one repeat interval after that
     "on" is answered with "on" too, but counted as a restart the relay did not report (answer N):
     the fourth within 24 h makes the plugin step aside (provisional, K4; Z4-02). Switch-offs
-    recurring the same time into the on-period — within 60 s, or a whole multiple up to 3× for a
-    timer of 5 min or more — are the relay's own timer: answered, no longer counted, and a warning
-    issue asks the user to declare it; the on-period counts from the "on" that started it — the
-    plugin's, or the relay's own later switch from off to on as Home Assistant showed it; a return
-    from unavailable or unknown is no such switch and does not move it (provisional, K4; Z4R-02,
-    Z4R2-01). Once recognised, the relay's own timer is renewed as a declared one, "on" every
-    min(its length ÷ 2, repeat interval); its length and the day's switch-offs compared with it are
-    stored with the relay, so a restart, an options save or a link drop forgets neither, and a
-    switch-off at that age into an on-period the plugin saw start is never counted toward answer N
-    (one after a power cycle, an unplanned restart or a reload is counted once, Z4R3-04); they are
-    dropped when the relay or its timer answer changes. The warning says that an automation
-    switching the relay off that long after "on" (a "maximum run time") looks the same (Z4R2-02,
-    Z4R2-05).
+    recurring the same time into the on-period, 9 min or more (10 min, a measurement up to a minute
+    short allowed) — within 60 s, or a whole multiple up to 3× — are the relay's own timer:
+    answered, no longer counted, and a warning issue asks the user to declare it; shorter regular
+    switch-offs are never taken for it, as each would start the boiler again: they count toward
+    answer N, the fourth within 24 h makes the plugin step aside (its rest state once, latched), and
+    the latch's error-level repair issue says the relay switched itself off about every N min and to
+    set its timer to at least 30 min or switch the timer off (decided by the user 2026-10-03); the
+    on-period counts from the "on" that started it — the plugin's, or the relay's own later switch
+    from off to on as Home Assistant showed it; a return from unavailable or unknown is no such
+    switch and does not move it (provisional, K4; Z4R-02, Z4R2-01). Once recognised, the relay's own
+    timer is renewed as a declared one, "on" every min(its length ÷ 2, repeat interval); its length
+    and the day's switch-offs compared with it are stored with the relay, so a restart, an options
+    save or a link drop forgets neither, and a switch-off at that age into an on-period the plugin
+    saw start is never counted toward answer N (one after a power cycle, an unplanned restart or a
+    reload is counted once, Z4R3-04); they are dropped when the relay or its timer answer changes.
+    The warning says that an automation switching the relay off that long after "on" (a "maximum run
+    time") looks the same (Z4R2-02, Z4R2-05).
   - Changes seen on the relay follow §7's matrix (rows R1–R9): a relay found in another state
     after a power or link loss, or back in its declared power-cut state, is sent the command
     again (a restart); 3 such restarts within 24 h raise an information warning, and a fourth
@@ -604,16 +609,17 @@ How control decides (principle 12):
   asks for more heat, which the valves throttle — and, without a weather reading, where the
   check saw it read warmer (decision 12). Without either, the last effective outdoor temperature
   holds for 3 h, then the user's fixed fallback, or the design flow, replaces it (decision 9).
-- **Comfort correction** (principle 13): while a zone's valve is fully open and its room is still
-  short of its setpoint, the water rises above the curve — at most +3 K, by 1 K per 30 min and
-  only while heat flows: the flame when it is known, else the command (S-24); it falls twice as
-  fast, and a zone without opening data does not block the fall; it counts only zones taking heat,
-  and does not rise while another zone taking heat is more than 1 K over its setpoint (S-08); it
-  freezes while a cap holds the setpoint, and does not rise when the clock is set back (S-25); it
-  is reset at hand-back and at the end of a session; when it stays at +3 K for hours, the user is
-  told. Its value is published, and a "Reset comfort correction" button resets it (answer J). The
-  zones' own PI integrators (SmartPI, TPI) act in series with it; the documentation describes the
-  interaction and the VT settings recommended with it.
+- **Comfort correction** (principle 13; off by default — the user's decision of 2026-10-03): while a
+  zone's valve is fully open and its room is still short of its setpoint, the water rises above the
+  curve — at most +3 K, by 1 K per 30 min and only while heat flows: the flame when it is known,
+  else the command (S-24); it falls twice as fast, and a zone without opening data does not block
+  the fall; it counts only zones taking heat, and does not rise while another zone taking heat is
+  more than 1 K over its setpoint (S-08); it freezes while a cap holds the setpoint, and does not
+  rise when the clock is set back (S-25); it is reset at hand-back and at the end of a session; when
+  it stays at +3 K for hours, the user is told. Its value is published, and a "Reset comfort
+  correction" button resets it (answer J). The zones' own PI integrators (SmartPI, TPI) act in
+  series with it; the documentation describes the interaction and the VT settings recommended with
+  it.
 - **"Off"** goes through the heating switch (built-in OTGW: `CH=0`, held, with `CS` of at least
   8 °C; a relay: the relay off). Control without a usable heating switch is blocked, and such
   installations get the monitor, as is decision 1's alternative (a low `CS` with `CH` left alone).
@@ -769,18 +775,35 @@ The four classes of a change seen in the read-back:
   min. The reaction "information" for another controller no longer exists.
 
 The plugin's previous value is exempt from judgement — a late echo, or the device holding it —
-until the plugin's new value has been read back once; for a two-valued target (the heating switch,
-the external-control switch) only until then or until 120 s after the send, whichever comes first.
-After that, a read-back at the previous state is judged by these classes: back at the baseline, by
-the fall-back rules (answer E); otherwise another controller. A two-valued echo slower than 120 s
-is judged too, and so may be one 60–120 s late beside VT's short pulses — the heating read-back
-should report promptly, and its field's text says so (known limits, K4; Z4R3-01, Z4R3-03). A
-setpoint keeps the exemption — a boiler's own limit is judged clipped, a slow read-back is waited
-for. A setpoint whose new value has not been read back for 5 min, while the read-back is known and
-shows another value, raises "confirmation missing" and a repair issue (a warning; an error where a
-hand-back stops heating) saying the boiler does not show the plugin's value and what to check;
-both clear once the value is read back or control is switched off, and never make the plugin step
-aside by themselves (Z4-01, Z4R-01, Z4R2-03).
+until the plugin's new value has been read back by its own echo: a report at least as new as the
+send, and not one that may still be the echo of an earlier send of the same value (the value
+between not read back since, and that earlier send less than 5 min ago); a stale report never
+counts (Z4R3-01). For a two-valued target (the heating switch, the external-control switch) only
+until then or until 5 min (300 s) after the send, whichever comes first, the value from before the
+plugin included (decided by the user 2026-10-03). Those 5 minutes start again at every change sent
+(not at keep-alives, the OTGW's 30-s `CH=` or resends), so the heating switch also has a stuck
+test (KD-01, provisional, K4): once its read-back has not changed while the plugin sent the other
+state at least twice — each send counted only once it has gone unshown three times the longest of
+the last ten echo delays plus 30 s (since Home Assistant last started), that delay trusted from
+three echoes on (KDF-01) — the first of them 5 min ago or more, the read-back is judged by these
+classes whatever the exemption: a stuck switch, or an automation putting it back where no step
+sees it, is judged within about 5–11 min of the first ignored command for VT cycles up to 10 min
+(longer ones: about a cycle plus a minute). A polled read-back learns a long delay, so its short
+pulses never count; a poll locked to VT's cycle (its interval a divisor or a multiple of it) can
+still sample the same phases for good and look stuck, pulses shorter than about a minute never
+count, and a switch stuck before three echoes were seen is left to the 5-min window (known
+limits). After that, a read-back at the previous state is judged by these classes: back at the
+baseline, by the fall-back rules (answer E); otherwise another controller. A two-valued echo, or a
+polled read-back, slower than 5 min is judged too — the heating read-back's field asks for one
+that reports a change within about a minute: a slower one delays noticing a change, and one slower
+than 5 min can make the plugin wrongly step aside (a known limit). A heating command lost without
+any trace of an outage is therefore sent again after up to 5 min; one lost with a trace, at once.
+A setpoint keeps the exemption — a boiler's own limit is judged clipped, a slow read-back is
+waited for. A setpoint whose new value has not been read back for 5 min, while the read-back is
+known and shows another value, raises "confirmation missing" and a repair issue (a warning; an
+error where a hand-back stops heating) saying the boiler does not show the plugin's value and what
+to check; both clear once the value is read back or control is switched off, and never make the
+plugin step aside by themselves (Z4-01, Z4R-01, Z4R2-03).
 
 | Case | What the read-back shows | Class | Reaction |
 |---|---|---|---|
@@ -798,7 +821,7 @@ aside by themselves (Z4-01, Z4R-01, Z4R2-03).
 | A held release not confirmed | the lowest water temperature | — | an alarm at once; the release retried every minute |
 | The external-control switch turned off while available | off, with no trace | another controller | step aside at once, without a rewrite |
 | The external-control switch off after a device restart | off, after unavailable or unknown | lost command | switched on again |
-| The external-control switch never seen on after the plugin turned it on | off | as the two rows above | judged 120 s after the turn-on, as the two rows above (Z4R2-03) |
+| The external-control switch never seen on after the plugin turned it on | off | as the two rows above | judged 5 min after the turn-on, as the two rows above (Z4R2-03, K4.3) |
 | A hot-water draw | a boiler-state echo goes off | — | not judged during a draw or for 2 min after it |
 | The plugin's own lapse (silence over 60 s), an expiring external-control switch's included | another value | — | sent again; not an outside change |
 | Changes no read-back can see (the boiler's panel, a lockout, the maker's app) | nothing | — | not an outside change; seen only through the comfort correction at its limit or "frost not warming"; a fault the boiler reports stops heating (boiler protection) |
@@ -809,7 +832,7 @@ aside by themselves (Z4-01, Z4R-01, Z4R2-03).
 | R2a: a relay found in its declared power-cut state without a trace (or, with "last" or "I don't know" declared, changed while available) | that state | lost command up to 3 within 24 h; the fourth: another controller | the command again; an information warning at 3; the fourth steps aside at once |
 | R3: a relay switched while it stayed available | the other state, no trace | another controller | rewritten once; a second change within 24 h → step aside to the rest state, then left alone |
 | R4: the periodic check finds a mismatch | not the commanded state | by its trace, as R2, R2a or R3 | as R2, R2a or R3 |
-| R5: the relay's own switch-off timer | off after its lapse time | — | "on" again, not counted; with the timer "I don't know", counted as a restart toward answer N (Z4-02), unless it recurs at the same on-period age, which is the relay's own timer (Z4R-02) |
+| R5: the relay's own switch-off timer | off after its lapse time | — | "on" again, not counted; with the timer "I don't know", counted as a restart toward answer N (Z4-02), unless it recurs at the same on-period age of 9 min or more (10 min, a minute's tolerance), which is the relay's own timer (Z4R-02); a shorter regular one keeps counting, and its latch issue names its length (K4.2) |
 | R6: a relay that reports no state | nothing | — | blind repeats; "controlled without confirmation"; a manual change is undone at the next repeat |
 | R7: the relay never takes the command | never the commanded state for more than 120 s after each of the first 3 sends | ignored from the start | not written again this session; an alarm-level issue; its "off" ignored: control blocked |
 | R8: the relay's hand-back | the rest state | — | done once read back; at a step aside written once and then left alone |
@@ -893,7 +916,7 @@ in K):
   interval, control stops in steady weather).
 - Frost protection: its limit and release temperature, and whether it watches every zone
   (default) or one zone.
-- Comfort correction on (default) or off; its bounds are fixed (principle 13).
+- Comfort correction off (default) or on; its bounds are fixed (principle 13).
 - Learning pauses on (default) or off.
 - The reactions decision 7 allows.
 - The two boiler-fault signals, the gateway's "Fault indication", and the "add water" threshold
@@ -929,7 +952,7 @@ Defaults of the safety options and why (the user reviews them at K4):
 | Frost limit / release | 5 / 7 °C | above freezing with a margin, below any comfort setpoint |
 | Frost protection | every zone, heated only where its emitter can take heat | heat for a zone VT keeps closed cannot arrive; a repair issue says what to do instead (decision 4) |
 | Demand threshold | one zone calling | any zone calling heats, as with VT's central boiler |
-| Comfort correction | on, up to +3 K | helps a room its emitter cannot heat on the curve, bounded so the others do not overheat |
+| Comfort correction | off (decided by the user 2026-10-03); up to +3 K when on | with VT's TPI zones it can hold the water at its +3 K edge while a zone at full duty stays short of its target by TPI's own offset, and every zone's cycle then stops the burner: 1.75 to 5 times the starts in the simulation, up to 6.3 with a daily outdoor swing; switched on, it helps a room its emitter cannot heat on the curve, bounded so the others do not overheat |
 | Learning pauses | on | keep swings the plugin causes out of SmartPI's model |
 | Alarm reaction | information; the hand-backs of decision 7 always | another controller is writing — never fight; the plugin stops heating only where the boiler itself stops |
 | Circuit-maximum alarm | the circuit's maximum + 5 K, for 10 min (information) | the boiler may overshoot the maximum; the user sees it (decision 10) |
@@ -1020,9 +1043,11 @@ yet; the user reviews every provisional value at K4.
 | The lowest-water-temperature suggestion never above 50 °C | monitor (X6) | provisional, K4 (reason to confirm) |
 | Control waiting for the gateway's read-back: a repair issue after 5 min, at error level where a hand-back stops heating | control (Z4-10) | provisional, K4 |
 | A command ignored from the start where a hand-back stops heating: an error-level repair issue | control (Z4-11) | decision 6 kept (no hand-back, no block) |
-| An undeclared relay timer: switch-offs within 60 s of the same on-period age, or a whole multiple up to 3× of a timer of 5 min or more; once recognised, renewed every min(length ÷ 2, repeat interval), its length and switch-offs stored | control (Z4R-02, Z4R2-01, Z4R2-05) | provisional, K4 |
+| An undeclared relay timer: switch-offs within 60 s of the same on-period age, or a whole multiple up to 3×, of a timer of 9 min or more (10 min less the 60-s tolerance); once recognised, renewed every min(length ÷ 2, repeat interval), its length and switch-offs stored | control (Z4R-02, Z4R2-01, Z4R2-05) | the 10-min floor decided by the user 2026-10-03, its 60-s tolerance KD-02; the rest provisional, K4 |
+| The shortest relay timer: 10 min declared, recognised from 9 min (a measurement a minute short allowed, KD-02) — a shorter declared one refused by the form and read as "I don't know" when stored; shorter regular switch-offs counted, the fourth within 24 h a step aside with an issue naming their length | relay, options, control (K4.2) | decided by the user 2026-10-03 |
 | A setpoint not shown: "confirmation missing" and a repair issue after 5 min of a known read-back showing another value; an error where a hand-back stops heating | guards, control (Z4R2-03) | provisional, K4 |
-| A two-valued target's previous state exempt at most 120 s after the send | guards (Z4R2-03) | provisional, K4 |
+| A two-valued target's previous state — heating on/off, the external-control switch not seen on — exempt at most 300 s after the send, the value from before the plugin included; a new value read back only by its own echo (a report at least as new as the send, not possibly an earlier send's) | guards, control (Z4R2-03, Z4R3-01) | decided by the user 2026-10-03 |
+| Heating on/off stuck: judged once its read-back has not changed while the other state was sent at least twice, each unshown for 3 × the longest of the last 10 echo delays (trusted from 3 echoes) + 30 s, the first 5 min ago or more | guards (KD-01, KDF-01) | provisional, K4 |
 
 The steps of `docs/plan-0.2.2.md` that build these values record their reasons; a value a step
 finds it needs beyond this table is added with "reason to confirm at K4", as a diff for consent.
@@ -1256,7 +1281,7 @@ Starts per hour count the hours with heating.
   boiler of the class "flow setpoint" or "on/off" (a relay); the curve's design flow is entered,
   never defaulted; control refused while VT's own central boiler is configured and during the
   monitoring period; the first setpoint of a session is the curve's value, not ramped from the
-  current flow; comfort correction on by default; alarm reactions as decision 7; frost protection
+  current flow; alarm reactions as decision 7; frost protection
   during the recognition period for zones already known; control resuming by itself after an
   every-zone-unknown hand-back.
 - Provisional write decisions (K4): boiler data is there while flame and flow are known — a
