@@ -233,6 +233,7 @@ from .core.loop import (
 )
 from .core.readings import BoilerSnapshot, ZoneState
 from .core.relay import (
+    TIMER_SHORTEST_S,
     ProofSeen,
     ProofState,
     RelaySeen,
@@ -1065,11 +1066,19 @@ class ControlUnit:
         if data.get("relay_timer_entity") != relay.entity or relay.timer is not RelayTimer.UNKNOWN:
             # Another relay's, or its timer declared since: nothing to recognise any more.
             relay_timer_seen, relay_lapses = None, ()
+        if relay_timer_seen is not None and relay_timer_seen < TIMER_SHORTEST_S:
+            # An earlier build could take a short one for the relay's own: never now (K4.2).
+            _LOGGER.warning(
+                "Ignoring a stored relay timer shorter than 10 min: its switch-offs count again"
+            )
+            relay_timer_seen = None
         latched = _flag(data.get("latched"))
         seen = data.get("step_aside_seen")
         if latched and isinstance(seen, Mapping):
             self._step_aside_seen = {
-                key: str(seen[key]) for key in ("target", "value") if isinstance(seen.get(key), str)
+                key: str(seen[key])
+                for key in ("target", "value", "minutes")
+                if isinstance(seen.get(key), str)
             } or None
         self._session = _Session(
             loop=LoopState(
@@ -2397,8 +2406,9 @@ class ControlUnit:
         self, before: LoopState, after: LoopState, read_back: float | None
     ) -> None:
         """Another controller made the plugin step aside at this step: what it showed — the
-        target and the value seen — for the latch issue to name, stored with the latch (Q1's
-        matrix, M8)."""
+        target and the value seen, and for a relay that switched itself off regularly too soon
+        to be its own timer, how often (K4.2) — for the latch issue to name, stored with the
+        latch (Q1's matrix, M8)."""
         entity: str | None
         value: str
         if after.setpoint.blocked is not None and before.setpoint.blocked is None:
@@ -2417,6 +2427,15 @@ class ControlUnit:
             entity = self.options.relay.entity
             state = self._hass.states.get(entity) if entity else None
             value = "-" if state is None else state.state
+            short = after.relay.short_off_s
+            if short is not None:
+                minutes = f"{max(1, round(short / 60.0))}"
+                self._step_aside_seen = {
+                    "target": entity or "-",
+                    "value": value,
+                    "minutes": minutes,
+                }
+                return
         else:
             return
         self._step_aside_seen = {"target": entity or "-", "value": value}
@@ -2466,20 +2485,29 @@ class ControlUnit:
         elif cause == _OTHER_LATCH:
             latched_by = self._session.loop.control.latched_by
             placeholders = {"alarm": ", ".join(latched_by) or "-"}
+        short_timer = False
         if self._relay_path and cause in (ControlAlarm.OUTSIDE_CHANGE.value, HEATING_OFF_IGNORED):
             # A relay (X8): its own texts, naming it — the step aside by its rest state.
+            placeholders = {"relay": self._relay_name()}
             if cause == ControlAlarm.OUTSIDE_CHANGE.value:
-                key = f"{LATCHED_ISSUE}_relay_{'on' if self.options.relay.rests_on else 'off'}"
+                rest = "on" if self.options.relay.rests_on else "off"
+                key = f"{LATCHED_ISSUE}_relay_{rest}"
+                minutes = (self._step_aside_seen or {}).get("minutes")
+                if minutes is not None:
+                    # It switched itself off every few minutes (K4.2): its timer, or an
+                    # automation, stops heating whatever the rest state — an error.
+                    key, short_timer = f"{LATCHED_ISSUE}_relay_short_timer_{rest}", True
+                    placeholders["minutes"] = minutes
             else:
                 key = f"{LATCHED_ISSUE}_relay_{HEATING_OFF_IGNORED}"
-            placeholders = {"relay": self._relay_name()}
+        stops = self._stops_heating() or short_timer
         ir.async_create_issue(
             self._hass,
             DOMAIN,
             issue_id,
             is_fixable=False,
             is_persistent=False,
-            severity=ir.IssueSeverity.ERROR if self._stops_heating() else ir.IssueSeverity.WARNING,
+            severity=ir.IssueSeverity.ERROR if stops else ir.IssueSeverity.WARNING,
             translation_key=key,
             translation_placeholders=placeholders,
         )

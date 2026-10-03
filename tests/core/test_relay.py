@@ -44,6 +44,7 @@ from custom_components.vtherm_smart_boiler.core.relay import (
     relay_for_new_session,
     relay_write_failed,
     relay_write_ignored,
+    short_switch_off_s,
 )
 
 MIN = 60.0
@@ -670,7 +671,7 @@ def test_an_unknown_timer_gets_on_repeats_and_a_late_switch_off_is_answered_and_
 @pytest.mark.parametrize("power_on", [RelayPowerOn.OFF, RelayPowerOn.ON])
 @pytest.mark.parametrize(
     ("timer", "timer_s"),
-    [(RelayTimer.UNKNOWN, None), (RelayTimer.MINUTES, 6 * MIN)],
+    [(RelayTimer.UNKNOWN, None), (RelayTimer.MINUTES, 10 * MIN)],
     ids=["unknown", "declared"],
 )
 def test_an_unknown_timer_lapse_is_bounded_by_answer_n(
@@ -679,7 +680,7 @@ def test_an_unknown_timer_lapse_is_bounded_by_answer_n(
     """Z4-02 (answers C, D, L, N), with Z4R-02's regularity rule: with the timer "I don't know",
     a switch-off at least one repeat interval into an on-period may be the timer's lapse — or an
     automation, a person, the relay's own button. Switch-offs at irregular times into their
-    on-periods — 7, 19, 33 and 48 min — are answered with "on" at once, but counted as answer N's
+    on-periods — 11, 17, 29 and 47 min — are answered with "on" at once, but counted as answer N's
     restarts: three within a day sent again and counted, the fourth is another controller — the
     plugin steps aside at once, with no rewrite, and writes nothing more; no timer is taken as
     seen. Negative: a declared timer's lapse stays the relay's own — "on" again, never counted,
@@ -688,7 +689,7 @@ def test_an_unknown_timer_lapse_is_bounded_by_answer_n(
     relay = Relay()
     offs = []
     start = 0.0
-    for minutes in (7, 19, 33, 48, 11):  # into each on-period; "on" again at once each time
+    for minutes in (11, 17, 29, 47, 13):  # into each on-period; "on" again at once each time
         start += minutes * MIN
         offs.append(start)
     state, results = drive(
@@ -833,10 +834,11 @@ def test_a_switch_off_like_one_a_day_before_shows_no_timer() -> None:
     assert state.lapses == ((back + 30 * MIN, 30 * MIN),)
 
 
-def test_whole_multiples_count_only_for_a_timer_of_five_minutes_or_more() -> None:
-    """Z4R-02's bound on multiples: below 5 min the tolerance windows of a timer's multiples
-    would cover almost any time, so switch-offs 4 and 8 min into their on-periods (a 2-min
-    repeat interval) are not taken for one timer: each counts, and the fourth steps aside."""
+def test_whole_multiples_count_only_for_a_timer_of_ten_minutes_or_more() -> None:
+    """Z4R-02's bound on multiples, at K4.2's shortest timer recognised (10 min): switch-offs 8,
+    16.5 and 23.5 min into their on-periods — one, two and three times 8 min, within 60 s — are
+    not taken for one 8-min timer (before K4.2 the second showed it): each counts, and the fourth
+    — 5 min in — steps aside."""
     config = RelayConfig(
         reports=RelayReports.YES,
         power_on=RelayPowerOn.OFF,
@@ -846,7 +848,7 @@ def test_whole_multiples_count_only_for_a_timer_of_five_minutes_or_more() -> Non
     relay = Relay()
     offs = []
     start = 0.0
-    for minutes in (4, 8, 4 * 3 + 0.5, 8 * 2 + 1.5):  # never within 60 s of one another
+    for minutes in (8, 16.5, 23.5, 5):
         start += minutes * MIN
         offs.append(start)
     state, results = drive(
@@ -861,34 +863,86 @@ def test_whole_multiples_count_only_for_a_timer_of_five_minutes_or_more() -> Non
     assert [seen[t].judged for t in offs[:3]] == [ChangeClass.LOST_COMMAND] * 3
     assert seen[offs[3]].judged is ChangeClass.ANOTHER_CONTROLLER
     assert state.timer_seen_s is None
+    assert short_switch_off_s(state, offs[-1]) is None  # irregular: no length to name
+    assert state.blocked
+    assert state.short_off_s is None
 
 
 @pytest.mark.parametrize("restarts", [True, False], ids=["restarted_by_on", "not_restarted"])
-def test_a_recognised_timer_is_renewed_as_a_declared_one(restarts: bool) -> None:
-    """Z4R2-05: once the relay's own timer is recognised, "on" is renewed every min(its length ÷
-    2, repeat interval), as for a declared timer. A 5-min timer that a repeated "on" restarts,
-    renewed every 5 min, races the renewal and lapses every 5 min — the boiler restarted each
-    time; recognised after its second lapse, it is renewed every 150 s and lapses no more.
-    Negative: one that "on" does not restart lapses all the same, answered and uncounted."""
+def test_a_twelve_minute_timer_is_still_recognised_and_renewed(restarts: bool) -> None:
+    """K4.2: a 12-min timer is long enough to be taken for the relay's own. One that "on" does
+    not restart lapses 12 min into every on-period — the first counted, then recognised (720 s):
+    answered, uncounted, and "on" renewed every min(length ÷ 2, repeat interval), here the repeat
+    interval. One that "on" restarts never lapses under the renewals: nothing counted, nothing
+    to recognise."""
     config = RelayConfig(
         reports=RelayReports.YES, power_on=RelayPowerOn.OFF, timer=RelayTimer.UNKNOWN
     )
-    relay = Relay(timer_s=300.0, restarts_timer=restarts)
+    relay = Relay(timer_s=12 * MIN, restarts_timer=restarts)
     state, results = drive(relay, config, True, 0.0, 3 * HOUR_S)
-    switch_offs = [
-        t for t, r in results if r.judged in (ChangeClass.LOST_COMMAND, ChangeClass.OWN_LAPSE)
-    ]
-    assert state.timer_seen_s == 300.0
-    assert lost(results) == [300.0]
+    renewals = [t for t, _on, kind in relay.writes if kind is WriteKind.KEEPALIVE]
     assert events(results) == []
     assert not state.blocked
-    if not restarts:
-        assert len(switch_offs) == 36  # every 5 min, as before: renewals cannot stop it
-        return
-    assert switch_offs == [300.0, 600.0]  # then renewed in time
-    renewals = [t for t, _on, kind in relay.writes if kind is WriteKind.KEEPALIVE]
-    assert renewals[:3] == [750.0, 900.0, 1050.0]
     assert relay.on
+    if restarts:
+        assert lost(results) == []
+        assert state.timer_seen_s is None
+        assert renewals[:3] == [300.0, 600.0, 900.0]
+        return
+    assert lost(results) == [12 * MIN]
+    assert state.timer_seen_s == 12 * MIN
+    lapses = [t for t, r in results if r.judged is ChangeClass.OWN_LAPSE]
+    assert lapses == [12 * MIN * n for n in range(2, 16)]
+    after = [t for t in renewals if t > lapses[0]]
+    assert after[0] - lapses[0] == 300.0  # the repeat interval: min(360, 300)
+    assert short_switch_off_s(state, 3 * HOUR_S) is None  # long enough: the relay's own
+
+
+@pytest.mark.parametrize("repeat_s", [60.0, 300.0], ids=["repeat_60s", "repeat_300s"])
+def test_a_short_regular_switch_off_counts_and_steps_aside_at_the_fourth(repeat_s: float) -> None:
+    """K4.2 (Z4R3-02): a relay switching itself off 2 min after every "on" — an "inching" timer
+    that "on" does not restart, or an automation — is regular, but shorter than 10 min: never
+    taken for the relay's own timer. Each switch-off is answered with "on" and counted toward
+    answer N, before the repeat interval as after it; the fourth within a day steps aside —
+    about 8 minutes in, not ~30 boiler starts an hour for good — and the length seen is there
+    for the latch issue to name. Also where Home Assistant shows no moment of the change."""
+    config = RelayConfig(
+        reports=RelayReports.YES,
+        power_on=RelayPowerOn.OFF,
+        timer=RelayTimer.UNKNOWN,
+        repeat_s=repeat_s,
+    )
+    for reports_change in (True, False):
+        relay = Relay(timer_s=2 * MIN, restarts_timer=False, reports_change=reports_change)
+        state, results = drive(relay, config, True, 0.0, 2 * HOUR_S)
+        assert lost(results) == [120.0, 240.0, 360.0], reports_change
+        assert events(results) == [(480.0, GuardEvent.OUTSIDE_CHANGE)]
+        assert state.blocked
+        assert state.timer_seen_s is None  # never taken for the relay's own
+        assert [age for _at, age in state.lapses] == [120.0] * 3  # each kept with its age
+        short = short_switch_off_s(state, 2 * HOUR_S)
+        assert short is not None
+        assert abs(short - 120.0) <= 10.0
+        assert state.short_off_s == short  # noted with the step aside, for the latch issue
+        ons = [t for t, on, _kind in relay.writes if on]
+        assert len(ons) <= 8  # then left alone: no boiler start every 2 minutes
+
+
+def test_a_short_regular_switch_off_is_named_only_where_two_agree() -> None:
+    """The length the latch issue names (K4.2): two of the day's counted switch-offs the same
+    time into their on-periods, within 60 s, and shorter than 10 min; none for irregular ones,
+    for a length of 10 min or more (the relay's own timer), or for ones over a day old."""
+
+    def named(*lapses: tuple[float, float], now: float = 5000.0) -> float | None:
+        return short_switch_off_s(RelayState(lapses=lapses), now)
+
+    assert named((100.0, 120.0), (400.0, 150.0)) == 135.0
+    assert named((100.0, 120.0), (400.0, 300.0), (900.0, 290.0)) == 295.0
+    assert named((100.0, 120.0)) is None
+    assert named((100.0, 120.0), (400.0, 190.0)) is None  # 70 s apart
+    assert named((100.0, 590.0), (900.0, 640.0)) is None  # 615 s: the relay's own
+    assert named((100.0, 120.0), (400.0, 130.0), now=100.0 + DAY) is None  # the first expired
+    assert named() is None
 
 
 def test_an_irregular_switch_off_after_the_timer_was_seen_still_counts() -> None:
@@ -979,7 +1033,7 @@ def test_a_relay_without_a_state_gets_blind_repeats(repeat_s: float, expected: l
 
 
 @pytest.mark.parametrize(
-    ("timer_min", "repeat_s", "every"), [(10, 300.0, 300.0), (4, 300.0, 120.0), (20, 300.0, 300.0)]
+    ("timer_min", "repeat_s", "every"), [(10, 300.0, 300.0), (10, 120.0, 120.0), (20, 300.0, 300.0)]
 )
 def test_a_timer_relay_is_renewed_at_half_its_timer(
     timer_min: int, repeat_s: float, every: float
@@ -1180,6 +1234,7 @@ def test_the_memory_across_a_hand_back_and_a_new_session() -> None:
         unreachable_since=90.0,
         lapses=((60.0, 1800.0),),
         timer_seen_s=600.0,
+        short_off_s=120.0,
     )
     kept = after_hand_back_relay(state)
     assert kept.written is None
@@ -1191,6 +1246,7 @@ def test_the_memory_across_a_hand_back_and_a_new_session() -> None:
     assert kept.restarts == (50.0, 60.0)
     assert kept.lapses == ((60.0, 1800.0),)  # Z4R-02: facts about the relay
     assert kept.timer_seen_s == 600.0
+    assert kept.short_off_s == 120.0  # K4.2: with the block it explains
     fresh = relay_for_new_session(state, 1000.0)
     assert not fresh.blocked
     assert not fresh.ignored
@@ -1200,6 +1256,7 @@ def test_the_memory_across_a_hand_back_and_a_new_session() -> None:
     assert fresh.unreachable_since == 90.0
     assert fresh.lapses == ((60.0, 1800.0),)
     assert fresh.timer_seen_s == 600.0
+    assert fresh.short_off_s is None  # the block is gone with the session
     later = relay_for_new_session(state, 100.0 + DAY)
     assert later.rewritten_at is None
     assert later.restarts == ()
@@ -1216,8 +1273,10 @@ def test_a_clock_set_back_counts_as_now() -> None:
         restarts=(6000.0,),
         lapses=((6000.0, 1800.0),),
         timer_seen_s=1800.0,
+        short_off_s=1200.0,
     )
     result = plan_relay(state, True, relay.seen(300.0), 300.0, REPORTING)
+    assert result.state.short_off_s == 1200.0  # a length, not a moment
     assert result.state.lapses == ((300.0, 1800.0),)  # the moment moves, the age stays
     assert result.state.timer_seen_s == 1800.0  # a length, not a moment
     assert result.state.written_at is not None
@@ -1288,6 +1347,7 @@ def test_no_sign_of_heat_for_thirty_minutes_raises_the_alarm() -> None:
         {"repeat_s": 301.0},
         {"timer": RelayTimer.MINUTES},
         {"timer": RelayTimer.MINUTES, "timer_s": 30.0},
+        {"timer": RelayTimer.MINUTES, "timer_s": 540.0},  # 9 min: below the shortest (K4.2)
         {"timer": RelayTimer.MINUTES, "timer_s": 7300.0},
         {"check_s": 5.0},
     ],

@@ -1501,6 +1501,63 @@ def test_a_declared_timer_without_its_length_is_read_as_unknown(length: object) 
     assert declared.loop.relay.timer_s == 600.0
 
 
+def _timer_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelname == "WARNING" and "switch-off timer" in record.getMessage()
+    ]
+
+
+@pytest.mark.parametrize("length", [5, 9, 9.9, "5", 1, 0])
+def test_a_declared_timer_shorter_than_ten_minutes_is_read_as_unknown_and_logged(
+    length: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    """K4.2 (decided by the user 2026-10-03): the shortest timer the plugin takes for the relay's
+    own is 10 min. A declared length below it — stored by an earlier build, or edited by hand —
+    is read as "I don't know" (the cautious reading: "on" repeated, its switch-offs counted
+    toward answer N), with a warning in the log naming it. 10 min itself is taken, silently."""
+    from custom_components.vtherm_smart_boiler.core.relay import RelayTimer
+
+    data = {**RELAY, "relay_off_timer": "minutes", "relay_off_timer_min": length}
+    options = parse_control(data, ON_OFF, None)
+    assert options.relay.timer is RelayTimer.UNKNOWN
+    assert options.relay.timer_min is None
+    assert options.loop.relay is not None
+    assert options.loop.relay.timer is RelayTimer.UNKNOWN
+    assert options.loop.relay.timer_s is None
+    warnings = _timer_warnings(caplog)
+    assert len(warnings) == 1
+    assert repr(length) in warnings[0]
+    assert "10" in warnings[0]
+    caplog.clear()
+    declared = parse_control({**data, "relay_off_timer_min": 10}, ON_OFF, None)
+    assert declared.relay.timer is RelayTimer.MINUTES
+    assert declared.loop.relay is not None
+    assert declared.loop.relay.timer_s == 600.0
+    assert _timer_warnings(caplog) == []
+
+
+@pytest.mark.parametrize("timer", ["minutes", "unknown", "none"])
+@pytest.mark.parametrize("length", ["missing", None, ""])
+def test_no_timer_length_gives_no_short_timer_warning(
+    timer: str, length: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Negatives (K4.2): with no length stored — missing, ``None`` or empty — nothing is below
+    10 min, so nothing is logged; a declared timer without its length is read as "I don't know"
+    as before, and "I don't know" and "none" stay as they are."""
+    from custom_components.vtherm_smart_boiler.core.relay import RelayTimer
+
+    data = {**RELAY, "relay_off_timer": timer}
+    if length != "missing":
+        data["relay_off_timer_min"] = length
+    options = parse_control(data, ON_OFF, None)
+    expected = RelayTimer.NONE if timer == "none" else RelayTimer.UNKNOWN
+    assert options.relay.timer is expected
+    assert options.relay.timer_min is None
+    assert _timer_warnings(caplog) == []
+
+
 @pytest.mark.parametrize(
     ("raw", "read"),
     [

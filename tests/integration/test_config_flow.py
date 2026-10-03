@@ -2535,6 +2535,23 @@ async def test_a_declared_timer_needs_its_length(
     assert result["step_id"] == "control_relay_behaviour"
 
 
+@pytest.mark.parametrize("length", [5, 9, 9.5, 1])
+async def test_a_declared_timer_shorter_than_ten_minutes_is_refused(
+    hass: HomeAssistant, entities: dict[str, str], length: float
+) -> None:
+    """K4.2 (decided by the user 2026-10-03): the shortest switch-off timer the plugin takes for
+    the relay's own is 10 min — a shorter one would start the boiler again at every lapse. The
+    form refuses a declared length below it with its own translated error, and takes 10."""
+    entry_id = await create_entry(hass, entities, "simple", ("living",), "on_off")
+    result = await to_relay_step(hass, entry_id)
+    answers = RELAY_ANSWERS | {"relay_off_timer": "minutes", "relay_off_timer_min": length}
+    result = await options_step(hass, result, answers)
+    assert result["step_id"] == "control_relay"
+    assert result["errors"] == {"relay_off_timer_min": "relay_off_timer_min_short"}
+    result = await options_step(hass, result, answers | {"relay_off_timer_min": 10})
+    assert result["step_id"] == "control_relay_behaviour"
+
+
 async def test_a_relay_used_by_a_vt_zone_or_the_gateway_is_refused(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:

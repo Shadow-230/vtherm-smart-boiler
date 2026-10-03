@@ -1711,7 +1711,7 @@ async def test_an_undeclared_relay_timer_outlives_link_drops_restarts_and_option
             assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
             await rig.hass.async_block_till_done()
         else:
-            repeat -= 10
+            repeat -= 7  # never a divisor of 27 min: a renewal would race every lapse
             control = dict(rig.entry.options["control"]) | {"relay_repeat_s": repeat}
             options = dict(rig.entry.options) | {"control": control}
             rig.hass.config_entries.async_update_entry(rig.entry, options=options)
@@ -1730,6 +1730,62 @@ async def test_an_undeclared_relay_timer_outlives_link_drops_restarts_and_option
     found = repair(rig, "relay_timer_seen")
     assert found is not None
     assert found.translation_placeholders["minutes"] == "27"
+
+
+@pytest.mark.parametrize(
+    ("repeat_s", "rest"),
+    # 50 s, not 60: a renewal every 60 s would land at the very moment of each 2-min lapse, and
+    # the simulator's order within that moment would decide whether a lapse is ever shown.
+    [(50, "off"), (300, "on")],
+    ids=["repeat_50s_rest_off", "repeat_300s_rest_on"],
+)
+async def test_a_short_relay_timer_makes_the_plugin_step_aside_and_says_so(
+    rig: Rig, repeat_s: int, rest: str
+) -> None:
+    """K4.2 (decided by the user 2026-10-03; Z4R3-02): the timer left at "I don't know"; the
+    relay switches itself off 2 min after every "on" — an "inching" timer that a repeated "on"
+    does not restart. Too short to be taken for the relay's own timer: each switch-off is
+    answered and counted (in the unit's first five minutes as an outage's lost command), and the
+    fourth counted within a day makes the plugin step aside — about 13 min after control
+    started, after 6 boiler starts, where before it went on with some 30 starts an hour for good.
+    The rest state is set once and the relay left alone; the latch issue, an error, says the
+    relay switched itself off about every 2 min and to set its timer to at least 30 min or
+    switch it off — again after a restart."""
+    from homeassistant.helpers import issue_registry as ir
+
+    await start_relay(
+        rig,
+        relay={"off_timer_min": 2, "timer_restarts_on_repeat": False},
+        relay_off_timer="unknown",
+        relay_repeat_s=repeat_s,
+        relay_rest_state=rest,
+    )
+    await relay_on_under_control(rig)
+    for _ in range(90):  # up to a quarter of an hour more
+        if rig.state("sensor", "control_state").state == "handed_back":
+            break
+        await rig.advance(10)
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    assert relay_model(rig).own_changes <= 7  # its switch-offs up to the step aside
+    await rig.advance(30)
+    found = repair(rig, "control_latched")
+    assert found is not None
+    assert found.translation_key == f"control_latched_relay_short_timer_{rest}"
+    assert found.translation_placeholders == {"relay": "Boiler sim relay", "minutes": "2"}
+    assert found.severity is ir.IssueSeverity.ERROR  # its timer stops heating either way
+    count, lapses = len(relay_commands(rig)), relay_model(rig).own_changes
+    await rig.advance(1800, step=30.0)
+    assert relay_commands(rig)[count:] == []  # left alone
+    assert relay_model(rig).own_changes - lapses <= 1  # at most the rest state "on" lapsing
+    assert not relay_model(rig).on
+    assert rig.entry is not None
+    assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
+    await rig.hass.async_block_till_done()
+    await rig.advance(30)
+    again = repair(rig, "control_latched")
+    assert again is not None
+    assert again.translation_key == found.translation_key
+    assert again.translation_placeholders == found.translation_placeholders
 
 
 async def test_relay_with_an_unknown_timer_is_kept_on_by_repeats(rig: Rig) -> None:

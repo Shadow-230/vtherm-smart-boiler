@@ -36,6 +36,7 @@ flow mapped, which the entry itself no longer requires.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field, replace
@@ -55,6 +56,8 @@ from .core.relay import (
     REPEAT_DEFAULT_S,
     REPEAT_MAX_S,
     REPEAT_MIN_S,
+    TIMER_MAX_S,
+    TIMER_MIN_S,
     RelayConfig,
     RelayPowerOn,
     RelayReports,
@@ -62,6 +65,8 @@ from .core.relay import (
     RelayTimer,
 )
 from .core.signals import Signal
+
+_LOGGER = logging.getLogger(__name__)
 
 MINUTE = 60.0
 KEEPALIVE_S = 30.0
@@ -279,7 +284,9 @@ RELAY_DEFAULTS: Mapping[str, Any] = MappingProxyType(
     }
 )
 RELAY_DOMAINS = ("switch", "climate")  # a switch, or a boiler thermostat entity (never a helper)
-RELAY_TIMER_MIN = (1.0, 120.0)  # a declared switch-off timer, in minutes
+# A declared switch-off timer, in minutes: 10 to 120 — the shortest the plugin takes for the
+# relay's own (decided by the user 2026-10-03, K4.2).
+RELAY_TIMER_MIN = (TIMER_MIN_S / MINUTE, TIMER_MAX_S / MINUTE)
 RELAY_HEATS_ABOVE_W = (10.0, 10000.0)  # the power above which the boiler counts as heating
 # Boiler classes the plugin monitors only: nothing it can write controls them.
 _MONITOR_ONLY_CLASSES = frozenset({BoilerClass.CURVE_ONLY, BoilerClass.READ_ONLY})
@@ -341,7 +348,7 @@ class RelayOptions:
     reports: RelayReports = RelayReports.UNKNOWN
     power_on: RelayPowerOn = RelayPowerOn.UNKNOWN
     timer: RelayTimer = RelayTimer.UNKNOWN
-    timer_min: float | None = None  # a declared length, 1–120 min
+    timer_min: float | None = None  # a declared length, 10–120 min
     repeat_s: float = REPEAT_DEFAULT_S
     rest: RelayRest = RelayRest.OFF
     heats_above_w: float | None = None  # None: the boiler's power proves nothing
@@ -481,11 +488,19 @@ def _within(raw: object, bounds: tuple[float, float]) -> float | None:
 def parse_relay(data: Mapping[str, Any]) -> RelayOptions:
     """The relay's answers, each unanswered one with its cautious default (R3). A choice this
     version does not know raises ``ValueError`` (P-70); hand-edited numbers outside their range
-    are read cautiously: a declared timer without a valid length as "I don't know", a repeat
-    interval outside 10–300 s as 300 s, a power threshold outside 10–10000 W as none."""
+    are read cautiously: a declared timer without a valid length as "I don't know" — one given
+    outside 10–120 min (below 10, K4.2) logged — a repeat interval outside 10–300 s as 300 s, a
+    power threshold outside 10–10000 W as none."""
     value = {**RELAY_DEFAULTS, **{k: v for k, v in data.items() if v not in (None, "")}}
     timer = RelayTimer(value["relay_off_timer"])
-    timer_min = _within(data.get("relay_off_timer_min"), RELAY_TIMER_MIN)
+    raw_min = data.get("relay_off_timer_min")
+    timer_min = _within(raw_min, RELAY_TIMER_MIN)
+    if timer is RelayTimer.MINUTES and timer_min is None and raw_min not in (None, ""):
+        _LOGGER.warning(
+            "The declared relay switch-off timer of %r min is outside 10 to 120 min: read as "
+            "unknown — 'on' repeated, and its switch-offs counted toward stepping aside",
+            raw_min,
+        )
     if timer is not RelayTimer.MINUTES or timer_min is None:
         timer = RelayTimer.UNKNOWN if timer is RelayTimer.MINUTES else timer
         timer_min = None

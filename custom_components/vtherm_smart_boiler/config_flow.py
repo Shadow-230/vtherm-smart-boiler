@@ -106,7 +106,7 @@ from .core.guards import WriteType
 from .core.installation import BoilerClass, CircuitControl, DhwType, EmitterType
 from .core.metrics import ModulationScale
 from .core.reference_room import Strategy
-from .core.relay import RelayPowerOn, RelayReports, RelayRest, RelayTimer
+from .core.relay import TIMER_MIN_S, RelayPowerOn, RelayReports, RelayRest, RelayTimer
 from .transport.entities import read_bounds, read_grid, relay_hvac_modes, temperature_unit_of
 from .vtherm_link import (
     VtCentralBoiler,
@@ -854,6 +854,8 @@ def control_relay_schema(
         vol.Required("relay_off_timer", default=choice("relay_off_timer", RelayTimer)): _select(
             "relay_off_timer", [t.value for t in RelayTimer]
         ),
+        # 10 to 120 min (K4.2); the box takes less, so the step answers it with its own
+        # translated error rather than Home Assistant's untranslated range check.
         _optional(RELAY_TIMER_MIN, control): _number(1, 120, 1, "min"),
         _optional("relay_repeat_s", {"relay_repeat_s": repeat}): _number(10, 300, 10, "s"),
         vol.Required("relay_rest_state", default=choice("relay_rest_state", RelayRest)): _select(
@@ -2326,8 +2328,9 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         """The relay and its own settings (R2, R3): refused in the form where the relay is no
         switch or boiler thermostat entity, cannot be set to heat and off, is driven by a VT
         zone, belongs to the boiler's gateway integration or to VT, or has another role; a
-        declared timer needs its length. What the hand-back goes through — the relay and its
-        rest state — cannot change while a hand-back is owed or control holds the relay."""
+        declared timer needs its length, 10 min at least (K4.2). What the hand-back goes
+        through — the relay and its rest state — cannot change while a hand-back is owed or
+        control holds the relay."""
         prefill = self._vt_prefill()
         schema = control_relay_schema(self.options, prefill)
         errors: dict[str, str] = {}
@@ -2335,10 +2338,14 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             problem = relay_entity_error(self.hass, self.options, user_input.get(RELAY_ENTITY))
             if problem is not None:
                 errors = {RELAY_ENTITY: problem}
-            elif user_input.get("relay_off_timer") == RelayTimer.MINUTES and user_input.get(
-                RELAY_TIMER_MIN
-            ) in (None, ""):
-                errors = {RELAY_TIMER_MIN: "relay_off_timer_min_missing"}
+            elif user_input.get("relay_off_timer") == RelayTimer.MINUTES:
+                length = user_input.get(RELAY_TIMER_MIN)
+                if length in (None, ""):
+                    errors = {RELAY_TIMER_MIN: "relay_off_timer_min_missing"}
+                elif float(length) * 60.0 < TIMER_MIN_S:
+                    # Decided by the user 2026-10-03 (K4.2): a shorter timer would start the
+                    # boiler again at every lapse.
+                    errors = {RELAY_TIMER_MIN: "relay_off_timer_min_short"}
             blocker = await self._async_hand_back_blocker()
             if not errors and blocker and self._changes_hand_back(user_input, schema):
                 errors = {"base": blocker}

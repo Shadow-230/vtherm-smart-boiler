@@ -961,6 +961,34 @@ def test_the_relay_timer_seen_issue_is_translated() -> None:
     assert "the same time after" in timer
 
 
+def test_the_short_relay_timer_texts_are_translated() -> None:
+    """K4.2 (decided by the user 2026-10-03): the latch issue of a relay that switched itself off
+    every few minutes — one per rest state, naming the relay and the minutes — says how often,
+    and to set its timer to at least 30 min or switch the timer off; the form's error for a
+    declared timer under 10 min; the timer fields say the shortest is 10 min, in every
+    language."""
+    for language in ALL_LANGUAGES:
+        texts = _texts(language)
+        for rest in ("off", "on"):
+            issue = texts["issues"][f"control_latched_relay_short_timer_{rest}"]
+            assert issue["title"], language
+            found = set(PLACEHOLDER.findall(issue["description"]))
+            assert found == {"relay", "minutes"}, (language, rest)
+            assert "30 min" in issue["description"], (language, rest)
+        assert "10" in texts["options"]["error"]["relay_off_timer_min_short"], language
+        for step in ("control_relay", "control_relay_from_vt"):
+            length = texts["options"]["step"][step]["data_description"]["relay_off_timer_min"]
+            assert "10–120" in length, (language, step)
+    for rest in ("off", "on"):
+        text = SOURCE["issues"][f"control_latched_relay_short_timer_{rest}"]["description"]
+        assert "switched itself off about every {minutes} min" in text
+        assert "at least 30 min, or switch the timer off" in text
+    on = SOURCE["issues"]["control_latched_relay_short_timer_on"]["description"]
+    assert "switches it off again" in on  # the rest state "on" does not hold
+    timer = SOURCE["options"]["step"]["control_relay"]["data_description"]["relay_off_timer"]
+    assert "10 min or more" in timer
+
+
 def test_the_setpoint_not_shown_issue_is_translated() -> None:
     """Z4R2-03: the repair issue of a setpoint the boiler does not show, with a title and a text
     and no placeholder, in every language; it says control goes on without a hand-back."""
