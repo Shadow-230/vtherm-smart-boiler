@@ -989,6 +989,20 @@ def test_the_short_relay_timer_texts_are_translated() -> None:
     assert "10 min or more" in timer
 
 
+def test_the_heating_read_back_says_how_soon_it_must_report() -> None:
+    """K4.3 (decided by the user 2026-10-03; Z4R3-03): the heating read-back field says to pick an
+    entity that reports a change within about a minute — a slower one delays noticing a change,
+    one slower than 5 min can make the plugin wrongly step aside — in every language."""
+    for language in ALL_LANGUAGES:
+        step = _texts(language)["options"]["step"]["control"]
+        text = step["data_description"]["ch_confirmed_entity"]
+        assert "5 min" in text, language
+    text = SOURCE["options"]["step"]["control"]["data_description"]["ch_confirmed_entity"]
+    assert "reports a change within about a minute" in text
+    assert "a slower one delays noticing a change" in text
+    assert "one slower than 5 min can make the plugin wrongly step aside" in text
+
+
 def test_the_setpoint_not_shown_issue_is_translated() -> None:
     """Z4R2-03: the repair issue of a setpoint the boiler does not show, with a title and a text
     and no placeholder, in every language; it says control goes on without a hand-back."""

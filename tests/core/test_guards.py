@@ -4,6 +4,7 @@ another controller), with the user's answers E, H and O of 2026-09-27."""
 
 from __future__ import annotations
 
+import random
 from collections.abc import Callable
 from dataclasses import replace
 
@@ -12,6 +13,7 @@ import pytest
 from custom_components.vtherm_smart_boiler.core.guards import (
     DAY,
     HOUR,
+    PREVIOUS_EXEMPT_S,
     REACTIONS,
     ChangeClass,
     Confirmation,
@@ -339,12 +341,14 @@ def test_a_clock_set_back_moves_every_moment_to_now() -> None:
         held(HELD),
         fallbacks=(9000.0,),
         recent=((9000.0, 45.0),),
+        left=((9000.0, 40.0),),
         change_at=9000.0,
         draw_at=9000.0,
     )
     result = result_of(state, 45.0, 45.0, 500.0, HELD)
     assert result.state.fallbacks == (500.0,)
     assert result.state.recent == ((500.0, 45.0),)
+    assert result.state.left == ((500.0, 40.0),)  # K4.3: a replaced value's moment, not its value
     assert result.state.change_at == 500.0
     assert result.state.draw_at == 500.0
 
@@ -865,8 +869,14 @@ def test_a_boiler_limit_at_the_previous_value_is_clipped_not_another_controller(
 
 @pytest.mark.parametrize(
     ("config", "lag"),
-    [(HELD, 150.0), (HELD, 200.0), (EXPIRING, 260.0), (ECHOED, 100.0)],
-    ids=["setpoint_150s", "setpoint_200s", "setpoint_260s_expiring", "heating_switch_100s"],
+    [(HELD, 150.0), (HELD, 200.0), (EXPIRING, 260.0), (ECHOED, 100.0), (ECHOED, 240.0)],
+    ids=[
+        "setpoint_150s",
+        "setpoint_200s",
+        "setpoint_260s_expiring",
+        "heating_switch_100s",
+        "heating_switch_240s",
+    ],
 )
 def test_a_slow_read_back_showing_the_previous_value_is_not_another_controller(
     config: GuardConfig, lag: float
@@ -874,9 +884,9 @@ def test_a_slow_read_back_showing_the_previous_value_is_not_another_controller(
     """Z4R-01: a setpoint read-back that shows each value 150-260 s late — an integration that
     polls the device every few minutes — while the plugin's value moves 2 K every 5 minutes: for
     six hours it shows the plugin's previous value after each change, then the new one. Never
-    another controller: no rewrite, no block, no event. A heating echo within the confirmation
-    timeout (100 s) alike; one slower than that is judged (Z4R2-03, a known limit for K4:
-    ``test_a_two_valued_echo_slower_than_the_timeout_is_judged``)."""
+    another controller: no rewrite, no block, no event. A heating echo within 5 minutes (100 s,
+    240 s) alike — its previous state is exempt that long (K4.3); one slower than that is judged
+    (``test_a_two_valued_echo_slower_than_five_minutes_is_judged``)."""
     if config.two_valued:
 
         def desired(t: float) -> float:
@@ -904,18 +914,22 @@ def test_a_slow_read_back_showing_the_previous_value_is_not_another_controller(
     assert not state.ignored
 
 
-def test_a_two_valued_echo_slower_than_the_timeout_is_judged() -> None:
-    """Z4R2-03's known limit (K4): a heating echo that shows each state 150 s late. Heating on/off
-    has no clip; its previous state is exempt only for the confirmation timeout after the send, so
-    after a toggle away from the value from before the plugin the late echo is judged as another
-    controller — the one rewrite, then, the echo still late, the guard blocks."""
+def test_a_two_valued_echo_slower_than_five_minutes_is_judged() -> None:
+    """K4.3's known limit (decided by the user 2026-10-03): a heating echo that shows each state
+    330 s late, heating switched every 10 minutes. Its previous state is exempt only for 5 minutes
+    after the send (``PREVIOUS_EXEMPT_S``), so the late echo is judged: back at the value from
+    before the plugin, a lost command; away from it, another controller — the one rewrite, then,
+    the echo still late, the guard blocks."""
+    assert PREVIOUS_EXEMPT_S == 300.0
     judged = []
     state = GuardState()
     t = 0.0
     while t <= 2 * HOUR:
-        desired = ON if int(t // 300) % 2 == 0 else OFF
-        shown = (ON if int((t - 150.0) // 300) % 2 == 0 else OFF) if t >= 150.0 else ON
-        result = result_of(state, desired, shown, t, ECHOED)
+        desired = ON if int(t // 600) % 2 == 0 else OFF
+        late = t - 330.0
+        shown = (ON if int(late // 600) % 2 == 0 else OFF) if late >= 0.0 else ON
+        reported = (late // 600) * 600 + 330.0 if late >= 0.0 else -HOUR
+        result = result_of(state, desired, shown, t, ECHOED, reported_at=reported)
         state = result.state
         judged.append(result.judged)
         if state.blocked is not None:
@@ -923,15 +937,17 @@ def test_a_two_valued_echo_slower_than_the_timeout_is_judged() -> None:
         t += 10.0
     assert ChangeClass.ANOTHER_CONTROLLER in judged
     assert state.blocked is GuardEvent.OUTSIDE_CHANGE
+    assert t < 1 * HOUR
 
 
 @pytest.mark.parametrize("case", ["stuck_on", "stuck_on_echo_unknown", "stuck_off", "reverted"])
 def test_a_heating_switch_never_showing_its_new_state_is_judged_within_minutes(case: str) -> None:
     """Z4R2-03: heating on/off whose new state no step ever sees — the device stuck at the
     plugin's previous state, or an automation putting it back within a step of every write — is
-    judged once the confirmation timeout after the send has passed, as decision 6 says: here the
-    previous state is not the value from before the plugin, so another controller — the one
-    rewrite, and with it still not taken, the guard blocks: the plugin steps aside within minutes.
+    judged once 5 minutes after the send have passed (K4.3, decided by the user 2026-10-03; the
+    confirmation timeout before), as decision 6 says: here the previous state is not the value
+    from before the plugin, so another controller — the one rewrite at 5 min 20 s, and with it
+    still not taken, the guard blocks at 7 min 20 s: the plugin steps aside within minutes.
     Stuck on (answer O's case: "off" before the plugin, or its echo unknown, the session's first
     "on" taken, then "off" never taken): heating without demand. Stuck off (its cold twin):
     "on" never taken while the plugin holds the boiler. Reverted: the OTGW's 30-s refresh writes
@@ -960,9 +976,9 @@ def test_a_heating_switch_never_showing_its_new_state_is_judged_within_minutes(c
             break
         t += 10.0
     rewrites = [at for at, _j, action, _e in seen if action == WriteAction(new, WriteKind.REWRITE)]
-    # Nothing before the timeout and two steps; with the echo unknown at the first send, that
+    # Nothing before the 5 minutes and two steps; with the echo unknown at the first send, that
     # unknown is a trace for 5 min, in which the other state is the device's own (uncounted).
-    first_judged = changed + (260.0 if case == "stuck_on_echo_unknown" else 140.0)
+    first_judged = changed + PREVIOUS_EXEMPT_S + 20.0
     assert rewrites == [first_judged]
     assert all(not events for at, _j, _a, events in seen if at < first_judged)
     assert seen[-1][3] == (GuardEvent.OUTSIDE_CHANGE,)
@@ -979,10 +995,10 @@ def test_a_heating_switch_never_showing_its_new_state_is_judged_within_minutes(c
 def test_a_heating_switch_previous_state_is_not_judged_while_unknown_or_during_a_draw(
     cause: str,
 ) -> None:
-    """Z4R2-03's negatives: past the confirmation timeout, an unknown read-back is never judged —
-    nothing written over it, no rewrite, no block; a hot-water draw (and the 2 min after it) is
-    not judged either, the previous state shown or not. The draw over, the previous state still
-    shown is judged as usual."""
+    """Z4R2-03's negatives, past the previous state's 5 minutes (K4.3): an unknown read-back is
+    never judged — nothing written over it, no rewrite, no block; a hot-water draw (and the 2 min
+    after it) is not judged either, the previous state shown or not. The draw over, the previous
+    state still shown is judged as usual."""
     state = keep(held(ECHOED, first=ON, value=ON), ECHOED, 160.0, 990.0, ON, ON)
     state, _, _ = step(state, OFF, ON, 1000.0, ECHOED)
     state = keep(state, ECHOED, 1010.0, 1990.0, OFF, OFF)
@@ -1002,6 +1018,171 @@ def test_a_heating_switch_previous_state_is_not_judged_while_unknown_or_during_a
         result = result_of(state, ON, OFF, 2400.0, ECHOED)
         assert result.judged is ChangeClass.ANOTHER_CONTROLLER
         assert result.action == WriteAction(ON, WriteKind.REWRITE)
+
+
+def _tpi_demand(seed: int) -> Callable[[float], float]:
+    """VT's TPI pulses for heating on/off: a 10-min cycle, its duty drawn for each cycle — off,
+    short pulses, long ones, full."""
+    rng = random.Random(seed)
+    duties = [rng.choice((0.0, 0.1, 0.2, 0.35, 0.5, 0.65, 0.8, 0.9, 1.0)) for _ in range(80)]
+
+    def demand(t: float) -> float:
+        cycle = int(t // 600.0)
+        return ON if t - cycle * 600.0 < duties[cycle] * 600.0 else OFF
+
+    return demand
+
+
+@pytest.mark.parametrize("poll_s", [150.0, 240.0], ids=["150s", "240s"])
+def test_a_polled_heating_read_back_is_never_judged(poll_s: float) -> None:
+    """K4.3 (decided by the user 2026-10-03; Z4R3-03): a heating read-back polled every 150 s or
+    240 s — some ebusd or cloud set-ups — while VT's TPI pulses switch heating for 12 hours, from
+    the session's first send, at three poll phases. The device takes each write at once; the
+    read-back shows it at the next poll. The previous state is exempt for 5 minutes after the
+    send that replaced it — the value from before the plugin included — so a poll not yet made
+    is never judged: no rewrite, no step aside, no "ignored from the start", and no lost command
+    counted (before: another controller within hours)."""
+    for seed in range(3):
+        for phase in (0.0, 37.0, 113.0):
+            demand = _tpi_demand(seed)
+            device = shown = OFF
+            shown_at = -HOUR  # from before the plugin
+            next_poll = phase
+            state = GuardState()
+            t = 0.0
+            while t <= 12 * HOUR:
+                if t >= next_poll:
+                    if device != shown:
+                        shown, shown_at = device, next_poll
+                    next_poll += poll_s
+                result = result_of(state, demand(t), shown, t, ECHOED, reported_at=shown_at)
+                state = result.state
+                if result.action is not None:
+                    device = result.action.value
+                assert result.judged not in (
+                    ChangeClass.ANOTHER_CONTROLLER,
+                    ChangeClass.LOST_COMMAND,
+                    ChangeClass.IGNORED_FROM_START,
+                ), (seed, phase, t, result.judged)
+                assert result.events == (), (seed, phase, t)
+                t += 10.0
+            assert state.rewritten_at is None
+            assert state.blocked is None
+            assert not state.ignored
+
+
+def _zones_demand(offsets: tuple[float, ...], on_s: float) -> Callable[[float], float]:
+    """Heating on while any zone's TPI pulse is on: each ``on_s`` long every 300 s, staggered."""
+
+    def demand(t: float) -> float:
+        return ON if any((t - offset) % 300.0 < on_s for offset in offsets) else OFF
+
+    return demand
+
+
+def _late_echo_patterns() -> list[Callable[[float], float]]:
+    rng = random.Random(1)
+    patterns = [_zones_demand((0.0,), 60.0), _zones_demand((0.0, 100.0, 200.0), 60.0)]
+    for _ in range(6):
+        offsets = tuple(round(rng.uniform(0.0, 300.0), -1) for _ in range(3))
+        patterns.append(_zones_demand(offsets, round(rng.uniform(30.0, 120.0), -1)))
+    return patterns
+
+
+@pytest.mark.parametrize("lag", ["60s", "90s", "115s", "30_to_120s"])
+def test_a_late_echo_beside_short_vt_pulses_is_never_judged(lag: str) -> None:
+    """K4.3 (Z4R3-01): VT pulses heating "on" for 60 s every 300 s — or three zones' pulses
+    staggered, heating switched both ways within a minute — while the heating switch's echo
+    reaches Home Assistant 60 to 120 s late, in order (a scripted or cloud-backed switch), for 12
+    hours. A stale report never counts as the read-back of a newer send: not one from before the
+    send, nor one that may still be the echo of an earlier send of the same state (the state
+    between not read back yet, within 5 minutes). So the plugin's own late echo is never judged:
+    no rewrite, no step aside, no lost command (before: another controller within hours)."""
+    rng = random.Random(7)
+    for demand in _late_echo_patterns():
+        device = shown = OFF
+        shown_at = last = -HOUR
+        reports: list[tuple[float, float]] = []  # (when Home Assistant shows it, the state)
+        state = GuardState()
+        t = 0.0
+        while t <= 12 * HOUR:
+            while reports and reports[0][0] <= t:
+                shown_at, shown = reports.pop(0)
+            result = result_of(state, demand(t), shown, t, ECHOED, reported_at=shown_at)
+            state = result.state
+            if result.action is not None and result.action.value != device:
+                device = result.action.value
+                delay = rng.uniform(30.0, 120.0) if lag == "30_to_120s" else float(lag[:-1])
+                last = max(last, t + delay)
+                reports.append((last, device))
+            assert result.judged not in (
+                ChangeClass.ANOTHER_CONTROLLER,
+                ChangeClass.LOST_COMMAND,
+            ), (t, result.judged)
+            assert result.events == (), t
+            t += 10.0
+        assert state.rewritten_at is None
+        assert state.blocked is None
+
+
+def test_a_stale_report_is_never_the_read_back_of_a_newer_send() -> None:
+    """Z4R3-01 at one toggle: "off" read back, then VT asks "on" at 1000 and "off" again at
+    1060; the echo comes 90 s late. At 1060 the echo still shows "off" from before 1000 — a
+    report older than the send: not its read-back, so the plugin's "on" arriving at 1090 is still
+    its exempt previous state, not judged; the echo of "off" at 1150 is newer than the send, but
+    may still be the echo of the "off" before 1000 while "on" was never read back: counted only
+    once that earlier "off" can no longer be in flight (5 minutes). A switch to "on" after that
+    is judged as usual: another controller, "on" not being the value from before the plugin."""
+    state = keep(held(ECHOED, first=OFF, value=OFF), ECHOED, 160.0, 990.0, OFF, OFF)
+    old = 10.0  # the echo has shown "off" since then — the value from before the plugin
+    state, action, _ = step(state, ON, OFF, 1000.0, ECHOED, reported_at=old)
+    assert action == WriteAction(ON, WriteKind.CHANGE)
+    for t in range(1010, 1060, 10):
+        state, _, events = step(state, ON, OFF, float(t), ECHOED, reported_at=old)
+        assert events == ()
+    state, action, _ = step(state, OFF, OFF, 1060.0, ECHOED, reported_at=old)
+    assert action == WriteAction(OFF, WriteKind.CHANGE)
+    assert not state.taken  # shown, but by a report from before the send
+    for t in range(1070, 1150, 10):
+        shown, at = (ON, 1090.0) if t >= 1090 else (OFF, old)
+        result = result_of(state, OFF, shown, float(t), ECHOED, reported_at=at)
+        state = result.state
+        assert result.judged is not ChangeClass.ANOTHER_CONTROLLER, t
+        assert result.events == ()
+        assert result.action is None or result.action.kind is WriteKind.KEEPALIVE
+    for t in range(1150, 1350, 10):
+        state, _, events = step(state, OFF, OFF, float(t), ECHOED, reported_at=1150.0)
+        assert events == ()
+        assert state.taken is (t > 1000 + PREVIOUS_EXEMPT_S), t
+    first = result_of(state, OFF, ON, 1350.0, ECHOED, reported_at=1350.0)  # switched from outside
+    assert first.judged is ChangeClass.NOT_JUDGED  # one step
+    result = result_of(first.state, OFF, ON, 1360.0, ECHOED, reported_at=1350.0)
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+    assert result.action == WriteAction(OFF, WriteKind.REWRITE)
+
+
+def test_a_stale_setpoint_report_is_not_the_read_back_of_a_newer_send() -> None:
+    """Z4R3-01 for the setpoint, a ramp reversed within the read-back's lag (Z4R2-04's family):
+    45 read back; 50 sent at 1000, 45 again at 1060 — the read-back still shows 45 from before
+    1000: not the read-back of the second send, so the late 50 is still the exempt previous
+    value, not judged. Its own echo, later, is."""
+    state = keep(held(HELD), HELD, 160.0, 990.0)
+    old = 10.0
+    state, action, _ = step(state, 50.0, 45.0, 1000.0, HELD, reported_at=old)
+    assert action == WriteAction(50.0, WriteKind.CHANGE)
+    state, action, _ = step(state, 45.0, 45.0, 1060.0, HELD, reported_at=old)
+    assert action == WriteAction(45.0, WriteKind.CHANGE)
+    assert not state.taken
+    for t in range(1070, 1700, 10):
+        shown, at = (
+            (50.0, 1090.0) if 1090 <= t < 1150 else ((45.0, 1150.0) if t >= 1150 else (45.0, old))
+        )
+        result = result_of(state, 45.0, shown, float(t), HELD, reported_at=at)
+        state = result.state
+        assert result.judged is not ChangeClass.ANOTHER_CONTROLLER, t
+        assert result.events == ()
+    assert state.taken  # its own echo, once the earlier 45 can no longer be in flight
+    assert state.rewritten_at is None
 
 
 def test_a_setpoint_not_shown_for_five_minutes_raises_confirmation_missing() -> None:

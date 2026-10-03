@@ -27,6 +27,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers import storage as ha_storage
+from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -3041,10 +3042,11 @@ async def test_heating_switched_from_outside_is_written_once_then_handed_back(ri
 async def test_a_heating_switch_that_never_shows_its_new_state_is_judged(rig: Rig) -> None:
     """Z4R2-03: OTGW with a heating echo, "on" before the plugin. The plugin switched heating off
     (read back), then on again — and the echo never shows "on" (the switch stuck, or an
-    automation putting it back within a step of every CH=1). Within a few minutes it is judged:
-    the plugin's previous state, no longer exempt after the confirmation timeout, held — another
-    controller: CH=1 written once more, then the plugin steps aside with the safe hand-back and
-    the latch issue, instead of refreshing CH=1 every 30 s for ever, unseen."""
+    automation putting it back within a step of every CH=1). Within minutes it is judged: the
+    plugin's previous state, no longer exempt 5 minutes after the send (K4.3, decided by the user
+    2026-10-03), held — another controller: CH=1 written once more, then the plugin steps aside
+    with the safe hand-back and the latch issue, about 7 minutes after the send, instead of
+    refreshing CH=1 every 30 s for ever, unseen."""
     await start(rig, ch_confirmed_entity=CH_ECHO)
     await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
     await rig.switch(True)
@@ -3054,15 +3056,21 @@ async def test_a_heating_switch_that_never_shows_its_new_state_is_judged(rig: Ri
     assert rig.gateway.ch is False  # "off" taken
     rig.gateway.forced_ch = False  # from now on the echo never shows "on"
     rig.zones.set("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
-    await rig.advance(110)
+    for _ in range(12):
+        await rig.advance(10)
+        if ("ch", True) in rig.gateway.calls:
+            break
     assert ("ch", True) in rig.gateway.calls  # "on" sent
-    assert rig.state("sensor", "control_state").state == "heating"  # not judged yet
-    for _ in range(40):
+    sent = dt_util.utcnow().timestamp()
+    await rig.advance(290)
+    assert rig.state("sensor", "control_state").state == "heating"  # within 5 minutes: not judged
+    for _ in range(30):
         await rig.advance(10)
         if rig.state("sensor", "control_state").state == "handed_back":
             break
     state = rig.state("sensor", "control_state")
     assert state.state == "handed_back"
+    assert sent + 300 < dt_util.utcnow().timestamp() <= sent + 480  # rewrite at 5:20, 2 min
     assert state.attributes["latched_by"] == ["outside_change"]
     assert unit_of(rig)._session.loop.switch.rewritten_at is not None  # one rewrite first
     assert issue(rig, "control_latched") is not None
@@ -7678,6 +7686,115 @@ class EchoedSwitch(FakeSwitch):
         self.hass.states.async_set(self.echo, shown)
 
 
+@dataclass
+class LateEchoedSwitch(EchoedSwitch):
+    """A held heating switch whose status entity reports each change ``lag_s`` late, in order —
+    a scripted or cloud-backed switch (Z4R3-01)."""
+
+    lag_s: float = 90.0
+    pending: list[Callable[[], None]] = field(default_factory=list)
+
+    def publish(self) -> None:
+        FakeSwitch.publish(self)
+        shown = ("on" if self.on else "off") if self.available else "unavailable"
+        if self.lag_s <= 0.0 or self.hass.states.get(self.echo) is None:
+            self.hass.states.async_set(self.echo, shown)
+            return
+
+        @callback
+        def show(_now: datetime) -> None:
+            self.pending.pop(0)
+            self.hass.states.async_set(self.echo, shown)
+
+        self.pending.append(async_call_later(self.hass, self.lag_s, show))
+
+    def stop(self) -> None:
+        """The test is over: the reports still on their way are dropped, later ones prompt."""
+        for cancel in self.pending:
+            cancel()
+        self.pending.clear()
+        self.lag_s = 0.0
+
+
+@pytest.mark.parametrize("lag_s", [90.0, 115.0])
+async def test_a_late_heating_echo_beside_short_vt_pulses_is_never_judged(
+    rig: Rig, lag_s: float
+) -> None:
+    """K4.3 (Z4R3-01): entity path, a held heating switch, off before the plugin, whose status
+    reports each change 90 or 115 s late, in order, while VT pulses heating on for 60 s every 5
+    minutes — and from the second hour a second zone's pulse 40 s after the first — for four
+    hours. The plugin's own late echo is never judged: a report older than a send, or one that
+    may still be the echo of an earlier send, is not its read-back. No rewrite, no step aside,
+    no latch, no lost command (before: another controller within the first hour)."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    switch = LateEchoedSwitch(rig.hass, on=False, lag_s=lag_s)
+    switch.register()
+    await start(
+        rig,
+        **held_entity(
+            number,
+            ch_entity=switch.entity_id,
+            ch_write_type="held",
+            ch_confirmed_entity=switch.echo,
+        ),
+    )
+    await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
+    await rig.switch(True)
+    pulsing: bool | None = None
+    for step in range(4 * 360):
+        phase = step * 10 % 300
+        pulse = phase < 60 or (step >= 360 and 100 <= phase < 160)
+        if pulse is not pulsing:
+            pulsing = pulse
+            if pulse:
+                rig.zones.set(
+                    "living", hvac_action="heating", valve_open_percent=60, on_percent=0.6
+                )
+            else:
+                rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+        await rig.advance(10)
+        assert rig.state("sensor", "control_state").state != "handed_back", step
+    switch.stop()
+    assert switch.writes.count(True) > 40  # pulsed all along
+    switch_guard = unit_of(rig)._session.loop.switch
+    assert switch_guard.baseline == 0.0  # "off" before the plugin
+    assert switch_guard.rewritten_at is None
+    assert switch_guard.blocked is None
+    assert issue(rig, "control_latched") is None
+    assert rig.state("binary_sensor", "alarm_commands_lost").state == "off"
+
+
+async def test_each_guard_is_told_when_its_read_back_last_changed(rig: Rig) -> None:
+    """Z4R3-01 (K4.3): each guard gets its read-back's last change, as Home Assistant shows it —
+    the setpoint's and heating on/off's — so a report older than a send is never taken for that
+    send's read-back. A read-back not there: not known."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    switch = EchoedSwitch(rig.hass)
+    switch.register()
+    await start(
+        rig,
+        **held_entity(
+            number,
+            ch_entity=switch.entity_id,
+            ch_write_type="held",
+            ch_confirmed_entity=switch.echo,
+        ),
+    )
+    await rig.advance(30)
+    now = dt_util.utcnow().timestamp()
+    setpoint, heating = unit_of(rig)._contexts(now, None)
+    for context, entity in ((setpoint, number.entity_id), (heating, switch.echo)):
+        state = rig.hass.states.get(entity)
+        assert state is not None
+        assert context.reported_at == state.last_changed.timestamp()
+        assert context.reported_at < now
+    rig.hass.states.async_remove(switch.echo)
+    _setpoint, heating = unit_of(rig)._contexts(now, None)
+    assert heating.reported_at is None
+
+
 async def test_heating_switched_by_hand_after_the_plugin_toggled_it_steps_aside(
     rig: Rig,
 ) -> None:
@@ -7841,10 +7958,11 @@ async def test_an_external_switch_never_shown_on_is_judged_after_the_timeout(
     rig: Rig, write_type: str
 ) -> None:
     """Z4R2-03 for the external-control switch: control turns it on, and it never shows "on"
-    (it does not take it, or something puts it back within a step). Within the confirmation
-    timeout nothing is judged; after it, it reads off with no trace of an outage — another
-    controller, as M14 says: the plugin steps aside, no fight, instead of turning it on again
-    every keep-alive for ever, unseen."""
+    (it does not take it, or something puts it back within a step). Within 5 minutes nothing is
+    judged (K4.3, decided by the user 2026-10-03: the same window as heating on/off's previous
+    state); after them, it reads off with no trace of an outage — another controller, as M14
+    says: the plugin steps aside, no fight, instead of turning it on again every keep-alive for
+    ever, unseen."""
     number = FakeNumber(rig.hass)
     number.register()
     external = FakeSwitch(
@@ -7855,8 +7973,8 @@ async def test_an_external_switch_never_shown_on_is_judged_after_the_timeout(
     await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
     await rig.switch(True)
     assert external.writes == [True]  # turned on, but it stays off
-    await rig.advance(110)
-    assert rig.state("sensor", "control_state").state != "handed_back"  # within the timeout
+    await rig.advance(290)
+    assert rig.state("sensor", "control_state").state != "handed_back"  # within 5 minutes
     await rig.advance(30)
     state = rig.state("sensor", "control_state")
     assert state.state == "handed_back"

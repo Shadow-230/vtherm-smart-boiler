@@ -171,7 +171,7 @@ from .core.controller import (
 )
 from .core.demand import zone_wants_heat
 from .core.guards import (
-    CONFIRM_TIMEOUT_S,
+    PREVIOUS_EXEMPT_S,
     TOLERANCE_K,
     Confirmation,
     GuardConfig,
@@ -3321,7 +3321,8 @@ class ControlUnit:
     def _contexts(self, now: float, dhw: bool | None) -> tuple[GuardContext, GuardContext]:
         """What each guard knows beside its read-back: the trace of an outage around its target,
         the thermostat's own request (the setpoint), hot water, the target back from unavailable
-        or unknown, and the last command stored (never a baseline)."""
+        or unknown, the last command stored (never a baseline), and when its read-back last
+        changed — a report older than a send is never that send's read-back (Z4R3-01)."""
         options = self.options
         gateway = options.write_path in OTGW_PATHS
         setpoint_target = options.confirmed_entity if gateway else options.setpoint_entity
@@ -3339,14 +3340,21 @@ class ControlUnit:
                 dhw=dhw,
                 returned=self._returned("setpoint", setpoint_target),
                 last_command=None if last is None else last.setpoint,
+                reported_at=self._changed_at(options.confirmed_entity),
             ),
             GuardContext(
                 outage_at=self._outage_at(heating_around),
                 dhw=dhw,
                 returned=self._returned("heating", heating_target),
                 last_command=None if last is None else (ON if last.heating else OFF),
+                reported_at=self._changed_at(options.ch_confirmed_entity),
             ),
         )
+
+    def _changed_at(self, entity: str | None) -> float | None:
+        """When a read-back last changed, as Home Assistant shows it; ``None`` without one."""
+        state = self._hass.states.get(entity) if entity else None
+        return None if state is None else state.last_changed.timestamp()
 
     def _watch_external(self, now: float) -> None:
         """M14, M15, M17: while control holds the boiler through the external-control switch it
@@ -3358,9 +3366,9 @@ class ControlUnit:
         change (Z4-09). Off with no trace otherwise — a person, an automation, its own button,
         while it stayed available — another controller: the plugin steps aside at once, with no
         rewrite (the whole safe hand-back; the switch, already off, counts as released). Not
-        judged while unknown, nor before it was read back on — but that only for the
-        confirmation timeout after the plugin turned it on (Z4R2-03): one never seen on, stuck or
-        put back within a step, is then judged as these rows say."""
+        judged while unknown, nor before it was read back on — but that only for 5 minutes after
+        the plugin turned it on (Z4R2-03, K4.3): one never seen on, stuck or put back within a
+        step, is then judged as these rows say."""
         options = self.options
         entity = options.hand_back_entity
         returned = self._returned("external", entity)
@@ -3417,15 +3425,15 @@ class ControlUnit:
 
     def _external_unseen_too_long(self, now: float) -> bool:
         """Z4R2-03: the external-control switch not seen on since the plugin turned it on, for
-        longer than the confirmation timeout — no longer exempt. Not turned on yet: nothing to
-        judge."""
+        longer than ``PREVIOUS_EXEMPT_S`` (5 minutes, K4.3, as heating on/off's previous state) —
+        no longer exempt. Not turned on yet: nothing to judge."""
         writer = self._writer
         on_at = None if writer is None else writer.external_on_at
         if on_at is None:
             return False
         if self._external_unseen_since is None:
             self._external_unseen_since = on_at  # the turn-on not seen since
-        return now - self._external_unseen_since > CONFIRM_TIMEOUT_S
+        return now - self._external_unseen_since > PREVIOUS_EXEMPT_S
 
     def _external_lapsed(self, now: float) -> bool:
         """M17 for the external-control switch (Z4-09): declared expiring, and not turned on by

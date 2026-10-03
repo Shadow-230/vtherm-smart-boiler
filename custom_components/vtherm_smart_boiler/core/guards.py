@@ -43,15 +43,20 @@ setpoint (S-40, answer E):
   plugin has switched both ways (Z4-01).
 
 The plugin's previous value is exempt — a late echo, or the device holding it — until the value
-that replaced it has been read back (Z4R-01). For heating on/off also only until the confirmation
-timeout after that send has passed (Z4R2-03): a state no step ever shows — the device stuck, an
-automation putting it back within a step — is then judged like any other (back at the value from
-before the plugin: the fall-back rows; otherwise another controller); an echo slower than the
-timeout is judged too, a known limit (K4). A setpoint has no such bound — a boiler's own limit is
-judged "clipped" once the plugin has sent values 1 K apart, and a slow read-back is waited for —
-but its value not shown for ``CONFIRMATION_MISSING_S`` while the read-back is known and shows
-another one is reported (``value_not_shown``: "confirmation missing" and its repair issue), never
-judged by itself.
+that replaced it has been read back (Z4R-01): by a report at least as new as the send that wrote
+it, and one that cannot still be the echo of an earlier send of the same value — the value
+between read back since, or that earlier send ``PREVIOUS_EXEMPT_S`` gone (Z4R3-01: a stale echo
+never counts as the read-back of a newer send; a report's age is the read-back's last change, as
+Home Assistant shows it). For heating on/off also only for ``PREVIOUS_EXEMPT_S`` after that send
+(Z4R2-03; 5 minutes, decided by the user 2026-10-03, K4.3), the value from before the plugin
+included — so a read-back polled up to every 5 minutes, or that late, is not judged: a state no
+step ever shows — the device stuck, an automation putting it back within a step — is then judged
+like any other (back at the value from before the plugin: the fall-back rows; otherwise another
+controller); an echo slower than 5 minutes is judged too, a known limit. A setpoint has no such
+bound — a boiler's own limit is judged "clipped" once the plugin has sent values 1 K apart, and a
+slow read-back is waited for — but its value not shown for ``CONFIRMATION_MISSING_S`` while the
+read-back is known and shows another one is reported (``value_not_shown``: "confirmation
+missing" and its repair issue), never judged by itself.
 
 Not judged: a difference seen for one step; the exempt previous value (above), shown "not
 confirmed" once the timeout has passed; a hot-water draw and the 120 s after it; the plugin's own
@@ -84,6 +89,12 @@ REWRITE_WINDOW_S = DAY  # after the one rewrite, another change this soon is not
 # timer's jitter or a step run early (switching control on).
 MIN_WRITE_INTERVAL_S = 5.0
 CONFIRM_TIMEOUT_S = 120.0  # a send read back within this; kept as today (reason to confirm)
+# Decided by the user 2026-10-03 (K4.3; provisional before, Z4R2-03's window at the confirmation
+# timeout): a two-valued target's previous state — heating on/off, and the external-control
+# switch not seen on yet — is exempt this long after the send that replaced it. A read-back that
+# reports within it is never judged; a device stuck in that state, or an automation putting it
+# back, is judged after it. It is also as long as a stale echo is taken to stay in flight.
+PREVIOUS_EXEMPT_S = 300.0
 TOLERANCE_K = 0.5  # a read-back this close shows a value; kept as today
 # Decision 6 with the user's answer E (2026-09-27), decided:
 FALL_BACK_WINDOW_S = HOUR  # a second fall-back without a trace this soon: another controller
@@ -175,9 +186,9 @@ class ReadKind(StrEnum):
     OURS = "ours"  # the value written, or one sent within the confirmation timeout
     FALL_BACK = "fall_back"  # the baseline, or the thermostat's own value
     # The value written before the current one, while the current one has not been read back
-    # since it replaced it — for heating on/off only within the confirmation timeout of that
-    # send: a late echo or the device holding it, not judged. Then it is another value like any
-    # other (Z4-01, Z4R-01, Z4R2-03).
+    # since it replaced it — for heating on/off only within ``PREVIOUS_EXEMPT_S`` of that send,
+    # the value from before the plugin included: a late echo or the device holding it, not
+    # judged. Then it is another value like any other (Z4-01, Z4R-01, Z4R2-03, K4.3).
     PREVIOUS = "previous"
     OTHER = "other"
 
@@ -220,6 +231,9 @@ class GuardContext:
     dhw: bool | None = None  # hot water now; unknown: the draw rule does not apply
     returned: bool = False  # the target came back from unavailable or unknown since the last step
     last_command: float | None = None  # the last command stored (V3): never a baseline
+    # When the read-back last changed, as Home Assistant shows it: a report older than a send is
+    # never its read-back (Z4R3-01). ``None``: not known — any report counts, as before.
+    reported_at: float | None = None
 
 
 NO_CONTEXT = GuardContext()
@@ -233,8 +247,14 @@ class GuardState:
     sent_at: float | None = None  # when the current value was last sent (keep-alives aside)
     confirmed_at: float | None = None  # read back as the plugin's since that send
     previous: float | None = None  # the value written before the current one
-    taken: bool = False  # the current value read back itself since it replaced ``previous``
+    # The current value read back itself since it replaced ``previous`` — by its own echo, not a
+    # stale one (``_own_echo``) — and whether ``previous`` had been, when it was replaced.
+    taken: bool = False
+    previous_taken: bool = False
     replaced_at: float | None = None  # when it replaced it (heating on/off: the exemption's end)
+    # The values replaced within ``PREVIOUS_EXEMPT_S`` — (when, value): an echo of theirs may
+    # still be on its way (Z4R3-01).
+    left: tuple[tuple[float, float], ...] = ()
     retry: bool = False  # the last write failed, or waited: send it again
     recent: tuple[tuple[float, float], ...] = ()  # (time, value) of sends within the timeout
     change_at: float | None = None  # the latest send of a new value
@@ -479,9 +499,9 @@ def classify(
     """The class of a step's read-back — the one table of decision 6, in its order (``SCOPE.md``
     §7): unknown; confirmed; a draw; the plugin's own lapse; a held target back; the rewrite not
     read back; the fall-back set (the start phase's attempts, then lost command or another
-    controller); the previous value while it is exempt (its successor not read back; heating
-    on/off within the confirmation timeout of that send); clipped; another value held two steps —
-    the previous one too, once no longer exempt."""
+    controller); the previous value while it is exempt (its successor not read back by its own
+    echo; heating on/off within ``PREVIOUS_EXEMPT_S`` of that send, before the fall-back set);
+    clipped; another value held two steps — the previous one too, once no longer exempt."""
     if state.written is None or not config.read_back or read_back is None or seen.kind is None:
         return ChangeClass.NOT_JUDGED
     if seen.kind is ReadKind.OURS:
@@ -653,8 +673,9 @@ def _observe(
             held_since=held_since,
             foreign=None,
             foreign_steps=0,
-            # The value written itself, not an older one still within the timeout (``recent``).
-            taken=state.taken or _near(read_back, state.written, tolerance),
+            # The value written itself, not an older one still within the timeout (``recent``),
+            # and by its own echo, not a stale one (Z4R3-01).
+            taken=state.taken or _own_echo(state, read_back, context, now, config),
         )
         if now - held_since >= config.confirm_timeout_s:
             # The value held: the start phase is over, and a target ignored from the start takes
@@ -684,6 +705,34 @@ def _note_attempt_trace(state: GuardState, trace: bool) -> GuardState:
     if trace and state.attempt_at is not None and not state.attempt_trace:
         return replace(state, attempt_trace=True)
     return state
+
+
+def _own_echo(
+    state: GuardState,
+    read_back: float,
+    context: GuardContext,
+    now: float,
+    config: GuardConfig,
+) -> bool:
+    """The read-back shows the value written by the echo of the send that wrote it (Z4R3-01): a
+    report at least as new as that send, and one that cannot still be the echo of an earlier send
+    of the same value — the value written in between was read back since (in order, this report
+    came after it), or that earlier send is ``PREVIOUS_EXEMPT_S`` gone. Where Home Assistant shows
+    no report time, any report counts."""
+    tolerance = config.tolerance
+    if not _near(read_back, state.written, tolerance):
+        return False
+    at, sent = context.reported_at, state.replaced_at
+    if at is None or sent is None:
+        return True
+    if at < sent:
+        return False  # a report from before the send
+    if state.previous_taken:
+        return True
+    return not any(
+        now - t <= PREVIOUS_EXEMPT_S and _near(value, state.written, tolerance)
+        for t, value in state.left
+    )
 
 
 def _latest(*moments: float | None) -> float | None:
@@ -739,6 +788,11 @@ def _kind(
     if ours:
         return ReadKind.OURS
     tolerance = config.tolerance
+    if config.two_valued and not trace and _previous(state, value, now, config):
+        # Heating on/off's previous state, its successor not read back, within
+        # ``PREVIOUS_EXEMPT_S`` — the value from before the plugin too: an echo not in yet, or a
+        # poll not made yet, is no fall-back (K4.3).
+        return ReadKind.PREVIOUS
     if _near(value, state.baseline, tolerance):
         return ReadKind.FALL_BACK
     if not config.two_valued and _near(value, context.thermostat, tolerance):
@@ -747,23 +801,32 @@ def _kind(
         # Two values: with a trace of an outage, the other state is the device's own — a lost
         # command, not another controller (more cautious than the table's row 13).
         return ReadKind.FALL_BACK
-    if _near(value, state.previous, tolerance) and not state.taken and _exempt(state, now, config):
+    if _previous(state, value, now, config):
         # The value the current one replaced, the current one not read back yet: a late echo, or
         # the device holding it — a setpoint for as long as that lasts (a boiler limit, a slow
-        # read-back: Z4R-01), heating on/off for the confirmation timeout only (Z4R2-03). Once
-        # it is no longer exempt, a return to it is judged: a two-valued target's other state
-        # too, once the plugin has switched both ways (Z4-01).
+        # read-back: Z4R-01), heating on/off for ``PREVIOUS_EXEMPT_S`` only (Z4R2-03, K4.3).
+        # Once it is no longer exempt, a return to it is judged: a two-valued target's other
+        # state too, once the plugin has switched both ways (Z4-01).
         return ReadKind.PREVIOUS
     return ReadKind.OTHER
 
 
+def _previous(state: GuardState, value: float, now: float, config: GuardConfig) -> bool:
+    """``value`` is the plugin's previous one, still exempt."""
+    return (
+        _near(value, state.previous, config.tolerance)
+        and not state.taken
+        and _exempt(state, now, config)
+    )
+
+
 def _exempt(state: GuardState, now: float, config: GuardConfig) -> bool:
     """A setpoint's previous value stays exempt until its successor is read back; heating
-    on/off's, also only within the confirmation timeout of the send that replaced it."""
+    on/off's, also only within ``PREVIOUS_EXEMPT_S`` of the send that replaced it (K4.3)."""
     if not config.two_valued:
         return True
     replaced = state.replaced_at
-    return replaced is not None and now - replaced <= config.confirm_timeout_s
+    return replaced is not None and now - replaced <= PREVIOUS_EXEMPT_S
 
 
 # --- what a class does -----------------------------------------------------------------------
@@ -881,6 +944,9 @@ def _send(
     low = value if fresh or state.sent_low is None else min(state.sent_low, value)
     high = value if fresh or state.sent_high is None else max(state.sent_high, value)
     recent = tuple((t, sent) for t, sent in state.recent if now - t <= config.confirm_timeout_s)
+    left = tuple((t, gone) for t, gone in state.left if now - t <= PREVIOUS_EXEMPT_S)
+    if new_value and written is not None:
+        left = (*left, (now, written))
     sent_values = state.sent_values
     if state.baseline is None and all(not _near(value, v, config.tolerance) for v in sent_values):
         sent_values = (*sent_values, value)
@@ -892,7 +958,9 @@ def _send(
         confirmed_at=None,
         previous=written if new_value else state.previous,
         taken=False if new_value else state.taken,
+        previous_taken=state.taken if new_value else state.previous_taken,
         replaced_at=now if new_value else state.replaced_at,
+        left=left,
         retry=False,
         recent=(*recent, (now, value)),
         change_at=now if kind is WriteKind.CHANGE and new_value else state.change_at,
@@ -943,4 +1011,6 @@ def _clock(state: GuardState, now: float, config: GuardConfig) -> GuardState:
         moved["fallbacks"] = tuple(min(t, now) for t in state.fallbacks)
     if any(t > now for t, _v in state.recent):
         moved["recent"] = tuple((min(t, now), v) for t, v in state.recent)
+    if any(t > now for t, _v in state.left):
+        moved["left"] = tuple((min(t, now), v) for t, v in state.left)
     return replace(state, **moved) if moved else state
