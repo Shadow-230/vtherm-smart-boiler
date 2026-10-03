@@ -1207,12 +1207,15 @@ def _stuck_run(
     hours: float = 3.0,
     unknown: tuple[float, float] | None = None,
     draw: tuple[float, float] | None = None,
+    late: tuple[float, float] | None = None,
 ) -> tuple[float | None, list[tuple[float, ChangeClass, tuple[GuardEvent, ...]]], GuardState]:
     """VT's pulses through a heating switch, "off" before the plugin, whose read-back reports each
     change 5 s after it, in order. From ``STUCK_AT`` the switch sticks (``case``): "on" whatever
     it is told (stuck_on), "off" whatever it is told (stuck_off), or put back "on" by an
     automation 3 s after every "off" — between two steps, so no step shows the "off" (reverted).
-    ``unknown``: the read-back unknown between the two moments; ``draw``: hot water then. Returns
+    ``unknown``: the read-back unknown between the two moments; ``draw``: hot water then;
+    ``late``: (from, extra) — the first command sent from ``from`` on is reported ``extra``
+    seconds late, and the commands after it wait behind it, as a stalled read-back would. Returns
     when the switch first ignored a command, the judgements from ``STUCK_AT`` on (when, class,
     events), and the guard's last state."""
     config = GuardConfig(write_type=WriteType.HELD, two_valued=True, refresh_s=refresh_s)
@@ -1222,6 +1225,7 @@ def _stuck_run(
     reports: list[tuple[float, float]] = []
     ignored: float | None = None
     judged: list[tuple[float, ChangeClass, tuple[GuardEvent, ...]]] = []
+    stalled_until = 0.0
     t = 0.0
     while t <= hours * HOUR and state.blocked is None:
         reports.sort()
@@ -1243,7 +1247,13 @@ def _stuck_run(
             if stuck and case == "stuck_off" and value == ON:
                 value, ignored = OFF, ignored if ignored is not None else t
             device = value
-            reports.append((t + 5.0, device))
+            delay = 5.0
+            if late is not None and t >= late[0]:
+                delay, late = 5.0 + late[1], None
+                stalled_until = t + delay
+            if t + delay < stalled_until:
+                delay = stalled_until - t  # behind the late report, in order
+            reports.append((t + delay, device))
             if stuck and case == "reverted" and value == OFF:
                 device, ignored = ON, ignored if ignored is not None else t
                 reports.append((t + 8.0, ON))
@@ -1285,6 +1295,24 @@ def test_a_stuck_heating_switch_is_judged_whatever_vt_pulses(
     last, _kind, events = judged[-1]
     assert events == (GuardEvent.OUTSIDE_CHANGE,)
     assert last - ignored <= 14 * MIN, (last - ignored) / MIN
+
+
+@pytest.mark.parametrize("case", ["stuck_on", "stuck_off", "reverted"])
+def test_one_late_echo_does_not_blind_the_stuck_test_for_the_session(case: str) -> None:
+    """KDF-01: the stuck test measures how long the read-back takes to show a change. One report
+    10 min late (a stalled read-back an hour before the switch sticks, the reports behind it
+    waiting too) once made that the delay for the whole session, so a send had to go unshown for
+    half an hour before it counted and, under VT's 5-min pulses, never did: a switch stuck later
+    was never judged. The delay is the longest of the last ``ECHO_WINDOW`` measurements, so the
+    late ones drop out after that many prompt echoes and the stuck switch is judged as without
+    them."""
+    ignored, judged, _state = _stuck_run(
+        _pulses(5 * MIN, 0.5), case, 300.0, late=(STUCK_AT - HOUR, 10 * MIN)
+    )
+    assert ignored is not None
+    assert judged, "never judged"
+    first, _kind, _events = judged[0]
+    assert first - ignored <= 11 * MIN, (first - ignored) / MIN
 
 
 @pytest.mark.parametrize("poll_s", [150.0, 240.0], ids=["150s", "240s"])

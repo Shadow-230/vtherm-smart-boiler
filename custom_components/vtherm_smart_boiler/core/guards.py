@@ -100,17 +100,20 @@ CONFIRM_TIMEOUT_S = 120.0  # a send read back within this; kept as today (reason
 # reports within it is never judged; a device stuck in that state, or an automation putting it
 # back, is judged after it. It is also as long as a stale echo is taken to stay in flight.
 PREVIOUS_EXEMPT_S = 300.0
-# KD-01 (provisional, K4): heating on/off stuck under VT's short pulses. Its read-back judged
-# stuck once it has not changed while the plugin sent the other state ``STUCK_SENDS`` times, the
-# first ``PREVIOUS_EXEMPT_S`` ago or more, each send counted only once it has gone unshown
-# ``ECHO_FACTOR`` times the longest echo delay seen this session plus ``ECHO_MARGIN_S``: a
-# read-back polled every few minutes learns a long delay, so its short pulses never count. Its
-# echo delay is known only from ``ECHOES_KNOWN`` echoes on — one poll that happened to come
-# just after a send says little — and until then it is never judged so.
+# KD-01 (provisional, K4): heating on/off stuck under VT's short pulses. Its read-back judged stuck
+# once it has not changed while the plugin sent the other state ``STUCK_SENDS`` times, the first
+# ``PREVIOUS_EXEMPT_S`` ago or more, each send counted only once it has gone unshown ``ECHO_FACTOR``
+# times the longest of the last ``ECHO_WINDOW`` echo delays plus ``ECHO_MARGIN_S``: a read-back
+# polled every few minutes learns a long delay, so its short pulses never count. Its echo delay is
+# known only from ``ECHOES_KNOWN`` echoes on — one poll that happened to come just after a send says
+# little — and until then it is never judged so.
 STUCK_SENDS = 2
 ECHO_FACTOR = 3.0
 ECHO_MARGIN_S = 30.0
 ECHOES_KNOWN = 3
+# KDF-01: only the last echoes count, so one late report (a stalled read-back) does not make the
+# stuck test blind for the rest of the session; it drops out after this many prompt ones.
+ECHO_WINDOW = 10
 TOLERANCE_K = 0.5  # a read-back this close shows a value; kept as today
 # Decision 6 with the user's answer E (2026-09-27), decided:
 FALL_BACK_WINDOW_S = HOUR  # a second fall-back without a trace this soon: another controller
@@ -314,9 +317,11 @@ class GuardState:
     clip: float | None = None  # held lower by the boiler: its own limit, shown only
     unknown_at: float | None = None  # the read-back last unknown: a trace of an outage
     draw_at: float | None = None  # hot water last seen
-    # Heating on/off: the longest echo delay seen this session, and how many echoes (KD-01).
+    # Heating on/off: the longest of the last ``ECHO_WINDOW`` echo delays, those delays, and how
+    # many echoes this session (KD-01, KDF-01).
     echo_s: float | None = None
     echoes: int = 0
+    echo_delays: tuple[float, ...] = ()
 
     @property
     def off_ignored(self) -> bool:
@@ -439,6 +444,7 @@ def after_hand_back(state: GuardState) -> GuardState:
             "draw_at",
             "echo_s",
             "echoes",
+            "echo_delays",
         )
     }
     return GuardState(**memory)
@@ -790,8 +796,9 @@ def _follow_shown(
     """KD-01, heating on/off: what the read-back shows at the steps. A change starts the count of
     missed sends afresh, and where it shows the value written, measures the echo delay — from the
     first send of that value since the read-back showed another, to the change as Home Assistant
-    shows it (else this step). While it stays, the current send of another value counts as
-    missed once it has gone unshown ``ECHO_FACTOR`` times the longest echo delay plus
+    shows it (else this step); the longest of the last ``ECHO_WINDOW`` delays counts. While it
+    stays, the current send of another value counts as missed once it has gone unshown
+    ``ECHO_FACTOR`` times that delay plus
     ``ECHO_MARGIN_S`` — not before ``ECHOES_KNOWN`` echoes were seen, and not during a hot-water
     draw, which starts the count afresh."""
     if not config.two_valued:
@@ -799,10 +806,12 @@ def _follow_shown(
     tolerance = config.tolerance
     if state.shown is None or not _near(read_back, state.shown, tolerance):
         echo, echoes, since = state.echo_s, state.echoes, state.away_since
+        delays = state.echo_delays
         if since is not None and _near(read_back, state.written, tolerance):
             at = context.reported_at
             delay = (at if at is not None and since <= at <= now else now) - since
-            echo = delay if echo is None else max(echo, delay)
+            delays = (*delays, delay)[-ECHO_WINDOW:]
+            echo = max(delays)
             echoes += 1
         return replace(
             state,
@@ -812,6 +821,7 @@ def _follow_shown(
             missed=(),
             echo_s=echo,
             echoes=echoes,
+            echo_delays=delays,
         )
     if quiet:
         return replace(state, missed=()) if state.missed else state
