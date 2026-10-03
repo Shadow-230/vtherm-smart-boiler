@@ -180,7 +180,7 @@ def features(
     has_dhw: bool = False,
     condensing: bool = True,
     control: ControlKind | None = None,
-    comfort_correction: bool = True,
+    comfort_correction: bool = False,
     circuit_maximum: bool = False,
     circuit_flow: bool = False,
     wall_thermostat: bool = False,

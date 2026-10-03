@@ -907,8 +907,9 @@ async def test_zones_in_auto_or_of_the_over_climate_type_decide_as_well(
 
 async def test_the_comfort_correction_stays_within_3_k(rig: Rig) -> None:
     """A room that cannot reach its setpoint with its valve fully open raises the water, by
-    3 K at most, and the user is told once it has sat at that edge."""
-    await start(rig)
+    3 K at most, and the user is told once it has sat at that edge — switched on: off by
+    default since the user's decision of 2026-10-03 (K4.1)."""
+    await start(rig, comfort_correction=True)
     await rig.switch(True)
     await rig.advance(900, step=30.0)
     attributes = rig.state("sensor", "control_state").attributes

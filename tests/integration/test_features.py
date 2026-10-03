@@ -84,6 +84,7 @@ def water_options(zone: str) -> dict[str, Any]:
             "topology": "gateway_with_thermostat",
             "thermostat_kind": "opentherm",
             "curve": {"design_outdoor": -15, "design_flow": 55},
+            "comfort_correction": True,  # every option on: off by default since K4.1
         },
     }
 

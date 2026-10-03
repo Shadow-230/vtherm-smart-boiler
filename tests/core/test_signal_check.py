@@ -112,6 +112,7 @@ FULL: dict[str, Any] = {
     "control": ControlKind.WATER,
     "circuit_maximum": True,
     "wall_thermostat": True,
+    "comfort_correction": True,  # off by default since K4.1: switched on here
 }
 
 

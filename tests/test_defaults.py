@@ -211,10 +211,10 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
         lambda: _demand(BARE),
         (1, None, None),
     ),
-    # Comfort correction | on, up to +3 K
-    ("comfort correction", lambda: CONTROL_DEFAULTS["comfort_correction"], True),
-    ("comfort correction (form)", lambda: BEHAVIOUR_FORM["comfort_correction"], True),
-    ("comfort correction (parser)", lambda: BARE.loop.control.comfort_correction, True),
+    # Comfort correction | off (decided by the user 2026-10-03, K4.1); up to +3 K when on
+    ("comfort correction", lambda: CONTROL_DEFAULTS["comfort_correction"], False),
+    ("comfort correction (form)", lambda: BEHAVIOUR_FORM["comfort_correction"], False),
+    ("comfort correction (parser)", lambda: BARE.loop.control.comfort_correction, False),
     ("comfort correction: its bound", lambda: CORRECTION_MAX_K, 3.0),
     # Learning pauses | on
     ("learning pauses", lambda: CONTROL_DEFAULTS["learning_pauses"], True),

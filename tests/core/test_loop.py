@@ -289,7 +289,9 @@ def test_the_setpoint_is_put_on_the_entitys_grid_inside_the_limits() -> None:
 def test_a_clip_is_never_learned_as_a_limit() -> None:
     """While the boiler holds the water lower than asked (clipped), the comfort correction does
     not rise and no limit changes (principle 13). Negative: without the clip it rises."""
-    control = ControlConfig(curve=HeatingCurve(), ramp_k_per_min=None, decision_interval_s=60.0)
+    control = ControlConfig(
+        curve=HeatingCurve(), ramp_k_per_min=None, decision_interval_s=60.0, comfort_correction=True
+    )
     config = replace(CONFIG, control=control)
 
     def short_zone(t: float) -> ZoneState:

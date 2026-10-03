@@ -147,13 +147,21 @@ def late_rooms(result, start: float, end: float) -> dict[str, list[float]]:
     }
 
 
+@pytest.mark.parametrize("correction", [False, True], ids=["defaults", "correction_on"])
 @pytest.mark.parametrize("mean", [8.0, -5.0])
-def test_rooms_hold_their_setpoints_under_control(mean: float) -> None:
-    controller = LoopController(LOOP)
-    result = simulate(scenario([mean, mean], controller))
+def test_rooms_hold_their_setpoints_under_control(mean: float, correction: bool) -> None:
+    """With the comfort correction on, every room holds its setpoint within a kelvin and none
+    overheats. With the defaults — the correction off since the user's decision of 2026-10-03
+    (K4.1) — the curve alone heats: the rooms near the curve's room temperature hold, and a room
+    set 2 K above it (the bathroom, 22 °C) stays up to about 2 K short at −5 °C: the cost the
+    option's text names (switch the correction on for such a room, or set the curve for it)."""
+    loop = replace(LOOP, control=replace(LOOP.control, comfort_correction=correction))
+    result = simulate(scenario([mean, mean], LoopController(loop)))
     targets = {z.zone_id: z.target for z in radiator_zones()}
     for zid, temps in late_rooms(result, 12 * HOUR, 2 * DAY).items():
-        assert min(temps) > targets[zid] - 1.0, zid
+        above_the_curve = targets[zid] - CURVE.room > 1.0
+        short_by = 2.5 if above_the_curve and not correction else 1.0
+        assert min(temps) > targets[zid] - short_by, zid
         assert max(temps) < targets[zid] + 1.5, zid
     assert result.override_s > 0.95 * 2 * DAY  # control held the boiler the whole time
 
@@ -239,11 +247,12 @@ def test_summer_heating_follows_vt_at_the_minimum_water_temperature() -> None:
 STARTS_CRITERION = 1.10  # J4's criterion (Z3 rule 6; provisional, K4)
 
 
-def own_curve_loop(boiler: BoilerProfile, comfort_correction: bool) -> LoopConfig:
+def own_curve_loop(boiler: BoilerProfile, comfort_correction: bool | None) -> LoopConfig:
     """The control the plugin runs on an OpenTherm Gateway (``parse_control``), its curve set to
     the boiler's own — linear (exponent 1) through the same points, shifted by the boiler's
     offset — and its lowest water temperature the boiler's own minimum, so that the comparison
-    is of the control, not of two curves (research/2026-10-02-z3-starts-ratio.md)."""
+    is of the control, not of two curves (research/2026-10-02-z3-starts-ratio.md).
+    ``comfort_correction``: ``None`` leaves the option out — the parser's default."""
     room = 20.0
     installation = Installation(
         Boiler(BoilerClass.FLOW_SETPOINT),
@@ -264,8 +273,9 @@ def own_curve_loop(boiler: BoilerProfile, comfort_correction: bool) -> LoopConfi
         },
         "hard_min": boiler.min_setpoint,
         "hard_max": boiler.max_setpoint,
-        "comfort_correction": comfort_correction,
     }
+    if comfort_correction is not None:
+        control["comfort_correction"] = comfort_correction
     return parse_control(control, installation, None).loop
 
 
@@ -274,7 +284,7 @@ def starts(result: SimResult, start: float, end: float) -> int:
     return len([burn for burn in find_burns(flame, start, end) if burn.start_seen])
 
 
-def starts_both_ways(mean: float, comfort_correction: bool) -> tuple[SimResult, SimResult]:
+def starts_both_ways(mean: float, comfort_correction: bool | None) -> tuple[SimResult, SimResult]:
     """24 h at a steady outdoor temperature (after a day to settle), in the same simulated
     house: three radiator zones under TPI, the boiler on its own regulation — its own curve,
     heating whenever a zone valve is open, as VT's central boiler switches it — and under the
@@ -313,18 +323,28 @@ def test_tpi_switch_zones_starts_per_hour_under_control(mean: float) -> None:
     assert controlled.override_s > 0.95 * 2 * DAY  # the control held the boiler throughout
 
 
+@pytest.mark.parametrize("mean", [8.0, -5.0])
+def test_tpi_switch_zones_starts_per_hour_with_the_defaults(mean: float) -> None:
+    """J4's criterion with the plugin's defaults — the comfort correction off since the user's
+    decision of 2026-10-03 (K4.1) — in the same house: the plugin starts the burner no more than
+    1.10 times as often per hour as the boiler's own regulation."""
+    own, controlled = starts_both_ways(mean, comfort_correction=None)
+    assert controlled.override_s > 0.95 * 2 * DAY  # the control held the boiler throughout
+    assert starts(controlled, DAY, 2 * DAY) <= STARTS_CRITERION * starts(own, DAY, 2 * DAY)
+
+
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "K4 (S-15): the comfort correction rises to +3 K while a TPI zone sits at full duty "
-        "short of its target, and every zone's cycle then stops the burner: x1.75 at +8 °C, "
-        "x5 at -5 °C (research/2026-10-02-z3-starts-ratio.md)"
+        "K4.1 (S-15): the comfort correction, when switched on, rises to +3 K while a TPI zone "
+        "sits at full duty short of its target, and every zone's cycle then stops the burner: "
+        "x1.75 at +8 °C, x5 at -5 °C (research/2026-10-02-z3-starts-ratio.md) — why it is off "
+        "by default"
     ),
 )
 @pytest.mark.parametrize("mean", [8.0, -5.0])
-def test_tpi_switch_zones_starts_per_hour_with_the_defaults(mean: float) -> None:
-    """J4's criterion with the plugin's defaults — the comfort correction on — in the same
-    house: expected to fail until K4 decides the correction's rule with TPI zones, its default,
-    or the criterion."""
+def test_tpi_switch_zones_starts_per_hour_with_the_correction_on(mean: float) -> None:
+    """The cost the option's text names: with the comfort correction switched on, the same
+    house fails J4's criterion."""
     own, controlled = starts_both_ways(mean, comfort_correction=True)
     assert starts(controlled, DAY, 2 * DAY) <= STARTS_CRITERION * starts(own, DAY, 2 * DAY)

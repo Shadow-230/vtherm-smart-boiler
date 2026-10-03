@@ -972,3 +972,19 @@ def test_the_setpoint_not_shown_issue_is_translated() -> None:
         assert issue["description"], language
         assert PLACEHOLDER.findall(issue["description"]) == [], language
     assert "does not hand the boiler back" in SOURCE["issues"][NOT_SHOWN_ISSUE]["description"]
+
+
+def test_the_comfort_correction_says_it_is_off_and_what_it_risks() -> None:
+    """K4.1: the comfort correction's description says it is off by default, and what switching
+    it on risks with VT's TPI zones — the water at its +3 K edge while a zone at full duty stays
+    short by TPI's own offset, the burner stopped by every zone's cycle, 1.75 to 5 times the
+    starts in the simulation — in every language."""
+    behaviour = SOURCE["options"]["step"]["control_behaviour"]["data_description"]
+    text = behaviour["comfort_correction"]
+    assert "Off (default)" in text
+    assert "TPI" in text
+    assert "1.75" in text
+    assert "5 times the starts" in text
+    for language in LANGUAGES:
+        translated = _texts(language)["options"]["step"]["control_behaviour"]
+        assert "1,75" in translated["data_description"]["comfort_correction"], language

@@ -229,7 +229,7 @@ class ControlConfig:
     # sensor last changed, which a steady room does not do for hours; a zone is unknown by its
     # state (unavailable, not started), and a room sensor gone quiet is VT's own safety mode's.
     zone_max_age_s: float | None = None
-    comfort_correction: bool = True
+    comfort_correction: bool = False  # off unless switched on (the user, 2026-10-03, K4.1)
     # The boiler link is lost once its stale steps cover this long within the last
     # ``OUTAGE_WINDOW_S`` (X2): control then hands back. ``None``: never lost (tests, simulator).
     stale_hand_back_s: float | None = OUTAGE_LOST_S

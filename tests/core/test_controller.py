@@ -155,7 +155,9 @@ def test_an_alarm_during_a_blocker_still_latches() -> None:
 def test_a_clip_holds_the_comfort_correction() -> None:
     """While the boiler holds the water lower than asked (its own limit), the correction does
     not rise: a clip is never learned (X1, principle 13)."""
-    config = ControlConfig(curve=CURVE, ramp_k_per_min=None, decision_interval_s=60.0)
+    config = ControlConfig(
+        curve=CURVE, ramp_k_per_min=None, decision_interval_s=60.0, comfort_correction=True
+    )
     for clipped, rises in ((True, False), (False, True)):
         state = ControlState()
         t = 0.0
@@ -374,7 +376,8 @@ def test_invalid_config(kwargs: dict) -> None:
         replace(CONFIG, **kwargs)
 
 
-WATER = replace(CONFIG, decision_interval_s=60.0)
+# The comfort correction's own tests switch it on: off by default since K4.1 (2026-10-03).
+WATER = replace(CONFIG, decision_interval_s=60.0, comfort_correction=True)
 
 
 def short(t: float, zone_id: str = "z", **kw: float) -> ZoneState:
@@ -583,9 +586,12 @@ def test_a_clock_jumping_forward_does_not_raise_the_correction_at_once() -> None
     correction in one step, past the ramp. A step counts for a minute at most."""
     cold = zone(0.0, valve_open=1.0, temperature=19.0, target=21.0)  # short, fully open
     burning = {"flame": True}
-    state, _ = run([inputs(0.0, zones=(cold,), **burning), inputs(10.0, zones=(cold,), **burning)])
+    on = replace(CONFIG, comfort_correction=True)
+    state, _ = run(
+        [inputs(0.0, zones=(cold,), **burning), inputs(10.0, zones=(cold,), **burning)], on
+    )
     jumped = zone(3610.0, valve_open=1.0, temperature=19.0, target=21.0)
-    state, _ = run([inputs(3610.0, zones=(jumped,), **burning)], state=state)
+    state, _ = run([inputs(3610.0, zones=(jumped,), **burning)], on, state)
     assert 0.0 < state.correction <= 0.1  # 70 s of heat flow, not an hour
 
 

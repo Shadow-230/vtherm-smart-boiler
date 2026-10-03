@@ -87,7 +87,9 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         "decision_interval_min": 5.0,
         "off_setpoint": DEFAULT_OFF_SETPOINT,
         "learning_pauses": True,
-        "comfort_correction": True,
+        # Off: with VT's TPI zones it can hold the water at its +3 K edge and multiply the
+        # burner's starts (decided by the user 2026-10-03, K4.1).
+        "comfort_correction": False,
         # Without the tick, VT giving no answer at all means no heating and an alarm (answer F).
         "own_room_controller": False,
         # VT's activation delay (decision 5): 0 s, VT's own default — heating starts at once.

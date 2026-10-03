@@ -6558,7 +6558,7 @@ async def test_control_switch_stays_usable_when_the_monitor_refresh_fails(
     """T-15 (P-02): the monitor's refresh fails at every run — its computation, or the feature
     manager's check before it. The monitor's own entities go unavailable; the control switch,
     control's state and its alarms do not, so switching control off still hands back at once."""
-    await start(rig)
+    await start(rig, comfort_correction=True)  # off by default since K4.1
     await rig.switch(True)
     await rig.advance(30)
     breaker = break_monitor(monkeypatch, where)
@@ -6583,7 +6583,7 @@ async def test_control_entities_go_unavailable_only_once_control_stops(rig: Rig)
     (an unload, Home Assistant stopping), and not before."""
     from homeassistant.helpers.entity_component import DATA_INSTANCES
 
-    await start(rig)
+    await start(rig, comfort_correction=True)  # off by default since K4.1
     assert rig.entry is not None
     unit = rig.entry.runtime_data.control
     entities = [
@@ -9085,7 +9085,7 @@ async def test_the_comfort_correction_is_published(rig: Rig) -> None:
     )
 
     short_room(rig)
-    await start(rig)
+    await start(rig, comfort_correction=True)  # off by default since K4.1
     await rig.switch(True)
     assert correction(rig) == 0.0
     await rig.advance(3600, step=60)
@@ -9112,7 +9112,7 @@ async def test_the_reset_button_resets_the_comfort_correction(rig: Rig) -> None:
     once; no hand-back, no reload, no option saved. The rise may start again under its rules —
     what is left of the day's 3 K."""
     short_room(rig)
-    await start(rig)
+    await start(rig, comfort_correction=True)  # off by default since K4.1
     await rig.switch(True)
     await rig.advance(3600, step=60)
     assert correction(rig) >= 1.5
@@ -9150,7 +9150,7 @@ async def test_the_reset_button_exists_only_with_control_configured(rig: Rig) ->
 
 
 async def test_a_press_with_control_off_changes_nothing(rig: Rig) -> None:
-    await start(rig)
+    await start(rig, comfort_correction=True)  # off by default since K4.1
     await press_reset(rig)
     assert correction(rig) == 0.0
     assert rig.gateway.calls == []
@@ -9294,7 +9294,7 @@ async def test_the_correction_freezes_while_foreign_heat_warms_a_zone(rig: Rig) 
     """Principle 13 (5): foreign heat — the monitor's view of a zone's source — freezes the
     comfort correction. Negative: the source off, it rises."""
     rig.hass.states.async_set("switch.fireplace", "on")
-    entry_options = options(rig.zones)
+    entry_options = options(rig.zones, comfort_correction=True)  # off by default since K4.1
     entry_options["zones"][0]["foreign_heat"] = [
         {"entity_id": "switch.fireplace", "kind": "switch"}
     ]
@@ -9365,7 +9365,7 @@ async def test_a_fixed_circuit_is_judged_by_its_own_flow_sensor(rig: Rig, own_se
 
 async def test_a_reset_once_the_unit_stops_does_nothing(rig: Rig) -> None:
     short_room(rig)
-    await start(rig)
+    await start(rig, comfort_correction=True)  # off by default since K4.1
     await rig.switch(True)
     await rig.advance(1860, step=60)
     assert rig.entry is not None
