@@ -928,6 +928,49 @@ def test_a_short_regular_switch_off_counts_and_steps_aside_at_the_fourth(repeat_
         assert len(ons) <= 8  # then left alone: no boiler start every 2 minutes
 
 
+@pytest.mark.parametrize("timer_s", [599.0, 545.0])
+def test_a_ten_minute_timer_measured_a_little_short_is_the_relays_own(timer_s: float) -> None:
+    """KD-02: the shortest timer taken for the relay's own is 10 min, and a measured age may be a
+    minute off: switch-offs recurring 599 s or 545 s into their on-periods — a 10-min timer
+    measured short — are the relay's own (from 540 s on): the first counted, then answered and
+    uncounted, never a step aside (before: counted at 10, 20 and 30 min, a step aside at 40, a
+    cold house). The form's floor for a declared timer stays 10 min."""
+    config = RelayConfig(
+        reports=RelayReports.YES, power_on=RelayPowerOn.OFF, timer=RelayTimer.UNKNOWN
+    )
+    relay = Relay(timer_s=timer_s, restarts_timer=False)
+    state, results = drive(relay, config, True, 0.0, 3 * HOUR_S)
+    counted = lost(results)
+    assert len(counted) == 1  # the first: nothing to compare it with yet
+    assert timer_s <= counted[0] < timer_s + 10.0  # seen at the next step
+    assert events(results) == []
+    assert not state.blocked
+    assert state.timer_seen_s is not None
+    assert abs(state.timer_seen_s - timer_s) <= 10.0
+    assert relay.on
+    with pytest.raises(ValueError, match="10 to 120"):
+        RelayConfig(timer=RelayTimer.MINUTES, timer_s=timer_s)  # declared: 10 min at least
+
+
+@pytest.mark.parametrize("timer_s", [535.0, 120.0])
+def test_a_regular_switch_off_under_nine_minutes_counts_toward_answer_n(timer_s: float) -> None:
+    """KD-02's other side: switch-offs recurring 535 s or 120 s into their on-periods are short of
+    10 min by more than a minute: counted toward answer N, the fourth within a day steps aside,
+    and the length is noted for the latch issue."""
+    config = RelayConfig(
+        reports=RelayReports.YES, power_on=RelayPowerOn.OFF, timer=RelayTimer.UNKNOWN
+    )
+    relay = Relay(timer_s=timer_s, restarts_timer=False)
+    state, results = drive(relay, config, True, 0.0, 3 * HOUR_S)
+    assert len(lost(results)) == 3
+    assert [event for _t, event in events(results)] == [GuardEvent.OUTSIDE_CHANGE]
+    assert all(abs(age - timer_s) <= 10.0 for _at, age in state.lapses)
+    assert state.blocked
+    assert state.timer_seen_s is None
+    assert state.short_off_s is not None
+    assert abs(state.short_off_s - timer_s) <= 10.0
+
+
 def test_a_short_regular_switch_off_is_named_only_where_two_agree() -> None:
     """The length the latch issue names (K4.2): two of the day's counted switch-offs the same
     time into their on-periods, within 60 s, and shorter than 10 min; none for irregular ones,
@@ -941,6 +984,8 @@ def test_a_short_regular_switch_off_is_named_only_where_two_agree() -> None:
     assert named((100.0, 120.0)) is None
     assert named((100.0, 120.0), (400.0, 190.0)) is None  # 70 s apart
     assert named((100.0, 590.0), (900.0, 640.0)) is None  # 615 s: the relay's own
+    assert named((100.0, 545.0), (900.0, 550.0)) is None  # 547.5 s: within a minute of 10 min
+    assert named((100.0, 530.0), (900.0, 540.0)) == 535.0  # under 9 min: short (KD-02)
     assert named((100.0, 120.0), (400.0, 130.0), now=100.0 + DAY) is None  # the first expired
     assert named() is None
 

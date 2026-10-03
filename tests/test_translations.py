@@ -986,7 +986,7 @@ def test_the_short_relay_timer_texts_are_translated() -> None:
     on = SOURCE["issues"]["control_latched_relay_short_timer_on"]["description"]
     assert "switches it off again" in on  # the rest state "on" does not hold
     timer = SOURCE["options"]["step"]["control_relay"]["data_description"]["relay_off_timer"]
-    assert "10 min or more" in timer
+    assert "9 min or more (a 10-min timer measured up to a minute short)" in timer  # KD-02
 
 
 def test_the_heating_read_back_says_how_soon_it_must_report() -> None:

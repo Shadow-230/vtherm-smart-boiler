@@ -233,7 +233,7 @@ from .core.loop import (
 )
 from .core.readings import BoilerSnapshot, ZoneState
 from .core.relay import (
-    TIMER_SHORTEST_S,
+    TIMER_RECOGNISED_S,
     ProofSeen,
     ProofState,
     RelaySeen,
@@ -1066,10 +1066,11 @@ class ControlUnit:
         if data.get("relay_timer_entity") != relay.entity or relay.timer is not RelayTimer.UNKNOWN:
             # Another relay's, or its timer declared since: nothing to recognise any more.
             relay_timer_seen, relay_lapses = None, ()
-        if relay_timer_seen is not None and relay_timer_seen < TIMER_SHORTEST_S:
-            # An earlier build could take a short one for the relay's own: never now (K4.2).
+        if relay_timer_seen is not None and relay_timer_seen < TIMER_RECOGNISED_S:
+            # An earlier build could take a short one for the relay's own: never now (K4.2;
+            # 10 min less a minute's tolerance, KD-02).
             _LOGGER.warning(
-                "Ignoring a stored relay timer shorter than 10 min: its switch-offs count again"
+                "Ignoring a stored relay timer shorter than 9 min: its switch-offs count again"
             )
             relay_timer_seen = None
         latched = _flag(data.get("latched"))

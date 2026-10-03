@@ -45,13 +45,14 @@ order:
    into its on-period as an earlier one, within ``TIMER_TOLERANCE_S`` — or a whole multiple of
    it, up to ``TIMER_MULTIPLES``, where a renewal reaching the relay just after its timer had
    switched it off restarted that timer unseen — shows the relay's own timer of that length
-   (Z4R-02), where that length is ``TIMER_SHORTEST_S`` or more: from then on a switch-off at that
-   age, or a multiple of it, is its lapse — "on" again, not counted — and the control unit asks
-   the user to declare the timer; a switch-off at another age still counts. A shorter regular
-   switch-off is never taken for the relay's own timer — each would start the boiler again — so
-   it keeps counting, and the fourth within a day steps aside; the latch issue names its length
-   (K4.2, ``short_switch_off_s``). An on-period is counted from the relay's own last "on" where
-   Home Assistant shows one later than the plugin's;
+   (Z4R-02), where that length is ``TIMER_RECOGNISED_S`` or more — 10 min, a measurement a minute
+   short allowed (KD-02): from then on a switch-off at that age, or a multiple of it, is its
+   lapse — "on" again, not counted — and the control unit asks the user to declare the timer; a
+   switch-off at another age still counts. A shorter regular switch-off is never taken for the
+   relay's own timer — each would start the boiler again — so it keeps counting, and the fourth
+   within a day steps aside; the latch issue names its length (K4.2, ``short_switch_off_s``). An
+   on-period is counted from the relay's own last "on" where Home Assistant shows one later than
+   the plugin's;
 6. never read back since a send, for longer than ``RELAY_CONFIRM_S`` → not confirmed ("write
    ignored"), sent again at the next check; after each of the session's first
    ``RELAY_START_SENDS`` sends → ignored from the start: not written again this session, repeats
@@ -111,11 +112,14 @@ TIMER_MAX_S = 7200.0
 # A declared timer's lapse at or after max(timer − 60 s, timer ÷ 2); with "I don't know", two
 # switch-offs this close in age into their on-periods show the relay's own timer (Z4R-02).
 TIMER_TOLERANCE_S = 60.0
+# KD-02: the shortest recurring age taken for the relay's own timer — 10 min, less the tolerance a
+# measured age is allowed, so a real 10-min timer seen a second or a minute short is its own.
+TIMER_RECOGNISED_S = TIMER_SHORTEST_S - TIMER_TOLERANCE_S
 # A lapse a renewal hid — it arrived a moment after the relay's timer had switched it off, and
 # restarted the timer with no trace in Home Assistant — leaves the next one seen a whole multiple
 # of the timer into the on-period: multiples up to this count as the same timer (Z4R-02), only
-# for a timer of ``TIMER_SHORTEST_S`` or longer (below about 5 min their tolerance windows would
-# cover almost any time).
+# for a timer of ``TIMER_RECOGNISED_S`` or longer (below about 5 min their tolerance windows
+# would cover almost any time).
 TIMER_MULTIPLES = 3
 PROOF_WINDOW_S = 1800.0  # longer than a common 20-minute restart lockout
 PROOF_FLOW_RISE_K = 5.0
@@ -450,12 +454,12 @@ def _timer_of(state: RelayState, age: float, now: float) -> float | None:
     before it — within ``TIMER_TOLERANCE_S``, or a whole multiple of it where a renewal hid a
     lapse in between (Z4R-02): the timer seen already (or this age, where that one was a multiple
     of it), the two ages' mean, or the shorter of two a multiple apart; ``None`` for an irregular
-    switch-off, and for a length below ``TIMER_SHORTEST_S`` (K4.2)."""
+    switch-off, and for a length below ``TIMER_RECOGNISED_S`` (K4.2, KD-02)."""
     seen = state.timer_seen_s
-    if seen is not None and seen >= TIMER_SHORTEST_S:
+    if seen is not None and seen >= TIMER_RECOGNISED_S:
         if _times(age, seen) is not None:
             return seen
-        if _times(seen, age) is not None and age >= TIMER_SHORTEST_S:
+        if _times(seen, age) is not None and age >= TIMER_RECOGNISED_S:
             return age  # shorter than seen
         return None
     for at, earlier in state.lapses:
@@ -466,7 +470,7 @@ def _timer_of(state: RelayState, age: float, now: float) -> float | None:
         if times is None:
             continue
         timer = (age + earlier) / 2.0 if times == 1 else short
-        if timer >= TIMER_SHORTEST_S:
+        if timer >= TIMER_RECOGNISED_S:
             return timer
     return None
 
@@ -474,11 +478,11 @@ def _timer_of(state: RelayState, age: float, now: float) -> float | None:
 def _times(age: float, timer: float) -> int | None:
     """How many timer lengths ``age`` is, where it is a whole number of them within
     ``TIMER_TOLERANCE_S``: one, or up to ``TIMER_MULTIPLES`` for a timer of at least
-    ``TIMER_SHORTEST_S``; ``None`` otherwise."""
+    ``TIMER_RECOGNISED_S``; ``None`` otherwise."""
     times = round(age / timer)
     if times < 1 or abs(age - times * timer) > TIMER_TOLERANCE_S:
         return None
-    if times > 1 and (times > TIMER_MULTIPLES or timer < TIMER_SHORTEST_S):
+    if times > 1 and (times > TIMER_MULTIPLES or timer < TIMER_RECOGNISED_S):
         return None
     return times
 
@@ -486,13 +490,13 @@ def _times(age: float, timer: float) -> int | None:
 def short_switch_off_s(state: RelayState, now: float) -> float | None:
     """How long into their on-periods the day's counted switch-offs came, where that was regular
     but too short to be the relay's own timer (K4.2): the mean of the latest two within
-    ``TIMER_TOLERANCE_S`` of each other and below ``TIMER_SHORTEST_S`` — for the latch issue to
+    ``TIMER_TOLERANCE_S`` of each other and below ``TIMER_RECOGNISED_S`` — for the latch issue to
     name; ``None`` otherwise."""
     ages = [age for at, age in state.lapses if now - at < RESTART_WINDOW_S]
     for index in range(len(ages) - 1, 0, -1):
         for earlier in reversed(ages[:index]):
             mean = (ages[index] + earlier) / 2.0
-            if abs(ages[index] - earlier) <= TIMER_TOLERANCE_S and mean < TIMER_SHORTEST_S:
+            if abs(ages[index] - earlier) <= TIMER_TOLERANCE_S and mean < TIMER_RECOGNISED_S:
                 return mean
     return None
 

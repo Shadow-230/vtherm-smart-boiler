@@ -10979,7 +10979,16 @@ async def test_unreadable_relay_memory_in_the_store_is_skipped(
 
 @pytest.mark.parametrize(
     "case",
-    ["kept", "unreadable", "not_a_list", "not_a_pair", "another_relay", "declared", "too_short"],
+    [
+        "kept",
+        "unreadable",
+        "not_a_list",
+        "not_a_pair",
+        "another_relay",
+        "declared",
+        "too_short",
+        "a_minute_short",
+    ],
 )
 async def test_the_relays_own_timer_is_stored_and_read_cautiously(
     rig: Rig,
@@ -10992,8 +11001,9 @@ async def test_the_relays_own_timer_is_stored_and_read_cautiously(
     switch-offs compared with it, are stored with the relay and read back at the next run — a
     restart or an options save forgets neither. Read cautiously: a value of another shape is
     skipped and logged, the rest restored; another relay's, or one kept from before the timer
-    was declared, are dropped — and a timer seen shorter than 10 min, which an earlier build
-    could store, is never the relay's own (K4.2): dropped and logged, its switch-offs kept."""
+    was declared, are dropped — and a timer seen shorter than 9 min, which an earlier build could
+    store, is never the relay's own (K4.2): dropped and logged, its switch-offs kept; one a minute
+    short of 10 min is (KD-02): kept."""
     at = START.timestamp()
     stored = relay_restorable(
         rig,
@@ -11011,6 +11021,8 @@ async def test_the_relays_own_timer_is_stored_and_read_cautiously(
         stored |= {"relay_timer_entity": "switch.another_relay"}
     if case == "too_short":
         stored |= {"relay_timer_seen_s": 120.0, "relay_lapses": [[at, 120.0]]}
+    if case == "a_minute_short":
+        stored |= {"relay_timer_seen_s": 545.0, "relay_lapses": [[at, 545.0]]}
     timer = (
         {"relay_off_timer": "minutes", "relay_off_timer_min": 27}
         if case == "declared"
@@ -11032,7 +11044,11 @@ async def test_the_relays_own_timer_is_stored_and_read_cautiously(
     elif case == "too_short":  # never the relay's own; its switch-offs still count
         assert memory.timer_seen_s is None
         assert memory.lapses == ((at, 120.0),)
-        assert _logged(caplog, logging.WARNING, "shorter than 10 min") == 1
+        assert _logged(caplog, logging.WARNING, "shorter than 9 min") == 1
+    elif case == "a_minute_short":  # a 10-min timer measured short: the relay's own (KD-02)
+        assert memory.timer_seen_s == 545.0
+        assert memory.lapses == ((at, 545.0),)
+        assert _logged(caplog, logging.WARNING, "shorter than") == 0
     elif case == "kept":
         assert memory.timer_seen_s == 1620.0
         assert memory.lapses == ((at, 1620.0),)
