@@ -327,6 +327,18 @@ async def test_a_boiler_fault_switches_heating_off_without_a_hand_back(rig: Rig)
     assert issue(rig, "boiler_fault") is None
 
 
+async def test_a_boiler_fault_raises_no_sign_the_boiler_heats(rig: Rig) -> None:
+    """Decision 2 of 0.2.3 (SB-01): the boiler's own fault switches heating off — heating is not
+    commanded, so "no sign the boiler heats" counts nothing, a zone calling and the flame off."""
+    await set_up(rig, add_entry(rig, with_fault(rig)))
+    await rig.switch(True)
+    rig.hass.states.async_set(LOW_WATER, "on")
+    await rig.advance(45 * MINUTE)
+    assert rig.state("sensor", "control_state").state == "boiler_fault"
+    assert rig.state("binary_sensor", "alarm_boiler_not_responding").state == "off"
+    assert issue(rig, "no_sign_boiler_heats") is None
+
+
 @pytest.mark.parametrize("gate", [None, "off", "unknown", "on"])
 async def test_a_gateway_fault_flag_counts_only_with_the_fault_indication_on(
     rig: Rig, gate: str | None

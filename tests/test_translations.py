@@ -1053,6 +1053,24 @@ def test_the_setpoint_not_shown_issue_is_translated() -> None:
     assert "does not hand the boiler back" in SOURCE["issues"][NOT_SHOWN_ISSUE]["description"]
 
 
+def test_the_no_sign_the_boiler_heats_issue_is_translated() -> None:
+    """Decision 2 of 0.2.3 (SB-01): the warning of a boiler that shows no sign of heating on the
+    water paths, in every language, with its minutes; it says what it may mean — a lockout,
+    summer mode or heating off on the panel, no gas — what to check, and that control goes on
+    without a hand-back. The alarm's name says the same on every path."""
+    from custom_components.vtherm_smart_boiler.control import NO_HEAT_SIGN_ISSUE
+
+    for language in ALL_LANGUAGES:
+        issue = _texts(language)["issues"][NO_HEAT_SIGN_ISSUE]
+        assert issue["title"], language
+        assert PLACEHOLDER.findall(issue["description"]) == ["minutes"], language
+    text = SOURCE["issues"][NO_HEAT_SIGN_ISSUE]["description"]
+    for said in ("locked out", "summer mode", "gas", "does not hand the boiler back"):
+        assert said in text, said
+    alarm = SOURCE["entity"]["binary_sensor"]["alarm_boiler_not_responding"]["name"]
+    assert alarm == "Control: no sign the boiler heats"
+
+
 def test_the_comfort_correction_says_it_is_off_and_what_it_risks() -> None:
     """K4.1: the comfort correction's description says it is off by default, and what switching
     it on risks with VT's TPI zones — the water at its +3 K edge while a zone at full duty stays

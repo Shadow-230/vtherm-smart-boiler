@@ -218,6 +218,7 @@ from .core.hand_back import (
     third_value,
     watch_foreign,
 )
+from .core.heat_sign import HeatSignSeen, HeatSignState, follow_heat_sign
 from .core.learning import (
     LearningState,
     PauseCause,
@@ -248,6 +249,7 @@ from .core.loop import (
 )
 from .core.readings import BoilerSnapshot, ZoneState
 from .core.relay import (
+    PROOF_WINDOW_S,
     RELAY_NOT_TAKEN_CHECKS,
     TIMER_RECOGNISED_S,
     ProofSeen,
@@ -406,6 +408,9 @@ RELAY_NOT_TAKING_ISSUE = "relay_not_taking"
 # Z4R-02: with the timer "I don't know", the relay seen switching itself off twice the same time
 # into an on-period — its own timer: a warning repair issue asks to declare it.
 RELAY_TIMER_ISSUE = "relay_timer_seen"
+# Decision 2 of 0.2.3 (SB-01): on the water paths, "no sign the boiler heats" — a warning repair
+# issue beside the information alarm; never a hand-back.
+NO_HEAT_SIGN_ISSUE = "no_sign_boiler_heats"
 # Y4 (the V3 carry-over): SmartPI zones whose learning the plugin paused and could not switch back
 # on for a day — no longer tried: a warning repair issue naming them, told once in the log, until
 # the zone's learning is on again or the plugin pauses it again.
@@ -618,15 +623,16 @@ class ControlAlarm(StrEnum):
     # ask for heat; and a demand criterion no known zone can feed (P-14). Neither has a reaction.
     NO_ZONE_KNOWN = "no_zone_known"
     DEMAND_CRITERION_NO_DATA = "demand_criterion_no_data"
-    # X8, the relay path only: the relay out of reach for five minutes (never a hand-back, R6);
-    # no sign the boiler heats for 30 minutes of the relay on (information, R12).
+    # X8, the relay path only: the relay out of reach for five minutes (never a hand-back, R6).
+    # Every path: no sign the boiler heats for 30 minutes — of the relay on (information, R12);
+    # on the water paths, of heating commanded while a zone calls (decision 2 of 0.2.3).
     RELAY_UNREACHABLE = "relay_unreachable"
     BOILER_NOT_RESPONDING = "boiler_not_responding"
 
 
 # Alarms that exist on one path only (R15): the relay's on the relay path; the boiler link's and
 # the missing confirmation elsewhere — a relay out of reach is "relay unreachable".
-RELAY_ONLY_ALARMS = frozenset({ControlAlarm.RELAY_UNREACHABLE, ControlAlarm.BOILER_NOT_RESPONDING})
+RELAY_ONLY_ALARMS = frozenset({ControlAlarm.RELAY_UNREACHABLE})
 NOT_FOR_RELAY_ALARMS = frozenset({ControlAlarm.BOILER_LINK_LOST, ControlAlarm.CONFIRMATION_MISSING})
 
 
@@ -897,6 +903,10 @@ class ControlUnit:
         self._relay_outages_seen = 0
         self._restore_gave_way = False  # R11: this step's restore gave way, the relay not there
         self._proof = ProofState()
+        # Decision 2 of 0.2.3 (SB-01): "no sign the boiler heats" on the water paths — its count,
+        # and whether its repair issue is up.
+        self._heat_sign = HeatSignState()
+        self._heat_sign_issue = False
         self._relay_unreachable_issue: tuple[str, str] | None = None
         self._relay_ignored_issue: tuple[str, str] | None = None
         self._relay_not_taking_issue: tuple[str, str] | None = None
@@ -1407,6 +1417,7 @@ class ControlUnit:
         self._delete_read_back_issue()  # the next run tells again, once its wait has lasted
         self._delete_ignored_issue()  # the next session tries the command again
         self._delete_not_shown_issue()  # the next run tells again, after its 5 minutes
+        self._end_heat_sign()  # the next run counts afresh
         # The resumes given up: stored, the next run with a unit shows them again (Y4).
         entry_id = self._coordinator.config_entry.entry_id
         ir.async_delete_issue(self._hass, DOMAIN, f"{LEARNING_NOT_RESUMED_ISSUE}_{entry_id}")
@@ -1681,6 +1692,7 @@ class ControlUnit:
                 self._delete_read_back_issue()
                 self._delete_ignored_issue()  # it goes with the session (Z4-11)
                 self._delete_not_shown_issue()  # and so does this one (Z4R2-03)
+                self._end_heat_sign()  # and "no sign the boiler heats" (decision 2 of 0.2.3)
             # The wish is stored before anything else can fail (P-11).
             await self._coordinator.async_save_control_now()
             await self._async_run_step(now)
@@ -1822,6 +1834,7 @@ class ControlUnit:
         self._follow_no_zone_known(now, out.decision)
         self._follow_read_back_wait(now, out.decision.reasons)
         self._follow_decision_alarms(out, monitor_failed)
+        self._follow_heat_sign(now, snapshot, out, dhw)
         self._follow_link_issue()
         ignored = self._follow_target_alarms(out)
         self._follow_ignored_no_heat()
@@ -2245,6 +2258,84 @@ class ControlUnit:
         if self._not_shown_issue:
             self._not_shown_issue = False
             ir.async_delete_issue(self._hass, DOMAIN, self._not_shown_issue_id())
+
+    def _follow_heat_sign(
+        self, now: float, snapshot: BoilerSnapshot, out: LoopOutput, dhw: bool | None
+    ) -> None:
+        """Decision 2 of 0.2.3 (SB-01), the water paths: heating commanded — control holds the
+        boiler with heating on, writing — while a zone calls, and for 30 minutes no sign of heat
+        (``core/heat_sign.py``): the information alarm "no sign the boiler heats" and a warning
+        repair issue, until a sign of heat or control is switched off. Never a hand-back. The
+        relay path has its own proof (R12)."""
+        if self._relay_path:
+            return
+        control = self._session.loop.control
+        command = control.command
+        if not self.enabled:
+            self._heat_sign = HeatSignState()
+        else:
+            commanded = (
+                control.controlling
+                and command is not None
+                and command.ch_enable
+                and not out.blocked
+            )
+            freshness = self._coordinator.config.freshness
+            seen = HeatSignSeen(
+                commanded=commanded,
+                calling=out.decision.calling,
+                flame=snapshot.flag(Signal.FLAME, freshness.get(Signal.FLAME)),
+                flow=snapshot.number(Signal.FLOW, freshness.get(Signal.FLOW)),
+                setpoint=self._heat_sign_setpoint(),
+                dhw=dhw,
+            )
+            self._heat_sign = follow_heat_sign(self._heat_sign, seen, now)
+        if not self._heat_sign.alarm:
+            self._session.alarms.discard(ControlAlarm.BOILER_NOT_RESPONDING)
+            self._delete_heat_sign_issue()
+            return
+        self._session.alarms.add(ControlAlarm.BOILER_NOT_RESPONDING)
+        if self._heat_sign_issue:
+            return
+        _LOGGER.warning(
+            "Heating has been on for %d minutes while a room asks for heat, and the boiler shows "
+            "no sign of heating; control goes on",
+            round(PROOF_WINDOW_S / MINUTE_S),
+        )
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            self._heat_sign_issue_id(),
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=NO_HEAT_SIGN_ISSUE,
+            translation_placeholders={"minutes": f"{PROOF_WINDOW_S / MINUTE_S:.0f}"},
+        )
+        self._heat_sign_issue = True
+
+    def _heat_sign_setpoint(self) -> float | None:
+        """The flow setpoint the plugin last wrote (on the entity's grid where it has one), else
+        the one it commands."""
+        loop = self._session.loop
+        if loop.setpoint.written is not None:
+            return loop.setpoint.written
+        command = loop.control.command
+        return None if command is None else command.setpoint
+
+    def _heat_sign_issue_id(self) -> str:
+        return f"{NO_HEAT_SIGN_ISSUE}_{self._coordinator.config_entry.entry_id}"
+
+    def _end_heat_sign(self) -> None:
+        """Control switched off, or the unit stopping: "no sign the boiler heats" counts afresh
+        and its issue goes (its alarm goes with the session)."""
+        self._heat_sign = HeatSignState()
+        self._delete_heat_sign_issue()
+
+    def _delete_heat_sign_issue(self) -> None:
+        if self._heat_sign_issue:
+            self._heat_sign_issue = False
+            ir.async_delete_issue(self._hass, DOMAIN, self._heat_sign_issue_id())
 
     def _target_ready(self) -> bool:
         """The write target can take a command: on the entity path each entity written to is

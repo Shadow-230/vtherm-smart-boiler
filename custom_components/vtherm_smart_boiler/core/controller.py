@@ -362,6 +362,9 @@ class ControlDecision:
     frost_closed: tuple[str, ...] = ()
     activation_at: float | None = None
     correction: float = 0.0
+    # Decision 2 of 0.2.3 (SB-01): a zone calls for heat — the zones' demand, at every step;
+    # "no sign the boiler heats" counts only then.
+    calling: bool = False
 
 
 def clock_start(since: float | None, now: float) -> float:
@@ -561,6 +564,7 @@ def decide(
         zones_without_data=() if recognition else demand.zones_without_data,
         frost_closed=state.frost_closed,  # held through the recognition period
         correction=state.correction,
+        calling=demand.wanted is True,
     )
 
 

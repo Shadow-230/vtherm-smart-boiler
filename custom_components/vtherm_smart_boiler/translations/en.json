@@ -1791,7 +1791,7 @@
             "name": "Wall thermostat after a hand-back: what is missing"
           },
           "relay_proof": {
-            "name": "Proof that the boiler heats (relay)",
+            "name": "Proof that the boiler heats",
             "state": {
               "available": "Available",
               "degraded": "Degraded: works from weaker inputs",
@@ -1799,10 +1799,10 @@
             }
           },
           "relay_proof_missing": {
-            "name": "Proof that the boiler heats (relay): missing"
+            "name": "Proof that the boiler heats: missing"
           },
           "relay_proof_missing_text": {
-            "name": "Proof that the boiler heats (relay): what is missing"
+            "name": "Proof that the boiler heats: what is missing"
           },
           "forecasts": {
             "name": "Forecast recording",
@@ -2656,6 +2656,10 @@
     "setpoint_not_shown": {
       "title": "The boiler does not show the plugin's water temperature",
       "description": "For 5 minutes the boiler's setpoint read-back has shown another water temperature than the one the plugin set. The plugin keeps control and does not hand the boiler back for this: the boiler may keep its own value — a limit set on it, a setting that locks it — or the entity picked as the setpoint read-back may not report the setpoint the boiler received, or report it late. Check the boiler's maximum water temperature and its control settings, and the setpoint read-back picked in the control options. Where a hand-back stops heating, the house may not get the heat it needs meanwhile. This notice goes once the read-back shows the plugin's value, or when you switch control off."
+    },
+    "no_sign_boiler_heats": {
+      "title": "No sign the boiler heats",
+      "description": "For {minutes} minutes control has had heating on while a room asks for heat, and the boiler has shown no sign of heating: its flame stayed off — or, without a flame signal, its flow temperature did not rise — while the water stayed below the plugin's setpoint. The boiler may be locked out after a fault, set to summer mode or with heating switched off on its own panel or in the maker's app, or without gas. Check the boiler's display for a fault or lockout code and reset it as its manual says; check that heating is switched on on the boiler's panel and in the maker's app, and that the gas supply is open. If the boiler's fault signals are available, mapping them in the options lets control see a fault at once. Control goes on and does not hand the boiler back for this. This notice goes once the flame shows on or the flow temperature rises, or when you switch control off."
     },
     "relay_unreachable_off": {
       "title": "The relay cannot be reached",

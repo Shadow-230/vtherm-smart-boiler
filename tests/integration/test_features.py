@@ -270,7 +270,9 @@ CASES: list[tuple[str, str, Change, str, str]] = [
         "inactive",
         "room_setpoint",
     ),
-    ("relay_proof", "water", lambda options: None, "inactive", "relay_control"),
+    # Decision 2 of 0.2.3 (SB-01): on the water paths, the flame or the flow.
+    ("relay_proof", "water", without(Signal.FLAME, Signal.FLOW), "inactive", "flame"),
+    ("relay_proof", "water", no_control, "inactive", "control"),
     (
         "relay_proof",
         "relay",
@@ -363,13 +365,12 @@ async def test_with_every_input_every_feature_of_the_path_is_available(
     hass: HomeAssistant, zones: FakeZones, forecasts: FakeForecasts, base: str
 ) -> None:
     """The base of the table: everything given, each feature is available — except those of
-    the other path (the relay's proof on a water path; the correction and a gateway's wall
-    thermostat on the relay path) — and none is counted inactive but those."""
+    the other path (the correction and a gateway's wall thermostat on the relay path; the proof
+    that the boiler heats is on both since decision 2 of 0.2.3) — and none is counted inactive
+    but those."""
     entry = await _setup(hass, zones, base, lambda options: None)
     state = features_state(hass, entry)
-    other = (
-        {"relay_proof"} if base == "water" else {"comfort_correction", "wall_thermostat_fallback"}
-    )
+    other = set() if base == "water" else {"comfort_correction", "wall_thermostat_fallback"}
     from custom_components.vtherm_smart_boiler.core.signal_check import Feature
 
     for feature in Feature:

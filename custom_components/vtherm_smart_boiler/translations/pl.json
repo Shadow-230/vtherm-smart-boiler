@@ -1791,7 +1791,7 @@
             "name": "Termostat ścienny po oddaniu sterowania: czego brakuje"
           },
           "relay_proof": {
-            "name": "Dowód, że kocioł grzeje (przekaźnik)",
+            "name": "Dowód, że kocioł grzeje",
             "state": {
               "available": "Dostępna",
               "degraded": "Ograniczona: działa ze słabszych danych",
@@ -1799,10 +1799,10 @@
             }
           },
           "relay_proof_missing": {
-            "name": "Dowód, że kocioł grzeje (przekaźnik): brakuje"
+            "name": "Dowód, że kocioł grzeje: brakuje"
           },
           "relay_proof_missing_text": {
-            "name": "Dowód, że kocioł grzeje (przekaźnik): czego brakuje"
+            "name": "Dowód, że kocioł grzeje: czego brakuje"
           },
           "forecasts": {
             "name": "Zapis prognoz",
@@ -2656,6 +2656,10 @@
     "setpoint_not_shown": {
       "title": "Kocioł nie pokazuje temperatury wody ustawionej przez wtyczkę",
       "description": "Od 5 minut odczyt zwrotny nastawy kotła pokazuje inną temperaturę wody niż ta, którą ustawiła wtyczka. Wtyczka nadal steruje i nie oddaje z tego powodu kotła: kocioł może trzymać własną wartość — ustawione w nim ograniczenie albo ustawienie, które go blokuje — albo encja wybrana jako odczyt zwrotny nastawy może nie pokazywać nastawy, którą kocioł otrzymał, lub pokazywać ją z opóźnieniem. Sprawdź maksymalną temperaturę wody i ustawienia sterowania kotła oraz odczyt zwrotny nastawy wybrany w opcjach sterowania. Tam, gdzie oddanie kotła wyłącza grzanie, dom może w tym czasie nie dostawać potrzebnego ciepła. To powiadomienie zniknie, gdy odczyt zwrotny pokaże wartość wtyczki albo gdy wyłączysz sterowanie."
+    },
+    "no_sign_boiler_heats": {
+      "title": "Brak oznak grzania kotła",
+      "description": "Od {minutes} minut sterowanie ma włączone grzanie, pomieszczenie prosi o ciepło, a kocioł nie pokazuje żadnej oznaki grzania: jego płomień pozostaje zgaszony — albo, bez sygnału płomienia, temperatura zasilania nie rośnie — a woda pozostaje chłodniejsza niż nastawa wtyczki. Kocioł może być zablokowany po awarii, przełączony w tryb letni albo mieć wyłączone grzanie na własnym panelu lub w aplikacji producenta, albo nie mieć gazu. Sprawdź na wyświetlaczu kotła kod błędu lub blokady i skasuj ją tak, jak podaje instrukcja kotła; sprawdź, czy grzanie jest włączone na panelu kotła i w aplikacji producenta oraz czy dopływ gazu jest otwarty. Jeśli sygnały awarii kotła są dostępne, przypisanie ich w opcjach pozwala sterowaniu od razu zobaczyć awarię. Sterowanie działa dalej i nie oddaje z tego powodu kotła. To powiadomienie zniknie, gdy płomień się zapali albo temperatura zasilania wzrośnie, albo gdy wyłączysz sterowanie."
     },
     "relay_unreachable_off": {
       "title": "Przekaźnik jest nieosiągalny",

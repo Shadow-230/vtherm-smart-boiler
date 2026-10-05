@@ -96,7 +96,8 @@ class Feature(StrEnum):
     # Y4: the verdict, and the features of phase X — the comfort correction, frost protection
     # and VT's activation delay (X4), the circuit's too-hot alarm (X4, decision 10), the lowest
     # water temperature's suggestion and the wall thermostat after a hand-back (X6), the relay's
-    # proof that the boiler heats (X8) — and the forecast snapshots.
+    # proof that the boiler heats (X8; on the water paths too, decision 2 of 0.2.3) — and the
+    # forecast snapshots.
     VERDICT = "verdict"
     COMFORT_CORRECTION = "comfort_correction"
     FROST_PROTECTION = "frost_protection"
@@ -305,9 +306,13 @@ def _proof_feature(
     mapped: frozenset[Signal], control: ControlKind | None, power_threshold: bool
 ) -> FeatureState:
     """X8 (R12): the proof that a relay's boiler heats — any one proof input, the power only
-    with its threshold; on the relay path only."""
-    if control is not ControlKind.RELAY:
-        return _state([RELAY_CONTROL])
+    with its threshold. Decision 2 of 0.2.3 (SB-01): on the water-temperature paths, "no sign
+    the boiler heats" — the flame or the flow."""
+    if control is None:
+        return _state([CONTROL])
+    if control is ControlKind.WATER:
+        water = (Signal.FLAME, Signal.FLOW)
+        return _state([] if any(s in mapped for s in water) else [s.value for s in water])
     inputs = [s for s in PROOF_SIGNALS if s in mapped]
     if inputs and not (inputs == [Signal.BOILER_POWER] and not power_threshold):
         return _state([])

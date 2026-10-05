@@ -258,6 +258,20 @@ def test_no_demand_is_idle() -> None:
     assert Reason.NO_DEMAND in decision.reasons
 
 
+def test_the_decision_says_whether_a_zone_calls() -> None:
+    """Decision 2 of 0.2.3 (SB-01): "no sign the boiler heats" counts only while a zone calls
+    — the zones' demand, whatever control does with it; unknown zones call for nothing."""
+    _state, [calling] = run([inputs(0.0)])
+    assert calling.calling
+    _state, [satisfied] = run([inputs(0.0, zones=(zone(0.0, valve_open=0.0),))])
+    assert not satisfied.calling
+    _state, [off] = run([inputs(0.0, enabled=False)])
+    assert off.calling  # control's own state is the control unit's to judge
+    unknown = (zone(0.0, valve_open=None, temperature=None, target=None),)
+    _state, [blind] = run([inputs(0.0, zones=unknown)])
+    assert not blind.calling
+
+
 def test_summer_and_winter_come_from_vt() -> None:
     """No summer switch of the plugin's own: a warm day with a zone calling heats; with VT's
     zones off it does not."""

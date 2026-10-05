@@ -120,7 +120,8 @@ def test_full_mapping() -> None:
     result = features(EVERYTHING, has_weather=True, has_gas_rates=True, **FULL)
     assert set(result) == set(Feature)
     inactive = {f for f, state in result.items() if state.status is not FeatureStatus.AVAILABLE}
-    assert inactive == {Feature.RELAY_PROOF}  # a water path has no relay
+    # Decision 2 of 0.2.3 (SB-01): a water path's proof of heat is its flame or its flow.
+    assert inactive == set()
     relay = features(
         EVERYTHING,
         has_weather=True,
@@ -307,11 +308,12 @@ CASES: list[tuple[Feature, dict[str, Any], FeatureStatus, tuple[str, ...]]] = [
         FeatureStatus.INACTIVE,
         ("room_setpoint",),
     ),
+    (Feature.RELAY_PROOF, {"control": None}, FeatureStatus.INACTIVE, ("control",)),
     (
         Feature.RELAY_PROOF,
-        {"control": ControlKind.WATER},
+        {"control": ControlKind.WATER, "without": {Signal.FLAME, Signal.FLOW}},
         FeatureStatus.INACTIVE,
-        ("relay_control",),
+        ("flame", "flow"),
     ),
     (
         Feature.RELAY_PROOF,
@@ -452,6 +454,19 @@ def test_the_relay_proof_counts_the_power_only_with_its_threshold() -> None:
     assert without.status is FeatureStatus.INACTIVE
     with_threshold = features(power, False, False, power_threshold=True, **relay)
     assert with_threshold[Feature.RELAY_PROOF].status is FeatureStatus.AVAILABLE
+
+
+def test_a_water_path_proves_heat_by_its_flame_or_its_flow() -> None:
+    """Decision 2 of 0.2.3 (SB-01): "no sign the boiler heats" on the water-temperature paths
+    judges the flame, else the flow — either one makes it available; the gas meter and the
+    power, which only the relay's proof reads, do not."""
+    water = {"control": ControlKind.WATER}
+    for signals in ({Signal.FLAME}, {Signal.FLOW}):
+        state = features(frozenset(signals), False, False, **water)[Feature.RELAY_PROOF]
+        assert state.status is FeatureStatus.AVAILABLE, signals
+    others = frozenset({Signal.GAS_METER, Signal.BOILER_POWER})
+    state = features(others, False, False, power_threshold=True, **water)[Feature.RELAY_PROOF]
+    assert (state.status, state.missing) == (FeatureStatus.INACTIVE, ("flame", "flow"))
 
 
 def test_the_suggestion_takes_the_read_back_for_the_ch_setpoint() -> None:

@@ -10927,6 +10927,7 @@ async def test_boiler_not_responding_after_thirty_minutes(rig: Rig, relay: FakeR
     await rig.advance(20)
     assert control_alarm(rig, "boiler_not_responding") == "on"
     assert rig.state("sensor", "control_state").attributes["boiler_heats"] == "not_seen"
+    assert issue(rig, NO_HEAT_SIGN) is None  # the water paths' issue (decision 2 of 0.2.3)
     rig.flame = True
     await rig.advance(10)
     assert control_alarm(rig, "boiler_not_responding") == "off"
@@ -10946,6 +10947,91 @@ async def test_no_heat_alarm_without_a_proof_input(rig: Rig, relay: FakeRelay) -
     assert rig.state("sensor", "control_state").attributes["boiler_heats"] == "unverified"
     switch = rig.state("switch", "control")
     assert switch.attributes["confirmation"] == "without_heat_confirmation"
+
+
+NO_HEAT_SIGN = "no_sign_boiler_heats"
+
+
+def no_heat_sign(rig: Rig) -> tuple[str, ir.IssueEntry | None]:
+    """The water paths' "no sign the boiler heats": its alarm and its repair issue."""
+    return control_alarm(rig, "boiler_not_responding"), issue(rig, NO_HEAT_SIGN)
+
+
+async def test_no_sign_the_boiler_heats_on_a_water_path(rig: Rig) -> None:
+    """Decision 2 of 0.2.3 (SB-01), the review's test: the gateway path, a calling zone, heating
+    on and the flame off — nothing at 29 minutes; at 31 the information alarm and a warning
+    repair issue, control still writing, no hand-back; the flame on clears both."""
+    await start(rig)
+    await rig.switch(True)
+    assert rig.flow is not None
+    assert rig.flow < rig.gateway.setpoints()[-1]
+    await rig.advance(29 * 60)
+    assert no_heat_sign(rig) == ("off", None)
+    await rig.advance(2 * 60)
+    alarm, found = no_heat_sign(rig)
+    assert alarm == "on"
+    assert found is not None
+    assert found.severity is ir.IssueSeverity.WARNING
+    assert found.translation_placeholders == {"minutes": "30"}
+    calls = len(rig.gateway.calls)
+    await rig.advance(60)
+    assert rig.gateway.calls[calls:]  # control goes on writing
+    state = rig.state("sensor", "control_state")
+    assert (state.state, state.attributes["latched_by"]) == ("heating", [])
+    rig.flame = True
+    await rig.advance(10)
+    assert no_heat_sign(rig) == ("off", None)
+
+
+async def test_no_sign_the_boiler_heats_waits_for_water_below_the_setpoint(rig: Rig) -> None:
+    """The water at the setpoint the plugin wrote (the gateway's value, on its 0.1-K step): a
+    boiler resting as asked is not judged."""
+    await start(rig)
+    await rig.switch(True)
+    rig.flow = rig.gateway.setpoints()[-1] + 0.1
+    await rig.advance(40 * 60)
+    assert no_heat_sign(rig) == ("off", None)
+
+
+@pytest.mark.parametrize("pause", ["zone", "hot_water"])
+async def test_no_sign_the_boiler_heats_counts_again_after_a_pause(rig: Rig, pause: str) -> None:
+    """The zone that stops calling, or a hot-water draw (and two minutes after it), starts the
+    count again."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20 * 60)
+    if pause == "zone":
+        rig.zones.set("living", valve_open_percent=0)
+    else:
+        rig.dhw = True
+    await rig.advance(60)
+    rig.zones.set("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+    rig.dhw = False
+    await rig.advance(27 * 60)
+    assert no_heat_sign(rig) == ("off", None)  # 48 minutes, at most 27 of them counted
+    await rig.advance(6 * 60)
+    assert no_heat_sign(rig)[0] == "on"
+
+
+async def test_no_sign_the_boiler_heats_needs_heating_commanded_and_a_sign_known(
+    rig: Rig,
+) -> None:
+    """Control switched off — the boiler handed back — clears the alarm and its issue, and
+    counts nothing; neither the flame nor the flow known judges nothing (the boiler link is
+    lost, and control hands back)."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(31 * 60)
+    assert no_heat_sign(rig)[0] == "on"
+    await rig.switch(False)
+    assert no_heat_sign(rig) == ("off", None)
+    await rig.advance(40 * 60)
+    assert no_heat_sign(rig) == ("off", None)
+    await rig.switch(True)
+    rig.flame = None
+    rig.flow = None
+    await rig.advance(40 * 60)
+    assert no_heat_sign(rig) == ("off", None)
 
 
 async def test_only_the_relays_services_are_called(rig: Rig, relay: FakeRelay) -> None:
