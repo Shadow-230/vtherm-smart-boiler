@@ -107,7 +107,7 @@ and VT's not-started zones read as the user's "off".
 | Step | Work |
 |---|---|
 | 1.1 | `SCOPE.md` and `docs/plan-0.2.2.md` take decisions 1–4, 6 and 12 (SB-01, SB-02, SB-03, SB-05, SB-06, SB-10; PB-03's one rule in SCOPE §7 and X3); `CLAUDE.md` "Where to continue" names this plan. |
-| 1.2 | No relay fights (decision 6): PB-01, PB-44, SB-05, SB-06. Keep the one rewrite through resends; a resend the relay never shows counts against another controller (answers C, N); the declared timer's lapse window bounded; a relay that stops taking commands mid-session raises an issue and, for "off", blocks and hands back. |
+| 1.2 ✅ | No relay fights (decision 6): PB-01, PB-44, SB-05, SB-06. Keep the one rewrite through resends; a resend the relay never shows counts against another controller (answers C, N); the declared timer's lapse window bounded; a relay that stops taking commands mid-session raises an issue and, for "off", blocks and hands back. |
 | 1.3 | The control unit's wish and hand-back debt hold under errors and restarts: PB-02, PB-04, PB-05, PB-12, PB-13, PB-14, PB-16, TB-02, TB-05, TB-06. The restored wish saved before anything else; the error path keyed on the debt and routed through the minute gate and the confirmation; the fixable owed issue when a hand-back stays unconfirmed; the lost-link issue kept across restarts; the old debt folded at the session's first write; a control-store write that fails noticed. |
 | 1.4 | "Nothing heats" visible and decision 3's end states settled (decisions 1–4, 12): PB-03, PB-23, SB-01, SB-02, SB-03, SB-10, TB-01. |
 | 1.5 | The check of part 1. |
@@ -148,6 +148,25 @@ and VT's not-started zones read as the user's "off".
 ## Open after 0.2.3
 
 Left on purpose for a later release; what a step leaves open is added here by name.
+
+1. Step 1.2 (relay): a relay stuck in one state while the plugin's command alternates faster than
+   about 15 min (VT's cycles) is never "not taken" — only the information alarm shows, and a
+   stuck-on relay can heat through the "off" periods without an error issue. A count of unshown
+   sends within a window would catch it but can turn isolated lost commands into a block — the
+   user's decision, K4.
+2. Step 1.2: a relay that keeps dropping out of reach every few minutes restarts the 3-check count
+   at each outage, so it is never "not taken" ("relay unreachable" and "commands lost" still
+   show) — K4.
+3. Step 1.2: a switch-back Home Assistant never records (a device coalescing its reports) cannot
+   be told from a relay not taking commands: decision 6's path, not answers C and N — K4.
+4. Step 1.2: an "on" not taken is sent again at every check for good (decision 6); a relay that
+   does switch on briefly but unseen would give the boiler a short pulse every 5 min — K4.
+5. Step 1.2: a declared timer must match the relay's real one within 60 s (or its 2× or 3×); a
+   longer real timer makes the plugin step aside after the fourth lapse within a day (before:
+   answered for good); the field's text says so — K4.
+6. Step 1.2: a relay that reports no state gets its command at once at every return from
+   unavailable or unknown (at least 5 s apart), so one that drops every minute is written more
+   often than the repeat interval — K4.
 
 ## After 0.2.3
 
