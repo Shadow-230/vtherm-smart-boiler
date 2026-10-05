@@ -18,8 +18,11 @@ from .control_config import WritePath, hand_back_effect, wall_thermostat_applies
 from .coordinator import SmartBoilerConfigEntry, SmartBoilerCoordinator
 from .entity import ControlEntity, coded_text
 
-# Blockers that pass on their own; control switched on waits for them instead of refusing.
-TRANSIENT_BLOCKERS = frozenset({"ha_starting", "vt_central_boiler_unknown", "monitor_failed"})
+# Blockers that pass on their own; control switched on waits for them instead of refusing — the
+# control store that cannot be written (PB-16) too, once a write works again.
+TRANSIENT_BLOCKERS = frozenset(
+    {"ha_starting", "vt_central_boiler_unknown", "monitor_failed", "control_state_not_saved"}
+)
 # Blockers the switch change itself clears.
 CLEARED_BY_SWITCHING = frozenset({"control_error"})
 # Latches that switching control off and on clears (answer O; decision 6 of 0.2.3): switching on

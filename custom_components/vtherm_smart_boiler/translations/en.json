@@ -1407,6 +1407,7 @@
               "setpoint_step_too_coarse": "The setpoint entity's step is too coarse",
               "control_error": "Stopped after an internal error: switch control off and on",
               "monitor_failed": "The plugin's monitor keeps failing",
+              "control_state_not_saved": "The plugin cannot save its memory of the boiler",
               "heating_off_ignored": "The boiler did not take \"heating off\": switch control off and on",
               "relay_off_not_taken": "The relay stopped taking \"off\": switch control off and on",
               "gateway_not_set_up": "The gateway's integration is removed or disabled",
@@ -2270,6 +2271,7 @@
               "setpoint_step_too_coarse": "The setpoint entity's step is too coarse",
               "control_error": "Stopped after an internal error: switch control off and on",
               "monitor_failed": "The plugin's monitor keeps failing",
+              "control_state_not_saved": "The plugin cannot save its memory of the boiler",
               "heating_off_ignored": "The boiler did not take \"heating off\": switch control off and on",
               "relay_off_not_taken": "The relay stopped taking \"off\": switch control off and on",
               "gateway_not_set_up": "The gateway's integration is removed or disabled",
@@ -2365,6 +2367,9 @@
     },
     "blocked_monitor_failed": {
       "message": "The plugin's monitor has failed for 5 minutes, so control handed the boiler back; it resumes on its own once the monitor works again. Check the log. Other reasons: {count} (all are listed on the control state)."
+    },
+    "blocked_control_state_not_saved": {
+      "message": "The plugin cannot save its memory of the boiler (see the repair issue), so control does not take the boiler; it resumes on its own once saving works again. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_timeout_needs_expiring_writes": {
       "message": "The device's timeout hands back only with expiring writes: choose a hand-back value or a switch in the options. Other reasons: {count} (all are listed on the control state)."
@@ -2501,6 +2506,10 @@
     "control_state_unreadable": {
       "title": "The plugin's memory of the boiler could not be read",
       "description": "The file in which the plugin remembers whether it holds the boiler could not be read: it is missing or damaged (Home Assistant may show its own notice about a damaged file). To be safe, the plugin assumed it held the boiler and handed it back first. Control then works as usual; check that the boiler and the control switch are as you expect."
+    },
+    "control_state_not_saved": {
+      "title": "The plugin cannot save its memory of the boiler",
+      "description": "Writing the file in which the plugin remembers whether it holds the boiler failed — a full disk, or a storage that turned read-only (Home Assistant's log has the error). A restart could then forget that the boiler holds a value the plugin wrote, so control does not take the boiler meanwhile: it handed it back, and a hand-back already owed is still made. Where a thermostat or the boiler's own control takes over, it heats now; where a hand-back stops heating, the boiler does not heat until control resumes. The plugin tries to save again every minute, and control resumes on its own once that works. Check Home Assistant's storage: its free space, and whether its disk or SD card is failing."
     },
     "hand_back_owed_after_removal": {
       "title": "The boiler may still hold a value from VTherm Smart Boiler",

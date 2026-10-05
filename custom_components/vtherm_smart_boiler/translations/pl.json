@@ -1407,6 +1407,7 @@
               "setpoint_step_too_coarse": "Krok encji nastawy jest za duży",
               "control_error": "Zatrzymane po błędzie wewnętrznym: wyłącz i włącz sterowanie",
               "monitor_failed": "Monitor wtyczki stale zawodzi",
+              "control_state_not_saved": "Wtyczka nie może zapisać swojej pamięci o kotle",
               "heating_off_ignored": "Kocioł nie przyjął „wyłącz grzanie”: wyłącz i włącz sterowanie",
               "relay_off_not_taken": "Przekaźnik przestał przyjmować „wyłącz”: wyłącz i włącz sterowanie",
               "gateway_not_set_up": "Integracja bramki jest usunięta lub wyłączona",
@@ -2270,6 +2271,7 @@
               "setpoint_step_too_coarse": "Krok encji nastawy jest za duży",
               "control_error": "Zatrzymane po błędzie wewnętrznym: wyłącz i włącz sterowanie",
               "monitor_failed": "Monitor wtyczki stale zawodzi",
+              "control_state_not_saved": "Wtyczka nie może zapisać swojej pamięci o kotle",
               "heating_off_ignored": "Kocioł nie przyjął „wyłącz grzanie”: wyłącz i włącz sterowanie",
               "relay_off_not_taken": "Przekaźnik przestał przyjmować „wyłącz”: wyłącz i włącz sterowanie",
               "gateway_not_set_up": "Integracja bramki jest usunięta lub wyłączona",
@@ -2365,6 +2367,9 @@
     },
     "blocked_monitor_failed": {
       "message": "Monitor wtyczki zawodzi od 5 minut, więc sterowanie oddało kocioł; wróci samo, gdy monitor znów zadziała. Sprawdź log. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
+    "blocked_control_state_not_saved": {
+      "message": "Wtyczka nie może zapisać swojej pamięci o kotle (zobacz zgłoszenie naprawy), więc sterowanie nie przejmuje kotła; wróci samo, gdy zapis znów zadziała. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_timeout_needs_expiring_writes": {
       "message": "Limit czasu urządzenia oddaje sterowanie tylko przy zapisach wygasających: wybierz w opcjach wartość oddania albo przełącznik. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
@@ -2501,6 +2506,10 @@
     "control_state_unreadable": {
       "title": "Nie udało się odczytać pamięci wtyczki o kotle",
       "description": "Plik, w którym wtyczka pamięta, czy steruje kotłem, nie dał się odczytać: brakuje go albo jest uszkodzony (Home Assistant może osobno zgłosić uszkodzony plik). Dla bezpieczeństwa wtyczka przyjęła, że sterowała kotłem, i najpierw go oddała. Potem sterowanie działa normalnie; sprawdź, czy kocioł i przełącznik sterowania są w stanie, jakiego oczekujesz."
+    },
+    "control_state_not_saved": {
+      "title": "Wtyczka nie może zapisać swojej pamięci o kotle",
+      "description": "Zapis pliku, w którym wtyczka pamięta, czy steruje kotłem, nie powiódł się — pełny dysk albo pamięć, która przeszła w tryb tylko do odczytu (błąd jest w logu Home Assistant). Po restarcie wtyczka mogłaby wtedy zapomnieć, że kocioł trzyma wartość przez nią zapisaną, więc sterowanie na razie nie przejmuje kotła: oddało go, a oddanie, które wtyczka już jest winna, i tak zostaje wysłane. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono teraz grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci. Wtyczka próbuje zapisać ponownie co minutę, a sterowanie wraca samo, gdy to się uda. Sprawdź pamięć Home Assistant: wolne miejsce i czy jej dysk lub karta SD nie zawodzi."
     },
     "hand_back_owed_after_removal": {
       "title": "Kocioł może nadal trzymać wartość z VTherm Smart Boiler",

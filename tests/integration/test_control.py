@@ -1297,6 +1297,7 @@ class FakeSwitch:
     on: bool = True
     stuck_on: bool = False  # it takes "on" but will not go off
     stuck_off: bool = False  # it takes "off" but will not go on
+    fail_off: bool = False  # "off" lands, then its call reports a failure (a slow integration)
 
     def register(self) -> None:
         fakes: dict[str, FakeSwitch] = self.hass.data.setdefault("fake_switches", {})
@@ -1309,6 +1310,8 @@ class FakeSwitch:
             fake.writes.append(on)
             fake.on = (on or fake.stuck_on) and not fake.stuck_off
             fake.publish()
+            if not on and fake.fail_off:
+                raise HomeAssistantError("timed out")
 
         async def turn_on(call: ServiceCall) -> None:
             await turn(call, True)
@@ -3612,6 +3615,8 @@ async def test_a_0_2_1_store_moves_to_the_control_store(
         "step_aside_seen": None,
         # Y4: the SmartPI resumes given up after a day (none here).
         "resume_given_up": {},
+        # PB-14: whether the lost link's hand-back issue was up (it was not).
+        "link_lost_issue": False,
     }
     assert hass_storage[control_key(entry)]["data"] == moved
     main = hass_storage[main_key(entry)]["data"]
@@ -4987,11 +4992,11 @@ async def test_an_end_of_session_hand_back_is_full_while_an_older_debt_exists(
     rig: Rig, hass_storage: dict[str, Any], older_debt: bool
 ) -> None:
     """P-49 (R2), as V5 decides it: the last run left a hand-back owed, with its held heating
-    switch left off, and this session's writes all fail (both targets away). Switched off, the
-    session's hand-back is the whole safe hand-back: the heating switch goes back on, though
-    this session never switched it — its success clears the older debt too. Without an older
-    debt the same: the heating part follows the hand-back's effect (S-27), not what the session
-    touched."""
+    switch left off, and this session's writes all fail (both targets away). The older debt is
+    folded into the session at its first write attempt (PB-13): the session holds the boiler.
+    Switched off, the session's hand-back is the whole safe hand-back: the heating switch goes
+    back on, though this session never switched it. Without an older debt the same: the heating
+    part follows the hand-back's effect (S-27), not what the session touched."""
     number = FakeNumber(rig.hass)
     number.register()
     switch = FakeSwitch(rig.hass, on=False)
@@ -5012,7 +5017,7 @@ async def test_an_end_of_session_hand_back_is_full_while_an_older_debt_exists(
     assert switch.writes == []
     unit = unit_of(rig)
     assert unit.holding
-    assert unit.hand_back_owed is older_debt
+    assert not unit.hand_back_owed  # folded into the session, which holds the boiler
     switch.set_available(True)  # back, and still off
     await rig.switch(False)
     assert switch.on  # "own control": the boiler heats under its own control again
@@ -9049,21 +9054,26 @@ async def test_a_restore_waits_for_its_setpoint_entity(
     assert rig.state("sensor", "control_state").attributes["reasons"] == ["zones_recognition"]
 
 
-async def test_a_restored_command_not_yet_through_keeps_the_debt(
+async def test_a_restored_command_not_yet_through_still_holds_the_boiler(
     rig: Rig, hass_storage: dict[str, Any]
 ) -> None:
-    """The restored command is given, but its write fails: the owed hand-back stays owed until a
-    write of it goes through, then it is folded in."""
+    """The restored command is given, but its write reports a failure: the owed hand-back is
+    folded into the session at that first attempt (PB-13) — the session holds the boiler, as
+    stored, so a crash still hands back first and the session's own hand-back is whole — and the
+    command is sent again until it goes through, with no hand-back first."""
     rig.gateway.fail_after = True
     not_started(rig)
     await start_with_stored(rig, hass_storage, restorable(rig), "0.2.2")
     await rig.advance(20)
     assert ("setpoint", RESTORED) in rig.gateway.calls
     unit = unit_of(rig)
-    assert unit.hand_back_owed
+    assert not unit.hand_back_owed
+    assert unit.holding
+    assert stored_control(hass_storage, rig)["controlling"] is True
     assert rig.state("binary_sensor", "alarm_write_failed").state == "on"
     rig.gateway.fail_after = False
     await rig.advance(40)
+    assert rig.state("binary_sensor", "alarm_write_failed").state == "off"
     assert not unit.hand_back_owed
     assert ("setpoint", 0.0) not in rig.gateway.calls
 

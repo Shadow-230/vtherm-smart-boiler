@@ -40,7 +40,10 @@ it clears). An alarm that cannot judge holds its state for an hour, then shows u
 The control state — whether the boiler may hold a value of ours, an owed hand-back, latches —
 lives in a store of its own, written at once and atomically; the entry's store keeps a copy.
 One function reads it for every place that asks (``async_read_control_state``): a state that
-cannot be read counts as "the plugin held the boiler" wherever control is configured.
+cannot be read counts as "the plugin held the boiler" wherever control is configured. Home
+Assistant's store logs a write that fails and goes on; the control store notes each write's
+outcome, so a failed one is known (``control_store_failing``) and control does not take the
+boiler until a write works again (PB-16).
 """
 
 from __future__ import annotations
@@ -336,7 +339,11 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # that start from then on only. Stored with the entry's data.
         self.fit_since: dict[ParameterKey, float] = {}
         self._store = main_store(hass, entry.entry_id)
-        self._control_store = control_store(hass, entry.entry_id)
+        self._control_store = control_store(hass, entry.entry_id, self._control_written)
+        # PB-16: the last write of the control store failed — its outcome is noted by the store
+        # itself, Home Assistant's store only logging it. Control does not take the boiler
+        # meanwhile; nothing written yet counts as no failure.
+        self.control_store_failing = False
         # Nothing is written before both stores were read: a setup that fails earlier must not
         # write the defaults over what the last run left (P-04).
         self._loaded = False
@@ -642,17 +649,36 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         provider = self._control_provider
         return provider() if provider is not None else self.stored_control
 
-    async def async_save_control_now(self) -> None:
+    async def async_save_control_now(self) -> bool:
         """Write the control state at once: for what a crash must not lose (the controlling
         marker, a latch). The entry store's copy is written at once too when the boiler's hold
-        or an owed hand-back changed, otherwise with the delayed save."""
+        or an owed hand-back changed, otherwise with the delayed save. Whether the control
+        state may be taken as stored: ``False`` once a write of it failed and none has worked
+        since (PB-16) — before the stores were read, or once stopped, nothing is written and
+        nothing failed."""
         if not self._loaded or self._stopped:
-            return
-        await self._control_store.async_save(self._stored_control())
+            return True
+        try:
+            await self._control_store.async_save(self._stored_control())
+        except Exception:  # an error the store does not log itself: it failed all the same
+            _LOGGER.exception("Could not write the control state")
+            self._control_written(False)
         if _owed_flags(self._stored_control()) != self._main_owed:
             await self.async_save_now()
         else:
             self.schedule_save()
+        return not self.control_store_failing
+
+    def _control_written(self, ok: bool) -> None:
+        """The outcome of a write of the control store (PB-16), told once when it changes."""
+        if not ok and not self.control_store_failing:
+            _LOGGER.error(
+                "The control state could not be written (the log above has why): control does "
+                "not take the boiler until it can, and a hand-back already owed is still made"
+            )
+        elif ok and self.control_store_failing:
+            _LOGGER.info("The control state can be written again")
+        self.control_store_failing = not ok
 
     def schedule_control_save(self) -> None:
         """``async_save_control_now`` from code that cannot wait: written at the next turn of
@@ -1864,9 +1890,42 @@ def main_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
     return Store(hass, STORAGE_VERSION, main_store_key(entry_id), atomic_writes=True)
 
 
-def control_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
-    """The control state alone, written at once and atomically on every change."""
-    return Store(hass, CONTROL_STORE_VERSION, control_store_key(entry_id), atomic_writes=True)
+class ControlStore(Store[dict[str, Any]]):
+    """The control store, whose writes are watched (PB-16). Home Assistant's store logs a write
+    that fails — a full disk, a storage turned read-only — and goes on, so each write's outcome
+    is noted here and told to ``noted``. Verified in Home Assistant 2026.9.3
+    (``helpers/storage.py``): ``_async_handle_write_data`` calls ``_async_write_data`` inside the
+    ``try`` that logs ``WriteError`` and ``SerializationError``; a write it defers (Home Assistant
+    stopping) or skips tells nothing. A later version that no longer calls it leaves every
+    outcome untold: nothing then counts as failed, as before (assumed, not seen)."""
+
+    def __init__(
+        self, hass: HomeAssistant, entry_id: str, noted: Callable[[bool], None] | None = None
+    ) -> None:
+        super().__init__(
+            hass, CONTROL_STORE_VERSION, control_store_key(entry_id), atomic_writes=True
+        )
+        self._noted = noted
+
+    async def _async_write_data(self, data: dict[str, Any]) -> None:
+        try:
+            await super()._async_write_data(data)
+        except Exception:
+            self._note(False)
+            raise
+        self._note(True)
+
+    def _note(self, ok: bool) -> None:
+        if self._noted is not None:
+            self._noted(ok)
+
+
+def control_store(
+    hass: HomeAssistant, entry_id: str, noted: Callable[[bool], None] | None = None
+) -> ControlStore:
+    """The control state alone, written at once and atomically on every change; ``noted`` is
+    told whether each write went through (PB-16)."""
+    return ControlStore(hass, entry_id, noted)
 
 
 def alive_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:

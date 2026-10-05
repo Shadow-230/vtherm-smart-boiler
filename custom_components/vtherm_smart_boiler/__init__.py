@@ -272,6 +272,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "hand_back_taken_by_other",
         "monitor_failed",  # the monitor's issue, or its note (V6)
         "control_stopped_heating",  # a blocker stopped heating (V7)
+        "control_state_not_saved",  # the control store cannot be written (PB-16)
         "control_latched",  # the entry's one latch issue (V7)
         "no_zone_known",  # every zone unknown (decision 3, X3)
         "frost_zone_closed",  # a cold room VT keeps closed (decision 4, X4)
