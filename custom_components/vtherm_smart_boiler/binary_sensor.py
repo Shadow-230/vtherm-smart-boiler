@@ -238,5 +238,8 @@ class ControlAlarmSensor(ControlEntity, BinarySensorEntity):
         if self.kind is ControlAlarm.CONFIRMATION_MISSING:
             return {"targets": list(status.unconfirmed_targets)}
         if self.kind is ControlAlarm.DEMAND_CRITERION_NO_DATA:
-            return {"criteria": list(status.criteria_without_data)}
+            return {
+                "criteria": list(status.criteria_without_data),
+                "zones": list(status.zones_without_data),  # calling, seen by none (PB-23)
+            }
         return None

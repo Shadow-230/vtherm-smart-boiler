@@ -120,7 +120,7 @@ from .limits import (
     watched_temperatures,
 )
 from .readings import ZONE_OPEN, ZoneState
-from .zone_watch import ZoneWatch, follow_zones, graced, in_recognition
+from .zone_watch import ZoneWatch, follow_zones, graced, in_recognition, unjudged_since
 
 HOUR = 3600.0
 DAY = 24 * HOUR
@@ -350,9 +350,13 @@ class ControlDecision:
     correction_at_limit: bool = False  # the correction at its band's edge for hours: tell the user
     link_lost: bool = False  # the boiler link is lost (X2): stale for five minutes within ten
     # Decision 3: every configured zone unknown after the recognition period and the graces;
-    # the configured demand criteria no known zone can feed (both outside the recognition).
+    # the zones known but no configured criterion judged (PB-03); the configured demand criteria
+    # no zone that heats can feed, and the calling zones that feed none (PB-23) — all outside
+    # the recognition period.
     zones_unknown: bool = False
+    no_criterion_judged: bool = False
     criteria_without_data: tuple[str, ...] = ()
+    zones_without_data: tuple[str, ...] = ()
     # Decision 4: the watched zones below the frost limit VT keeps closed (outside the
     # recognition period); decision 5: when a pending start is due; the comfort correction.
     frost_closed: tuple[str, ...] = ()
@@ -537,6 +541,12 @@ def decide(
         memory=graced(watch),
         recognition=recognition,
     )
+    # PB-03: the zones known, and no configured criterion can be judged — decision 3's end
+    # state too, and since when, for its repair issue; held through a recognition period.
+    unjudged = not recognition and demand.wanted is None and demand.fresh_zones > 0
+    if not recognition:
+        watch = replace(watch, unjudged_since=unjudged_since(watch.unjudged_since, unjudged, now))
+        state = replace(state, zones=watch)
     state, decision = _decide(state, inputs, config, demand)
     if state.activation_s is not None:
         # A step that did not count the pending start pauses it (a stale link, the recognition
@@ -546,7 +556,9 @@ def decide(
         decision,
         link_lost=link.lost,
         zones_unknown=not recognition and bool(inputs.zones) and demand.fresh_zones == 0,
+        no_criterion_judged=unjudged,
         criteria_without_data=() if recognition else demand.criteria_without_data,
+        zones_without_data=() if recognition else demand.zones_without_data,
         frost_closed=state.frost_closed,  # held through the recognition period
         correction=state.correction,
     )

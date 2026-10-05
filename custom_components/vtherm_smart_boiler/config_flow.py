@@ -615,6 +615,7 @@ OWN_ROOM_CONTROLLER = "own_room_controller"
 _UNFED = {
     "power_threshold_kw": "power_criterion_no_zone",
     "opening_threshold": "opening_criterion_no_zone",
+    "count_threshold": "zone_feeds_no_criterion",  # PB-23: a zone a count of 0 never hears
 }
 
 
@@ -1666,6 +1667,7 @@ class _Steps:
     _circuits_done: list[dict[str, Any]]
     # A problem the last check found: shown on its step, which the flow goes back to.
     _problem: tuple[str, dict[str, str]] | None = None
+    _unfed_zones: str = ""  # PB-23: the zones a count of 0 could never hear, for the form
 
     def _form(
         self,
@@ -2381,6 +2383,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             step_id="control_relay_behaviour",
             data_schema=control_relay_behaviour_schema(self.options, prefill),
             errors=errors,
+            description_placeholders=self._unfed_placeholders(errors),
         )
 
     def _relay_behaviour_error(self, user_input: dict[str, Any]) -> dict[str, str]:
@@ -2474,6 +2477,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             step_id="control_behaviour",
             data_schema=control_behaviour_schema(self.options),
             errors=errors,
+            description_placeholders=self._unfed_placeholders(errors),
         )
 
     def _curve_problems(self, user_input: dict[str, Any]) -> list[tuple[str, str]]:
@@ -2503,7 +2507,11 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         publishes a device power of 0 where none is set, and a zone of VT's over_climate type
         no opening. Refused where at least one zone can be read and none feeds it; with none
         readable (VT away, or not started yet) nothing can be told, and it is kept — at run time
-        the criterion then counts as without data, with an alarm. The field to fix, or ``None``."""
+        the criterion then counts as without data, with an alarm. PB-23: with a zone count of 0,
+        a readable zone that feeds none of the thresholds set could never ask for heat —
+        refused too, naming it (``_unfed_zones``); one that cannot be read is not judged, and a
+        calling zone without the data raises the run-time alarm. The field to fix, or
+        ``None``."""
         power = user_input.get("power_threshold_kw")
         opening = user_input.get("opening_threshold")
         if not power and not opening:
@@ -2517,6 +2525,21 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             return "power_threshold_kw"
         if opening and not any(feeds_opening(zone) for zone in readable):
             return "opening_threshold"
+        count = int(user_input.get("count_threshold", CONTROL_DEFAULTS["count_threshold"]))
+        unheard = [
+            zone.zone_id
+            for zone in readable
+            if not (power and feeds_power(zone)) and not (opening and feeds_opening(zone))
+        ]
+        if count == 0 and unheard:
+            self._unfed_zones = ", ".join(link.zone_name(zone) for zone in unheard)
+            return "count_threshold"
+        return None
+
+    def _unfed_placeholders(self, errors: Mapping[str, str]) -> dict[str, str] | None:
+        """PB-23: the zone the form's error names."""
+        if errors.get("count_threshold") == _UNFED["count_threshold"]:
+            return {"zone": self._unfed_zones}
         return None
 
     def _off_near_hand_back_value(self, user_input: dict[str, Any]) -> bool:

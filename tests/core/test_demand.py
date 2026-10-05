@@ -206,12 +206,13 @@ def test_an_opening_criterion_without_data_is_not_no_demand() -> None:
 
 @pytest.mark.parametrize(("calling", "wanted"), [(True, True), (False, False)])
 def test_only_the_criterion_without_data_is_left_out(calling: bool, wanted: bool) -> None:
-    """A count of 1 and a power threshold without data: the count decides."""
+    """A count of 1 and a power threshold without data: the count decides. With no zone
+    calling there is nothing to judge, so no criterion lacks data (PB-23)."""
     zones = [zone("a", valve_open=0.6 if calling else 0.0)]
     config = DemandConfig(count_threshold=1, power_threshold_kw=1.0)
     result = boiler_demand(zones, NOW, AGE, config)
     assert result.wanted is wanted
-    assert result.criteria_without_data == ("power",)
+    assert result.criteria_without_data == (("power",) if calling else ())
 
 
 def test_a_device_power_of_zero_is_no_data_but_a_mean_power_of_zero_is_none_now() -> None:
@@ -288,6 +289,125 @@ def test_no_zone_known_names_no_criterion(zones: list[ZoneState]) -> None:
     result = boiler_demand(zones, NOW, AGE, config)
     assert result.wanted is None
     assert result.criteria_without_data == ()
+
+
+# --- PB-23: only heating zones give a criterion data; a calling zone no criterion can see ----
+
+POWER_ONLY = DemandConfig(count_threshold=0, power_threshold_kw=1.0)
+OPENING_ONLY = DemandConfig(count_threshold=0, opening_threshold=0.5)
+BOTH = DemandConfig(count_threshold=0, power_threshold_kw=1.0, opening_threshold=0.5)
+
+
+def test_an_off_zone_publishing_an_opening_gives_the_criterion_no_data() -> None:
+    """PB-23: a count of 0 and only an opening threshold; an "off" valve zone publishes an
+    opening of 0 and the calling room is a plain over_climate one without an opening. The off
+    zone must not make the criterion "with data": no criterion can be judged (PB-03's case), and
+    the calling zone is named — never a silent "no"."""
+    zones = [zone("off", heating_enabled=False, valve_open=0.0), zone("trv", calling=True)]
+    config = DemandConfig(count_threshold=0, opening_threshold=0.5)
+    result = boiler_demand(zones, NOW, AGE, config)
+    assert result.wanted is None
+    assert result.criteria_without_data == ("opening",)
+    assert result.zones_without_data == ("trv",)
+
+
+def test_an_idle_zone_with_a_device_power_gives_the_power_criterion_no_data() -> None:
+    """PB-23: a zone in a heating mode with a device power but no cycle running (it does not
+    call) does not make the power criterion "with data" for a calling zone without one."""
+    zones = [zone("idle", power=2.0, on_percent=0.0), zone("valve", valve_open=0.6)]
+    config = DemandConfig(count_threshold=0, power_threshold_kw=1.0)
+    result = boiler_demand(zones, NOW, AGE, config)
+    assert result.wanted is None
+    assert result.criteria_without_data == ("power",)
+    assert result.power_kw is None
+    assert result.zones_without_data == ("valve",)
+
+
+def test_a_zone_whose_cycle_runs_gives_the_power_criterion_data() -> None:
+    """A switch zone in the off part of its cycle keeps its mean power, which the criterion sums
+    as VT does: the criterion has data and decides; the calling zone that cannot feed it is
+    still named, as its own call is not what the boiler follows."""
+    switch = zone("switch", on_percent=0.6, power=2.0, device_active=False)
+    valve = zone("valve", valve_open=0.5)
+    config = DemandConfig(count_threshold=0, power_threshold_kw=1.0)
+    result = boiler_demand([switch, valve], NOW, AGE, config)
+    assert result.wanted is True
+    assert result.power_kw == pytest.approx(1.2)
+    assert result.criteria_without_data == ()
+    assert result.zones_without_data == ("valve",)
+
+
+def test_a_calling_zone_no_criterion_can_see_is_named_while_others_decide() -> None:
+    """PB-23 (b): a calling zone that feeds no configured criterion is not silently ignored:
+    the others' data decides (0.5 kW, below the threshold) and the zone is named for the alarm
+    — it never starts the boiler on its own."""
+    fed = zone("fed", valve_open=0.6, power=1.0, mean_power=0.5, device_active=True)
+    blind = zone("blind", valve_open=0.6)
+    config = DemandConfig(count_threshold=0, power_threshold_kw=1.0)
+    result = boiler_demand([fed, blind], NOW, AGE, config)
+    assert result.wanted is False
+    assert result.criteria_without_data == ()
+    assert result.zones_without_data == ("blind",)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        DemandConfig(count_threshold=0, power_threshold_kw=1.0),
+        DemandConfig(count_threshold=0, opening_threshold=0.5),
+        DemandConfig(count_threshold=0, power_threshold_kw=1.0, opening_threshold=0.5),
+        DemandConfig(count_threshold=1, power_threshold_kw=1.0),
+    ],
+)
+def test_with_no_zone_calling_every_criterion_says_no(config: DemandConfig) -> None:
+    """Nothing calls — zones idle, off, or not known: every criterion says no, whatever the
+    zones publish (power ``None``, no opening): there is no call to judge, so nothing lacks data
+    and nothing is handed back while the house needs no heat."""
+    zones = [
+        zone("idle", calling=False),
+        zone("off", heating_enabled=False, valve_open=0.0),
+        zone("gone", heating_enabled=None, calling=True),
+    ]
+    result = boiler_demand(zones, NOW, AGE, config)
+    assert result.wanted is False
+    assert result.criteria_without_data == ()
+    assert result.zones_without_data == ()
+
+
+@pytest.mark.parametrize(
+    ("calling", "config", "without"),
+    [
+        # The zone's device power and mean power unknown (``None``).
+        (zone("z", valve_open=0.6, power=None, mean_power=None), POWER_ONLY, ("power",)),
+        # No opening and no duty cycle (``None``): VT's over_climate.
+        (zone("z", calling=True, valve_open=None, on_percent=None), OPENING_ONLY, ("opening",)),
+        (zone("z", calling=True, power=None), BOTH, ("power", "opening")),
+    ],
+)
+def test_a_calling_zone_without_the_data_is_named_with_its_criterion(
+    calling: ZoneState, config: DemandConfig, without: tuple[str, ...]
+) -> None:
+    result = boiler_demand([calling], NOW, AGE, config)
+    assert result.wanted is None
+    assert result.criteria_without_data == without
+    assert result.zones_without_data == ("z",)
+
+
+def test_a_count_sees_every_calling_zone_and_an_unknown_zone_is_never_named() -> None:
+    """Negative: with a count of 1 or more every calling zone feeds a criterion — none is
+    named; an unknown zone (no mode, or stale) is decision 3's case, never named here."""
+    calling = zone("z", valve_open=0.6)
+    config = DemandConfig(count_threshold=1, power_threshold_kw=1.0)
+    result = boiler_demand([calling], NOW, AGE, config)
+    assert result.wanted is True
+    assert result.zones_without_data == ()
+    stale = zone("stale", valve_open=0.6, reported_at=NOW - 2 * AGE)
+    unknown = zone("unknown", heating_enabled=None, valve_open=0.6)
+    fed = zone("fed", valve_open=0.6, power=2.0)
+    result = boiler_demand([stale, unknown, fed], NOW, AGE, POWER_ONLY)
+    assert result.zones_without_data == ()
+    assert result.unknown == ("stale", "unknown")
+    assert result.wanted is True
 
 
 # --- P-126: VT's own states as scenarios, zone by zone and step by step -----------------------

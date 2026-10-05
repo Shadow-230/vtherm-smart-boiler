@@ -1173,6 +1173,36 @@ async def test_a_criterion_no_zone_can_feed_is_refused_in_the_form(
     result = await options_step(hass, result, {"count_threshold": 0, "power_threshold_kw": 1.0})
     assert result["errors"] == {"power_threshold_kw": "power_criterion_no_zone"}
     zones.set("bedroom", power_manager={"device_power": 1.5, "power_unit": "kW"})
+    result = await options_step(hass, result, {"count_threshold": 1, "power_threshold_kw": 1.0})
+    assert result["step_id"] == "control_alarms"
+
+
+async def test_a_count_of_0_is_refused_while_a_zone_feeds_no_criterion(
+    hass: HomeAssistant, entities: dict[str, str], zones: FakeZones
+) -> None:
+    """PB-23 (a): a count of 0 with only a power threshold, the bedroom with a device power and
+    the living room without one: the living room could never ask for heat — refused, naming it.
+    With an opening threshold too it feeds the opening: accepted; so is a count of 1. Negative:
+    a zone that cannot be read (unavailable) is not judged."""
+    zones.set("living", power_manager={"device_power": 0.0, "power_unit": "kW"})
+    zones.set("bedroom", power_manager={"device_power": 1.5, "power_unit": "kW"})
+    result = await to_behaviour_with(hass, entities, ("living", "bedroom"))
+    result = await options_step(hass, result, {"count_threshold": 0, "power_threshold_kw": 1.0})
+    assert result["errors"] == {"count_threshold": "zone_feeds_no_criterion"}
+    living = hass.states.get(zones.entities["living"])
+    assert living is not None
+    assert result["description_placeholders"] == {"zone": living.name}
+    answer = {"count_threshold": 0, "power_threshold_kw": 1.0, "opening_threshold": 50}
+    result = await options_step(hass, result, answer)
+    assert result["step_id"] == "control_alarms"
+
+
+async def test_a_count_of_0_skips_a_zone_that_cannot_be_read(
+    hass: HomeAssistant, entities: dict[str, str], zones: FakeZones
+) -> None:
+    zones.set("bedroom", power_manager={"device_power": 1.5, "power_unit": "kW"})
+    result = await to_behaviour_with(hass, entities, ("living", "bedroom"))
+    zones.set("living", "unavailable")
     result = await options_step(hass, result, {"count_threshold": 0, "power_threshold_kw": 1.0})
     assert result["step_id"] == "control_alarms"
 
@@ -2848,6 +2878,28 @@ async def test_the_relay_behaviour_step_refuses_a_criterion_no_zone_feeds(
     }
     result = await options_step(hass, result, answer)
     assert result["errors"] == {"power_threshold_kw": "power_criterion_no_zone"}
+
+
+async def test_the_relay_behaviour_step_refuses_a_count_of_0_a_zone_cannot_feed(
+    hass: HomeAssistant, entities: dict[str, str], zones: FakeZones
+) -> None:
+    """PB-23 (a) on the relay path: an over_climate zone without an opening and a count of 0
+    with only an opening threshold — refused, naming the zone."""
+    entry_id = await create_entry(hass, entities, "advanced", ("living", "bedroom"), "on_off")
+    zones.set("living", on_percent=None, power_percent=None)
+    result = await to_relay_step(hass, entry_id)
+    result = await options_step(hass, result, RELAY_ANSWERS)
+    answer = {
+        "activation_delay_s": 0,
+        "count_threshold": 0,
+        "learning_pauses": True,
+        "opening_threshold": 50,
+    }
+    result = await options_step(hass, result, answer)
+    assert result["errors"] == {"count_threshold": "zone_feeds_no_criterion"}
+    living = hass.states.get(zones.entities["living"])
+    assert living is not None
+    assert result["description_placeholders"] == {"zone": living.name}
 
 
 async def test_the_relay_cannot_change_while_control_holds_it(

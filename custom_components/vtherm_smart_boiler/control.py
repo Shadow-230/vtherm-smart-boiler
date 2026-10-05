@@ -174,6 +174,7 @@ from .core.alarms import UNKNOWN_HOLD_S, fault_holds, follow_fault
 from .core.controller import (
     HA_STARTING,
     BoilerCommand,
+    ControlDecision,
     ControlInputs,
     ControlMode,
     ControlState,
@@ -260,7 +261,7 @@ from .core.relay import (
 )
 from .core.signal_check import OutdoorStatus, curve_sensor
 from .core.signals import Signal
-from .core.zone_watch import in_recognition, no_zone_issue_due
+from .core.zone_watch import criteria_issue_due, in_recognition, no_zone_issue_due
 from .core.zones import plausible_room
 from .transport.entities import (
     read_bounds,
@@ -676,7 +677,8 @@ class ControlStatus:
     unconfirmed_targets: tuple[str, ...] = ()  # targets whose confirmation is missing
     # Blockers that do not count yet: VT's central boiler unknown within its grace (P-105).
     blockers_waiting: tuple[str, ...] = ()
-    criteria_without_data: tuple[str, ...] = ()  # demand criteria no known zone can feed
+    criteria_without_data: tuple[str, ...] = ()  # demand criteria no zone that heats can feed
+    zones_without_data: tuple[str, ...] = ()  # calling zones that feed no criterion (PB-23)
     correction: float = 0.0  # the comfort correction now, K (P-38)
     activation_at: float | None = None  # when a start waiting VT's activation delay is due
     frost_closed_zones: tuple[str, ...] = ()  # watched rooms below the frost limit VT keeps closed
@@ -1811,7 +1813,7 @@ class ControlUnit:
         self._follow_frost(now, zones)
         self._follow_frost_closed(out.decision.frost_closed, zones)
         unknown = self._follow_unknown_zones(now, zones)
-        self._follow_no_zone_known(now, out.decision.reasons)
+        self._follow_no_zone_known(now, out.decision)
         self._follow_read_back_wait(now, out.decision.reasons)
         self._follow_decision_alarms(out, monitor_failed)
         self._follow_link_issue()
@@ -1861,6 +1863,7 @@ class ControlUnit:
             unconfirmed_targets=out.unconfirmed,
             blockers_waiting=waiting,
             criteria_without_data=out.decision.criteria_without_data,
+            zones_without_data=out.decision.zones_without_data,
             correction=out.decision.correction,
             activation_at=out.decision.activation_at,
             frost_closed_zones=tuple(self._frost_issue_shown),
@@ -1975,10 +1978,16 @@ class ControlUnit:
         decision = out.decision
         for flagged, alarm in (
             # Decision 3: nothing can ask for heat — every zone unknown after the recognition
-            # period and the graces; or a criterion no known zone can feed (P-14).
-            (self.enabled and decision.zones_unknown, ControlAlarm.NO_ZONE_KNOWN),
+            # period and the graces, or the zones known and no criterion judged (PB-03); a
+            # criterion no zone that heats can feed (P-14), or a calling zone that feeds none
+            # (PB-23).
             (
-                self.enabled and bool(decision.criteria_without_data),
+                self.enabled and (decision.zones_unknown or decision.no_criterion_judged),
+                ControlAlarm.NO_ZONE_KNOWN,
+            ),
+            (
+                self.enabled
+                and bool(decision.criteria_without_data or decision.zones_without_data),
                 ControlAlarm.DEMAND_CRITERION_NO_DATA,
             ),
             # Every topology, whenever the switch is on and the link is lost — whatever a
@@ -2079,16 +2088,25 @@ class ControlUnit:
             await self._async_try_hand_back(now)
         self._coordinator.schedule_control_save()
 
-    def _follow_no_zone_known(self, now: float, reasons: Sequence[Reason]) -> None:
+    def _follow_no_zone_known(self, now: float, decision: ControlDecision) -> None:
         """Decision 3's repair issue once every configured zone has been unknown for ten
-        minutes, whatever control does: what it says follows what control does then — the
-        usual "off", the hand-back to a working thermostat, or only the monitor."""
+        minutes — or, the zones known, no configured criterion could be judged for as long,
+        the issue then naming the criteria (PB-03) — whatever control does: what it says follows
+        what control does then — the usual "off", the hand-back to a working thermostat, or only
+        the monitor. It goes the step a zone answers or a criterion has data again; a
+        recognition period (VT reloading) decides nothing new, so it leaves the issue as it is."""
+        watch = self._session.loop.control.zones
+        if in_recognition(watch) and not no_zone_issue_due(watch, now):
+            return
         kind: str | None = None
-        if no_zone_issue_due(self._session.loop.control.zones, now):
+        criteria: tuple[str, ...] = ()
+        if no_zone_issue_due(watch, now) or criteria_issue_due(watch, now):
             kind = "monitor"
-            if Reason.ZONES_UNKNOWN in reasons:
+            if Reason.ZONES_UNKNOWN in decision.reasons:
                 kind = "handed_back" if working_thermostat(self.options) else "off"
-        self._coordinator.report_no_zone_known(kind)
+            if not decision.zones_unknown:
+                criteria = decision.criteria_without_data
+        self._coordinator.report_no_zone_known(kind, criteria)
 
     def _follow_read_back_wait(self, now: float, reasons: Sequence[Reason]) -> None:
         """Z4-10 (P-21): control switched on does not take the boiler until the gateway's setpoint

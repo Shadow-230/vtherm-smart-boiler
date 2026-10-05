@@ -177,6 +177,8 @@ def test_every_config_error_code_can_be_shown() -> None:
     assert options_only <= set(SOURCE["options"]["error"])
     zone = SOURCE["config"]["error"]["zone_on_boiler_thermostat"]
     assert set(PLACEHOLDER.findall(zone)) == {"zone"}  # the zones step names the zone
+    unfed = SOURCE["options"]["error"]["zone_feeds_no_criterion"]  # PB-23 names the zone
+    assert set(PLACEHOLDER.findall(unfed)) == {"zone"}
 
 
 def test_every_control_entity_blocker_and_issue_is_translated() -> None:
@@ -215,6 +217,10 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
         no_zone = SOURCE["issues"][f"no_zone_known_{kind}"]
         assert no_zone["title"], kind
         assert set(PLACEHOLDER.findall(no_zone["description"])) == {"zones"}, kind
+        # PB-03: the zones known, no criterion judged — the issue names the criteria.
+        no_criterion = SOURCE["issues"][f"no_criterion_judged_{kind}"]
+        assert no_criterion["title"], kind
+        assert set(PLACEHOLDER.findall(no_criterion["description"])) == {"criteria"}, kind
     frost = SOURCE["issues"]["frost_zone_closed"]  # decision 4 (X4)
     assert frost["title"]
     assert set(PLACEHOLDER.findall(frost["description"])) == {"zones"}

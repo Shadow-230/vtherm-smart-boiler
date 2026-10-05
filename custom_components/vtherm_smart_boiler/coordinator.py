@@ -188,6 +188,7 @@ DAY = 86400.0
 # monitor only included; its text follows what control does then (translation keys
 # ``no_zone_known_off``, ``_handed_back``, ``_monitor``).
 NO_ZONE_KNOWN_ISSUE = "no_zone_known"
+NO_CRITERION_ISSUE = "no_criterion_judged"  # its text where the zones are known (PB-03)
 # X6: the wall thermostat on a gateway would keep the house cool after a hand-back (``_unknown``:
 # it reports no setpoint); the lowest water temperature's suggestion (``_boiler``: worded for the
 # device that sets the water). Warnings, not fixable.
@@ -396,7 +397,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # Decision 3's repair issue: every zone unknown since, for the monitor only; the kind
         # raised now.
         self._zones_unknown_since: float | None = None
-        self._no_zone_issue: str | None = None
+        self._no_zone_issue: tuple[str, tuple[str, ...]] | None = None
         # X6: the suggestion the last analysis gave; the wall thermostat's warning since, and
         # the issues raised now (their translation key and placeholders).
         self.lowest_water: LowestWaterSuggestion | None = None
@@ -1622,24 +1623,36 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             self._issue("auto_tpi_blocked", blocked)
         self._issue("learning_not_paused", unpaused)
 
-    def report_no_zone_known(self, kind: str | None) -> None:
+    def report_no_zone_known(self, kind: str | None, criteria: Sequence[str] = ()) -> None:
         """Decision 3's repair issue: ``kind`` — "off", "handed_back" or "monitor" — while every
-        configured zone has been unknown for ten minutes; ``None`` deletes it. An error where
-        heating stops, else a warning (provisional, K4). Raised anew when its kind changes."""
-        if kind == self._no_zone_issue:
+        configured zone has been unknown for ten minutes, or, with ``criteria``, while the zones
+        are known but none of the configured criteria — those named — could be judged for as
+        long (PB-03); ``None`` deletes it. An error where heating stops, else a warning
+        (provisional, K4). Raised anew when its kind or its criteria change."""
+        wanted = None if kind is None else (kind, tuple(criteria))
+        if wanted == self._no_zone_issue:
             return
         issue_id = f"{NO_ZONE_KNOWN_ISSUE}_{self.config_entry.entry_id}"
         ir.async_delete_issue(self.hass, DOMAIN, issue_id)
-        self._no_zone_issue = kind
+        self._no_zone_issue = wanted
         if kind is None:
             return
-        _LOGGER.warning(
-            "No Versatile Thermostat zone has answered for ten minutes (%s)",
-            {"off": "heating is off", "handed_back": "the boiler is handed back"}.get(
-                kind, "the monitor cannot judge them"
-            ),
-        )
-        zones = ", ".join(self.link.zone_name(zone) for zone in self.config.zone_entities)
+        effects = {"off": "heating is off", "handed_back": "the boiler is handed back"}
+        if criteria:
+            _LOGGER.warning(
+                "No demand criterion could be judged for ten minutes: %s has no data (%s)",
+                ", ".join(criteria),
+                effects.get(kind, "control does not decide now"),
+            )
+            key = f"{NO_CRITERION_ISSUE}_{kind}"
+            placeholders = {"criteria": ", ".join(criteria)}
+        else:
+            _LOGGER.warning(
+                "No Versatile Thermostat zone has answered for ten minutes (%s)",
+                effects.get(kind, "the monitor cannot judge them"),
+            )
+            zones = ", ".join(self.link.zone_name(zone) for zone in self.config.zone_entities)
+            key, placeholders = f"{NO_ZONE_KNOWN_ISSUE}_{kind}", {"zones": zones}
         ir.async_create_issue(
             self.hass,
             DOMAIN,
@@ -1647,8 +1660,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             is_fixable=False,
             is_persistent=False,
             severity=ir.IssueSeverity.ERROR if kind == "off" else ir.IssueSeverity.WARNING,
-            translation_key=f"{NO_ZONE_KNOWN_ISSUE}_{kind}",
-            translation_placeholders={"zones": zones},
+            translation_key=key,
+            translation_placeholders=placeholders,
         )
 
     def _issue(self, key: str, zones: list[str]) -> None:

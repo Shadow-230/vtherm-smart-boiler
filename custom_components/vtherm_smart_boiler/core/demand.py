@@ -15,9 +15,17 @@ alone, a count threshold of 0 turning the count off, as in VT:
   can flow, and the criterion asks for nothing;
 - the opening: the widest opening among the zones that call.
 
-A criterion no known zone can feed — no device power above 0 (VT publishes 0 when none is set),
-no opening or duty cycle at all — has no data: it is left out, and when no configured criterion
-can be judged, demand is unknown, never a silent "no" (P-14; decision 3 then decides). Only
+A criterion has data only from zones that heat (PB-23): the opening from a calling zone that
+publishes an opening or duty cycle; the power from a calling zone with a device power above 0 (VT
+publishes 0 when none is set), or one whose cycle runs with a mean power above 0, as the power
+sums it. A zone in "off", or one that neither calls nor runs a cycle, gives none — so an "off"
+zone publishing an opening of 0 cannot hide a calling room the criterion cannot see. With no
+zone calling there is nothing to judge: every criterion says no. A criterion without data is
+left out, and when no configured criterion can be judged, demand is unknown, never a silent
+"no" (P-14; decision 3 then decides, PB-03). A calling zone that feeds none of the configured
+criteria — a count of 0 with a power or an opening it does not publish — is named for the alarm
+(PB-23): it never starts the boiler on its own, as no threshold the user set can see it, and
+it is never ignored silently. Only
 zones whose state is known count: a zone that is unavailable, or heating while VT has not
 started it, is unknown, never "no demand"; a zone in its grace period keeps its last known
 answer (``memory``); with no zone known, demand is unknown. A zone whose room sensor VT has
@@ -63,12 +71,14 @@ class DemandConfig:
 class Demand:
     wanted: bool | None  # None: no zone is known, or no configured criterion can be judged
     zones_wanting: int = 0
-    power_kw: float | None = None  # None: no known zone feeds the power criterion
+    power_kw: float | None = None  # None: the power criterion has no data
     widest_opening: float | None = None
     fresh_zones: int = 0  # the zones known now, those in their grace period included
     unknown: tuple[str, ...] = ()  # zones whose state is not known
-    # Configured criteria no known zone can feed: left out of the decision.
+    # Configured criteria no zone that heats can feed: left out of the decision.
     criteria_without_data: tuple[str, ...] = ()
+    # Calling zones that feed none of the configured criteria: named by the alarm (PB-23).
+    zones_without_data: tuple[str, ...] = ()
 
 
 def zone_wants_heat(zone: ZoneState, zone_opening: float) -> bool:
@@ -148,11 +158,13 @@ def boiler_demand(
     wanting = [z for z in known if zone_wants_heat(z, opening)]
     openings = [z.demand for z in wanting if z.demand is not None]
     widest = max(openings) if openings else None
+    heating = [z for z in known if z.heating_enabled is True and not z.shedding]
+    calls = bool(wanting)  # nothing calls: nothing to judge, every criterion says no
     power: float | None = None
-    if any(feeds_power(z) for z in known):
-        heating = [z for z in known if z.heating_enabled is True and not z.shedding]
+    if not calls or any(_feeds_power_now(z, opening) for z in heating):
         flowing = any(heat_can_flow(z, opening) for z in heating)
         power = sum(_mean_power(z, opening) for z in heating) if flowing else 0.0
+    opening_fed = not calls or any(feeds_opening(z) for z in wanting)
     judged: list[bool] = []
     without: list[str] = []
     if config.count_threshold > 0:
@@ -165,9 +177,29 @@ def boiler_demand(
         else:
             judged.append(power >= config.power_threshold_kw)
     if config.opening_threshold is not None:
-        if not any(feeds_opening(z) for z in known):
+        if not opening_fed:
             without.append(OPENING)
         else:
             judged.append(widest is not None and widest >= config.opening_threshold)
     wanted = any(judged) if judged else None
-    return Demand(wanted, len(wanting), power, widest, len(known), tuple(unknown), tuple(without))
+    unseen = tuple(z.zone_id for z in wanting if not _feeds_any(z, config))
+    return Demand(
+        wanted, len(wanting), power, widest, len(known), tuple(unknown), tuple(without), unseen
+    )
+
+
+def _feeds_power_now(zone: ZoneState, zone_opening: float) -> bool:
+    """The zone gives the power criterion data now: it calls with a power VT publishes, or its
+    cycle runs with a mean power above 0 (a switch zone in the off part of its cycle)."""
+    if _mean_power(zone, zone_opening) > 0.0:
+        return True
+    return feeds_power(zone) and zone_wants_heat(zone, zone_opening)
+
+
+def _feeds_any(zone: ZoneState, config: DemandConfig) -> bool:
+    """The calling zone can feed one of the configured criteria: a count always sees it."""
+    if config.count_threshold > 0:
+        return True
+    if config.power_threshold_kw is not None and feeds_power(zone):
+        return True
+    return config.opening_threshold is not None and feeds_opening(zone)

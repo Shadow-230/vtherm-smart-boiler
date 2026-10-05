@@ -648,9 +648,9 @@
           "ramp_k_per_min": "The fastest setpoint change, in K per minute. Default 1. Faster changes stress the boiler and make zones overshoot.",
           "decision_interval_min": "How often the water temperature is decided anew, in minutes; default 5, VT's default cycle. Heating on and off follows the zones at every 10 s step, whatever this is; the plugin does not read the zones' own cycles. Shorter: the water follows the weather and the rooms sooner, but the zones' algorithms see it move more often; longer: steadier water that follows more slowly.",
           "off_setpoint": "The setpoint written for \"off\" when there is no heating switch, in °C. Default 10: far below any heating value, and below the lowest water temperature. Risk: a low setpoint does not switch the boiler's heating off — ESPHome and DIYLess masters keep CH enabled, and boilers are reported to keep their CH pump running; a heating switch, or an OpenTherm Gateway's CH=0, really turns heating off. Control without a heating switch is blocked in this version, so this setpoint is not written yet.",
-          "count_threshold": "Heating is needed when at least this many zones call for heat. Default 1; at most the number of zones. 0 turns the count off, leaving the power or opening threshold alone, as in Versatile Thermostat. Higher leaves a single calling room without heat.",
-          "power_threshold_kw": "Optional: heating is needed when the zones' mean power over their cycle, as Versatile Thermostat counts it, reaches this, in kW — counted only while at least one of them has its valve open or its device on. Too high leaves small rooms without heat.",
-          "opening_threshold": "Optional: heating is needed when the widest valve opening among the calling zones reaches this, in %. Too high leaves a room that opens a little without heat.",
+          "count_threshold": "Heating is needed when at least this many zones call for heat. Default 1; at most the number of zones. 0 turns the count off, leaving the power or opening threshold alone, as in Versatile Thermostat — then every zone must report what that threshold needs, or its room could never ask for heat: the form refuses a zone that does not, and a calling zone that does not raises the \"demand criterion has no data\" alarm. Higher leaves a single calling room without heat.",
+          "power_threshold_kw": "Optional: heating is needed when the zones' mean power over their cycle, as Versatile Thermostat counts it, reaches this, in kW — counted only while at least one of them has its valve open or its device on. A zone without a device power set in VT gives it no data; with a zone count of 0 such a zone could never ask for heat. Too high leaves small rooms without heat.",
+          "opening_threshold": "Optional: heating is needed when the widest valve opening among the calling zones reaches this, in %. A zone without a valve opening or duty cycle (VT's over_climate) gives it no data; with a zone count of 0 such a zone could never ask for heat. Too high leaves a room that opens a little without heat.",
           "learning_pauses": "Pause SmartPI learning while hot water runs, while foreign heat warms a zone and while the water temperature swings, so it does not learn what the boiler did; each pause and resume is read back from SmartPI. After hot water it waits for the water to come back, at most an hour after the draw; after foreign heat or a swing, only the minimum pause. Default on. Auto-TPI cannot be paused without resetting what it learned, so zones running it are reported instead. Off: SmartPI learns through those moments too, which can skew its model.",
           "comfort_correction": "Off (default): the water follows the curve alone. On: while a zone's valve is fully open and its room stays short of its setpoint, the water goes up to 3 K above the curve — 1 K per 30 minutes, only while heat flows (the flame, where known) — and falls twice as fast; it never rises while another zone taking heat is more than 1 K too warm, nor while a limit holds the water, and at most 3 K a day; it holds during hot water and foreign heat; it is shown on the control state; it resets at hand-back and with the \"Reset comfort correction\" button, and after three hours at 3 K tells you the curve is probably too low. It acts in series with the zones' own PI (SmartPI, TPI): its slow rate lets them settle first. A zone algorithm's outdoor term (TPI's external coefficient) counts the weather a second time: keep it small while the plugin sets the water. Risk with Versatile Thermostat's TPI zones: a zone at full duty can stay short of its target by TPI's own offset, so the water climbs to its +3 K edge and stays there, and every zone's cycle then stops the burner — in the simulation, 1.75 to 5 times the starts of the boiler's own regulation, up to 6.3 times with a daily outdoor swing. Switch it on only where a room stays cold with its valve open, and watch the starts."
         }
@@ -758,9 +758,9 @@
         },
         "data_description": {
           "activation_delay_s": "Seconds heating waits after the first call for heat, so slow valves (thermoelectric, underfloor) open before the boiler and its pump run — as Versatile Thermostat's central boiler did; pre-filled from VT's own setting where VT kept one, for you to confirm. Stopping is never delayed. Default 0: at once. Risk: a zone whose heating pulse is shorter than the delay never starts the boiler, and pulses close to it give short burns.",
-          "count_threshold": "Heating is needed when at least this many zones call for heat. Default 1; at most the number of zones. 0 turns the count off, leaving the power or opening threshold alone, as in Versatile Thermostat. Higher leaves a single calling room without heat.",
-          "power_threshold_kw": "Optional: heating is needed when the zones' mean power over their cycle, as Versatile Thermostat counts it, reaches this, in kW — counted only while at least one of them has its valve open or its device on. Too high leaves small rooms without heat.",
-          "opening_threshold": "Optional: heating is needed when the widest valve opening among the calling zones reaches this, in %. Too high leaves a room that opens a little without heat.",
+          "count_threshold": "Heating is needed when at least this many zones call for heat. Default 1; at most the number of zones. 0 turns the count off, leaving the power or opening threshold alone, as in Versatile Thermostat — then every zone must report what that threshold needs, or its room could never ask for heat: the form refuses a zone that does not, and a calling zone that does not raises the \"demand criterion has no data\" alarm. Higher leaves a single calling room without heat.",
+          "power_threshold_kw": "Optional: heating is needed when the zones' mean power over their cycle, as Versatile Thermostat counts it, reaches this, in kW — counted only while at least one of them has its valve open or its device on. A zone without a device power set in VT gives it no data; with a zone count of 0 such a zone could never ask for heat. Too high leaves small rooms without heat.",
+          "opening_threshold": "Optional: heating is needed when the widest valve opening among the calling zones reaches this, in %. A zone without a valve opening or duty cycle (VT's over_climate) gives it no data; with a zone count of 0 such a zone could never ask for heat. Too high leaves a room that opens a little without heat.",
           "learning_pauses": "Pause SmartPI learning while hot water runs and while foreign heat warms a zone, so it does not learn what the boiler did; each pause and resume is read back from SmartPI. With a relay the boiler sets its own water temperature, so its swings pause nothing. Default on. Auto-TPI cannot be paused without resetting what it learned, so zones running it are reported instead. Off: SmartPI learns through those moments too, which can skew its model.",
           "frost_limit": "A watched zone colder than this starts heating, whatever else applies, where heat can reach it — its valve open or its device on — in °C. Default 5 °C. Too low risks frozen pipes; too high heats rooms you keep off.",
           "frost_release": "Frost protection ends once every watched zone is above this, in °C. Default 7 °C, above the limit. Close to the limit, frost heating starts and stops more often.",
@@ -793,6 +793,7 @@
       "no_zones": "Add at least one Versatile Thermostat zone before setting up control.",
       "power_criterion_no_zone": "No zone reports a device power in Versatile Thermostat, so this threshold could never be reached: set the power in VT or leave it empty.",
       "opening_criterion_no_zone": "No zone reports a valve opening or duty cycle, so this threshold could never be reached.",
+      "zone_feeds_no_criterion": "With a zone count of 0, {zone} could never ask for heat: it reports none of what the thresholds set here need — a device power in Versatile Thermostat for the power threshold, a valve opening or duty cycle for the opening threshold. Set the zone count to 1 or more, or set the missing value in VT.",
       "off_setpoint_not_below_hard_min": "\"Off\" must be at least 1 °C below the lowest water temperature, or the boiler would not see a change.",
       "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit (°C, °F or K): a value written would mean something else to it. Pick the boiler's flow setpoint entity.",
       "missing_signal": "A required signal is missing.",
@@ -2147,6 +2148,9 @@
         "state_attributes": {
           "criteria": {
             "name": "Criteria"
+          },
+          "zones": {
+            "name": "Calling zones without data"
           }
         }
       },
@@ -2586,6 +2590,18 @@
     "no_zone_known_monitor": {
       "title": "Versatile Thermostat gives no answer",
       "description": "None of the zones answers ({zones}); the monitor cannot judge them. Check that Versatile Thermostat is loaded, its thermostats are enabled and their entity IDs are the ones in the plugin's options."
+    },
+    "no_criterion_judged_off": {
+      "title": "No demand criterion can be judged: the boiler is not heating",
+      "description": "The zones answer, but a room calls for heat and none of the demand criteria set in the plugin's options can see it ({criteria}: \"power\" needs a device power set in Versatile Thermostat, \"opening\" a valve opening or duty cycle). The plugin keeps the boiler's heating off and resumes as soon as a criterion has data again. Set the device power in VT, or set the zone count to 1 or more in the plugin's control options."
+    },
+    "no_criterion_judged_handed_back": {
+      "title": "No demand criterion can be judged: the boiler is back on its thermostat or its own room controller",
+      "description": "The zones answer, but a room calls for heat and none of the demand criteria set in the plugin's options can see it ({criteria}: \"power\" needs a device power set in Versatile Thermostat, \"opening\" a valve opening or duty cycle). The plugin handed the boiler back to the thermostat on the gateway, or to the boiler's own room controller, and takes it again as soon as a criterion has data again. Set the device power in VT, or set the zone count to 1 or more in the plugin's control options."
+    },
+    "no_criterion_judged_monitor": {
+      "title": "No demand criterion can be judged",
+      "description": "The zones answer, but a room calls for heat and none of the demand criteria set in the plugin's options can see it ({criteria}: \"power\" needs a device power set in Versatile Thermostat, \"opening\" a valve opening or duty cycle); switched on, control could not heat for it. Set the device power in VT, or set the zone count to 1 or more in the plugin's control options."
     },
     "frost_zone_closed": {
       "title": "A room below the frost limit cannot get heat",

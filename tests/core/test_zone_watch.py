@@ -14,6 +14,7 @@ from custom_components.vtherm_smart_boiler.core.zone_watch import (
     graced,
     in_recognition,
     no_zone_issue_due,
+    unjudged_since,
 )
 
 MIN = 60.0
@@ -261,3 +262,13 @@ def test_a_started_off_zone_is_known_during_the_recognition_and_after() -> None:
         for t in (0.0, RECOGNITION_S)
     ]
     assert [watch.unknown_since for watch in run(steps)] == [None, None]
+
+
+def test_since_when_no_criterion_is_judged() -> None:
+    """PB-03: kept from its start while it lasts, begun again now when the wall clock was set
+    back (C9), and over the step a criterion is judged — or nothing is known (``None``)."""
+    assert unjudged_since(None, True, 100.0) == 100.0
+    assert unjudged_since(100.0, True, 700.0) == 100.0
+    assert unjudged_since(700.0, True, 100.0) == 100.0
+    assert unjudged_since(100.0, False, 700.0) is None
+    assert unjudged_since(None, False, 700.0) is None

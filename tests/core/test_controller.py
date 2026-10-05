@@ -45,7 +45,12 @@ from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.demand import DemandConfig
 from custom_components.vtherm_smart_boiler.core.limits import FlowLimits, FrostConfig, LimitCode
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
-from custom_components.vtherm_smart_boiler.core.zone_watch import GRACE_S, RECOGNITION_S
+from custom_components.vtherm_smart_boiler.core.zone_watch import (
+    GRACE_S,
+    NO_ZONE_ISSUE_S,
+    RECOGNITION_S,
+    criteria_issue_due,
+)
 
 MIN = 60.0
 CURVE = HeatingCurve(design_outdoor=-15.0, design_flow=55.0, room=20.0, exponent=1.0)
@@ -1438,6 +1443,44 @@ def test_every_criterion_without_data_ends_like_every_zone_unknown() -> None:
         else:
             assert last.mode is ControlMode.IDLE
             assert not last.command.ch_enable
+        assert last.no_criterion_judged  # PB-03: the end state's alarm rises here too
+
+
+def test_no_criterion_judged_and_since_when_follow_the_zones_data() -> None:
+    """PB-03 (decision 3 of 0.2.3): zones known and no configured criterion judged — a calling
+    zone without a device power. The decision says so at once (the alarm "no zone known"), and
+    the zones' watch keeps since when, for the repair issue after ``NO_ZONE_ISSUE_S``: through a
+    hand-back and switched off alike. The step a power is published both end. Negative: never in
+    the recognition period, nor with every zone unknown (decision 3's own case), nor with no
+    zone calling (nothing to judge)."""
+    demand = DemandConfig(count_threshold=0, power_threshold_kw=1.0)
+    end = NO_ZONE_ISSUE_S + 10.0
+    for base, enabled in ((CONFIG, True), (THERMOSTAT, True), (CONFIG, False)):
+        config = replace(base, demand=demand)
+        blind = during(0.0, end, lambda t: (started("a", t),), enabled=enabled)
+        state, decisions = run(blind, config)
+        assert all(d.no_criterion_judged for d in decisions)
+        assert state.zones.unjudged_since == 0.0
+        assert criteria_issue_due(state.zones, NO_ZONE_ISSUE_S)
+        assert not criteria_issue_due(state.zones, NO_ZONE_ISSUE_S - 10.0)
+        fed = inputs(end, zones=(started("a", end, power=2.0),), enabled=enabled)
+        state, decision = decide(state, fed, config)
+        assert not decision.no_criterion_judged
+        assert state.zones.unjudged_since is None
+    config = replace(CONFIG, demand=demand)
+    state, _decisions = run(during(0.0, 60.0, lambda t: (started("a", t),)), config)
+    state, decision = decide(state, inputs(60.0, zones=(away("a"),)), config)  # VT reloads
+    assert decision.reasons == (Reason.ZONES_RECOGNITION,)
+    assert not decision.no_criterion_judged
+    assert state.zones.unjudged_since == 0.0  # held through the recognition period
+    for zones in (
+        lambda t: (placeholder("a", t),),  # the recognition period
+        lambda _t: (away("a"),),  # every zone unknown
+        lambda t: (started("a", t, valve_open=0.0),),  # nothing calls
+    ):
+        state, decisions = run(during(0.0, NO_ZONE_ISSUE_S + 10.0, zones), config)
+        assert not any(d.no_criterion_judged for d in decisions)
+        assert state.zones.unjudged_since is None
 
 
 def test_a_steady_unknown_zone_with_an_age_limit_set_counts_as_unknown() -> None:

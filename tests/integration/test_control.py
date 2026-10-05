@@ -9004,9 +9004,12 @@ async def test_a_criterion_without_data_raises_its_alarm_and_ends_like_no_zone_k
     alarm = rig.state("binary_sensor", "alarm_demand_criterion_no_data")
     assert alarm.state == "on"
     assert alarm.attributes["criteria"] == ["power"]
+    assert alarm.attributes["zones"] == [rig.zones.entities["living"]]  # PB-23: it calls
     state = rig.state("sensor", "control_state")
     assert (state.state, state.attributes["reasons"]) == ("handed_back", ["zones_unknown"])
-    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"  # zones known
+    # PB-03 (decision 3 of 0.2.3): the zones are known, but nothing can be judged — the end
+    # state's own alarm rises too.
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "on"
     rig.zones.set(
         "living",
         hvac_action="heating",
@@ -9017,7 +9020,106 @@ async def test_a_criterion_without_data_raises_its_alarm_and_ends_like_no_zone_k
     )
     await rig.advance(10)
     assert rig.state("binary_sensor", "alarm_demand_criterion_no_data").state == "off"
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"
     assert rig.gateway.setpoints()[-1] == EXPECTED  # 1.2 kW ≥ 1.0: heating
+
+
+# PB-03: a calling zone whose VT device power is 0 (none set) — the power criterion cannot see
+# it; and the same zone once VT publishes a power again.
+BLIND = {
+    "hvac_action": "heating",
+    "valve_open_percent": 60,
+    "on_percent": 0.6,
+    "power_manager": {"device_power": 0.0, "mean_cycle_power": None, "power_unit": "kW"},
+}
+FED = BLIND | {
+    "specific_states": {"is_device_active": True},
+    "power_manager": {"device_power": 2.0, "mean_cycle_power": 1.2, "power_unit": "kW"},
+}
+
+
+@pytest.mark.parametrize(
+    ("topology", "kind", "severity"),
+    [
+        ("gateway_standalone", "off", ir.IssueSeverity.ERROR),
+        ("gateway_with_thermostat", "handed_back", ir.IssueSeverity.WARNING),
+    ],
+)
+async def test_no_criterion_judged_raises_the_no_zone_alarm_and_an_issue_naming_it(
+    rig: Rig, topology: str, kind: str, severity: ir.IssueSeverity
+) -> None:
+    """PB-03 (decision 3 of 0.2.3), the review's test: a count of 0, a 1-kW power threshold
+    and a calling zone whose VT device power is 0. The alarm "no zone known" rises at once; after
+    ten minutes a repair issue names the criterion — an error stand-alone, where heating stays
+    off; a warning where the thermostat on the gateway has the boiler. Both go the step VT
+    publishes a power again, and control heats."""
+    rig.zones.set("living", **BLIND)
+    await start(rig, topology=topology, count_threshold=0, power_threshold_kw=1.0)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "on"
+    assert no_zone_issue(rig) is None
+    await rig.advance(11 * 60)
+    found = no_zone_issue(rig)
+    assert found is not None
+    assert found.translation_key == f"no_criterion_judged_{kind}"
+    assert found.severity is severity
+    assert found.translation_placeholders == {"criteria": "power"}
+    assert ("ch", True) not in rig.gateway.calls  # nothing heats for a call it cannot see
+    rig.zones.set("living", **FED)
+    await rig.advance(10)
+    assert no_zone_issue(rig) is None
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"
+    assert rig.state("binary_sensor", "alarm_demand_criterion_no_data").state == "off"
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+
+
+async def test_no_criterion_judged_with_control_switched_off_is_the_monitors_issue(
+    rig: Rig,
+) -> None:
+    """PB-03 with the monitor only — control configured and switched off: no alarm, and after
+    ten minutes the repair issue as a warning, naming the criterion; it goes once a zone feeds
+    it. Negative: no control configured, no criterion — no issue."""
+    rig.zones.set("living", **BLIND)
+    await start(rig, count_threshold=0, power_threshold_kw=1.0)
+    await rig.advance(11 * 60)
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"  # switched off
+    found = no_zone_issue(rig)
+    assert found is not None
+    assert found.translation_key == "no_criterion_judged_monitor"
+    assert found.severity is ir.IssueSeverity.WARNING
+    rig.zones.set("living", **FED)
+    await rig.advance(10)
+    assert no_zone_issue(rig) is None
+
+
+async def test_no_criterion_issue_without_control_configured(rig: Rig) -> None:
+    rig.zones.set("living", **BLIND)
+    entry = add_entry(rig, without_control(options(rig.zones)))
+    await set_up(rig, entry)
+    await rig.advance(11 * 60, step=30.0)
+    assert no_zone_issue(rig) is None
+
+
+async def test_the_no_criterion_issue_gives_way_to_every_zone_unknown(rig: Rig) -> None:
+    """The calling zone without data then lost for good: the recognition period that follows
+    (every zone stopped answering at once) leaves the issue as it is; at its end every zone is
+    unknown, and the issue says that instead — the zones named, no criterion: an unknown zone
+    never makes a criterion "without data"."""
+    rig.zones.set("living", **BLIND)
+    await start(rig, topology="gateway_standalone", count_threshold=0, power_threshold_kw=1.0)
+    await rig.switch(True)
+    await rig.advance(11 * 60)
+    assert no_zone_issue(rig).translation_key == "no_criterion_judged_off"
+    rig.zones.set("living", "unavailable")
+    await rig.advance(9 * 60)
+    assert no_zone_issue(rig).translation_key == "no_criterion_judged_off"  # recognition
+    await rig.advance(2 * 60)
+    found = no_zone_issue(rig)
+    assert found.translation_key == "no_zone_known_off"
+    assert set(found.translation_placeholders) == {"zones"}
+    assert rig.state("binary_sensor", "alarm_demand_criterion_no_data").state == "off"
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "on"
 
 
 async def test_the_switch_shows_the_boilers_own_room_controller(rig: Rig) -> None:
