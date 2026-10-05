@@ -131,8 +131,9 @@ REPEAT_MAX_S = 300.0  # a relay restarted in the wrong state stays so at most th
 TIMER_SHORTEST_S = 600.0
 TIMER_MIN_S = TIMER_SHORTEST_S  # a declared switch-off timer: 10 to 120 minutes
 TIMER_MAX_S = 7200.0
-# A declared timer's lapse at or after max(timer − 60 s, timer ÷ 2); with "I don't know", two
-# switch-offs this close in age into their on-periods show the relay's own timer (Z4R-02).
+# A declared timer's lapse within this of a whole multiple of its length (decision 6 of 0.2.3);
+# with "I don't know", two switch-offs this close in age into their on-periods show the relay's
+# own timer (Z4R-02).
 TIMER_TOLERANCE_S = 60.0
 # KD-02: the shortest recurring age taken for the relay's own timer — 10 min, less the tolerance a
 # measured age is allowed, so a real 10-min timer seen a second or a minute short is its own.

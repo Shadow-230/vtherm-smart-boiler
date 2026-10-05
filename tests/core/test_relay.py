@@ -785,9 +785,10 @@ def test_the_declared_timer_switching_off_is_its_own_lapse_not_counted(
 def test_an_early_switch_off_with_a_timer_is_another_controller(
     power_on: RelayPowerOn, judged: ChangeClass, restart: bool
 ) -> None:
-    """A switch-off before max(timer − 60 s, timer ÷ 2) is judged as any change while the relay
-    stayed available: with "on after a power cut" another controller (rewritten once); with
-    "off", "last" or "I don't know" R2a's possible restart (answer N)."""
+    """A switch-off 400 s into a declared 10-min timer's on-period — not within 60 s of its
+    length — is judged as any change while the relay stayed available: with "on after a power
+    cut" another controller (rewritten once); with "off", "last" or "I don't know" R2a's possible
+    restart (answer N)."""
     config = RelayConfig(
         reports=RelayReports.YES, power_on=power_on, timer=RelayTimer.MINUTES, timer_s=10 * MIN
     )
