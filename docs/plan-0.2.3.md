@@ -108,7 +108,7 @@ and VT's not-started zones read as the user's "off".
 |---|---|
 | 1.1 | `SCOPE.md` and `docs/plan-0.2.2.md` take decisions 1–4, 6 and 12 (SB-01, SB-02, SB-03, SB-05, SB-06, SB-10; PB-03's one rule in SCOPE §7 and X3); `CLAUDE.md` "Where to continue" names this plan. |
 | 1.2 ✅ | No relay fights (decision 6): PB-01, PB-44, SB-05, SB-06. Keep the one rewrite through resends; a resend the relay never shows counts against another controller (answers C, N); the declared timer's lapse window bounded; a relay that stops taking commands mid-session raises an issue and, for "off", blocks and hands back. |
-| 1.3 | The control unit's wish and hand-back debt hold under errors and restarts: PB-02, PB-04, PB-05, PB-12, PB-13, PB-14, PB-16, TB-02, TB-05, TB-06. The restored wish saved before anything else; the error path keyed on the debt and routed through the minute gate and the confirmation; the fixable owed issue when a hand-back stays unconfirmed; the lost-link issue kept across restarts; the old debt folded at the session's first write; a control-store write that fails noticed. |
+| 1.3 ✅ | The control unit's wish and hand-back debt hold under errors and restarts: PB-02, PB-04, PB-05, PB-12, PB-13, PB-14, PB-16, TB-02, TB-05, TB-06. The restored wish saved before anything else; the error path keyed on the debt and routed through the minute gate and the confirmation; the fixable owed issue when a hand-back stays unconfirmed; the lost-link issue kept across restarts; the old debt folded at the session's first write; a control-store write that fails noticed. |
 | 1.4 | "Nothing heats" visible and decision 3's end states settled (decisions 1–4, 12): PB-03, PB-23, SB-01, SB-02, SB-03, SB-10, TB-01. |
 | 1.5 | The check of part 1. |
 | 1.6 🔒 | Stop: the report to the user, with the tokens part 1 used; the user decides whether part 2 starts. |
@@ -167,6 +167,21 @@ Left on purpose for a later release; what a step leaves open is added here by na
 6. Step 1.2: a relay that reports no state gets its command at once at every return from
    unavailable or unknown (at least 5 s apart), so one that drops every minute is written more
    often than the repeat interval — K4.
+7. Step 1.3 (PB-16): while the control store cannot be written, control does not take the boiler
+   and hands back what it holds — stand-alone, nothing heats until a write works again (an
+   error-level issue says so); the store is tried again every minute (provisional) — K4.
+8. Step 1.3 (PB-16): a failed write is seen through Home Assistant's private
+   `Store._async_write_data` (2026.9.0 and 2026.9.3); a version that stops calling it hides
+   failures again, and control runs as before 0.2.3 — the PB-16 tests catch it on the versions CI
+   runs — K5.
+9. Step 1.3 (PB-16): the repair flow's release and the entry's removal write the control store with
+   no unit to block or tell; a failed write there is in Home Assistant's log only — K4.
+10. Step 1.3 (PB-14): the lost link's issue ("Control handed the boiler back: its data is lost")
+    also shows when control was switched on with the link already lost and never held the boiler;
+    its wording — K4.
+11. Step 1.3 (TB-05): after a stop that ran out of time, the hand-back stays owed with the
+    persistent issue until the next start; a disabled entry has no next start, so that issue is
+    the only alarm (as before) — K4.
 
 ## After 0.2.3
 
