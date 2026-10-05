@@ -2000,3 +2000,83 @@ def test_the_precedence_of_the_configuration_blockers(
     control = parse_control(section, installation, None)
     pairs = None if shared is None else {Signal(k): Signal(v) for k, v in shared.items()}
     assert config_blockers(control, installation, pairs, signals=signals) == expected
+
+
+# --- SB-10 (decision 12): a setup that fails where a hand-back stops heating -----------------
+
+# A control section this version cannot read: a write path it does not know.
+UNREADABLE_SECTION = {"write_path": "carrier_pigeon"}
+NOT_HEATED, MAY_NOT_BE_HEATED = "setup_failed_not_heated", "setup_failed_may_not_be_heated"
+
+
+@pytest.mark.parametrize(
+    ("section", "state", "report"),
+    [
+        # The options' control section decides where it can be read.
+        (OTGW, {"enabled": True}, NOT_HEATED),  # a gateway without a thermostat
+        (OTGW, {"enabled": False}, None),  # control switched off: no heat from it either way
+        (OTGW | WITH_THERMOSTAT, {"enabled": True}, None),  # the thermostat takes over
+        (OTGW | {"topology": "virtual"}, {"enabled": True}, None),  # the device decides
+        (RELAY, {"enabled": True}, NOT_HEATED),  # a relay resting "off"
+        (RELAY | {"relay_rest_state": "on"}, {"enabled": True}, None),  # the boiler heats
+        (OTGW | WITH_THERMOSTAT, {"enabled": True, "taken_with": OTGW}, None),  # options first
+        # A wish never stored, one that cannot be read, a state not read at all: the cautious
+        # side — only a clear "off" is off.
+        (OTGW, {}, NOT_HEATED),
+        (OTGW, {"enabled": None}, NOT_HEATED),
+        (OTGW, {"enabled": "yes"}, NOT_HEATED),
+        (OTGW, None, NOT_HEATED),
+        # The options' section cannot be read: the options the control was taken with decide.
+        (UNREADABLE_SECTION, {"enabled": True, "taken_with": OTGW}, NOT_HEATED),
+        (UNREADABLE_SECTION, {"enabled": True, "taken_with": OTGW | WITH_THERMOSTAT}, None),
+        (UNREADABLE_SECTION, {"enabled": False, "taken_with": OTGW}, None),
+        # Neither tells what a hand-back does: the house may not be heated.
+        (UNREADABLE_SECTION, {"enabled": True}, MAY_NOT_BE_HEATED),
+        (UNREADABLE_SECTION, {"enabled": True, "taken_with": None}, MAY_NOT_BE_HEATED),
+        (UNREADABLE_SECTION, {"taken_with": UNREADABLE_SECTION}, MAY_NOT_BE_HEATED),
+        (UNREADABLE_SECTION, {"enabled": True, "taken_with": "damaged"}, MAY_NOT_BE_HEATED),
+        (OTGW | {"topology": "monitor_mode"}, {"enabled": True}, MAY_NOT_BE_HEATED),
+        (UNREADABLE_SECTION, None, MAY_NOT_BE_HEATED),
+        # No control section: control is not configured, so a setup that worked would not heat
+        # either — whatever the last run took the boiler with.
+        (None, {"enabled": True, "taken_with": OTGW}, None),
+        ({"write_path": ""}, {"enabled": True, "taken_with": OTGW}, None),
+    ],
+)
+def test_a_failed_setup_tells_of_a_house_not_heated(
+    section: dict | None, state: dict | None, report: str | None
+) -> None:
+    from custom_components.vtherm_smart_boiler.control_config import failed_setup_report
+
+    options = {"signals": {}} if section is None else {"signals": {}, "control": section}
+    found = failed_setup_report(options, state)
+    assert (None if found is None else found.value) == report
+
+
+def test_a_failed_setup_with_options_of_another_shape_tells_nothing() -> None:
+    from custom_components.vtherm_smart_boiler.control_config import failed_setup_report
+
+    assert failed_setup_report(None, {"enabled": True, "taken_with": OTGW}) is None
+    assert failed_setup_report({"control": "damaged"}, {"enabled": True}) is None
+
+
+@pytest.mark.parametrize(
+    ("data", "stops"),
+    [
+        (OTGW, True),
+        (OTGW | WITH_THERMOSTAT, False),
+        (RELAY, True),
+        (OTGW | {"topology": "monitor_mode"}, None),  # control cannot run: no effect known
+        (UNREADABLE_SECTION, None),
+        ({}, None),
+        (None, None),
+        ("damaged", None),
+    ],
+)
+def test_a_stored_section_tells_whether_a_hand_back_stops_heating(
+    data: object, stops: bool | None
+) -> None:
+    """Without the installation a bare one stands in: the effect needs the section alone."""
+    from custom_components.vtherm_smart_boiler.control_config import section_stops_heating
+
+    assert section_stops_heating(data) is stops

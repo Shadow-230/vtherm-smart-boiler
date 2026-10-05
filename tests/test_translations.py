@@ -1067,3 +1067,16 @@ def test_the_comfort_correction_says_it_is_off_and_what_it_risks() -> None:
     for language in LANGUAGES:
         translated = _texts(language)["options"]["step"]["control_behaviour"]
         assert "1,75" in translated["data_description"]["comfort_correction"], language
+
+
+def test_sb10_texts_are_translated() -> None:
+    """SB-10 (decision 12): a failed setup's issue, the house known or only possibly unheated —
+    every report the rule gives has its text, without placeholders, and says what to do."""
+    from custom_components.vtherm_smart_boiler.control_config import FailedSetupReport
+
+    for report in FailedSetupReport:
+        issue = SOURCE["issues"][report.value]
+        assert issue["title"], report
+        assert issue["description"], report
+        assert "{" not in issue["title"] + issue["description"], report
+        assert "reload the entry" in issue["description"], report

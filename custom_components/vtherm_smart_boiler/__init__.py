@@ -28,6 +28,9 @@ REMOVED_ISSUE = "entity_removed"
 REACTIONS_REMOVED_ISSUE = "reactions_removed"
 # The issues a control unit raises for a hand-back without a latch (decision 7, Y1).
 HAND_BACK_ISSUES = ("hand_back_boiler_link_lost", "hand_back_control_error")
+# SB-10 (decision 12): a setup that failed where the house goes unheated — one issue per entry,
+# its translation key saying whether that is known or only possible.
+NOT_HEATED_ISSUE = "setup_failed_not_heated"
 
 
 # Loaded through Home Assistant's import executor before first use: importing them in the event
@@ -106,6 +109,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
         coordinator.async_start_background()
         # Last: renames and removals are followed only for an entry that runs (P-19).
         entry.async_on_unload(_follow_entities(hass, entry, coordinator))
+        _forget_not_heated(hass, entry)  # the plugin runs: a failed setup's issue goes (SB-10)
     except Exception:
         await _async_setup_failed(hass, entry, coordinator)
         raise
@@ -130,7 +134,8 @@ async def _async_setup_failed(
     """Nothing of a failed setup keeps running: the units hand back again if still owed (a
     persistent issue tells of one that did not get through), then every clock, listener and
     task stops. Home Assistant retries a setup that is not ready, which hands back first again;
-    after an error, the issue stays until a reload or an options change."""
+    after an error, the issue stays until a reload or an options change. Last, where the house
+    is left unheated, SB-10's issue says so (``_report_not_heated``)."""
     import logging
 
     from . import feature_manager
@@ -150,9 +155,11 @@ async def _async_setup_failed(
     if not coordinator.loaded:
         # The stores could not even be read: what they owe is reported from them, cautiously.
         await _async_report_owed_from_store(hass, entry)
-    elif not _units(coordinator) and owes_hand_back(coordinator.stored_control):
-        # Owed with nothing to make it (the options that took the boiler are gone).
-        report_owed_hand_back(hass, entry.entry_id, persistent=True)
+    else:
+        if not _units(coordinator) and owes_hand_back(coordinator.stored_control):
+            # Owed with nothing to make it (the options that took the boiler are gone).
+            report_owed_hand_back(hass, entry.entry_id, persistent=True)
+        _report_not_heated(hass, entry, coordinator.stored_control)
     if hasattr(entry, "runtime_data"):
         # Not left for the options flow or a listener to take for a running entry.
         object.__delattr__(entry, "runtime_data")
@@ -285,6 +292,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "learning_not_resumed",  # SmartPI resumes given up after a day (Y4)
         "vt_central_entry_not_running",  # VT's central entry not running (X7)
         UNREADABLE_ISSUE,
+        NOT_HEATED_ISSUE,  # a failed setup left the house unheated (SB-10)
         # Y1: the notifications (a reload keeps them), the hand-back issues, the migration's.
         "add_water",
         "pressure_high",
@@ -370,10 +378,11 @@ def _report_thermostat_kind(hass: HomeAssistant, entry: ConfigEntry, config: Ent
 async def _async_report_owed_from_store(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """The options cannot be read, so no unit can hand back: if the last run left the boiler
     held — or its control state cannot be read while the options hold a control section — the
-    user is told, for good, and can settle it by hand."""
+    user is told, for good, and can settle it by hand. Then SB-10's issue, from the same read."""
     from .control import report_owed_hand_back
     from .coordinator import async_read_control_state
 
+    state: Mapping[str, Any] | None = None
     try:
         read = await async_read_control_state(hass, entry.entry_id, entry.options)
     except Exception:  # an unexpected failure: the cautious answer
@@ -382,9 +391,45 @@ async def _async_report_owed_from_store(hass: HomeAssistant, entry: ConfigEntry)
         logging.getLogger(__name__).exception("Could not read the stored control state")
         owed = has_control_section(entry.options)
     else:
-        owed = read.owed
+        owed, state = read.owed, read.state
     if owed:
         report_owed_hand_back(hass, entry.entry_id, persistent=True)
+    _report_not_heated(hass, entry, state)
+
+
+def _report_not_heated(
+    hass: HomeAssistant, entry: ConfigEntry, state: Mapping[str, Any] | None
+) -> None:
+    """SB-10 (decision 12): a setup that failed — after its owed hand-back — where a hand-back
+    stops heating and the stored wish (``state``, the control state as read; ``None`` where it
+    could not be read) is not a clear "off" raises at once a persistent error-level issue: the
+    plugin did not start and the house is not heated, or may not be where no options tell what a
+    hand-back does (``failed_setup_report``). The alarms that would tell of it live in the
+    control unit, which does not run. Otherwise an earlier one goes; a setup that works, or the
+    entry's removal, removes it."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from .control_config import failed_setup_report
+
+    report = failed_setup_report(entry.options, state)
+    if report is None:
+        _forget_not_heated(hass, entry)
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        f"{NOT_HEATED_ISSUE}_{entry.entry_id}",
+        is_fixable=False,
+        is_persistent=True,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key=report.value,
+    )
+
+
+def _forget_not_heated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    from homeassistant.helpers import issue_registry as ir
+
+    ir.async_delete_issue(hass, DOMAIN, f"{NOT_HEATED_ISSUE}_{entry.entry_id}")
 
 
 def _hand_back_unit(

@@ -2517,6 +2517,14 @@
       "title": "Nie udało się odczytać pamięci wtyczki o kotle",
       "description": "Plik, w którym wtyczka pamięta, czy steruje kotłem, nie dał się odczytać: brakuje go albo jest uszkodzony (Home Assistant może osobno zgłosić uszkodzony plik). Dla bezpieczeństwa wtyczka przyjęła, że sterowała kotłem, i najpierw go oddała. Potem sterowanie działa normalnie; sprawdź, czy kocioł i przełącznik sterowania są w stanie, jakiego oczekujesz."
     },
+    "setup_failed_not_heated": {
+      "title": "Wtyczka nie wystartowała: dom nie jest ogrzewany",
+      "description": "Wtyczka nie mogła wystartować, więc nie steruje kotłem, a tutaj oddanie kotła wyłącza grzanie (bramka bez termostatu, wartość przy oddaniu oznaczona jako wyłączająca grzanie albo przekaźnik spoczywający w stanie „wyłączony”): dom nie jest ogrzewany, chyba że grzeje go coś innego. Działa tylko własna ochrona kotła przed zamarzaniem, jeśli ją ma. Otwórz Ustawienia → Urządzenia i usługi, znajdź wpis wtyczki i przeczytaj jego błąd; popraw to, co wskazuje, i przeładuj wpis. To powiadomienie zniknie, gdy wtyczka wystartuje."
+    },
+    "setup_failed_may_not_be_heated": {
+      "title": "Wtyczka nie wystartowała: dom może nie być ogrzewany",
+      "description": "Wtyczka nie mogła wystartować, więc nie steruje kotłem. Nie da się odczytać ani jej opcji, ani opcji, z którymi przejęła kocioł, więc nie wie, co kocioł robi bez niej: tam, gdzie oddanie kotła wyłącza grzanie (bramka bez termostatu, wartość przy oddaniu oznaczona jako wyłączająca grzanie albo przekaźnik spoczywający w stanie „wyłączony”), dom nie jest ogrzewany. Otwórz Ustawienia → Urządzenia i usługi, znajdź wpis wtyczki i przeczytaj jego błąd; popraw to, co wskazuje, i przeładuj wpis. To powiadomienie zniknie, gdy wtyczka wystartuje."
+    },
     "control_state_not_saved": {
       "title": "Wtyczka nie może zapisać swojej pamięci o kotle",
       "description": "Zapis pliku, w którym wtyczka pamięta, czy steruje kotłem, nie powiódł się — pełny dysk albo pamięć, która przeszła w tryb tylko do odczytu (błąd jest w logu Home Assistant). Po restarcie wtyczka mogłaby wtedy zapomnieć, że kocioł trzyma wartość przez nią zapisaną, więc sterowanie na razie nie przejmuje kotła: oddało go, a oddanie, które wtyczka już jest winna, i tak zostaje wysłane. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono teraz grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci. Wtyczka próbuje zapisać ponownie co minutę, a sterowanie wraca samo, gdy to się uda. Sprawdź pamięć Home Assistant: wolne miejsce i czy jej dysk lub karta SD nie zawodzi."

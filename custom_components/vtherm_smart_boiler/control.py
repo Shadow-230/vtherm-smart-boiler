@@ -159,12 +159,11 @@ from .control_config import (
     AlarmReaction,
     ControlOptions,
     HandBack,
-    HandBackEffect,
     Topology,
     WritePath,
     config_blockers,
     frost_protection_by,
-    hand_back_effect,
+    hand_back_stops_heating,
     highest_water_temperature,
     map_control_entities,
     rename_in_control,
@@ -2339,10 +2338,7 @@ class ControlUnit:
     def _stops_heating(self) -> bool:
         """A hand-back stops heating: nothing heats the house once control lets go — a relay
         resting "off" included, unless a thermostat in parallel heats (X8)."""
-        return hand_back_effect(self.options) in (
-            HandBackEffect.HEATING_STOPS,
-            HandBackEffect.RELAY_RESTS_OFF,
-        )
+        return hand_back_stops_heating(self.options) is True
 
     def _follow_frost(self, now: float, zones: Sequence[ZoneState]) -> None:
         """S-57: while control does not hold the boiler where a hand-back stops heating, a room

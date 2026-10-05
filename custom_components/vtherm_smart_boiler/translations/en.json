@@ -2517,6 +2517,14 @@
       "title": "The plugin's memory of the boiler could not be read",
       "description": "The file in which the plugin remembers whether it holds the boiler could not be read: it is missing or damaged (Home Assistant may show its own notice about a damaged file). To be safe, the plugin assumed it held the boiler and handed it back first. Control then works as usual; check that the boiler and the control switch are as you expect."
     },
+    "setup_failed_not_heated": {
+      "title": "The plugin did not start: the house is not heated",
+      "description": "The plugin could not start, so it does not control the boiler, and here handing the boiler back stops heating (a gateway without a thermostat, a hand-back value declared to stop heating, or a relay resting \"off\"): the house is not heated unless something else heats it. Only the boiler's own frost protection, if it has one, still works. Open Settings → Devices & services, find the plugin's entry and read its error; fix what it names, then reload the entry. This notice goes once the plugin starts."
+    },
+    "setup_failed_may_not_be_heated": {
+      "title": "The plugin did not start: the house may not be heated",
+      "description": "The plugin could not start, so it does not control the boiler. Neither its options nor the options it took the boiler with can be read, so it cannot tell what the boiler does without it: where handing the boiler back stops heating (a gateway without a thermostat, a hand-back value declared to stop heating, or a relay resting \"off\"), the house is not heated. Open Settings → Devices & services, find the plugin's entry and read its error; fix what it names, then reload the entry. This notice goes once the plugin starts."
+    },
     "control_state_not_saved": {
       "title": "The plugin cannot save its memory of the boiler",
       "description": "Writing the file in which the plugin remembers whether it holds the boiler failed — a full disk, or a storage that turned read-only (Home Assistant's log has the error). A restart could then forget that the boiler holds a value the plugin wrote, so control does not take the boiler meanwhile: it handed it back, and a hand-back already owed is still made. Where a thermostat or the boiler's own control takes over, it heats now; where a hand-back stops heating, the boiler does not heat until control resumes. The plugin tries to save again every minute, and control resumes on its own once that works. Check Home Assistant's storage: its free space, and whether its disk or SD card is failing."

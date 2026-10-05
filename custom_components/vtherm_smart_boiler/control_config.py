@@ -44,11 +44,12 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
+from .const import CONTROL, has_control_section
 from .core.controller import OUTAGE_LOST_S, ControlConfig
 from .core.curve import HeatingCurve
 from .core.demand import DemandConfig
 from .core.guards import HELD_REFRESH_S, GuardConfig, WriteType
-from .core.installation import BoilerClass, CircuitControl, EmitterType, Installation
+from .core.installation import Boiler, BoilerClass, CircuitControl, EmitterType, Installation
 from .core.learning import LearningConfig
 from .core.limits import FlowLimits, FrostConfig
 from .core.loop import DEFAULT_OFF_SETPOINT, LoopConfig
@@ -868,6 +869,62 @@ def hand_back_effect(control: ControlOptions) -> HandBackEffect | None:
         if control.topology is not None
         else None
     )
+
+
+# Where nothing heats the house once control lets go.
+_STOPS_HEATING = frozenset({HandBackEffect.HEATING_STOPS, HandBackEffect.RELAY_RESTS_OFF})
+
+
+def hand_back_stops_heating(control: ControlOptions) -> bool | None:
+    """A hand-back stops heating: nothing heats the house once control lets go — a relay resting
+    "off" included, unless a thermostat in parallel heats (X8). ``None`` where control cannot
+    run, so no effect is known."""
+    effect = hand_back_effect(control)
+    return None if effect is None else effect in _STOPS_HEATING
+
+
+def section_stops_heating(data: object) -> bool | None:
+    """Whether a hand-back through a stored control section — the options', or those the control
+    was taken with — stops heating; ``None`` where it holds no control or cannot be read. The
+    effect needs the section alone, so a bare installation stands in for one that may not be
+    readable."""
+    if not isinstance(data, Mapping):
+        return None
+    try:
+        control = parse_control(data, Installation(Boiler(BoilerClass.READ_ONLY), ()), None)
+    except Exception:  # whatever cannot be read tells nothing
+        return None
+    return hand_back_stops_heating(control) if control.configured else None
+
+
+class FailedSetupReport(StrEnum):
+    """What a setup that fails tells of the house (SB-10): its repair issue's translation key."""
+
+    NOT_HEATED = "setup_failed_not_heated"
+    MAY_NOT_BE_HEATED = "setup_failed_may_not_be_heated"
+
+
+def failed_setup_report(
+    options: object, state: Mapping[str, Any] | None
+) -> FailedSetupReport | None:
+    """SB-10 (decision 12): a setup that failed, where a hand-back stops heating — by the
+    options' control section where it can be read, else by the options the control was taken
+    with (``taken_with`` in the stored control state ``state``; ``None`` where it could not be
+    read) — and the stored wish is not a clear "off": the plugin did not start and the house is
+    not heated. A wish never stored or unreadable counts as "on" (the cautious side). Where
+    neither section tells what a hand-back does, the house may not be heated. Nothing where the
+    options hold no control section — a setup that worked would not heat either — or the
+    hand-back leaves heating to a thermostat or the boiler's own control."""
+    if not isinstance(options, Mapping) or not has_control_section(options):
+        return None
+    if state is not None and state.get("enabled") is False:
+        return None
+    stops = section_stops_heating(options[CONTROL])
+    if stops is None and state is not None:
+        stops = section_stops_heating(state.get("taken_with"))
+    if stops is False:
+        return None
+    return FailedSetupReport.NOT_HEATED if stops else FailedSetupReport.MAY_NOT_BE_HEATED
 
 
 class FrostProtection(StrEnum):
