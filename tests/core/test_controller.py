@@ -1269,17 +1269,74 @@ def test_a_transient_loss_of_every_zone_does_not_start_the_boiler() -> None:
     assert decisions[-1].mode is ControlMode.IDLE
 
 
-def test_an_off_zone_not_ready_means_no_demand() -> None:
-    """T-17 (S-34): the only zone "off", VT not having started it, its temperature fresh: no
-    demand once the recognition period is over — IDLE with ``NO_DEMAND``, not unknown."""
-    steps = during(
-        0.0, RECOGNITION_S + 10.0, lambda t: (placeholder("a", t, ready=False, temperature=19.0),)
-    )
+def test_an_off_zone_not_started_without_is_ready_means_no_demand() -> None:
+    """T-17 (S-34): the only zone "off", VT not having started it and showing no ``is_ready``
+    (its placeholder, an older VT), its temperature fresh: no demand once the recognition period
+    is over — IDLE with ``NO_DEMAND``, not unknown."""
+    steps = during(0.0, RECOGNITION_S + 10.0, lambda t: (placeholder("a", t, temperature=19.0),))
     _state, decisions = run(steps)
     assert decisions[0].mode is ControlMode.WAITING_DATA  # not known during the recognition
     assert decisions[-1].mode is ControlMode.IDLE
     assert Reason.NO_DEMAND in decisions[-1].reasons
     assert not decisions[-1].zones_unknown
+
+
+def unstarted(zone_id: str, t: float, heating_enabled: bool = False) -> ZoneState:
+    """What VT 10.4.0 shows for a thermostat it cannot start (an underlying device unavailable):
+    "off" — "heat" for over_valve — with ``is_ready`` false, its room temperature fresh."""
+    return ZoneState(
+        zone_id,
+        heating_enabled=heating_enabled,
+        ready=False,
+        reported=False,
+        reported_at=t,
+        temperature=19.0,
+        valve_open=0.0,
+    )
+
+
+@pytest.mark.parametrize("heating_enabled", [False, True], ids=["off", "heat"])
+@pytest.mark.parametrize("config", [CONFIG, THERMOSTAT], ids=["off", "handed_back"])
+@pytest.mark.parametrize("how", ["restart", "one_by_one"])
+def test_zones_vt_cannot_start_end_in_decision_3s_end_state(
+    how: str, config: ControlConfig, heating_enabled: bool
+) -> None:
+    """SB-02 (decision 1 of 2026-10-05): VT cannot start any thermostat — after a restart with
+    the Zigbee or Z-Wave integration down (the recognition period), or one after another (each
+    zone's grace) — and shows each with ``is_ready`` false. After the recognition period and the
+    grace every zone is unknown: the usual "off" stand-alone, a hand-back to a working
+    thermostat — never IDLE with ``NO_DEMAND``."""
+    if how == "restart":
+        end = RECOGNITION_S
+
+        def zones(t: float) -> tuple[ZoneState, ...]:
+            return (unstarted("a", t, heating_enabled), unstarted("b", t, heating_enabled))
+
+    else:
+        end = 20.0 + GRACE_S
+
+        def zones(t: float) -> tuple[ZoneState, ...]:
+            return (
+                started("a", t) if t < 10.0 else unstarted("a", t, heating_enabled),
+                started("b", t) if t < 20.0 else unstarted("b", t, heating_enabled),
+            )
+
+    steps = during(0.0, end + 60.0, zones)
+    state, decisions = run(steps, config)
+    after = [d for s, d in zip(steps, decisions, strict=True) if s.now >= end]
+    before = [d for s, d in zip(steps, decisions, strict=True) if s.now < end]
+    assert not any(Reason.NO_DEMAND in d.reasons for d in decisions)
+    assert not any(d.zones_unknown for d in before)
+    assert all(d.zones_unknown and Reason.ZONES_UNKNOWN in d.reasons for d in after)
+    if config.working_thermostat:
+        assert all(d.mode is ControlMode.HANDED_BACK and d.command is None for d in after)
+        backs = [s.now for s, d in zip(steps, decisions, strict=True) if d.hand_back]
+        assert backs == ([end] if how == "one_by_one" else [])  # at a restart nothing was taken
+    else:
+        assert all(d.mode is ControlMode.IDLE for d in after)
+        assert all(d.command is not None and not d.command.ch_enable for d in after)
+        assert not any(d.hand_back for d in decisions)
+    assert not state.latched
 
 
 def test_home_assistant_starting_keeps_a_restored_command_but_decides_nothing_new() -> None:
@@ -2015,6 +2072,49 @@ def test_on_off_mode_idle_and_frost() -> None:
     _state, [frost] = run([inputs(0.0, zones=(cold,))], ON_OFF)
     assert frost.mode is ControlMode.FROST
     assert frost.command == BoilerCommand(True, None)
+
+
+def irregular(start: float, span: float) -> list[float]:
+    """Control's steps from ``start`` for at least ``span`` seconds, 10 to 60 s apart."""
+    gaps = (10.0, 35.0, 60.0, 25.0, 45.0)
+    times = [start]
+    while times[-1] < start + span:
+        times.append(times[-1] + gaps[len(times) % len(gaps)])
+    return times
+
+
+def test_relay_frost_that_does_not_warm_the_room_is_reported_per_episode() -> None:
+    """TB-01: the relay path. A watched zone VT switched off at 3 °C, its valve open, never
+    warms: at every step — every 10 to 60 s for 2.2 hours — the relay "on" in FROST, reported
+    from two hours on and never before; the room at the release for one step ends the episode,
+    and the next one, back at 3 °C, counts from its own start."""
+    config = _relay_config()
+
+    def cold(t: float, temperature: float = 3.0) -> ControlInputs:
+        room = zone(t, heating_enabled=False, temperature=temperature, valve_open=1.0)
+        return inputs(t, zones=(room,))
+
+    first = irregular(0.0, 2.2 * HOUR)
+    released = first[-1] + 30.0
+    later = irregular(released + 20.0, 2.2 * HOUR)
+    steps = [*(cold(t) for t in first), cold(released, 7.0), *(cold(t) for t in later)]
+    _state, decisions = run(steps, config)
+    episode, release, second = (
+        decisions[: len(first)],
+        decisions[len(first)],
+        decisions[len(first) + 1 :],
+    )
+    assert all(d.mode is ControlMode.FROST for d in episode)
+    assert all(d.command == BoilerCommand(True, None) for d in episode)
+    assert [d.frost_stuck for d in episode] == [t >= FROST_ALARM_S for t in first]
+    assert release.mode is not ControlMode.FROST
+    assert not release.frost_stuck
+    begun = next(t for t, d in zip(later, second, strict=True) if d.mode is ControlMode.FROST)
+    assert begun == later[0]
+    assert all(d.mode is ControlMode.FROST for d in second)
+    assert all(d.command == BoilerCommand(True, None) for d in second)
+    assert [d.frost_stuck for d in second] == [t - begun >= FROST_ALARM_S for t in later]
+    assert second[-1].frost_stuck
 
 
 def _relay_config(**control: object) -> ControlConfig:

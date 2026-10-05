@@ -224,13 +224,15 @@ def test_a_device_power_of_zero_is_no_data_but_a_mean_power_of_zero_is_none_now(
     assert result.wanted is False
 
 
-def test_an_off_zone_not_ready_is_known_without_demand() -> None:
-    """T-17 (S-34): "off" has no demand whatever VT's start shows, once the recognition period
-    is over; during it, the zone is not known yet."""
-    off = zone("a", heating_enabled=False, ready=False, reported=False, temperature=19.0)
+@pytest.mark.parametrize(("ready", "known"), [(None, True), (False, False)])
+def test_an_off_zone_not_started_after_the_recognition(ready: bool | None, known: bool) -> None:
+    """T-17 (S-34): "off" VT has not started, without ``is_ready`` (VT's placeholder, an older
+    VT), has no demand once the recognition period is over; with ``is_ready`` false VT cannot
+    start it, so it stays unknown (SB-02). During the recognition period neither is known yet."""
+    off = zone("a", heating_enabled=False, ready=ready, reported=False, temperature=19.0)
     result = boiler_demand([off], NOW, AGE, DemandConfig())
-    assert result.wanted is False
-    assert result.unknown == ()
+    assert result.wanted is (False if known else None)
+    assert result.unknown == (() if known else ("a",))
     during = boiler_demand([off], NOW, AGE, DemandConfig(), recognition=True)
     assert during.wanted is None
     assert during.unknown == ("a",)
@@ -367,11 +369,11 @@ def test_an_open_window_switching_a_zone_off_leaves_it_known_without_demand() ->
 
 
 def test_a_vt_restart_off_and_not_ready_then_started() -> None:
-    """VT reloads: before its first refresh each thermostat shows a placeholder "off", not
-    ready. During the recognition period such a zone is not known yet; after it, "off" is
+    """VT reloads: before its first refresh each thermostat shows a placeholder "off", without
+    ``is_ready``. During the recognition period such a zone is not known yet; after it, "off" is
     known without demand (S-34), while a heating mode VT has not started stays unknown. Once
     VT has started the zone, it counts as it shows."""
-    placeholder = zone("a", heating_enabled=False, ready=False, reported=False, temperature=None)
+    placeholder = zone("a", heating_enabled=False, ready=None, reported=False, temperature=None)
     heat_unstarted = zone("a", valve_open=0.6, ready=False, reported=False)
     started = zone("a", valve_open=0.6, ready=True, reported=True)
     assert demand_over([[placeholder]], recognition=True) == [(None, 0, ("a",))]

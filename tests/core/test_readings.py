@@ -107,9 +107,15 @@ def zone(**kw) -> ZoneState:
         # Heat or auto that VT does not run yet: unknown.
         (zone(heating_enabled=True, reported=False, ready=False), False, False),
         (zone(heating_enabled=True, reported=False), False, False),
-        # "Off" that VT has not started: no demand once the recognition period is over (S-34).
-        (zone(heating_enabled=False, reported=False, ready=False), True, False),
+        # "Off" that VT has not started, without ``is_ready`` (VT's placeholder before its first
+        # refresh, an older VT): no demand once the recognition period is over (S-34).
         (zone(heating_enabled=False, reported=False), True, False),
+        # VT says it has not started it (``is_ready`` false): it cannot — a device unavailable —
+        # so its "off" is not the user's: unknown after the recognition period too (SB-02).
+        (zone(heating_enabled=False, reported=False, ready=False), False, False),
+        (zone(heating_enabled=False, ready=False), False, False),
+        # Started and "off": the user's "off", known without demand (S-34).
+        (zone(heating_enabled=False, reported=True, ready=True), True, True),
         (zone(heating_enabled=True), True, True),  # nothing said about the start: as before
         (zone(heating_enabled=True, ready=False), False, False),
         (zone(heating_enabled=True, reported=True, reported_at=None), False, False),  # never

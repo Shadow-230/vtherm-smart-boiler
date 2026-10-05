@@ -82,9 +82,11 @@ class ZoneState:
     ``on_percent`` and ``valve_open`` are fractions from 0 to 1. ``power`` is the device power
     as configured in VT, in kW — above 0, or unknown; ``mean_power`` VT's mean power over the
     zone's cycle, in kW (live only). ``ready``: VT's ``is_ready``, it has finished starting the
-    thermostat. ``reported``: VT shows it started — ``is_ready`` true, or an older VT's state
-    without that key — and ``False`` while it does not (before VT's first refresh a thermostat
-    shows a placeholder "off" with neither); ``None``: not said, ``ready`` alone decides.
+    thermostat — ``False`` for any published value but true, ``None`` where VT shows none (its
+    placeholder before the first refresh, an older VT). ``reported``: VT shows it started —
+    ``is_ready`` true, or an older VT's state without that key — and ``False`` while it does not
+    (before VT's first refresh a thermostat shows a placeholder "off" with neither); ``None``:
+    not said, ``ready`` alone decides.
     ``temperature_at``: when the room temperature was last measured; the zone is fresh by it,
     else by the entity's report. ``room_sensor_lost``: the room sensor VT reads is gone,
     unavailable or unknown now, or VT's own safety mode is on — VT keeps the last temperature it
@@ -163,12 +165,15 @@ class ZoneState:
     def is_known(self, now: float, max_age: float | None, recognition: bool = False) -> bool:
         """Its mode is known and its data fresh, and VT has started it — or, once the
         recognition period is over, it is in a mode that does not heat: such a zone has no
-        demand whether VT runs it or not (S-34). A heating mode VT does not run is unknown."""
+        demand whether VT runs it or not (S-34). A heating mode VT does not run is unknown, and
+        so is any mode VT shows with ``is_ready`` not true: VT cannot start the thermostat (a
+        device unavailable) and shows "off" for as long as it cannot — not the user's "off"
+        (SB-02, decision 1 of 2026-10-05)."""
         if self.heating_enabled is None or not self.is_fresh(now, max_age):
             return False
         if self.started:
             return True
-        return not self.heating_enabled and not recognition
+        return not self.heating_enabled and not recognition and self.ready is not False
 
     def has_reported(self, now: float, max_age: float | None) -> bool:
         """VT shows it started, and its mode and data are known: what the recognition period

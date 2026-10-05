@@ -47,7 +47,7 @@ class ZoneValues:
     power: float | None = None  # kW, live only
     auto_mode: bool = False
     device_active: bool | None = None  # live only
-    ready: bool | None = None
+    ready: bool | None = None  # VT's ``is_ready``; ``None``: not published
     temperature_at: float | None = None  # epoch seconds, live only
     max_on_percent: float | None = None  # 0 to 1, live only
     mean_power: float | None = None  # kW, VT's mean power over the cycle, live only
@@ -86,7 +86,9 @@ def zone_values(
         power=_device_power(manager),
         auto_mode=state in AUTO_MODES,
         device_active=active if isinstance(active, bool) else None,
-        ready=ready if isinstance(ready, bool) else None,
+        # Published but not VT's true (false, ``None``, a string, a number): not started — the
+        # cautious reading (SB-02). Not published: ``None``.
+        ready=ready is True if "is_ready" in attributes else None,
         temperature_at=_moment(specific.get("last_temperature_datetime")),
         max_on_percent=_cap(configuration.get("max_on_percent")),
         mean_power=_power(manager, "mean_cycle_power", positive=False),

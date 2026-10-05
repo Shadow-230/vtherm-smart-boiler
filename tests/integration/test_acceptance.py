@@ -77,6 +77,7 @@ class Rig:
     vt_mode: str = "heat"  # the HVAC mode VT gives its thermostats (VT's own modes act on it)
     over_climate: set[str] = field(default_factory=set)  # zones of VT's over_climate type
     modes: dict[str, str] = field(default_factory=dict)  # a zone's own mode, over ``vt_mode``
+    vt_ready: bool = True  # VT's ``is_ready`` on every thermostat; false: VT cannot start them
     fahrenheit: bool = False  # Home Assistant in US customary units: VT reports in °F
     spy: ServiceSpy | None = None  # every service call (P-118)
     smartpi: dict[str, bool] = field(default_factory=dict)  # SmartPI zones: learning on or off
@@ -124,7 +125,7 @@ class Rig:
                         "current_temperature": self.degrees(self.sim.room(zone.zone_id)),
                         "temperature": self.degrees(self.sim.plant.targets[index]),
                         "hvac_action": action,
-                        "is_ready": True,
+                        "is_ready": self.vt_ready,
                         "specific_states": {"is_device_active": active},
                     },
                 )
@@ -145,7 +146,7 @@ class Rig:
                 valve_open_percent=round(opening * 100),
                 on_percent=0.0 if mode == "off" else round(opening, 2),
                 specific_states=specific,
-                is_ready=True,
+                is_ready=self.vt_ready,
                 **extra,
             )
 
@@ -872,6 +873,59 @@ async def test_zones_that_cannot_be_read_end_in_decision_3s_end_state(
         ir.async_get(rig.hass).async_get_issue(DOMAIN, f"no_zone_known_{rig.entry.entry_id}")
         is None
     )
+
+
+@pytest.mark.parametrize("when", ["restart", "reload"])
+@pytest.mark.parametrize(
+    ("topology", "handed_back"),
+    [("gateway_with_thermostat", True), ("gateway_standalone", False)],
+)
+async def test_zones_vt_cannot_start_end_in_decision_3s_end_state(
+    rig: Rig, topology: str, handed_back: bool, when: str
+) -> None:
+    """SB-02 (decision 1 of 2026-10-05): VT cannot start any thermostat — the Zigbee or Z-Wave
+    integration down after a restart, or after VT's reload — and shows each "off" with
+    ``is_ready`` false for as long as it cannot. That is not the user's "off": once the
+    recognition period is over every zone is unknown — with the thermostat on the gateway the
+    boiler is handed back to it; stand-alone, heating off — with the alarm and the repair issue,
+    never "no demand"; control resumes once VT starts them."""
+    from homeassistant.helpers import issue_registry as ir
+
+    if when == "restart":
+        rig.vt_mode, rig.vt_ready = "off", False
+    await start(rig, topology=topology)
+    await rig.switch(True)
+    if when == "reload":
+        await rig.advance(60)
+        assert rig.gateway("ch")[-1][2] is True
+        rig.vt_mode, rig.vt_ready = "off", False
+        rig.mirror_zones()
+    reasons: set[str] = set()
+    for _ in range(22):  # 11 minutes: the recognition period and a little more
+        await rig.advance(30, step=30.0)
+        reasons |= set(rig.state("sensor", "control_state").attributes["reasons"])
+    state = rig.state("sensor", "control_state")
+    assert "no_demand" not in reasons
+    assert "zones_unknown" in state.attributes["reasons"]
+    assert len(state.attributes["unknown_zones"]) == len(rig.sim.zones)
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "on"
+    assert rig.entry is not None
+    issue = ir.async_get(rig.hass).async_get_issue(DOMAIN, f"no_zone_known_{rig.entry.entry_id}")
+    assert issue is not None
+    assert issue.translation_key == (
+        "no_zone_known_handed_back" if handed_back else "no_zone_known_off"
+    )
+    if handed_back:
+        assert state.state == "handed_back"
+        assert not rig.gateway("ch") or rig.gateway("ch")[-1][2] is not False  # no CH=0
+    else:
+        assert state.state == "idle"
+        assert rig.gateway("ch")[-1][2] is False  # heating off, no hand-back
+    rig.vt_mode, rig.vt_ready = "heat", True
+    rig.mirror_zones()
+    await rig.advance(30, step=10.0)
+    assert rig.state("sensor", "control_state").state in ("heating", "idle")
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"
 
 
 @pytest.mark.parametrize("kind", ["auto", "over_climate"])

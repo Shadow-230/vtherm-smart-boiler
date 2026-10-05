@@ -933,14 +933,7 @@ def _on_off_decision(
         return idle, ControlDecision(
             ControlMode.IDLE, None, reasons=reasons, activation_at=activation_at
         )
-    frost_stuck = (
-        frost_on
-        and state.frost_since is not None
-        and now - state.frost_since >= FROST_ALARM_S
-        and coldest is not None
-        and state.frost_from is not None
-        and coldest < state.frost_from + FROST_WARMING_K
-    )
+    frost_stuck = frost_on and _frost_stuck(state, now, coldest)
     mode = ControlMode.HEATING if want_heat else ControlMode.IDLE
     if frost_on:
         mode = ControlMode.FROST

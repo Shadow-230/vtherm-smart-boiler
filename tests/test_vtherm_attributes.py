@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 from custom_components.vtherm_smart_boiler.vtherm_attributes import (
     CentralMode,
     ZoneValues,
@@ -212,3 +213,52 @@ def test_a_zone_without_vt_attributes_has_not_reported(
     state: str, attributes: dict[str, object], reported: bool
 ) -> None:
     assert zone_values(state, attributes).reported is reported
+
+
+RECOGNISED = 1000.0  # a step after the recognition period
+
+
+def _known_after_recognition(state: str, attributes: dict[str, object]) -> bool:
+    values = zone_values(state, attributes)
+    zone = ZoneState(
+        "z",
+        heating_enabled=values.heating_enabled,
+        ready=values.ready,
+        reported=values.reported,
+        reported_at=RECOGNISED,
+    )
+    return zone.is_known(RECOGNISED, None)
+
+
+@pytest.mark.parametrize("state", ["off", "cool", "heat"])
+@pytest.mark.parametrize("ready", [False, None, "true", 1, 0])
+def test_a_zone_vt_shows_not_ready_is_unknown_after_the_recognition(
+    state: str, ready: object
+) -> None:
+    """SB-02 (decision 1 of 2026-10-05): VT shows a thermostat it cannot start (a device
+    unavailable) "off" — "heat" for over_valve — with ``is_ready`` false for as long as it
+    cannot: unknown after the recognition period too, not the user's "off". A published value
+    that is not VT's true (``None``, a string, a number) is read the same way: the cautious
+    reading."""
+    values = zone_values(state, {"is_ready": ready, "specific_states": {}})
+    assert values.ready is False
+    assert not values.reported
+    assert not _known_after_recognition(state, {"is_ready": ready, "specific_states": {}})
+
+
+@pytest.mark.parametrize(
+    ("state", "attributes", "ready"),
+    [
+        ("off", {"is_ready": True, "specific_states": {}}, True),  # started: the user's "off"
+        ("cool", {"is_ready": True}, True),
+        ("off", {}, None),  # VT 10.4.0's placeholder: as before, S-34
+        ("off", {"specific_states": {}}, None),  # an older VT without ``is_ready`` (assumed)
+    ],
+)
+def test_an_off_zone_started_or_without_is_ready_stays_known_without_demand(
+    state: str, attributes: dict[str, object], ready: bool | None
+) -> None:
+    """S-34 kept: "off" on a zone VT has started, or that shows no ``is_ready`` at all, is
+    known — without demand — once the recognition period is over."""
+    assert zone_values(state, attributes).ready is ready
+    assert _known_after_recognition(state, attributes)

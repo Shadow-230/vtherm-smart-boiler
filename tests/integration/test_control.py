@@ -10363,6 +10363,36 @@ def name_of(rig: Rig, entity_id: str) -> str:
     return state.name
 
 
+async def test_relay_frost_heating_that_does_not_warm_the_room_raises_the_alarm(
+    rig: Rig, relay: FakeRelay
+) -> None:
+    """TB-01, the relay path: a zone VT switched off at 3 °C, its valve open, never warms — the
+    relay stays on in frost and the alarm shows from two hours on; the room at the release ends
+    the episode, and the next one, back at 3 °C, counts from its own start."""
+
+    async def cold_for(seconds: int, temperature: float = 3.0) -> None:
+        for _ in range(seconds // 60):  # VT keeps reporting the room
+            asleep(rig, temperature)
+            await rig.advance(60, step=60)
+
+    asleep(rig, 3.0)
+    await start_relay(rig)
+    await rig.switch(True)
+    await cold_for(3600)
+    assert rig.state("sensor", "control_state").state == "frost"
+    assert control_alarm(rig, "frost_not_warming") == "off"
+    await cold_for(3660)
+    assert control_alarm(rig, "frost_not_warming") == "on"
+    assert relay.calls == [True]  # on all along: never stopped
+    await cold_for(60, 7.0)  # the release
+    assert rig.state("sensor", "control_state").state != "frost"
+    assert control_alarm(rig, "frost_not_warming") == "off"
+    await cold_for(600)
+    assert rig.state("sensor", "control_state").state == "frost"
+    assert relay.on
+    assert control_alarm(rig, "frost_not_warming") == "off"  # a new episode
+
+
 async def test_relay_control_follows_vt_both_ways(rig: Rig, relay: FakeRelay) -> None:
     """The relay goes on and off with the zones, at once; written on a mismatch only — no
     repeats for a relay that reports its state and has no timer; switched off, control hands

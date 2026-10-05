@@ -228,9 +228,36 @@ def test_the_no_zone_issue_is_due_after_ten_minutes_of_every_zone_unknown() -> N
 
 
 def test_an_off_zone_vt_has_not_started_is_known_once_the_recognition_is_over() -> None:
-    """S-34: after the recognition period an "off" zone VT never started counts as known, so
-    every zone is not unknown."""
+    """S-34: after the recognition period an "off" zone VT never started, without ``is_ready``
+    (VT's placeholder, an older VT), counts as known, so every zone is not unknown."""
     steps = [(t, (placeholder("a", t),)) for t in (0.0, RECOGNITION_S)]
     seen = run(steps)
     assert seen[0].unknown_since == 0.0
     assert seen[1].unknown_since is None
+
+
+@pytest.mark.parametrize("heating_enabled", [False, True], ids=["off_or_cool", "heat"])
+def test_a_zone_vt_cannot_start_stays_unknown_after_the_recognition(heating_enabled: bool) -> None:
+    """SB-02 (decision 1 of 2026-10-05): VT shows a thermostat it cannot start — an underlying
+    device unavailable — "off" ("heat" for over_valve), ``is_ready`` false, for as long as it
+    cannot. Every zone stays unknown after the recognition period, and the repair issue
+    follows."""
+
+    def unstarted(t: float) -> ZoneState:
+        return ZoneState(
+            "a", heating_enabled=heating_enabled, ready=False, reported=False, reported_at=t
+        )
+
+    seen = run([(t, (unstarted(t),)) for t in (0.0, RECOGNITION_S, NO_ZONE_ISSUE_S + 10.0)])
+    assert [watch.unknown_since for watch in seen] == [0.0, 0.0, 0.0]
+    assert not in_recognition(seen[-1])
+    assert no_zone_issue_due(seen[-1], NO_ZONE_ISSUE_S + 10.0)
+
+
+def test_a_started_off_zone_is_known_during_the_recognition_and_after() -> None:
+    """S-34 kept: "off" on a zone VT has started (``is_ready`` true) is the user's "off"."""
+    steps = [
+        (t, (zone("a", t, heating_enabled=False, ready=True, valve_open=0.0),))
+        for t in (0.0, RECOGNITION_S)
+    ]
+    assert [watch.unknown_since for watch in run(steps)] == [None, None]
