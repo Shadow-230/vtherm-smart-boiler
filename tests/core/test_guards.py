@@ -649,18 +649,38 @@ def test_an_attempt_with_an_outage_does_not_count_toward_ignored() -> None:
 
 def test_heating_off_ignored_from_the_start_names_off() -> None:
     """Answer O: the heating switch stays on after each of the session's first three sends of
-    "off" — ignored from the start, with "off" among the values it did not take. Negative: only
-    "on" not taken — the switch stays off — is ignored from the start without it."""
+    "off" — ignored from the start, with "off" among the values it did not take. Decision 4 of
+    0.2.3 (SB-03): only "on" not taken — the switch stays off, or its read-back is frozen at
+    "off" — names "on" instead. Negatives: a read-back unknown or unavailable throughout is
+    never judged, and "on" held once and lost later is a lost command — neither is named."""
     state, _, _ = step(GuardState(), OFF, ON, 0.0, ECHOED)  # on before the plugin
     for t in range(10, 400, 10):
         state, _, _ = step(state, OFF, ON, float(t), ECHOED)
     assert state.ignored
     assert state.off_ignored
+    assert not state.on_ignored
     state, _, _ = step(GuardState(), ON, OFF, 0.0, ECHOED)
     for t in range(10, 400, 10):
         state, _, _ = step(state, ON, OFF, float(t), ECHOED)
     assert state.ignored
     assert not state.off_ignored
+    assert state.on_ignored
+    state, _, _ = step(GuardState(), ON, None, 0.0, ECHOED)  # unknown or unavailable
+    for t in range(10, 800, 10):
+        state, _, _ = step(state, ON, None, float(t), ECHOED)
+    assert not state.ignored
+    assert not state.on_ignored
+    state, _, _ = step(GuardState(), ON, OFF, 0.0, ECHOED)
+    for t in range(10, 200, 10):  # "on" taken and held: the start phase is over
+        state, _, _ = step(state, ON, ON, float(t), ECHOED)
+    assert state.start_done
+    lost = False
+    for t in range(200, 800, 10):  # then never shown again
+        result = result_of(state, ON, OFF, float(t), ECHOED)
+        state, lost = result.state, lost or result.lost
+    assert lost
+    assert not state.ignored
+    assert not state.on_ignored
 
 
 def test_ignored_from_the_start_ends_once_the_value_holds() -> None:

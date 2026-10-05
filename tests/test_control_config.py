@@ -667,8 +667,9 @@ NOT_ALLOWED = (
 )
 ALWAYS = ("control_error", "boiler_link_lost", "outside_change", "monitor_failed")
 # The plugin can no longer switch heating off: "off" ignored from the start (answer O), or a
-# relay's "off" no longer taken in the session (decision 6 of 0.2.3).
-OFF_NOT_TAKEN = ("heating_off_ignored", "relay_off_not_taken")
+# relay's "off" no longer taken in the session (decision 6 of 0.2.3); or it cannot make the boiler
+# heat: "on" ignored from the start (decision 4 of 0.2.3).
+OFF_NOT_TAKEN = ("heating_off_ignored", "relay_off_not_taken", "heating_on_ignored")
 
 
 @pytest.mark.parametrize("data", [OTGW, OTGW | WITH_THERMOSTAT, ENTITY])
@@ -676,8 +677,8 @@ def test_only_allow_listed_alarms_may_hand_back(data: dict) -> None:
     """Decision 7: an allow-list in the code. A stored "hand back" for any other alarm — low
     pressure, a failed write, an alarm this version does not know — gives information, whatever
     the hand-back's effect; it is not even kept. Always: an internal error, the lost boiler link,
-    another controller, the monitor failing, heating off ignored from the start, a relay's "off"
-    no longer taken in the session (decision 6 of 0.2.3)."""
+    another controller, the monitor failing, heating off or on ignored from the start (answer O;
+    decision 4 of 0.2.3), a relay's "off" no longer taken in the session (decision 6 of 0.2.3)."""
     from custom_components.vtherm_smart_boiler.control_config import (
         ALWAYS_HAND_BACK_ALARMS,
         OPTIONAL_HAND_BACK_ALARMS,
@@ -783,18 +784,18 @@ def test_write_ignored_may_hand_back_only_where_a_thermostat_or_own_control_take
     assert parse_control(data, installation, None).reaction("write_ignored") is AlarmReaction.INFO
 
 
+@pytest.mark.parametrize("cause", ["heating_off_ignored", "heating_on_ignored"])
 @pytest.mark.parametrize("data", [OTGW, OTGW | WITH_THERMOSTAT, ENTITY, TICKED, RELAY])
-def test_heating_off_ignored_from_the_start_always_hands_back(data: dict) -> None:
+def test_heating_off_ignored_from_the_start_always_hands_back(data: dict, cause: str) -> None:
     """Answer O: the heating switch's "off" ignored from the start hands back and latches
     whatever is stored — "information" included — and whatever the effect, stand-alone
-    included. Negative: only "on" ignored is the optional rule above — stand-alone it informs."""
+    included; so does its "on" (decision 4 of 0.2.3, SB-03). Negative: any other ignored write
+    is the optional rule above — stand-alone it informs."""
     installation = ON_OFF if data is RELAY else RADIATORS
-    stored = data | {
-        "alarm_reactions": {"heating_off_ignored": "info", "write_ignored": "hand_back"}
-    }
+    stored = data | {"alarm_reactions": {cause: "info", "write_ignored": "hand_back"}}
     options = parse_control(stored, installation, None)
-    assert options.reaction("heating_off_ignored") is AlarmReaction.HAND_BACK
-    assert "heating_off_ignored" not in options.alarm_reactions
+    assert options.reaction(cause) is AlarmReaction.HAND_BACK
+    assert cause not in options.alarm_reactions
     if data is OTGW:
         assert options.reaction("write_ignored") is AlarmReaction.INFO
 

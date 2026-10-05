@@ -31,7 +31,8 @@ setpoint (S-40, answer E):
   the session's first three sends (an attempt with a trace of an outage in it does not count): the
   target is not written again this session, keep-alives included; the other target goes on; tried
   again at the next session. Where it is the heating switch and "off" is among the values it did
-  not take, the loop blocks control and hands back (answer O);
+  not take, the loop blocks control and hands back (answer O), and so where "on" is (decision 4
+  of 0.2.3);
 - **clipped** — one lower value whatever the plugin sends, across at least two sent values 1 K
   apart: the boiler's own limit, shown, never learned as a limit;
 - **another controller** — a second fall-back without a trace within an hour that no send
@@ -333,6 +334,12 @@ class GuardState:
         """Heating on/off ignored from the start with "off" among what it did not take: the
         plugin can no longer switch heating off (answer O)."""
         return self.ignored and any(value == 0.0 for value in self.ignored_values)
+
+    @property
+    def on_ignored(self) -> bool:
+        """Heating on/off ignored from the start with "on" among what it did not take: the
+        plugin cannot make the boiler heat (decision 4 of 0.2.3, SB-03)."""
+        return self.ignored and any(value == 1.0 for value in self.ignored_values)
 
 
 @dataclass(frozen=True, slots=True)

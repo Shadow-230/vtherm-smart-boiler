@@ -25,10 +25,12 @@ TRANSIENT_BLOCKERS = frozenset(
 )
 # Blockers the switch change itself clears.
 CLEARED_BY_SWITCHING = frozenset({"control_error"})
-# Latches that switching control off and on clears (answer O; decision 6 of 0.2.3): switching on
-# is refused, with their text, only while control is on — with control off, on is the second half
-# of "off and on", and the next off and on clears the latch as for any other.
-CLEARED_BY_OFF_AND_ON = frozenset({"heating_off_ignored", "relay_off_not_taken"})
+# Latches that switching control off and on clears (answer O; decisions 4 and 6 of 0.2.3):
+# switching on is refused, with their text, only while control is on — with control off, on is
+# the second half of "off and on", and the next off and on clears the latch as for any other.
+CLEARED_BY_OFF_AND_ON = frozenset(
+    {"heating_off_ignored", "heating_on_ignored", "relay_off_not_taken"}
+)
 
 
 PARALLEL_UPDATES = 1  # one switch action at a time

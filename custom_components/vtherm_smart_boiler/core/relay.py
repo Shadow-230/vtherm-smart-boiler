@@ -45,9 +45,11 @@ of 0.2.3), rows in this order:
    ignored"), sent again at the next check; after each of the session's first
    ``RELAY_START_SENDS`` sends → ignored from the start: not written again this session, repeats
    included (where "off" is what it ignores, the plugin can no longer switch heating off:
-   answer O). After the start phase, not shown over ``RELAY_NOT_TAKEN_CHECKS`` checks running —
-   from the first send not shown, through new commands, until the relay shows one; a check it
-   could not answer, out of reach, and a lost command start the run again — it has stopped
+   answer O; where "on", it cannot make the boiler heat: decision 4 of 0.2.3 — the loop blocks
+   control and hands the relay back either way). After the start phase, not shown over
+   ``RELAY_NOT_TAKEN_CHECKS`` checks running — from the first send not shown, through new
+   commands, until the relay shows one; a check it could not answer, out of reach, and a lost
+   command start the run again — it has stopped
    taking commands (decision 6 of 0.2.3, SB-06): "on" is sent again at every check and the
    control unit raises an error-level issue (the house is not heated); "off" not taken leaves
    the plugin unable to switch heating off — nothing more is written, and the loop blocks
@@ -313,6 +315,12 @@ class RelayState:
         """Ignored from the start with "off" among what it did not take: the plugin can no
         longer switch heating off (answer O)."""
         return self.ignored and False in self.ignored_values
+
+    @property
+    def on_ignored(self) -> bool:
+        """Ignored from the start with "on" among what it did not take: the plugin cannot make
+        the boiler heat (decision 4 of 0.2.3, SB-03)."""
+        return self.ignored and True in self.ignored_values
 
 
 @dataclass(frozen=True, slots=True)

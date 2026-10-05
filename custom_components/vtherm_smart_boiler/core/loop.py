@@ -11,19 +11,22 @@ together — a gateway reset loses both overrides — is one lost command; three
 session, while the other goes on; but heating on/off ignored from the start with "off" among what
 it did not take leaves the plugin unable to switch heating off: at the next step control is
 latched and handed back (``HEATING_OFF_IGNORED``, the user's answer O), whatever alarm reaction is
-stored. Once a guard has found another controller, every write stops — the setpoint and heating
-on/off alike: the plugin never fights it. That lasts one step: an outside change always hands
-back (S-11), so the next step latches and steps aside. A hand-back is passed on as it is — the
-guards never hold it back, and it names no target to leave out: the control unit makes the whole
-safe hand-back, over the other controller's value too (the user's answer H). The guards keep
-their memory across it (P-06): a hand-back inside a session resets only what was sent.
+stored — and so with "on" among what it did not take (``HEATING_ON_IGNORED``, decision 4 of
+0.2.3): the plugin cannot make the boiler heat, and a switch never written again would leave VT's
+later "off" unwritten too. Once a guard has found another controller, every write stops — the
+setpoint and heating on/off alike: the plugin never fights it. That lasts one step: an outside
+change always hands back (S-11), so the next step latches and steps aside. A hand-back is passed
+on as it is — the guards never hold it back, and it names no target to leave out: the control
+unit makes the whole safe hand-back, over the other controller's value too (the user's answer
+H). The guards keep their memory across it (P-06): a hand-back inside a session resets only
+what was sent.
 
 On the relay path (class 3, X8) there is no setpoint and no heating switch: the loop plans no
 guard write and hands heating on/off to the relay rule (``core.relay``), whose lost commands count
-toward "commands lost" like the guards', whose "off" ignored from the start blocks control as the
-heating switch's does (answer O applied to relays) — and so does its "off" no longer taken in the
-session (decision 6 of 0.2.3) — and whose finding another controller stops every write until the
-next step steps aside.
+toward "commands lost" like the guards', whose "off" or "on" ignored from the start blocks control
+as the heating switch's does (answer O applied to relays; decision 4 of 0.2.3) — and so does its
+"off" no longer taken in the session (decision 6 of 0.2.3) — and whose finding another controller
+stops every write until the next step steps aside.
 """
 
 from __future__ import annotations
@@ -68,6 +71,10 @@ ON, OFF = 1.0, 0.0  # heating on/off as the guard sees it
 # The latch's cause when heating on/off was ignored from the start with "off" among what it did
 # not take (answer O): blocked until the user switches control off and on.
 HEATING_OFF_IGNORED = "heating_off_ignored"
+# The latch's cause when heating on/off was ignored from the start with "on", not "off", among what
+# it did not take (decision 4 of 0.2.3, SB-03): the plugin cannot make the boiler heat — blocked
+# until the user switches control off and on, as answer O.
+HEATING_ON_IGNORED = "heating_on_ignored"
 # The latch's cause when a relay that had taken commands stopped taking "off" in the session
 # (decision 6 of 0.2.3, SB-06): blocked until the user switches control off and on, as answer O.
 RELAY_OFF_NOT_TAKEN = "relay_off_not_taken"
@@ -208,12 +215,10 @@ def loop_step(
     if config.relay is not None:
         return _relay_step(state, inputs, config, config.relay, relay_seen or RelaySeen())
     now = inputs.now
-    if config.ch_writes and state.switch.off_ignored:
-        # The plugin can no longer switch heating off (answer O): latched and handed back,
-        # whatever alarm reaction is stored.
-        alarms = inputs.hand_back_alarms
-        if HEATING_OFF_IGNORED not in alarms:
-            inputs = replace(inputs, hand_back_alarms=(*alarms, HEATING_OFF_IGNORED))
+    if config.ch_writes:
+        # The plugin can no longer switch heating off (answer O), or cannot make the boiler heat
+        # (decision 4 of 0.2.3): latched and handed back, whatever alarm reaction is stored.
+        inputs = _ignored_latch(inputs, state.switch.off_ignored, state.switch.on_ignored)
     if state.setpoint.clip is not None and not inputs.clipped:
         inputs = replace(inputs, clipped=True)
     warned = losses_warning(state.losses, now, state.losses_warned)
@@ -330,6 +335,18 @@ def loop_step(
     )
 
 
+def _ignored_latch(inputs: ControlInputs, off: bool, on: bool) -> ControlInputs:
+    """Heating on/off — the heating switch or the relay — ignored from the start: its cause among
+    the alarms that hand back, "off" first (answer O: the plugin can no longer switch heating
+    off), else "on" (decision 4 of 0.2.3: it cannot make the boiler heat); unchanged without
+    either."""
+    cause = HEATING_OFF_IGNORED if off else HEATING_ON_IGNORED if on else None
+    alarms = inputs.hand_back_alarms
+    if cause is None or cause in alarms:
+        return inputs
+    return replace(inputs, hand_back_alarms=(*alarms, cause))
+
+
 def _relay_step(
     state: LoopState,
     inputs: ControlInputs,
@@ -340,16 +357,13 @@ def _relay_step(
     """The relay path's step: the controller's decision, then the relay rule — followed at every
     step, whatever holds control, for the relay's reachability and its alarm."""
     now = inputs.now
-    for cause, holds in (
-        # The plugin can no longer switch heating off — "off" ignored from the start (answer O
-        # applied to relays), or no longer taken in the session (decision 6 of 0.2.3): latched
-        # and handed back, whatever alarm reaction is stored.
-        (HEATING_OFF_IGNORED, state.relay.off_ignored),
-        (RELAY_OFF_NOT_TAKEN, state.relay.off_not_taken),
-    ):
-        alarms = inputs.hand_back_alarms
-        if holds and cause not in alarms:
-            inputs = replace(inputs, hand_back_alarms=(*alarms, cause))
+    # The plugin can no longer switch heating off — "off" ignored from the start (answer O
+    # applied to relays), or no longer taken in the session (decision 6 of 0.2.3) — or cannot
+    # make the boiler heat — "on" ignored from the start (decision 4 of 0.2.3): latched and
+    # handed back, whatever alarm reaction is stored.
+    inputs = _ignored_latch(inputs, state.relay.off_ignored, state.relay.on_ignored)
+    if state.relay.off_not_taken and RELAY_OFF_NOT_TAKEN not in inputs.hand_back_alarms:
+        inputs = replace(inputs, hand_back_alarms=(*inputs.hand_back_alarms, RELAY_OFF_NOT_TAKEN))
     warned = losses_warning(state.losses, now, state.losses_warned)
     state = replace(state, losses_warned=warned)
     control, decision = decide(state.control, inputs, config.control)

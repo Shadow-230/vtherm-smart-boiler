@@ -21,6 +21,7 @@ from custom_components.vtherm_smart_boiler.core.guards import (
 from custom_components.vtherm_smart_boiler.core.limits import FlowLimits, Grid
 from custom_components.vtherm_smart_boiler.core.loop import (
     HEATING_OFF_IGNORED,
+    HEATING_ON_IGNORED,
     RELAY_OFF_NOT_TAKEN,
     LastCommand,
     LoopConfig,
@@ -245,8 +246,10 @@ def test_a_gateway_reset_loses_both_overrides_as_one_lost_command() -> None:
 def test_heating_off_ignored_from_the_start_hands_back_at_the_next_step(only_on: bool) -> None:
     """Answer O: the heating switch's "off" ignored from the start — control is latched with
     ``heating_off_ignored`` and handed back at the next step, whatever alarm reaction is stored.
-    Negative: only "on" ignored (the switch stays off) — reported, no hand-back, the setpoint
-    still written."""
+    Decision 4 of 0.2.3 (SB-03): only "on" ignored (the switch, or its read-back, stays off) —
+    latched with ``heating_on_ignored`` and handed back alike; before, control went on with the
+    switch never written again, so VT's later "off" was never written either. Nothing more is
+    written while the latch holds."""
     config = replace(CONFIG, switch_guard=ECHOED_SWITCH)
     opening = 0.6 if only_on else 0.0  # demand asks "on", no demand "off"
     echo = not only_on  # the switch stays where it was before the plugin
@@ -255,15 +258,37 @@ def test_heating_off_ignored_from_the_start_hands_back_at_the_next_step(only_on:
     state, outs = run(state, config, 10.0, 360.0, value, echo, opening=opening)
     assert outs[-1][1].ignored == ("heating",)
     state, out = loop_step(state, inputs(370.0, opening=opening), value, config, echo)
-    if only_on:
-        assert not out.hand_back
-        assert not state.control.latched
-        state, outs = run(state, config, 380.0, 420.0, value, echo, opening=opening)
-        assert any(out.setpoint is not None for _t, out in outs)  # the setpoint's keep-alives
-    else:
-        assert out.hand_back
-        assert state.control.latched
-        assert state.control.latched_by == (HEATING_OFF_IGNORED,)
+    assert out.hand_back
+    assert state.control.latched
+    cause = HEATING_ON_IGNORED if only_on else HEATING_OFF_IGNORED
+    assert state.control.latched_by == (cause,)
+    # VT's next command, the other way: nothing written, the latch holds.
+    state, outs = run(state, config, 380.0, 600.0, value, echo, opening=0.6 - opening)
+    assert all(out.setpoint is None and out.heating is None for _t, out in outs)
+    assert state.control.latched_by == (cause,)
+
+
+@pytest.mark.parametrize("case", ["unknown", "once_taken"])
+def test_heating_on_not_judged_or_lost_later_never_latches(case: str) -> None:
+    """Decision 4 of 0.2.3 (SB-03), negatives: the heating read-back unknown or unavailable
+    throughout is never judged — "on" is not taken for ignored and nothing latches; "on" taken
+    and held once, then never shown again, is a lost command sent again, not "ignored from the
+    start" — nothing latches either."""
+    config = replace(CONFIG, switch_guard=ECHOED_SWITCH)
+    echo: bool | None = None if case == "unknown" else True
+    state, out = loop_step(LoopState(), inputs(0.0), 0.0, config, False)
+    value = out.setpoint.value
+    state, _outs = run(state, config, 10.0, 200.0, value, echo)
+    if case == "once_taken":
+        assert state.switch.start_done
+        echo = False  # from now on the read-back never shows "on"
+    state, outs = run(state, config, 210.0, 1200.0, value, echo)
+    assert not any(out.hand_back for _t, out in outs)
+    assert not state.control.latched
+    assert not state.switch.ignored
+    if case == "once_taken":
+        assert any(out.heating is not None for _t, out in outs)  # sent again
+        assert state.losses
 
 
 def test_the_setpoint_is_put_on_the_entitys_grid_inside_the_limits() -> None:
@@ -640,11 +665,14 @@ def test_a_relay_loss_counts_toward_commands_lost_and_a_step_aside_hands_back() 
     assert state.relay.blocked  # the session's memory stays
 
 
-def test_a_relay_that_ignores_off_from_the_start_blocks_control() -> None:
+@pytest.mark.parametrize("command", [False, True], ids=["off", "on"])
+def test_a_relay_that_ignores_off_from_the_start_blocks_control(command: bool) -> None:
     """Answer O applied to relays: "off" ignored from the start — the next step latches with
-    ``heating_off_ignored`` and hands back, whatever reaction is stored."""
-    stuck = RelaySeen(on=True, known=True, available=True)
-    zones = (ZoneState("z", 20.0, 21.0, True, reported_at=0.0, valve_open=0.0),)
+    ``heating_off_ignored`` and hands back, whatever reaction is stored. Decision 4 of 0.2.3
+    (SB-03, R7): "on" ignored from the start — latched with ``heating_on_ignored`` alike; before,
+    reported only, the relay never written again. Nothing more is planned while it holds."""
+    stuck = RelaySeen(on=not command, known=True, available=True)
+    zones = (ZoneState("z", 20.0, 21.0, True, reported_at=0.0, valve_open=0.6 * command),)
     state = LoopState()
     out = None
     for t in [10.0 * n for n in range(0, 80)]:
@@ -654,8 +682,15 @@ def test_a_relay_that_ignores_off_from_the_start_blocks_control() -> None:
     assert out is not None
     assert out.hand_back
     assert state.control.latched
-    assert HEATING_OFF_IGNORED in state.control.latched_by
+    cause = HEATING_ON_IGNORED if command else HEATING_OFF_IGNORED
+    assert state.control.latched_by == (cause,)
     assert out.ignored == ("relay",)
+    calls = 0.6 * (not command)
+    for t in [800.0 + 10.0 * n for n in range(60)]:  # VT's next command, the other way
+        step = inputs(t, opening=calls)
+        state, out = loop_step(state, step, None, RELAY_LOOP, relay_seen=stuck)
+        assert out.relay is None
+    assert state.control.latched_by == (cause,)
 
 
 def test_a_relay_that_stops_taking_off_mid_session_blocks_control() -> None:

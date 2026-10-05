@@ -1490,7 +1490,8 @@ def test_an_unconfirmed_command_is_reported_and_clears_when_it_holds() -> None:
 def test_a_relay_that_never_takes_the_command_is_ignored_from_the_start(command: bool) -> None:
     """Never the commanded state for longer than 120 s after each of the session's first three
     sends: not written again this session, repeats included — "ignored from the start" (R7).
-    Where it is "off" that it ignores, the plugin can no longer switch heating off (answer O)."""
+    Where it is "off" that it ignores, the plugin can no longer switch heating off (answer O);
+    where it is "on", it cannot make the boiler heat (decision 4 of 0.2.3, SB-03)."""
     config = RelayConfig(reports=RelayReports.YES, timer=RelayTimer.UNKNOWN)
     relay = Relay(on=not command, takes=False)
     state, results = drive(relay, config, command, 0.0, 3600.0)
@@ -1501,6 +1502,7 @@ def test_a_relay_that_never_takes_the_command_is_ignored_from_the_start(command:
     assert relay_write_ignored(state)
     assert relay_check(state, config, reports=True) is RelayCheck.IGNORED
     assert state.off_ignored is (not command)
+    assert state.on_ignored is command
     # Never held a command: "ignored from the start", not a relay that stopped taking them.
     assert not state.not_taken
     assert not state.off_not_taken

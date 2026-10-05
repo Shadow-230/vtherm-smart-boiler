@@ -1410,6 +1410,7 @@
               "monitor_failed": "The plugin's monitor keeps failing",
               "control_state_not_saved": "The plugin cannot save its memory of the boiler",
               "heating_off_ignored": "The boiler did not take \"heating off\": switch control off and on",
+              "heating_on_ignored": "The boiler did not take \"heating on\": switch control off and on",
               "relay_off_not_taken": "The relay stopped taking \"off\": switch control off and on",
               "gateway_not_set_up": "The gateway's integration is removed or disabled",
               "mqtt_not_set_up": "The MQTT integration is removed or disabled",
@@ -1435,6 +1436,7 @@
               "outside_change": "Another controller changed a value: the plugin stepped aside",
               "write_ignored": "The boiler ignores a value control writes (set to hand back)",
               "heating_off_ignored": "The boiler did not take \"heating off\" from the start",
+              "heating_on_ignored": "The boiler did not take \"heating on\" from the start",
               "relay_off_not_taken": "The relay stopped taking \"off\" during the session"
             }
           },
@@ -2277,6 +2279,7 @@
               "monitor_failed": "The plugin's monitor keeps failing",
               "control_state_not_saved": "The plugin cannot save its memory of the boiler",
               "heating_off_ignored": "The boiler did not take \"heating off\": switch control off and on",
+              "heating_on_ignored": "The boiler did not take \"heating on\": switch control off and on",
               "relay_off_not_taken": "The relay stopped taking \"off\": switch control off and on",
               "gateway_not_set_up": "The gateway's integration is removed or disabled",
               "mqtt_not_set_up": "The MQTT integration is removed or disabled",
@@ -2404,6 +2407,9 @@
     },
     "blocked_heating_off_ignored": {
       "message": "From the start of the session the boiler did not take the plugin's \"heating off\" — or the relay its \"off\" — so the plugin could not switch heating off. Control stopped and the boiler was handed back. Check the heating switch or the relay picked in the options and the boiler's settings, then switch control off and on. The monitor keeps running. Other reasons: {count} (all are listed on the control state)."
+    },
+    "blocked_heating_on_ignored": {
+      "message": "From the start of the session the boiler did not take the plugin's \"heating on\" — or the relay its \"on\" — so the plugin could not make the boiler heat. Control stopped and the boiler was handed back. Check the heating switch or the relay picked in the options, the entity that confirms it, and the boiler's settings, then switch control off and on. The monitor keeps running. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_relay_off_not_taken": {
       "message": "The relay took the plugin's commands earlier in the session, then did not show \"off\" for about 15 minutes, so the plugin could not switch heating off — the boiler may keep heating. Control stopped and the relay was set once to its state after hand-back, which cannot be relied on either. Check the relay, its connection and the entity picked in the options, then switch control off and on. The monitor keeps running. Other reasons: {count} (all are listed on the control state)."
@@ -2563,6 +2569,10 @@
       "title": "Control stopped: the boiler does not take \"heating off\"",
       "description": "From the start of the session the boiler did not take the plugin's \"heating off\": the plugin could not switch heating off, so it handed the boiler back safely — first the lowest water temperature, then heating on where a thermostat or the boiler's own control takes over, then the release. Where a thermostat or the boiler's own control takes over, it heats now; where a hand-back stops heating, the boiler does not heat until control resumes. Check the heating switch picked in the options and the boiler's settings, then switch control off and on. The monitor keeps running."
     },
+    "control_latched_heating_on_ignored": {
+      "title": "Control stopped: the boiler does not take \"heating on\"",
+      "description": "From the start of the session the boiler did not take the plugin's \"heating on\" — or the entity picked to confirm it never showed it — so the plugin could not make the boiler heat, and it handed the boiler back safely: first the lowest water temperature, then heating on where a thermostat or the boiler's own control takes over, then the release. Until control resumes the plugin does not heat the house, frost protection included: where a thermostat or the boiler's own control takes over, it heats only if the boiler takes its demand; where a hand-back stops heating, the boiler does not heat. Check the heating switch and the entity that confirms it picked in the options (a status showing whether the boiler heats right now does not confirm the switch) and the boiler's settings, then switch control off and on. The monitor keeps running."
+    },
     "control_latched_write_ignored": {
       "title": "Control handed back: the boiler ignores a value the plugin writes",
       "description": "The boiler did not take a value the plugin wrote — the alarm \"Boiler ignores a value\" names which — and you set that alarm to hand back. Control handed the boiler back safely: first the lowest water temperature, then heating on, then the release; the thermostat or the boiler's own control heats now. Check the entity picked in the options and the boiler's settings (a value outside its range, a setting that locks it), then switch control off and on to take the boiler back."
@@ -2633,7 +2643,7 @@
     },
     "write_ignored_no_heat": {
       "title": "The boiler does not accept the command: the house is not heated",
-      "description": "From the start of the session the boiler has not taken a command the plugin writes — the water temperature, or \"heating on\"; the alarm \"Control: the boiler does not accept a command\" names which. So the plugin cannot heat the house, frost protection included, and with this installation nothing else does: here a hand-back stops heating (a gateway without a thermostat gives the boiler no heat demand without the plugin's setpoint). The plugin keeps control and does not hand the boiler back; it tries the command again at the next session — when you switch control off and on, or after a restart — not when control takes the boiler again after a pause. Check the boiler's settings — a value outside its range, a setting that locks it — and the entities picked in the options, then switch control off and on."
+      "description": "From the start of the session the boiler has not taken the water temperature the plugin writes; the alarm \"Control: the boiler does not accept a command\" names it. So the plugin cannot heat the house, frost protection included, and with this installation nothing else does: here a hand-back stops heating (a gateway without a thermostat gives the boiler no heat demand without the plugin's setpoint). The plugin keeps control and does not hand the boiler back; it tries the command again at the next session — when you switch control off and on, or after a restart — not when control takes the boiler again after a pause. Check the boiler's settings — a value outside its range, a setting that locks it — and the entities picked in the options, then switch control off and on."
     },
     "setpoint_not_shown": {
       "title": "The boiler does not show the plugin's water temperature",
@@ -2657,7 +2667,7 @@
     },
     "relay_ignored": {
       "title": "The relay does not accept the command — check it",
-      "description": "{relay} did not take the plugin's command after three tries this session. Nothing else controls the boiler now: check the relay and the entity picked in the options. The plugin tries again when control next takes the boiler."
+      "description": "{relay} did not take the plugin's command after three tries this session. Nothing else controls the boiler now: check the relay and the entity picked in the options. The plugin tries again when control next takes the boiler. Control stays stopped until you switch it off and on."
     },
     "relay_ignored_off": {
       "title": "The relay does not accept the command — check it",
@@ -2698,6 +2708,10 @@
     "control_latched_relay_heating_off_ignored": {
       "title": "Control stopped: the relay does not take \"off\"",
       "description": "From the start of the session {relay} did not take the plugin's \"off\": the boiler may keep heating, as the relay does not switch off. Control stopped; the relay was set once to its state after hand-back, which cannot be relied on either. Check the relay and the entity picked in the options, then switch control off and on. The monitor keeps running."
+    },
+    "control_latched_relay_heating_on_ignored": {
+      "title": "Control stopped: the relay does not take \"on\"",
+      "description": "From the start of the session {relay} did not take the plugin's \"on\": the boiler gets no heat demand from the plugin, so the house is not heated, frost protection included. Control stopped; the relay was set once to its state after hand-back, which cannot be relied on either. Check the relay and the entity picked in the options, then switch control off and on. The monitor keeps running."
     },
     "control_latched_relay_off_not_taken": {
       "title": "Control stopped: the relay stopped taking \"off\"",

@@ -310,8 +310,9 @@ DESIGN_OUTDOOR_UNDER_ROOM_K = 10.0
 # alarm only informs, X8); another controller writing to the boiler, which makes the plugin step
 # aside — the whole safe hand-back, then a latch (decision 6, answer H); and heating off ignored
 # from the start of the session, blocked and handed back like an installation without a working
-# heating switch (answer O), and so a relay that stops taking "off" in the session (decision 6 of
-# 0.2.3). A stored reaction for them is neutralised (S-11).
+# heating switch (answer O), and so heating on ignored from the start (decision 4 of 0.2.3) and a
+# relay that stops taking "off" in the session (decision 6 of 0.2.3). A stored reaction for them
+# is neutralised (S-11).
 ALWAYS_HAND_BACK_ALARMS = frozenset(
     {
         "control_error",
@@ -319,6 +320,7 @@ ALWAYS_HAND_BACK_ALARMS = frozenset(
         "outside_change",
         "monitor_failed",
         "heating_off_ignored",
+        "heating_on_ignored",
         "relay_off_not_taken",
     }
 )

@@ -856,16 +856,18 @@ async def test_a_setpoint_ignored_from_the_start_where_nothing_else_heats_raises
 
 
 @pytest.mark.parametrize("ignored", ["on", "off"])
-async def test_heating_on_ignored_from_the_start_where_nothing_else_heats_raises_an_error(
+async def test_heating_ignored_from_the_start_stand_alone_latches_with_an_error(
     rig: Rig, ignored: str
 ) -> None:
-    """Z4-11's heating-switch branch (Z4R-07): stand-alone with a heating echo, the setpoint
-    confirmed; the echo never shows "on" after each of the session's first three sends of
-    CH=1 — "heating on" ignored from the start, so the boiler cannot heat and nothing else heats
-    the house: the error-level repair issue, with control going on, not latched. Variant: the
-    echo never shows "off" — "heating off" ignored from the start: answer O's latch and its issue
-    alone, not this one."""
+    """Decision 4 of 0.2.3 (SB-03), stand-alone with a heating echo, the setpoint confirmed: the
+    echo never shows "on" after each of the session's first three sends of CH=1 — "heating on"
+    ignored from the start, so the boiler cannot heat and nothing else heats the house: control
+    is latched with ``heating_on_ignored`` and handed back, and the latch's issue is an error.
+    Before: Z4-11's "house not heated" issue with control going on, not latched, the switch
+    never written again. Variant: the echo never shows "off" — "heating off" ignored from the
+    start: answer O's latch and its issue alike. Neither raises Z4-11's issue."""
     stays_on = ignored == "off"
+    cause = f"heating_{ignored}_ignored"
     rig.gateway.thermostat = 0.0  # without the override a stand-alone gateway reads 0
     rig.gateway.forced_ch = stays_on  # the echo stays where it was before the plugin
     rig.gateway.publish()
@@ -880,29 +882,20 @@ async def test_heating_on_ignored_from_the_start_where_nothing_else_heats_raises
     await rig.advance(310)  # past the five minutes the unit's own start counts as a trace
     await rig.switch(True)
     await rig.advance(350)
-    assert issue(rig, "write_ignored_no_heat") is None  # two attempts
+    assert issue(rig, "control_latched") is None  # two attempts
     await rig.advance(20)  # the third, and the step after it
     alarm = rig.state("binary_sensor", "alarm_write_ignored")
     assert alarm.state == "on"
     assert alarm.attributes["targets"] == ["heating"]
     state = rig.state("sensor", "control_state")
-    found = issue(rig, "write_ignored_no_heat")
-    if stays_on:
-        assert found is None
-        assert state.state == "handed_back"
-        assert state.attributes["latched_by"] == ["heating_off_ignored"]
-        latched = issue(rig, "control_latched")
-        assert latched is not None
-        assert latched.translation_key == "control_latched_heating_off_ignored"
-        assert latched.severity is ir.IssueSeverity.ERROR  # a hand-back stops heating
-        return
-    assert found is not None
-    assert found.severity is ir.IssueSeverity.ERROR
-    assert state.state == "heating"  # no hand-back, no block
-    assert state.attributes["latched_by"] == []
-    assert issue(rig, "control_latched") is None
-    await rig.switch(False)
-    assert issue(rig, "write_ignored_no_heat") is None  # it goes with the session
+    assert issue(rig, "write_ignored_no_heat") is None
+    assert state.state == "handed_back"
+    assert state.attributes["latched_by"] == [cause]
+    latched = issue(rig, "control_latched")
+    assert latched is not None
+    assert latched.translation_key == f"control_latched_{cause}"
+    assert latched.severity is ir.IssueSeverity.ERROR  # a hand-back stops heating
+    assert not latched.is_fixable
 
 
 async def test_a_dropped_override_is_sent_again_not_fought(rig: Rig) -> None:
@@ -7575,15 +7568,20 @@ async def test_the_one_rewrite_is_remembered_across_a_clean_reload(
 async def test_an_ignored_heating_switch_raises_write_ignored(
     rig: Rig, hass_storage: dict[str, Any], ignored: str
 ) -> None:
-    """T-04 (P-09) with answer O: OTGW with a heating echo, the setpoint confirmed. The echo
-    never follows CH=0 — "on" before the plugin and after each of the session's first three sends
-    of "off": "write ignored" names the heating switch and, at the next step, control is blocked
-    and the boiler handed back (CS=<lowest>, CH=1, CS=0) whatever alarm reaction is stored; the
-    latch names ``heating_off_ignored``, so do the entry's latch issue and a blocker. The latch
-    survives a reload and clears only when control is switched off and on. Negative: the echo
-    never follows CH=1 — only "on" ignored, the switch staying off — "write ignored" as decision
-    6 says: no block, no latch, the setpoint still written."""
+    """T-04 (P-09) with answer O and decision 4 of 0.2.3 (SB-03): OTGW with a heating echo and a
+    thermostat, the setpoint confirmed. The echo never follows CH=0 — "on" before the plugin and
+    after each of the session's first three sends of "off" — or never follows CH=1 — "off"
+    throughout, the boiler or its echo not taking "heating on": "write ignored" names the
+    heating switch and, at the next step, control is blocked and the boiler handed back
+    (CS=<lowest>, CH=1, CS=0) whatever alarm reaction is stored; the latch names
+    ``heating_off_ignored`` or ``heating_on_ignored``, and so do the entry's latch issue — a
+    warning where "off" was refused, as the thermostat takes over; an error where "on" was, as
+    the plugin cannot make the boiler heat — and a blocker. Nothing is written after the
+    hand-back, VT's next command the other way included (before, for "on": no latch, the switch
+    never written again, so VT's later "off" never reached the boiler). The latch survives a
+    reload and clears only when control is switched off and on."""
     stays_on = ignored == "off"
+    cause = f"heating_{ignored}_ignored"
     rig.gateway.forced_ch = stays_on  # the echo stays where it was before the plugin
     rig.gateway.publish()
     if stays_on:  # no zone calls: control asks "off"
@@ -7600,30 +7598,31 @@ async def test_an_ignored_heating_switch_raises_write_ignored(
     await rig.advance(10)
     state = rig.state("sensor", "control_state")
     blockers = rig.state("switch", "control").attributes["blockers"]
-    if not stays_on:
-        assert state.state == "heating"
-        assert state.attributes["latched_by"] == []
-        assert "heating_off_ignored" not in blockers
-        count = len(rig.gateway.setpoints())
-        await rig.advance(60)
-        assert len(rig.gateway.setpoints()) > count  # the setpoint still written
-        return
     assert state.state == "handed_back"
-    assert state.attributes["latched_by"] == ["heating_off_ignored"]
+    assert state.attributes["latched_by"] == [cause]
     assert rig.gateway.calls[-3:] == HAND_BACK
-    assert "heating_off_ignored" in blockers
+    assert cause in blockers
     found = issue(rig, "control_latched")
     assert found is not None
-    assert found.translation_key == "control_latched_heating_off_ignored"
-    assert found.severity is ir.IssueSeverity.WARNING  # a thermostat takes over
-    assert stored_control(hass_storage, rig)["latched_by"] == ["heating_off_ignored"]
+    assert found.translation_key == f"control_latched_{cause}"
+    severity = ir.IssueSeverity.WARNING if stays_on else ir.IssueSeverity.ERROR
+    assert found.severity is severity
+    assert issue(rig, "write_ignored_no_heat") is None  # the latch's issue says it
+    assert stored_control(hass_storage, rig)["latched_by"] == [cause]
     assert rig.state("binary_sensor", "alarm_write_ignored").state == "on"
+    count = len(rig.gateway.calls)
+    if stays_on:  # VT's next command, the other way
+        rig.zones.set("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+    else:
+        rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await rig.advance(120)
+    assert len(rig.gateway.calls) == count  # nothing written but the hand-back
     assert rig.entry is not None
     assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
     await rig.hass.async_block_till_done()
     await rig.advance(30)
-    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["heating_off_ignored"]
-    assert "heating_off_ignored" in rig.state("switch", "control").attributes["blockers"]
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == [cause]
+    assert cause in rig.state("switch", "control").attributes["blockers"]
     assert issue(rig, "control_latched") is not None
     alarm = rig.state("binary_sensor", "alarm_write_ignored")
     assert alarm.state == "on"  # the alarm with the latch, through the reload
@@ -7634,17 +7633,17 @@ async def test_an_ignored_heating_switch_raises_write_ignored(
     await rig.switch(False)
     assert issue(rig, "control_latched") is None
     await rig.switch(True)  # the user's off and on: a new session tries the switch again
-    assert "heating_off_ignored" not in rig.state("switch", "control").attributes["blockers"]
+    assert cause not in rig.state("switch", "control").attributes["blockers"]
     assert rig.state("sensor", "control_state").attributes["latched_by"] == []
 
 
 @pytest.mark.parametrize("heating_target", [True, False], ids=["heating", "setpoint_only"])
 async def test_write_ignored_clears_per_guard(rig: Rig, heating_target: bool) -> None:
     """P-09: "write ignored" follows each guard. The heating switch's "on" ignored from the
-    start (the switch stays off; its "off" never refused, so answer O does not apply) and the
-    setpoint confirmed: the alarm stays on naming the heating switch — the setpoint's
-    confirmation never clears it; a new session (off, then on) with the heating value taken
-    clears it. Negative: a path without a heating target — the setpoint alone decides."""
+    start (the switch stays off) and the setpoint confirmed: the alarm names the heating switch —
+    the setpoint's confirmation does not clear it — and stays on with the latch that follows
+    (decision 4 of 0.2.3); a new session (off, then on) with the heating value taken clears
+    it. Negative: a path without a heating target — the setpoint alone decides."""
     if heating_target:
         rig.gateway.forced_ch = False
         rig.gateway.publish()
@@ -7654,13 +7653,16 @@ async def test_write_ignored_clears_per_guard(rig: Rig, heating_target: bool) ->
         await start(rig)
     await rig.advance(310)
     await rig.switch(True)
-    await rig.advance(370)
+    await rig.advance(360 if heating_target else 370)
     alarm = rig.state("binary_sensor", "alarm_write_ignored")
     assert alarm.state == "on"
     assert alarm.attributes["targets"] == (["heating"] if heating_target else ["setpoint"])
     if heating_target:
         setpoint = rig.state("sensor", "control_setpoint")
         assert setpoint.attributes["confirmation"] == "confirmed_by_gateway"
+        await rig.advance(10)
+        state = rig.state("sensor", "control_state")
+        assert state.attributes["latched_by"] == ["heating_on_ignored"]
         await rig.advance(300)
         assert rig.state("binary_sensor", "alarm_write_ignored").state == "on"
         rig.gateway.forced_ch = None
@@ -7727,6 +7729,66 @@ async def test_heating_off_ignored_from_the_start_blocks_and_hands_back(
         await rig.advance(400)  # three counted attempts after the trace
         assert rig.state("sensor", "control_state").state == "handed_back"
         assert "heating_off_ignored" in rig.state("switch", "control").attributes["blockers"]
+
+
+@pytest.mark.parametrize("case", ["frozen", "unknown", "unavailable", "once_taken"])
+async def test_heating_on_ignored_from_the_start_blocks_and_hands_back(rig: Rig, case: str) -> None:
+    """Decision 4 of 0.2.3 (SB-03) on the entity path: a held heating switch that takes every
+    command, its read-back — a status entity picked for it — frozen at "off": "on" is never read
+    back after each of the session's first three sends — blocked and handed back, with the
+    blocker and the latch's error-level issue; VT's later "off" is not written but through the
+    hand-back (before: the switch never written again, so heating stayed enabled for the session,
+    with no latch); switching control off and on clears it. Negatives: the read-back unknown or
+    unavailable throughout (nothing judged: no blocker, VT's "off" still written); "on" taken and
+    held once, then not shown (a lost command, not "from the start": no such blocker)."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    switch = FakeSwitch(rig.hass, on=False)
+    switch.register()
+    echo = switch.entity_id
+    if case != "once_taken":
+        echo = "input_boolean.fake_ch_echo"
+        rig.hass.states.async_set(echo, "off" if case == "frozen" else case)
+    control = held_entity(
+        number, ch_entity=switch.entity_id, ch_write_type="held", ch_confirmed_entity=echo
+    )
+    await start(rig, **control)
+    await rig.advance(310)
+    await rig.switch(True)
+    if case == "once_taken":
+        await rig.advance(150)  # "on" taken and held: the start phase is over
+        assert switch.on
+        switch.stuck_off = True  # from now on it will not go on
+        switch.on = False
+        switch.publish()
+    await rig.advance(400)
+    state = rig.state("sensor", "control_state")
+    blockers = rig.state("switch", "control").attributes["blockers"]
+    if case != "frozen":
+        assert "heating_on_ignored" not in blockers
+        assert "heating_on_ignored" not in state.attributes["latched_by"]
+        if case == "once_taken":
+            return
+        assert state.state == "heating"
+        rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+        await rig.advance(20)
+        assert switch.writes[-1] is False  # VT's "off" written
+        return
+    assert state.state == "handed_back"
+    assert state.attributes["latched_by"] == ["heating_on_ignored"]
+    assert "heating_on_ignored" in blockers
+    found = issue(rig, "control_latched")
+    assert found is not None
+    assert found.translation_key == "control_latched_heating_on_ignored"
+    assert found.severity is ir.IssueSeverity.ERROR  # though the device's own control takes over
+    count = len(switch.writes)
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await rig.advance(120)
+    assert len(switch.writes) == count  # VT's "off": nothing written but the hand-back
+    await rig.switch(False)
+    await rig.switch(True)
+    assert "heating_on_ignored" not in rig.state("switch", "control").attributes["blockers"]
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == []
 
 
 @dataclass
@@ -10940,12 +11002,15 @@ async def test_a_relay_that_never_takes_the_command_raises_relay_ignored(
     """R7: never the commanded state for 120 s after each of the session's first three sends —
     not written again this session; "write ignored" names the relay and a repair issue (an
     error) says so. Where it is "off" it ignores, control is blocked (answer O): the boiler may
-    keep heating."""
+    keep heating; where it is "on", alike (decision 4 of 0.2.3, SB-03): the house is not heated.
+    Either way the relay is handed back to its rest state, written once, with the latch's
+    error-level issue (before, for "on": no block, no hand-back)."""
     relay.on = not command
     relay.takes = False
     relay.publish()
     calling(rig, command)
-    await start_relay(rig)
+    # The rest state the relay does not read: the hand-back writes it.
+    await start_relay(rig, relay_rest_state="on" if command else "off")
     # Past the unit's start, a trace of an outage: sends within it are lost commands, not the
     # start phase's attempts (X1's rule).
     await rig.advance(START_TRACE_S)
@@ -10961,15 +11026,16 @@ async def test_a_relay_that_never_takes_the_command_raises_relay_ignored(
     assert found.severity.value == "error"
     assert found.translation_key == ("relay_ignored" if command else "relay_ignored_off")
     await rig.advance(1200)
-    # Not written again this session, repeats included; where "off" is ignored, the rest state
-    # ("off") is written once at the hand-back, though it cannot be relied on (answer O).
-    assert len([call for call in relay.calls if call is command]) == (3 if command else 4)
-    if not command:
-        blockers = rig.state("switch", "control").attributes["blockers"]
-        assert "heating_off_ignored" in blockers
-        latch = issue(rig, "control_latched")
-        assert latch is not None
-        assert latch.translation_key == "control_latched_relay_heating_off_ignored"
+    # Not written again this session, repeats included; the rest state is written once at the
+    # hand-back, though it cannot be relied on (answer O; decision 4 of 0.2.3).
+    assert relay.calls == [command] * 4
+    cause = "heating_on_ignored" if command else "heating_off_ignored"
+    assert cause in rig.state("switch", "control").attributes["blockers"]
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == [cause]
+    latch = issue(rig, "control_latched")
+    assert latch is not None
+    assert latch.translation_key == f"control_latched_relay_{cause}"
+    assert latch.severity is ir.IssueSeverity.ERROR
 
 
 def relay_memory(rig: Rig) -> Any:

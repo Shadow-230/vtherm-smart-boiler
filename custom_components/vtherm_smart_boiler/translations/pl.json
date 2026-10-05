@@ -1410,6 +1410,7 @@
               "monitor_failed": "Monitor wtyczki stale zawodzi",
               "control_state_not_saved": "Wtyczka nie może zapisać swojej pamięci o kotle",
               "heating_off_ignored": "Kocioł nie przyjął „wyłącz grzanie”: wyłącz i włącz sterowanie",
+              "heating_on_ignored": "Kocioł nie przyjął „włącz grzanie”: wyłącz i włącz sterowanie",
               "relay_off_not_taken": "Przekaźnik przestał przyjmować „wyłącz”: wyłącz i włącz sterowanie",
               "gateway_not_set_up": "Integracja bramki jest usunięta lub wyłączona",
               "mqtt_not_set_up": "Integracja MQTT jest usunięta lub wyłączona",
@@ -1435,6 +1436,7 @@
               "outside_change": "Inny sterownik zmienił wartość: wtyczka się wycofała",
               "write_ignored": "Kocioł ignoruje wartość zapisywaną przez sterowanie (ustawione na oddanie)",
               "heating_off_ignored": "Kocioł od początku nie przyjął „wyłącz grzanie”",
+              "heating_on_ignored": "Kocioł od początku nie przyjął „włącz grzanie”",
               "relay_off_not_taken": "Przekaźnik w trakcie sesji przestał przyjmować „wyłącz”"
             }
           },
@@ -2277,6 +2279,7 @@
               "monitor_failed": "Monitor wtyczki stale zawodzi",
               "control_state_not_saved": "Wtyczka nie może zapisać swojej pamięci o kotle",
               "heating_off_ignored": "Kocioł nie przyjął „wyłącz grzanie”: wyłącz i włącz sterowanie",
+              "heating_on_ignored": "Kocioł nie przyjął „włącz grzanie”: wyłącz i włącz sterowanie",
               "relay_off_not_taken": "Przekaźnik przestał przyjmować „wyłącz”: wyłącz i włącz sterowanie",
               "gateway_not_set_up": "Integracja bramki jest usunięta lub wyłączona",
               "mqtt_not_set_up": "Integracja MQTT jest usunięta lub wyłączona",
@@ -2404,6 +2407,9 @@
     },
     "blocked_heating_off_ignored": {
       "message": "Od początku sesji kocioł nie przyjął polecenia wtyczki „wyłącz grzanie” — albo przekaźnik polecenia „wyłącz” — więc wtyczka nie mogła wyłączyć ogrzewania. Sterowanie się zatrzymało, a kocioł został oddany. Sprawdź przełącznik ogrzewania albo przekaźnik wybrany w opcjach i ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
+    "blocked_heating_on_ignored": {
+      "message": "Od początku sesji kocioł nie przyjął polecenia wtyczki „włącz grzanie” — albo przekaźnik polecenia „włącz” — więc wtyczka nie mogła uruchomić grzania. Sterowanie się zatrzymało, a kocioł został oddany. Sprawdź przełącznik ogrzewania albo przekaźnik wybrany w opcjach, encję, która go potwierdza, i ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_relay_off_not_taken": {
       "message": "Przekaźnik przyjmował wcześniej w tej sesji polecenia wtyczki, a potem przez około 15 minut nie pokazał „wyłącz”, więc wtyczka nie mogła wyłączyć ogrzewania — kocioł może dalej grzać. Sterowanie się zatrzymało, a przekaźnik został raz ustawiony w stan po oddaniu sterowania, na którym też nie można polegać. Sprawdź przekaźnik, jego łączność i encję wybraną w opcjach, a potem wyłącz i włącz sterowanie. Monitor działa dalej. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
@@ -2563,6 +2569,10 @@
       "title": "Sterowanie zatrzymane: kocioł nie przyjmuje „wyłącz grzanie”",
       "description": "Od początku sesji kocioł nie przyjął polecenia wtyczki „wyłącz grzanie”, więc wtyczka nie mogła wyłączyć ogrzewania i oddała kocioł bezpiecznie: najpierw najniższa temperatura wody, potem włączone grzanie tam, gdzie przejmuje termostat albo własne sterowanie kotła, potem zwolnienie. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono teraz grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci. Sprawdź przełącznik ogrzewania wybrany w opcjach i ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej."
     },
+    "control_latched_heating_on_ignored": {
+      "title": "Sterowanie zatrzymane: kocioł nie przyjmuje „włącz grzanie”",
+      "description": "Od początku sesji kocioł nie przyjął polecenia wtyczki „włącz grzanie” — albo encja wybrana do jego potwierdzania nigdy go nie pokazała — więc wtyczka nie mogła uruchomić grzania i oddała kocioł bezpiecznie: najpierw najniższa temperatura wody, potem włączone grzanie tam, gdzie przejmuje termostat albo własne sterowanie kotła, potem zwolnienie. Dopóki sterowanie nie wróci, wtyczka nie ogrzewa domu, także ochrona przed mrozem: tam, gdzie przejmuje termostat albo własne sterowanie kotła, grzeje ono tylko wtedy, gdy kocioł przyjmuje jego żądanie; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje. Sprawdź przełącznik ogrzewania i encję, która go potwierdza, wybrane w opcjach (stan pokazujący, czy kocioł grzeje w tej chwili, nie potwierdza przełącznika) oraz ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej."
+    },
     "control_latched_write_ignored": {
       "title": "Sterowanie oddało kocioł: kocioł ignoruje wartość zapisywaną przez wtyczkę",
       "description": "Kocioł nie przyjął wartości zapisanej przez wtyczkę — którą, pokazuje alarm „Kocioł ignoruje wartość” — a ten alarm ustawiono na oddanie kotła. Sterowanie bezpiecznie oddało kocioł: najpierw najniższa temperatura wody, potem włączenie grzania, potem zwolnienie; teraz grzeje termostat albo własne sterowanie kotła. Sprawdź encję wybraną w opcjach i ustawienia kotła (wartość spoza jego zakresu, ustawienie, które ją blokuje), a potem wyłącz i włącz sterowanie, by znów przejąć kocioł."
@@ -2633,7 +2643,7 @@
     },
     "write_ignored_no_heat": {
       "title": "Kocioł nie przyjmuje polecenia: dom nie jest ogrzewany",
-      "description": "Od początku sesji kocioł nie przyjął polecenia wtyczki — temperatury wody albo „włącz grzanie”; który to cel, podaje alarm „Sterowanie: kocioł nie przyjmuje polecenia”. Wtyczka nie może więc ogrzewać domu, także w ramach ochrony przed mrozem, a w tej instalacji nic innego tego nie robi: oddanie kotła wyłącza tu grzanie (bramka bez termostatu bez nastawy wtyczki nie przekazuje kotłowi zapotrzebowania na ciepło). Wtyczka nadal steruje i nie oddaje kotła; spróbuje ponownie w następnej sesji — gdy wyłączysz i włączysz sterowanie albo po ponownym uruchomieniu — a nie wtedy, gdy sterowanie przejmie kocioł po przerwie. Sprawdź ustawienia kotła — wartość spoza jego zakresu albo ustawienie, które go blokuje — oraz encje wybrane w opcjach, a potem wyłącz i włącz sterowanie."
+      "description": "Od początku sesji kocioł nie przyjął temperatury wody, którą zapisuje wtyczka; podaje to alarm „Sterowanie: kocioł nie przyjmuje polecenia”. Wtyczka nie może więc ogrzewać domu, także w ramach ochrony przed mrozem, a w tej instalacji nic innego tego nie robi: oddanie kotła wyłącza tu grzanie (bramka bez termostatu bez nastawy wtyczki nie przekazuje kotłowi zapotrzebowania na ciepło). Wtyczka nadal steruje i nie oddaje kotła; spróbuje ponownie w następnej sesji — gdy wyłączysz i włączysz sterowanie albo po ponownym uruchomieniu — a nie wtedy, gdy sterowanie przejmie kocioł po przerwie. Sprawdź ustawienia kotła — wartość spoza jego zakresu albo ustawienie, które go blokuje — oraz encje wybrane w opcjach, a potem wyłącz i włącz sterowanie."
     },
     "setpoint_not_shown": {
       "title": "Kocioł nie pokazuje temperatury wody ustawionej przez wtyczkę",
@@ -2657,7 +2667,7 @@
     },
     "relay_ignored": {
       "title": "Przekaźnik nie przyjmuje polecenia — sprawdź go",
-      "description": "{relay} nie przyjął polecenia wtyczki po trzech próbach w tej sesji. Nic innego nie steruje teraz kotłem: sprawdź przekaźnik i encję wybraną w opcjach. Wtyczka spróbuje ponownie, gdy sterowanie następnym razem przejmie kocioł."
+      "description": "{relay} nie przyjął polecenia wtyczki po trzech próbach w tej sesji. Nic innego nie steruje teraz kotłem: sprawdź przekaźnik i encję wybraną w opcjach. Wtyczka spróbuje ponownie, gdy sterowanie następnym razem przejmie kocioł. Sterowanie pozostaje zatrzymane, dopóki go nie wyłączysz i nie włączysz."
     },
     "relay_ignored_off": {
       "title": "Przekaźnik nie przyjmuje polecenia — sprawdź go",
@@ -2698,6 +2708,10 @@
     "control_latched_relay_heating_off_ignored": {
       "title": "Sterowanie zatrzymane: przekaźnik nie przyjmuje „wyłącz”",
       "description": "Od początku sesji {relay} nie przyjął polecenia wtyczki „wyłącz”: kocioł może dalej grzać, bo przekaźnik się nie wyłącza. Sterowanie się zatrzymało; przekaźnik został raz ustawiony w stan po oddaniu sterowania, na którym też nie można polegać. Sprawdź przekaźnik i encję wybraną w opcjach, a potem wyłącz i włącz sterowanie. Monitor działa dalej."
+    },
+    "control_latched_relay_heating_on_ignored": {
+      "title": "Sterowanie zatrzymane: przekaźnik nie przyjmuje „włącz”",
+      "description": "Od początku sesji {relay} nie przyjął polecenia wtyczki „włącz”: kocioł nie dostaje od wtyczki żądania grzania, więc dom nie jest ogrzewany, także ochrona przed mrozem. Sterowanie się zatrzymało; przekaźnik został raz ustawiony w stan po oddaniu sterowania, na którym też nie można polegać. Sprawdź przekaźnik i encję wybraną w opcjach, a potem wyłącz i włącz sterowanie. Monitor działa dalej."
     },
     "control_latched_relay_off_not_taken": {
       "title": "Sterowanie zatrzymane: przekaźnik przestał przyjmować „wyłącz”",

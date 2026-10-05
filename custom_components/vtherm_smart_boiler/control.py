@@ -232,6 +232,7 @@ from .core.limits import Grid, handed_back_in_frost, watched_temperatures, write
 from .core.loop import (
     HEATING,
     HEATING_OFF_IGNORED,
+    HEATING_ON_IGNORED,
     OFF,
     ON,
     RELAY,
@@ -336,23 +337,26 @@ STOPPED_HEATING_S = 60.0
 STORE_NOT_SAVED = "control_state_not_saved"
 STORE_RETRY_S = 60.0
 # Blockers that raise no such issue: Home Assistant starting (the minute starts once it runs),
-# an internal error (its own alarm), the monitor failing (V6's own issue), heating off ignored
-# from the start or a relay's "off" no longer taken (the latch issue says so), and the control
-# store that cannot be written (its own issue).
+# an internal error (its own alarm), the monitor failing (V6's own issue), heating off or on
+# ignored from the start or a relay's "off" no longer taken (the latch issue says so), and the
+# control store that cannot be written (its own issue).
 _QUIET_BLOCKERS = frozenset(
     {
         "ha_starting",
         "control_error",
         "monitor_failed",
         HEATING_OFF_IGNORED,
+        HEATING_ON_IGNORED,
         RELAY_OFF_NOT_TAKEN,
         STORE_NOT_SAVED,
     }
 )
-# The latches that mean the plugin can no longer switch heating off — "off" ignored from the
-# start (answer O), or a relay's "off" no longer taken in the session (decision 6 of 0.2.3):
-# blocked until the user switches control off and on.
-_OFF_NOT_TAKEN = (HEATING_OFF_IGNORED, RELAY_OFF_NOT_TAKEN)
+# The latches of a heating switch or relay that does not take a command: the plugin can no
+# longer switch heating off — "off" ignored from the start (answer O), or a relay's "off" no
+# longer taken in the session (decision 6 of 0.2.3) — or cannot make the boiler heat — "on"
+# ignored from the start (decision 4 of 0.2.3): blocked until the user switches control off and
+# on.
+_NOT_TAKEN = (HEATING_OFF_IGNORED, HEATING_ON_IGNORED, RELAY_OFF_NOT_TAKEN)
 # After stepping aside from another controller, where the option is on: control returns by
 # itself once the read-backs have shown only the hand-back state this long (decided).
 RETURN_QUIET_S = 3600.0
@@ -381,9 +385,10 @@ VT_CENTRAL_ISSUE = "vt_central_entry_not_running"
 # provisional, K4).
 READ_BACK_WAIT_ISSUE = "read_back_waiting"
 READ_BACK_WAIT_S = 300.0
-# Where a hand-back stops heating, the boiler not taking the water temperature or "heating on"
-# from the start of the session leaves the house unheated: decision 6's information alarm, and a
-# repair issue at error level (Z4-11). No hand-back, no block.
+# Where a hand-back stops heating, the boiler not taking the water temperature from the start of
+# the session leaves the house unheated: decision 6's information alarm, and a repair issue at
+# error level (Z4-11). No hand-back, no block. "Heating on" not taken is a latch of its own
+# (``HEATING_ON_IGNORED``, decision 4 of 0.2.3).
 WRITE_IGNORED_ISSUE = "write_ignored_no_heat"
 # Z4R2-03: the setpoint's read-back known and showing another value than the plugin's for
 # 5 minutes — "confirmation missing", and a repair issue: a warning, an error where a hand-back
@@ -421,6 +426,7 @@ RUNTIME_BLOCKERS = (
     "monitor_failed",
     STORE_NOT_SAVED,  # PB-16: the control store cannot be written
     HEATING_OFF_IGNORED,
+    HEATING_ON_IGNORED,  # decision 4 of 0.2.3: "heating on" ignored from the start
     RELAY_OFF_NOT_TAKEN,  # decision 6 of 0.2.3: a relay's "off" no longer taken in the session
     # X5: the gateway's or MQTT's integration gone or disabled (X5.5); a zone that is not a VT
     # climate (X5.7); a zone VT built on the boiler's own thermostat (X5.19).
@@ -1502,11 +1508,12 @@ class ControlUnit:
             # control resumes on its own once a write of the control store works again.
             found.append(STORE_NOT_SAVED)
         control = self._session.loop.control
-        for cause in _OFF_NOT_TAKEN:
+        for cause in _NOT_TAKEN:
             if control.latched and cause in control.latched_by:
-                # The boiler did not take "heating off" from the start of the session (answer O),
-                # or the relay stopped taking "off" in it (decision 6 of 0.2.3): blocked until
-                # the user switches control off and on after fixing it (X5.21).
+                # The boiler did not take "heating off" (answer O) or "heating on" (decision 4 of
+                # 0.2.3) from the start of the session, or the relay stopped taking "off" in it
+                # (decision 6 of 0.2.3): blocked until the user switches control off and on after
+                # fixing it (X5.21).
                 found.append(cause)
         return tuple(found)
 
@@ -2010,15 +2017,15 @@ class ControlUnit:
 
     def _follow_target_alarms(self, out: LoopOutput) -> tuple[str, ...]:
         """The alarms of each write target (P-09): ignored from the start — and while the latch
-        for heating off ignored from the start, or a relay's "off" no longer taken, holds, a
-        restart included — commands lost, and a confirmation missing. The targets shown as
+        for heating off or on ignored from the start, or a relay's "off" no longer taken, holds,
+        a restart included — commands lost, and a confirmation missing. The targets shown as
         ignored."""
         session = self._session
         ignored = out.ignored
         latch = session.loop.control
         target = RELAY if self._relay_path else HEATING
-        off_not_taken = any(cause in latch.latched_by for cause in _OFF_NOT_TAKEN)
-        if latch.latched and off_not_taken and target not in ignored:
+        not_taken = any(cause in latch.latched_by for cause in _NOT_TAKEN)
+        if latch.latched and not_taken and target not in ignored:
             ignored = (*ignored, target)
         for flagged, alarm in (
             (bool(ignored), ControlAlarm.WRITE_IGNORED),
@@ -2161,21 +2168,18 @@ class ControlUnit:
 
     def _follow_ignored_no_heat(self) -> None:
         """Z4-11: where a hand-back stops heating, nothing else heats the house while the boiler
-        does not take the plugin's water temperature, or its "heating on", from the start of the
-        session. Decision 6 stays — control goes on with the information alarm, no hand-back, no
-        block — and a repair issue at error level says the house is not heated and what to
-        check. The relay has its own issue (``RELAY_IGNORED_ISSUE``); "heating off" not taken
-        has the latch's (answer O). It goes once the target takes the value after all, with the
-        session, and with the unit."""
+        does not take the plugin's water temperature from the start of the session. Decision 6
+        stays — control goes on with the information alarm, no hand-back, no block — and a
+        repair issue at error level says the house is not heated and what to check. The relay
+        has its own issue (``RELAY_IGNORED_ISSUE``); "heating off" or "heating on" not taken has
+        the latch's (answer O; decision 4 of 0.2.3), whatever the hand-back's effect. It goes
+        once the target takes the value after all, with the session, and with the unit."""
         loop = self._session.loop
-        heating_on_ignored = (
-            self.options.loop.ch_writes and loop.switch.ignored and not loop.switch.off_ignored
-        )
         shown = (
             not self._relay_path
             and self.enabled
             and loop.control.controlling
-            and (loop.setpoint.ignored or heating_on_ignored)
+            and loop.setpoint.ignored
             and self._stops_heating()
         )
         if not shown:
@@ -2563,6 +2567,11 @@ class ControlUnit:
                 'The boiler did not take "heating off" from the start of the session: control '
                 "hands the boiler back and stays blocked until control is switched off and on"
             )
+        if HEATING_ON_IGNORED in latched_by:
+            _LOGGER.warning(
+                'The boiler did not take "heating on" from the start of the session: control '
+                "hands the boiler back and stays blocked until control is switched off and on"
+            )
         if RELAY_OFF_NOT_TAKEN in latched_by:
             _LOGGER.warning(
                 'The relay has stopped taking the plugin\'s commands and does not take "off": '
@@ -2624,7 +2633,7 @@ class ControlUnit:
             return None
         for cause in (
             ControlAlarm.OUTSIDE_CHANGE.value,
-            *_OFF_NOT_TAKEN,
+            *_NOT_TAKEN,
             ControlAlarm.WRITE_IGNORED.value,
         ):
             if cause in control.latched_by:
@@ -2660,8 +2669,10 @@ class ControlUnit:
         elif cause == _OTHER_LATCH:
             latched_by = self._session.loop.control.latched_by
             placeholders = {"alarm": ", ".join(latched_by) or "-"}
-        error = False
-        if self._relay_path and cause in (ControlAlarm.OUTSIDE_CHANGE.value, *_OFF_NOT_TAKEN):
+        # "Heating on" not taken from the start (decision 4 of 0.2.3): the plugin cannot make
+        # the boiler heat, whatever the hand-back's effect — an error.
+        error = cause == HEATING_ON_IGNORED
+        if self._relay_path and cause in (ControlAlarm.OUTSIDE_CHANGE.value, *_NOT_TAKEN):
             # A relay (X8): its own texts, naming it — the step aside by its rest state.
             placeholders = {"relay": self._relay_name()}
             if cause == ControlAlarm.OUTSIDE_CHANGE.value:
@@ -2673,8 +2684,8 @@ class ControlUnit:
                     # automation, stops heating whatever the rest state — an error.
                     key, error = f"{LATCHED_ISSUE}_relay_short_timer_{rest}", True
                     placeholders["minutes"] = minutes
-            elif cause == HEATING_OFF_IGNORED:
-                key = f"{LATCHED_ISSUE}_relay_{HEATING_OFF_IGNORED}"
+            elif cause in (HEATING_OFF_IGNORED, HEATING_ON_IGNORED):
+                key = f"{LATCHED_ISSUE}_relay_{cause}"
             else:
                 # It stopped taking commands in the session, "off" among them (decision 6 of
                 # 0.2.3): the boiler may keep heating, whatever the rest state — an error.
@@ -3881,11 +3892,11 @@ class ControlUnit:
         return state.name if state is not None and state.name else relay
 
     def _step_aside(self) -> bool:
-        """The relay's hand-back is a step aside — another controller, or its "off" ignored from
-        the start or no longer taken in the session: its rest state written once, then left
-        alone (answers H, L, O; decision 6 of 0.2.3)."""
+        """The relay's hand-back is a step aside — another controller, its "off" or "on" ignored
+        from the start, or its "off" no longer taken in the session: its rest state written
+        once, then left alone (answers H, L, O; decisions 4 and 6 of 0.2.3)."""
         control = self._session.loop.control
-        causes = (ControlAlarm.OUTSIDE_CHANGE.value, *_OFF_NOT_TAKEN)
+        causes = (ControlAlarm.OUTSIDE_CHANGE.value, *_NOT_TAKEN)
         return (
             self._relay_path
             and control.latched

@@ -424,6 +424,7 @@ def test_x8_texts_are_translated() -> None:
         "control_latched_relay_off",
         "control_latched_relay_on",
         "control_latched_relay_heating_off_ignored",
+        "control_latched_relay_heating_on_ignored",
         "control_latched_relay_off_not_taken",
     ):
         issue = SOURCE["issues"][key]
@@ -459,6 +460,7 @@ def test_y1_texts_are_translated() -> None:
         ("control_latched", {"target", "value"}),
         ("control_latched_write_ignored", set()),
         ("control_latched_heating_off_ignored", set()),
+        ("control_latched_heating_on_ignored", set()),
         ("control_latched_other", {"alarm"}),
         ("hand_back_boiler_link_lost", set()),
         ("hand_back_control_error", set()),
@@ -790,6 +792,7 @@ def test_coded_lists_have_translated_text(language: str) -> None:
     from custom_components.vtherm_smart_boiler.core.controller import Reason
     from custom_components.vtherm_smart_boiler.core.loop import (
         HEATING_OFF_IGNORED,
+        HEATING_ON_IGNORED,
         RELAY_OFF_NOT_TAKEN,
     )
     from custom_components.vtherm_smart_boiler.core.verdict import ReasonCode
@@ -800,7 +803,7 @@ def test_coded_lists_have_translated_text(language: str) -> None:
     verdict = entity["sensor"]["verdict"]
     blockers = {*CONFIG_BLOCKERS, *RUNTIME_BLOCKERS}
     latches = {ControlAlarm.OUTSIDE_CHANGE.value, ControlAlarm.WRITE_IGNORED.value}
-    latches |= {HEATING_OFF_IGNORED, RELAY_OFF_NOT_TAKEN}
+    latches |= {HEATING_OFF_IGNORED, HEATING_ON_IGNORED, RELAY_OFF_NOT_TAKEN}
     assert _values(state, "reasons") == {reason.value for reason in Reason}
     assert _values(state, "blockers") == blockers
     assert _values(switch, "blockers") == blockers
