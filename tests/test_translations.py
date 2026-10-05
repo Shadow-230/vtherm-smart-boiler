@@ -366,6 +366,7 @@ def test_x8_texts_are_translated() -> None:
     say a Shelly's timer on a repeated "on" is not documented (Q3.10)."""
     from custom_components.vtherm_smart_boiler.control import (
         RELAY_IGNORED_ISSUE,
+        RELAY_NOT_TAKING_ISSUE,
         RELAY_RESTS_OFF_ISSUE,
         RELAY_UNREACHABLE_ISSUE,
     )
@@ -405,12 +406,19 @@ def test_x8_texts_are_translated() -> None:
         assert set(PLACEHOLDER.findall(SOURCE["issues"][key]["description"])) == {"relay"}
     off = SOURCE["issues"][f"{RELAY_IGNORED_ISSUE}_off"]["description"]
     assert "the relay does not switch off" in off
+    # Decision 6 of 0.2.3 (SB-06): the relay that stopped taking commands in the session.
+    for key in (RELAY_NOT_TAKING_ISSUE, f"{RELAY_NOT_TAKING_ISSUE}_off"):
+        assert set(PLACEHOLDER.findall(SOURCE["issues"][key]["description"])) == {"relay"}
+    assert "the house is not heated" in SOURCE["issues"][RELAY_NOT_TAKING_ISSUE]["description"]
+    stuck = SOURCE["issues"][f"{RELAY_NOT_TAKING_ISSUE}_off"]["description"]
+    assert "the relay does not switch off" in stuck
     rests = SOURCE["issues"][RELAY_RESTS_OFF_ISSUE]
     assert set(PLACEHOLDER.findall(rests["description"])) == {"zones"}
     for key in (
         "control_latched_relay_off",
         "control_latched_relay_on",
         "control_latched_relay_heating_off_ignored",
+        "control_latched_relay_off_not_taken",
     ):
         issue = SOURCE["issues"][key]
         assert issue["title"], key
@@ -774,7 +782,10 @@ def test_coded_lists_have_translated_text(language: str) -> None:
     from custom_components.vtherm_smart_boiler.control import RUNTIME_BLOCKERS, ControlAlarm
     from custom_components.vtherm_smart_boiler.control_config import CONFIG_BLOCKERS
     from custom_components.vtherm_smart_boiler.core.controller import Reason
-    from custom_components.vtherm_smart_boiler.core.loop import HEATING_OFF_IGNORED
+    from custom_components.vtherm_smart_boiler.core.loop import (
+        HEATING_OFF_IGNORED,
+        RELAY_OFF_NOT_TAKEN,
+    )
     from custom_components.vtherm_smart_boiler.core.verdict import ReasonCode
 
     entity = _texts(language)["entity"]
@@ -783,7 +794,7 @@ def test_coded_lists_have_translated_text(language: str) -> None:
     verdict = entity["sensor"]["verdict"]
     blockers = {*CONFIG_BLOCKERS, *RUNTIME_BLOCKERS}
     latches = {ControlAlarm.OUTSIDE_CHANGE.value, ControlAlarm.WRITE_IGNORED.value}
-    latches.add(HEATING_OFF_IGNORED)
+    latches |= {HEATING_OFF_IGNORED, RELAY_OFF_NOT_TAKEN}
     assert _values(state, "reasons") == {reason.value for reason in Reason}
     assert _values(state, "blockers") == blockers
     assert _values(switch, "blockers") == blockers

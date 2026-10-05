@@ -175,6 +175,9 @@ class ChangeClass(StrEnum):
     # Never read back since a send, for longer than the timeout, after the start phase: a relay's
     # "not confirmed" (X8, ``core.relay``), sent again at its next check.
     NOT_CONFIRMED = "not_confirmed"
+    # A relay's command not shown over three of its checks running, after the start phase: it
+    # has stopped taking commands (decision 6 of 0.2.3, ``core.relay``).
+    NOT_TAKEN = "not_taken"
 
 
 class Reaction(StrEnum):
@@ -195,6 +198,8 @@ REACTIONS: Mapping[ChangeClass, Reaction] = MappingProxyType(
         ChangeClass.IGNORED_FROM_START: Reaction.STOP,
         ChangeClass.ANOTHER_CONTROLLER: Reaction.REWRITE_ONCE,
         ChangeClass.NOT_CONFIRMED: Reaction.NONE,  # a relay's next check sends it again
+        # A relay's "on" sent again at its next check; its "off" stops it (``core.relay``).
+        ChangeClass.NOT_TAKEN: Reaction.NONE,
     }
 )
 

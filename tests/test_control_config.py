@@ -666,6 +666,9 @@ NOT_ALLOWED = (
     "an alarm this version does not know",
 )
 ALWAYS = ("control_error", "boiler_link_lost", "outside_change", "monitor_failed")
+# The plugin can no longer switch heating off: "off" ignored from the start (answer O), or a
+# relay's "off" no longer taken in the session (decision 6 of 0.2.3).
+OFF_NOT_TAKEN = ("heating_off_ignored", "relay_off_not_taken")
 
 
 @pytest.mark.parametrize("data", [OTGW, OTGW | WITH_THERMOSTAT, ENTITY])
@@ -673,19 +676,20 @@ def test_only_allow_listed_alarms_may_hand_back(data: dict) -> None:
     """Decision 7: an allow-list in the code. A stored "hand back" for any other alarm — low
     pressure, a failed write, an alarm this version does not know — gives information, whatever
     the hand-back's effect; it is not even kept. Always: an internal error, the lost boiler link,
-    another controller, the monitor failing, heating off ignored from the start."""
+    another controller, the monitor failing, heating off ignored from the start, a relay's "off"
+    no longer taken in the session (decision 6 of 0.2.3)."""
     from custom_components.vtherm_smart_boiler.control_config import (
         ALWAYS_HAND_BACK_ALARMS,
         OPTIONAL_HAND_BACK_ALARMS,
     )
 
-    assert set(ALWAYS) | {"heating_off_ignored"} == ALWAYS_HAND_BACK_ALARMS
+    assert set(ALWAYS) | set(OFF_NOT_TAKEN) == ALWAYS_HAND_BACK_ALARMS
     assert OPTIONAL_HAND_BACK_ALARMS == {"write_ignored"}
     stored = dict.fromkeys(NOT_ALLOWED, "hand_back")
     options = parse_control(data | {"alarm_reactions": stored}, RADIATORS, None)
     for alarm in NOT_ALLOWED:
         assert options.reaction(alarm) is AlarmReaction.INFO, alarm
-    for alarm in (*ALWAYS, "heating_off_ignored"):
+    for alarm in (*ALWAYS, *OFF_NOT_TAKEN):
         assert options.reaction(alarm) is AlarmReaction.HAND_BACK, alarm
     assert options.alarm_reactions == {}
     assert options.reaction("pressure_low") is AlarmReaction.INFO  # the default too
@@ -697,7 +701,7 @@ def test_a_relay_never_hands_back_for_its_link() -> None:
     options = parse_control(RELAY | {"alarm_reactions": {"boiler_link_lost": "info"}}, ON_OFF, None)
     assert options.reaction("boiler_link_lost") is AlarmReaction.INFO
     assert options.reaction("relay_unreachable") is AlarmReaction.INFO
-    for alarm in ("control_error", "outside_change", "monitor_failed", "heating_off_ignored"):
+    for alarm in ("control_error", "outside_change", "monitor_failed", *OFF_NOT_TAKEN):
         assert options.reaction(alarm) is AlarmReaction.HAND_BACK, alarm
 
 

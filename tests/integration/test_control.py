@@ -10249,14 +10249,28 @@ class FakeRelay:
     assumed: bool = False
     calls: list[bool] = field(default_factory=list)
     entity: _RelayEntity | None = None
+    # An old automation that puts the relay back a second after every call of the plugin's that
+    # changed it (PB-01): the test's clock, to move that second on. ``reverts_itself``: the
+    # relay's own logic does it (an "inching" mode, a script on the device), so Home Assistant
+    # files the change under the caller's context, as it does for a few seconds after a call.
+    reverts: Any = None
+    reverts_itself: bool = False
 
     def turned(self, on: bool) -> None:
         """A call reached it — with the caller's context, which Home Assistant keeps."""
         self.calls.append(on)
+        before = self.on
         if self.takes:
             self.on = on
         assert self.entity is not None
         self.entity.async_write_ha_state()
+        if self.reverts is not None and self.on != before:
+            self.reverts.tick(1)  # a second later, before any step looks again
+            if self.reverts_itself:
+                self.on = before
+                self.entity.async_write_ha_state()
+            else:
+                self.switch(before)
 
     def publish(self) -> None:
         """A report of its own, with a context of its own (not the plugin's)."""
@@ -10814,6 +10828,299 @@ async def test_a_relay_that_never_takes_the_command_raises_relay_ignored(
         latch = issue(rig, "control_latched")
         assert latch is not None
         assert latch.translation_key == "control_latched_relay_heating_off_ignored"
+
+
+def relay_memory(rig: Rig) -> Any:
+    assert rig.entry is not None
+    return rig.entry.runtime_data.control._session.loop.relay
+
+
+async def test_a_controller_reverting_the_relay_at_once_makes_the_plugin_step_aside(
+    rig: Rig, relay: FakeRelay
+) -> None:
+    """PB-01 (answers C, N): an old automation switches the relay off, and puts it back a second
+    after every "on" of the plugin's, so no step ever sees the plugin's state — Home Assistant
+    shows it for that second. With the power-cut state "I don't know", each such switch-off is
+    a possible restart: three answered, the fourth makes the plugin step aside — within minutes,
+    the rest state ("off", read already) not written, then nothing more. Before: "on" resent
+    every 5 min for good — a burner start every 5 min — with an information alarm only."""
+    calling(rig)
+    await start_relay(rig, relay_power_on_state="unknown")
+    await rig.switch(True)
+    await rig.advance(START_TRACE_S)
+    assert relay.calls == [True]
+    relay.reverts = rig.freezer
+    relay.switch(False)  # the automation
+    await rig.advance(600)
+    assert relay.calls == [True, True, True, True]  # three restarts answered, each put back
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    found = issue(rig, "control_latched")
+    assert found is not None
+    assert found.translation_key == "control_latched_relay_off"
+    assert len(relay_memory(rig).restarts) == 3
+    assert issue(rig, "relay_not_taking") is None  # it took every command: no relay fault
+    await rig.advance(1800, step=30.0)
+    assert relay.calls == [True, True, True, True]  # left alone
+
+
+async def test_a_relay_that_puts_itself_back_at_once_raises_the_not_taking_issue(
+    rig: Rig, relay: FakeRelay
+) -> None:
+    """PB-01's other side, in Home Assistant: the relay puts itself back a second after every
+    "on" by its own logic, so the change carries the plugin's own context. Never judged another
+    controller, nor left unjudged with "on" resent every 5 min for good: "not confirmed", then
+    after three checks the error-level issue that it does not take commands — "on" still sent at
+    every check, no step aside."""
+    calling(rig, False)
+    await start_relay(rig, relay_power_on_state="unknown")
+    await rig.switch(True)
+    await rig.advance(START_TRACE_S)
+    relay.reverts = rig.freezer
+    relay.reverts_itself = True
+    calling(rig)
+    await rig.advance(10)
+    assert relay.calls == [True]
+    assert not relay.on  # back at once
+    await rig.advance(880)
+    assert issue(rig, "relay_not_taking") is None
+    assert rig.state("sensor", "control_state").attributes["relay_check"] == "not_confirmed"
+    await rig.advance(20)
+    found = issue(rig, "relay_not_taking")
+    assert found is not None
+    assert found.translation_key == "relay_not_taking"
+    assert rig.state("sensor", "control_state").state == "heating"
+    assert issue(rig, "control_latched") is None
+    assert relay_memory(rig).restarts == ()
+    assert relay.calls == [True] * 4  # at each check
+
+
+async def test_a_relay_rewrite_that_fails_once_still_steps_aside(
+    rig: Rig, relay: FakeRelay, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PB-01 (answer C): commanded off, the relay is switched on by another controller that then
+    holds it; the one rewrite's service call fails once and goes again at the next step — still
+    as the rewrite, so 120 s after it was decided, not read back, the plugin steps aside with the
+    rest state once. Before: the retry went as a plain resend that forgot the rewrite, and "off"
+    was resent every 5 min for good."""
+    failing = {"off": True}
+    original = _RelayEntity.async_turn_off
+
+    async def turn_off(self: Any, **kwargs: Any) -> None:
+        if failing["off"]:
+            failing["off"] = False
+            raise HomeAssistantError("the relay did not answer")
+        await original(self, **kwargs)
+
+    calling(rig, False)
+    await start_relay(rig)
+    await rig.switch(True)
+    await rig.advance(START_TRACE_S)
+    assert relay.calls == []  # it reads "off" already
+    monkeypatch.setattr(_RelayEntity, "async_turn_off", turn_off)
+    relay.takes = False
+    relay.switch(True)  # another controller, holding it on
+    await rig.advance(10)
+    assert relay.calls == []  # the rewrite's call failed
+    assert control_alarm(rig, "write_failed") == "on"
+    await rig.advance(10)
+    assert relay.calls == [False]  # the rewrite again
+    await rig.advance(100)
+    assert rig.state("sensor", "control_state").state == "idle"
+    await rig.advance(20)
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    assert relay.calls == [False, False]  # the rest state, once
+    found = issue(rig, "control_latched")
+    assert found is not None
+    assert found.translation_key == "control_latched_relay_off"
+    await rig.advance(1800, step=30.0)
+    assert relay.calls == [False, False]
+
+
+@pytest.mark.parametrize("rest", ["off", "on"])
+async def test_late_switch_offs_with_a_declared_relay_timer_make_the_plugin_step_aside(
+    rig: Rig, relay: FakeRelay, rest: str
+) -> None:
+    """SB-05 (decision 6 of 0.2.3): a declared 10-min timer. A switch-off 10 min into an
+    on-period is its lapse — "on" again, not counted. An automation switching the relay off 15
+    min into each on-period is not: each is a change seen on the relay — here, in its declared
+    power-cut state "off", a restart the relay did not report — three answered, the fourth steps
+    aside: the rest state written once (unless the relay reads it already), then nothing more.
+    Before: every switch-off from 9 min on was the timer's, answered for good."""
+    calling(rig)
+    await start_relay(rig, relay_off_timer="minutes", relay_off_timer_min=10, relay_rest_state=rest)
+    await rig.switch(True)
+    assert relay.calls == [True]  # the on-period begins
+    await rig.advance(600)
+    relay.switch(False)  # the timer's own lapse, 10 min in
+    await rig.advance(10)
+    assert relay.on  # "on" again at once
+    assert relay_memory(rig).restarts == ()  # not counted
+    for n in (1, 2, 3):
+        await rig.advance(900 - 10)
+        relay.switch(False)  # the automation, 15 min into the on-period
+        await rig.advance(10)
+        assert relay.on, n  # answered
+        assert len(relay_memory(rig).restarts) == n
+    await rig.advance(900 - 10)
+    count = len(relay.calls)
+    relay.switch(False)  # the fourth within a day
+    await rig.advance(20)
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    # No rewrite; the rest state once — "off" is read already.
+    assert relay.calls[count:] == ([] if rest == "off" else [True])
+    assert relay.on is (rest == "on")
+    found = issue(rig, "control_latched")
+    assert found is not None
+    assert found.translation_key == f"control_latched_relay_{rest}"
+    relay.switch(rest == "off")  # the automation again
+    await rig.advance(1800, step=30.0)
+    assert relay.calls[count:] == ([] if rest == "off" else [True])  # left alone
+
+
+async def test_a_relay_that_stops_taking_off_mid_session_blocks_control(
+    rig: Rig, relay: FakeRelay
+) -> None:
+    """SB-06 (decision 6 of 0.2.3): a relay that took "on" — the start phase over — then stops
+    taking commands (a link that delivers its reports but not the commands, a stuck contact) and
+    does not show "off" over three checks: an error-level issue says the boiler may keep
+    heating; control is blocked and the relay handed back — its rest state written once — with
+    the latch issue and a blocker until control is switched off and on, as answer O. Before:
+    "not confirmed", the information alarm only, "off" resent every 5 min for good."""
+    calling(rig)
+    await start_relay(rig)
+    await rig.switch(True)
+    await rig.advance(START_TRACE_S)
+    assert relay.on
+    relay.takes = False
+    calling(rig, False)
+    await rig.advance(10)
+    assert relay.calls == [True, False]  # "off", not taken
+    await rig.advance(880)
+    assert issue(rig, "relay_not_taking") is None
+    assert relay.calls == [True, False, False, False]  # sent again at two checks
+    assert rig.state("sensor", "control_state").attributes["relay_check"] == "not_confirmed"
+    await rig.advance(20)
+    found = issue(rig, "relay_not_taking")
+    assert found is not None
+    assert found.translation_key == "relay_not_taking_off"
+    assert found.severity is ir.IssueSeverity.ERROR
+    assert found.translation_placeholders == {"relay": name_of(rig, RELAY)}
+    assert relay.calls == [True, False, False, False]  # no more "off": the next step hands back
+    await rig.advance(10)
+    state = rig.state("sensor", "control_state")
+    assert state.state == "handed_back"
+    assert state.attributes["latched_by"] == ["relay_off_not_taken"]
+    assert state.attributes["relay_check"] == "not_taken"
+    assert relay.calls == [True, False, False, False, False]  # the rest state, once
+    assert relay.on  # the boiler may keep heating
+    blockers = rig.state("switch", "control").attributes["blockers"]
+    assert "relay_off_not_taken" in blockers
+    latch = issue(rig, "control_latched")
+    assert latch is not None
+    assert latch.translation_key == "control_latched_relay_off_not_taken"
+    assert latch.severity is ir.IssueSeverity.ERROR
+    write_ignored = rig.state("binary_sensor", "alarm_write_ignored")
+    assert write_ignored.state == "on"
+    assert write_ignored.attributes["targets"] == ["relay"]
+    await rig.advance(1800, step=30.0)
+    assert len(relay.calls) == 5  # left alone
+    assert rig.entry is not None
+    assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
+    await rig.hass.async_block_till_done()
+    await rig.advance(60)
+    assert len(relay.calls) == 5  # the latch outlives a restart
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    assert "relay_off_not_taken" in rig.state("switch", "control").attributes["blockers"]
+    latch = issue(rig, "control_latched")
+    assert latch is not None
+    assert latch.translation_key == "control_latched_relay_off_not_taken"
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)  # refused while control is on: off and on clears it
+    assert err.value.translation_key == "blocked_relay_off_not_taken"
+    relay.takes = True
+    await rig.switch(False)
+    await rig.switch(True)
+    assert issue(rig, "control_latched") is None
+    assert issue(rig, "relay_not_taking") is None
+    assert "relay_off_not_taken" not in rig.state("switch", "control").attributes["blockers"]
+
+
+@pytest.mark.parametrize("outage", [False, True], ids=["reachable", "out_of_reach_meanwhile"])
+async def test_a_relay_that_stops_taking_on_mid_session_raises_an_issue_and_keeps_sending(
+    rig: Rig, relay: FakeRelay, outage: bool
+) -> None:
+    """SB-06 (decision 6 of 0.2.3): a relay that took "off" — the start phase over — then does
+    not show "on" over three checks: an error-level issue says the house is not heated; control
+    keeps heating and sends "on" again at every check; the issue goes once the relay shows "on".
+    Negative: out of reach in the middle of the checks — the run starts again once it is back,
+    so no issue 15 min after the first send."""
+    calling(rig, False)
+    await start_relay(rig)
+    await rig.switch(True)
+    await rig.advance(START_TRACE_S)
+    relay.takes = False
+    calling(rig)
+    await rig.advance(10)
+    assert relay.calls == [True]  # "on", not taken
+    if outage:
+        await rig.advance(200)
+        relay.away()
+        await rig.advance(400)
+        relay.back(False)
+        await rig.advance(290)
+        assert issue(rig, "relay_not_taking") is None
+        assert rig.state("sensor", "control_state").attributes["relay_check"] != "not_taken"
+        return
+    await rig.advance(880)
+    assert issue(rig, "relay_not_taking") is None
+    await rig.advance(20)
+    found = issue(rig, "relay_not_taking")
+    assert found is not None
+    assert found.translation_key == "relay_not_taking"
+    assert found.severity is ir.IssueSeverity.ERROR
+    state = rig.state("sensor", "control_state")
+    assert state.state == "heating"  # control keeps the relay
+    assert state.attributes["relay_check"] == "not_taken"
+    assert relay.calls == [True] * 4  # at each check
+    await rig.advance(300)
+    assert relay.calls == [True] * 5
+    relay.takes = True
+    await rig.advance(300)
+    assert relay.on  # taken at the next check
+    assert issue(rig, "relay_not_taking") is not None
+    await rig.advance(10)  # and shown at the step after it
+    assert issue(rig, "relay_not_taking") is None
+    assert rig.state("sensor", "control_state").attributes["relay_check"] != "not_taken"
+
+
+@pytest.mark.parametrize("assumed", [False, True], ids=["declared_no", "assumed_state"])
+async def test_a_relay_without_a_state_gets_its_command_at_once_when_it_returns(
+    rig: Rig, relay: FakeRelay, assumed: bool
+) -> None:
+    """PB-44 (R6): a relay that reports no state — declared so, or an entity with
+    ``assumed_state`` — gets its command at once when it comes back within reach, as the
+    "relay unreachable" texts say, not at the next blind repeat (before: up to the repeat
+    interval, 5 min, later); a blip between two steps counts too. Nothing is written while it
+    is away."""
+    relay.assumed = assumed
+    calling(rig)
+    await start_relay(rig, relay_reports_state="yes" if assumed else "no")
+    await rig.switch(True)
+    assert relay.calls == [True]
+    await rig.advance(60)
+    relay.away()
+    await rig.advance(60)
+    assert relay.calls == [True]  # nothing while it is away
+    relay.back(False)  # its state after a power cut
+    await rig.advance(10)
+    assert relay.calls == [True, True]  # at once
+    assert relay.on
+    await rig.advance(60)
+    relay.away()
+    relay.back(False)  # gone and back between two steps
+    await rig.advance(10)
+    assert relay.calls == [True, True, True]
+    assert relay.on
 
 
 async def test_a_relay_a_vt_zone_drives_or_of_the_gateway_blocks_control(

@@ -232,6 +232,7 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
                 "outside_change",
                 "monitor_failed",
                 "heating_off_ignored",
+                "relay_off_not_taken",  # decision 6 of 0.2.3: a relay's "off" no longer taken
             }
         ),
     ),

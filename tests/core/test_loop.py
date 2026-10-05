@@ -21,6 +21,7 @@ from custom_components.vtherm_smart_boiler.core.guards import (
 from custom_components.vtherm_smart_boiler.core.limits import FlowLimits, Grid
 from custom_components.vtherm_smart_boiler.core.loop import (
     HEATING_OFF_IGNORED,
+    RELAY_OFF_NOT_TAKEN,
     LastCommand,
     LoopConfig,
     LoopState,
@@ -655,6 +656,40 @@ def test_a_relay_that_ignores_off_from_the_start_blocks_control() -> None:
     assert state.control.latched
     assert HEATING_OFF_IGNORED in state.control.latched_by
     assert out.ignored == ("relay",)
+
+
+def test_a_relay_that_stops_taking_off_mid_session_blocks_control() -> None:
+    """Decision 6 of 0.2.3 (SB-06): a relay that held "on" — the start phase over — and then
+    does not show "off" over three checks running: the next step latches with
+    ``relay_off_not_taken`` and hands back, whatever reaction is stored, as answer O does; the
+    relay stays named among the ignored targets. Negative: "on" not taken never blocks."""
+    stuck = RelaySeen(on=True, known=True, available=True)
+    state = LoopState()
+    for t in [10.0 * n for n in range(30)]:  # the rooms call: "on", shown and held
+        state, out = loop_step(state, inputs(t), None, RELAY_LOOP, relay_seen=stuck)
+    assert state.relay.start_done
+    out = None
+    for t in [300.0 + 10.0 * n for n in range(150)]:  # they stop calling: "off", never shown
+        state, out = loop_step(state, inputs(t, opening=0.0), None, RELAY_LOOP, relay_seen=stuck)
+        if out.hand_back:
+            break
+    assert out is not None
+    assert out.hand_back
+    assert out.decision.command is None
+    assert state.control.latched
+    assert state.control.latched_by == (RELAY_OFF_NOT_TAKEN,)
+    assert out.ignored == ("relay",)
+    assert state.relay.off_not_taken
+    # "On" not taken: reported, sent again, never a block.
+    off = RelaySeen(on=False, known=True, available=True)
+    state = LoopState()
+    for t in [10.0 * n for n in range(30)]:
+        state, out = loop_step(state, inputs(t, opening=0.0), None, RELAY_LOOP, relay_seen=off)
+    for t in [300.0 + 10.0 * n for n in range(150)]:
+        state, out = loop_step(state, inputs(t), None, RELAY_LOOP, relay_seen=off)
+        assert not out.hand_back
+    assert state.relay.not_taken
+    assert not state.control.latched
 
 
 def test_a_new_session_keeps_the_relays_rewrite_and_restarts_for_their_day() -> None:

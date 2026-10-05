@@ -17,57 +17,74 @@ What is written (R8):
   not ruled out (every repeat interval — every min(its length ÷ 2, repeat interval) once the
   relay's own timer has been recognised, Z4R2-05); "off" is not repeated;
 - a relay that reports no state — declared so, not known, or an entity with ``assumed_state`` —
-  gets its current command, on or off, every repeat interval, and nothing is judged from it;
+  gets its current command, on or off, every repeat interval, and at once when it comes back
+  within reach (PB-44); nothing is judged from it;
 - nothing is written while it is unavailable or missing: out of reach for
   ``RELAY_UNREACHABLE_S`` (unavailable, missing or unknown) it raises its alarm, and it is never
   handed back meanwhile — nothing could reach it; the command goes out at once on its return;
+- a write that failed, or had to wait, goes again at the next step — the one rewrite still as the
+  rewrite (PB-01);
 - writes stay ``MIN_WRITE_INTERVAL_S`` apart.
 
-What its own state means (R7; decision 6 with the user's answers C, D, L, N and O), rows in this
-order:
+What its own state means (R7; decision 6 with the user's answers C, D, L, N and O, and decision 6
+of 0.2.3), rows in this order:
 
 1. the command → confirmed;
 2. another state within ``RELAY_CONFIRM_S`` of a send, or the previous command shown late →
-   waiting;
+   waiting; while the one rewrite is pending, within ``RELAY_CONFIRM_S`` of when it was decided,
+   whatever its retries (PB-01);
 3. another state with a trace of an outage (the relay, or another entity of its device, away
    within the trace window, or a restart seen), or at the first report after a start → a lost
    command: sent again at once and counted (answer C);
-4. the one rewrite not read back within ``RELAY_CONFIRM_S`` → another controller holds the relay:
-   the plugin steps aside (decision 6's M8, for a relay);
-5. commanded on, found off inside the window of its switch-off timer — at or after
-   max(timer − 60 s, timer ÷ 2) since the "on" that started the on-period for a declared length,
-   one repeat interval for "I don't know". A declared timer's is the relay's own lapse: "on"
-   again at once, not counted — no loss of any kind, so a timer that lapses all day never raises
-   "commands lost" (``SCOPE.md`` §5 class 3; Q1's matrix row R5). With "I don't know" one such
-   switch-off cannot be told from an automation, a person or the relay's own button: "on" again
-   at once, but counted as answer N's restart — ``RESTARTS_ANSWERED`` within a day, the next one
-   another controller, and the plugin steps aside at once (Z4-02). One that comes the same time
-   into its on-period as an earlier one, within ``TIMER_TOLERANCE_S`` — or a whole multiple of
-   it, up to ``TIMER_MULTIPLES``, where a renewal reaching the relay just after its timer had
-   switched it off restarted that timer unseen — shows the relay's own timer of that length
-   (Z4R-02), where that length is ``TIMER_RECOGNISED_S`` or more — 10 min, a measurement a minute
-   short allowed (KD-02): from then on a switch-off at that age, or a multiple of it, is its
-   lapse — "on" again, not counted — and the control unit asks the user to declare the timer; a
-   switch-off at another age still counts. A shorter regular switch-off is never taken for the
-   relay's own timer — each would start the boiler again — so it keeps counting, and the fourth
-   within a day steps aside; the latch issue names its length (K4.2, ``short_switch_off_s``). An
-   on-period is counted from the relay's own last "on" where Home Assistant shows one later than
-   the plugin's;
-6. never read back since a send, for longer than ``RELAY_CONFIRM_S`` → not confirmed ("write
+4. the one rewrite not read back within ``RELAY_CONFIRM_S`` of when it was decided → another
+   controller holds the relay: the plugin steps aside (decision 6's M8, for a relay);
+5. never shown since a send — not read back at a step, nor switched between on and off since it
+   as Home Assistant showed it and then put back by something else (put back under the plugin's
+   own context, within the seconds Home Assistant files a change under it, the relay did not
+   keep the command) — for longer than ``RELAY_CONFIRM_S`` → not confirmed ("write
    ignored"), sent again at the next check; after each of the session's first
    ``RELAY_START_SENDS`` sends → ignored from the start: not written again this session, repeats
    included (where "off" is what it ignores, the plugin can no longer switch heating off:
-   answer O);
-7. after a confirmation, a change with the plugin's own context → not judged: the next check
-   sends the command again;
-8. after a confirmation, with no trace: the state the user declared for after a power cut, or —
-   with "last" or "I don't know" declared — any change → a restart the relay did not report
-   (answers D, N): sent again and counted, ``RESTARTS_ANSWERED`` times within a day; the fourth
-   is another controller, and the plugin steps aside at once, with no rewrite first (a
-   switch-off while commanded on, with the timer "I don't know", is kept with its age, as in
-   row 5, for the latch issue to name a regular one);
+   answer O). After the start phase, not shown over ``RELAY_NOT_TAKEN_CHECKS`` checks running —
+   from the first send not shown, through new commands, until the relay shows one; a check it
+   could not answer, out of reach, and a lost command start the run again — it has stopped
+   taking commands (decision 6 of 0.2.3, SB-06): "on" is sent again at every check and the
+   control unit raises an error-level issue (the house is not heated); "off" not taken leaves
+   the plugin unable to switch heating off — nothing more is written, and the loop blocks
+   control and hands the relay back, as answer O;
+6. shown since the send — at a step, or for a moment between two steps — and now another state:
+   a change seen on the relay (PB-01), by the rows below. Commanded on, found off inside the
+   window of its switch-off timer — within ``TIMER_TOLERANCE_S`` of a whole multiple of a
+   declared length, at most ``TIMER_MULTIPLES``, since the "on" that started the on-period or
+   since the last renewal (decision 6 of 0.2.3, SB-05); one repeat interval or more into it for
+   "I don't know". A declared timer's is the relay's own lapse: "on" again at once, not counted —
+   no loss of any kind, so a timer that lapses all day never raises "commands lost" (``SCOPE.md``
+   §5 class 3; Q1's matrix row R5); any other switch-off is judged by rows 7 to 9. With "I don't
+   know" one such switch-off cannot be told from an automation, a person or the relay's own
+   button: "on" again at once, but counted as answer N's restart — ``RESTARTS_ANSWERED`` within a
+   day, the next one another controller, and the plugin steps aside at once (Z4-02). One that
+   comes the same time into its on-period as an earlier one, within ``TIMER_TOLERANCE_S`` — or a
+   whole multiple of it, up to ``TIMER_MULTIPLES``, where a renewal reaching the relay just after
+   its timer had switched it off restarted that timer unseen — shows the relay's own timer of
+   that length (Z4R-02), where that length is ``TIMER_RECOGNISED_S`` or more — 10 min, a
+   measurement a minute short allowed (KD-02): from then on a switch-off at that age, or a
+   multiple of it, is its lapse — "on" again, not counted — and the control unit asks the user to
+   declare the timer; a switch-off at another age still counts. A shorter regular switch-off is
+   never taken for the relay's own timer — each would start the boiler again — so it keeps
+   counting, and the fourth within a day steps aside; the latch issue names its length (K4.2,
+   ``short_switch_off_s``). An on-period is counted from the relay's own last "on" where Home
+   Assistant shows one later than the plugin's;
+7. after a step read the command back, a change with the plugin's own context (a renewal's) →
+   not judged: the next check sends the command again;
+8. with no trace: the state the user declared for after a power cut, or — with "last" or "I
+   don't know" declared — any change → a restart the relay did not report (answers D, N): sent
+   again and counted, ``RESTARTS_ANSWERED`` times within a day; the fourth is another controller,
+   and the plugin steps aside at once, with no rewrite first (a switch-off while commanded on,
+   with the timer "I don't know", is kept with its age, as in row 6, for the latch issue to name
+   a regular one). A controller that puts the relay back a second after every send is counted so
+   too, never only "not confirmed" (PB-01);
 9. otherwise → another controller (answer C): rewritten once; a second change within a day of
-   that rewrite makes the plugin step aside.
+   that rewrite, or the rewrite not read back, makes the plugin step aside.
 
 Stepping aside stops every write; the control unit then makes the relay's hand-back — its rest
 state, written once and then left alone (answers H, L). Restarts with a trace do not count toward
@@ -101,6 +118,11 @@ REWRITE_WINDOW_S = DAY  # decision 6: after the one rewrite, a second change thi
 RELAY_CHECK_S = 300.0
 RELAY_CONFIRM_S = 120.0  # a send read back within this (X1's confirmation timeout)
 RELAY_START_SENDS = 3  # the session's first sends that may all go unconfirmed (X1's attempts)
+# Decision 6 of 0.2.3 (SB-06): after the start phase, a relay that has not shown the plugin's
+# command over this many of its checks running — about 15 min at the 5-min check — has stopped
+# taking commands: long enough for a slow link to deliver a resend, short enough that a boiler
+# stuck on, or a house left unheated, is reported within a quarter of an hour.
+RELAY_NOT_TAKEN_CHECKS = 3
 REPEAT_DEFAULT_S = 300.0  # the repeat interval without one entered or carried over from VT
 REPEAT_MIN_S = 10.0
 REPEAT_MAX_S = 300.0  # a relay restarted in the wrong state stays so at most this long
@@ -164,6 +186,7 @@ class RelayCheck(StrEnum):
     CONFIRMED = "confirmed"
     WAITING = "waiting"
     NOT_CONFIRMED = "not_confirmed"
+    NOT_TAKEN = "not_taken"  # it has stopped taking commands in the session (decision 6)
     IGNORED = "ignored"
     UNVERIFIED = "unverified"  # it reports no state: controlled without confirmation
     CHANGED_FROM_OUTSIDE = "changed_from_outside"
@@ -215,18 +238,6 @@ class RelayConfig:
         return None
 
     @property
-    def lapse_s(self) -> float | None:
-        """How long after the "on" that started the on-period a switch-off is the timer's lapse:
-        max(timer − 60 s, timer ÷ 2) for a declared length — the floor keeps a 1-minute timer
-        from taking every switch-off for its lapse — one repeat interval for "I don't know";
-        ``None`` without a timer."""
-        if self.timer is RelayTimer.MINUTES and self.timer_s is not None:
-            return max(self.timer_s - TIMER_TOLERANCE_S, self.timer_s / 2.0)
-        if self.timer is RelayTimer.UNKNOWN:
-            return self.repeat_s
-        return None
-
-    @property
     def power_cut_state(self) -> bool | None:
         """The state it takes after a power cut, where declared "off" or "on"."""
         return {RelayPowerOn.OFF: False, RelayPowerOn.ON: True}.get(self.power_on)
@@ -246,6 +257,9 @@ class RelaySeen:
     # When it last switched between on and off, as Home Assistant showed it — a return from
     # unavailable or unknown is no such switch (Z4R2-01); ``None``: none seen yet.
     changed_at: float | None = None
+    # Back within reach since the step before: unavailable, unknown or missing then, or in
+    # between (PB-44).
+    returned: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,12 +279,20 @@ class RelayState:
     rewrite_pending: bool = False  # the one rewrite not read back yet
     unconfirmed: bool = False  # not read back within the timeout: "write ignored"
     attempt_at: float | None = None  # the start phase's running attempt
+    # After the start phase (decision 6 of 0.2.3): the first send of the run of checks the relay
+    # has not shown the plugin's command in — through new commands, until it shows one — and
+    # whether that run has lasted ``RELAY_NOT_TAKEN_CHECKS`` checks: it stopped taking commands.
+    unshown_since: float | None = None
+    not_taken: bool = False
     # --- the session's memory: kept across hand-backs, reset at the session's end ---
     start_done: bool = False  # the relay held a command for the timeout
     failed_sends: int = 0  # counted failed attempts of the start phase
     ignored: bool = False  # ignored from the start: not written again this session
     ignored_values: tuple[bool, ...] = ()  # the commands it did not take
     blocked: bool = False  # another controller: the plugin steps aside, nothing more written
+    # It stopped taking "off" in the session (decision 6 of 0.2.3): the plugin can no longer
+    # switch heating off — nothing more written, control blocked until off and on.
+    off_not_taken: bool = False
     # Stepped aside at answer N's fourth after regular switch-offs too short to be the relay's
     # own timer: their length, for the latch issue to name (K4.2; a length, not a moment).
     short_off_s: float | None = None
@@ -329,8 +351,11 @@ def plan_relay(
     state = _clock(state, now)
     if seen.known:
         state = replace(state, unreachable_since=None)
-    elif state.unreachable_since is None:
-        state = replace(state, unreachable_since=now)
+    else:
+        # A check the relay cannot answer breaks a run of checks without its command
+        # (decision 6 of 0.2.3): the run starts again once it shows a state.
+        away = now if state.unreachable_since is None else state.unreachable_since
+        state = replace(state, unreachable_since=away, unshown_since=None)
     since = state.unreachable_since
     unreachable = since is not None and now - since >= RELAY_UNREACHABLE_S
     reports = config.reports_state and seen.reports
@@ -345,7 +370,8 @@ def plan_relay(
     result = RelayResult(
         state, None, events, verdict.judged, lost, verdict.restart and lost, unreachable
     )
-    if state.blocked or state.ignored or desired is None or not seen.available:
+    stopped = state.blocked or state.ignored or state.off_not_taken
+    if stopped or desired is None or not seen.available:
         return result
     kind, adopt = _due(state, desired, seen, verdict.judged, reports, now, config)
     if adopt:
@@ -364,12 +390,27 @@ def _classify(state: RelayState, seen: RelaySeen, now: float, config: RelayConfi
     command = state.written
     if seen.on is command:
         return _Verdict(ChangeClass.CONFIRMED)
-    if _waiting(state, seen, now):
+    if state.rewrite_pending:
+        # The one rewrite's own timeout runs from when it was decided, through a retry of a
+        # write that failed or had to wait (PB-01).
+        if not _rewrite_due(state, now):
+            return _Verdict(ChangeClass.NOT_JUDGED)
+    elif _waiting(state, seen, now):
         return _Verdict(ChangeClass.NOT_JUDGED)
     if seen.trace or seen.first:
         return _Verdict(ChangeClass.LOST_COMMAND)  # answer C: a power or link loss
     if state.rewrite_pending:
         return _Verdict(ChangeClass.ANOTHER_CONTROLLER)  # the one rewrite did not hold
+    if not _shown(state, seen):
+        if not state.start_done and state.attempt_at is not None:
+            if state.failed_sends + 1 >= RELAY_START_SENDS:
+                return _Verdict(ChangeClass.IGNORED_FROM_START)
+            return _Verdict(ChangeClass.FAILED_ATTEMPT)
+        if state.start_done and _not_taken(state, now, config):
+            return _Verdict(ChangeClass.NOT_TAKEN)  # decision 6 of 0.2.3 (SB-06)
+        return _Verdict(ChangeClass.NOT_CONFIRMED)
+    # Shown since the send — read back at a step, or for a moment between two steps — and now
+    # another state: a change seen on the relay (PB-01).
     if command is True and seen.on is False and _lapsed(state, seen, now, config):
         if config.timer is not RelayTimer.UNKNOWN:
             return _Verdict(ChangeClass.OWN_LAPSE)
@@ -384,12 +425,6 @@ def _classify(state: RelayState, seen: RelaySeen, now: float, config: RelayConfi
         # Maybe its timer, maybe an automation or a person: answered, but bounded as a restart
         # the relay did not report (answer N), never without limit (Z4-02).
         return replace(_restart(state, now), age=age)
-    if state.confirmed_at is None:
-        if not state.start_done and state.attempt_at is not None:
-            if state.failed_sends + 1 >= RELAY_START_SENDS:
-                return _Verdict(ChangeClass.IGNORED_FROM_START)
-            return _Verdict(ChangeClass.FAILED_ATTEMPT)
-        return _Verdict(ChangeClass.NOT_CONFIRMED)
     if seen.ours:
         return _Verdict(ChangeClass.NOT_JUDGED)  # its own context: left to the next check
     power_cut = config.power_cut_state
@@ -431,15 +466,61 @@ def _waiting(state: RelayState, seen: RelaySeen, now: float) -> bool:
     )
 
 
+def _rewrite_due(state: RelayState, now: float) -> bool:
+    """The one rewrite not read back within ``RELAY_CONFIRM_S`` of when it was decided — not of
+    its last retry (PB-01); with no moment kept, due."""
+    at = state.rewritten_at
+    return at is None or now - at >= RELAY_CONFIRM_S
+
+
+def _flipped(state: RelayState, seen: RelaySeen) -> bool:
+    """The relay switched between on and off after the last send, as Home Assistant showed it,
+    and was then switched back by something else: whatever it shows now, it showed the command
+    for a moment — it took the command (PB-01). A return from unavailable or unknown is no such
+    switch (Z4R2-01). Put back under the plugin's own context — within the seconds after a call
+    in which Home Assistant still files a change under it: the relay's own logic, an "inching"
+    mode, a stale report — it did not keep the command: not shown, and so never judged as
+    another controller nor left unjudged for good (decision 6 of 0.2.3)."""
+    sent, changed = state.sent_at, seen.changed_at
+    return sent is not None and changed is not None and changed > sent and not seen.ours
+
+
+def _shown(state: RelayState, seen: RelaySeen) -> bool:
+    """The relay has shown the command since it was last sent: read back as it at a step, or
+    for a moment between two steps."""
+    return state.confirmed_at is not None or _flipped(state, seen)
+
+
+def _not_taken(state: RelayState, now: float, config: RelayConfig) -> bool:
+    """After the start phase, the relay has not shown the plugin's command over
+    ``RELAY_NOT_TAKEN_CHECKS`` checks running, from the first send of the run — this send's
+    where the run starts now (decision 6 of 0.2.3, SB-06). With no send to time it from, it has
+    not."""
+    since = state.sent_at if state.unshown_since is None else state.unshown_since
+    return since is not None and now - since >= RELAY_NOT_TAKEN_CHECKS * config.check_s
+
+
 def _lapsed(state: RelayState, seen: RelaySeen, now: float, config: RelayConfig) -> bool:
-    """The switch-off came inside the timer's lapse window, counted from the start of the
-    on-period — not from the last "on" sent, so a relay that does not restart its timer on a
-    repeated "on" is recognised too."""
-    lapse = config.lapse_s
+    """The switch-off came inside the timer's lapse window. A declared timer's: within
+    ``TIMER_TOLERANCE_S`` of a whole multiple of its length, at most ``TIMER_MULTIPLES``, since
+    the "on" that started the on-period — not the last "on" sent, so a relay that does not
+    restart its timer on a repeated "on" is recognised, a renewal that hid a lapse included —
+    or since the last renewal, for one that does (decision 6 of 0.2.3, SB-05: before, anything
+    late into a long run was taken for it). "I don't know": at least one repeat interval into
+    the on-period. No timer: none."""
     start = state.on_since
-    if lapse is None or start is None:
+    if start is None:
         return False
-    return _age(start, seen, now) >= lapse
+    if config.timer is RelayTimer.MINUTES and config.timer_s is not None:
+        since = [start]
+        renewed = state.written_at  # commanded on, every write is an "on": the last renewal
+        if renewed is not None and renewed > start:
+            since.append(renewed)
+        timer = config.timer_s
+        return any(_times(_age(at, seen, now), timer) is not None for at in since)
+    if config.timer is RelayTimer.UNKNOWN:
+        return _age(start, seen, now) >= config.repeat_s
+    return False
 
 
 def _age(start: float, seen: RelaySeen, now: float) -> float:
@@ -504,8 +585,12 @@ def short_switch_off_s(state: RelayState, now: float) -> float | None:
 def _observe(state: RelayState, seen: RelaySeen, now: float) -> RelayState:
     """The relay shows the command: confirmed, held since; held for the timeout, the start phase
     is over and "write ignored" clears (not after "ignored from the start"). Shown on since a
-    moment later than the "on" the on-period counts from, the on-period began then (Z4R-02)."""
+    moment later than the "on" the on-period counts from, the on-period began then (Z4R-02).
+    Shown — now, or for a moment since the send — it takes commands: a run of checks without
+    its command ends (decision 6 of 0.2.3)."""
     if seen.on is not state.written:
+        if _flipped(state, seen):
+            state = replace(state, unshown_since=None, not_taken=False)
         return replace(state, held_since=None)
     start, changed = state.on_since, seen.changed_at
     if seen.on and start is not None and changed is not None and changed > start:
@@ -519,6 +604,8 @@ def _observe(state: RelayState, seen: RelaySeen, now: float) -> RelayState:
         held_since=held,
         rewrite_pending=False,
         attempt_at=None,
+        unshown_since=None,
+        not_taken=False,
     )
     if now - held >= RELAY_CONFIRM_S and not state.ignored:
         state = replace(state, start_done=True, unconfirmed=False)
@@ -542,7 +629,9 @@ def _account(
         if verdict.age is not None:
             lapses = tuple(lapse for lapse in state.lapses if now - lapse[0] < RESTART_WINDOW_S)
             state = replace(state, lapses=(*lapses, (now, verdict.age)))
-        return state, (), True
+        # Explained by an outage or a restart, and sent again: a run of checks without the
+        # command starts again from this send (decision 6 of 0.2.3).
+        return replace(state, unshown_since=None), (), True
     if judged is ChangeClass.ANOTHER_CONTROLLER:
         recent = state.rewritten_at is not None and now - state.rewritten_at < REWRITE_WINDOW_S
         if verdict.restart or state.rewrite_pending or recent:
@@ -577,8 +666,17 @@ def _account(
             unconfirmed=True,
         )
         return state, (GuardEvent.IGNORED,), False
-    if judged is ChangeClass.NOT_CONFIRMED:
-        return replace(state, unconfirmed=True), (), False
+    if judged in (ChangeClass.NOT_CONFIRMED, ChangeClass.NOT_TAKEN):
+        state = replace(state, unconfirmed=True)
+        if state.start_done and state.unshown_since is None:
+            state = replace(state, unshown_since=state.sent_at)  # the run of checks begins
+        if judged is ChangeClass.NOT_TAKEN:
+            # It stopped taking commands (decision 6 of 0.2.3): "on" is sent again at every
+            # check; "off" not taken leaves the plugin unable to switch heating off — nothing
+            # more is written, and control is blocked and handed back, as answer O does.
+            off = state.off_not_taken or state.written is False
+            state = replace(state, not_taken=True, off_not_taken=off)
+        return state, (), False
     return state, (), False
 
 
@@ -586,7 +684,12 @@ def _account(
 
 _RESENDING = frozenset({ChangeClass.LOST_COMMAND, ChangeClass.OWN_LAPSE})
 _CHECKED = frozenset(
-    {ChangeClass.NOT_JUDGED, ChangeClass.NOT_CONFIRMED, ChangeClass.FAILED_ATTEMPT}
+    {
+        ChangeClass.NOT_JUDGED,
+        ChangeClass.NOT_CONFIRMED,
+        ChangeClass.FAILED_ATTEMPT,
+        ChangeClass.NOT_TAKEN,
+    }
 )
 
 
@@ -603,12 +706,16 @@ def _due(
     the relay reports its state and already shows it, and no switch-off timer needs the "on"."""
     written = state.written
     if state.retry and written is not None:
-        return WriteKind.RESEND, False
+        # A write that failed, or had to wait, goes now — the one rewrite still as the rewrite,
+        # so its timeout and the step aside it may lead to are not forgotten (PB-01).
+        return (WriteKind.REWRITE if state.rewrite_pending else WriteKind.RESEND), False
     if written is None or desired != written:
         shows = reports and seen.known and seen.on is desired
         timer = desired and config.renew_s is not None
         return WriteKind.CHANGE, shows and not timer
     if not reports:
+        if seen.returned:
+            return WriteKind.RESEND, False  # back within reach: its command at once (R6, PB-44)
         # Blind: the current command, on or off, every repeat interval.
         return (WriteKind.KEEPALIVE if _elapsed(state, now, config.repeat_s) else None), False
     if judged in _RESENDING:
@@ -655,6 +762,8 @@ def _adopt(state: RelayState, desired: bool, now: float) -> RelayState:
         rewrite_pending=False,
         unconfirmed=state.unconfirmed and not state.start_done,
         attempt_at=None,
+        unshown_since=None,
+        not_taken=False,
     )
 
 
@@ -670,7 +779,7 @@ def _send(
     if kind is WriteKind.KEEPALIVE:
         return replace(state, written_at=now, retry=False), RelayWrite(desired, kind)
     new = state.written is None or desired != state.written
-    if kind is WriteKind.RESEND and new:
+    if kind in (WriteKind.RESEND, WriteKind.REWRITE) and new:
         kind = WriteKind.CHANGE  # the command moved on: the new one goes
     # The "on" that starts an on-period: a new "on", or "on" again while the relay reads off.
     starts = desired and (new or seen.on is not True or state.on_since is None)
@@ -699,6 +808,7 @@ _SESSION = (
     "ignored",
     "ignored_values",
     "blocked",
+    "off_not_taken",
     "short_off_s",
     "rewritten_at",
     "restarts",
@@ -715,8 +825,9 @@ def relay_write_failed(state: RelayState) -> RelayState:
 
 def after_hand_back_relay(state: RelayState) -> RelayState:
     """A hand-back inside the session: the per-send fields go; the session's memory — the block,
-    "ignored from the start", the start phase, the one rewrite, the restarts — stays, and so do
-    the facts about the relay (its reachability, its own timer seen)."""
+    "ignored from the start", "off" no longer taken, the start phase, the one rewrite, the
+    restarts — stays, and so do the facts about the relay (its reachability, its own timer
+    seen)."""
     kept: dict[str, Any] = {name: getattr(state, name) for name in _SESSION}
     return RelayState(**kept)
 
@@ -739,8 +850,8 @@ def relay_for_new_session(state: RelayState, now: float) -> RelayState:
 
 def relay_write_ignored(state: RelayState) -> bool:
     """ "Write ignored": not read back within the timeout, until the relay has held the command
-    for it — or ignored from the start, until the next session."""
-    return state.ignored or state.unconfirmed
+    for it — or ignored from the start, or "off" no longer taken, until the next session."""
+    return state.ignored or state.unconfirmed or state.off_not_taken
 
 
 def relay_check(state: RelayState, config: RelayConfig, *, reports: bool) -> RelayCheck | None:
@@ -752,6 +863,8 @@ def relay_check(state: RelayState, config: RelayConfig, *, reports: bool) -> Rel
         return RelayCheck.CHANGED_FROM_OUTSIDE
     if state.ignored:
         return RelayCheck.IGNORED
+    if state.off_not_taken or state.not_taken:
+        return RelayCheck.NOT_TAKEN  # decision 6 of 0.2.3
     if state.written is None:
         return None
     if state.unconfirmed:

@@ -92,11 +92,15 @@ On/off control through a relay (class 3, X8) runs the same unit through the rela
 (``core.relay``): the link is the relay — flame and flow never gate it, and it is never handed back
 for a lost link; out of reach for five minutes it raises "relay unreachable" and a repair issue,
 and gets the command again when it returns. A listener on the relay notes every change, with
-whether it carried one of the plugin's own write contexts. Its "off" ignored from the start
-blocks control like the heating switch's (answer O); stepping aside from another controller —
-the relay switched twice within a day while it stayed available, or a fourth unreported restart
-(answers C, N) — sets it once to its rest state and leaves it alone (answers H, L). A hand-back
-owed when the session commands the relay again is folded into the session, never off-then-on; a
+whether it carried one of the plugin's own write contexts, and every pass through unavailable or
+unknown, so a relay that reports no state gets its command at once on its return (PB-44). Its
+"off" ignored from the start blocks control like the heating switch's (answer O), and so does its
+"off" no longer taken after the start phase — three checks without its command raise an
+error-level issue, for "on" too (decision 6 of 0.2.3); stepping aside from another controller —
+the relay switched twice within a day while it stayed available, or a fourth unreported restart,
+a command put back a second after every send included (answers C, N; PB-01) — sets it once to
+its rest state and leaves it alone (answers H, L). A hand-back owed when the session commands the
+relay again is folded into the session, never off-then-on; a
 planned restart restores the last command at once, before the control switch restores (R11).
 While control does not hold a relay resting "off" and a room asks for heat or is near freezing,
 a repair issue says the boiler does not heat. Optional proof that the boiler heats is information
@@ -221,6 +225,7 @@ from .core.loop import (
     OFF,
     ON,
     RELAY,
+    RELAY_OFF_NOT_TAKEN,
     SETPOINT,
     LastCommand,
     LoopOutput,
@@ -233,6 +238,7 @@ from .core.loop import (
 )
 from .core.readings import BoilerSnapshot, ZoneState
 from .core.relay import (
+    RELAY_NOT_TAKEN_CHECKS,
     TIMER_RECOGNISED_S,
     ProofSeen,
     ProofState,
@@ -312,9 +318,15 @@ _OTHER_LATCH = "other"
 STOPPED_HEATING_ISSUE = "control_stopped_heating"
 STOPPED_HEATING_S = 60.0
 # Blockers that raise no such issue: Home Assistant starting (the minute starts once it runs),
-# an internal error (its own alarm), the monitor failing (V6's own issue) and heating off ignored
-# from the start (the latch issue says so).
-_QUIET_BLOCKERS = frozenset({"ha_starting", "control_error", "monitor_failed", HEATING_OFF_IGNORED})
+# an internal error (its own alarm), the monitor failing (V6's own issue), and heating off
+# ignored from the start or a relay's "off" no longer taken (the latch issue says so).
+_QUIET_BLOCKERS = frozenset(
+    {"ha_starting", "control_error", "monitor_failed", HEATING_OFF_IGNORED, RELAY_OFF_NOT_TAKEN}
+)
+# The latches that mean the plugin can no longer switch heating off — "off" ignored from the
+# start (answer O), or a relay's "off" no longer taken in the session (decision 6 of 0.2.3):
+# blocked until the user switches control off and on.
+_OFF_NOT_TAKEN = (HEATING_OFF_IGNORED, RELAY_OFF_NOT_TAKEN)
 # After stepping aside from another controller, where the option is on: control returns by
 # itself once the read-backs have shown only the hand-back state this long (decided).
 RETURN_QUIET_S = 3600.0
@@ -358,6 +370,9 @@ RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control
 RELAY_UNREACHABLE_ISSUE = "relay_unreachable"
 RELAY_IGNORED_ISSUE = "relay_ignored"
 RELAY_RESTS_OFF_ISSUE = "relay_rests_off"
+# Decision 6 of 0.2.3 (SB-06): a relay that took commands and then stopped taking them in the
+# session — an error-level issue, one text for "on" and one for "off".
+RELAY_NOT_TAKING_ISSUE = "relay_not_taking"
 # Z4R-02: with the timer "I don't know", the relay seen switching itself off twice the same time
 # into an on-period — its own timer: a warning repair issue asks to declare it.
 RELAY_TIMER_ISSUE = "relay_timer_seen"
@@ -379,6 +394,7 @@ RUNTIME_BLOCKERS = (
     "control_error",
     "monitor_failed",
     HEATING_OFF_IGNORED,
+    RELAY_OFF_NOT_TAKEN,  # decision 6 of 0.2.3: a relay's "off" no longer taken in the session
     # X5: the gateway's or MQTT's integration gone or disabled (X5.5); a zone that is not a VT
     # climate (X5.7); a zone VT built on the boiler's own thermostat (X5.19).
     "gateway_not_set_up",
@@ -841,10 +857,16 @@ class ControlUnit:
         # Z4R2-01: when the relay last switched between on and off itself or by a command, as
         # Home Assistant showed it — a return from unavailable or unknown is not such a switch.
         self._relay_flipped_at: float | None = None
+        # PB-44: the relay's changes through unavailable, unknown or missing, counted, and the
+        # count the last step saw — a return within reach since then is passed on, so a relay
+        # that reports no state gets its command at once.
+        self._relay_outages = 0
+        self._relay_outages_seen = 0
         self._restore_gave_way = False  # R11: this step's restore gave way, the relay not there
         self._proof = ProofState()
         self._relay_unreachable_issue: tuple[str, str] | None = None
         self._relay_ignored_issue: tuple[str, str] | None = None
+        self._relay_not_taking_issue: tuple[str, str] | None = None
         self._rests_off_issue: tuple[str, str] | None = None
         self._relay_timer_issue: tuple[str, str] | None = None
         # Y1, boiler protection: since when each mapped fault signal has counted, on the control
@@ -1418,10 +1440,12 @@ class ControlUnit:
             # A hand-back; control resumes on its own once the monitor works again (answer I).
             found.append("monitor_failed")
         control = self._session.loop.control
-        if control.latched and HEATING_OFF_IGNORED in control.latched_by:
-            # The boiler did not take "heating off" from the start of the session (answer O):
-            # blocked until the user switches control off and on after fixing it (X5.21).
-            found.append(HEATING_OFF_IGNORED)
+        for cause in _OFF_NOT_TAKEN:
+            if control.latched and cause in control.latched_by:
+                # The boiler did not take "heating off" from the start of the session (answer O),
+                # or the relay stopped taking "off" in it (decision 6 of 0.2.3): blocked until
+                # the user switches control off and on after fixing it (X5.21).
+                found.append(cause)
         return tuple(found)
 
     def _relay_blockers(self) -> list[str]:
@@ -1894,13 +1918,15 @@ class ControlUnit:
 
     def _follow_target_alarms(self, out: LoopOutput) -> tuple[str, ...]:
         """The alarms of each write target (P-09): ignored from the start — and while the latch
-        for heating off ignored from the start holds, a restart included — commands lost, and
-        a confirmation missing. The targets shown as ignored."""
+        for heating off ignored from the start, or a relay's "off" no longer taken, holds, a
+        restart included — commands lost, and a confirmation missing. The targets shown as
+        ignored."""
         session = self._session
         ignored = out.ignored
         latch = session.loop.control
         target = RELAY if self._relay_path else HEATING
-        if latch.latched and HEATING_OFF_IGNORED in latch.latched_by and target not in ignored:
+        off_not_taken = any(cause in latch.latched_by for cause in _OFF_NOT_TAKEN)
+        if latch.latched and off_not_taken and target not in ignored:
             ignored = (*ignored, target)
         for flagged, alarm in (
             (bool(ignored), ControlAlarm.WRITE_IGNORED),
@@ -2384,7 +2410,8 @@ class ControlUnit:
         """The latch was set in this step: for another controller, the plugin steps aside — the
         whole safe hand-back follows at once, which no guard holds back and which skips no
         target (the user's answer H); for heating off ignored from the start, control is blocked
-        and hands back (answer O). Its repair issue is raised anew."""
+        and hands back (answer O), and so for a relay that stopped taking "off" in the session
+        (decision 6 of 0.2.3). Its repair issue is raised anew."""
         latched_by = self._session.loop.control.latched_by
         if ControlAlarm.OUTSIDE_CHANGE.value in latched_by:
             _LOGGER.warning(
@@ -2395,6 +2422,12 @@ class ControlUnit:
             _LOGGER.warning(
                 'The boiler did not take "heating off" from the start of the session: control '
                 "hands the boiler back and stays blocked until control is switched off and on"
+            )
+        if RELAY_OFF_NOT_TAKEN in latched_by:
+            _LOGGER.warning(
+                'The relay has stopped taking the plugin\'s commands and does not take "off": '
+                "the boiler may keep heating; control hands the relay back and stays blocked "
+                "until control is switched off and on"
             )
         if ControlAlarm.WRITE_IGNORED.value in latched_by:
             _LOGGER.warning(
@@ -2443,14 +2476,15 @@ class ControlUnit:
 
     def _latch_cause(self) -> str | None:
         """The cause the entry's one latch issue names (decision 7, Y1): another controller,
-        heating off ignored from the start, an ignored write set to hand back — or, for a latch
-        an earlier version stored, ``_OTHER_LATCH``; ``None`` without a latch."""
+        heating off ignored from the start or a relay's "off" no longer taken, an ignored write
+        set to hand back — or, for a latch an earlier version stored, ``_OTHER_LATCH``; ``None``
+        without a latch."""
         control = self._session.loop.control
         if self.hand_back_only or not control.latched:
             return None
         for cause in (
             ControlAlarm.OUTSIDE_CHANGE.value,
-            HEATING_OFF_IGNORED,
+            *_OFF_NOT_TAKEN,
             ControlAlarm.WRITE_IGNORED.value,
         ):
             if cause in control.latched_by:
@@ -2486,8 +2520,8 @@ class ControlUnit:
         elif cause == _OTHER_LATCH:
             latched_by = self._session.loop.control.latched_by
             placeholders = {"alarm": ", ".join(latched_by) or "-"}
-        short_timer = False
-        if self._relay_path and cause in (ControlAlarm.OUTSIDE_CHANGE.value, HEATING_OFF_IGNORED):
+        error = False
+        if self._relay_path and cause in (ControlAlarm.OUTSIDE_CHANGE.value, *_OFF_NOT_TAKEN):
             # A relay (X8): its own texts, naming it — the step aside by its rest state.
             placeholders = {"relay": self._relay_name()}
             if cause == ControlAlarm.OUTSIDE_CHANGE.value:
@@ -2497,11 +2531,15 @@ class ControlUnit:
                 if minutes is not None:
                     # It switched itself off every few minutes (K4.2): its timer, or an
                     # automation, stops heating whatever the rest state — an error.
-                    key, short_timer = f"{LATCHED_ISSUE}_relay_short_timer_{rest}", True
+                    key, error = f"{LATCHED_ISSUE}_relay_short_timer_{rest}", True
                     placeholders["minutes"] = minutes
-            else:
+            elif cause == HEATING_OFF_IGNORED:
                 key = f"{LATCHED_ISSUE}_relay_{HEATING_OFF_IGNORED}"
-        stops = self._stops_heating() or short_timer
+            else:
+                # It stopped taking commands in the session, "off" among them (decision 6 of
+                # 0.2.3): the boiler may keep heating, whatever the rest state — an error.
+                error = True
+        stops = self._stops_heating() or error
         ir.async_create_issue(
             self._hass,
             DOMAIN,
@@ -3563,6 +3601,8 @@ class ControlUnit:
             state is None or state.state in UNAVAILABLE_STATES for state in (old, new)
         ):
             self._outages[entity_id] = now
+            if entity_id == self.options.relay.entity:
+                self._relay_outages += 1  # PB-44: its return is passed to the next step
         if entity_id == self.options.relay.entity and (
             old is None or new is None or old.state != new.state
         ):
@@ -3668,9 +3708,10 @@ class ControlUnit:
 
     def _step_aside(self) -> bool:
         """The relay's hand-back is a step aside — another controller, or its "off" ignored from
-        the start: its rest state written once, then left alone (answers H, L, O)."""
+        the start or no longer taken in the session: its rest state written once, then left
+        alone (answers H, L, O; decision 6 of 0.2.3)."""
         control = self._session.loop.control
-        causes = (ControlAlarm.OUTSIDE_CHANGE.value, HEATING_OFF_IGNORED)
+        causes = (ControlAlarm.OUTSIDE_CHANGE.value, *_OFF_NOT_TAKEN)
         return (
             self._relay_path
             and control.latched
@@ -3681,8 +3722,9 @@ class ControlUnit:
         """The relay as Home Assistant shows it now (R6, R7): its state — a switch on or off, a
         boiler thermostat heat, off or another mode — whether it can take a write (there and not
         unavailable), whether its state confirms anything (not ``assumed_state``), the trace of
-        an outage around it, whether its last change was the plugin's own, and whether this is
-        its first state since the unit started."""
+        an outage around it, whether its last change was the plugin's own, whether this is its
+        first state since the unit started, and whether it came back within reach since the step
+        before — out of reach at that step, or in between (PB-44)."""
         entity = self.options.relay.entity
         state = self._hass.states.get(entity) if entity else None
         known = state is not None and state.state not in UNAVAILABLE_STATES
@@ -3693,6 +3735,10 @@ class ControlUnit:
             outage_seen(self._outages, self._trace_entities(entity), now)
             or trace_seen(self._restart_at, now)
         )
+        back = self._returned(RELAY, entity)  # out of reach at the step before, up now
+        between = self._relay_outages != self._relay_outages_seen
+        self._relay_outages_seen = self._relay_outages
+        returned = back or (known and between)
         return RelaySeen(
             on=on,
             known=known,
@@ -3704,6 +3750,7 @@ class ControlUnit:
             # Its last switch between on and off (Z4R2-01), not Home Assistant's last change,
             # which a return from unavailable also sets: a link drop does not move the on-period.
             changed_at=self._relay_flipped_at,
+            returned=returned,
         )
 
     async def _async_follow_relay(self, now: float, out: LoopOutput) -> None:
@@ -3838,8 +3885,9 @@ class ControlUnit:
     def _follow_relay_issues(self, now: float, zones: Sequence[ZoneState], out: LoopOutput) -> None:
         """The relay's repair issues (R6, R7, R10): out of reach for five minutes while control is
         switched on; the command never taken this session (an error: nothing else controls the
-        boiler; where it is "off" the boiler may keep heating); its own timer seen while the
-        timer is declared "I don't know" (a warning asking to declare it, Z4R-02); and a relay
+        boiler; where it is "off" the boiler may keep heating); the command no longer taken in it
+        (an error, decision 6 of 0.2.3); its own timer seen while the timer is declared "I don't
+        know" (a warning asking to declare it, Z4R-02); and a relay
         resting "off" while control does not hold it, it reads off, its hand-back was not taken
         by another controller, and a room asks for heat or is near freezing."""
         if not self._relay_path:
@@ -3867,6 +3915,30 @@ class ControlUnit:
             ir.IssueSeverity.ERROR,
             {"relay": self._relay_name()},
         )
+        # Decision 6 of 0.2.3 (SB-06): a relay that took commands and then did not show one over
+        # three checks — "on": the house is not heated, "on" still sent at every check, the
+        # issue gone once the relay shows the command; "off": the boiler may keep heating,
+        # control blocked and the relay handed back until control is switched off and on.
+        not_taking = None
+        if state.off_not_taken:
+            not_taking = f"{RELAY_NOT_TAKING_ISSUE}_off"
+        elif state.not_taken:
+            not_taking = RELAY_NOT_TAKING_ISSUE
+        was = self._relay_not_taking_issue
+        self._relay_not_taking_issue = self._show_relay_issue(
+            f"{RELAY_NOT_TAKING_ISSUE}_{entry_id}",
+            was,
+            not_taking,
+            ir.IssueSeverity.ERROR,
+            {"relay": self._relay_name()},
+        )
+        if not_taking is not None and was is None:
+            _LOGGER.warning(
+                "The relay has not shown the plugin's command for about %d minutes: it seems "
+                "to have stopped taking commands (%s)",
+                round(RELAY_NOT_TAKEN_CHECKS * relay.config.check_s / MINUTE_S),
+                '"off" not taken: control stops' if state.off_not_taken else '"on" sent again',
+            )
         # Z4R-02: the relay's own timer seen, its timer declared "I don't know": answered and no
         # longer counted — the user is asked to declare it.
         timer = state.timer_seen_s if relay.timer is RelayTimer.UNKNOWN else None
@@ -3959,12 +4031,14 @@ class ControlUnit:
         for issue in (
             RELAY_UNREACHABLE_ISSUE,
             RELAY_IGNORED_ISSUE,
+            RELAY_NOT_TAKING_ISSUE,
             RELAY_RESTS_OFF_ISSUE,
             RELAY_TIMER_ISSUE,
         ):
             ir.async_delete_issue(self._hass, DOMAIN, f"{issue}_{entry_id}")
         self._relay_unreachable_issue = None
         self._relay_ignored_issue = None
+        self._relay_not_taking_issue = None
         self._rests_off_issue = None
         self._relay_timer_issue = None
 

@@ -22,6 +22,7 @@ from custom_components.vtherm_smart_boiler.core.relay import (
     PROOF_WINDOW_S,
     RELAY_CHECK_S,
     RELAY_CONFIRM_S,
+    RELAY_NOT_TAKEN_CHECKS,
     RELAY_UNREACHABLE_S,
     RESTARTS_ANSWERED,
     HeatEvidence,
@@ -74,7 +75,15 @@ class Relay:
     # its timer; ``masked_seen``: Home Assistant shows that brief change (its moment), or not.
     masks: Callable[[float], bool] | None = None
     masked_seen: bool = False
+    # Another controller puts it back within a second of every write of the plugin's that
+    # changed it: Home Assistant shows the plugin's state for that second, then the other one
+    # (PB-01) — the next step never sees the plugin's state. ``reverts_ours``: it puts itself
+    # back, within Home Assistant's few seconds in which a state still carries the caller's
+    # context — an "inching" relay, a script on the device: the change shows as the plugin's.
+    reverts: bool = False
+    reverts_ours: bool = False
     writes: list[tuple[float, bool, WriteKind]] = field(default_factory=list)
+    failed: list[tuple[float, bool, WriteKind]] = field(default_factory=list)  # never arrived
 
     def tick(self, t: float, *, due_now: bool = True) -> None:
         """Its own timer switches it off (``due_now``: also a lapse due exactly at ``t``)."""
@@ -87,7 +96,9 @@ class Relay:
     def masked_at(self, t: float) -> bool:
         return self.masks is not None and self.masks(t)
 
-    def seen(self, t: float, *, reports: bool = True, first: bool = False) -> RelaySeen:
+    def seen(
+        self, t: float, *, reports: bool = True, first: bool = False, returned: bool = False
+    ) -> RelaySeen:
         known = self.available and self.on is not None
         return RelaySeen(
             on=self.on if known else None,
@@ -98,12 +109,14 @@ class Relay:
             ours=self.ours,
             first=first,
             changed_at=self.changed_at if self.reports_change else None,
+            returned=returned,
         )
 
     def write(self, t: float, write: RelayWrite) -> None:
         self.writes.append((t, write.on, write.kind))
         if not (self.available and self.takes):
             return
+        foreign = self.on
         before = self.changed_at
         masked = False
         if self.masked_at(t) and self.on and write.on:
@@ -116,6 +129,8 @@ class Relay:
         if masked and not self.masked_seen:
             self.changed_at = before  # off and on again with no trace in Home Assistant
         self.on, self.ours = write.on, True
+        if self.reverts and foreign is not None and foreign is not write.on:
+            self.on, self.changed_at, self.ours = foreign, t + 1.0, self.reverts_ours
 
     def switch(self, t: float, on: bool) -> None:
         """Something else switches it while it stays available."""
@@ -144,22 +159,35 @@ def drive(
     reports: bool = True,
     step: float = 10.0,
     at: Callable[[float], None] | None = None,
+    fails: Callable[[float], bool] | None = None,
 ) -> tuple[RelayState, list[tuple[float, RelayResult]]]:
     """Steps every ``step`` seconds from ``start`` to ``end`` (included); ``at(t)`` changes the
-    relay before the step at ``t`` sees it."""
+    relay before the step at ``t`` sees it; ``fails(t)``: the service call of the step at ``t``
+    fails — nothing reaches the relay, and the control unit reports it (``relay_write_failed``).
+    The relay is seen back within reach (``returned``) where it went through an outage since
+    the step before, as the control unit notes it (PB-44)."""
     state = state or RelayState()
     results: list[tuple[float, RelayResult]] = []
     t = start
+    last: float | None = None
     while t <= end + 1e-9:
         if at is not None:
             at(t)
         relay.tick(t, due_now=not relay.masked_at(t))
         want = desired(t) if callable(desired) else desired
-        result = plan_relay(state, want, relay.seen(t, reports=reports), t, config)
-        if result.write is not None:
-            relay.write(t, result.write)
+        outage = relay.outage_at
+        returned = relay.available and outage is not None and last is not None and outage > last
+        seen = relay.seen(t, reports=reports, returned=returned)
+        result = plan_relay(state, want, seen, t, config)
         state = result.state
+        if result.write is not None:
+            if fails is not None and fails(t):
+                relay.failed.append((t, result.write.on, result.write.kind))
+                state = relay_write_failed(state)
+            else:
+                relay.write(t, result.write)
         results.append((t, result))
+        last = t
         t += step
     return state, results
 
@@ -382,6 +410,7 @@ def test_a_relay_that_reports_no_state_is_never_judged() -> None:
         assert all(r.judged is ChangeClass.NOT_JUDGED for _t, r in results)
         assert state.restarts == ()
         assert relay_check(state, config, reports=reports) is RelayCheck.UNVERIFIED
+        assert not state.not_taken  # never judged as no longer taking commands either
 
 
 def test_a_relay_out_of_reach_is_not_written_and_alarms_after_five_minutes() -> None:
@@ -532,6 +561,167 @@ def test_a_change_a_day_after_the_rewrite_is_rewritten_again() -> None:
     assert not state.blocked
 
 
+@pytest.mark.parametrize("cause", ["service_fails", "write_rate"])
+@pytest.mark.parametrize("held", [True, False], ids=["held", "let_go"])
+def test_a_rewrite_that_could_not_go_out_at_once_is_still_the_one_rewrite(
+    cause: str, held: bool
+) -> None:
+    """PB-01 (a), answer C: the one rewrite whose service call fails — or that must wait for the
+    write-rate guard — goes out at the next step as the rewrite again, not as a plain resend
+    that forgets it: where the other controller holds the relay, the plugin steps aside 120 s
+    after the rewrite was decided, and writes nothing more (before: resent every 5 min for
+    good). Negative: where the other controller has let go, the retried rewrite is read back —
+    no step aside, the day's rewrite spent."""
+    config = replace(REPORTING, power_on=RelayPowerOn.OFF)
+    relay = Relay(on=True)
+    state, _ = drive(relay, config, False, 0.0, 200.0)
+    assert relay.on is False
+    if cause == "write_rate":
+        state = replace(state, written_at=997.0)  # a write attempt 3 s before
+    relay.takes = not held
+    state, results = drive(
+        relay,
+        config,
+        False,
+        1000.0,
+        1400.0,
+        state,
+        at=lambda s: relay.switch(s, True) if s == 1000 else None,
+        fails=(lambda s: s == 1000) if cause == "service_fails" else None,
+    )
+    by_t = dict(results)
+    assert by_t[1000.0].judged is ChangeClass.ANOTHER_CONTROLLER
+    assert by_t[1010.0].write == RelayWrite(False, WriteKind.REWRITE)  # still the rewrite
+    assert state.rewritten_at == 1000.0
+    if not held:
+        assert events(results) == []
+        assert not state.blocked
+        assert not state.rewrite_pending
+        assert relay.on is False
+        return
+    assert by_t[1000.0 + RELAY_CONFIRM_S - 10].events == ()
+    late = by_t[1000.0 + RELAY_CONFIRM_S]  # 120 s after the rewrite was decided
+    assert late.judged is ChangeClass.ANOTHER_CONTROLLER
+    assert late.events == (GuardEvent.OUTSIDE_CHANGE,)
+    assert state.blocked
+    assert [w for w in relay.writes if w[0] > 1010.0] == []  # left alone
+
+
+@pytest.mark.parametrize(
+    ("power_on", "command", "steps_aside_at", "kind"),
+    [
+        # Answer N: no power-cut state known — a possible restart, three a day, the fourth steps
+        # aside (each resend shown for a second, then reverted: never a step's "not confirmed").
+        (RelayPowerOn.UNKNOWN, True, 1000.0 + 3 * RELAY_CONFIRM_S, WriteKind.RESEND),
+        (RelayPowerOn.LAST, True, 1000.0 + 3 * RELAY_CONFIRM_S, WriteKind.RESEND),
+        # Reverted to the declared power-cut state: answer D's restart, the same count.
+        (RelayPowerOn.OFF, True, 1000.0 + 3 * RELAY_CONFIRM_S, WriteKind.RESEND),
+        # Answer C: another state than the declared one — rewritten once; the rewrite reverted
+        # at once is not read back: a step aside 120 s later.
+        (RelayPowerOn.OFF, False, 1000.0 + RELAY_CONFIRM_S, WriteKind.REWRITE),
+        (RelayPowerOn.ON, True, 1000.0 + RELAY_CONFIRM_S, WriteKind.REWRITE),
+    ],
+)
+def test_a_controller_reverting_every_write_at_once_makes_the_plugin_step_aside(
+    power_on: RelayPowerOn, command: bool, steps_aside_at: float, kind: WriteKind
+) -> None:
+    """PB-01 (b), answers C and N: an old automation switches the relay back within a second of
+    every write of the plugin's, so no step ever sees the plugin's state — Home Assistant shows
+    it for that second. A command shown and then put back is a change seen on the relay, never
+    "not confirmed": counted as a restart (answer N) or another controller (answer C), so the
+    plugin steps aside within minutes — its rest state is then the control unit's, written once
+    — instead of starting the boiler every 5 min for good (the review's probe: 73 resends in 6 h,
+    one restart counted)."""
+    config = replace(REPORTING, power_on=power_on)
+    relay = Relay(on=command)
+    state, _ = drive(relay, config, command, 0.0, 300.0)
+    assert state.start_done  # taken as it is, then held: the start phase is over
+    assert relay.writes == []
+
+    def automation(s: float) -> None:
+        if s == 1000:
+            relay.switch(s, not command)
+            relay.reverts = True  # from now on, every write of the plugin's put back at once
+
+    state, results = drive(relay, config, command, 990.0, 1000.0 + DAY, state, at=automation)
+    assert events(results) == [(steps_aside_at, GuardEvent.OUTSIDE_CHANGE)]
+    assert state.blocked
+    sends = [(t, on, k) for t, on, k in relay.writes]
+    assert sends[0] == (1000.0, command, kind)
+    assert all(t < steps_aside_at for t, _on, _k in sends)  # then left alone
+    assert len(sends) <= RESTARTS_ANSWERED
+    assert all(r.judged is not ChangeClass.NOT_CONFIRMED for _t, r in results)
+    assert not state.not_taken
+    assert relay_check(state, config, reports=True) is RelayCheck.CHANGED_FROM_OUTSIDE
+
+
+def test_a_revert_home_assistant_never_shows_is_a_relay_not_taking_the_command() -> None:
+    """PB-01's negative: where Home Assistant never shows the plugin's state between the writes
+    and the reverts (no moment of a change known), nothing tells the relay took the command: it
+    is not judged another controller, and is left to the relay that does not take commands
+    (decision 6): "not confirmed" first, then, three checks on, "not taken" — never counted as a
+    restart."""
+    config = replace(REPORTING, power_on=RelayPowerOn.UNKNOWN)
+    relay = Relay(on=True, reports_change=False)
+    state, _ = drive(relay, config, True, 0.0, 300.0)
+
+    def automation(s: float) -> None:
+        if s == 1000:
+            relay.switch(s, False)
+            relay.reverts = True
+
+    state, results = drive(relay, config, True, 990.0, 3000.0, state, at=automation)
+    by_t = dict(results)
+    assert by_t[1000.0].restart  # the switch-off itself, after a confirmation: answer N
+    assert len(state.restarts) == 1  # the resends never shown: no restart counted for them
+    assert by_t[1000.0 + RELAY_CONFIRM_S].judged is ChangeClass.NOT_CONFIRMED
+    assert events(results) == []
+    assert not state.blocked
+    assert state.not_taken  # stopped taking commands, as far as anything shows
+
+
+@pytest.mark.parametrize("command", [True, False])
+def test_a_relay_that_puts_itself_back_at_once_is_not_taking_the_command(command: bool) -> None:
+    """PB-01's other side: a relay that puts itself back within a second of every write, by its
+    own logic — an "inching" relay, a script on the device — so that Home Assistant files the
+    change under the plugin's own context. Not another controller (the plugin's own context is
+    never judged one), yet never left unjudged for good either: shown only for that second, the
+    command counts as not shown — "not confirmed", sent again at each check, and after three
+    checks "not taken" (decision 6 of 0.2.3): "on" still sent, "off" no longer — never a restart
+    counted, never a step aside."""
+    config = replace(REPORTING, power_on=RelayPowerOn.UNKNOWN)
+    relay = Relay(on=not command, reverts=True, reverts_ours=True)
+    state, _ = drive(relay, config, not command, 0.0, 300.0)
+    assert state.start_done
+    state, results = drive(relay, config, command, 1000.0, 2500.0, state)
+    sends = [t for t, _on, _kind in relay.writes]
+    assert sends[:3] == [1000.0, 1000.0 + RELAY_CHECK_S, 1000.0 + 2 * RELAY_CHECK_S]
+    by_t = dict(results)
+    assert by_t[1000.0 + RELAY_CONFIRM_S].judged is ChangeClass.NOT_CONFIRMED
+    assert by_t[1000.0 + NOT_TAKEN_S].judged is ChangeClass.NOT_TAKEN
+    assert state.not_taken
+    assert state.off_not_taken is (not command)
+    assert (1000.0 + NOT_TAKEN_S in sends) is command  # "on" sent again; "off" no longer
+    assert state.restarts == ()
+    assert not state.blocked
+    assert events(results) == []
+
+
+def test_a_revert_while_the_relay_reads_unknown_is_not_judged() -> None:
+    """PB-01's negative: the relay's state unknown at every step after the plugin's writes —
+    nothing judged, nothing counted, no step aside."""
+    config = replace(REPORTING, power_on=RelayPowerOn.UNKNOWN)
+    _relay, state = confirmed_on(config)
+    unknown = RelaySeen(on=None, known=False, available=True, changed_at=1001.0)
+    for t in (1000.0, 1120.0, 1240.0, 1360.0, 1480.0):
+        result = plan_relay(state, True, unknown, t, config)
+        assert result.judged is ChangeClass.NOT_JUDGED
+        assert result.events == ()
+        state = result.state
+    assert state.restarts == ()
+    assert not state.blocked
+
+
 def no_warning_from(results: list[tuple[float, RelayResult]]) -> bool:
     """Whether the losses a run counted leave "commands lost" off at every step."""
     losses: tuple[tuple[float, str], ...] = ()
@@ -614,6 +804,126 @@ def test_an_early_switch_off_with_a_timer_is_another_controller(
     assert result.write == RelayWrite(True, expected)
 
 
+@pytest.mark.parametrize(
+    ("timer", "off_age", "since_renewal", "lapse"),
+    [
+        # Decision 6 of 0.2.3 (SB-05): a declared 10-min timer's lapse within 60 s of 10, 20 or
+        # 30 min into the on-period.
+        (RelayTimer.MINUTES, 540.0, False, True),
+        (RelayTimer.MINUTES, 539.0, False, False),
+        (RelayTimer.MINUTES, 600.0, False, True),
+        (RelayTimer.MINUTES, 660.0, False, True),
+        (RelayTimer.MINUTES, 661.0, False, False),
+        (RelayTimer.MINUTES, 900.0, False, False),  # half-way: a person, an automation
+        (RelayTimer.MINUTES, 1200.0, False, True),  # twice: a renewal hid one lapse
+        (RelayTimer.MINUTES, 1261.0, False, False),
+        (RelayTimer.MINUTES, 1800.0, False, True),  # three times
+        (RelayTimer.MINUTES, 2400.0, False, False),  # four times: beyond three
+        (RelayTimer.MINUTES, 2700.0, False, False),  # 45 min into a long run (the probe)
+        # Since the last renewal ("on" sent again), where it is not since the on-period's "on".
+        (RelayTimer.MINUTES, 600.0, True, True),
+        (RelayTimer.MINUTES, 450.0, True, False),
+        # Negative: no timer declared — never a lapse, whatever the age.
+        (RelayTimer.NONE, 600.0, False, False),
+    ],
+)
+def test_a_declared_timer_lapses_only_near_a_whole_multiple_of_its_length(
+    timer: RelayTimer, off_age: float, since_renewal: bool, lapse: bool
+) -> None:
+    """SB-05 (decision 6 of 0.2.3): a switch-off is a declared timer's lapse — "on" again, not
+    counted — only within 60 s of a whole multiple of its length, at most three, since the "on"
+    that started the on-period or since the last renewal; any other switch-off is a change seen
+    on the relay, under answers C and N (here, found in its declared power-cut state, "off": a
+    restart the relay did not report, counted). Before, anything from max(timer − 60 s, timer ÷
+    2) on was the timer's — a person or an automation switching the boiler off 45 min into a
+    run was overridden for good."""
+    config = RelayConfig(
+        reports=RelayReports.YES,
+        power_on=RelayPowerOn.OFF,
+        timer=timer,
+        timer_s=10 * MIN if timer is RelayTimer.MINUTES else None,
+    )
+    renewed = 1000.0  # the last "on" sent, at 1000 s into an on-period begun at 0
+    off_at = (renewed if since_renewal else 0.0) + off_age
+    state = RelayState(
+        written=True,
+        written_at=renewed if since_renewal else 0.0,
+        sent_at=0.0,
+        on_since=0.0,
+        confirmed_at=10.0,
+        held_since=10.0,
+        start_done=True,
+    )
+    seen = RelaySeen(on=False, known=True, available=True, changed_at=off_at)
+    result = plan_relay(state, True, seen, off_at + 5.0, config)
+    assert result.write == RelayWrite(True, WriteKind.RESEND)  # "on" again at once, either way
+    if lapse:
+        assert result.judged is ChangeClass.OWN_LAPSE
+        assert not result.lost
+        assert result.state.restarts == ()
+    else:
+        assert result.judged is ChangeClass.LOST_COMMAND
+        assert result.restart  # counted toward answer N
+        assert result.state.restarts == (off_at + 5.0,)
+
+
+@pytest.mark.parametrize("changed_at", [600.0, None], ids=["moment_shown", "no_moment"])
+def test_a_switch_off_with_no_on_period_known_is_no_declared_timers_lapse(
+    changed_at: float | None,
+) -> None:
+    """SB-05's negative: with no on-period start known — and Home Assistant showing the
+    switch-off's moment or not — nothing can be measured against the declared timer: the
+    switch-off is a change seen on the relay (here a restart counted), never taken for its
+    lapse."""
+    config = RelayConfig(
+        reports=RelayReports.YES,
+        power_on=RelayPowerOn.OFF,
+        timer=RelayTimer.MINUTES,
+        timer_s=10 * MIN,
+    )
+    state = RelayState(
+        written=True, written_at=0.0, sent_at=0.0, confirmed_at=10.0, start_done=True
+    )
+    seen = RelaySeen(on=False, known=True, available=True, changed_at=changed_at)
+    result = plan_relay(state, True, seen, 605.0, config)
+    assert result.judged is ChangeClass.LOST_COMMAND
+    assert result.restart
+
+
+@pytest.mark.parametrize(
+    ("power_on", "steps_aside_after"),
+    [(RelayPowerOn.OFF, 4), (RelayPowerOn.ON, 2), (RelayPowerOn.UNKNOWN, 4)],
+    ids=["off_answer_n", "on_answer_c", "unknown_answer_n"],
+)
+def test_late_switch_offs_with_a_declared_timer_make_the_plugin_step_aside(
+    power_on: RelayPowerOn, steps_aside_after: int
+) -> None:
+    """SB-05's probe: a declared 30-min timer, and an automation switching the relay off 45 min
+    into each on-period while the rooms call. Before, all 15 switch-offs in 12 h were taken for
+    the timer's lapse and answered for good. Now each is a change seen on the relay: with the
+    power-cut state "off" (or "I don't know") a restart the relay did not report — three a day
+    answered, the fourth steps aside (answer N); with "on", another controller — rewritten once,
+    the second steps aside (answer C). Then nothing more is written."""
+    config = RelayConfig(
+        reports=RelayReports.YES, power_on=power_on, timer=RelayTimer.MINUTES, timer_s=30 * MIN
+    )
+    relay = Relay(restarts_timer=False)  # ``on_at``: the start of its on-period
+    offs: list[float] = []
+
+    def automation(s: float) -> None:
+        if relay.on and relay.on_at is not None and s - relay.on_at >= 45 * MIN:
+            relay.switch(s, False)
+            offs.append(s)
+
+    state, results = drive(relay, config, True, 0.0, 12 * HOUR_S, at=automation)
+    assert state.blocked
+    assert len(offs) == steps_aside_after
+    assert events(results) == [(offs[-1], GuardEvent.OUTSIDE_CHANGE)]
+    assert all(r.judged is not ChangeClass.OWN_LAPSE for _t, r in results)
+    assert [t for t, _on, _kind in relay.writes if t >= offs[-1]] == []  # left alone
+    assert offs[-1] <= 3 * HOUR_S + 60.0
+
+
 @pytest.mark.parametrize(("switch_at", "lapse"), [(300.0, True), (290.0, False)])
 def test_an_unknown_timer_gets_on_repeats_and_a_late_switch_off_is_answered_and_counted(
     switch_at: float, lapse: bool
@@ -683,8 +993,10 @@ def test_an_unknown_timer_lapse_is_bounded_by_answer_n(
     on-periods — 11, 17, 29 and 47 min — are answered with "on" at once, but counted as answer N's
     restarts: three within a day sent again and counted, the fourth is another controller — the
     plugin steps aside at once, with no rewrite, and writes nothing more; no timer is taken as
-    seen. Negative: a declared timer's lapse stays the relay's own — "on" again, never counted,
-    all five times."""
+    seen. With a declared 10-min timer only the switch-offs within 60 s of a whole multiple of
+    it, at most three, are its own lapses — "on" again, never counted — here 11 and 29 min in; 17,
+    47 and 13 min in are changes seen on the relay, under answers C and N (decision 6 of
+    0.2.3)."""
     config = RelayConfig(reports=RelayReports.YES, power_on=power_on, timer=timer, timer_s=timer_s)
     relay = Relay()
     offs = []
@@ -702,16 +1014,24 @@ def test_an_unknown_timer_lapse_is_bounded_by_answer_n(
     )
     seen = dict(results)
     if timer is RelayTimer.MINUTES:
-        for t in offs:
+        lapses = [offs[0], offs[2]]
+        for t in lapses:
             assert seen[t].judged is ChangeClass.OWN_LAPSE
             assert seen[t].write == RelayWrite(True, WriteKind.RESEND)
             assert not seen[t].lost
             assert not seen[t].restart
-        assert state.restarts == ()
+        counted = [t for t in offs if t not in lapses]
         assert state.timer_seen_s is None  # declared: nothing to learn
-        assert events(results) == []
-        assert not state.blocked
-        assert relay.on
+        if power_on is RelayPowerOn.OFF:
+            assert all(seen[t].restart for t in counted)  # answer N: three, no fourth yet
+            assert state.restarts == tuple(counted)
+            assert events(results) == []
+            assert not state.blocked
+            assert relay.on
+            return
+        assert seen[offs[1]].write == RelayWrite(True, WriteKind.REWRITE)  # answer C: once
+        assert events(results) == [(offs[3], GuardEvent.OUTSIDE_CHANGE)]  # then a step aside
+        assert state.blocked
         return
     for t in offs[:3]:
         assert seen[t].judged is ChangeClass.LOST_COMMAND
@@ -1077,6 +1397,54 @@ def test_a_relay_without_a_state_gets_blind_repeats(repeat_s: float, expected: l
     assert lost(results) == []
 
 
+@pytest.mark.parametrize("reports", [RelayReports.NO, RelayReports.UNKNOWN])
+def test_a_relay_without_a_state_gets_its_command_at_once_when_it_returns(
+    reports: RelayReports,
+) -> None:
+    """PB-44 (R6): a relay that reports no state — declared "no", or "I don't know", the default
+    — gets its current command at once when it comes back within reach, as the issue's text
+    says, not at the next blind repeat (before: back at 160 s, written at 300 s); the repeats
+    count on from that write. Back between two steps (a blip the steps never saw) counts too.
+    Negative: nothing is written while it is out of reach, and without a return the repeat
+    interval holds."""
+    config = RelayConfig(reports=reports)
+    relay = Relay()
+
+    def link(s: float) -> None:
+        if s == 100:
+            relay.away(s)
+        elif s == 160:
+            relay.back(s, False)  # its state after the outage: not the command
+        elif s == 600:
+            relay.away(s - 6)
+            relay.back(s - 3, False)
+
+    _state, results = drive(relay, config, True, 0.0, 950.0, at=link)
+    assert relay.writes == [
+        (0.0, True, WriteKind.CHANGE),
+        (160.0, True, WriteKind.RESEND),  # at once on its return
+        (460.0, True, WriteKind.KEEPALIVE),  # the repeat interval from that write
+        (600.0, True, WriteKind.RESEND),  # back between two steps
+        (900.0, True, WriteKind.KEEPALIVE),
+    ]
+    assert events(results) == []
+    assert lost(results) == []
+    # A relay that reports its state, back in the commanded state: nothing to send.
+    reporting, state = confirmed_on()
+    state, _ = drive(
+        reporting,
+        REPORTING,
+        True,
+        1000.0,
+        1300.0,
+        state,
+        at=lambda s: (
+            reporting.away(s) if s == 1000 else reporting.back(s, True) if s == 1100 else None
+        ),
+    )
+    assert reporting.writes == [(0.0, True, WriteKind.CHANGE)]
+
+
 @pytest.mark.parametrize(
     ("timer_min", "repeat_s", "every"), [(10, 300.0, 300.0), (10, 120.0, 120.0), (20, 300.0, 300.0)]
 )
@@ -1132,6 +1500,9 @@ def test_a_relay_that_never_takes_the_command_is_ignored_from_the_start(command:
     assert relay_write_ignored(state)
     assert relay_check(state, config, reports=True) is RelayCheck.IGNORED
     assert state.off_ignored is (not command)
+    # Never held a command: "ignored from the start", not a relay that stopped taking them.
+    assert not state.not_taken
+    assert not state.off_not_taken
     # It stays so for the session, even once the relay shows the command by itself.
     relay.switch(3610.0, command)
     state, _ = drive(relay, config, command, 3610.0, 4000.0, state)
@@ -1153,6 +1524,134 @@ def test_a_relay_taken_after_the_second_send_is_not_ignored() -> None:
     assert not state.ignored
     assert not relay_write_ignored(state)
     assert [t for t, _on, _kind in relay.writes] == [0.0, 300.0]
+
+
+def stopped_taking(command: bool) -> tuple[Relay, RelayState]:
+    """A relay that held the other command — the start phase over — and then stops taking
+    commands: a Zigbee link that delivers its reports but not the plugin's commands, a stuck
+    contact."""
+    relay = Relay(on=not command)
+    state, _ = drive(relay, REPORTING, not command, 0.0, 300.0)
+    assert state.start_done
+    relay.takes = False
+    return relay, state
+
+
+NOT_TAKEN_S = RELAY_NOT_TAKEN_CHECKS * RELAY_CHECK_S  # about 15 min
+
+
+def test_a_relay_that_stops_taking_off_mid_session_is_blocked_after_three_checks() -> None:
+    """SB-06 (decision 6 of 0.2.3): after the start phase, a relay that does not show "off" — sent
+    at 1000 s, again at the checks 300 s and 600 s later — over three checks running has stopped
+    taking commands: at the third check, nothing more is written, and the session is marked so
+    the loop blocks control and the unit hands the relay back (its rest state, once), as answer O
+    does. "Write ignored" stays on; the status says "not taken". Before: "not confirmed" and the
+    information alarm only, "off" resent every 5 min for good while the boiler kept heating."""
+    relay, state = stopped_taking(False)
+    state, results = drive(relay, REPORTING, False, 1000.0, 3000.0, state)
+    assert relay.writes == [
+        (1000.0, False, WriteKind.CHANGE),
+        (1300.0, False, WriteKind.RESEND),
+        (1600.0, False, WriteKind.RESEND),
+    ]
+    by_t = dict(results)
+    assert by_t[1000.0 + RELAY_CONFIRM_S].judged is ChangeClass.NOT_CONFIRMED  # information
+    assert not by_t[1000.0 + NOT_TAKEN_S - 10].state.not_taken
+    stopped = by_t[1000.0 + NOT_TAKEN_S]
+    assert stopped.judged is ChangeClass.NOT_TAKEN
+    assert stopped.write is None
+    assert stopped.state.off_not_taken
+    assert state.not_taken
+    assert state.off_not_taken
+    assert relay_write_ignored(state)
+    assert relay_check(state, REPORTING, reports=True) is RelayCheck.NOT_TAKEN
+    assert events(results) == []
+    assert lost(results) == []
+    assert not state.blocked
+    # The block is the session's: kept through the hand-back, gone at the next session.
+    kept = after_hand_back_relay(state)
+    assert kept.written is None
+    assert not kept.not_taken
+    assert kept.off_not_taken
+    assert relay_write_ignored(kept)
+    assert relay_check(kept, REPORTING, reports=True) is RelayCheck.NOT_TAKEN
+    result = plan_relay(kept, None, relay.seen(3010.0), 3010.0, REPORTING)
+    assert result.write is None
+    fresh = relay_for_new_session(state, 5000.0)
+    assert not fresh.off_not_taken
+    assert not fresh.not_taken
+
+
+def test_a_relay_that_stops_taking_on_mid_session_is_reported_and_sent_on_at_each_check() -> None:
+    """SB-06 (decision 6 of 0.2.3): "on" not shown over three checks running — the house is not
+    heated: marked "not taken" (the unit's error-level issue), while "on" is still sent at every
+    check; no block. Once the relay shows "on" again the mark goes at once."""
+    relay, state = stopped_taking(True)
+    state, results = drive(relay, REPORTING, True, 1000.0, 2500.0, state)
+    assert [t for t, _on, _kind in relay.writes] == [1000.0, 1300.0, 1600.0, 1900.0, 2200.0, 2500.0]
+    assert all(on for _t, on, _kind in relay.writes)
+    by_t = dict(results)
+    assert not by_t[1000.0 + NOT_TAKEN_S - 10].state.not_taken
+    assert by_t[1000.0 + NOT_TAKEN_S].judged is ChangeClass.NOT_TAKEN
+    assert by_t[1000.0 + NOT_TAKEN_S].write == RelayWrite(True, WriteKind.RESEND)
+    assert state.not_taken
+    assert not state.off_not_taken
+    assert relay_check(state, REPORTING, reports=True) is RelayCheck.NOT_TAKEN
+    assert events(results) == []
+    relay.takes = True
+    state, _ = drive(relay, REPORTING, True, 2510.0, 2810.0, state)
+    assert relay.on  # taken at the next check
+    assert not state.not_taken
+    state, _ = drive(relay, REPORTING, True, 2820.0, 2950.0, state)
+    assert relay_check(state, REPORTING, reports=True) is RelayCheck.CONFIRMED
+
+
+def test_checks_a_relay_out_of_reach_could_not_make_do_not_count() -> None:
+    """SB-06's negative: the relay unavailable for ten minutes in the middle of the checks — the
+    run of three checks starts again once it is back (its return is a lost command, sent again
+    while its trace lasts); "not taken" comes 15 min after the first send it did not show since,
+    not 15 min after the first send."""
+    relay, state = stopped_taking(False)
+
+    def outage(s: float) -> None:
+        if s == 1200:
+            relay.away(s)
+        elif s == 1800:
+            relay.back(s, True)  # still on: "off" not taken
+
+    state, results = drive(relay, REPORTING, False, 1000.0, 4000.0, state, at=outage)
+    # Back with a trace: lost commands, sent again every 120 s while the trace lasts (R2); the
+    # run of checks starts at the last of them.
+    assert [t for t, _on, _kind in relay.writes] == [
+        1000.0,
+        1800.0,
+        1920.0,
+        2040.0,
+        2040.0 + RELAY_CHECK_S,
+        2040.0 + 2 * RELAY_CHECK_S,
+    ]
+    stopped = [t for t, r in results if r.judged is ChangeClass.NOT_TAKEN]
+    assert stopped[0] == 2040.0 + NOT_TAKEN_S  # not at 1000 + 15 min
+    assert state.off_not_taken
+
+
+def test_a_relay_never_read_cannot_be_judged_not_taking_commands() -> None:
+    """SB-06's negative: unknown inputs — a relay that reads ``unknown`` throughout, and one with
+    no send to time from — are never judged as no longer taking commands."""
+    _relay, state = confirmed_on()
+    unknown = RelaySeen(on=None, known=False, available=True)
+    for t in (1000.0, 2000.0, 3000.0):
+        result = plan_relay(state, False, unknown, t, REPORTING)
+        state = result.state
+        assert result.judged is ChangeClass.NOT_JUDGED
+    assert not state.not_taken
+    assert not state.off_not_taken
+    # Never sent, never shown: nothing to time a run of checks from.
+    unsent = RelayState(written=True, start_done=True)
+    shows_off = RelaySeen(on=False, known=True, available=True)
+    result = plan_relay(unsent, True, shows_off, 5000.0, REPORTING)
+    assert result.judged is ChangeClass.NOT_CONFIRMED
+    assert not result.state.not_taken
 
 
 def test_a_late_echo_of_the_previous_command_is_not_a_change() -> None:
