@@ -122,7 +122,7 @@ and VT's not-started zones read as the user's "off".
 | 2.2 ✅ | Hand-backs confirmed correctly, and what judges them frozen while one is owed (decision 5): PB-09, PB-10, PB-11, PB-22, PB-26, PB-27, SB-04, TB-04, TB-13. |
 | 2.3 ✅ | Setup and stored options safe, and K4 given the full list (decision 9): PB-06, PB-07, PB-08, PB-24, SB-09, TB-03, TB-08, TB-25. Wrong shapes and non-finite or out-of-range numbers refused with a reason and an owed hand-back reported; platforms unloaded after a late setup failure without wiping the registry; the restart latch's untick gap; SB-09's additions to "Open after 0.2.2" committed at once, and K4's rows pointing to every item marked K4. |
 | 2.4 ✅ | The comfort correction meets principle 13's rules 3 and 5 (decision 11): SB-11. Rule 3: it moves only while the starts per hour do not rise against the same hours before it began, and steps back when they do; rule 5: it freezes in extreme weather — an outdoor temperature beyond the design outdoor temperature, or a change faster than a set rate per hour (provisional, K4) — with its tests and the simulator's starts measured with it on. |
-| 2.5 | The smaller answers: learning pauses (decision 14: SB-29); no default for the high-pressure alarm and the monitor's thresholds listed (decision 13: SB-18); the count pre-filled 0 from VT (decision 7: SB-07); the return by itself after the external-control switch as a separate opt-in (decision 10: SB-36); J4's starts criterion with its conditions and a test carrying the daily swing (decision 8: SB-08). |
+| 2.5 ✅ | The smaller answers: learning pauses (decision 14: SB-29); no default for the high-pressure alarm and the monitor's thresholds listed (decision 13: SB-18); the count pre-filled 0 from VT (decision 7: SB-07); the return by itself after the external-control switch as a separate opt-in (decision 10: SB-36); J4's starts criterion with its conditions and a test carrying the daily swing (decision 8: SB-08). |
 | 2.6 | The check of part 2. |
 | 2.7 🔒 | Stop: the report to the user, with the tokens part 2 used; the user decides whether part 3 starts. |
 
@@ -258,6 +258,14 @@ Left on purpose for a later release; what a step leaves open is added here by na
 42. Step 2.4: rule 5's freeze also stops the correction from falling, so through a long outage of
     the outdoor sensor it keeps its value (at most +3 K) until a hand-back — K4.
 43. Step 2.4: the control state does not say why the comfort correction is held — K4.
+44. Step 2.5 (decision 13): entries that ran with the old high-pressure defaults keep 2.5 and
+    2.8 bar, written into their options at the migration; below a valve rated about 2.1 bar they
+    never fire — a one-time hint to confirm the limits — K4.
+45. Step 2.5 (decision 14): the 1-h cap's follow-up state is not stored, so a restart while a
+    cause lasts gives one more pause — K4.
+46. Step 2.5 (decision 10): entries that used the external-control switch's return by itself lose
+    it until the user ticks the new option, with no notice; the second confirmation's text names
+    only the general return — K4.
 
 ## After 0.2.3
 
