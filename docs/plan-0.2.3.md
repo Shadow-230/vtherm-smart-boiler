@@ -280,6 +280,13 @@ Left on purpose for a later release; what a step leaves open is added here by na
     OpenTherm thermostat stays owed with its alarm (see item 31); with a device timeout up to
     60 min, a restart before the release writes the lowest again, so the device may hold it about
     2 h; a stored timeout out of range falls back to 1 min rather than being refused — K4.
+52. Step 3.1 (SB-14): the circuit control "controlled separately" (an external mixing controller, a
+    mixer driven by Home Assistant, a separate weather controller; `SCOPE.md` §5) has no code — no
+    release yet, unless the user names one at K4; it sits beside item 1 of "Open after 0.2.2".
+53. Step 3.1 (SB-33): the freshness guard writes nothing while the boiler link's data are stale, so
+    a stand-alone gateway's `CS` lapses within about a minute (an extra start) and a held command
+    stays up to 5 min against VT (`SCOPE.md` principle 12, exception 7); whether "heating off" is
+    exempt from the guard — K4.
 
 ## After 0.2.3
 
