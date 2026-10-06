@@ -10,6 +10,7 @@ from custom_components.vtherm_smart_boiler.control_config import (
     Topology,
     WritePath,
     config_blockers,
+    fixed_keys,
     parse_control,
 )
 from custom_components.vtherm_smart_boiler.core.guards import WriteType
@@ -222,6 +223,10 @@ def test_every_blocker_is_listed() -> None:
 
     shared = {Signal.RETURN: Signal.FLOW}
     found |= set(config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS, shared))
+    # PB-26: the lowest water temperature above the boiler's maximum.
+    found |= set(
+        config_blockers(parse_control(OTGW | {"hard_min": 45}, RADIATORS, 40.0), RADIATORS)
+    )
     # X8: the relay path, and flame and flow optional for the entry.
     found |= set(config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS, signals=()))
     for data, installation in (
@@ -1226,12 +1231,12 @@ def test_one_entity_for_two_signals_is_a_blocker() -> None:
 
 def test_the_option_key_lists_are_one_each() -> None:
     """P-71: the writable-entity step's answers and what a hand-back goes through are listed
-    once, in the control options."""
+    once, in the control options — with what judges it (PB-09)."""
     from custom_components.vtherm_smart_boiler import config_flow
     from custom_components.vtherm_smart_boiler.control_config import HAND_BACK_KEYS, TARGET_KEYS
 
     assert set(HAND_BACK_KEYS) <= set(TARGET_KEYS)
-    assert config_flow.HAND_BACK_KEYS is HAND_BACK_KEYS
+    assert config_flow.fixed_keys is fixed_keys
     assert config_flow.TARGET_KEYS is TARGET_KEYS
     assert not hasattr(config_flow, "ENTITY_STEP_KEYS")
 
@@ -1798,6 +1803,12 @@ _FLOOR = Installation(
 )
 _ON_OFF_NO_ZONES = Installation(Boiler(BoilerClass.ON_OFF), (Circuit("main"),))
 _HEATING_SWITCH = {"ch_entity": "switch.heat", "ch_write_type": "held"}
+# PB-26: a radiator circuit capped at 40 °C.
+_CAPPED = Installation(
+    Boiler(BoilerClass.FLOW_SETPOINT),
+    (Circuit("main", max_flow=40.0),),
+    (Zone("climate.a", "main"),),
+)
 _ALL_SIGNALS = None  # not given: flame and flow are not checked
 _NO_SIGNALS: tuple = ()
 
@@ -2008,6 +2019,22 @@ BLOCKER_PRECEDENCE = [
         [],
     ),
     (
+        "the lowest above the circuit's maximum",
+        OTGW | {"hard_min": 45},
+        _CAPPED,
+        None,
+        _ALL_SIGNALS,
+        ["hard_min_above_max"],
+    ),
+    (
+        "the lowest at the circuit's maximum",
+        OTGW | {"hard_min": 40},
+        _CAPPED,
+        None,
+        _ALL_SIGNALS,
+        [],
+    ),
+    (
         "flame and flow not mapped",
         OTGW,
         RADIATORS,
@@ -2133,3 +2160,36 @@ def test_a_stored_section_tells_whether_a_hand_back_stops_heating(
     from custom_components.vtherm_smart_boiler.control_config import section_stops_heating
 
     assert section_stops_heating(data) is stops
+
+
+# --- PB-09: what cannot change while a hand-back is owed, or control holds the boiler ----------
+
+
+@pytest.mark.parametrize(
+    ("path", "judged"),
+    [
+        (
+            "entity",
+            {
+                "confirmed_entity", "ch_confirmed_entity", "write_type", "ch_write_type",
+                "hand_back_timeout_min",
+            },
+        ),
+        ("opentherm_gw", {"confirmed_entity"}),
+        ("otgw_mqtt", {"confirmed_entity"}),
+        ("relay", set()),
+        (None, set()),  # no control stored
+        ("carrier_pigeon", set()),  # a path this version does not know
+    ],
+)  # fmt: skip
+def test_what_judges_a_release_is_fixed_on_its_path(path: str | None, judged: set[str]) -> None:
+    """PB-09: beside what a hand-back goes through, what judges its release on the path; the
+    lowest water temperature only while one is owed — made after a change, a hand-back writes
+    the new lowest first and is judged by it."""
+    from custom_components.vtherm_smart_boiler.control_config import HAND_BACK_KEYS
+
+    holding = set(fixed_keys(path, owed=False))
+    owed = set(fixed_keys(path, owed=True))
+    assert holding == set(HAND_BACK_KEYS) | judged
+    lowest = {"hard_min"} if judged else set()
+    assert owed == holding | lowest

@@ -788,8 +788,8 @@
       "ch_write_type_not_supported": "Zadeklaruj przełącznik grzania jako wygasający lub trzymany albo zostaw przełącznik pusty: wtyczka nigdy nie zapisuje trwałej pamięci kotła.",
       "hand_back_value_effect_missing": "Metoda wartości wymaga skutku: co urządzenie robi z wartością oddania.",
       "own_room_controller_but_heating_stops": "Wartość przy oddaniu, która zatrzymuje grzanie, nie zostawia nic do przejęcia własnemu regulatorowi kotła: odznacz pole albo zmień działanie wartości przy oddaniu.",
-      "hand_back_pending": "Oddanie sterowania jeszcze nie dotarło do kotła: ścieżka zapisu, to, do czego sterowanie pisze, i odczyt zwrotny bramki nie mogą się zmienić, dopóki nie dotrze. Przywróć cel albo wybierz „Bez sterowania”: oddanie jest nadal ponawiane.",
-      "control_holds_boiler": "Sterowanie ma kocioł: najpierw wyłącz sterowanie, żeby kocioł został oddany przez urządzenie, które go trzyma; potem zmień, do czego sterowanie pisze, albo odczyt zwrotny bramki.",
+      "hand_back_pending": "Oddanie sterowania jeszcze nie dotarło do kotła: ścieżka zapisu, to, do czego sterowanie pisze, odczyty zwrotne i typy zapisu, po których ocenia się oddanie, limit czasu urządzenia oraz najniższa temperatura wody nie mogą się zmienić, dopóki nie dotrze. Przywróć cel albo wybierz „Bez sterowania”: oddanie jest nadal ponawiane.",
+      "control_holds_boiler": "Sterowanie ma kocioł: najpierw wyłącz sterowanie, żeby kocioł został oddany przez urządzenie, które go trzyma; potem zmień, do czego sterowanie pisze, odczyty zwrotne, typy zapisu albo limit czasu urządzenia.",
       "count_threshold_above_zones": "Więcej stref, niż jest skonfigurowanych: grzanie nigdy nie zostałoby wezwane.",
       "no_demand_criterion": "Ustaw co najmniej jedno kryterium: liczba stref 0 wymaga progu mocy albo otwarcia.",
       "no_zones": "Przed konfiguracją sterowania dodaj co najmniej jedną strefę Versatile Thermostat.",
@@ -843,6 +843,7 @@
       "design_flow_above_hard_max": "Projektowa temperatura zasilania jest wyższa od najwyższej temperatury wody, więc w mróz krzywa zostałaby obcięta. Podnieś najwyższą temperaturę wody albo obniż temperaturę projektową.",
       "design_outdoor_too_warm": "Projektowa temperatura zewnętrzna musi być co najmniej 10 K niższa od temperatury pokojowej krzywej.",
       "hard_min_not_below_design_flow": "Najniższa temperatura wody musi być niższa od projektowej temperatury zasilania.",
+      "hard_min_above_max": "Najniższa temperatura wody jest wyższa od maksimum obiegu albo kotła: oddanie sterowania najpierw wysłałoby kotłu gorętszą wodę, niż one dopuszczają. Obniż ją do najmniejszego maksimum albo niżej.",
       "thermostat_kind_missing": "Podaj, co jest podłączone do zacisków termostatu bramki.",
       "thermostat_kind_contradicts_topology": "Ta odpowiedź nie pasuje do podłączenia bramki: termostat OpenTherm oznacza „Bramka z termostatem”, brak termostatu oznacza pracę samodzielną. Wybierz drugie podłączenie.",
       "relay_domain_not_supported": "Przekaźnik musi być przełącznikiem albo encją termostatu kotła, nie pomocnikiem.",
@@ -1391,6 +1392,7 @@
               "design_flow_above_hard_max": "Projektowa temperatura zasilania przekracza najwyższą temperaturę wody",
               "design_outdoor_too_warm": "Projektowa temperatura zewnętrzna jest za wysoka",
               "hard_min_not_below_design_flow": "Najniższa temperatura wody nie jest poniżej projektowej temperatury zasilania",
+              "hard_min_above_max": "Najniższa temperatura wody jest wyższa od maksimum",
               "no_heating_switch": "Brak przełącznika ogrzewania, którego wtyczka może użyć",
               "thermostat_on_off": "Styk wł./wył. na zaciskach termostatu bramki",
               "thermostat_kind_unknown": "Brak odpowiedzi: co jest podłączone do zacisków termostatu bramki",
@@ -2260,6 +2262,7 @@
               "design_flow_above_hard_max": "Projektowa temperatura zasilania przekracza najwyższą temperaturę wody",
               "design_outdoor_too_warm": "Projektowa temperatura zewnętrzna jest za wysoka",
               "hard_min_not_below_design_flow": "Najniższa temperatura wody nie jest poniżej projektowej temperatury zasilania",
+              "hard_min_above_max": "Najniższa temperatura wody jest wyższa od maksimum",
               "no_heating_switch": "Brak przełącznika ogrzewania, którego wtyczka może użyć",
               "thermostat_on_off": "Styk wł./wył. na zaciskach termostatu bramki",
               "thermostat_kind_unknown": "Brak odpowiedzi: co jest podłączone do zacisków termostatu bramki",
@@ -2451,6 +2454,9 @@
     },
     "blocked_hard_min_not_below_design_flow": {
       "message": "Najniższa temperatura wody musi być niższa od projektowej temperatury zasilania. Popraw to w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
+    "blocked_hard_min_above_max": {
+      "message": "Najniższa temperatura wody jest wyższa od maksimum obiegu albo kotła: oddanie sterowania najpierw wysłałoby kotłu gorętszą wodę, niż one dopuszczają. Obniż ją w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_thermostat_on_off": {
       "message": "Do zacisków termostatu bramki podłączony jest styk wł./wył.: „wyłączone ogrzewanie” bramki blokowałoby go po awarii Home Assistant, więc sterowanie nie jest dostępne. Monitor działa dalej. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."

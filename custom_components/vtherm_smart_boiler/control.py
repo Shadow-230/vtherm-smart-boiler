@@ -229,7 +229,13 @@ from .core.learning import (
     release_all,
     rename_zone,
 )
-from .core.limits import Grid, handed_back_in_frost, watched_temperatures, write_bounds
+from .core.limits import (
+    Grid,
+    handed_back_in_frost,
+    watched_temperatures,
+    within_write_bounds,
+    write_bounds,
+)
 from .core.loop import (
     HEATING,
     HEATING_OFF_IGNORED,
@@ -1263,8 +1269,24 @@ class ControlUnit:
             if any(b not in _QUIET_BLOCKERS for b in blockers) and self._stops_heating():
                 self._stopped_by_blocker = True  # the session carried over, ended by a blocker
             return
-        self._restore_command = BoilerCommand(command.heating, command.setpoint)
+        self._restore_command = BoilerCommand(command.heating, self._within_limits(command))
         self._restore_pending = True
+
+    def _within_limits(self, command: LastCommand) -> float | None:
+        """A restored setpoint within the limits as the options give them now (PB-11): a
+        maximum lowered since the run that wrote it — a circuit's or the boiler's, outside the
+        control section the restore compares — holds for it too; the gateways have no entity
+        grid to put it there. "Off" as a low setpoint is not this value: the loop writes it from
+        its own option."""
+        setpoint = command.setpoint
+        if setpoint is None or self._relay_path:
+            return setpoint
+        if not (command.heating or self.options.loop.ch_writes):
+            return setpoint
+        control = self.options.loop.control
+        return within_write_bounds(
+            setpoint, control.limits, control.circuit_max, control.boiler_max, control.circuit_floor
+        )
 
     @property
     def _relay_path(self) -> bool:

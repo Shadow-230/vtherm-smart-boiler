@@ -60,8 +60,8 @@ from ..control_config import (
     one_entity_in_two_roles,
 )
 from ..core.guards import HELD_REFRESH_S, WriteType
-from ..core.hand_back import CheckKind, CheckSource, ReleaseRule
-from ..core.limits import GRID_EPSILON, is_on_grid
+from ..core.hand_back import RELEASE_TOLERANCE_K, CheckKind, CheckSource, ReleaseRule
+from ..core.limits import GRID_EPSILON, Grid, is_on_grid
 from ..core.relay import CONTEXTS_KEPT
 from ..units import celsius_to, parse_number
 from .entities import grid_from_state
@@ -398,9 +398,7 @@ class EntityWriter(_ServiceWriter):
         await self._take()
         await self._call_entity("turn_on" if on else "turn_off", self._switch)
 
-    async def _set_value(self, celsius: float | None, timeout_s: float | None) -> None:
-        if celsius is None:
-            raise WriteError(f"{self._setpoint}: no value on its grid inside the limits")
+    async def _set_value(self, celsius: float, timeout_s: float | None) -> None:
         value = _as_entity_takes_it(self._check_target(self._setpoint), celsius)
         await self._call_entity("set_value", self._setpoint, timeout_s=timeout_s, value=value)
 
@@ -427,12 +425,11 @@ class EntityWriter(_ServiceWriter):
         # The values on the setpoint entity's grid, inside the limits (P-15): the lowest never
         # below itself, the hand-back value never above the highest water temperature.
         grid = grid_from_state(self._hass.states.get(self._setpoint))
-        lowest: float | None = _checked(self._lowest, 0.0)
-        if grid is not None:
-            lowest = grid.put(self._lowest, self._lowest, self._highest)
-        # 1. The lowest water temperature, with the release target only.
+        lowest = self._lowest_to_write(grid)
+        # 1. The lowest water temperature, with the release target only; one the entity cannot
+        # take fails in its own part (PB-27).
         lowest_ok = releasing and await _part(
-            errors, lambda: self._set_value(lowest, write_timeout_s)
+            errors, lambda: self._set_lowest(lowest, write_timeout_s)
         )
         # 2. Heating on, where the boiler returns to a thermostat or its own control.
         switch = self._switch
@@ -447,17 +444,18 @@ class EntityWriter(_ServiceWriter):
         # 3. The release.
         external = self._external
         if self._hand_back is HandBack.VALUE:
-            value = None if self._hand_back_value is None else float(self._hand_back_value)
-            if value is not None and grid is not None:
-                value = grid.put(value, None, self._highest)
+            wanted = None if self._hand_back_value is None else float(self._hand_back_value)
+            value = self._hand_back_on_grid(wanted, grid)
             written = releasing and await _part(
-                errors, lambda: self._set_hand_back_value(value, write_timeout_s)
+                errors, lambda: self._set_hand_back_value(value, wanted, write_timeout_s)
             )
             held = self._options.write_type is WriteType.HELD
             kind = CheckKind.VALUE if held else CheckKind.LEAVES_VALUE
+            # Not written, the check keeps the value the hand-back means (PB-22).
+            expected = wanted if value is None else value
             checks.append(
                 self._value_check(
-                    kind, value, lowest_ok and written, release_from, None, before, lowest
+                    kind, expected, lowest_ok and written, release_from, None, before, lowest
                 )
             )
         elif self._hand_back is HandBack.SWITCH and external:
@@ -475,9 +473,47 @@ class EntityWriter(_ServiceWriter):
             raise HandBackFailed("; ".join(str(err) for err in errors), tuple(checks))
         return tuple(checks)
 
-    async def _set_hand_back_value(self, value: float | None, timeout_s: float | None) -> None:
+    def _lowest_to_write(self, grid: Grid | None) -> float | None:
+        """The lowest water temperature as the hand-back writes it first: never above the
+        highest water temperature (PB-26); on the entity's grid, never below itself there.
+        ``None`` where none fits — its part then fails alone (PB-27)."""
+        lowest = min(self._lowest, self._highest)
+        if grid is not None:
+            return grid.put(lowest, lowest, self._highest)
+        try:
+            return _checked(lowest, 0.0)
+        except WriteError:
+            return None
+
+    def _hand_back_on_grid(self, wanted: float | None, grid: Grid | None) -> float | None:
+        """The hand-back value on the entity's grid, never above the highest water temperature;
+        ``None`` where the grid has no value within the release tolerance of it. It is never
+        moved onto the entity's range (S-21, PB-22): 10 °C for 0 would be a setpoint to the
+        device, its heating enabled, and the read-back would show the release done."""
+        if wanted is None or grid is None:
+            return wanted
+        value = grid.put(wanted, None, self._highest)
+        if value is None or abs(value - wanted) > RELEASE_TOLERANCE_K:
+            return None
+        return value
+
+    async def _set_lowest(self, value: float | None, timeout_s: float | None) -> None:
         if value is None:
-            raise WriteError("no hand-back value, or none on the entity's grid")
+            raise WriteError(
+                f"{self._setpoint}: no value it takes for the lowest water temperature "
+                f"{self._lowest:g} inside the limits"
+            )
+        await self._set_value(value, timeout_s)
+
+    async def _set_hand_back_value(
+        self, value: float | None, wanted: float | None, timeout_s: float | None
+    ) -> None:
+        if wanted is None:
+            raise WriteError("no hand-back value")
+        if value is None:
+            raise WriteError(
+                f"{self._setpoint}: the hand-back value {wanted:g} is outside what it takes now"
+            )
         await self._set_value(value, timeout_s)
 
     def _value_read_back(self) -> str:
@@ -561,7 +597,9 @@ class _GatewayWriter(_ServiceWriter):
     def __init__(self, hass: HomeAssistant, options: ControlOptions) -> None:
         super().__init__(hass)
         self._reachable_by = options.confirmed_entity
-        self._lowest = options.loop.control.limits.hard_min
+        # The hand-back's first part never above the highest water temperature (PB-26).
+        control = options.loop.control
+        self._lowest = min(control.limits.hard_min, highest_water_temperature(control))
 
     async def keep_alive(self, returned: bool = False) -> None:
         """The loop repeats the gateway's overrides itself."""
@@ -655,16 +693,19 @@ class OpenthermGwWriter(_GatewayWriter):
         debt, a retry leaves ``CS=<lowest>`` out."""
         before = self._read_back_now()
 
-        def setpoint(value: float) -> Callable[[], Awaitable[None]]:
-            data = {"gateway_id": self._gateway, "temperature": value}
+        def setpoint(value: Callable[[], float]) -> Callable[[], Awaitable[None]]:
+            # The value is checked inside its part: one refused fails alone (PB-27).
             return lambda: self._call(
-                self.DOMAIN, "set_control_setpoint", data, timeout_s=write_timeout_s
+                self.DOMAIN,
+                "set_control_setpoint",
+                {"gateway_id": self._gateway, "temperature": value()},
+                timeout_s=write_timeout_s,
             )
 
         lowest = (
             ()
             if self._lowest_sent(skip)
-            else (setpoint(_checked(self._lowest, OTGW_MIN_SETPOINT)),)
+            else (setpoint(lambda: _checked(self._lowest, OTGW_MIN_SETPOINT)),)
         )
         await _all_of(
             *lowest,
@@ -674,7 +715,7 @@ class OpenthermGwWriter(_GatewayWriter):
                 {"gateway_id": self._gateway, "ch_override": True},
                 timeout_s=write_timeout_s,
             ),
-            setpoint(0),
+            setpoint(lambda: 0),
         )
         # The gateway's full status comes with every (re)connection, so a read-back without a
         # value means nothing has come from the gateway since the connection was lost.
@@ -725,12 +766,15 @@ class OtgwMqttWriter(_GatewayWriter):
         a publish is done once written to the socket, the firmware offline or not. Once they
         went through for this debt, a retry leaves ``CS=<lowest>`` out (PB-10)."""
         before = self._read_back_now()
-        lowest = f"{_checked(self._lowest, OTGW_MIN_SETPOINT):.1f}"
+
+        def lowest() -> str:  # checked inside its part: one refused fails alone (PB-27)
+            return f"{_checked(self._lowest, OTGW_MIN_SETPOINT):.1f}"
+
         await _all_of(
             *(
                 ()
                 if self._lowest_sent(skip)
-                else (lambda: self._publish("ctrlsetpt", lowest, write_timeout_s),)
+                else (lambda: self._publish("ctrlsetpt", lowest(), write_timeout_s),)
             ),
             lambda: self._publish("chenable", "1", write_timeout_s),
             lambda: self._publish("ctrlsetpt", "0", write_timeout_s),

@@ -788,8 +788,8 @@
       "ch_write_type_not_supported": "Declare the heating switch expiring or held, or leave the switch empty: the plugin never writes to the boiler's persistent memory.",
       "hand_back_value_effect_missing": "The value method needs its effect: what the device does with the hand-back value.",
       "own_room_controller_but_heating_stops": "A hand-back value that stops heating leaves nothing for the boiler's own room controller to take over: untick the box or change what the hand-back value does.",
-      "hand_back_pending": "A hand-back has not reached the boiler yet: the write path, what control writes to and the gateway's read-back cannot change until it does. Bring the target back, or choose \"No control\": the hand-back is still retried.",
-      "control_holds_boiler": "Control has the boiler: switch control off first, so the boiler is given back through the device that has it; then change what control writes to or the gateway's read-back.",
+      "hand_back_pending": "A hand-back has not reached the boiler yet: the write path, what control writes to, the read-backs and write types that judge the hand-back, the device's timeout and the lowest water temperature cannot change until it does. Bring the target back, or choose \"No control\": the hand-back is still retried.",
+      "control_holds_boiler": "Control has the boiler: switch control off first, so the boiler is given back through the device that has it; then change what control writes to, the read-backs, the write types or the device's timeout.",
       "count_threshold_above_zones": "More zones than are configured: heating would never be asked for.",
       "no_demand_criterion": "Set at least one criterion: a zone count of 0 needs a power or an opening threshold.",
       "no_zones": "Add at least one Versatile Thermostat zone before setting up control.",
@@ -843,6 +843,7 @@
       "design_flow_above_hard_max": "The design flow temperature is above the highest water temperature, so the curve would be cut off in frost. Raise the highest water temperature or lower the design flow.",
       "design_outdoor_too_warm": "The design outdoor temperature must be at least 10 K below the curve's room temperature.",
       "hard_min_not_below_design_flow": "The lowest water temperature must be below the design flow temperature.",
+      "hard_min_above_max": "The lowest water temperature is above the circuit's or the boiler's maximum: the hand-back would first send the boiler hotter water than they allow. Lower it to the smallest maximum or below.",
       "thermostat_kind_missing": "Say what is wired to the gateway's thermostat terminals.",
       "thermostat_kind_contradicts_topology": "This answer does not fit the gateway connection: an OpenTherm thermostat means \"Gateway with a thermostat\", nothing means stand-alone. Pick the other connection.",
       "relay_domain_not_supported": "The relay must be a switch or a boiler thermostat entity, not a helper.",
@@ -1391,6 +1392,7 @@
               "design_flow_above_hard_max": "The design flow temperature is above the highest water temperature",
               "design_outdoor_too_warm": "The design outdoor temperature is too warm",
               "hard_min_not_below_design_flow": "The lowest water temperature is not below the design flow temperature",
+              "hard_min_above_max": "The lowest water temperature is above a maximum",
               "no_heating_switch": "No heating switch the plugin may use",
               "thermostat_on_off": "An on/off contact on the gateway's thermostat terminals",
               "thermostat_kind_unknown": "Not answered: what is wired to the gateway's thermostat terminals",
@@ -2260,6 +2262,7 @@
               "design_flow_above_hard_max": "The design flow temperature is above the highest water temperature",
               "design_outdoor_too_warm": "The design outdoor temperature is too warm",
               "hard_min_not_below_design_flow": "The lowest water temperature is not below the design flow temperature",
+              "hard_min_above_max": "The lowest water temperature is above a maximum",
               "no_heating_switch": "No heating switch the plugin may use",
               "thermostat_on_off": "An on/off contact on the gateway's thermostat terminals",
               "thermostat_kind_unknown": "Not answered: what is wired to the gateway's thermostat terminals",
@@ -2451,6 +2454,9 @@
     },
     "blocked_hard_min_not_below_design_flow": {
       "message": "The lowest water temperature must be below the design flow temperature. Correct it in the options. Other reasons: {count} (all are listed on the control state)."
+    },
+    "blocked_hard_min_above_max": {
+      "message": "The lowest water temperature is above the circuit's or the boiler's maximum: the hand-back would first send the boiler hotter water than they allow. Lower it in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_thermostat_on_off": {
       "message": "An on/off contact is wired to the gateway's thermostat terminals: the gateway's \"heating off\" would block it after a Home Assistant crash, so control is not offered. The monitor keeps running. Other reasons: {count} (all are listed on the control state)."

@@ -200,6 +200,8 @@ CONFIG_BLOCKERS = (
     "design_flow_above_hard_max",
     "design_outdoor_too_warm",
     "hard_min_not_below_design_flow",
+    # PB-26: the lowest water temperature above a maximum — the hand-back's first part.
+    "hard_min_above_max",
     "no_heating_switch",
     # X6: what is wired to the gateway's thermostat terminals (decision 1).
     "thermostat_on_off",
@@ -273,6 +275,21 @@ HAND_BACK_KEYS = (
     "hand_back_entity", "hand_back_entity_write_type", "gateway_id", "mqtt_top", "mqtt_node",
     "relay_entity", "relay_rest_state",
 )  # fmt: skip
+# What judges a hand-back's release on each write path, or shapes what it writes first (PB-09):
+# fixed as ``HAND_BACK_KEYS`` are — the read-backs, the write types, the device's timeout, and
+# on the gateways their read-back. The lowest water temperature only while a hand-back is owed:
+# one made after a change writes the new lowest first and is judged by it.
+RELEASE_JUDGED_BY: Mapping[WritePath, tuple[str, ...]] = MappingProxyType(
+    {
+        WritePath.ENTITY: (
+            "confirmed_entity", "ch_confirmed_entity", "write_type", "ch_write_type",
+            "hand_back_timeout_min", "hard_min",
+        ),
+        WritePath.OPENTHERM_GW: ("confirmed_entity", "hard_min"),
+        WritePath.OTGW_MQTT: ("confirmed_entity", "hard_min"),
+    }
+)  # fmt: skip
+FIXED_WHILE_OWED_ONLY = frozenset({"hard_min"})
 # The relay's own settings unanswered: each its cautious reading (R3; provisional, K4) — its
 # state report "I don't know" (blind repeats), its state after a power cut "I don't know" (maybe
 # on), a timer "I don't know" (it may have one), the rest state "off", the tick not given. The
@@ -1022,6 +1039,23 @@ def highest_water_temperature(control: ControlConfig) -> float:
     )
 
 
+def fixed_keys(path: object, *, owed: bool) -> tuple[str, ...]:
+    """What cannot change while control holds the boiler through ``path`` (a stored write
+    path) — and, ``owed``, while a hand-back is owed: what the hand-back goes through, and what
+    judges its release there (PB-09)."""
+    try:
+        judged = RELEASE_JUDGED_BY.get(WritePath(str(path)), ())
+    except ValueError:
+        judged = ()
+    return (*HAND_BACK_KEYS, *(key for key in judged if owed or key not in FIXED_WHILE_OWED_ONLY))
+
+
+def lowest_above_max(control: ControlConfig) -> bool:
+    """PB-26: the lowest water temperature above the highest — a circuit's or the boiler's
+    maximum below it. The hand-back writes the lowest first, and control could never give it."""
+    return control.limits.hard_min > highest_water_temperature(control)
+
+
 def hand_back_value_above_max(value: float | None, highest: float) -> bool:
     """S-21: the hand-back value is exempt only from the lowest water temperature."""
     return value is not None and value > highest
@@ -1299,7 +1333,10 @@ def _curve_blockers(control: ControlOptions) -> list[str]:
     problems = curve_problems(
         curve.design_flow, curve.design_outdoor, curve.room, limits.hard_min, limits.hard_max
     )
-    return [key for _field, key in problems]
+    found = [key for _field, key in problems]
+    if lowest_above_max(control.loop.control):
+        found.append("hard_min_above_max")
+    return found
 
 
 def _circuit_blockers(installation: Installation) -> list[str]:

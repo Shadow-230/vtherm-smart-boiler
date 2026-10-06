@@ -1798,6 +1798,35 @@ async def owe_a_hand_back(rig: Rig) -> FakeNumber:
 
 
 @pytest.mark.usefixtures("low_setpoint_off")
+async def test_a_hand_back_value_the_entity_no_longer_takes_stays_owed(rig: Rig) -> None:
+    """PB-22 (S-21), the review's probe: the held number's minimum rises to 10 while control
+    holds it. The hand-back value 0 is not moved onto 10 — the boiler would keep a 10 °C
+    setpoint, its heating enabled, with no alarm: the hand-back stays owed, with its alarm and
+    issue. Once the number takes 0 again, the retry gives it and the debt is settled."""
+    number = FakeNumber(rig.hass, attributes={"min": 0, "max": 90, "step": 0.5})
+    number.register()
+    await start(rig, **held_entity(number, hand_back_value=0))
+    await rig.switch(True)
+    assert number.writes
+    number.attributes = {"min": 10, "max": 90, "step": 0.5}
+    number.publish(number.value)
+    await rig.switch(False)
+    await rig.advance(10)
+    assert 10.0 not in number.writes
+    assert number.writes[-1] == LOWEST  # the lowest went; the release did not
+    assert unit_of(rig).hand_back_owed
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+    assert issue(rig, "hand_back_owed") is not None
+    number.attributes = {"min": 0, "max": 90, "step": 0.5}
+    number.publish(number.value)
+    await rig.advance(70)
+    assert number.writes[-1] == 0.0
+    await rig.advance(10)
+    assert not unit_of(rig).hand_back_owed
+    assert issue(rig, "hand_back_owed") is None
+
+
+@pytest.mark.usefixtures("low_setpoint_off")
 async def test_no_control_while_a_hand_back_is_owed_keeps_handing_back(rig: Rig) -> None:
     """Control removed from the options while its hand-back cannot get through: a unit that only
     hands back keeps retrying, with a repair issue, until the boiler has it."""
@@ -1917,6 +1946,167 @@ async def test_the_gateways_read_back_cannot_change_while_control_holds_the_boil
     rig.hass.states.async_set(other, "20.0", {"unit_of_measurement": "°C"})
     flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": other})
     assert flow["errors"] == {"confirmed_entity": "control_holds_boiler"}
+
+
+@pytest.mark.usefixtures("low_setpoint_off")
+@pytest.mark.parametrize("key", ["confirmed_entity", "ch_confirmed_entity"])
+async def test_the_entity_paths_read_backs_cannot_change_while_a_hand_back_is_owed(
+    rig: Rig, key: str
+) -> None:
+    """PB-09, the review's probe: a held setpoint goes away at the hand-back, which is owed.
+    Another read-back — one that shows the hand-back value, say — would count the hand-back as
+    made while the device got nothing: the change is refused with the reason. Negative: the
+    same read-backs go on to the next step."""
+    number = await owe_a_hand_back(rig)
+    await rig.switch(False)
+    assert unit_of(rig).hand_back_owed
+    if key == "confirmed_entity":
+        other = "sensor.somewhere_else_temperature"
+        rig.hass.states.async_set(other, "50.0", {"unit_of_measurement": "°C"})
+    else:
+        other = "binary_sensor.somewhere_else"
+        rig.hass.states.async_set(other, "on")
+    answer = {"write_path": "entity", "topology": "virtual", "confirmed_entity": number.entity_id}
+    flow = await _first_control_step(rig, answer | {key: other})
+    assert flow["errors"] == {key: "hand_back_pending"}
+    assert rig.entry is not None
+    assert rig.entry.options["control"]["confirmed_entity"] == number.entity_id
+    flow = await _first_control_step(rig, answer)
+    assert flow["step_id"] == "control_entity"
+
+
+ENTITY_STEP_ANSWER = {
+    "write_type": "held",
+    "ch_write_type": "unknown",
+    "hand_back": "value",
+    "hand_back_value": 50,
+    "hand_back_value_effect": "own_control",
+    "hand_back_entity_write_type": "unknown",
+}
+
+
+@pytest.mark.usefixtures("low_setpoint_off")
+@pytest.mark.parametrize("owed", [True, False], ids=["owed", "holding"])
+@pytest.mark.parametrize(
+    ("change", "refused"),
+    [
+        ({"write_type": "expiring"}, True),
+        ({"ch_write_type": "held"}, True),
+        ({"hand_back_timeout_min": 30}, False),  # judges the timeout method only
+        ({}, False),
+    ],
+    ids=["write_type", "ch_write_type", "timeout_of_another_method", "unchanged"],
+)
+async def test_the_write_types_cannot_change_while_a_hand_back_is_owed(
+    rig: Rig, owed: bool, change: dict[str, Any], refused: bool
+) -> None:
+    """PB-09: the write types judge the release — a held value must show the hand-back value,
+    an expiring one only leave the plugin's — so they are fixed while a hand-back is owed or
+    control holds the boiler, whose hand-back the new options would make."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    await start(rig, **held_entity(number))
+    await rig.switch(True)
+    if owed:
+        number.set_available(False)
+        await rig.switch(False)
+        assert unit_of(rig).hand_back_owed
+    else:
+        assert unit_of(rig).holding
+    answer = {"write_path": "entity", "topology": "virtual", "confirmed_entity": number.entity_id}
+    flow = await _first_control_step(rig, answer)
+    answer = ENTITY_STEP_ANSWER | {"setpoint_entity": number.entity_id} | change
+    flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], answer)
+    if refused:
+        reason = "hand_back_pending" if owed else "control_holds_boiler"
+        assert flow["errors"] == {"base": reason}
+    else:
+        assert flow["step_id"] == "control_curve"
+
+
+async def test_the_device_timeout_and_the_lowest_are_fixed_while_a_hand_back_is_owed(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """PB-09 with decision 5: a timeout hand-back is judged from the device's own timeout and
+    against the lowest it wrote first — both fixed while it is owed (here an entry not running,
+    its store owing it). Negative: the same values go on."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    section = held_entity(number, write_type="expiring", hand_back="timeout")
+    # Without the gateway path's id, which the flow drops for the entity path.
+    section |= {"hand_back_timeout_min": 5, "hard_min": LOWEST, "gateway_id": None}
+    for key in ("hand_back_value", "hand_back_value_effect"):
+        del section[key]
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones, **section)
+    )
+    entry.add_to_hass(rig.hass)  # never set up
+    rig.entry = entry
+    hass_storage[f"{DOMAIN}.{entry.entry_id}"] = {
+        "version": 1,
+        "key": f"{DOMAIN}.{entry.entry_id}",
+        "data": {
+            "monitoring_since": 0.0,
+            "control": {"hand_back_pending": True, "taken_with": dict(entry.options["control"])},
+        },
+    }
+    configure = rig.hass.config_entries.options.async_configure
+    answer = {"write_path": "entity", "topology": "virtual", "confirmed_entity": number.entity_id}
+    flow = await _first_control_step(rig, answer)
+    step = ENTITY_STEP_ANSWER | {"setpoint_entity": number.entity_id, "write_type": "expiring"}
+    step |= {"hand_back": "timeout"}
+    for key in ("hand_back_value", "hand_back_value_effect"):
+        del step[key]
+    refused = await configure(flow["flow_id"], step | {"hand_back_timeout_min": 10})
+    assert refused["errors"] == {"base": "hand_back_pending"}
+    flow = await configure(flow["flow_id"], step | {"hand_back_timeout_min": 5})
+    assert flow["step_id"] == "control_curve"
+    refused = await configure(flow["flow_id"], CURVE_ANSWER | {"hard_min": 30})
+    assert refused["errors"] == {"hard_min": "hand_back_pending"}
+    flow = await configure(flow["flow_id"], CURVE_ANSWER | {"hard_min": LOWEST})
+    flow = await _through_alarms(rig, flow)
+    assert flow["type"] == "create_entry"  # the save finds nothing changed that judges it
+
+
+async def test_the_lowest_may_change_while_control_holds_the_boiler(rig: Rig) -> None:
+    """PB-09: with nothing owed, the lowest water temperature stays open while control holds
+    the boiler — the hand-back made after the change writes the new lowest first and is judged
+    by it."""
+    integrations_running(rig)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert unit_of(rig).holding
+    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": CONFIRMED})
+    configure = rig.hass.config_entries.options.async_configure
+    flow = await configure(flow["flow_id"], {"gateway_id": "gw"})
+    assert flow["step_id"] == "control_curve"
+    flow = await configure(flow["flow_id"], CURVE_ANSWER | {"hard_min": 30})
+    assert not flow.get("errors")
+    flow = await _through_alarms(rig, flow)
+    assert flow["type"] == "create_entry"  # the save, too, leaves it open while holding
+    await rig.hass.async_block_till_done()
+    assert rig.entry is not None
+    assert rig.entry.options["control"]["hard_min"] == 30
+
+
+@pytest.mark.parametrize(("hard_min", "refused"), [(45, True), (40, False)])
+async def test_the_lowest_above_the_circuits_maximum_is_refused(
+    rig: Rig, hard_min: int, refused: bool
+) -> None:
+    """PB-26: the circuit's maximum 40 °C, the lowest water temperature 45 °C: refused at the
+    curve step — the hand-back would send 45 first, and control could never give it. At the
+    maximum itself it passes."""
+    integrations_running(rig)
+    await set_up(rig, add_entry(rig, with_circuit(rig, {"max_flow": 40})))
+    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": CONFIRMED})
+    configure = rig.hass.config_entries.options.async_configure
+    flow = await configure(flow["flow_id"], {"gateway_id": "gw"})
+    flow = await configure(flow["flow_id"], CURVE_ANSWER | {"hard_min": hard_min})
+    if refused:
+        assert flow["errors"] == {"hard_min": "hard_min_above_max"}
+    else:
+        assert not flow.get("errors")
 
 
 async def test_an_entry_that_is_not_running_is_guarded_by_its_store(
@@ -8944,6 +9134,58 @@ async def test_the_last_command_is_restored_at_once_after_a_restart(
     assert rig.gateway.setpoints()[-1] == pytest.approx(EXPECTED, abs=0.5)
     assert ("setpoint", 0.0) not in rig.gateway.calls
     assert issue(rig, OWED) is None
+
+
+@pytest.mark.parametrize("circuit_max", [40.0, None], ids=["lowered", "none"])
+async def test_a_restored_command_goes_out_within_the_limits_as_they_are_now(
+    rig: Rig, hass_storage: dict[str, Any], circuit_max: float | None
+) -> None:
+    """PB-11: the last command a run stored (on, 45 °C), the circuit's maximum lowered to 40 °C
+    in the options since — the control section unchanged, so the command is given again. On the
+    gateway, which has no entity grid to put it on, through the recognition period with a zone
+    not reporting: nothing above 40 °C goes out. Negative: without a maximum, 45 °C as stored."""
+    from homeassistant.core import CoreState
+
+    rig.hass.set_state(CoreState.starting)
+    not_started(rig)
+    circuit = {} if circuit_max is None else {"max_flow": circuit_max}
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=with_circuit(rig, circuit)
+    )
+    entry.add_to_hass(rig.hass)
+    seed_stores(hass_storage, entry, restorable(rig), "0.2.2")
+    assert await rig.hass.config_entries.async_setup(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    rig.entry = entry
+    await rig.advance(600, step=30)
+    written = rig.gateway.setpoints()
+    assert written
+    assert ("setpoint", 0.0) not in rig.gateway.calls  # given again, not handed back first
+    assert set(written) == {RESTORED if circuit_max is None else circuit_max}
+
+
+@pytest.mark.usefixtures("low_setpoint_off")
+async def test_a_restored_off_is_not_raised_into_the_limits(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """PB-11's negative: on a path without heating writes "off" is a low setpoint below the
+    lowest water temperature. Given again after a restart it stays "off" — written from its
+    own option, its target not raised to the lowest — never turned into heating."""
+    from homeassistant.core import CoreState
+
+    from custom_components.vtherm_smart_boiler.core.loop import DEFAULT_OFF_SETPOINT
+
+    rig.hass.set_state(CoreState.starting)
+    not_started(rig)
+    number = FakeNumber(rig.hass)
+    number.register()
+    section = held_entity(number)
+    command = {"heating": False, "setpoint": DEFAULT_OFF_SETPOINT, "at": START.timestamp()}
+    stored = restorable(rig, last_command=command, taken_with=taken_with(rig, **section))
+    await start_with_stored(rig, hass_storage, stored, "0.2.2", **section)
+    await rig.advance(60)
+    assert number.writes == [DEFAULT_OFF_SETPOINT]
+    assert rig.state("sensor", "control_state").attributes["target"] == DEFAULT_OFF_SETPOINT
 
 
 OWED = "hand_back_owed"

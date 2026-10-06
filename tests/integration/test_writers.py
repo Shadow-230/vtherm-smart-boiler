@@ -1179,3 +1179,161 @@ async def test_a_relay_writer_needs_a_relay_it_can_switch(hass: HomeAssistant) -
 async def test_a_relay_writer_names_its_services(hass: HomeAssistant) -> None:
     writer = make_writer(hass, relay_options())
     assert writer.services == {("switch", "turn_on"), ("switch", "turn_off")}
+
+
+# --- 2.2b: what an owed hand-back writes (PB-22, PB-26, PB-27, TB-04) --------------------------
+
+NUMBER_AND_SWITCH = (("number", "set_value"), ("switch", "turn_on"), ("switch", "turn_off"))
+
+
+def value_hand_back(**extra: Any) -> dict[str, Any]:
+    """A held setpoint entity with a value hand-back that returns the boiler to its control."""
+    return {
+        "write_path": "entity",
+        "setpoint_entity": "number.flow",
+        "write_type": "held",
+        "hand_back": "value",
+        "hand_back_value": 0,
+        "hand_back_value_effect": "own_control",
+    } | extra
+
+
+@pytest.mark.parametrize("write_type", ["held", "expiring"])
+async def test_a_hand_back_value_outside_the_entitys_range_is_never_moved_onto_it(
+    hass: HomeAssistant, write_type: str
+) -> None:
+    """PB-22 (S-21): the number's minimum rose to 10 while control held it. The hand-back value
+    0 is not moved onto 10 — a value the device would read as a setpoint, its heating enabled —
+    and its release never counts as written: the hand-back fails, stays owed and is shown; the
+    lowest is still written. The check keeps the value the hand-back means."""
+    calls = record(hass, ("number", "set_value"))
+    attributes = {"unit_of_measurement": "°C", "step": 0.5, "min": 10, "max": 90}
+    hass.states.async_set("number.flow", "45", attributes)
+    writer = make_writer(hass, options(**value_hand_back(write_type=write_type)))
+    with pytest.raises(HandBackFailed, match="hand-back value 0") as failed:
+        await writer.hand_back(release_from=45.0)
+    assert calls == [("number", "set_value", {"entity_id": "number.flow", "value": LOWEST})]
+    (check,) = failed.value.checks
+    assert (check.expected, check.written) == (0.0, False)
+
+
+async def test_a_hand_back_value_with_no_grid_point_fails_and_stays_owed(
+    hass: HomeAssistant,
+) -> None:
+    """TB-04: no value on the entity's grid within its range and the highest water temperature
+    (the boiler's maximum 45 °C, the entity from 50 °C): the release fails, owed — as does the
+    lowest, which has none either."""
+    calls = record(hass, ("number", "set_value"))
+    attributes = {"unit_of_measurement": "°C", "step": 1, "min": 50, "max": 80}
+    hass.states.async_set("number.flow", "60", attributes)
+    writer = make_writer(hass, parse_control(value_hand_back(), INSTALLATION, 45.0))
+    with pytest.raises(HandBackFailed) as failed:
+        await writer.hand_back(release_from=60.0)
+    assert calls == []
+    (check,) = failed.value.checks
+    assert check.written is False
+
+
+async def test_a_lowest_the_entity_cannot_take_fails_alone(hass: HomeAssistant) -> None:
+    """TB-04: the setpoint entity takes 0 to 15 °C, the lowest is 20: the heating switch's "on"
+    and the release are still sent; the lowest's part fails and the hand-back stays owed."""
+    calls = record(hass, *NUMBER_AND_SWITCH)
+    attributes = {"unit_of_measurement": "°C", "step": 1, "min": 0, "max": 15}
+    hass.states.async_set("number.flow", "15", attributes)
+    hass.states.async_set("switch.ch", "off")
+    section = value_hand_back(ch_entity="switch.ch", ch_write_type="held")
+    writer = make_writer(hass, options(**section))
+    with pytest.raises(HandBackFailed, match="no value") as failed:
+        await writer.hand_back(release_from=15.0)
+    assert calls == [
+        ("switch", "turn_on", {"entity_id": "switch.ch"}),
+        ("number", "set_value", {"entity_id": "number.flow", "value": 0.0}),
+    ]
+    switch, value = failed.value.checks
+    assert switch.written is True
+    assert value.written is False  # the lowest did not get there: the release is not counted
+
+
+@pytest.mark.parametrize("path", ["entity", *GATEWAYS])
+async def test_a_stored_lowest_above_what_a_writer_takes_fails_alone(
+    hass: HomeAssistant, path: str
+) -> None:
+    """PB-27: a lowest of 92 °C stored by hand (the limits allow up to 95) is refused inside its
+    own part: the heating switch or CH=1, and the release, are still tried."""
+    calls = record(hass, *NUMBER_AND_SWITCH, *GATEWAY_SERVICES)
+    limits = {"hard_min": 92, "hard_max": 95}
+    if path == "entity":
+        hass.states.async_set("number.flow", "45", {"unit_of_measurement": "°C"})
+        hass.states.async_set("switch.ch", "off")
+        section = value_hand_back(ch_entity="switch.ch", ch_write_type="held") | limits
+    else:
+        hass.states.async_set(READ_BACK, "45", {"unit_of_measurement": "°C"})
+        section = GATEWAYS[path] | {"confirmed_entity": READ_BACK} | limits
+    writer = make_writer(hass, options(**section))
+    with pytest.raises(WriteError, match="92"):
+        await writer.hand_back(release_from=45.0)
+    sent = [call[2] for call in calls]
+    released = {
+        "entity": [{"entity_id": "switch.ch"}, {"entity_id": "number.flow", "value": 0.0}],
+        "opentherm_gw": [
+            {"gateway_id": "gw1", "ch_override": True},
+            {"gateway_id": "gw1", "temperature": 0},
+        ],
+        "otgw_mqtt": [
+            {"topic": "OTGW/set/otgw-1/chenable", "payload": "1"},
+            {"topic": "OTGW/set/otgw-1/ctrlsetpt", "payload": "0"},
+        ],
+    }[path]
+    assert sent == released
+
+
+@pytest.mark.parametrize("path", ["entity", *GATEWAYS])
+@pytest.mark.parametrize("boiler_max", [40.0, None], ids=["capped", "uncapped"])
+async def test_the_lowest_a_hand_back_writes_first_keeps_below_the_maxima(
+    hass: HomeAssistant, path: str, boiler_max: float | None
+) -> None:
+    """PB-26: the lowest water temperature 45 °C, the boiler's maximum 40 °C: the hand-back's
+    first part sends 40, not 45, and its release is judged against what it sent. Negative:
+    without the maximum, 45."""
+    calls = record(hass, *NUMBER_AND_SWITCH, *GATEWAY_SERVICES)
+    if path == "entity":
+        hass.states.async_set("number.flow", "38", {"unit_of_measurement": "°C"})
+        section = value_hand_back(hand_back_value=30)
+    else:
+        hass.states.async_set(READ_BACK, "38", {"unit_of_measurement": "°C"})
+        section = GATEWAYS[path] | {"confirmed_entity": READ_BACK}
+    writer = make_writer(hass, parse_control(section | {"hard_min": 45}, INSTALLATION, boiler_max))
+    checks = await writer.hand_back(release_from=38.0)
+    expected = 45.0 if boiler_max is None else boiler_max
+    first = calls[0][2]
+    sent = first.get("value", first.get("temperature", first.get("payload")))
+    assert float(sent) == expected
+    assert checks[-1].lowest == expected
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), 95.0, -1.0])
+async def test_a_number_without_a_range_refuses_an_implausible_setpoint(
+    hass: HomeAssistant, value: float
+) -> None:
+    """TB-04: a number entity without min, max or step still refuses what no boiler takes."""
+    calls = record(hass, ("number", "set_value"))
+    hass.states.async_set("number.flow", "40", {"unit_of_measurement": "°C"})
+    writer = make_writer(hass, options(**value_hand_back()))
+    with pytest.raises(WriteError):
+        await writer.write_setpoint(value)
+    assert calls == []
+
+
+async def test_a_value_hand_back_without_its_value_fails_and_stays_owed(
+    hass: HomeAssistant,
+) -> None:
+    """A value hand-back whose value is missing (options from outside the form): the lowest
+    goes, the release fails with its reason and stays owed; nothing is guessed."""
+    calls = record(hass, ("number", "set_value"))
+    hass.states.async_set("number.flow", "45", {"unit_of_measurement": "°C"})
+    writer = make_writer(hass, options(**value_hand_back(hand_back_value=None)))
+    with pytest.raises(HandBackFailed, match="no hand-back value") as failed:
+        await writer.hand_back(release_from=45.0)
+    assert calls == [("number", "set_value", {"entity_id": "number.flow", "value": LOWEST})]
+    (check,) = failed.value.checks
+    assert (check.expected, check.written) == (None, False)

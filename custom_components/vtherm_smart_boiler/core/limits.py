@@ -108,6 +108,19 @@ def write_bounds(
     return min(low, high), high
 
 
+def within_write_bounds(
+    value: float,
+    limits: FlowLimits,
+    circuit_max: float | None = None,
+    boiler_max: float | None = None,
+    floor: float | None = None,
+) -> float:
+    """``value`` moved inside ``write_bounds``: a setpoint kept from options changed since — a
+    command given again after a restart — goes out within the limits as they are now (PB-11)."""
+    low, high = write_bounds(limits, circuit_max, boiler_max, floor)
+    return min(max(value, low), high)
+
+
 GRID_EPSILON = 1e-6  # how close to a grid value (in steps) counts as on it
 MAX_STEP_K = 1.0  # a setpoint entity with a coarser step cannot confirm a value (P-15)
 

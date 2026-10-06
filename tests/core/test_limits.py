@@ -20,6 +20,7 @@ from custom_components.vtherm_smart_boiler.core.limits import (
     is_on_grid,
     limit_flow,
     on_grid,
+    within_write_bounds,
     write_bounds,
 )
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
@@ -105,6 +106,25 @@ def test_the_bounds_a_written_value_keeps() -> None:
     assert write_bounds(limits, circuit_max=45.0, boiler_max=80.0) == (25.0, 45.0)
     assert write_bounds(limits, floor=40.0) == (40.0, 70.0)
     assert write_bounds(limits, circuit_max=35.0, floor=40.0) == (35.0, 35.0)
+
+
+@pytest.mark.parametrize(
+    ("value", "kwargs", "expected"),
+    [
+        (45.0, {"circuit_max": 40.0}, 40.0),  # PB-11: a maximum lowered since it was written
+        (45.0, {"boiler_max": 42.0, "circuit_max": 44.0}, 42.0),
+        (75.0, {}, 70.0),  # the hard maximum
+        (20.0, {}, 25.0),  # the lowest water temperature raised since
+        (30.0, {"floor": 35.0}, 35.0),  # a fixed circuit's floor
+        (45.0, {"circuit_max": 35.0, "floor": 40.0}, 35.0),  # the cap wins over the floor
+        (45.0, {"circuit_max": 50.0}, 45.0),  # inside: unchanged
+    ],
+)
+def test_a_value_is_moved_inside_the_bounds_a_written_value_keeps(
+    value: float, kwargs: dict[str, float], expected: float
+) -> None:
+    limits = FlowLimits(hard_min=25.0, hard_max=70.0)
+    assert within_write_bounds(value, limits, **kwargs) == expected
 
 
 @pytest.mark.parametrize(

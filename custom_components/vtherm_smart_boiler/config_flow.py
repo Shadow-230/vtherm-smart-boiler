@@ -22,7 +22,7 @@ shows VT's activation delay at every level; no signal is required for the entry.
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from enum import StrEnum
 from typing import Any
 
@@ -66,10 +66,8 @@ from .control_config import (
     CONTROL_DEFAULTS,
     CURVE_DEFAULTS,
     GATEWAY_TOPOLOGIES,
-    HAND_BACK_KEYS,
     HAND_BACK_TIMEOUT_DEFAULT_MIN,
     HAND_BACK_TIMEOUT_MIN,
-    OTGW_PATHS,
     PATH_TOPOLOGIES,
     RELAY_DEFAULTS,
     RELAY_DOMAINS,
@@ -84,9 +82,11 @@ from .control_config import (
     WritePath,
     config_blockers,
     curve_problems,
+    fixed_keys,
     hand_back_value_problems,
     heating_writes,
     kind_contradicts_topology,
+    lowest_above_max,
     off_too_close_to_lowest,
     own_room_controller_offered,
     parse_thermostat_kind,
@@ -605,15 +605,21 @@ CONTROL_ADVANCED_KEYS = (
     "return_after_outside_change",
 )
 CURVE_KEYS = ("design_outdoor", "design_flow", "room", "exponent", "offset")
+OWN_ROOM_CONTROLLER = "own_room_controller"
+HAND_BACK_TIMEOUT = "hand_back_timeout_min"
 # What an absent hand-back answer means: the form fills in this default (an entry saved before
-# the answer existed has none). What a hand-back goes through (``HAND_BACK_KEYS``) and the
-# writable-entity step's answers (``TARGET_KEYS``) are listed once, in the control options.
+# the answer existed has none). What a hand-back goes through and what judges it
+# (``fixed_keys``) and the writable-entity step's answers (``TARGET_KEYS``) are listed once, in
+# the control options.
 _HAND_BACK_DEFAULTS = {
     "hand_back_entity_write_type": WriteType.UNKNOWN.value,
     "relay_rest_state": RELAY_DEFAULTS["relay_rest_state"],
+    "write_type": WriteType.UNKNOWN.value,
+    "ch_write_type": WriteType.UNKNOWN.value,
+    "hard_min": CONTROL_DEFAULTS["hard_min"],
+    HAND_BACK_TIMEOUT: HAND_BACK_TIMEOUT_DEFAULT_MIN,
 }
-OWN_ROOM_CONTROLLER = "own_room_controller"
-HAND_BACK_TIMEOUT = "hand_back_timeout_min"
+HAND_BACK_PENDING = "hand_back_pending"
 # A demand threshold no zone can feed (P-14): the field, and what the form says.
 _UNFED = {
     "power_threshold_kw": "power_criterion_no_zone",
@@ -1657,7 +1663,10 @@ def _given(data: Mapping[str, Any], key: str) -> Any:
 
 
 def _hand_back_answer(data: Mapping[str, Any], key: str) -> Any:
-    """A hand-back answer as given, or the default the form fills in for it."""
+    """A hand-back answer as given, or the default the form fills in for it. The device's
+    timeout judges the timeout method only: with another, the save drops it."""
+    if key == HAND_BACK_TIMEOUT and _given(data, "hand_back") != HandBack.TIMEOUT:
+        return None
     found = _given(data, key)
     return _HAND_BACK_DEFAULTS.get(key) if found is None else found
 
@@ -1997,11 +2006,11 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         run left owed through what the options say then."""
         coordinator = getattr(self.config_entry, "runtime_data", None)
         if coordinator is None:
-            return "hand_back_pending" if await self._async_owed_in_store() else None
+            return HAND_BACK_PENDING if await self._async_owed_in_store() else None
         found = (getattr(coordinator, name, None) for name in ("control", "hand_back_unit"))
         units = [unit for unit in found if unit is not None]
         if any(unit.hand_back_owed for unit in units):
-            return "hand_back_pending"
+            return HAND_BACK_PENDING
         if any(unit.holding for unit in units):
             return "control_holds_boiler"
         return None
@@ -2018,41 +2027,51 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         read = await async_read_control_state(self.hass, entry.entry_id, entry.options)
         return read.owed
 
-    def _changes_gateway_read_back(self, user_input: dict[str, Any]) -> bool:
-        """Whether the answer re-picks a built-in gateway's read-back, which tells whether a
-        hand-back through the gateway got there (R6, H2 with C1)."""
+    def _changed_read_back(self, user_input: dict[str, Any], blocker: str) -> str | None:
+        """The read-back the answer re-picks on the path kept, where it judges a hand-back's
+        release: a gateway's (R6, H2 with C1), the setpoint's and the heating switch's on the
+        entity path (PB-09); ``None`` where none is."""
         current = self.config_entry.options.get(CONTROL, {})
         path = current.get("write_path")
-        if path not in OTGW_PATHS or user_input.get("write_path") != path:
-            return False
-        return (user_input.get("confirmed_entity") or None) != (
-            current.get("confirmed_entity") or None
+        if user_input.get("write_path") != path:
+            return None
+        fixed = fixed_keys(path, owed=blocker == HAND_BACK_PENDING)
+        return next(
+            (
+                key
+                for key in ("confirmed_entity", "ch_confirmed_entity")
+                if key in fixed and _given(user_input, key) != _given(current, key)
+            ),
+            None,
         )
 
-    def _changes_hand_back(self, user_input: dict[str, Any], schema: vol.Schema) -> bool:
-        """Whether the answer changes how the boiler is given back. A field the form shows but
-        the answer leaves out was cleared: the frontend leaves an emptied optional field out."""
+    def _changes_hand_back(
+        self, user_input: dict[str, Any], shown: vol.Schema | Collection[str], blocker: str
+    ) -> bool:
+        """Whether the answer changes how the boiler is given back, or what judges it, while
+        ``blocker`` holds (PB-09). A field the form shows but the answer leaves out was cleared:
+        the frontend leaves an emptied optional field out."""
+        if isinstance(shown, vol.Schema):
+            shown = {str(marker) for marker in shown.schema}
         current = self.config_entry.options.get(CONTROL, {})
-        shown = {str(marker) for marker in schema.schema}
         return any(
             _hand_back_answer(user_input, key) != _hand_back_answer(current, key)
-            for key in HAND_BACK_KEYS
+            for key in fixed_keys(current.get("write_path"), owed=blocker == HAND_BACK_PENDING)
             if key in shown
         )
 
-    def _saves_another_hand_back(self) -> bool:
-        """Whether the options to be saved change what a hand-back goes through: the path, what
-        it writes to, the gateway or its topics, or a gateway's read-back, which judges its
-        release (P-12). Taking control out changes nothing: the options that took the boiler
+    def _saves_another_hand_back(self, *, owed: bool) -> bool:
+        """Whether the options to be saved change what a hand-back goes through or what judges
+        it: the path, what it writes to, the gateway or its topics, the read-backs, the write
+        types, the device's timeout, and with a hand-back owed the lowest water temperature
+        (P-12, PB-09). Taking control out changes nothing: the options that took the boiler
         still hand it back, through a unit that only does that."""
         new = self.options.get(CONTROL)
         if not isinstance(new, Mapping):
             return False
         current = self.config_entry.options.get(CONTROL)
         current = current if isinstance(current, Mapping) else {}
-        keys = ["write_path", *HAND_BACK_KEYS]
-        if new.get("write_path") in OTGW_PATHS:
-            keys.append("confirmed_entity")
+        keys = ["write_path", *fixed_keys(new.get("write_path"), owed=owed)]
         return any(_hand_back_answer(new, key) != _hand_back_answer(current, key) for key in keys)
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -2109,12 +2128,14 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             # A maximum lowered under the hand-back value, or "off" moved next to it, since the
             # step that checks it (S-21, S-49): back to that step.
             return await self._back_to_problem(problems[0], None)
-        if self._saves_another_hand_back():
+        if self._saves_another_hand_back(owed=True):
             # Checked again here, not only at the control steps: control may have taken the
             # boiler, or begun to owe it a hand-back, since they were answered (P-12). Nothing
             # is saved; the control step says why.
             blocker = await self._async_hand_back_blocker()
-            if blocker is not None:
+            if blocker is not None and self._saves_another_hand_back(
+                owed=blocker == HAND_BACK_PENDING
+            ):
                 return await self._back_to_problem(blocker, None)
         if not confirmed and (blocking := self._new_blockers()):
             # Open after R6 #3: an edit that would keep control from running is confirmed first.
@@ -2195,8 +2216,8 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 # "No control" stays possible: the hand-back goes through the old path, retried
                 # by a unit that only hands back.
                 errors = {"write_path": blocker}
-            elif not errors and blocker and self._changes_gateway_read_back(user_input):
-                errors = {"confirmed_entity": blocker}
+            elif not errors and blocker and (key := self._changed_read_back(user_input, blocker)):
+                errors = {key: blocker}
             if errors:
                 return self._form(
                     step_id="control", data_schema=control_schema(self.options), errors=errors
@@ -2245,7 +2266,9 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             if (
                 not errors
                 and blocker
-                and self._changes_hand_back(user_input, control_entity_schema(self.options))
+                and self._changes_hand_back(
+                    user_input, control_entity_schema(self.options), blocker
+                )
             ):
                 errors = {"base": blocker}
             if not errors:
@@ -2277,7 +2300,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             ):
                 errors = {"gateway_id": "gateway_not_set_up"}  # not running: nothing arrives
             elif (blocker := await self._async_hand_back_blocker()) and self._changes_hand_back(
-                user_input, control_gateway_schema(self.options, gateways)
+                user_input, control_gateway_schema(self.options, gateways), blocker
             ):
                 errors = {"base": blocker}
             else:
@@ -2312,7 +2335,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             if (
                 not errors
                 and blocker
-                and self._changes_hand_back(user_input, control_mqtt_schema(self.options))
+                and self._changes_hand_back(user_input, control_mqtt_schema(self.options), blocker)
             ):
                 errors = {"base": blocker}
             if not errors:
@@ -2363,7 +2386,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                     # boiler again at every lapse.
                     errors = {RELAY_TIMER_MIN: "relay_off_timer_min_short"}
             blocker = await self._async_hand_back_blocker()
-            if not errors and blocker and self._changes_hand_back(user_input, schema):
+            if not errors and blocker and self._changes_hand_back(user_input, schema, blocker):
                 errors = {"base": blocker}
             if not errors:
                 apply_control_relay(self.options, user_input)
@@ -2440,8 +2463,15 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             elif off_too_close_in(self.options, user_input["hard_min"]):
                 # P-25, at both levels: "off" as a low setpoint next to the lowest water.
                 errors["hard_min"] = "off_setpoint_not_below_hard_min"
+            elif self._lowest_above_max(user_input):
+                errors["hard_min"] = "hard_min_above_max"
             elif found := self._frost_zone_error(user_input):
                 errors = found
+            elif (blocker := await self._async_hand_back_blocker()) and self._changes_hand_back(
+                user_input, ("hard_min",), blocker
+            ):
+                # PB-09: an owed hand-back wrote the lowest first and is judged by it.
+                errors["hard_min"] = blocker
             else:
                 apply_control_curve(self.options, user_input)
                 if _advanced(self.options):
@@ -2506,6 +2536,14 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             float(user_input["hard_min"]),
             float(user_input["hard_max"]),
         )
+
+    def _lowest_above_max(self, user_input: dict[str, Any]) -> bool:
+        """PB-26: the lowest water temperature as entered above a circuit's or the boiler's
+        maximum, which the hand-back would send first; the options as they stand otherwise."""
+        candidate = copy.deepcopy(self.options)
+        apply_control_curve(candidate, user_input)
+        control = control_of(candidate)
+        return control is not None and lowest_above_max(control.loop.control)
 
     def _frost_zone_error(self, user_input: dict[str, Any]) -> dict[str, str]:
         """The frost zone is one of the configured zones, as the form offers (P-79)."""
