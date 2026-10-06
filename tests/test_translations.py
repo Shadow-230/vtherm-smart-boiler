@@ -1026,6 +1026,17 @@ def test_the_short_relay_timer_texts_are_translated() -> None:
     assert "9 min or more (a 10-min timer measured up to a minute short)" in timer  # KD-02
 
 
+def test_the_relay_not_taking_texts_count_through_command_changes() -> None:
+    """L2 of the part-1 check: the run of checks without the plugin's command goes on through
+    new commands, so the current one may be younger than the quarter hour: the texts say the
+    relay has shown none of the commands for about 15 minutes, and not the current one now."""
+    for key, command in (("relay_not_taking", "on"), ("relay_not_taking_off", "off")):
+        text = SOURCE["issues"][key]["description"]
+        assert "for about 15 minutes — three checks — it has shown none of them" in text
+        assert f'it does not show "{command}" now' in text
+        assert f'has not shown "{command}" for about' not in text
+
+
 def test_the_heating_read_back_says_how_soon_it_must_report() -> None:
     """K4.3 (decided by the user 2026-10-03; Z4R3-03): the heating read-back field says to pick an
     entity that reports a change within about a minute — a slower one delays noticing a change,

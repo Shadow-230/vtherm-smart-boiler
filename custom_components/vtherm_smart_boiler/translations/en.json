@@ -2687,11 +2687,11 @@
     },
     "relay_not_taking": {
       "title": "The relay has stopped taking commands: the house is not heated",
-      "description": "{relay} took the plugin's commands earlier in this session, but has not shown \"on\" for about 15 minutes — three checks. The boiler gets no heat demand, so the house is not heated, frost protection included. The plugin keeps control and sends \"on\" again at every check; this notice goes once the relay shows \"on\". Check the relay and its connection — a link that delivers its reports but not the commands, or a stuck contact — and the entity picked in the options."
+      "description": "{relay} took the plugin's commands earlier in this session, but for about 15 minutes — three checks — it has shown none of them, and it does not show \"on\" now. The boiler gets no heat demand, so the house is not heated, frost protection included. The plugin keeps control and sends \"on\" again at every check; this notice goes once the relay shows \"on\". Check the relay and its connection — a link that delivers its reports but not the commands, or a stuck contact — and the entity picked in the options."
     },
     "relay_not_taking_off": {
       "title": "The relay has stopped taking commands: the boiler may keep heating",
-      "description": "{relay} took the plugin's commands earlier in this session, but has not shown \"off\" for about 15 minutes — three checks. The boiler may keep heating, as the relay does not switch off. Control stopped; the relay was set once to its state after hand-back, which cannot be relied on either. Check the relay and its connection — a link that delivers its reports but not the commands, or a stuck contact — and the entity picked in the options, then switch control off and on. The monitor keeps running."
+      "description": "{relay} took the plugin's commands earlier in this session, but for about 15 minutes — three checks — it has shown none of them, and it does not show \"off\" now. The boiler may keep heating, as the relay does not switch off. Control stopped; the relay was set once to its state after hand-back, which cannot be relied on either. Check the relay and its connection — a link that delivers its reports but not the commands, or a stuck contact — and the entity picked in the options, then switch control off and on. The monitor keeps running."
     },
     "relay_rests_off": {
       "title": "The boiler does not heat while control is off",

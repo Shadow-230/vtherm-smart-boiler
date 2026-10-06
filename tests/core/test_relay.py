@@ -84,6 +84,7 @@ class Relay:
     reverts_ours: bool = False
     writes: list[tuple[float, bool, WriteKind]] = field(default_factory=list)
     failed: list[tuple[float, bool, WriteKind]] = field(default_factory=list)  # never arrived
+    starts: list[float] = field(default_factory=list)  # an "on" written while off: a boiler start
 
     def tick(self, t: float, *, due_now: bool = True) -> None:
         """Its own timer switches it off (``due_now``: also a lapse due exactly at ``t``)."""
@@ -122,6 +123,8 @@ class Relay:
         if self.masked_at(t) and self.on and write.on:
             self.tick(t)  # the lapse due now, a moment before the write
             masked = not self.on
+        if write.on and self.on is False:
+            self.starts.append(t)
         if write.on and (not self.on or self.restarts_timer):
             self.on_at = t
         if self.on != write.on:
@@ -1429,7 +1432,7 @@ def test_a_relay_without_a_state_gets_its_command_at_once_when_it_returns(
         (900.0, True, WriteKind.KEEPALIVE),
     ]
     assert events(results) == []
-    assert lost(results) == []
+    assert lost(results) == [160.0, 600.0]  # back off while commanded on: counted (M1)
     # A relay that reports its state, back in the commanded state: nothing to send.
     reporting, state = confirmed_on()
     state, _ = drive(
@@ -1444,6 +1447,96 @@ def test_a_relay_without_a_state_gets_its_command_at_once_when_it_returns(
         ),
     )
     assert reporting.writes == [(0.0, True, WriteKind.CHANGE)]
+
+
+def drops_every_minute(relay: Relay, back_on: bool) -> Callable[[float], None]:
+    """Out of reach for one step every minute, then back — off after a power loss, or on after a
+    link loss alone."""
+
+    def at(t: float) -> None:
+        if t > 0 and t % 60 == 0:
+            relay.away(t)
+        elif t > 0 and t % 60 == 10:
+            relay.back(t, back_on)
+
+    return at
+
+
+@pytest.mark.parametrize(
+    ("reports", "back_on", "counted"),
+    [
+        (RelayReports.UNKNOWN, False, True),  # back in another state
+        (RelayReports.NO, False, True),
+        (RelayReports.UNKNOWN, True, False),  # back as commanded: nothing lost
+        (RelayReports.NO, True, True),  # no state shown, commanded on
+    ],
+)
+def test_a_relay_without_a_state_dropping_out_every_minute_is_written_as_its_repeat_would(
+    reports: RelayReports, back_on: bool, counted: bool
+) -> None:
+    """M1 of the part-1 check (PB-44 bounded): a relay that reports no state, commanded on for an
+    hour, drops out every minute. Before, every return got "on" at once — 60 boiler starts in the
+    hour after a power loss each time, against 11 with the repeat alone, and no alarm. A return's
+    command at once now comes at most once each check interval, and not within the confirmation
+    timeout of a write; the returns between wait for the regular repeat — one write each 5 min,
+    as the repeat alone gave. Each return in another state — or, with no state shown, any return
+    while commanded on — counts toward "commands lost", so the flapping is shown."""
+    relay = Relay(on=True)
+    _state, results = drive(
+        relay,
+        RelayConfig(reports=reports),
+        True,
+        0.0,
+        HOUR_S,
+        at=drops_every_minute(relay, back_on),
+    )
+    assert relay.writes == [(0.0, True, WriteKind.CHANGE)] + [
+        (130.0 + RELAY_CHECK_S * n, True, WriteKind.RESEND) for n in range(12)
+    ]
+    assert relay.starts == ([] if back_on else [t for t, _on, _kind in relay.writes[1:]])
+    returns = [10.0 + MIN * n for n in range(60)]  # back at 10 s past every minute
+    assert lost(results) == (returns if counted else [])
+    assert events(results) == []
+
+
+def test_a_relay_knocked_out_by_each_on_is_started_no_more_often_than_its_repeat() -> None:
+    """M1 of the part-1 check: a relay that reports no state and drops out a few seconds after
+    each "on" it is given — the boiler's start on its supply, or interference at the ignition —
+    comes back off. Its command at once would start the boiler again at once; a return within
+    the confirmation timeout of a write waits for the regular repeat, so the boiler starts once
+    each repeat interval, as before PB-44, and the returns count toward "commands lost"."""
+    relay = Relay(on=False)
+
+    def knocked_out(t: float) -> None:
+        if relay.writes and t - relay.writes[-1][0] == 10.0 and relay.on:
+            relay.away(t - 6.0)
+            relay.back(t - 3.0, False)
+
+    _state, results = drive(relay, RelayConfig(), True, 0.0, HOUR_S, at=knocked_out)
+    assert relay.starts == [300.0 * n for n in range(13)]
+    assert [kind for _t, _on, kind in relay.writes[1:]] == [WriteKind.KEEPALIVE] * 12
+    assert lost(results) == [10.0 + 300.0 * n for n in range(12)]
+
+
+def test_a_relay_without_a_state_unknown_for_good_gets_only_its_repeats() -> None:
+    """Negatives (M1): a relay that stays "unknown" is no return — only its regular repeats, no
+    loss; a return with no command, or before any command, counts nothing and writes only a new
+    command."""
+    relay = Relay(on=None)  # within reach, its state unknown
+    _state, results = drive(relay, RelayConfig(), True, 0.0, 950.0)
+    assert relay.writes == [(0.0, True, WriteKind.CHANGE)] + [
+        (300.0 * n, True, WriteKind.KEEPALIVE) for n in (1, 2, 3)
+    ]
+    assert lost(results) == []
+    back = RelaySeen(on=False, known=True, available=True, returned=True)
+    held = RelayState(written=True, written_at=0.0, on_since=0.0)
+    none = plan_relay(held, None, back, 1000.0, RelayConfig())
+    assert (none.write, none.lost) == (None, False)
+    first = plan_relay(RelayState(), True, back, 1000.0, RelayConfig())
+    assert first.write == RelayWrite(True, WriteKind.CHANGE)
+    assert not first.lost
+    unknown = replace(back, on=None, known=False)
+    assert plan_relay(held, True, unknown, 1000.0, RelayConfig(reports=RelayReports.NO)).lost
 
 
 @pytest.mark.parametrize(

@@ -2687,11 +2687,11 @@
     },
     "relay_not_taking": {
       "title": "Przekaźnik przestał przyjmować polecenia: dom nie jest ogrzewany",
-      "description": "{relay} przyjmował wcześniej w tej sesji polecenia wtyczki, ale od około 15 minut — trzech sprawdzeń — nie pokazuje „włącz”. Kocioł nie dostaje zapotrzebowania na ciepło, więc dom nie jest ogrzewany, ochrona przed mrozem też nie działa. Wtyczka zachowuje sterowanie i wysyła „włącz” ponownie przy każdym sprawdzeniu; to powiadomienie zniknie, gdy przekaźnik pokaże „włącz”. Sprawdź przekaźnik i jego łączność — łącze, które dostarcza jego raporty, ale nie polecenia, albo zablokowany styk — oraz encję wybraną w opcjach."
+      "description": "{relay} przyjmował wcześniej w tej sesji polecenia wtyczki, ale od około 15 minut — trzech sprawdzeń — nie pokazał żadnego z nich, a teraz nie pokazuje „włącz”. Kocioł nie dostaje zapotrzebowania na ciepło, więc dom nie jest ogrzewany, ochrona przed mrozem też nie działa. Wtyczka zachowuje sterowanie i wysyła „włącz” ponownie przy każdym sprawdzeniu; to powiadomienie zniknie, gdy przekaźnik pokaże „włącz”. Sprawdź przekaźnik i jego łączność — łącze, które dostarcza jego raporty, ale nie polecenia, albo zablokowany styk — oraz encję wybraną w opcjach."
     },
     "relay_not_taking_off": {
       "title": "Przekaźnik przestał przyjmować polecenia: kocioł może dalej grzać",
-      "description": "{relay} przyjmował wcześniej w tej sesji polecenia wtyczki, ale od około 15 minut — trzech sprawdzeń — nie pokazuje „wyłącz”. Kocioł może dalej grzać, bo przekaźnik się nie wyłącza. Sterowanie się zatrzymało; przekaźnik został raz ustawiony w stan po oddaniu sterowania, na którym też nie można polegać. Sprawdź przekaźnik i jego łączność — łącze, które dostarcza jego raporty, ale nie polecenia, albo zablokowany styk — oraz encję wybraną w opcjach, a potem wyłącz i włącz sterowanie. Monitor działa dalej."
+      "description": "{relay} przyjmował wcześniej w tej sesji polecenia wtyczki, ale od około 15 minut — trzech sprawdzeń — nie pokazał żadnego z nich, a teraz nie pokazuje „wyłącz”. Kocioł może dalej grzać, bo przekaźnik się nie wyłącza. Sterowanie się zatrzymało; przekaźnik został raz ustawiony w stan po oddaniu sterowania, na którym też nie można polegać. Sprawdź przekaźnik i jego łączność — łącze, które dostarcza jego raporty, ale nie polecenia, albo zablokowany styk — oraz encję wybraną w opcjach, a potem wyłącz i włącz sterowanie. Monitor działa dalej."
     },
     "relay_rests_off": {
       "title": "Kocioł nie grzeje, gdy sterowanie jest wyłączone",

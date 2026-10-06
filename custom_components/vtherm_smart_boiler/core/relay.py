@@ -18,10 +18,14 @@ What is written (R8):
   relay's own timer has been recognised, Z4R2-05); "off" is not repeated;
 - a relay that reports no state — declared so, not known, or an entity with ``assumed_state`` —
   gets its current command, on or off, every repeat interval, and at once when it comes back
-  within reach (PB-44); nothing is judged from it;
+  within reach (PB-44) — at most once each check interval, and not within ``RELAY_CONFIRM_S``
+  of a write, other returns waiting for the repeat, so one that keeps dropping out is switched
+  no more often than its repeat alone would (M1 of the part-1 check); nothing is judged from
+  it, but a return in another state — or, with no state shown, any return while commanded on —
+  counts toward "commands lost";
 - nothing is written while it is unavailable or missing: out of reach for
   ``RELAY_UNREACHABLE_S`` (unavailable, missing or unknown) it raises its alarm, and it is never
-  handed back meanwhile — nothing could reach it; the command goes out at once on its return;
+  handed back meanwhile — nothing could reach it; the command goes out on its return, as above;
 - a write that failed, or had to wait, goes again at the next step — the one rewrite still as the
   rewrite (PB-01);
 - writes stay ``MIN_WRITE_INTERVAL_S`` apart.
@@ -287,6 +291,9 @@ class RelayState:
     # whether that run has lasted ``RELAY_NOT_TAKEN_CHECKS`` checks: it stopped taking commands.
     unshown_since: float | None = None
     not_taken: bool = False
+    # A relay that reports no state: the last command sent at once at its return (PB-44) — the
+    # next such send waits a check interval (M1 of the part-1 check).
+    return_sent_at: float | None = None
     # --- the session's memory: kept across hand-backs, reset at the session's end ---
     start_done: bool = False  # the relay held a command for the timeout
     failed_sends: int = 0  # counted failed attempts of the start phase
@@ -376,6 +383,8 @@ def plan_relay(
         if not state.ignored:
             verdict = _classify(state, seen, now, config)
             state, events, lost = _account(state, verdict, seen, now)
+    elif not reports and desired is not None:
+        lost = _lost_at_return(state, seen, config)
     result = RelayResult(
         state, None, events, verdict.judged, lost, verdict.restart and lost, unreachable
     )
@@ -387,8 +396,24 @@ def plan_relay(
         return replace(result, state=_adopt(state, desired, now))
     if kind is None:
         return result
+    if kind is WriteKind.RESEND and seen.returned and not reports:
+        state = replace(state, return_sent_at=now)  # bounds the next one (M1)
     state, write = _send(state, desired, kind, seen, now)
     return replace(result, state=state, write=write)
+
+
+def _lost_at_return(state: RelayState, seen: RelaySeen, config: RelayConfig) -> bool:
+    """A relay that reports no state, back within reach with a command in force: a lost command,
+    counted toward "commands lost" (R2) though nothing is judged from it (M1 of the part-1
+    check) — back in another state where its entity shows one, or, where it shows none (declared
+    "no", or ``assumed_state``), back at all while commanded on: the outage may have stopped the
+    boiler, and the command sent again starts it. So a relay that keeps dropping out is shown."""
+    command = state.written
+    if not seen.returned or command is None:
+        return False
+    if seen.known and seen.reports and config.reports is not RelayReports.NO:
+        return seen.on is not command
+    return command
 
 
 # --- what a step's state means (R7) ---------------------------------------------------------
@@ -723,7 +748,7 @@ def _due(
         timer = desired and config.renew_s is not None
         return WriteKind.CHANGE, shows and not timer
     if not reports:
-        if seen.returned:
+        if seen.returned and _return_due(state, now, config):
             return WriteKind.RESEND, False  # back within reach: its command at once (R6, PB-44)
         # Blind: the current command, on or off, every repeat interval.
         return (WriteKind.KEEPALIVE if _elapsed(state, now, config.repeat_s) else None), False
@@ -753,6 +778,19 @@ def _renew_s(state: RelayState, config: RelayConfig) -> float | None:
 
 def _elapsed(state: RelayState, now: float, interval: float) -> bool:
     return state.written_at is None or now - state.written_at >= interval
+
+
+def _return_due(state: RelayState, now: float, config: RelayConfig) -> bool:
+    """A relay that reports no state gets its command at once at a return (PB-44), bounded so
+    that one dropping out again and again is switched no more often than its repeat alone would
+    (M1 of the part-1 check): at most once each check interval, and not within
+    ``RELAY_CONFIRM_S`` of a write — that write may be what knocked it out (the boiler's start
+    on its supply), and a reporting relay's change is not judged that soon after a send either.
+    A return that waits gets the regular repeat."""
+    if not _elapsed(state, now, RELAY_CONFIRM_S):
+        return False
+    sent = state.return_sent_at
+    return sent is None or now - sent >= config.check_s
 
 
 def _adopt(state: RelayState, desired: bool, now: float) -> RelayState:

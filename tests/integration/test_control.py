@@ -11486,7 +11486,8 @@ async def test_a_relay_without_a_state_gets_its_command_at_once_when_it_returns(
     ``assumed_state`` — gets its command at once when it comes back within reach, as the
     "relay unreachable" texts say, not at the next blind repeat (before: up to the repeat
     interval, 5 min, later); a blip between two steps counts too. Nothing is written while it
-    is away."""
+    is away. Bounded (M1 of the part-1 check): back again within 5 min of that send, it waits
+    for the regular repeat; each return while commanded on counts toward "commands lost"."""
     relay.assumed = assumed
     calling(rig)
     await start_relay(rig, relay_reports_state="yes" if assumed else "no")
@@ -11502,10 +11503,21 @@ async def test_a_relay_without_a_state_gets_its_command_at_once_when_it_returns(
     assert relay.on
     await rig.advance(60)
     relay.away()
-    relay.back(False)  # gone and back between two steps
+    relay.back(False)  # gone and back between two steps, a minute after the last send
     await rig.advance(10)
+    assert relay.calls == [True, True]  # waits for the repeat
+    assert not relay.on
+    await rig.advance(230)  # the repeat, 5 min after the last write
     assert relay.calls == [True, True, True]
     assert relay.on
+    assert control_alarm(rig, "commands_lost") == "off"  # two returns lost
+    await rig.advance(130)
+    relay.away()
+    relay.back(False)  # over 5 min after the last return's send, 2 min after the repeat
+    await rig.advance(10)
+    assert relay.calls == [True] * 4  # at once again
+    assert relay.on
+    assert control_alarm(rig, "commands_lost") == "on"  # the third within a day
 
 
 async def test_a_relay_a_vt_zone_drives_or_of_the_gateway_blocks_control(
