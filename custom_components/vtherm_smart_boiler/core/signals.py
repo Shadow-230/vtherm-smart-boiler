@@ -146,3 +146,28 @@ SIGNAL_PRECEDENCE: tuple[Signal, ...] = (
     Signal.BOILER_LOCKOUT,
     Signal.FAULT_INDICATION,
 )
+
+# How near 0 °C the gateway's last outdoor reading must be for its next 0.0 to be a reading
+# (PB-21, M1; provisional, K4).
+GATEWAY_OUTDOOR_ZERO_NEAR_K = 2.0
+
+
+@dataclass
+class GatewayOutdoor:
+    """The OpenTherm Gateway's outdoor temperature through its zero rule (PB-21, M1). The
+    gateway shows 0 after a reset and for good where the boiler never answers the ID, but a
+    boiler reporting whole or half degrees also reads exactly 0 for hours at freezing. A 0.0
+    is a reading only right after a known reading within ``GATEWAY_OUTDOOR_ZERO_NEAR_K`` of 0
+    (an accepted 0 included); with no reading yet in this run, after one farther away, or
+    after an unknown state (unavailable, missing, implausible — the trace of an outage or a
+    reset) it is unknown. A gateway reset whose entity never goes unknown is not traced: its 0
+    after a reading near 0 counts, at most that margin off. ``last``: the last value read."""
+
+    last: float | None = None
+
+    def read(self, value: float | None) -> float | None:
+        """The reading for ``value`` (the entity's parsed value, its 0 kept as 0)."""
+        if value == 0.0 and (self.last is None or abs(self.last) > GATEWAY_OUTDOOR_ZERO_NEAR_K):
+            value = None
+        self.last = value
+        return value

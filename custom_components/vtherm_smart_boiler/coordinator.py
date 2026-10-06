@@ -172,7 +172,7 @@ from .core.signal_check import (
     features,
     link_connected,
 )
-from .core.signals import Signal
+from .core.signals import GatewayOutdoor, Signal
 from .core.supply import circuit_return, circuit_supply
 from .core.zone_watch import every_zone_unknown_since, issue_due
 from .forecasts import ForecastRecorder
@@ -932,8 +932,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         history = self._empty_history()
         for entity_id, rows in states.items():
             timed = [(row.last_updated.timestamp(), row) for row in rows if isinstance(row, State)]
+            outdoor = GatewayOutdoor()  # the zero rule's memory of the recorded states (M1)
             for t, state in with_downtime(timed, down, start, end):
-                self._record(entity_id, state, t, history)
+                self._record(entity_id, state, t, history, outdoor)
         return history
 
     @callback
@@ -965,14 +966,21 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         )
 
     def _record(
-        self, entity_id: str, state: State | None, t: float, history: History | None = None
+        self,
+        entity_id: str,
+        state: State | None,
+        t: float,
+        history: History | None = None,
+        outdoor: GatewayOutdoor | None = None,
     ) -> None:
-        """A state into the history (the live one, or one being rebuilt off the event loop:
-        nothing here writes to Home Assistant)."""
+        """A state into the history (the live one, or one being rebuilt off the event loop with
+        its own ``outdoor`` memory: nothing here writes to Home Assistant or changes the live
+        readings)."""
         history = self.history if history is None else history
         signal = self.transport.signal_of(entity_id)
         if signal is not None:
-            _append(history.signals[signal], t, self.transport.reading_of(signal, state).value)
+            reading = self.transport.reading_of(signal, state, outdoor)
+            _append(history.signals[signal], t, reading.value)
         if entity_id in history.zones:
             zone = self.link.zone_from_state(entity_id, state)
             series = history.zones[entity_id]

@@ -10,7 +10,7 @@ from ..core.foreign_heat import SourceKind
 from ..core.hand_back import RestartKind
 from ..core.limits import Grid
 from ..core.readings import BoilerSnapshot, Reading
-from ..core.signals import Signal
+from ..core.signals import GatewayOutdoor, Signal
 from ..units import (
     celsius_to,
     parse_binary,
@@ -101,6 +101,8 @@ class EntityTransport:
         self._mapping = dict(mapping)
         self._by_entity = {entity: signal for signal, entity in self._mapping.items()}
         self.gateway = frozenset(gateway)
+        # The live outdoor readings' memory for the gateway's zero rule (PB-21, M1).
+        self.outdoor = GatewayOutdoor()
 
     def signal_of(self, entity_id: str) -> Signal | None:
         return self._by_entity.get(entity_id)
@@ -108,8 +110,17 @@ class EntityTransport:
     def reading(self, signal: Signal) -> Reading:
         return self.reading_of(signal, self._hass.states.get(self._mapping[signal]))
 
-    def reading_of(self, signal: Signal, state: State | None) -> Reading:
-        """A state of the signal's entity as a reading — the live one, or a recorded one."""
+    def reading_of(
+        self, signal: Signal, state: State | None, outdoor: GatewayOutdoor | None = None
+    ) -> Reading:
+        """A state of the signal's entity as a reading — the live one, or a recorded one. The
+        gateway's outdoor temperature goes through its zero rule (PB-21, M1), with ``outdoor``
+        as the memory — recorded states in time order bring their own; the live one by
+        default."""
+        if signal is Signal.OUTDOOR and signal in self.gateway:
+            memory = self.outdoor if outdoor is None else outdoor
+            reading = reading_from_state(signal, state)
+            return Reading(memory.read(reading.value), reading.reported_at)
         return reading_from_state(signal, state, from_gateway=signal in self.gateway)
 
     def snapshot(self, now: float) -> BoilerSnapshot:

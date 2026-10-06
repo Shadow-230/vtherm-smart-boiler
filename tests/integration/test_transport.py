@@ -8,7 +8,7 @@ import pytest
 from homeassistant.core import HomeAssistant
 
 from custom_components.vtherm_smart_boiler import transport
-from custom_components.vtherm_smart_boiler.core.signals import Signal
+from custom_components.vtherm_smart_boiler.core.signals import GatewayOutdoor, Signal
 from custom_components.vtherm_smart_boiler.transport.entities import EntityTransport
 
 from .harness import BOILER_ENTITIES, FakeBoiler
@@ -42,6 +42,39 @@ async def test_implausible_and_unavailable_states_are_unknown(
     snapshot = link.snapshot(now=1e10)
     assert snapshot.number(Signal.FLOW) is None
     assert snapshot.flag(Signal.FLAME) is None
+
+
+async def test_a_gateway_outdoor_zero_follows_the_last_reading(hass: HomeAssistant) -> None:
+    """PB-21, M1: the gateway's outdoor 0 °C is a reading after one near 0, unknown with none
+    yet, after one far away or after the entity was unavailable; a recorded state goes through
+    a memory of its own and leaves the live one as it was; flow keeps the 0-is-unknown rule."""
+    outdoor, flow = BOILER_ENTITIES[Signal.OUTDOOR], BOILER_ENTITIES[Signal.FLOW]
+    gateway = frozenset({Signal.OUTDOOR, Signal.FLOW})
+    link = EntityTransport(hass, {Signal.OUTDOOR: outdoor, Signal.FLOW: flow}, gateway)
+    unit = {"unit_of_measurement": "°C"}
+
+    def read(value: str) -> object:
+        hass.states.async_set(outdoor, value, unit)
+        return link.snapshot(now=1e10).number(Signal.OUTDOOR)
+
+    assert read("0.0") is None  # no reading yet in this run
+    assert read("1.0") == 1.0
+    assert read("0.0") == 0.0
+    assert read("0") == 0.0  # hours at freezing
+    hass.states.async_set(flow, "0.0", unit)
+    assert link.snapshot(now=1e10).number(Signal.FLOW) is None
+    recorded = GatewayOutdoor()
+    state = hass.states.get(outdoor)
+    assert link.reading_of(Signal.OUTDOOR, state, recorded).value is None  # its own memory
+    assert read("0.0") == 0.0  # the live memory unchanged
+    assert read("unavailable") is None
+    assert read("0.0") is None  # back from unavailable: a reset's 0
+    assert read("8.0") == 8.0
+    assert read("0.0") is None
+    assert (
+        EntityTransport(hass, {Signal.OUTDOOR: outdoor}).snapshot(1e10).number(Signal.OUTDOOR)
+        == 0.0
+    )  # not the gateway's: 0 is a reading
 
 
 WRITE_WORDS = ("write", "set", "turn", "send", "publish", "command", "call", "service")

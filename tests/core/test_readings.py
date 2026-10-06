@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import pytest
 
+from custom_components.vtherm_smart_boiler.core.curve import (
+    OutdoorSource,
+    OutdoorState,
+    update_outdoor,
+)
 from custom_components.vtherm_smart_boiler.core.readings import (
     UNKNOWN,
     BoilerSnapshot,
@@ -11,8 +16,10 @@ from custom_components.vtherm_smart_boiler.core.readings import (
     ZoneState,
 )
 from custom_components.vtherm_smart_boiler.core.signals import (
+    GATEWAY_OUTDOOR_ZERO_NEAR_K,
     LINK_SIGNALS,
     SIGNAL_SPECS,
+    GatewayOutdoor,
     Signal,
 )
 
@@ -193,3 +200,57 @@ def test_a_zone_has_reported_when_vt_shows_it_started_with_its_mode(
 )
 def test_a_zones_mean_power_over_its_cycle(state: ZoneState, power: float | None) -> None:
     assert state.cycle_power == (None if power is None else pytest.approx(power))
+
+
+def _outdoor_run(values: list[float | None], step_s: float = 30 * 60) -> list[OutdoorState]:
+    """Gateway outdoor readings, one every ``step_s``, through the zero rule and the curve's
+    effective outdoor temperature (no weather entity)."""
+    memory = GatewayOutdoor()
+    state = OutdoorState()
+    states = []
+    for index, value in enumerate(values):
+        state = update_outdoor(state, memory.read(value), None, index * step_s)
+        states.append(state)
+    return states
+
+
+def test_a_gateway_outdoor_zero_near_the_last_reading_is_a_reading_for_hours() -> None:
+    """PB-21, M1: a boiler reporting whole or half degrees reads exactly 0 for hours at
+    freezing — after a reading near 0 it is 0 °C, not unknown; no fallback after the hold."""
+    states = _outdoor_run([1.0] + [0.0] * 9)  # 0 °C for 4.5 h
+    assert all(state.source is OutdoorSource.SENSOR for state in states)
+    assert states[-1].effective == pytest.approx(0.0, abs=0.3)
+    states = _outdoor_run([0.5] + [0.0] * 9)
+    assert all(state.source is OutdoorSource.SENSOR for state in states)
+    assert GatewayOutdoor(-2.0).read(0.0) == 0.0  # the margin itself counts as near
+
+
+def test_a_gateway_outdoor_zero_far_from_the_last_reading_or_first_is_unknown() -> None:
+    """PB-21, M1: the gateway's reset shows 0 — after a reading more than 2 K away, or with no
+    reading yet in this run, a 0 is unknown, and so are the zeros after it."""
+    assert GATEWAY_OUTDOOR_ZERO_NEAR_K == 2.0
+    for first in (8.0, -2.5, 2.1):
+        memory = GatewayOutdoor()
+        assert memory.read(first) == first
+        assert memory.read(0.0) is None
+        assert memory.read(0.0) is None
+        assert memory.read(1.5) == 1.5  # a real reading again
+        assert memory.read(0.0) == 0.0
+    memory = GatewayOutdoor()
+    assert memory.read(0.0) is None
+    assert memory.read(0.0) is None
+    states = _outdoor_run([8.0] + [0.0] * 8)
+    assert states[1].source is OutdoorSource.HELD
+    assert states[-1].source is OutdoorSource.NONE  # unknown, as before: the hold then ends
+
+
+def test_a_gateway_outdoor_zero_after_an_unknown_state_is_unknown() -> None:
+    """PB-21, M1: a state that is unknown (``None``: unavailable, missing, implausible) is a
+    trace of the gateway's outage or reset — the next 0 is unknown until a real reading."""
+    memory = GatewayOutdoor()
+    assert memory.read(0.5) == 0.5
+    assert memory.read(None) is None
+    assert memory.read(0.0) is None
+    assert memory.last is None
+    assert memory.read(-0.5) == -0.5
+    assert memory.read(0.0) == 0.0
