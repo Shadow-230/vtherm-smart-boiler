@@ -18,6 +18,7 @@ import pytest
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.core.alarms import AlarmKind
@@ -35,8 +36,10 @@ from .test_control import (  # the rig fixture comes with them
     blockers,
     issue,
     options,
+    ran_before,
     rig,  # noqa: F401
     set_up,
+    smartpi_learner,
     start,
     unit_of,
 )
@@ -284,6 +287,49 @@ async def test_without_a_threshold_there_is_no_add_water(rig: Rig) -> None:
     assert state.missing == ("add_water_threshold",)  # Y4: named as a missing input
 
 
+@pytest.mark.parametrize(
+    ("limits", "level", "notified"),
+    [
+        ({}, None, False),
+        ({"pressure_high_warning": 2.0}, "warning", False),
+        ({"pressure_high_alarm": 2.0}, "alarm", True),
+    ],
+    ids=["none", "warning_only", "alarm_only"],
+)
+async def test_the_high_pressure_limits_are_the_users_own(
+    rig: Rig, limits: dict[str, float], level: str | None, notified: bool
+) -> None:
+    """Decision 13 (SB-18), an entry of this version: without a limit no high-pressure alarm
+    exists, however high the pressure, and no notification opens; a warning alone shows at
+    once and never notifies; an alarm alone notifies after five minutes and closes after an
+    hour below it less 0.1 bar."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=with_pressure(rig, 1.5, **limits),
+        version=1,
+        minor_version=5,
+    )
+    entry.add_to_hass(rig.hass)
+    ran_before(rig, entry)
+    await set_up(rig, entry)
+    await rig.advance(60)
+    set_pressure(rig, 2.2)
+    await rig.advance(5 * MINUTE + 30)
+    key = f"{entry.entry_id}_alarm_pressure_high"
+    found = er.async_get(rig.hass).async_get_entity_id("binary_sensor", DOMAIN, key)
+    if level is None:
+        assert found is None
+    else:
+        assert rig.state("binary_sensor", "alarm_pressure_high").attributes["level"] == level
+    assert (issue(rig, "pressure_high") is not None) is notified
+    if notified:
+        set_pressure(rig, 1.85)
+        await rig.advance(62 * MINUTE, step=60.0)
+        assert issue(rig, "pressure_high") is None
+
+
 # --- boiler protection: the boiler's own fault -------------------------------------------------
 
 
@@ -325,6 +371,25 @@ async def test_a_boiler_fault_switches_heating_off_without_a_hand_back(rig: Rig)
     assert rig.state("sensor", "control_state").state == "heating"
     await rig.advance(30)
     assert issue(rig, "boiler_fault") is None
+
+
+@pytest.mark.parametrize("fault", ["on", "unavailable"])
+async def test_a_boiler_fault_pauses_smartpi_learning(rig: Rig, fault: str) -> None:
+    """Decision 14 (SB-29): control's "off" for a boiler fault pauses SmartPI's learning in a
+    zone calling for heat, as a draw does — when it is sent, after five minutes. Negative: the
+    fault unavailable counts as none and pauses nothing."""
+    calls = smartpi_learner(rig)
+    zone = rig.zones.entities["living"]
+    await set_up(rig, add_entry(rig, with_fault(rig)))
+    await rig.switch(True)
+    await rig.advance(30)
+    rig.hass.states.async_set(LOW_WATER, fault)
+    await rig.advance(4 * MINUTE)
+    assert (zone, False) not in calls  # no "off" yet
+    await rig.advance(90)
+    assert ((zone, False) in calls) is (fault == "on")
+    state = rig.state("sensor", "control_state").state
+    assert (state == "boiler_fault") is (fault == "on")
 
 
 async def test_a_boiler_fault_raises_no_sign_the_boiler_heats(rig: Rig) -> None:

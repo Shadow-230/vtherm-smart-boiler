@@ -113,7 +113,6 @@ from .core.alarms import (
     DEFAULT_FREQUENT_STARTS_PER_HOUR,
     DEFAULT_UNSTABLE_BURNS_PER_DAY,
     FLUE_GAS_CONDENSING_BAND,
-    PRESSURE_HIGH_BAND,
 )
 from .core.building import InsulationClass, ThermalMass
 from .core.demand import feeds_opening, feeds_power
@@ -571,19 +570,13 @@ def monitor_schema(options: dict[str, Any]) -> vol.Schema:
             ): _number(*MONITOR_BOUNDS["foreign_heat_hold_min"], 5, "min"),
             # Y1: one optional "add water" threshold from the boiler's manual — none by default.
             _optional("add_water_below", monitor): _number(*ADD_WATER_RANGE_BAR, 0.1, "bar"),
-            **_limit(
-                monitor,
-                "pressure_high_warning",
-                PRESSURE_HIGH_BAND.warning,
-                *MONITOR_BOUNDS["pressure_high_warning"],
-                "bar",
+            # Decision 13 (SB-18): the high-pressure limits, from the safety valve's rating —
+            # none by default, each optional.
+            _optional("pressure_high_warning", monitor): _number(
+                *MONITOR_BOUNDS["pressure_high_warning"], 0.1, "bar"
             ),
-            **_limit(
-                monitor,
-                "pressure_high_alarm",
-                PRESSURE_HIGH_BAND.alarm,
-                *MONITOR_BOUNDS["pressure_high_alarm"],
-                "bar",
+            _optional("pressure_high_alarm", monitor): _number(
+                *MONITOR_BOUNDS["pressure_high_alarm"], 0.1, "bar"
             ),
             **_limit(
                 monitor,
@@ -614,8 +607,8 @@ def monitor_schema(options: dict[str, Any]) -> vol.Schema:
 def _limit(
     current: dict[str, Any], key: str, default: float | None, low: float, high: float, unit: str
 ) -> dict[Any, Any]:
-    step = 0.1 if unit == "bar" else 1.0
-    return {vol.Required(key, default=current.get(key, default)): _number(low, high, step, unit)}
+    """A flue-gas limit, in whole degrees, offered at its default."""
+    return {vol.Required(key, default=current.get(key, default)): _number(low, high, 1.0, unit)}
 
 
 # --- control ----------------------------------------------------------------------------------
@@ -2022,8 +2015,9 @@ class SmartBoilerConfigFlow(_Steps, ConfigFlow, domain=DOMAIN):
     VERSION = 1
     # 2: the options 0.2.1 removed are gone; 3: a control section without the lowest water
     # temperature keeps 25 °C; 4: the "add water" threshold replaces the low-pressure limits, and
-    # alarm reactions no longer offered go (see async_migrate_entry).
-    MINOR_VERSION = 4
+    # alarm reactions no longer offered go; 5: the high-pressure limits have no default, and an
+    # entry from before keeps those it ran with (see async_migrate_entry).
+    MINOR_VERSION = 5
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}

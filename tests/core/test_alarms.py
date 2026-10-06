@@ -12,7 +12,7 @@ from custom_components.vtherm_smart_boiler.core.alarms import (
     HELD,
     HOT_WATER_UNKNOWN,
     NO_ZONE_DATA,
-    PRESSURE_HIGH_BAND,
+    PRESSURE_HIGH_HYSTERESIS_BAR,
     UNKNOWN_HOLD_S,
     UNKNOWN_INPUT,
     Alarm,
@@ -29,6 +29,7 @@ from custom_components.vtherm_smart_boiler.core.alarms import (
     frequent_starts,
     hysteresis_samples,
     pressure_alarms,
+    pressure_high_band,
     pressure_samples,
     pressure_trend,
     settle,
@@ -43,6 +44,8 @@ HOUR = 3600.0
 DAY = 86400.0
 LOW = AlarmKind.PRESSURE_LOW
 HIGH = AlarmKind.PRESSURE_HIGH
+# A sample band — no default exists since decision 13 of 0.2.3 (SB-18).
+HIGH_BAND = Band(warning=2.5, alarm=2.8, rising=True, hysteresis=PRESSURE_HIGH_HYSTERESIS_BAR)
 ADD_WATER = add_water_band(0.8)  # a threshold the user entered from the boiler's manual
 
 
@@ -68,11 +71,11 @@ def test_levels_at_once_and_after_five_minutes() -> None:
     """The warning level shows at once; the alarm level only once the value has stayed beyond
     the alarm limit for five minutes of known readings (decision 7)."""
     assert ALARM_HOLD_S == 300.0
-    ok = banded_alarm(HIGH, 2.0, PRESSURE_HIGH_BAND, None, 0.0)
+    ok = banded_alarm(HIGH, 2.0, HIGH_BAND, None, 0.0)
     assert (ok.active, ok.level, ok.value, ok.known_at) == (False, None, 2.0, 0.0)
-    warning = banded_alarm(HIGH, 2.6, PRESSURE_HIGH_BAND, None, 0.0)
+    warning = banded_alarm(HIGH, 2.6, HIGH_BAND, None, 0.0)
     assert (warning.active, warning.level, warning.limit) == (True, Level.WARNING, 2.5)
-    early = banded_alarm(HIGH, 2.9, PRESSURE_HIGH_BAND, None, 0.0)
+    early = banded_alarm(HIGH, 2.9, HIGH_BAND, None, 0.0)
     assert (early.active, early.level) == (True, Level.WARNING)  # not five minutes yet
     flue = settled(AlarmKind.FLUE_GAS_HIGH, [105.0] * 6, FLUE_GAS_CONDENSING_BAND)
     assert (flue.level, flue.limit) == (Level.ALARM, 100.0)
@@ -81,16 +84,16 @@ def test_levels_at_once_and_after_five_minutes() -> None:
 def test_the_alarm_level_needs_five_minutes_of_known_readings() -> None:
     """2.9 bar known: a warning for 4 min 59 s, the alarm at 5 min. A ``None`` in between
     restarts the count."""
-    alarm = banded_alarm(HIGH, 2.9, PRESSURE_HIGH_BAND, None, 0.0)
+    alarm = banded_alarm(HIGH, 2.9, HIGH_BAND, None, 0.0)
     assert alarm.level is Level.WARNING
-    before = banded_alarm(HIGH, 2.9, PRESSURE_HIGH_BAND, alarm, 299.0)
+    before = banded_alarm(HIGH, 2.9, HIGH_BAND, alarm, 299.0)
     assert before.level is Level.WARNING
-    assert banded_alarm(HIGH, 2.9, PRESSURE_HIGH_BAND, before, 300.0).level is Level.ALARM
-    gap = banded_alarm(HIGH, None, PRESSURE_HIGH_BAND, alarm, 120.0)
+    assert banded_alarm(HIGH, 2.9, HIGH_BAND, before, 300.0).level is Level.ALARM
+    gap = banded_alarm(HIGH, None, HIGH_BAND, alarm, 120.0)
     assert (gap.active, gap.reason) == (True, HELD)
-    again = banded_alarm(HIGH, 2.9, PRESSURE_HIGH_BAND, gap, 180.0)
-    assert banded_alarm(HIGH, 2.9, PRESSURE_HIGH_BAND, again, 479.0).level is Level.WARNING
-    assert banded_alarm(HIGH, 2.9, PRESSURE_HIGH_BAND, again, 480.0).level is Level.ALARM
+    again = banded_alarm(HIGH, 2.9, HIGH_BAND, gap, 180.0)
+    assert banded_alarm(HIGH, 2.9, HIGH_BAND, again, 479.0).level is Level.WARNING
+    assert banded_alarm(HIGH, 2.9, HIGH_BAND, again, 480.0).level is Level.ALARM
 
 
 def test_an_unknown_input_holds_the_alarm_one_hour_then_is_unknown() -> None:
@@ -99,27 +102,27 @@ def test_an_unknown_input_holds_the_alarm_one_hour_then_is_unknown() -> None:
     until a known reading comes. An inactive alarm is held alike: off for the hour, then
     unknown, never "OK" for good."""
     assert UNKNOWN_HOLD_S == 3600.0
-    active = settled(HIGH, [2.9] * 6, PRESSURE_HIGH_BAND)
+    active = settled(HIGH, [2.9] * 6, HIGH_BAND)
     known = active.known_at
     assert known == 5 * MIN
-    held = banded_alarm(HIGH, None, PRESSURE_HIGH_BAND, active, known + 59 * MIN)
+    held = banded_alarm(HIGH, None, HIGH_BAND, active, known + 59 * MIN)
     assert (held.active, held.reason, held.level) == (True, HELD, Level.ALARM)
-    gone = banded_alarm(HIGH, None, PRESSURE_HIGH_BAND, held, known + 61 * MIN)
+    gone = banded_alarm(HIGH, None, HIGH_BAND, held, known + 61 * MIN)
     assert gone.active is None
     assert gone.reason == UNKNOWN_INPUT
-    later = banded_alarm(HIGH, None, PRESSURE_HIGH_BAND, gone, known + 5 * HOUR)
+    later = banded_alarm(HIGH, None, HIGH_BAND, gone, known + 5 * HOUR)
     assert later.active is None
-    back = banded_alarm(HIGH, 2.0, PRESSURE_HIGH_BAND, later, known + 6 * HOUR)
+    back = banded_alarm(HIGH, 2.0, HIGH_BAND, later, known + 6 * HOUR)
     assert (back.active, back.reason) == (False, None)
-    ok = banded_alarm(HIGH, 2.0, PRESSURE_HIGH_BAND, None, 0.0)
-    held_ok = banded_alarm(HIGH, None, PRESSURE_HIGH_BAND, ok, 59 * MIN)
+    ok = banded_alarm(HIGH, 2.0, HIGH_BAND, None, 0.0)
+    held_ok = banded_alarm(HIGH, None, HIGH_BAND, ok, 59 * MIN)
     assert (held_ok.active, held_ok.reason) == (False, HELD)
-    assert banded_alarm(HIGH, None, PRESSURE_HIGH_BAND, held_ok, 61 * MIN).active is None
+    assert banded_alarm(HIGH, None, HIGH_BAND, held_ok, 61 * MIN).active is None
 
 
 def test_an_input_unknown_from_the_start_is_unknown_at_once() -> None:
     """Negative: no reading ever — unknown at once, never "OK"; for a count or a trend too."""
-    for kind, band in ((HIGH, PRESSURE_HIGH_BAND), (LOW, ADD_WATER)):
+    for kind, band in ((HIGH, HIGH_BAND), (LOW, ADD_WATER)):
         alarm = banded_alarm(kind, None, band, None, 0.0)
         assert alarm.active is None
         assert alarm.reason == UNKNOWN_INPUT
@@ -133,14 +136,14 @@ def test_an_input_unknown_from_the_start_is_unknown_at_once() -> None:
 def test_a_level_clears_only_past_the_hysteresis() -> None:
     """P64: an active level clears only once the value is back past its limit by the
     hysteresis — from the alarm to the warning as from the warning to none."""
-    alarm = settled(HIGH, [2.9] * 6, PRESSURE_HIGH_BAND)
+    alarm = settled(HIGH, [2.9] * 6, HIGH_BAND)
     assert alarm.level is Level.ALARM
-    assert banded_alarm(HIGH, 2.75, PRESSURE_HIGH_BAND, alarm, 6 * MIN).level is Level.ALARM
-    warning = banded_alarm(HIGH, 2.65, PRESSURE_HIGH_BAND, alarm, 6 * MIN)
+    assert banded_alarm(HIGH, 2.75, HIGH_BAND, alarm, 6 * MIN).level is Level.ALARM
+    warning = banded_alarm(HIGH, 2.65, HIGH_BAND, alarm, 6 * MIN)
     assert warning.level is Level.WARNING
-    assert banded_alarm(HIGH, 2.45, PRESSURE_HIGH_BAND, warning, 7 * MIN).active
-    assert not banded_alarm(HIGH, 2.35, PRESSURE_HIGH_BAND, warning, 7 * MIN).active
-    assert not banded_alarm(HIGH, 2.45, PRESSURE_HIGH_BAND, None, 0.0).active
+    assert banded_alarm(HIGH, 2.45, HIGH_BAND, warning, 7 * MIN).active
+    assert not banded_alarm(HIGH, 2.35, HIGH_BAND, warning, 7 * MIN).active
+    assert not banded_alarm(HIGH, 2.45, HIGH_BAND, None, 0.0).active
     off = Band(warning=None, alarm=None, rising=True, hysteresis=1.0)
     assert not banded_alarm(AlarmKind.FLUE_GAS_HIGH, 500.0, off, None, 0.0).active
 
@@ -148,7 +151,7 @@ def test_a_level_clears_only_past_the_hysteresis() -> None:
 def test_low_pressure_has_no_default_threshold() -> None:
     """Y1: without an "add water" threshold no low-pressure alarm is computed at all, however
     low the pressure; the high-pressure alarm still is."""
-    alarms = pressure_alarms(0.3, None, PRESSURE_HIGH_BAND, {}, 0.0)
+    alarms = pressure_alarms(0.3, None, HIGH_BAND, {}, 0.0)
     assert LOW not in alarms
     assert alarms[HIGH].active is False
 
@@ -158,14 +161,14 @@ def test_add_water_after_five_minutes_below_the_threshold() -> None:
     level. It clears only above the threshold + 0.1 bar."""
     alarms: dict[AlarmKind, Alarm] = {}
     for minute in range(5):
-        alarms = pressure_alarms(0.75, 0.8, PRESSURE_HIGH_BAND, alarms, minute * MIN)
+        alarms = pressure_alarms(0.75, 0.8, HIGH_BAND, alarms, minute * MIN)
         assert alarms[LOW].active is False, minute
-    alarms = pressure_alarms(0.75, 0.8, PRESSURE_HIGH_BAND, alarms, 5 * MIN)
+    alarms = pressure_alarms(0.75, 0.8, HIGH_BAND, alarms, 5 * MIN)
     low = alarms[LOW]
     assert (low.active, low.level, low.value, low.limit) == (True, Level.ALARM, 0.75, 0.8)
-    alarms = pressure_alarms(0.85, 0.8, PRESSURE_HIGH_BAND, alarms, 6 * MIN)
+    alarms = pressure_alarms(0.85, 0.8, HIGH_BAND, alarms, 6 * MIN)
     assert alarms[LOW].active
-    alarms = pressure_alarms(0.95, 0.8, PRESSURE_HIGH_BAND, alarms, 7 * MIN)
+    alarms = pressure_alarms(0.95, 0.8, HIGH_BAND, alarms, 7 * MIN)
     assert alarms[LOW].active is False
 
 
@@ -660,3 +663,36 @@ def test_a_notification_opens_at_its_level_and_closes_after_an_hour_in_range() -
     assert outside == Notice(True)
     raised_again = follow_notice(again, True, False, 70 * MIN)
     assert raised_again == Notice(True)
+
+
+def test_without_high_pressure_limits_there_is_no_high_pressure_alarm() -> None:
+    """Decision 13 (SB-18): no high-pressure limit by default, as "add water" — no alarm is
+    computed at all, however high the pressure."""
+    assert pressure_high_band(None, None) is None
+    assert pressure_alarms(3.5, None, None, {}, 0.0) == {}
+    assert pressure_alarms(None, None, None, {}, 0.0) == {}
+
+
+def test_a_high_pressure_warning_alone_never_reaches_the_alarm_level() -> None:
+    band = pressure_high_band(2.0, None)
+    assert band == Band(2.0, None, True, PRESSURE_HIGH_HYSTERESIS_BAR)
+    alarm = settled(HIGH, [2.1] * 10, band)
+    assert (alarm.active, alarm.level, alarm.limit) == (True, Level.WARNING, 2.0)
+    assert banded_alarm(HIGH, 1.95, band, alarm, 11 * MIN).active is True  # its hysteresis
+    assert banded_alarm(HIGH, 1.85, band, alarm, 11 * MIN).active is False
+
+
+def test_a_high_pressure_alarm_alone_holds_five_minutes_first() -> None:
+    band = pressure_high_band(None, 2.0)
+    early = banded_alarm(HIGH, 2.1, band, None, 0.0)
+    assert (early.active, early.level) == (False, None)  # no warning level meanwhile
+    alarm = banded_alarm(HIGH, 2.1, band, early, ALARM_HOLD_S)
+    assert (alarm.active, alarm.level, alarm.limit) == (True, Level.ALARM, 2.0)
+    assert banded_alarm(HIGH, 1.95, band, alarm, ALARM_HOLD_S + MIN).level is Level.ALARM
+    assert banded_alarm(HIGH, 1.85, band, alarm, ALARM_HOLD_S + MIN).active is False
+
+
+def test_a_high_pressure_alarm_with_the_pressure_unknown_is_unknown() -> None:
+    """Negative: limits set, the pressure unknown from the start — unknown, never "OK"."""
+    alarms = pressure_alarms(None, None, pressure_high_band(2.0, 2.3), {}, 0.0)
+    assert (alarms[HIGH].active, alarms[HIGH].reason) == (None, UNKNOWN_INPUT)

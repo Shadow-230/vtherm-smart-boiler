@@ -219,7 +219,24 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.config_entries.async_update_entry(entry, options=options, minor_version=3)
     if entry.minor_version < 4:
         _migrate_alarms(hass, entry)
+    if entry.minor_version < 5:
+        _migrate_pressure_high(hass, entry)
     return True
+
+
+def _migrate_pressure_high(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Decision 13 of 0.2.3 (SB-18, minor version 5): the high-pressure limits have no default
+    any more; an entry from before with the water pressure mapped keeps the 2.5 / 2.8 bar it ran
+    with — written into its options, shown and editable in the form — so no alarm drops
+    silently; a stored limit stays as stored."""
+    from .config import migrated_pressure_high
+    from .const import MONITOR
+
+    options = dict(entry.options)
+    monitor = migrated_pressure_high(options)
+    if monitor is not None:
+        options[MONITOR] = monitor
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=5)
 
 
 def _migrate_alarms(hass: HomeAssistant, entry: ConfigEntry) -> None:

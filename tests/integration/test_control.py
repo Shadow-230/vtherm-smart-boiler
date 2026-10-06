@@ -4023,13 +4023,12 @@ async def test_a_0_2_1_store_moves_to_the_control_store(
     # setpoint a gateway's release must leave, none while nothing is owed (V4); the value a
     # timeout hand-back releases back to, and the targets another controller holds (V5);
     # whether a blocker stopped heating (V7); each guard's value from before the plugin and its
-    # last fall-back without a trace (X1); each pause's causes and the end of its hot water (X4).
+    # last fall-back without a trace (X1); each pause's causes (X4).
     moved = control | {
         "enabled": False,
         "last_command": None,
         "resume_since": {},
         "pause_causes": {},
-        "dhw_ended": {},
         "release_from": None,
         "release_baseline": None,
         "taken_by_other": [],
@@ -9254,7 +9253,7 @@ async def test_a_renamed_entity_carries_what_control_stored_for_it(
     control = rig.entry.options["control"]
     assert control["frost_zone"] == "climate.lounge"
     kept = stored_control(hass_storage, rig)
-    for key in ("paused", "pause_causes", "resuming", "resume_since", "dhw_ended"):
+    for key in ("paused", "pause_causes", "resuming", "resume_since"):
         assert living not in kept[key], key
     assert "climate.lounge" in kept["paused"] or "climate.lounge" in kept["resuming"]
     assert kept["taken_with"] == control

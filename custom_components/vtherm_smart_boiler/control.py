@@ -1056,12 +1056,12 @@ class ControlUnit:
             "controlling": self._holding,
             "taken_with": dict(self._raw) if kept and self._raw else None,
             "paused": dict(session.learning.paused),
-            # What each pause is for (P-89): a pause after hot water waits for the flow.
+            # What each pause is for (P-89): a pause after hot water waits for the flow. Its
+            # start (``paused``) bounds it: an hour at most (decision 14).
             "pause_causes": {
                 zone: [cause.value for cause in causes]
                 for zone, causes in session.learning.causes.items()
             },
-            "dhw_ended": dict(session.learning.dhw_ended),
             "resuming": dict(session.learning.resuming),
             "resume_since": dict(session.learning.resume_since),
             # Resumes given up (Y4): the next run shows them again.
@@ -1134,9 +1134,6 @@ class ControlUnit:
         )
         # A pause's causes, where stored (P-89); without them it is taken for hot water.
         causes: dict[str, tuple[PauseCause, ...]] = field("pause_causes", _causes, {})
-        dhw_ended: dict[str, float] = field(
-            "dhw_ended", lambda raw: {str(z): float(t) for z, t in raw.items()}, {}
-        )
         given_up: dict[str, float] = field(
             "resume_given_up", lambda raw: {str(z): float(t) for z, t in raw.items()}, {}
         )
@@ -1199,7 +1196,6 @@ class ControlUnit:
                 resuming=resuming,
                 resume_since={z: t for z, t in resume_since.items() if z in resuming},
                 causes={z: c for z, c in causes.items() if z in paused},
-                dhw_ended={z: t for z, t in dhw_ended.items() if z in paused},
                 given_up=given_up,
             ),
             alarms=alarms,
@@ -1891,6 +1887,7 @@ class ControlUnit:
             None if command is None else command.setpoint,
             out.heating_on,
             out.blocked,
+            fault=Reason.BOILER_FAULT in out.decision.reasons,
         )
         self._status = ControlStatus(
             configured=True,
@@ -4416,7 +4413,10 @@ class ControlUnit:
         heating_setpoint: float | None,
         heating: bool | None,
         writes_stopped: bool = False,
+        fault: bool = False,
     ) -> None:
+        """``fault``: control sends its "off" for a boiler fault — it pauses SmartPI's learning in
+        the zones calling for heat, as a draw does (decision 14)."""
         controlling = self._session.loop.control.controlling and not writes_stopped
         if not (self.options.learning_pauses and controlling):
             await self._async_release_learning(now)
@@ -4451,6 +4451,7 @@ class ControlUnit:
             now,
             self.options.learning,
             heating,
+            fault,
         )
         self._learning_calls += [(zone_id, False) for zone_id in plan.pause]
         self._learning_calls += [(zone_id, True) for zone_id in plan.resume]
@@ -4461,12 +4462,8 @@ class ControlUnit:
             # Stored before SmartPI is asked (the calls come after the step): a crash right
             # after a pause must still know the zone is the plugin's to resume (P-10).
             await self._coordinator.async_save_control_now()
-        elif (
-            plan.resume
-            or plan.state.resuming != before.resuming
-            or plan.state.dhw_ended != before.dhw_ended
-        ):
-            # A resume sent again, or when a pause's hot water ended: only times.
+        elif plan.resume or plan.state.resuming != before.resuming:
+            # A resume sent again: only times.
             self._coordinator.schedule_control_save()
 
     async def _async_release_learning(self, now: float) -> None:

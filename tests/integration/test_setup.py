@@ -793,7 +793,7 @@ async def test_an_entry_from_before_drops_the_options_that_are_gone(
         minor_version=1,
     )
     await setup(hass, entry)
-    assert entry.minor_version == 4
+    assert entry.minor_version == 5
     # Minor version 3 (X6): the lowest water temperature 0.2.1 used, kept.
     assert entry.options["control"] == {"write_path": "entity", "hard_min": 25.0}
 
@@ -841,7 +841,7 @@ async def test_the_alarm_migration_moves_to_the_add_water_threshold(
     entry.add_to_hass(hass)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 4
+    assert entry.minor_version == 5
     stored = entry.options["monitor"]
     assert "pressure_low_warning" not in stored
     assert "pressure_low_alarm" not in stored
@@ -878,7 +878,7 @@ async def test_the_alarm_migration_keeps_an_offered_reaction_and_raises_no_issue
     entry.add_to_hass(hass)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 4
+    assert entry.minor_version == 5
     assert entry.options["control"]["alarm_reactions"] == {"write_ignored": "hand_back"}
     assert ir.async_get(hass).async_get_issue(DOMAIN, f"reactions_removed_{entry.entry_id}") is None
 
@@ -913,7 +913,7 @@ async def test_migration_keeps_the_floor_of_a_control_section_without_it(
     entry.add_to_hass(hass)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 4
+    assert entry.minor_version == 5
     stored = entry.options.get("control")
     if hard_min is None:
         assert stored == control
@@ -954,14 +954,53 @@ CURRENT_OPTIONS = {  # Y1: the "add water" threshold; the one reaction still off
     "control": _GATEWAY | {"alarm_reactions": {"write_ignored": "hand_back"}, "hard_min": 25.0},
     "monitor": {"monitoring_days": 7, "add_water_below": 0.8},
 }
-STORED_BY_MINOR[4] = CURRENT_OPTIONS
+STORED_BY_MINOR[4] = STORED_BY_MINOR[5] = CURRENT_OPTIONS  # no pressure: 5 writes nothing
+
+
+@pytest.mark.parametrize(
+    ("minor", "stored", "expected"),
+    [
+        (4, {}, {"pressure_high_warning": 2.5, "pressure_high_alarm": 2.8}),
+        (
+            1,
+            {"pressure_high_alarm": 3.0},
+            {"pressure_high_warning": 2.5, "pressure_high_alarm": 3.0},
+        ),
+        (5, {}, {}),
+    ],
+    ids=["ran_with_the_defaults", "one_stored", "this_version"],
+)
+async def test_an_entry_from_before_keeps_the_high_pressure_limits_it_ran_with(
+    hass: HomeAssistant, minor: int, stored: dict[str, float], expected: dict[str, float]
+) -> None:
+    """Decision 13 of 0.2.3 (SB-18, minor version 5): an entry from before with the water
+    pressure mapped keeps the 2.5 / 2.8 bar it ran with — written into its options, shown in
+    the form — and so its alarm; a stored limit stays as stored. Negative: an entry of this
+    version without limits gets none — no high-pressure alarm, the feature naming what it
+    lacks."""
+    from custom_components.vtherm_smart_boiler.core.signal_check import Feature
+
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.PRESSURE))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0, Signal.PRESSURE: 1.5})
+    options = dict(entry_for(boiler).options) | {"monitor": {"monitoring_days": 7, **stored}}
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=minor
+    )
+    await setup(hass, entry)
+    assert entry.minor_version == 5
+    assert entry.options["monitor"] == {"monitoring_days": 7, **expected}
+    key = f"{entry.entry_id}_alarm_pressure_high"
+    found = er.async_get(hass).async_get_entity_id("binary_sensor", DOMAIN, key)
+    assert (found is not None) is bool(expected)
+    missing = entry.runtime_data.data.features[Feature.PRESSURE_WARNING].missing
+    assert missing == (() if expected else ("pressure_high_threshold",))
 
 
 @pytest.mark.parametrize("minor", sorted(STORED_BY_MINOR))
 async def test_an_entry_of_any_earlier_minor_version_migrates_to_this_ones_options(
     hass: HomeAssistant, minor: int
 ) -> None:
-    """P-124: from minor version 1 through 2 and 3 to this one (4), each step applied once and in
+    """P-124: from minor version 1 through 2, 3 and 4 to this one (5), each step applied once and in
     order from where the entry stands — ``boiler.shared_return`` and 0.2.1's removed control
     options go (2), the lowest water temperature 0.2.1 used is kept (3, X6), the low-pressure
     limits become the "add water" threshold and the reactions decision 7 no longer offers go,

@@ -121,9 +121,20 @@ class Band:
 # default, replacing 0.2.1's 1.0 / 0.7 bar — cleared 0.1 bar above it; 0.1 to 2.0 bar.
 ADD_WATER_HYSTERESIS_BAR = 0.1
 ADD_WATER_RANGE_BAR = (0.1, 2.0)
-PRESSURE_HIGH_BAND = Band(warning=2.5, alarm=2.8, rising=True, hysteresis=0.1)
+# The high pressure (decision 13 of 0.2.3, SB-18): no limits by default, as "add water" — the
+# user enters them below the safety valve's rating, read on the valve itself (often 3 bar in
+# Europe, about 2.1 bar in North America: no one default fits); a level clears 0.1 bar below.
+PRESSURE_HIGH_HYSTERESIS_BAR = 0.1
 # Flue gas of a condensing boiler; a non-condensing boiler runs far hotter and has no default.
 FLUE_GAS_CONDENSING_BAND = Band(warning=85.0, alarm=100.0, rising=True, hysteresis=5.0)
+
+
+def pressure_high_band(warning: float | None, alarm: float | None) -> Band | None:
+    """The high-pressure band from the user's limits — either may be missing, and that level is
+    off; ``None`` without either: no high-pressure alarm at all."""
+    if warning is None and alarm is None:
+        return None
+    return Band(warning, alarm, rising=True, hysteresis=PRESSURE_HIGH_HYSTERESIS_BAR)
 
 
 def add_water_band(threshold: float) -> Band:
@@ -176,20 +187,22 @@ def banded_alarm(
 def pressure_alarms(
     value: float | None,
     add_water_below: float | None,
-    high: Band,
+    high: Band | None,
     previous: Mapping[AlarmKind, Alarm],
     now: float,
 ) -> dict[AlarmKind, Alarm]:
-    """The water pressure's alarms: "add water" only with the user's threshold (none by
-    default: no low-pressure alarm at all), and the high pressure. Both only inform: heating
-    stops only while the boiler itself reports a fault that stops it."""
+    """The water pressure's alarms: "add water" only with the user's threshold, and the high
+    pressure only with the user's limits (none by default: no such alarm at all; decision 13).
+    Both only inform: heating stops only while the boiler itself reports a fault that stops
+    it."""
     alarms: dict[AlarmKind, Alarm] = {}
     if add_water_below is not None:
         low = AlarmKind.PRESSURE_LOW
         band = add_water_band(add_water_below)
         alarms[low] = banded_alarm(low, value, band, previous.get(low), now)
-    high_kind = AlarmKind.PRESSURE_HIGH
-    alarms[high_kind] = banded_alarm(high_kind, value, high, previous.get(high_kind), now)
+    if high is not None:
+        high_kind = AlarmKind.PRESSURE_HIGH
+        alarms[high_kind] = banded_alarm(high_kind, value, high, previous.get(high_kind), now)
     return alarms
 
 

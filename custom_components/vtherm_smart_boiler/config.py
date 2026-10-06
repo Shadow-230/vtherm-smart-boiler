@@ -44,9 +44,9 @@ from .core.alarms import (
     DEFAULT_FREQUENT_STARTS_PER_HOUR,
     DEFAULT_UNSTABLE_BURNS_PER_DAY,
     FLUE_GAS_CONDENSING_BAND,
-    PRESSURE_HIGH_BAND,
     Band,
     add_water_band,
+    pressure_high_band,
 )
 from .core.building import (
     InsulationClass,
@@ -183,7 +183,7 @@ class AlarmThresholds:
     low-pressure alarm at all (Y1)."""
 
     pressure_low: Band | None = None
-    pressure_high: Band = PRESSURE_HIGH_BAND
+    pressure_high: Band | None = None  # decision 13: none without the user's limits
     flue_gas: Band = FLUE_GAS_CONDENSING_BAND
     starts_per_hour: int = DEFAULT_FREQUENT_STARTS_PER_HOUR
     unstable_burns_per_day: int = DEFAULT_UNSTABLE_BURNS_PER_DAY
@@ -687,6 +687,38 @@ def _band(data: Mapping[str, Any], name: str, default: Band) -> Band:
     return Band(warning, alarm, default.rising, default.hysteresis)
 
 
+def _pressure_high(data: Mapping[str, Any]) -> Band | None:
+    """The high-pressure band (decision 13): each limit optional, none by default; the alarm
+    above the warning only where both are set."""
+    warning, alarm = (
+        _bounded("invalid_monitor", data, key, MONITOR_BOUNDS[key])
+        for key in ("pressure_high_warning", "pressure_high_alarm")
+    )
+    if warning is not None and alarm is not None and alarm <= warning:
+        raise ConfigError("alarm_limits_out_of_order", "pressure_high")
+    return pressure_high_band(warning, alarm)
+
+
+# Decision 13 of 0.2.3 (SB-18): minor version 5 took the high-pressure limits' defaults away;
+# an entry from before keeps the ones it ran with (2.5 / 2.8 bar), so no alarm drops silently.
+MIGRATED_PRESSURE_HIGH = (("pressure_high_warning", 2.5), ("pressure_high_alarm", 2.8))
+
+
+def migrated_pressure_high(options: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The monitor section of an entry from before decision 13 with the water pressure mapped,
+    each high-pressure limit it did not store set to the one it ran with; a stored limit stays
+    as stored. ``None``: nothing to write — the pressure not mapped, both limits stored, or a
+    section of another shape, which the reader refuses with its reason."""
+    signals = options.get("signals")
+    monitor = options.get("monitor", {})
+    if not isinstance(signals, Mapping) or not isinstance(monitor, Mapping):
+        return None
+    if not signals.get(Signal.PRESSURE.value):
+        return None
+    missing = {k: v for k, v in MIGRATED_PRESSURE_HIGH if monitor.get(k) in (None, "")}
+    return {**monitor, **missing} if missing else None
+
+
 # 0.2.1's low-pressure limits and their defaults (Y1's migration).
 OLD_LOW_PRESSURE = (("pressure_low_warning", 1.0), ("pressure_low_alarm", 0.7))
 
@@ -731,7 +763,7 @@ def _alarm_thresholds(data: Mapping[str, Any]) -> AlarmThresholds:
     starts, burns = "starts_per_hour_limit", "unstable_burns_limit"
     return AlarmThresholds(
         pressure_low=_add_water(data),
-        pressure_high=_band(data, "pressure_high", PRESSURE_HIGH_BAND),
+        pressure_high=_pressure_high(data),
         flue_gas=_band(data, "flue_gas", FLUE_GAS_CONDENSING_BAND),
         starts_per_hour=int(_monitor_value(data, starts, DEFAULT_FREQUENT_STARTS_PER_HOUR)),
         unstable_burns_per_day=int(_monitor_value(data, burns, DEFAULT_UNSTABLE_BURNS_PER_DAY)),

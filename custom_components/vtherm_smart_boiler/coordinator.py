@@ -1178,6 +1178,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             has_weather,
             has_rates,
             add_water=config.monitor.alarms.add_water_below is not None,
+            pressure_high=config.monitor.alarms.pressure_high is not None,
             bypass=config.installation.boiler.bypass,
             zone_valves=zone_valves,
             zone_data=bool(config.installation.zones) if zone_data is None else zone_data,
@@ -1407,7 +1408,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         config = self.config
         found: set[str] = set()
         if Signal.PRESSURE in config.signals:
-            found.add(PRESSURE_HIGH_ISSUE)
+            high = config.monitor.alarms.pressure_high
+            if high is not None and high.alarm is not None:  # decision 13: the user's limit
+                found.add(PRESSURE_HIGH_ISSUE)
             if config.monitor.alarms.add_water_below is not None:
                 found.add(ADD_WATER_ISSUE)
             if Signal.FLAME in config.signals and Signal.FLOW in config.signals:
@@ -1424,7 +1427,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         """Y1's notifications. "Add water", high pressure and hot flue gas open at their alarm
         level — held five minutes of known readings, hot-water draws included — and close
         after an hour of known readings in the normal range: above the threshold + 0.1 bar;
-        below the warning limit less its hysteresis. The trend's opens while it is exceeded and
+        below the warning limit less its hysteresis, the alarm limit's without a warning; none
+        opens without an alarm limit (decision 13). The trend's opens while it is exceeded and
         closes after an hour of it not. An unknown reading keeps an open one open. The boiler's
         fault opens once it has counted five minutes and closes when it no longer counts. Only
         information: none changes control."""
@@ -1455,14 +1459,15 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             (PRESSURE_HIGH_ISSUE, AlarmKind.PRESSURE_HIGH, high, pressure, _bar),
             (FLUE_GAS_HIGH_ISSUE, AlarmKind.FLUE_GAS_HIGH, gas, flue, _degrees),
         ):
-            if band.warning is None or band.alarm is None:
+            if band is None or band.alarm is None:
                 continue
             limit = f"{band.alarm:.1f}" if shown is _bar else f"{band.alarm:.0f}"
+            clears = band.alarm if band.warning is None else band.warning
             banded.append(
                 (
                     key,
                     kind,
-                    below(value, band.warning - band.hysteresis),
+                    below(value, clears - band.hysteresis),
                     {"value": shown(value), "limit": limit},
                 )
             )

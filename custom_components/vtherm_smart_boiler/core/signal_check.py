@@ -118,6 +118,8 @@ class FeatureStatus(StrEnum):
 # The inputs a feature may lack that are no signal — each a code in ``FeatureState.missing``,
 # beside the signals' own (``Signal`` values), named in a translated text.
 ADD_WATER_THRESHOLD = "add_water_threshold"  # the "add water" threshold, from the manual
+# The high-pressure warning or alarm, from the safety valve's rating (decision 13 of 0.2.3).
+PRESSURE_HIGH_THRESHOLD = "pressure_high_threshold"
 CONDENSING_BOILER = "condensing_boiler"  # the boiler declared condensing
 ZONE_DATA = "zone_data"  # VT zones configured, and at run time one known
 VALVE_OPENINGS = "valve_openings"  # every zone reports its valve opening
@@ -174,6 +176,7 @@ def features(
     has_gas_rates: bool,
     *,
     add_water: bool = False,
+    pressure_high: bool = False,
     bypass: bool = False,
     zone_valves: bool | None = None,
     zone_data: bool = True,
@@ -193,7 +196,8 @@ def features(
     inactive, naming what it lacks. Configured, ``mapped`` holds the mapped signals and each
     flag what the options give; at run time the signals known now, and the flags what is known
     now. ``has_gas_rates``: gas at min and max power are known. Y1: ``add_water`` — the user
-    entered the "add water" threshold; ``bypass`` — a bypass or a low-loss header is declared;
+    entered the "add water" threshold; ``pressure_high`` — a high-pressure limit (decision 13
+    of 0.2.3); ``bypass`` — a bypass or a low-loss header is declared;
     ``zone_valves`` — whether every zone reports a valve opening (``None``: not known yet);
     ``zone_data`` — zones are configured (at run time: one is known); ``gateway`` — the mapped
     signals the OpenTherm Gateway reports, whose fault flags need the fault indication (Q3.9);
@@ -212,7 +216,9 @@ def features(
     result: dict[Feature, FeatureState] = {
         Feature.CYCLES: _state(lacking(Signal.FLAME)),
         Feature.CONDENSING: _state(lacking(Signal.FLAME, Signal.RETURN)),
-        Feature.PRESSURE_WARNING: _state(lacking(Signal.PRESSURE)),
+        Feature.PRESSURE_WARNING: _state(
+            lacking(Signal.PRESSURE) + ([] if pressure_high else [PRESSURE_HIGH_THRESHOLD])
+        ),
         Feature.PRESSURE_TREND: _state(lacking(Signal.PRESSURE, Signal.FLAME, Signal.FLOW)),
         Feature.VERDICT: _state(lacking(Signal.FLAME)),
     }

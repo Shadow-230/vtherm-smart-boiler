@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from custom_components.vtherm_smart_boiler.core.learning import (
     LearningConfig,
     LearningState,
@@ -23,8 +25,8 @@ def zone(
     return ZoneLearning(zid, learning, valve_open, foreign)
 
 
-def plan(state, zones, t, dhw=False, flow=45.0, setpoint=45.0):
-    return plan_learning(state, zones, dhw, flow, setpoint, t * MIN, CONFIG)
+def plan(state, zones, t, dhw=False, flow=45.0, setpoint=45.0, fault=False):
+    return plan_learning(state, zones, dhw, flow, setpoint, t * MIN, CONFIG, fault=fault)
 
 
 def test_dhw_pauses_only_zones_with_an_open_valve() -> None:
@@ -142,13 +144,13 @@ def test_the_flow_must_come_back_within_a_tolerance_either_way() -> None:
 
 
 def test_learning_resumes_after_the_longest_pause_whatever_the_flow() -> None:
-    """S20, P-89: a boiler that cannot reach the setpoint must not keep learning paused for
-    ever — an hour after the draw ended (provisional, K4), whatever the flow."""
+    """S20, P-89, decision 14: a boiler that cannot reach the setpoint must not keep learning
+    paused for ever — an hour after the pause began (provisional, K4), whatever the flow."""
     state = plan(LearningState(), [zone("a")], 0, dhw=True).state
     state = plan(state, [zone("a", learning=False)], 30, flow=30.0, setpoint=45.0).state
-    waiting = plan(state, [zone("a", learning=False)], 89, flow=30.0, setpoint=45.0)
-    assert waiting.resume == ()  # 59 min after the draw ended at 30
-    late = plan(waiting.state, [zone("a", learning=False)], 90, flow=30.0, setpoint=45.0)
+    waiting = plan(state, [zone("a", learning=False)], 59, flow=30.0, setpoint=45.0)
+    assert waiting.resume == ()
+    late = plan(waiting.state, [zone("a", learning=False)], 60, flow=30.0, setpoint=45.0)
     assert late.resume == ("a",)
 
 
@@ -169,10 +171,13 @@ def test_a_release_counts_as_a_toggle() -> None:
 
 def test_pauses_can_be_switched_off() -> None:
     config = LearningConfig(
-        pause_on_dhw=False, pause_on_foreign_heat=False, pause_on_water_swing=False
+        pause_on_dhw=False,
+        pause_on_foreign_heat=False,
+        pause_on_water_swing=False,
+        pause_on_fault=False,
     )
     result = plan_learning(
-        LearningState(), [zone("a", foreign=True)], True, 45.0, 45.0, 0.0, config
+        LearningState(), [zone("a", foreign=True)], True, 45.0, 45.0, 0.0, config, fault=True
     )
     assert result.pause == ()
 
@@ -254,31 +259,67 @@ def test_the_flow_condition_applies_to_hot_water_only() -> None:
     assert cold.resume == ()
 
 
-def test_the_hot_water_flow_wait_is_capped_an_hour_after_the_draw_ended() -> None:
-    """A draw of 50 min, then the flow stays low: learning resumes 60 min after the draw ended
-    — not 60 min after the pause began."""
+def test_a_stuck_draw_signal_keeps_a_pause_an_hour_at_most() -> None:
+    """Decision 14 (SB-29): a draw signal stuck on keeps no pause for good — it ends an hour
+    after it began, and the same draw does not pause the zone again, its valve closing and
+    opening meanwhile or the signal unknown for a while; a new draw (the signal off, then on)
+    pauses it again."""
     state = plan(LearningState(), [zone("a")], 0, dhw=True).state
-    for minute in range(1, 50):
-        state = plan(state, [zone("a", learning=False)], minute, dhw=True, flow=30.0).state
-    ended = 50
-    for minute in range(ended, ended + 60):
-        result = plan(state, [zone("a", learning=False)], minute, flow=30.0, setpoint=45.0)
+    for minute in range(1, 60):
+        result = plan(state, [zone("a", learning=False)], minute, dhw=True, flow=30.0)
         assert result.resume == (), minute
         state = result.state
-    assert state.dhw_ended == {"a": ended * MIN}
-    late = plan(state, [zone("a", learning=False)], ended + 60, flow=30.0, setpoint=45.0)
-    assert late.resume == ("a",)
-    assert late.state.dhw_ended == {}
+    capped = plan(state, [zone("a", learning=False)], 60, dhw=True, flow=30.0)
+    assert capped.resume == ("a",)
+    state = capped.state
+    assert state.outlasted == {"a": (PauseCause.DHW,)}
+    for minute, valve, dhw in (
+        (61, True, True),
+        (75, False, True),
+        (80, True, True),
+        (150, True, None),
+        (151, True, True),
+    ):
+        result = plan(state, [zone("a", valve_open=valve)], minute, dhw=dhw)
+        assert result.pause == (), minute
+        state = result.state
+    state = plan(state, [zone("a")], 200, dhw=False).state  # the draw ends
+    assert state.outlasted == {}
+    assert plan(state, [zone("a")], 201, dhw=True).pause == ("a",)
 
 
-def test_a_new_draw_during_the_flow_wait_starts_its_hour_again() -> None:
+def test_a_new_draw_during_a_pause_does_not_lengthen_it() -> None:
     state = plan(LearningState(), [zone("a")], 0, dhw=True).state
     state = plan(state, [zone("a", learning=False)], 10, flow=30.0).state  # the draw ended
     state = plan(state, [zone("a", learning=False)], 40, dhw=True, flow=30.0).state
-    assert state.dhw_ended == {}
     state = plan(state, [zone("a", learning=False)], 45, flow=30.0).state
-    assert plan(state, [zone("a", learning=False)], 70, flow=30.0).resume == ()
-    assert plan(state, [zone("a", learning=False)], 105, flow=30.0).resume == ("a",)
+    assert plan(state, [zone("a", learning=False)], 59, flow=30.0).resume == ()
+    late = plan(state, [zone("a", learning=False)], 60, flow=30.0)
+    assert late.resume == ("a",)
+    assert late.state.outlasted == {}  # nothing lasted: a later draw pauses again
+
+
+@pytest.mark.parametrize("cause", ["fault", "foreign"])
+def test_every_pause_ends_an_hour_after_it_began(cause: str) -> None:
+    """Decision 14: a fault "off" or foreign heat lasting hours keeps no pause beyond the hour,
+    and does not pause the zone again until it has ended."""
+
+    def step(state: LearningState, minute: float, on: bool, learning: bool):
+        if cause == "fault":
+            return plan(state, [zone("a", learning=learning)], minute, fault=on)
+        return plan(state, [zone("a", learning=learning, foreign=on)], minute)
+
+    state = step(LearningState(), 0, True, True).state
+    assert step(state, 59, True, False).resume == ()
+    capped = step(state, 60, True, False)
+    assert capped.resume == ("a",)
+    state = capped.state
+    for minute in (61, 75, 180):
+        result = step(state, minute, True, True)
+        assert result.pause == (), minute
+        state = result.state
+    state = step(state, 181, False, True).state
+    assert step(state, 182, True, True).pause == ("a",)
 
 
 def test_hot_water_among_the_causes_keeps_its_flow_condition() -> None:
@@ -292,12 +333,13 @@ def test_hot_water_among_the_causes_keeps_its_flow_condition() -> None:
 
 def test_unknown_causes_after_a_restart_are_treated_as_hot_water() -> None:
     """Negative: a pause stored without its causes (0.2.1, a damaged store) waits for the flow,
-    at most an hour from the first step seen without a cause."""
+    at most an hour from its start (decision 14)."""
     state = LearningState(paused={"a": 0.0}, last_toggle={"a": 0.0})
     cold = plan(state, [zone("a", learning=False)], 20, flow=30.0, setpoint=45.0)
     assert cold.resume == ()
-    assert cold.state.dhw_ended == {"a": 20 * MIN}
-    late = plan(cold.state, [zone("a", learning=False)], 80, flow=30.0, setpoint=45.0)
+    still = plan(cold.state, [zone("a", learning=False)], 59, flow=30.0, setpoint=45.0)
+    assert still.resume == ()
+    late = plan(still.state, [zone("a", learning=False)], 60, flow=30.0, setpoint=45.0)
     assert late.resume == ("a",)
 
 
@@ -317,7 +359,6 @@ def test_a_release_forgets_the_causes() -> None:
     released, zones = release_all(state, 6 * MIN)
     assert zones == ("a",)
     assert released.causes == {}
-    assert released.dhw_ended == {}
 
 
 def test_a_renamed_zone_keeps_what_the_plugin_holds_for_it() -> None:
@@ -330,7 +371,8 @@ def test_a_renamed_zone_keeps_what_the_plugin_holds_for_it() -> None:
         resuming={"climate.a": 3.0},
         resume_since={"climate.a": 3.0},
         causes={"climate.a": (PauseCause.DHW,), "climate.b": ()},
-        dhw_ended={"climate.a": 4.0},
+        resumed={"climate.a": 4.0},
+        outlasted={"climate.a": (PauseCause.BOILER_FAULT,)},
     )
     renamed = rename_zone(state, "climate.a", "climate.c")
     assert renamed.paused == {"climate.c": 1.0, "climate.b": 2.0}
@@ -338,7 +380,8 @@ def test_a_renamed_zone_keeps_what_the_plugin_holds_for_it() -> None:
     assert renamed.resuming == {"climate.c": 3.0}
     assert renamed.resume_since == {"climate.c": 3.0}
     assert renamed.causes == {"climate.c": (PauseCause.DHW,), "climate.b": ()}
-    assert renamed.dhw_ended == {"climate.c": 4.0}
+    assert renamed.resumed == {"climate.c": 4.0}
+    assert renamed.outlasted == {"climate.c": (PauseCause.BOILER_FAULT,)}
     assert renamed.setpoints == state.setpoints
 
 
@@ -400,3 +443,59 @@ def test_a_release_and_a_rename_keep_what_was_given_up() -> None:
     released, _ = release_all(state, MIN)
     assert released.given_up == {"a": 0.0}
     assert rename_zone(released, "a", "c").given_up == {"c": 0.0}
+
+
+def test_a_boiler_fault_off_pauses_the_zones_calling_for_heat() -> None:
+    """Decision 14 (SB-29): control's "off" for a boiler fault pauses learning as a draw does —
+    in zones calling for heat only — and once it ends the flow must come back first."""
+    result = plan(LearningState(), [zone("a"), zone("b", valve_open=False)], 0, fault=True)
+    assert result.pause == ("a",)
+    assert result.causes == {"a": (PauseCause.BOILER_FAULT,), "b": ()}
+    lasting = plan(result.state, [zone("a", learning=False)], 30, fault=True)
+    assert lasting.resume == ()
+    cold = plan(lasting.state, [zone("a", learning=False)], 31, flow=30.0, setpoint=45.0)
+    assert cold.resume == ()  # the boiler heats again: the flow must come back first
+    back = plan(cold.state, [zone("a", learning=False)], 35, flow=44.0, setpoint=45.0)
+    assert back.resume == ("a",)
+
+
+@pytest.mark.parametrize("fault", [None, False])
+def test_a_fault_off_not_known_pauses_nothing(fault: bool | None) -> None:
+    """Negative: no fault "off" — none sent, or not known — pauses nothing, as before."""
+    assert plan(LearningState(), [zone("a")], 0, fault=fault).pause == ()
+
+
+@pytest.mark.parametrize("cause", ["dhw", "fault"])
+def test_a_draw_or_a_fault_pauses_even_right_after_a_resume(cause: str) -> None:
+    """Decision 14 (SB-29): every draw pauses, also within the minimum pause after the plugin's
+    own resume — so does a fault "off"; foreign heat still waits for it (above)."""
+    state = plan(LearningState(), [zone("a", foreign=True)], 0).state
+    state = plan(state, [zone("a", learning=False)], 11).state  # resumed
+    assert state.resumed == {"a": 11 * MIN}
+    again = plan(state, [zone("a")], 12, **{cause: True})
+    assert again.pause == ("a",)
+    assert again.state.resumed == {}
+
+
+def test_a_draw_signal_unknown_right_after_a_resume_pauses_nothing() -> None:
+    """Negative: a draw signal unknown is no draw."""
+    state = plan(LearningState(), [zone("a", foreign=True)], 0).state
+    state = plan(state, [zone("a", learning=False)], 11).state
+    assert plan(state, [zone("a")], 12, dhw=None).pause == ()
+
+
+def test_a_draw_does_not_repeat_a_pause_that_did_not_take_or_follow_a_release() -> None:
+    """Negative: a pause whose flag still read on (SmartPI skipped it, or the user switched
+    learning back on) is not sent again within the minimum pause, the draw lasting — the
+    plugin never fights the user; nor right after a release (control switched off and on)."""
+    state = plan(LearningState(), [zone("a")], 0, dhw=True).state
+    state = plan(state, [zone("a")], 1.5, dhw=True).state  # not taken: not the plugin's
+    for minute in (2.5, 5, 9.5):
+        result = plan(state, [zone("a")], minute, dhw=True)
+        assert result.pause == (), minute
+        state = result.state
+    assert plan(state, [zone("a")], 10, dhw=True).pause == ("a",)
+    paused = plan(LearningState(), [zone("a")], 0, dhw=True).state
+    released, _ = release_all(paused, 11 * MIN)
+    assert plan(released, [zone("a")], 12, dhw=True).pause == ()
+    assert plan(released, [zone("a")], 21, dhw=True).pause == ("a",)

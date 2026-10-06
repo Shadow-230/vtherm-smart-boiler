@@ -12,6 +12,7 @@ from custom_components.vtherm_smart_boiler.core.signal_check import (
     ADD_WATER_THRESHOLD,
     CONTROL,
     ENTITY_FOR_TWO_SIGNALS,
+    PRESSURE_HIGH_THRESHOLD,
     ControlKind,
     Feature,
     FeatureState,
@@ -105,6 +106,7 @@ def test_minimal_mapping_enables_the_basics() -> None:
 EVERYTHING = frozenset(Signal)
 FULL: dict[str, Any] = {
     "add_water": True,
+    "pressure_high": True,
     "zone_valves": True,
     "zone_data": True,
     "has_dhw": True,
@@ -193,6 +195,12 @@ CASES: list[tuple[Feature, dict[str, Any], FeatureStatus, tuple[str, ...]]] = [
         {"without": {Signal.PRESSURE}},
         FeatureStatus.INACTIVE,
         ("pressure",),
+    ),
+    (
+        Feature.PRESSURE_WARNING,
+        {"pressure_high": False},
+        FeatureStatus.INACTIVE,
+        ("pressure_high_threshold",),
     ),
     (Feature.ADD_WATER, {"without": {Signal.PRESSURE}}, FeatureStatus.INACTIVE, ("pressure",)),
     (
@@ -410,6 +418,8 @@ def test_the_y1_features_name_what_they_lack() -> None:
         (CONTROL, Signal.LOW_PRESSURE_FAULT, Signal.BOILER_LOCKOUT),
     )
     assert nothing[Feature.ADD_WATER].missing == (Signal.PRESSURE, ADD_WATER_THRESHOLD)
+    pressure = nothing[Feature.PRESSURE_WARNING].missing
+    assert pressure == (Signal.PRESSURE, PRESSURE_HIGH_THRESHOLD)  # decision 13: as add water
     assert nothing[Feature.PRESSURE_TREND].missing == (Signal.PRESSURE, Signal.FLAME, Signal.FLOW)
     assert nothing[Feature.HYSTERESIS_DRIFT].missing == (Signal.FLAME, Signal.FLOW)
     pump = frozenset({Signal.PUMP_RUNNING})

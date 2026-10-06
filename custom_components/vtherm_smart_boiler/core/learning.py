@@ -1,17 +1,25 @@
 """Learning pauses: keep the zone algorithms from learning what the boiler did to the rooms.
 
-A zone's learning is paused while DHW runs and its valve is open (no hot water reaches it) — every
-draw, however short and on a combi boiler too, as the zone gets no heat meanwhile (S-41) — while
-foreign heat warms it, and while the water temperature swings widely. Each pause keeps its causes
-(P-89). It resumes once every cause is gone and the minimum pause has passed; after hot water the
-flow must also be back within a tolerance of its setpoint — or heating be off — at the latest an
-hour after the draw ended (the anchor provisional, K4). After foreign heat or a swing no flow
-condition applies. A pause whose causes are not known (stored by an earlier version) is taken for
-hot water: the cautious rule.
+A zone's learning is paused while DHW runs, or control sends its "off" for a boiler fault, and its
+valve is open (no heat reaches it) — every draw, however short and on a combi boiler too, as the
+zone gets no heat meanwhile (S-41; the fault: decision 14) — while foreign heat warms it, and
+while the water temperature swings widely. Each pause keeps its causes (P-89). It resumes once
+every cause is gone and the minimum pause has passed; after hot water or a fault the flow must
+also be back within a tolerance of its setpoint — or heating be off. After foreign heat or a
+swing no flow condition applies. A pause whose causes are not known (stored by an earlier
+version) is taken for hot water: the cautious rule.
+
+A pause ends at the latest an hour after it began, even while its cause lasts (decision 14;
+provisional, K4): the causes then on — the draw, the fault "off", foreign heat, the swing — pause
+the zone again only once their signal has read off; a draw or fault signal unknown meanwhile is
+taken for the same one. That is not stored: after a restart a cause still on pauses once more.
 
 The plugin only resumes what it paused itself and never touches a zone whose learning the user
 has switched off. Every toggle costs the zone algorithm its observation in progress, so the
-plugin does not toggle faster than the minimum pause.
+plugin does not toggle faster than the minimum pause — except that a draw or a fault "off"
+pauses a zone even within it after the plugin's own resume (decision 14). Not after a pause that
+did not take, nor after a release: the plugin never fights the user, nor toggles with a control
+switched off and on.
 
 Every pause and resume is read back from the zone algorithm's flag: SmartPI skips a thermostat
 it cannot find without an error, and keeps its flag for good. A pause whose flag still reads on a
@@ -35,6 +43,12 @@ class PauseCause(StrEnum):
     DHW = "dhw"
     FOREIGN_HEAT = "foreign_heat"
     WATER_SWING = "water_swing"
+    BOILER_FAULT = "boiler_fault"  # control's "off" for a boiler fault (decision 14)
+
+
+# The calling zones get no heat: these pause even within the minimum pause after the plugin's
+# own resume, and after them the flow must come back first (S-41, decision 14).
+NO_HEAT = frozenset({PauseCause.DHW, PauseCause.BOILER_FAULT})
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,11 +56,15 @@ class LearningConfig:
     pause_on_dhw: bool = True
     pause_on_foreign_heat: bool = True
     pause_on_water_swing: bool = True
+    pause_on_fault: bool = True
     swing_k: float = 5.0  # setpoint change within the window that counts as a swing
     swing_window_s: float = 30 * MINUTE
     min_pause_s: float = 10 * MINUTE
-    resume_margin_k: float = 3.0  # after DHW, the flow must be back within this of its setpoint
-    max_pause_s: float = 60 * MINUTE  # ...or this long since the draw ended (provisional, K4)
+    # After hot water or a fault, the flow must be back within this of its setpoint...
+    resume_margin_k: float = 3.0
+    # ...and a pause ends this long after it began, even while its cause lasts (decision 14;
+    # provisional, K4).
+    max_pause_s: float = 60 * MINUTE
     check_s: float = MINUTE  # a pause or resume is read back after this
     give_up_s: float = DAY  # a zone gone this long after a resume is no longer followed
 
@@ -73,11 +91,15 @@ class LearningState:
     # The causes each running pause has seen (P-89); a paused zone without an entry: unknown,
     # taken for hot water.
     causes: Mapping[str, tuple[PauseCause, ...]] = field(default_factory=dict)
-    # A paused zone whose hot water has ended: since when — its flow wait is capped from then.
-    dhw_ended: Mapping[str, float] = field(default_factory=dict)
     # Resumes given up a day after the first one (Y4): since when; shown until the zone's flag
     # reads on again or the plugin pauses it again.
     given_up: Mapping[str, float] = field(default_factory=dict)
+    # Zones the plugin resumed within the minimum pause, since when: a draw or a fault "off"
+    # pauses them again at once (decision 14). Not stored.
+    resumed: Mapping[str, float] = field(default_factory=dict)
+    # The causes a pause's hour outlasted, per zone: they pause it again only once their signal
+    # has read off (decision 14). Not stored.
+    outlasted: Mapping[str, tuple[PauseCause, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +146,18 @@ def follow_resumes(
     return followed, tuple(again)
 
 
+def _signals(
+    zone: ZoneLearning, dhw: bool | None, fault: bool | None, swing: bool, config: LearningConfig
+) -> dict[PauseCause, bool | None]:
+    """Each cause's signal for a zone, its valve aside: on, off, or unknown (``None``)."""
+    return {
+        PauseCause.DHW: dhw if config.pause_on_dhw else False,
+        PauseCause.BOILER_FAULT: fault if config.pause_on_fault else False,
+        PauseCause.FOREIGN_HEAT: config.pause_on_foreign_heat and zone.foreign_heat,
+        PauseCause.WATER_SWING: swing,
+    }
+
+
 def plan_learning(
     state: LearningState,
     zones: Sequence[ZoneLearning],
@@ -133,9 +167,11 @@ def plan_learning(
     now: float,
     config: LearningConfig,
     heating: bool | None = None,
+    fault: bool | None = None,
 ) -> LearningPlan:
     """Which zones to pause and resume now. ``setpoint`` is the heating setpoint (not a low
-    "off" value); ``heating`` whether the boiler is to heat now (``None``: unknown)."""
+    "off" value); ``heating`` whether the boiler is to heat now; ``fault`` whether control sends
+    its "off" for a boiler fault (decision 14) — ``None``: unknown, which pauses nothing."""
     state, again = follow_resumes(state, {z.zone_id: z.learning for z in zones}, now, config)
     setpoints = tuple(
         (t, v)
@@ -156,94 +192,120 @@ def plan_learning(
     resuming = dict(state.resuming)
     resume_since = dict(state.resume_since)
     kept = {z: c for z, c in state.causes.items() if z in paused}
-    ended = {z: t for z, t in state.dhw_ended.items() if z in paused}
     given_up = dict(state.given_up)
+    resumed = {z: t for z, t in state.resumed.items() if 0.0 <= now - t < config.min_pause_s}
+    outlasted = dict(state.outlasted)
     pause: list[str] = []
     resume: list[str] = list(again)
     causes: dict[str, tuple[PauseCause, ...]] = {}
     for zone in zones:
         zone_id = zone.zone_id
-        reasons: list[PauseCause] = []
-        if config.pause_on_dhw and dhw is True and zone.valve_open:
-            reasons.append(PauseCause.DHW)
-        if config.pause_on_foreign_heat and zone.foreign_heat:
-            reasons.append(PauseCause.FOREIGN_HEAT)
-        if swing:
-            reasons.append(PauseCause.WATER_SWING)
-        causes[zone_id] = tuple(reasons)
+        signals = _signals(zone, dhw, fault, swing, config)
+        reasons = tuple(
+            cause
+            for cause, on in signals.items()
+            if on is True and (zone.valve_open or cause not in NO_HEAT)
+        )
+        causes[zone_id] = reasons
+        # A cause the hour outlasted counts again once its signal has read off.
+        lasting = tuple(c for c in outlasted.pop(zone_id, ()) if signals[c] is not False)
+        if lasting:
+            outlasted[zone_id] = lasting
+        fresh = tuple(r for r in reasons if r not in lasting)
         since = paused.get(zone_id)
         if since is not None and zone.learning is True and now - since >= config.check_s:
             # The pause did not take, or the user switched learning back on: not ours now.
             paused.pop(zone_id)
             kept.pop(zone_id, None)
-            ended.pop(zone_id, None)
             since = None
         if since is not None:
             # Every cause the pause has seen; unknown ones (an earlier version's store) are
-            # taken for hot water. The flow wait after hot water is capped from its end.
+            # taken for hot water.
             seen = kept.get(zone_id) or (PauseCause.DHW,)
-            kept[zone_id] = (*seen, *(r for r in reasons if r not in seen))
-            if PauseCause.DHW in reasons:
-                ended.pop(zone_id, None)
-            elif PauseCause.DHW in kept[zone_id]:
-                ended[zone_id] = min(ended.get(zone_id, now), now)
+            kept[zone_id] = (*seen, *(r for r in fresh if r not in seen))
         last = toggles.get(zone_id)
         settled = last is None or now - last >= config.min_pause_s
-        resuming_now = zone_id in resuming
-        if reasons and since is None and not resuming_now and zone.learning is True and settled:
+        # A draw or a fault "off" right after the plugin's own resume: paused at once.
+        no_heat = zone_id in resumed and any(r in NO_HEAT for r in fresh)
+        if (
+            fresh
+            and since is None
+            and zone_id not in resuming
+            and zone.learning is True
+            and (settled or no_heat)
+        ):
             pause.append(zone_id)
             paused[zone_id] = now
             toggles[zone_id] = now
-            kept[zone_id] = tuple(reasons)
+            kept[zone_id] = fresh
             given_up.pop(zone_id, None)  # a new pause: an earlier give-up is over
+            resumed.pop(zone_id, None)
         elif (
-            not reasons
-            and since is not None
+            since is not None
             and settled
-            and _may_resume(kept[zone_id], ended.get(zone_id), flow_recovered, now, config)
+            and (
+                now - since >= config.max_pause_s
+                or (not fresh and _may_resume(kept[zone_id], flow_recovered))
+            )
         ):
             if zone.learning is not True:
                 resume.append(zone_id)
                 resuming[zone_id] = now
                 resume_since.setdefault(zone_id, now)
+            on = tuple(c for c, value in signals.items() if value is True)
+            if on and now - since >= config.max_pause_s:
+                outlasted[zone_id] = on  # decision 14: the hour is up, the causes last
             paused.pop(zone_id, None)
             kept.pop(zone_id, None)
-            ended.pop(zone_id, None)
             toggles[zone_id] = now
+            resumed[zone_id] = now
     return LearningPlan(
-        LearningState(paused, setpoints, toggles, resuming, resume_since, kept, ended, given_up),
+        LearningState(
+            paused,
+            setpoints,
+            toggles,
+            resuming,
+            resume_since,
+            kept,
+            given_up,
+            resumed,
+            outlasted,
+        ),
         tuple(pause),
         tuple(resume),
         causes,
     )
 
 
-def _may_resume(
-    causes: Sequence[PauseCause],
-    dhw_ended: float | None,
-    flow_recovered: bool,
-    now: float,
-    config: LearningConfig,
-) -> bool:
+def _may_resume(causes: Sequence[PauseCause], flow_recovered: bool) -> bool:
     """A pause whose causes are gone and whose minimum pause has passed ends — after hot water
-    only once the flow is back (or heating is off), at the latest ``max_pause_s`` after the draw
-    ended; after foreign heat or a swing at once (P-89)."""
-    if PauseCause.DHW not in causes:
-        return True
-    return flow_recovered or (dhw_ended is not None and now - dhw_ended >= config.max_pause_s)
+    or a fault only once the flow is back (or heating is off); after foreign heat or a swing at
+    once (P-89). The hour since the pause began ends it whatever the flow (decision 14)."""
+    return flow_recovered or not any(cause in NO_HEAT for cause in causes)
 
 
 def release_all(state: LearningState, now: float) -> tuple[LearningState, tuple[str, ...]]:
     """Resume every zone the plugin paused (control switched off, unload, hand-back); each is
     followed until its flag reads on.
 
-    A release is a toggle too: a zone is not paused again sooner than the minimum pause."""
+    A release is a toggle too: a zone is not paused again sooner than the minimum pause, not
+    even by a draw — control switched off and on must not toggle it (decision 14). What an
+    hour outlasted stays: control off sees no signal read off."""
     toggles = dict(state.last_toggle)
     toggles.update(dict.fromkeys(state.paused, now))
     resuming = {**state.resuming, **dict.fromkeys(state.paused, now)}
     since = {**dict.fromkeys(state.paused, now), **state.resume_since}
     # The causes are forgotten; what was given up stays shown.
-    released = LearningState({}, state.setpoints, toggles, resuming, since, given_up=state.given_up)
+    released = LearningState(
+        {},
+        state.setpoints,
+        toggles,
+        resuming,
+        since,
+        given_up=state.given_up,
+        resumed=state.resumed,
+        outlasted=state.outlasted,
+    )
     return released, tuple(state.paused)
 
 
@@ -261,8 +323,9 @@ def rename_zone(state: LearningState, old: str, new: str) -> LearningState:
         state.resuming,
         state.resume_since,
         state.causes,
-        state.dhw_ended,
         state.given_up,
+        state.resumed,
+        state.outlasted,
     )
     if not any(old in values for values in keyed):
         return state
@@ -273,6 +336,7 @@ def rename_zone(state: LearningState, old: str, new: str) -> LearningState:
         resuming=moved(state.resuming),
         resume_since=moved(state.resume_since),
         causes=moved(state.causes),
-        dhw_ended=moved(state.dhw_ended),
         given_up=moved(state.given_up),
+        resumed=moved(state.resumed),
+        outlasted=moved(state.outlasted),
     )

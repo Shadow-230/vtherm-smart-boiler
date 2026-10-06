@@ -3016,6 +3016,42 @@ async def test_the_monitor_step_offers_add_water_and_not_the_old_low_pressure_li
     assert EntryConfig.from_options(options).monitor.alarms.add_water_below == 0.8
 
 
+async def test_the_monitor_step_offers_no_high_pressure_limits(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 13 (SB-18): the high-pressure warning and alarm are optional and offered empty —
+    no default fits every safety valve. Left empty, none is stored and there is no such alarm;
+    one alone is kept; both must be in order — the step says so — and are kept."""
+    entry_id = await create_entry(hass, entities, "advanced")
+    base = {
+        "condensing_return": 55,
+        "short_burn_min": 10,
+        "monitoring_days": 7,
+        "near_room_k": 3,
+        "foreign_heat_hold_min": 60,
+    }
+    for limits, expected in (
+        ({}, None),
+        ({"pressure_high_alarm": 2.0}, (None, 2.0)),
+        ({"pressure_high_warning": 2.2, "pressure_high_alarm": 2.0}, "alarm_limits_out_of_order"),
+        ({"pressure_high_warning": 1.8, "pressure_high_alarm": 2.0}, (1.8, 2.0)),
+    ):
+        menu = await hass.config_entries.options.async_init(entry_id)
+        result = await options_step(hass, menu, {"next_step_id": "monitor"})
+        if not limits:
+            assert form_default(result, "pressure_high_warning") is None
+            assert form_default(result, "pressure_high_alarm") is None
+        result = await options_step(hass, result, base | limits)
+        if isinstance(expected, str):
+            assert (result["step_id"], result["errors"]) == ("monitor", {"base": expected})
+            continue
+        assert result["type"] is FlowResultType.CREATE_ENTRY, limits
+        await hass.async_block_till_done()
+        options = hass.config_entries.async_get_entry(entry_id).options
+        band = EntryConfig.from_options(options).monitor.alarms.pressure_high
+        assert (None if band is None else (band.warning, band.alarm)) == expected
+
+
 def _form_optional(result: dict[str, Any], key: str) -> bool:
     return any(str(marker) == key for marker in result["data_schema"].schema)
 

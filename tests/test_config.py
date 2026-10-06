@@ -7,6 +7,7 @@ import pytest
 from custom_components.vtherm_smart_boiler.config import (
     ConfigError,
     EntryConfig,
+    migrated_pressure_high,
     named_entities,
     rename_entity,
 )
@@ -190,6 +191,7 @@ def test_alarm_thresholds_default_and_options() -> None:
     defaults = EntryConfig.from_options(MINIMAL).monitor.alarms
     assert defaults.pressure_low is None  # Y1: no "add water" threshold by default
     assert defaults.add_water_below is None
+    assert defaults.pressure_high is None  # decision 13: no high-pressure limits by default
     assert defaults.starts_per_hour == DEFAULT_FREQUENT_STARTS_PER_HOUR
     options = MINIMAL | {
         "monitor": {
@@ -832,3 +834,79 @@ def test_a_relay_control_section_parses() -> None:
     assert config.control.relay.entity == "switch.boiler_relay"
     assert "switch.boiler_relay" in named_entities(options)
     assert named_entities(options)["switch.boiler_relay"] == ("control.relay_entity",)
+
+
+@pytest.mark.parametrize(
+    ("monitor", "limits"),
+    [
+        ({}, None),
+        ({"pressure_high_warning": "", "pressure_high_alarm": None}, None),
+        ({"pressure_high_warning": 2.9}, (2.9, None)),
+        ({"pressure_high_alarm": 1.8}, (None, 1.8)),
+        ({"pressure_high_warning": 1.7, "pressure_high_alarm": 1.9}, (1.7, 1.9)),
+    ],
+    ids=["none", "empty", "warning_only", "alarm_only", "both"],
+)
+def test_the_high_pressure_limits_are_each_optional(
+    monitor: dict, limits: tuple[float | None, float | None] | None
+) -> None:
+    """Decision 13 (SB-18): each limit optional, none by default; "alarm above the warning"
+    only where both are set — one alone is never compared with a default."""
+    band = EntryConfig.from_options(MINIMAL | {"monitor": monitor}).monitor.alarms.pressure_high
+    assert (None if band is None else (band.warning, band.alarm)) == limits
+
+
+@pytest.mark.parametrize("value", [1.4, 4.1, "high", True, float("nan")])
+def test_a_high_pressure_limit_outside_the_forms_bounds_cannot_be_used(value: object) -> None:
+    for key in ("pressure_high_warning", "pressure_high_alarm"):
+        with pytest.raises(ConfigError) as err:
+            EntryConfig.from_options(MINIMAL | {"monitor": {key: value}})
+        assert (err.value.code, err.value.subject) == ("invalid_monitor", key)
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        (
+            {"signals": {"pressure": "sensor.p"}},
+            {"pressure_high_warning": 2.5, "pressure_high_alarm": 2.8},
+        ),
+        (
+            {"signals": {"pressure": "sensor.p"}, "monitor": {"monitoring_days": 7}},
+            {"monitoring_days": 7, "pressure_high_warning": 2.5, "pressure_high_alarm": 2.8},
+        ),
+        (
+            {"signals": {"pressure": "sensor.p"}, "monitor": {"pressure_high_alarm": 3.0}},
+            {"pressure_high_warning": 2.5, "pressure_high_alarm": 3.0},
+        ),
+        (
+            {
+                "signals": {"pressure": "sensor.p"},
+                "monitor": {"pressure_high_warning": 1.8, "pressure_high_alarm": 2.0},
+            },
+            None,
+        ),
+        ({"signals": {"flame": "binary_sensor.f"}}, None),
+        ({"signals": {"pressure": ""}}, None),
+        ({"signals": "pressure"}, None),
+        ({"signals": {"pressure": "sensor.p"}, "monitor": ["pressure_high_alarm"]}, None),
+    ],
+    ids=[
+        "no_monitor",
+        "monitor_without",
+        "one_stored",
+        "both_stored",
+        "no_pressure",
+        "pressure_empty",
+        "signals_of_another_shape",
+        "monitor_of_another_shape",
+    ],
+)
+def test_the_migration_keeps_the_high_pressure_limits_an_entry_ran_with(
+    options: dict, expected: dict | None
+) -> None:
+    """Decision 13 (minor version 5): an entry from before, with the water pressure mapped,
+    keeps 0.2.2's 2.5 / 2.8 bar for each limit it did not store — no alarm drops silently; a
+    stored limit stays as stored. Without the pressure, or a section of another shape (refused
+    by the reader with its reason), nothing is written."""
+    assert migrated_pressure_high(options) == expected
