@@ -210,7 +210,12 @@ def test_every_blocker_is_listed() -> None:
         # X5: one entity in two roles; a topology the path cannot use; the curve's checks.
         (ENTITY | {"ch_entity": "number.boiler_flow"}, RADIATORS),
         (OTGW | {"topology": "virtual"}, RADIATORS),
-        (OTGW | {"curve": {"design_outdoor": 12, "design_flow": 24}, "hard_min": 25}, RADIATORS),
+        (
+            OTGW
+            | {"curve": {"design_outdoor": -15, "design_flow": 25, "room": 20.5}, "hard_min": 25},
+            RADIATORS,
+        ),
+        (OTGW | {"curve": {"design_outdoor": 10, "design_flow": 55, "room": 19.5}}, RADIATORS),
         (OTGW | {"curve": {"design_outdoor": -15, "design_flow": 75}}, RADIATORS),
         # X6: what is wired to the gateway's thermostat terminals (decision 1).
         (OTGW | {"thermostat_kind": "on_off"}, RADIATORS),
@@ -1025,8 +1030,36 @@ def test_the_activation_delay_is_read_with_its_cautious_default() -> None:
     assert stored.loop.control.activation_delay_s == 120.0
     assert parse_control(OTGW | {"activation_delay_s": None}, RADIATORS, None).loop.control
     for bad in (-10, 700):
-        with pytest.raises(ValueError, match="activation delay"):
+        with pytest.raises(ValueError, match="activation_delay_s"):
             parse_control(OTGW | {"activation_delay_s": bad}, RADIATORS, None)
+
+
+@pytest.mark.parametrize(
+    ("changes", "key"),
+    [
+        ({"hard_min": ""}, "hard_min"),  # emptied by hand: no value to run on
+        ({"hard_max": True}, "hard_max"),
+        ({"curve": ["design_flow", 55]}, "curve"),
+        ({"curve": CURVE | {"exponent": "inf"}}, "exponent"),
+        ({"alarm_reactions": ["write_ignored"]}, "alarm_reactions"),
+        ({"learning_pauses": "no"}, "learning_pauses"),
+        ({"hand_back_value": "nan"}, "hand_back_value"),
+        ({"count_threshold": float("inf")}, "count_threshold"),
+        ({"off_setpoint": -1}, "off_setpoint"),
+    ],
+)
+def test_stored_control_values_the_form_would_not_take_are_refused(changes: dict, key: str) -> None:
+    """PB-06, PB-24: a control value not finite, outside the form's bounds, emptied, a flag
+    that is not a yes or no, or a part of another shape raises ``ValueError`` naming it."""
+    with pytest.raises(ValueError, match=key):
+        parse_control(OTGW | changes, RADIATORS, None)
+
+
+def test_stored_control_values_left_out_take_their_defaults() -> None:
+    """The negative of PB-24: values not stored (``None``) take their cautious defaults."""
+    stored = dict.fromkeys(("hard_min", "frost_limit", "hand_back_value", "curve"))
+    control = parse_control(OTGW | stored | {"curve": CURVE}, RADIATORS, None).loop.control
+    assert (control.limits.hard_min, control.frost.room_limit) == (20.0, 5.0)
 
 
 def test_zones_declared_closed_when_off_reach_frost_protection() -> None:
@@ -1150,16 +1183,22 @@ def test_the_heating_switch_block_is_lifted_in_one_place(monkeypatch: pytest.Mon
 @pytest.mark.parametrize(
     ("changes", "blocker"),
     [
-        ({"curve": {"design_outdoor": -15, "design_flow": 24.5}}, "design_flow_too_low"),
+        (
+            {"curve": {"design_outdoor": -15, "design_flow": 25, "room": 20.5}},
+            "design_flow_too_low",
+        ),
         ({"curve": {"design_outdoor": -15, "design_flow": 26, "room": 22}}, "design_flow_too_low"),
         ({"curve": {"design_outdoor": -15, "design_flow": 72}}, "design_flow_above_hard_max"),
         ({"curve": CURVE, "hard_max": 50}, "design_flow_above_hard_max"),
-        ({"curve": {"design_outdoor": 12, "design_flow": 55}}, "design_outdoor_too_warm"),
+        (
+            {"curve": {"design_outdoor": 10, "design_flow": 55, "room": 19.5}},
+            "design_outdoor_too_warm",
+        ),
         (
             {"curve": {"design_outdoor": 9, "design_flow": 55, "room": 18}},
             "design_outdoor_too_warm",
         ),
-        ({"curve": CURVE, "hard_min": 55}, "hard_min_not_below_design_flow"),
+        ({"curve": CURVE | {"design_flow": 50}, "hard_min": 50}, "hard_min_not_below_design_flow"),
         (
             {"curve": {"design_outdoor": -15, "design_flow": 40}, "hard_min": 45},
             "hard_min_not_below_design_flow",
@@ -1964,7 +2003,7 @@ BLOCKER_PRECEDENCE = [
     ),
     (
         "the curve's own problems only once it is entered",
-        OTGW | {"curve": {"design_outdoor": -15, "design_flow": 22}},
+        OTGW | {"curve": {"design_outdoor": -15, "design_flow": 25, "room": 20.5}},
         RADIATORS,
         None,
         _ALL_SIGNALS,

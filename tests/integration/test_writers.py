@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -1258,18 +1259,21 @@ async def test_a_lowest_the_entity_cannot_take_fails_alone(hass: HomeAssistant) 
 async def test_a_stored_lowest_above_what_a_writer_takes_fails_alone(
     hass: HomeAssistant, path: str
 ) -> None:
-    """PB-27: a lowest of 92 °C stored by hand (the limits allow up to 95) is refused inside its
-    own part: the heating switch or CH=1, and the release, are still tried."""
+    """PB-27: a lowest of 92 °C (the core's limits allow up to 95) is refused inside its own
+    part: the heating switch or CH=1, and the release, are still tried. Stored by hand it is
+    refused when the options are read (PB-24): the writer's own refusal is a second line."""
     calls = record(hass, *NUMBER_AND_SWITCH, *GATEWAY_SERVICES)
-    limits = {"hard_min": 92, "hard_max": 95}
     if path == "entity":
         hass.states.async_set("number.flow", "45", {"unit_of_measurement": "°C"})
         hass.states.async_set("switch.ch", "off")
-        section = value_hand_back(ch_entity="switch.ch", ch_write_type="held") | limits
+        section = value_hand_back(ch_entity="switch.ch", ch_write_type="held")
     else:
         hass.states.async_set(READ_BACK, "45", {"unit_of_measurement": "°C"})
-        section = GATEWAYS[path] | {"confirmed_entity": READ_BACK} | limits
-    writer = make_writer(hass, options(**section))
+        section = GATEWAYS[path] | {"confirmed_entity": READ_BACK}
+    parsed = options(**section)
+    inner = parsed.loop.control
+    inner = replace(inner, limits=replace(inner.limits, hard_min=92.0, hard_max=95.0))
+    writer = make_writer(hass, replace(parsed, loop=replace(parsed.loop, control=inner)))
     with pytest.raises(WriteError, match="92"):
         await writer.hand_back(release_from=45.0)
     sent = [call[2] for call in calls]

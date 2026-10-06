@@ -106,6 +106,36 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
 CURVE_DEFAULTS: Mapping[str, float] = MappingProxyType(
     {"design_outdoor": -15.0, "design_flow": 55.0, "room": 20.0, "offset": 0.0}
 )
+# The options form's bounds of every control number it takes, in the unit the options store; the
+# form reads them here. A stored one not finite or outside them — a hand edit, an import — is
+# refused, so control is left out: never run on a value the form would not take (PB-24).
+CONTROL_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
+    {
+        "hard_min": (10.0, 50.0),
+        "hard_max": (30.0, 90.0),
+        "ceiling_band": (0.0, 20.0),
+        "frost_limit": (3.0, 10.0),
+        "frost_release": (4.0, 12.0),
+        "count_threshold": (0.0, 20.0),
+        "power_threshold_kw": (0.1, 100.0),
+        "opening_threshold": (1.0, 100.0),
+        "fallback_setpoint": (25.0, 80.0),
+        "ramp_k_per_min": (0.1, 10.0),
+        "decision_interval_min": (1.0, 30.0),
+        "off_setpoint": (0.0, 30.0),
+        "activation_delay_s": (0.0, 600.0),
+        "hand_back_value": (0.0, 90.0),
+    }
+)
+CURVE_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
+    {
+        "design_outdoor": (-40.0, 10.0),
+        "design_flow": (25.0, 80.0),
+        "room": (15.0, 25.0),
+        "exponent": (1.0, 2.0),
+        "offset": (-10.0, 10.0),
+    }
+)
 # The lowest water temperature written by the entry migration (minor version 3) into a control
 # section stored without one: 0.2.1's default, so no installation's floor drops silently
 # (provisional, K4).
@@ -493,16 +523,38 @@ def rename_in_control(section: Mapping[str, Any], old: str, new: str) -> dict[st
     return map_control_entities(section, lambda _key, entity: new if entity == old else entity)
 
 
-def _float(data: Mapping[str, Any], key: str, default: float | None) -> float | None:
-    value = data.get(key, default)
-    if value is None or value == "":
+def _checked(
+    data: Mapping[str, Any], key: str, bounds: Mapping[str, tuple[float, float]] = CONTROL_BOUNDS
+) -> float | None:
+    """A stored control number the form bounds; none stored, ``None``. One that is not a finite
+    number within its bounds — nan, inf, out of range, a flag, text — raises ``ValueError``
+    naming it (PB-24)."""
+    raw = data.get(key)
+    if raw is None or raw == "":
         return None
-    return float(value)
+    value = _number(raw)
+    low, high = bounds[key]
+    if value is None or not low <= value <= high:
+        raise ValueError(f"{key}: {raw!r} is not a number from {low:g} to {high:g}")
+    return value
 
 
-def _minutes(data: Mapping[str, Any], key: str, default_min: float) -> float:
-    value = _float(data, key, default_min)
-    return (default_min if value is None else value) * MINUTE
+def _required(
+    data: Mapping[str, Any], key: str, bounds: Mapping[str, tuple[float, float]] = CONTROL_BOUNDS
+) -> float:
+    value = _checked(data, key, bounds)
+    if value is None:
+        raise ValueError(f"{key}: no value")
+    return value
+
+
+def _yes_no(data: Mapping[str, Any], key: str) -> bool:
+    """A stored yes or no; anything else — "false" as text, a number — raises ``ValueError``
+    naming it, never read as true (PB-24)."""
+    value = data[key]
+    if not isinstance(value, bool):
+        raise ValueError(f"{key}: {value!r} is not a yes or no")
+    return value
 
 
 def _number(raw: object) -> float | None:
@@ -536,6 +588,15 @@ def _hand_back_timeout_s(data: Mapping[str, Any]) -> float:
             )
         return DEVICE_TIMEOUT_DEFAULT_S
     return minutes * MINUTE
+
+
+def _mapping(data: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    """A stored part of the control section that is a mapping (the curve, the reactions); none
+    stored, an empty one; another shape raises ``ValueError`` naming it (PB-06)."""
+    value = data.get(key) or {}
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{key}: {value!r} is not a section")
+    return value
 
 
 def parse_relay(data: Mapping[str, Any]) -> RelayOptions:
@@ -590,17 +651,18 @@ def parse_control(
     if not data.get("write_path"):
         return ControlOptions()
     path = WritePath(data["write_path"])
-    curve_data = data.get("curve") or {}
+    curve_data = _mapping(data, "curve")
     circuit = installation.circuits[0] if installation.circuits else None
     emitters = installation.emitters_in(circuit.circuit_id) if circuit is not None else frozenset()
     default_exponent = min((EXPONENT_BY_EMITTER[e] for e in emitters), default=1.3)
     curve_value = {**CURVE_DEFAULTS, **curve_data}
+    exponent = _checked(curve_value, "exponent", CURVE_BOUNDS)
     curve = HeatingCurve(
-        design_outdoor=float(curve_value["design_outdoor"]),
-        design_flow=float(curve_value["design_flow"]),
-        room=float(curve_value["room"]),
-        exponent=float(curve_data.get("exponent", default_exponent)),
-        offset=float(curve_value["offset"]),
+        design_outdoor=_required(curve_value, "design_outdoor", CURVE_BOUNDS),
+        design_flow=_required(curve_value, "design_flow", CURVE_BOUNDS),
+        room=_required(curve_value, "room", CURVE_BOUNDS),
+        exponent=default_exponent if exponent is None else exponent,
+        offset=_required(curve_value, "offset", CURVE_BOUNDS),
     )
     value = {**CONTROL_DEFAULTS, **{k: v for k, v in data.items() if v is not None}}
     relay = parse_relay(data) if path is WritePath.RELAY else RelayOptions()
@@ -626,41 +688,41 @@ def parse_control(
         # The mixing valve needs supply water above its own temperature (S-42); a maximum the
         # user declared still applies, and wins.
         circuit_floor = circuit.fixed_temperature + FIXED_CIRCUIT_MARGIN_K
-    ramp = _float(value, "ramp_k_per_min", None)
+    ramp = _checked(value, "ramp_k_per_min")
     frost_zone = data.get("frost_zone") or None
     control = ControlConfig(
         curve=curve,
         limits=FlowLimits(
-            hard_min=float(value["hard_min"]),
-            hard_max=float(value["hard_max"]),
-            ceiling_band=float(value["ceiling_band"]),
+            hard_min=_required(value, "hard_min"),
+            hard_max=_required(value, "hard_max"),
+            ceiling_band=_required(value, "ceiling_band"),
         ),
         circuit_max=circuit_max,
         boiler_max=boiler_max,
         circuit_floor=circuit_floor,
         frost=FrostConfig(
-            room_limit=float(value["frost_limit"]),
-            release=float(value["frost_release"]),
+            room_limit=_required(value, "frost_limit"),
+            release=_required(value, "frost_release"),
             # A zone no longer configured must not leave frost protection watching nothing.
             zone=frost_zone if frost_zone in {z.zone_id for z in installation.zones} else None,
             closes_when_off=frozenset(z.zone_id for z in installation.zones if z.closes_when_off),
         ),
         demand=DemandConfig(
-            count_threshold=int(value["count_threshold"]),
-            power_threshold_kw=_float(data, "power_threshold_kw", None),
+            count_threshold=int(_required(value, "count_threshold")),
+            power_threshold_kw=_checked(data, "power_threshold_kw"),
             opening_threshold=(
                 None
-                if (opening := _float(data, "opening_threshold", None)) is None
+                if (opening := _checked(data, "opening_threshold")) is None
                 else opening / 100.0
             ),
         ),
-        fallback_setpoint=_float(data, "fallback_setpoint", None),
+        fallback_setpoint=_checked(data, "fallback_setpoint"),
         ramp_k_per_min=None if on_off else ramp,
-        decision_interval_s=_minutes(value, "decision_interval_min", 5.0),
+        decision_interval_s=_required(value, "decision_interval_min") * MINUTE,
         # The relay sets no water temperature: nothing to correct (R5).
-        comfort_correction=bool(value["comfort_correction"]) and not on_off,
+        comfort_correction=_yes_no(value, "comfort_correction") and not on_off,
         # Only what the user saved: VT's own value is a pre-fill in the form, never taken here.
-        activation_delay_s=float(value["activation_delay_s"]),
+        activation_delay_s=_required(value, "activation_delay_s"),
         # The relay path (R5, R6): heating on and off only, and its link is the relay itself —
         # never a hand-back for the boiler's signals, which never gate it.
         on_off=on_off,
@@ -685,12 +747,12 @@ def parse_control(
         and (
             path in OTGW_PATHS or (bool(data.get("ch_entity")) and ch_write_type in WRITABLE_TYPES)
         ),
-        off_setpoint=float(value["off_setpoint"]),
+        off_setpoint=_required(value, "off_setpoint"),
         relay=relay.config if on_off else None,
     )
     reactions = {
         str(alarm): AlarmReaction(reaction)
-        for alarm, reaction in (data.get("alarm_reactions") or {}).items()
+        for alarm, reaction in _mapping(data, "alarm_reactions").items()
         # Only the optional reaction is kept; a fixed one leaves nothing to choose, and any other
         # is no longer offered — a stored one is neutralised, whatever it holds (S-11, S-30).
         if str(alarm) in OPTIONAL_HAND_BACK_ALARMS and not on_off
@@ -702,7 +764,7 @@ def parse_control(
         write_type=write_type,
         ch_write_type=ch_write_type,
         hand_back=HandBack(data["hand_back"]) if data.get("hand_back") else None,
-        hand_back_value=_float(data, "hand_back_value", None),
+        hand_back_value=_checked(data, "hand_back_value"),
         hand_back_value_effect=(
             ValueEffect(data["hand_back_value_effect"])
             if data.get("hand_back_value_effect")
@@ -724,7 +786,7 @@ def parse_control(
         loop=loop,
         # R13: no water swing on a relay — it sets no water temperature.
         learning=LearningConfig(pause_on_water_swing=not on_off),
-        learning_pauses=bool(value["learning_pauses"]),
+        learning_pauses=_yes_no(value, "learning_pauses"),
         alarm_reactions=reactions,
         # Decision 6: the return by itself is not offered for relays.
         return_after_outside_change=data.get("return_after_outside_change") is True and not on_off,

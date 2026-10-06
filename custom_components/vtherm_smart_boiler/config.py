@@ -4,10 +4,12 @@ The config flow writes one options dictionary; everything else reads it through
 ``EntryConfig.from_options``, so there is a single definition of what each key means and of its
 cautious default. A stored value this version does not know raises a ``ConfigError`` naming its
 section (``invalid_boiler``, ``invalid_circuit``, ...), which the options flow shows on that
-section's step (P-70). One entity mapped to two signals is kept for the first in the form's
-order; the later signal is dropped and recorded in ``shared_signals`` — control gets a blocker,
-the monitor runs (X5.2). No signal is required (X8): flame and flow serve the monitor and
-water-temperature control, which gets a blocker without them.
+section's step (P-70); so does a section of another shape (PB-06), and a number the form bounds
+stored not finite or outside the form's bounds — refused, never used or widened (PB-24). One
+entity mapped to two signals is kept for the first in the form's order; the later signal is
+dropped and recorded in ``shared_signals`` — control gets a blocker, the monitor runs (X5.2). No
+signal is required (X8): flame and flow serve the monitor and water-temperature control, which
+gets a blocker without them.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any, SupportsFloat
 
 from .const import (
@@ -79,6 +82,85 @@ class ConfigError(ValueError):
         super().__init__(f"{code}: {subject}" if subject else code)
         self.code = code
         self.subject = subject
+
+
+# The options form's bounds of every stored number it takes (PB-24); the form reads them here. A
+# stored one not finite or outside them — a hand edit, an import — is refused with its section's
+# reason. Freshness limits are stored in seconds, the form's 1 to 1440 minutes.
+CIRCUIT_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
+    {
+        "max_flow": (20.0, 90.0),
+        "fixed_temperature": (20.0, 70.0),
+        "max_flow_alarm": (20.0, 100.0),
+        "max_flow_alarm_min": (1.0, 120.0),
+    }
+)
+ZONE_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
+    {"reference_output_w": (50.0, 20000.0), "exponent": (1.0, 2.0)}
+)
+FOREIGN_HEAT_THRESHOLDS: Mapping[SourceKind, tuple[float, float]] = MappingProxyType(
+    {SourceKind.POWER: (1.0, 10000.0), SourceKind.TEMPERATURE: (20.0, 300.0)}
+)
+SWITCH_MARGIN_BOUNDS = (0.1, 3.0)
+# Shorter would let control start before the monitoring period (X5); the integration tests lift
+# it in their one place to start control at once.
+MONITORING_DAYS_BOUNDS = (7.0, 60.0)
+MONITOR_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
+    {
+        "condensing_return": (40.0, 65.0),
+        "short_burn_min": (1.0, 60.0),
+        "verdict_window_days": (7.0, 365.0),
+        "near_room_k": (1.0, 10.0),
+        "foreign_heat_hold_min": (0.0, 720.0),
+        "pressure_high_warning": (1.5, 4.0),
+        "pressure_high_alarm": (1.5, 4.0),
+        "flue_gas_warning": (40.0, 200.0),
+        "flue_gas_alarm": (40.0, 200.0),
+        "starts_per_hour_limit": (2.0, 60.0),
+        "unstable_burns_limit": (1.0, 100.0),
+    }
+)
+FRESHNESS_BOUNDS_MIN = (1.0, 1440.0)
+
+# Each section's reason where it is stored in another shape (PB-06); circuits and zones are
+# lists, every other section a mapping.
+SECTION_CODES: Mapping[str, str] = MappingProxyType(
+    {
+        SIGNALS: "invalid_signals",
+        BOILER: "invalid_boiler",
+        CIRCUITS: "invalid_circuit",
+        ZONES: "invalid_zone",
+        PARAMETERS: "invalid_parameters",
+        BUILDING: "invalid_building",
+        REFERENCE_ROOM: "invalid_reference",
+        MONITOR: "invalid_monitor",
+        FRESHNESS: "invalid_freshness",
+        CONTROL: "invalid_control",
+    }
+)
+_LIST_SECTIONS = frozenset({CIRCUITS, ZONES})
+
+
+def section_fits(key: str, value: object) -> bool:
+    """Whether a stored section has its shape: nothing, a list of mappings for circuits and
+    zones, a mapping for every other section."""
+    if value is None:
+        return True
+    if key in _LIST_SECTIONS:
+        return isinstance(value, list | tuple) and all(isinstance(i, Mapping) for i in value)
+    return isinstance(value, Mapping)
+
+
+def _section(options: Mapping[str, Any], key: str) -> Any:
+    """A stored section; none stored, an empty one. One of another shape — a list where a mapping
+    belongs, text where a section belongs — raises ``ConfigError(invalid_<section>, key)``
+    (PB-06)."""
+    value = options.get(key)
+    if not section_fits(key, value):
+        raise ConfigError(SECTION_CODES[key], key)
+    if value is None:
+        return [] if key in _LIST_SECTIONS else {}
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,26 +257,31 @@ class EntryConfig:
         """The entry's configuration. ``strict_control=False`` (at setup): a control section that
         cannot be used leaves control out with ``control_problem`` set instead of failing, so
         the monitor keeps running and a hand-back still owed can go out."""
-        signals, shared = _signals(options.get(SIGNALS, {}))
-        boiler_data = options.get(BOILER, {})
+        signals, shared = _signals(_section(options, SIGNALS))
+        boiler_data = _section(options, BOILER)
         boiler = Boiler(
             _enum(BoilerClass, boiler_data, "class", BoilerClass.READ_ONLY, "invalid_boiler"),
             _enum(DhwType, boiler_data, "dhw", DhwType.NONE, "invalid_boiler"),
-            bool(boiler_data.get("condensing", True)),
-            bool(boiler_data.get("bypass", False)),
+            _flag("invalid_boiler", boiler_data, "condensing", True),
+            _flag("invalid_boiler", boiler_data, "bypass", False),
         )
-        circuits, flow_entities = _circuits(options.get(CIRCUITS, []))
-        zones, zone_configs = _zones(options.get(ZONES, []), {c.circuit_id for c in circuits})
+        circuits, flow_entities = _circuits(_section(options, CIRCUITS))
+        zones, zone_configs = _zones(_section(options, ZONES), {c.circuit_id for c in circuits})
         installation = Installation(boiler, circuits, zones)
         errors = [i for i in installation.issues() if i.severity.value == "error"]
         if errors:
             raise ConfigError(errors[0].code.value, errors[0].subject)
-        parameters = _parameters(options.get(PARAMETERS, {}), options.get(BUILDING, {}))
-        reference = _reference(options.get(REFERENCE_ROOM, {}), [z.zone_id for z in zones])
-        freshness, weather_max_age = _freshness(options.get(FRESHNESS, {}))
+        parameters = _parameters(_section(options, PARAMETERS), _section(options, BUILDING))
+        reference = _reference(_section(options, REFERENCE_ROOM), [z.zone_id for z in zones])
+        freshness, weather_max_age = _freshness(_section(options, FRESHNESS))
+        monitor = _monitor(
+            _section(options, MONITOR),
+            boiler_data,
+            control_sets_water(boiler, options.get(CONTROL)),
+        )
         control_problem: str | None = None
         try:
-            control = _control(options.get(CONTROL), installation, parameters)
+            control = _control(_section(options, CONTROL), installation, parameters)
         except ConfigError as err:
             if strict_control:
                 raise
@@ -208,11 +295,7 @@ class EntryConfig:
             zones=tuple(zone_configs),
             circuit_flow_entities=flow_entities,
             reference_room=reference,
-            monitor=_monitor(
-                options.get(MONITOR, {}),
-                boiler_data,
-                control_sets_water(boiler, options.get(CONTROL)),
-            ),
+            monitor=monitor,
             freshness=freshness,
             control=control,
             control_problem=control_problem,
@@ -351,8 +434,35 @@ def _read[T](code: str, key: str, read: Callable[[], T]) -> T:
     not know, not a number, missing where required — raises ``ConfigError(code, key)``."""
     try:
         return read()
-    except (KeyError, TypeError, ValueError) as err:
+    except (AttributeError, KeyError, TypeError, ValueError) as err:
         raise ConfigError(code, key) from err
+
+
+def _bounded(
+    code: str, data: Mapping[str, Any], key: str, bounds: tuple[float, float]
+) -> float | None:
+    """A stored number the form bounds; none stored, ``None``. One that is not a finite number
+    within ``bounds`` — nan, inf, out of range, a flag — raises ``ConfigError(code, key)``: never
+    used, never widened (PB-24)."""
+    raw = data.get(key)
+    value = None if isinstance(raw, bool) else _read(code, key, lambda: _float_or_none(raw))
+    if value is None and raw in (None, ""):
+        return None
+    low, high = bounds
+    if value is None or not low <= value <= high:  # nan fails too
+        raise ConfigError(code, key)
+    return value
+
+
+def _flag(code: str, data: Mapping[str, Any], key: str, default: bool) -> bool:
+    """A stored yes or no; none stored, ``default``. Anything else — "false" as text, a number —
+    raises ``ConfigError(code, key)``: never read as true (PB-24)."""
+    value = data.get(key)
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        raise ConfigError(code, key)
+    return value
 
 
 def _item_text(item: Any, key: str, code: str) -> str:
@@ -365,7 +475,7 @@ def _item_text(item: Any, key: str, code: str) -> str:
 
 
 def _circuit_number(item: Mapping[str, Any], key: str) -> float | None:
-    return _read("invalid_circuit", key, lambda: _float_or_none(item.get(key)))
+    return _bounded("invalid_circuit", item, key, CIRCUIT_BOUNDS[key])
 
 
 def _circuits(data: Any) -> tuple[tuple[Circuit, ...], dict[str, str]]:
@@ -407,19 +517,22 @@ def _circuits(data: Any) -> tuple[tuple[Circuit, ...], dict[str, str]]:
 
 
 def _zone_number(item: Mapping[str, Any], key: str) -> float | None:
-    return _read("invalid_zone", key, lambda: _float_or_none(item.get(key)))
+    return _bounded("invalid_zone", item, key, ZONE_BOUNDS[key])
+
+
+def _source(source: Mapping[str, Any]) -> ForeignHeatSource:
+    kind = SourceKind(source.get("kind", SourceKind.SWITCH))
+    threshold = _float_or_none(source.get("threshold"))
+    if threshold is not None:
+        low, high = FOREIGN_HEAT_THRESHOLDS.get(kind, (-math.inf, math.inf))
+        if isinstance(source.get("threshold"), bool) or not low <= threshold <= high:
+            raise ValueError(f"threshold {threshold!r} outside {low} to {high}")
+    return ForeignHeatSource(str(source["entity_id"]), kind, threshold)
 
 
 def _sources(item: Mapping[str, Any]) -> tuple[ForeignHeatSource, ...]:
     def read() -> tuple[ForeignHeatSource, ...]:
-        return tuple(
-            ForeignHeatSource(
-                str(source["entity_id"]),
-                SourceKind(source.get("kind", SourceKind.SWITCH)),
-                _float_or_none(source.get("threshold")),
-            )
-            for source in item.get("foreign_heat", [])
-        )
+        return tuple(_source(source) for source in item.get("foreign_heat") or [])
 
     return _read("invalid_zone", "foreign_heat", read)
 
@@ -503,16 +616,21 @@ def _reference(data: Mapping[str, Any], zone_ids: list[str]) -> ReferenceRoomCon
     zone = data.get("zone") or None
     if strategy is Strategy.CHOSEN_ZONE and zone not in zone_ids:
         raise ConfigError("reference_zone_unknown", zone)
-    margin = _read(
-        "invalid_reference",
-        "switch_margin",
-        lambda: float(data.get("switch_margin", DEFAULT_SWITCH_MARGIN_K)),
+    margin = _bounded("invalid_reference", data, "switch_margin", SWITCH_MARGIN_BOUNDS)
+    return ReferenceRoomConfig(
+        strategy, zone, DEFAULT_SWITCH_MARGIN_K if margin is None else margin
     )
-    return ReferenceRoomConfig(strategy, zone, margin)
 
 
 def _monitor_value(data: Mapping[str, Any], key: str, default: float | None) -> float:
-    return _read("invalid_monitor", key, lambda: float(data.get(key, default)))
+    """A stored monitor number within the form's bounds; none stored, ``default``."""
+    bounds = MONITORING_DAYS_BOUNDS if key == "monitoring_days" else MONITOR_BOUNDS[key]
+    value = _bounded("invalid_monitor", data, key, bounds)
+    if value is None:
+        value = default
+    if value is None:  # a band without a default limit: nothing to fall back on
+        raise ConfigError("invalid_monitor", key)
+    return value
 
 
 def control_sets_water(boiler: Boiler, control: Any) -> bool:
@@ -529,15 +647,10 @@ def _monitor(
     data: Mapping[str, Any], boiler: Mapping[str, Any], sets_water: bool = False
 ) -> MonitorConfig:
     monitoring_days = _monitor_value(data, "monitoring_days", 7.0)
-    window = _read(
-        "invalid_monitor",
-        "verdict_window_days",
-        lambda: (
-            None
-            if data.get("verdict_window_days") in (None, "")
-            else int(data["verdict_window_days"])
-        ),
+    window_days = _bounded(
+        "invalid_monitor", data, "verdict_window_days", MONITOR_BOUNDS["verdict_window_days"]
     )
+    window = None if window_days is None else int(window_days)
     return MonitorConfig(
         monitor=MonitorOptions(
             condensing_return=_monitor_value(data, "condensing_return", DEFAULT_CONDENSING_RETURN),
@@ -549,7 +662,7 @@ def _monitor(
             has_dhw=boiler.get("dhw") != DhwType.NONE,
             verdict=VerdictOptions(
                 min_days=monitoring_days,
-                condensing_boiler=bool(boiler.get("condensing", True)),
+                condensing_boiler=_flag("invalid_boiler", boiler, "condensing", True),
                 control_sets_water=sets_water,
             ),
             # Never shorter than the monitoring period: the verdict could not be reached.
@@ -620,14 +733,8 @@ def _alarm_thresholds(data: Mapping[str, Any]) -> AlarmThresholds:
         pressure_low=_add_water(data),
         pressure_high=_band(data, "pressure_high", PRESSURE_HIGH_BAND),
         flue_gas=_band(data, "flue_gas", FLUE_GAS_CONDENSING_BAND),
-        starts_per_hour=_read(
-            "invalid_monitor",
-            starts,
-            lambda: int(data.get(starts, DEFAULT_FREQUENT_STARTS_PER_HOUR)),
-        ),
-        unstable_burns_per_day=_read(
-            "invalid_monitor", burns, lambda: int(data.get(burns, DEFAULT_UNSTABLE_BURNS_PER_DAY))
-        ),
+        starts_per_hour=int(_monitor_value(data, starts, DEFAULT_FREQUENT_STARTS_PER_HOUR)),
+        unstable_burns_per_day=int(_monitor_value(data, burns, DEFAULT_UNSTABLE_BURNS_PER_DAY)),
     )
 
 
@@ -635,8 +742,10 @@ def _freshness(data: Mapping[str, Any]) -> tuple[dict[Signal, float | None], flo
     """The age limit of each signal, and the weather entity's own, stored under ``weather`` beside
     them and taken out first: it is no signal. ``None``: no limit — availability only."""
 
+    low, high = FRESHNESS_BOUNDS_MIN
+
     def limit(key: str, value: Any) -> float | None:
-        return _read("invalid_freshness", key, lambda: None if value is None else float(value))
+        return _bounded("invalid_freshness", {key: value}, key, (low * 60.0, high * 60.0))
 
     result: dict[Signal, float | None] = {}
     for key, value in data.items():
@@ -651,11 +760,11 @@ def _freshness(data: Mapping[str, Any]) -> tuple[dict[Signal, float | None], flo
 
 
 def _control(
-    data: Mapping[str, Any] | None, installation: Installation, parameters: ParameterSet
+    data: Mapping[str, Any], installation: Installation, parameters: ParameterSet
 ) -> ControlOptions:
     try:
         return parse_control(data, installation, parameters.value(ParameterKey.MAX_CH_SETPOINT))
-    except (KeyError, TypeError, ValueError) as err:
+    except (AttributeError, KeyError, TypeError, ValueError) as err:
         raise ConfigError("invalid_control", str(err)) from err
 
 

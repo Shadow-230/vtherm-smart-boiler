@@ -56,9 +56,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
         # A control section that cannot be used leaves control out, not the whole entry: the
         # monitor keeps running, and a hand-back still owed goes out.
         config = EntryConfig.from_options(entry.options, strict_control=False)
-    except (ConfigError, KeyError, TypeError, ValueError) as err:
-        # Options this version cannot read — an option a later check refuses, a hand edit —
-        # stop the entry with a reason, and a boiler the last run held is not forgotten.
+    except (AttributeError, ConfigError, KeyError, TypeError, ValueError) as err:
+        # Options this version cannot read — an option a later check refuses, a hand edit, a
+        # section of another shape (PB-06) — stop the entry with a reason, and a boiler the last
+        # run held is not forgotten.
         await _async_report_owed_from_store(hass, entry)
         if isinstance(err, ConfigError):
             code, subject = err.code, err.subject or "-"

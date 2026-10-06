@@ -464,6 +464,181 @@ def test_unknown_stored_values_name_their_section(options: dict, code: str, subj
     assert (err.value.code, err.value.subject) == (code, subject)
 
 
+# PB-24 (TB-25): an underfloor circuit with its maximum, and a gateway's control section.
+UNDERFLOOR = MINIMAL | {
+    "boiler": {"class": "flow_setpoint"},
+    "circuits": [{"id": "floor", "max_flow": 40}],
+    "zones": [{"entity_id": "climate.a", "circuit": "floor", "emitter": "underfloor"}],
+}
+GATEWAY_CONTROL = {
+    "write_path": "opentherm_gw",
+    "gateway_id": "gw",
+    "confirmed_entity": "sensor.setpoint",
+    "topology": "gateway_standalone",
+    "thermostat_kind": "none",
+    "curve": {"design_outdoor": -15, "design_flow": 35},
+}
+NAN, INF = float("nan"), float("inf")
+
+
+def _floor_circuit(**values: object) -> dict:
+    return UNDERFLOOR | {"circuits": [{"id": "floor", "max_flow": 40} | values]}
+
+
+def _zone(**values: object) -> dict:
+    return MINIMAL | {"zones": [{"entity_id": "climate.a", "emitter": "radiator"} | values]}
+
+
+@pytest.mark.parametrize(
+    ("options", "code", "subject"),
+    [
+        *(
+            (_floor_circuit(max_flow=value), "invalid_circuit", "max_flow")
+            for value in ("nan", "inf", NAN, INF, -5, 500, 19.5, True)
+        ),
+        (_floor_circuit(max_flow_alarm="nan"), "invalid_circuit", "max_flow_alarm"),
+        (_floor_circuit(max_flow_alarm=101), "invalid_circuit", "max_flow_alarm"),
+        (_floor_circuit(max_flow_alarm_min=0), "invalid_circuit", "max_flow_alarm_min"),
+        (_floor_circuit(fixed_temperature="-inf"), "invalid_circuit", "fixed_temperature"),
+        (_zone(exponent="nan"), "invalid_zone", "exponent"),
+        (_zone(reference_output_w=0), "invalid_zone", "reference_output_w"),
+        (
+            _zone(foreign_heat=[{"entity_id": "sensor.p", "kind": "power", "threshold": NAN}]),
+            "invalid_zone",
+            "foreign_heat",
+        ),
+        (
+            _zone(foreign_heat=[{"entity_id": "sensor.t", "kind": "temperature", "threshold": 5}]),
+            "invalid_zone",
+            "foreign_heat",
+        ),
+        (
+            MINIMAL | {"reference_room": {"switch_margin": "nan"}},
+            "invalid_reference",
+            "switch_margin",
+        ),
+        *(
+            (MINIMAL | {"monitor": {"monitoring_days": v}}, "invalid_monitor", "monitoring_days")
+            for v in ("nan", INF, 0, 6, 61, -7)
+        ),
+        *(
+            (MINIMAL | {"monitor": {key: value}}, "invalid_monitor", key)
+            for key, value in (
+                ("verdict_window_days", INF),
+                ("starts_per_hour_limit", INF),
+                ("unstable_burns_limit", 0),
+                ("pressure_high_alarm", "nan"),
+                ("flue_gas_warning", 500),
+                ("near_room_k", -1),
+                ("condensing_return", NAN),
+                ("short_burn_min", 0),
+                ("foreign_heat_hold_min", -5),
+            )
+        ),
+        (MINIMAL | {"freshness": {"flow": "nan"}}, "invalid_freshness", "flow"),
+        (MINIMAL | {"freshness": {"weather": 0}}, "invalid_freshness", "weather"),
+        (MINIMAL | {"boiler": {"condensing": "false"}}, "invalid_boiler", "condensing"),
+        (MINIMAL | {"boiler": {"bypass": 1}}, "invalid_boiler", "bypass"),
+    ],
+)
+def test_stored_numbers_outside_the_form_are_refused(
+    options: dict, code: str, subject: str
+) -> None:
+    """PB-24 (TB-25): a number the form bounds, read back not finite or outside the form's
+    bounds — a hand edit, an import — is refused naming its section, never used or widened: a
+    circuit maximum of nan would drop an underfloor circuit's cap, a monitoring period of 0 days
+    would let control start at once; a flag is a yes or a no, never text read as true."""
+    with pytest.raises(ConfigError) as err:
+        EntryConfig.from_options(options)
+    assert (err.value.code, err.value.subject) == (code, subject)
+
+
+def test_stored_numbers_at_the_form_bounds_are_kept() -> None:
+    """The bounds themselves, and nothing stored, are read as before (the negative of PB-24)."""
+    config = EntryConfig.from_options(
+        _floor_circuit(max_flow=20, max_flow_alarm=100, max_flow_alarm_min=120)
+        | {"monitor": {"monitoring_days": 60, "verdict_window_days": 365}}
+        | {"freshness": {"flow": 60, "weather": 86400, "return": None}}
+    )
+    circuit = config.installation.circuits[0]
+    assert (circuit.max_flow, circuit.max_flow_alarm) == (20.0, 100.0)
+    assert config.monitor.monitoring_days == 60.0
+    assert config.freshness[Signal.FLOW] == 60.0
+    assert config.weather_max_age_s == 86400.0
+    floor = EntryConfig.from_options(UNDERFLOOR | {"monitor": {"monitoring_days": None}})
+    assert floor.installation.circuits[0].max_flow == 40.0
+    assert floor.monitor.monitoring_days == 7.0
+
+
+@pytest.mark.parametrize(
+    ("changes", "key"),
+    [
+        ({"frost_limit": "nan"}, "frost_limit"),
+        ({"frost_limit": 18, "frost_release": 20}, "frost_limit"),
+        ({"curve": {"design_outdoor": -15, "design_flow": "nan"}}, "design_flow"),
+        ({"fallback_setpoint": 95}, "fallback_setpoint"),
+        ({"fallback_setpoint": NAN}, "fallback_setpoint"),
+        ({"decision_interval_min": 0}, "decision_interval_min"),
+        ({"decision_interval_min": "nan"}, "decision_interval_min"),
+        ({"comfort_correction": "false"}, "comfort_correction"),
+    ],
+)
+def test_stored_control_numbers_outside_the_form_leave_control_out(changes: dict, key: str) -> None:
+    """PB-24 (TB-25): a control value the form bounds, stored not finite or outside them, is
+    refused at a save (the control step shows it) and leaves control out at setup — the monitor
+    runs, an owed hand-back still goes out through the options the boiler was taken with."""
+    options = UNDERFLOOR | {"control": GATEWAY_CONTROL | changes}
+    with pytest.raises(ConfigError) as err:
+        EntryConfig.from_options(options)
+    assert err.value.code == "invalid_control"
+    assert key in str(err.value)
+    config = EntryConfig.from_options(options, strict_control=False)
+    assert not config.control.configured
+    assert config.control_problem is not None
+    assert key in config.control_problem
+    assert EntryConfig.from_options(UNDERFLOOR | {"control": GATEWAY_CONTROL}).control.configured
+
+
+SECTIONS_OF_ANOTHER_SHAPE = [
+    ("signals", ["binary_sensor.flame"], "invalid_signals"),
+    ("boiler", "flow_setpoint", "invalid_boiler"),
+    ("circuits", {"id": "main"}, "invalid_circuit"),
+    ("circuits", ["main"], "invalid_circuit"),
+    ("zones", "climate.a", "invalid_zone"),
+    ("zones", [["climate.a"]], "invalid_zone"),
+    ("parameters", [], "invalid_parameters"),
+    ("building", "big", "invalid_building"),
+    ("reference_room", ["chosen_zone"], "invalid_reference"),
+    ("monitor", [], "invalid_monitor"),
+    ("freshness", [60], "invalid_freshness"),
+    ("control", ["opentherm_gw"], "invalid_control"),
+    ("control", "opentherm_gw", "invalid_control"),
+]
+
+
+@pytest.mark.parametrize(("section", "value", "code"), SECTIONS_OF_ANOTHER_SHAPE)
+def test_a_section_of_another_shape_is_refused_naming_it(
+    section: str, value: object, code: str
+) -> None:
+    """PB-06: a section of another shape — a list where a mapping belongs, text where a section
+    belongs (a hand edit, an import) — raises a ``ConfigError`` naming it, never an
+    ``AttributeError``; a control section so leaves control out at setup."""
+    with pytest.raises(ConfigError) as err:
+        EntryConfig.from_options(MINIMAL | {section: value})
+    assert (err.value.code, err.value.subject) == (code, section)
+    if section == "control":
+        config = EntryConfig.from_options(MINIMAL | {section: value}, strict_control=False)
+        assert not config.control.configured
+        assert config.control_problem is not None
+
+
+@pytest.mark.parametrize("section", sorted({s for s, _, _ in SECTIONS_OF_ANOTHER_SHAPE}))
+def test_a_section_stored_as_none_reads_as_empty(section: str) -> None:
+    """The negative of PB-06: a section stored as nothing (``None``) is no section."""
+    config = EntryConfig.from_options(MINIMAL | {section: None})
+    assert not config.control.configured
+
+
 @pytest.mark.parametrize(
     ("signals", "control", "recorded"),
     [

@@ -41,7 +41,19 @@ from homeassistant.helpers import selector
 from homeassistant.helpers.translation import async_get_translations
 from homeassistant.util import dt as dt_util
 
-from .config import ConfigError, EntryConfig
+from .config import (
+    CIRCUIT_BOUNDS,
+    FOREIGN_HEAT_THRESHOLDS,
+    FRESHNESS_BOUNDS_MIN,
+    MONITOR_BOUNDS,
+    MONITORING_DAYS_BOUNDS,
+    SECTION_CODES,
+    SWITCH_MARGIN_BOUNDS,
+    ZONE_BOUNDS,
+    ConfigError,
+    EntryConfig,
+    section_fits,
+)
 from .const import (
     BOILER,
     BUILDING,
@@ -63,7 +75,9 @@ from .const import (
     ZONES,
 )
 from .control_config import (
+    CONTROL_BOUNDS,
     CONTROL_DEFAULTS,
+    CURVE_BOUNDS,
     CURVE_DEFAULTS,
     GATEWAY_TOPOLOGIES,
     HAND_BACK_TIMEOUT_DEFAULT_MIN,
@@ -322,7 +336,10 @@ def freshness_schema(options: dict[str, Any]) -> vol.Schema:
     """An optional age limit, in minutes, for each mapped signal and the weather entity."""
     limits = {k: v / 60.0 for k, v in options.get(FRESHNESS, {}).items() if v is not None}
     return vol.Schema(
-        {_optional(key, limits): _number(1, 1440, 1, "min") for key in _freshness_keys(options)}
+        {
+            _optional(key, limits): _number(*FRESHNESS_BOUNDS_MIN, 1, "min")
+            for key in _freshness_keys(options)
+        }
     )
 
 
@@ -388,12 +405,18 @@ def circuit_schema(
                 current.get("control"), CircuitControl, CircuitControl.UNMIXED_SHARED.value
             ),
         ): _select("circuit_control", [c.value for c in CircuitControl]),
-        _optional("max_flow", current): _number(20, 90, 1, "°C"),
-        _optional("fixed_temperature", current): _number(20, 70, 1, "°C"),
+        _optional("max_flow", current): _number(*CIRCUIT_BOUNDS["max_flow"], 1, "°C"),
+        _optional("fixed_temperature", current): _number(
+            *CIRCUIT_BOUNDS["fixed_temperature"], 1, "°C"
+        ),
     }
     if _advanced(options):
-        fields[_optional(MAX_FLOW_ALARM, current)] = _number(20, 100, 1, "°C")
-        fields[_optional(MAX_FLOW_ALARM_MIN, current)] = _number(1, 120, 1, "min")
+        fields[_optional(MAX_FLOW_ALARM, current)] = _number(
+            *CIRCUIT_BOUNDS[MAX_FLOW_ALARM], 1, "°C"
+        )
+        fields[_optional(MAX_FLOW_ALARM_MIN, current)] = _number(
+            *CIRCUIT_BOUNDS[MAX_FLOW_ALARM_MIN], 1, "min"
+        )
         fields[_optional("flow_entity", current)] = _entity(_TEMPERATURE)
         fields[vol.Required("add_another", default=more)] = selector.BooleanSelector()
     return vol.Schema(fields)
@@ -459,21 +482,23 @@ def zone_schema(options: dict[str, Any], current: dict[str, Any]) -> vol.Schema:
         foreign_heat_filters(options), multiple=True
     )
     if _advanced(options):
-        fields[_optional("reference_output_w", current)] = _number(50, 20000, 10, "W")
-        fields[_optional("exponent", current)] = _number(1.0, 2.0, 0.01)
+        fields[_optional("reference_output_w", current)] = _number(
+            *ZONE_BOUNDS["reference_output_w"], 10, "W"
+        )
+        fields[_optional("exponent", current)] = _number(*ZONE_BOUNDS["exponent"], 0.01)
         thresholds = {
             s["kind"]: s.get("threshold")
             for s in current.get("foreign_heat", [])
             if s.get("threshold")
         }
         fields[_optional("power_threshold", {"power_threshold": thresholds.get("power")})] = (
-            _number(1, 10000, 1, "W")
+            _number(*FOREIGN_HEAT_THRESHOLDS[SourceKind.POWER], 1, "W")
         )
         fields[
             _optional(
                 "temperature_threshold", {"temperature_threshold": thresholds.get("temperature")}
             )
-        ] = _number(20, 300, 1, "°C")
+        ] = _number(*FOREIGN_HEAT_THRESHOLDS[SourceKind.TEMPERATURE], 1, "°C")
     return vol.Schema(fields)
 
 
@@ -517,7 +542,7 @@ def reference_schema(options: dict[str, Any]) -> vol.Schema:
         fields[_optional("zone", reference)] = _entity(_ZONE_FILTER)
     if _advanced(options):
         fields[vol.Required("switch_margin", default=reference.get("switch_margin", 0.3))] = (
-            _number(0.1, 3.0, 0.1, "K")
+            _number(*SWITCH_MARGIN_BOUNDS, 0.1, "K")
         )
     return vol.Schema(fields)
 
@@ -527,35 +552,61 @@ def monitor_schema(options: dict[str, Any]) -> vol.Schema:
     return vol.Schema(
         {
             vol.Required("condensing_return", default=monitor.get("condensing_return", 55.0)): (
-                _number(40, 65, 0.5, "°C")
+                _number(*MONITOR_BOUNDS["condensing_return"], 0.5, "°C")
             ),
             vol.Required("short_burn_min", default=monitor.get("short_burn_min", 10.0)): _number(
-                1, 60, 1, "min"
+                *MONITOR_BOUNDS["short_burn_min"], 1, "min"
             ),
             vol.Required("monitoring_days", default=monitor.get("monitoring_days", 7.0)): _number(
-                7, 60, 1, "d"
+                *MONITORING_DAYS_BOUNDS, 1, "d"
             ),
-            _optional("verdict_window_days", monitor): _number(7, 365, 1, "d"),
+            _optional("verdict_window_days", monitor): _number(
+                *MONITOR_BOUNDS["verdict_window_days"], 1, "d"
+            ),
             vol.Required("near_room_k", default=monitor.get("near_room_k", 3.0)): _number(
-                1, 10, 0.5, "K"
+                *MONITOR_BOUNDS["near_room_k"], 0.5, "K"
             ),
             vol.Required(
                 "foreign_heat_hold_min", default=monitor.get("foreign_heat_hold_min", 60.0)
-            ): _number(0, 720, 5, "min"),
+            ): _number(*MONITOR_BOUNDS["foreign_heat_hold_min"], 5, "min"),
             # Y1: one optional "add water" threshold from the boiler's manual — none by default.
             _optional("add_water_below", monitor): _number(*ADD_WATER_RANGE_BAR, 0.1, "bar"),
-            **_limit(monitor, "pressure_high_warning", PRESSURE_HIGH_BAND.warning, 1.5, 4, "bar"),
-            **_limit(monitor, "pressure_high_alarm", PRESSURE_HIGH_BAND.alarm, 1.5, 4, "bar"),
-            **_limit(monitor, "flue_gas_warning", FLUE_GAS_CONDENSING_BAND.warning, 40, 200, "°C"),
-            **_limit(monitor, "flue_gas_alarm", FLUE_GAS_CONDENSING_BAND.alarm, 40, 200, "°C"),
+            **_limit(
+                monitor,
+                "pressure_high_warning",
+                PRESSURE_HIGH_BAND.warning,
+                *MONITOR_BOUNDS["pressure_high_warning"],
+                "bar",
+            ),
+            **_limit(
+                monitor,
+                "pressure_high_alarm",
+                PRESSURE_HIGH_BAND.alarm,
+                *MONITOR_BOUNDS["pressure_high_alarm"],
+                "bar",
+            ),
+            **_limit(
+                monitor,
+                "flue_gas_warning",
+                FLUE_GAS_CONDENSING_BAND.warning,
+                *MONITOR_BOUNDS["flue_gas_warning"],
+                "°C",
+            ),
+            **_limit(
+                monitor,
+                "flue_gas_alarm",
+                FLUE_GAS_CONDENSING_BAND.alarm,
+                *MONITOR_BOUNDS["flue_gas_alarm"],
+                "°C",
+            ),
             vol.Required(
                 "starts_per_hour_limit",
                 default=monitor.get("starts_per_hour_limit", DEFAULT_FREQUENT_STARTS_PER_HOUR),
-            ): _number(2, 60, 1),
+            ): _number(*MONITOR_BOUNDS["starts_per_hour_limit"], 1),
             vol.Required(
                 "unstable_burns_limit",
                 default=monitor.get("unstable_burns_limit", DEFAULT_UNSTABLE_BURNS_PER_DAY),
-            ): _number(1, 100, 1),
+            ): _number(*MONITOR_BOUNDS["unstable_burns_limit"], 1),
         }
     )
 
@@ -703,7 +754,9 @@ def control_entity_schema(options: dict[str, Any]) -> vol.Schema:
         vol.Required("hand_back", default=control.get("hand_back", vol.UNDEFINED)): _select(
             "hand_back", [h.value for h in HandBack]
         ),
-        _optional("hand_back_value", control): _number(0, 90, 0.5, "°C"),
+        _optional("hand_back_value", control): _number(
+            *CONTROL_BOUNDS["hand_back_value"], 0.5, "°C"
+        ),
         _optional("hand_back_value_effect", control): _select(
             "hand_back_value_effect", [e.value for e in ValueEffect]
         ),
@@ -784,7 +837,11 @@ def activation_delay_field(
     stored = control.get(ACTIVATION_DELAY)
     if stored is None:
         stored = CONTROL_DEFAULTS[ACTIVATION_DELAY] if vt_delay is None else vt_delay
-    return {vol.Required(ACTIVATION_DELAY, default=stored): _number(0, 600, 10, "s")}
+    return {
+        vol.Required(ACTIVATION_DELAY, default=stored): _number(
+            *CONTROL_BOUNDS[ACTIVATION_DELAY], 10, "s"
+        )
+    }
 
 
 def control_curve_schema(options: dict[str, Any], vt_delay: float | None = None) -> vol.Schema:
@@ -799,29 +856,41 @@ def control_curve_schema(options: dict[str, Any], vt_delay: float | None = None)
         return control.get(key, CONTROL_DEFAULTS[key])
 
     fields: dict[Any, Any] = {
-        vol.Required("design_outdoor", default=design_outdoor): _number(-40, 10, 0.5, "°C"),
+        vol.Required("design_outdoor", default=design_outdoor): _number(
+            *CURVE_BOUNDS["design_outdoor"], 0.5, "°C"
+        ),
         # The curve is the user's to enter: no silent default for the design flow.
         vol.Required("design_flow", default=curve.get("design_flow", vol.UNDEFINED)): _number(
-            25, 80, 0.5, "°C"
+            *CURVE_BOUNDS["design_flow"], 0.5, "°C"
         ),
-        vol.Required("hard_min", default=default("hard_min")): _number(10, 50, 0.5, "°C"),
-        vol.Required("hard_max", default=default("hard_max")): _number(30, 90, 0.5, "°C"),
+        vol.Required("hard_min", default=default("hard_min")): _number(
+            *CONTROL_BOUNDS["hard_min"], 0.5, "°C"
+        ),
+        vol.Required("hard_max", default=default("hard_max")): _number(
+            *CONTROL_BOUNDS["hard_max"], 0.5, "°C"
+        ),
         **activation_delay_field(control, vt_delay),
     }
     if _advanced(options):
         fields |= {
             vol.Required("room", default=curve.get("room", CURVE_DEFAULTS["room"])): _number(
-                15, 25, 0.5, "°C"
+                *CURVE_BOUNDS["room"], 0.5, "°C"
             ),
-            _optional("exponent", curve): _number(1.0, 2.0, 0.05),
+            _optional("exponent", curve): _number(*CURVE_BOUNDS["exponent"], 0.05),
             vol.Required("offset", default=curve.get("offset", CURVE_DEFAULTS["offset"])): (
-                _number(-10, 10, 0.5, "K")
+                _number(*CURVE_BOUNDS["offset"], 0.5, "K")
             ),
-            vol.Required("ceiling_band", default=default("ceiling_band")): _number(0, 20, 0.5, "K"),
-            _optional("fallback_setpoint", control): _number(25, 80, 0.5, "°C"),
-            vol.Required("frost_limit", default=default("frost_limit")): _number(3, 10, 0.5, "°C"),
+            vol.Required("ceiling_band", default=default("ceiling_band")): _number(
+                *CONTROL_BOUNDS["ceiling_band"], 0.5, "K"
+            ),
+            _optional("fallback_setpoint", control): _number(
+                *CONTROL_BOUNDS["fallback_setpoint"], 0.5, "°C"
+            ),
+            vol.Required("frost_limit", default=default("frost_limit")): _number(
+                *CONTROL_BOUNDS["frost_limit"], 0.5, "°C"
+            ),
             vol.Required("frost_release", default=default("frost_release")): _number(
-                4, 12, 0.5, "°C"
+                *CONTROL_BOUNDS["frost_release"], 0.5, "°C"
             ),
             _optional("frost_zone", control): selector.EntitySelector(
                 selector.EntitySelectorConfig(include_entities=_zone_entities(options))
@@ -964,16 +1033,22 @@ def control_relay_behaviour_schema(
         vol.Required(
             "count_threshold",
             default=CONTROL_DEFAULTS["count_threshold"] if count is None else count,
-        ): _number(0, 20, 1),
+        ): _number(*CONTROL_BOUNDS["count_threshold"], 1),
         _optional("power_threshold_kw", {"power_threshold_kw": power}): _number(
-            0.1, 100, 0.1, "kW"
+            *CONTROL_BOUNDS["power_threshold_kw"], 0.1, "kW"
         ),
-        _optional("opening_threshold", control): _number(1, 100, 1, "%"),
+        _optional("opening_threshold", control): _number(
+            *CONTROL_BOUNDS["opening_threshold"], 1, "%"
+        ),
         vol.Required("learning_pauses", default=default("learning_pauses")): (
             selector.BooleanSelector()
         ),
-        vol.Required("frost_limit", default=default("frost_limit")): _number(3, 10, 0.5, "°C"),
-        vol.Required("frost_release", default=default("frost_release")): _number(4, 12, 0.5, "°C"),
+        vol.Required("frost_limit", default=default("frost_limit")): _number(
+            *CONTROL_BOUNDS["frost_limit"], 0.5, "°C"
+        ),
+        vol.Required("frost_release", default=default("frost_release")): _number(
+            *CONTROL_BOUNDS["frost_release"], 0.5, "°C"
+        ),
         _optional("frost_zone", control): selector.EntitySelector(
             selector.EntitySelectorConfig(include_entities=_zone_entities(options))
         ),
@@ -998,12 +1073,18 @@ def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
 
     return vol.Schema(
         {
-            **required("ramp_k_per_min", _number(0.1, 10, 0.1, "K/min")),
-            **required("decision_interval_min", _number(1, 30, 1, "min")),
-            **required("off_setpoint", _number(0, 30, 0.5, "°C")),
-            **required("count_threshold", _number(0, 20, 1)),
-            _optional("power_threshold_kw", control): _number(0.1, 100, 0.1, "kW"),
-            _optional("opening_threshold", control): _number(1, 100, 1, "%"),
+            **required("ramp_k_per_min", _number(*CONTROL_BOUNDS["ramp_k_per_min"], 0.1, "K/min")),
+            **required(
+                "decision_interval_min", _number(*CONTROL_BOUNDS["decision_interval_min"], 1, "min")
+            ),
+            **required("off_setpoint", _number(*CONTROL_BOUNDS["off_setpoint"], 0.5, "°C")),
+            **required("count_threshold", _number(*CONTROL_BOUNDS["count_threshold"], 1)),
+            _optional("power_threshold_kw", control): _number(
+                *CONTROL_BOUNDS["power_threshold_kw"], 0.1, "kW"
+            ),
+            _optional("opening_threshold", control): _number(
+                *CONTROL_BOUNDS["opening_threshold"], 1, "%"
+            ),
             **required("learning_pauses", selector.BooleanSelector()),
             **required("comfort_correction", selector.BooleanSelector()),
         }
@@ -1292,7 +1373,7 @@ def control_of(options: dict[str, Any]) -> ControlOptions | None:
     save's own check then names the problem)."""
     try:
         return EntryConfig.from_options(options).control
-    except ConfigError, KeyError, TypeError, ValueError:
+    except AttributeError, ConfigError, KeyError, TypeError, ValueError:
         return None
 
 
@@ -1643,6 +1724,8 @@ _PROBLEM_STEPS = {
     "invalid_monitor": "monitor",
     "invalid_building": "building",
     "invalid_freshness": "freshness",
+    "invalid_signals": "signals",
+    "invalid_parameters": "building",
     "unreadable_options": "signals",
     "invalid_control": "control",
     # Found at the save (P-12): control took the boiler, or began to owe it a hand-back, after
@@ -1988,12 +2071,33 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         # Blockers the edit would add to control, awaiting confirmation; confirmed: saved anyway.
         self._blocking: list[str] = []
         self._blocking_confirmed = False
+        # Stored sections of another shape, each shown first at the save (PB-06).
+        self._unreadable: list[str] = []
 
     @property
     def options(self) -> dict[str, Any]:  # type: ignore[override]
         if self._options is None:
-            self._options = copy.deepcopy(dict(self.config_entry.options))
+            options = copy.deepcopy(dict(self.config_entry.options))
+            # PB-06: a section of another shape (a hand edit, an import) is edited from empty, so
+            # its step and the menu can show; the save first sends the user to that step, with
+            # its reason — nothing of it is dropped unseen.
+            self._unreadable = [
+                key for key in SECTION_CODES if not section_fits(key, options.get(key))
+            ]
+            for key in self._unreadable:
+                options[key] = [] if key in (CIRCUITS, ZONES) else {}
+            self._options = options
         return self._options
+
+    def _next_unreadable(self) -> str | None:
+        """The next stored section of another shape not shown yet (PB-06)."""
+        _ = self.options  # made at first use, finding them
+        return self._unreadable.pop(0) if self._unreadable else None
+
+    def _stored_control(self) -> Mapping[str, Any]:
+        """The stored control section; one of another shape reads as none (PB-06)."""
+        current = self.config_entry.options.get(CONTROL)
+        return current if isinstance(current, Mapping) else {}
 
     def _next_after(self, step: str) -> str:
         return "save"
@@ -2031,7 +2135,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         """The read-back the answer re-picks on the path kept, where it judges a hand-back's
         release: a gateway's (R6, H2 with C1), the setpoint's and the heating switch's on the
         entity path (PB-09); ``None`` where none is."""
-        current = self.config_entry.options.get(CONTROL, {})
+        current = self._stored_control()
         path = current.get("write_path")
         if user_input.get("write_path") != path:
             return None
@@ -2053,7 +2157,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         the frontend leaves an emptied optional field out."""
         if isinstance(shown, vol.Schema):
             shown = {str(marker) for marker in shown.schema}
-        current = self.config_entry.options.get(CONTROL, {})
+        current = self._stored_control()
         return any(
             _hand_back_answer(user_input, key) != _hand_back_answer(current, key)
             for key in fixed_keys(current.get("write_path"), owed=blocker == HAND_BACK_PENDING)
@@ -2069,8 +2173,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         new = self.options.get(CONTROL)
         if not isinstance(new, Mapping):
             return False
-        current = self.config_entry.options.get(CONTROL)
-        current = current if isinstance(current, Mapping) else {}
+        current = self._stored_control()
         keys = ["write_path", *fixed_keys(new.get("write_path"), owed=owed)]
         return any(_hand_back_answer(new, key) != _hand_back_answer(current, key) for key in keys)
 
@@ -2120,6 +2223,9 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         # A confirmation holds for the save right after it only: any way back to a step asks
         # again at the next save.
         confirmed, self._blocking_confirmed = self._blocking_confirmed, False
+        if (key := self._next_unreadable()) is not None:
+            # PB-06: a section stored in another shape is shown once, from empty, with its reason.
+            return await self._back_to_problem(SECTION_CODES[key], key)
         problem = validate_problem(self.options)
         if problem is not None:
             return await self._back_to_problem(*problem)
@@ -2205,7 +2311,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
     ) -> ConfigFlowResult:
         if user_input is not None:
             path = user_input["write_path"]
-            current = self.config_entry.options.get(CONTROL, {}).get("write_path")
+            current = self._stored_control().get("write_path")
             errors = control_error(user_input, self.options)
             if not errors and path != NO_CONTROL:
                 errors = entity_errors(self.hass, user_input, CONTROL_ENTITY_FIELDS)

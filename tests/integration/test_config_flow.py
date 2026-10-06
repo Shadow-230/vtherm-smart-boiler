@@ -1815,8 +1815,8 @@ async def test_an_unknown_stored_value_is_a_form_error(
 async def test_options_that_cannot_be_read_are_a_form_error(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    """P-70: a section of another shape entirely is ``unreadable_options`` on the signals step,
-    never an exception; the signals step shows and saves."""
+    """P-70, PB-06: a section of another shape entirely is named (``invalid_signals``) on its
+    step, never an exception; the signals step shows and saves."""
     options = {"level": "simple", "signals": "flame and flow"}
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
     entry.add_to_hass(hass)
@@ -1824,11 +1824,64 @@ async def test_options_that_cannot_be_read_are_a_form_error(
     result = await options_step(hass, menu, {"next_step_id": "building"})
     result = await options_step(hass, result, {})
     assert result["step_id"] == "signals"
-    assert result["errors"] == {"base": "unreadable_options"}
+    assert result["errors"] == {"base": "invalid_signals"}
     result = await options_step(
         hass, result, {"flame": entities["flame"], "flow": entities["flow"]}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+@pytest.mark.parametrize(
+    ("level", "section", "value", "step", "code"),
+    [
+        ("advanced", "monitor", [], "monitor", "invalid_monitor"),
+        ("simple", "control", ["opentherm_gw"], "control", "invalid_control"),
+        ("simple", "zones", "climate.living", "zones", "invalid_zone"),
+        ("simple", "circuits", {"id": "main", "max_flow": 40}, "circuit", "invalid_circuit"),
+    ],
+)
+async def test_a_section_of_another_shape_is_shown_from_empty_first(
+    hass: HomeAssistant,
+    entities: dict[str, str],
+    level: str,
+    section: str,
+    value: object,
+    step: str,
+    code: str,
+) -> None:
+    """PB-06: a section stored in another shape (``monitor: []``, a list as the control section)
+    neither breaks the menu nor its step: the save first shows that step, from empty, with its
+    reason — the section is never dropped unseen; the next save goes through."""
+    signals = {"flame": entities["flame"], "flow": entities["flow"]}
+    options = {"level": level, "signals": signals, section: value}
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
+    entry.add_to_hass(hass)
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    assert menu["type"] is FlowResultType.MENU
+    result = await options_step(hass, menu, {"next_step_id": "freshness"})
+    result = await options_step(hass, result, {})
+    assert result["step_id"] == step
+    assert result["errors"] == {"base": code}
+    if section == "monitor":
+        result = await options_step(hass, result, {})
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        assert isinstance(entry.options["monitor"], dict)
+
+
+async def test_a_value_of_another_shape_inside_a_section_is_a_form_error(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """P-70: a value of another shape inside a section that no section check names — a list as
+    a parameter — is ``unreadable_options`` on the signals step, never an exception at a save."""
+    signals = {"flame": entities["flame"], "flow": entities["flow"]}
+    options = {"level": "simple", "signals": signals, "parameters": {"loss_coefficient": [1]}}
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
+    entry.add_to_hass(hass)
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "freshness"})
+    result = await options_step(hass, result, {})
+    assert result["step_id"] == "signals"
+    assert result["errors"] == {"base": "unreadable_options"}
 
 
 async def test_entities_are_checked_on_the_server(
