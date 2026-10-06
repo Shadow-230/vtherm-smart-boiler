@@ -11,7 +11,8 @@ missing tests TB-02, TB-05 and TB-06.
   never judged another controller's, and its hand-back stays whole.
 - PB-14: the lost link's issue is kept across a restart, and follows ``blocked_by``.
 - PB-16: a control-store write that fails keeps control from taking the boiler, with a repair
-  issue, until a write works again.
+  issue, until the store has written for a while without a failure (M1 of the part-1 check);
+  the store's watch passes on whatever Home Assistant's store gives it (L2).
 - TB-05, TB-06: a stop that cannot get the unit's lock in time keeps the debt; a switch change or
   a restore queued behind a stop does nothing.
 
@@ -28,7 +29,7 @@ import asyncio
 import copy
 import dataclasses
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 from unittest.mock import patch
@@ -39,6 +40,7 @@ from homeassistant.core import CoreState, HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers import storage as ha_storage
+from homeassistant.util import dt as dt_util
 from homeassistant.util.file import WriteError
 from pytest_homeassistant_custom_component.common import mock_restore_cache
 
@@ -158,6 +160,33 @@ def writes_failing(key: str, after: int = 0) -> Iterator[list[str]]:
 
     with patch.object(ha_storage.Store, "_async_write_data", failing):
         yield failed
+
+
+@contextmanager
+def control_writes(rig: Rig, fails: Callable[[int], bool]) -> Iterator[list[tuple[float, bool]]]:
+    """Each write of this entry's control store, numbered from 1, fails where ``fails`` says so
+    (``WriteError``, as in ``writes_failing``) — a store that fails now and then, a dying SD card
+    say. Yields every write's time and whether it went through."""
+    assert rig.entry is not None
+    key = control_key(rig.entry)
+    write = ha_storage.Store._async_write_data  # the test's storage mock
+    log: list[tuple[float, bool]] = []
+
+    async def flaky(store: ha_storage.Store[Any], data: dict[str, Any]) -> None:
+        if store.key == key:
+            ok = not fails(len(log) + 1)
+            log.append((dt_util.utcnow().timestamp(), ok))
+            if not ok:
+                raise WriteError(OSError(5, "Input/output error"))
+        await write(store, data)
+
+    with patch.object(ha_storage.Store, "_async_write_data", flaky):
+        yield log
+
+
+def first_working_after(log: list[tuple[float, bool]], at: float) -> float | None:
+    """The first write in ``log`` after ``at`` that went through."""
+    return next((t for t, ok in log if ok and t > at), None)
 
 
 @contextmanager
@@ -475,6 +504,48 @@ async def test_a_failing_step_whose_hand_back_and_issues_fail_keeps_the_debt(
     stored = stored_control(hass_storage, rig)
     assert stored["hand_back_pending"] is True
     assert stored["controlling"] is True
+
+
+@pytest.mark.parametrize("also", ["learning_release", "issue_registry"])
+async def test_a_lasting_step_error_with_another_failure_keeps_the_minutes_retry(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, also: str
+) -> None:
+    """TB-02 with a second lasting failure (L1 of the part-1 check): the control step raises at
+    every step, the gateway does not show the owed hand-back released, and — at every step as
+    well — the release of learning raises, or the issue registry fails for this integration.
+    The hand-back still goes out once a minute: a step that made no attempt does not put the
+    retry off, and an owed issue that cannot be raised does not stop the attempt. Before: CS=0
+    once in six minutes."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    unit = unit_of(rig)
+    rig.gateway.ignore_release = True
+    monkeypatch.setattr(type(unit), "_async_step", broken_step)
+    if also == "learning_release":
+
+        async def broken_release(self: Any, now: float) -> None:
+            raise RuntimeError("a bug in the learning release")
+
+        monkeypatch.setattr(type(unit), "_async_release_learning", broken_release)
+    else:
+        create = ir.async_create_issue
+
+        def create_issue(hass: HomeAssistant, domain: str, *args: Any, **kwargs: Any) -> None:
+            if domain == DOMAIN:
+                raise RuntimeError("the issue registry fails")
+            create(hass, domain, *args, **kwargs)
+
+        monkeypatch.setattr(ir, "async_create_issue", create_issue)
+    sent = rig.gateway.setpoints().count(0.0)
+    await rig.advance(10)  # the first failing step: the whole safe hand-back
+    assert rig.gateway.setpoints().count(0.0) == sent + 1
+    await rig.advance(40)
+    assert rig.gateway.setpoints().count(0.0) == sent + 1  # nothing more within the minute
+    for minute in range(1, 6):
+        await rig.advance(60 if minute > 1 else 20)
+        assert rig.gateway.setpoints().count(0.0) == sent + 1 + minute
+    assert unit.hand_back_owed
 
 
 async def test_an_error_whose_hand_back_raises_with_nothing_held_owes_nothing(
@@ -796,8 +867,8 @@ async def test_control_does_not_take_the_boiler_while_its_memory_cannot_be_writt
     Home Assistant's store logs it and goes on). Switched on, control does not take the boiler —
     a crash would forget it holds it: the blocker ``control_state_not_saved`` and an error-level
     repair issue say why, the switch stays on, and the store is tried again every minute;
-    nothing is written to the boiler. Once a write works again, both go, control takes the
-    boiler, and the store says so."""
+    nothing is written to the boiler. Once the store has written for ``STORE_HOLD_S`` without a
+    failure, both go, control takes the boiler, and the store says so."""
     await start(rig)
     with control_writes_failing(rig) as failed:
         await rig.switch(True)
@@ -815,7 +886,10 @@ async def test_control_does_not_take_the_boiler_while_its_memory_cannot_be_writt
         await rig.advance(20)
         assert len(failed) == tries + 1  # once a minute
         assert rig.gateway.calls == []
-    await rig.advance(60)
+    await rig.advance(60)  # the minute's retry works: control is held off a while longer
+    assert "control_state_not_saved" in blockers(rig)
+    assert rig.gateway.calls == []
+    await rig.advance(control_module.STORE_HOLD_S)
     assert "control_state_not_saved" not in blockers(rig)
     assert issue(rig, STORE_ISSUE) is None
     assert rig.gateway.setpoints() == [EXPECTED]
@@ -830,7 +904,8 @@ async def test_a_session_whose_hold_cannot_be_stored_does_not_take_the_boiler(
     """PB-16 at the session's first write: the wish is stored, then the store fails at the write
     that marks the boiler held — made before the write, as a crash must know of it. Nothing is
     written: the boiler is not taken; the next step shows the blocker and the issue, with
-    nothing to hand back. Control takes the boiler once a write works again."""
+    nothing to hand back. Control takes the boiler once the store has written for
+    ``STORE_HOLD_S`` without a failure."""
     await start(rig)
     unit = unit_of(rig)
     with control_writes_failing(rig, after=1) as failed:  # the wish goes through, then none
@@ -844,6 +919,8 @@ async def test_a_session_whose_hold_cannot_be_stored_does_not_take_the_boiler(
         assert issue(rig, STORE_ISSUE) is not None
         assert rig.gateway.calls == []  # nothing held: nothing to hand back
     await rig.advance(60)
+    assert issue(rig, STORE_ISSUE) is not None  # held off a while longer
+    await rig.advance(control_module.STORE_HOLD_S)
     assert issue(rig, STORE_ISSUE) is None
     assert rig.gateway.setpoints() == [EXPECTED]
     assert stored_control(hass_storage, rig)["controlling"] is True
@@ -855,7 +932,8 @@ async def test_a_control_store_failing_while_control_holds_the_boiler_hands_back
     """PB-16 while control holds the boiler: a write of the control store fails — here the one
     that stores heating switched off at once. The next step hands the boiler back, though its
     debt cannot be stored first (a hand-back is never held back), with the blocker and the
-    issue; once a write works again, control takes the boiler afresh."""
+    issue; once the store has written for ``STORE_HOLD_S`` without a failure, control takes the
+    boiler afresh."""
     await start(rig)
     await rig.switch(True)
     await rig.advance(20)
@@ -872,6 +950,87 @@ async def test_a_control_store_failing_while_control_holds_the_boiler_hands_back
         assert _logged(caplog, logging.ERROR, "The control state could not be written") == 1
     rig.zones.set("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
     await rig.advance(70)
+    assert issue(rig, STORE_ISSUE) is not None  # held off a while longer
+    assert rig.gateway.calls[-3:] == HAND_BACK
+    await rig.advance(control_module.STORE_HOLD_S)
+    assert issue(rig, STORE_ISSUE) is None
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+
+
+async def held_off_until(rig: Rig, at: float) -> ir.IssueEntry:
+    """Steps until shortly before ``at``, control held off at each: the blocker up and the
+    store's error issue the same one throughout — neither deleted nor raised again."""
+    found = issue(rig, STORE_ISSUE)
+    assert found is not None
+    while dt_util.utcnow().timestamp() < at - 10:
+        await rig.advance(10)
+        assert "control_state_not_saved" in blockers(rig)
+        assert issue(rig, STORE_ISSUE) == found
+    return found
+
+
+async def test_one_failed_control_store_write_hands_back_once_and_holds_control_off(
+    rig: Rig,
+) -> None:
+    """PB-16's hold-off (M1 of the part-1 check): one write of the control store fails while
+    control holds the boiler. The next step hands back — once: the writes that work after it,
+    the debt's own first, do not let control take the boiler again; the blocker and the error
+    issue hold until the store has written for ``STORE_HOLD_S`` without a failure, the store
+    written again every minute meanwhile. Then control takes the boiler again. Before: control
+    took the boiler again a step after the hand-back — a burner cycle ten seconds apart."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(60)
+    assert rig.entry is not None
+    coordinator = rig.entry.runtime_data
+    rig.gateway.calls.clear()
+    with control_writes(rig, lambda n: n == 1) as log:
+        await coordinator.async_save_control_now()  # the one write that fails
+        await rig.advance(10)  # the blocker: the safe hand-back
+        assert rig.gateway.calls == HAND_BACK
+        working = first_working_after(log, 0.0)  # the debt's own write
+        assert working is not None
+        await held_off_until(rig, working + control_module.STORE_HOLD_S)
+        assert rig.gateway.calls == HAND_BACK  # not taken in between
+        # The minute's retry kept writing the store meanwhile.
+        retries = [t for t, ok in log if t > working + 1]
+        assert len(retries) >= control_module.STORE_HOLD_S / control_module.STORE_RETRY_S - 1
+        assert all(ok for _, ok in log[1:])
+        await rig.advance(30)
+    assert "control_state_not_saved" not in blockers(rig)
+    assert issue(rig, STORE_ISSUE) is None
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+
+
+async def test_a_control_store_failing_every_other_write_hands_back_once(rig: Rig) -> None:
+    """PB-16's hold-off with a store that fails at every second write (a dying SD card) for a
+    quarter of an hour: one hand-back, control held off and the error issue up throughout —
+    each failure, the minute's retry meeting them, starts the hold again. Once the writes work,
+    control takes the boiler ``STORE_HOLD_S`` after the first that worked. Before: thirteen
+    hand-backs in five minutes, the issue created and deleted with each."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(60)
+    assert rig.entry is not None
+    coordinator = rig.entry.runtime_data
+    rig.gateway.calls.clear()
+    failing = True
+    with control_writes(rig, lambda n: failing and n % 2 == 1) as log:
+        await coordinator.async_save_control_now()  # the first write fails
+        await rig.advance(10)
+        assert rig.gateway.calls == HAND_BACK
+        await held_off_until(rig, dt_util.utcnow().timestamp() + 15 * 60)
+        assert rig.gateway.calls == HAND_BACK  # one hand-back; the boiler never taken again
+        assert sum(not ok for _, ok in log) >= 7  # the minute's retry met the failures
+        failing = False
+        last_failure = max(t for t, ok in log if not ok)
+        while (working := first_working_after(log, last_failure)) is None:
+            await rig.advance(10)
+            assert "control_state_not_saved" in blockers(rig)
+        await held_off_until(rig, working + control_module.STORE_HOLD_S)
+        assert rig.gateway.calls == HAND_BACK
+        await rig.advance(30)
+    assert "control_state_not_saved" not in blockers(rig)
     assert issue(rig, STORE_ISSUE) is None
     assert rig.gateway.setpoints()[-1] == EXPECTED
 
@@ -959,6 +1118,33 @@ async def test_a_control_store_write_with_no_outcome_is_not_a_failure(
     with writes_failing(quiet.key) as failed:
         await quiet.async_save({"controlling": True})  # nothing raised
     assert failed == [quiet.key]
+
+
+async def test_the_control_stores_watch_passes_on_an_argument_more(hass: HomeAssistant) -> None:
+    """PB-16 (L2 of the part-1 check): the watch on the control store's writes overrides a
+    private method of Home Assistant's store, so it passes on whatever it is given — an argument
+    a later Home Assistant adds included — and still tells each outcome, rather than making
+    every control-store write fail and blocking control for good."""
+    from custom_components.vtherm_smart_boiler.coordinator import control_store
+
+    told: list[bool] = []
+    store = control_store(hass, "x", told.append)
+    given: list[tuple[Any, ...]] = []
+
+    async def write_data(self: Any, data: dict[str, Any], *args: Any, **kwargs: Any) -> None:
+        given.append((data, args, kwargs))
+        if kwargs.get("fail"):
+            raise WriteError(OSError(30, "Read-only file system"))
+
+    with patch.object(ha_storage.Store, "_async_write_data", write_data):
+        await store._async_write_data({"controlling": True}, "more", flag=True)
+        with pytest.raises(WriteError):
+            await store._async_write_data({"controlling": False}, fail=True)
+    assert given == [
+        ({"controlling": True}, ("more",), {"flag": True}),
+        ({"controlling": False}, (), {"fail": True}),
+    ]
+    assert told == [True, False]
 
 
 # --- TB-05: the stop cannot get the unit's lock in time ----------------------------------------

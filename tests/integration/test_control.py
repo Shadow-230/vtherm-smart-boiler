@@ -7791,6 +7791,64 @@ async def test_heating_on_ignored_from_the_start_blocks_and_hands_back(rig: Rig,
     assert rig.state("sensor", "control_state").attributes["latched_by"] == []
 
 
+@pytest.mark.parametrize("release", ["shown", "refused"])
+async def test_heating_on_ignored_writes_the_heating_switch_once_in_the_hand_back(
+    rig: Rig, release: str
+) -> None:
+    """Decision 4 of 0.2.3 (SB-03; finding 1 of the part-1 check D) on the entity path: a held
+    heating switch that will not go on and is its own read-back, a hand-back that gives the
+    boiler its own control back. "On" ignored from the start latches and hands back; the
+    hand-back writes the switch "on" once — its rest state, as a relay steps aside — and leaves
+    it out of the debt: never written again, and no owed issue for it. Before: "on" every
+    minute for good, with an error-level owed issue beside the latch's. Negative (``refused``):
+    the setpoint's release, refused by the device, is still sent again every minute, with the
+    owed issue, until it shows; the switch is not written again meanwhile."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    switch = FakeSwitch(rig.hass, on=False, stuck_off=True)
+    switch.register()
+    control = held_entity(
+        number,
+        ch_entity=switch.entity_id,
+        ch_write_type="held",
+        ch_confirmed_entity=switch.entity_id,
+    )
+    await start(rig, **control)
+    await rig.advance(310)
+    await rig.switch(True)
+    assert EXPECTED != 50.0  # the hand-back value, which the device may refuse below
+    number.refuse = 50.0 if release == "refused" else None
+    for _ in range(60):
+        before = len(switch.writes)
+        await rig.advance(10)
+        if rig.state("sensor", "control_state").state == "handed_back":
+            break
+    else:
+        pytest.fail("not handed back")
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["heating_on_ignored"]
+    assert switch.writes[before:] == [True]  # the hand-back's "on", once
+    written, lowest = len(switch.writes), len(number.writes)
+    await rig.advance(1800)
+    assert len(switch.writes) == written  # never again
+    found = issue(rig, "control_latched")
+    assert found is not None
+    assert found.translation_key == "control_latched_heating_on_ignored"
+    unit = unit_of(rig)
+    if release == "shown":
+        assert not unit.hand_back_owed
+        assert issue(rig, "hand_back_owed") is None
+        return
+    assert unit.hand_back_owed
+    assert issue(rig, "hand_back_owed") is not None
+    assert len(number.writes) - lowest >= 29  # the lowest, written with each retry of the release
+    number.refuse = None
+    await rig.advance(60)
+    assert number.value == 50.0
+    assert not unit.hand_back_owed
+    assert issue(rig, "hand_back_owed") is None
+    assert len(switch.writes) == written
+
+
 @dataclass
 class EchoedSwitch(FakeSwitch):
     """A held heating switch with a status entity of its own that follows it — an ESPHome

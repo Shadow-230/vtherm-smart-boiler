@@ -42,8 +42,8 @@ lives in a store of its own, written at once and atomically; the entry's store k
 One function reads it for every place that asks (``async_read_control_state``): a state that
 cannot be read counts as "the plugin held the boiler" wherever control is configured. Home
 Assistant's store logs a write that fails and goes on; the control store notes each write's
-outcome, so a failed one is known (``control_store_failing``) and control does not take the
-boiler until a write works again (PB-16).
+outcome, so a failed one is known (``control_store_failing``, ``control_store_failures``) and
+control does not take the boiler until the store has written for a while without one (PB-16).
 """
 
 from __future__ import annotations
@@ -342,9 +342,11 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._store = main_store(hass, entry.entry_id)
         self._control_store = control_store(hass, entry.entry_id, self._control_written)
         # PB-16: the last write of the control store failed — its outcome is noted by the store
-        # itself, Home Assistant's store only logging it. Control does not take the boiler
-        # meanwhile; nothing written yet counts as no failure.
+        # itself, Home Assistant's store only logging it — and how many have failed so far.
+        # Control does not take the boiler meanwhile, nor for a while after each failure;
+        # nothing written yet counts as no failure.
         self.control_store_failing = False
+        self.control_store_failures = 0
         # Nothing is written before both stores were read: a setup that fails earlier must not
         # write the defaults over what the last run left (P-04).
         self._loaded = False
@@ -671,11 +673,15 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         return not self.control_store_failing
 
     def _control_written(self, ok: bool) -> None:
-        """The outcome of a write of the control store (PB-16), told once when it changes."""
+        """The outcome of a write of the control store (PB-16), each failure counted; told
+        once when it changes."""
+        if not ok:
+            self.control_store_failures += 1
         if not ok and not self.control_store_failing:
             _LOGGER.error(
                 "The control state could not be written (the log above has why): control does "
-                "not take the boiler until it can, and a hand-back already owed is still made"
+                "not take the boiler until it has written for a while again, and a hand-back "
+                "already owed is still made"
             )
         elif ok and self.control_store_failing:
             _LOGGER.info("The control state can be written again")
@@ -1920,9 +1926,11 @@ class ControlStore(Store[dict[str, Any]]):
         )
         self._noted = noted
 
-    async def _async_write_data(self, data: dict[str, Any]) -> None:
+    async def _async_write_data(self, *args: Any, **kwargs: Any) -> None:
+        # Whatever Home Assistant gives its private method is passed on as it is: an argument a
+        # later version adds must not make every write of the control store fail (L2).
         try:
-            await super()._async_write_data(data)
+            await super()._async_write_data(*args, **kwargs)
         except Exception:
             self._note(False)
             raise

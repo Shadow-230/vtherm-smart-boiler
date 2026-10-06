@@ -947,19 +947,20 @@ def test_the_read_back_waiting_issue_is_translated() -> None:
 
 def test_the_control_store_issue_is_translated() -> None:
     """PB-16: the repair issue of a control store that cannot be written, with a title and a
-    text and no placeholder, in every language; it says that control does not take the boiler
-    meanwhile, that the plugin tries again every minute and that control resumes by itself."""
+    text in every language, its one placeholder the minutes of the hold (M1 of the part-1
+    check); it says that control does not take the boiler meanwhile, that the plugin saves
+    again every minute and that control resumes by itself once saving has worked that long."""
     from custom_components.vtherm_smart_boiler.control import STORE_NOT_SAVED
 
     for language in ALL_LANGUAGES:
         issue = _texts(language)["issues"][STORE_NOT_SAVED]
         assert issue["title"], language
         assert issue["description"], language
-        assert PLACEHOLDER.findall(issue["description"]) == [], language
+        assert PLACEHOLDER.findall(issue["description"]) == ["minutes"], language
     text = SOURCE["issues"][STORE_NOT_SAVED]["description"]
     assert "control does not take the boiler" in text
     assert "every minute" in text
-    assert "resumes on its own" in text
+    assert "resumes on its own once saving has worked for {minutes} minutes" in text
 
 
 def test_the_ignored_command_without_heat_issue_is_translated() -> None:

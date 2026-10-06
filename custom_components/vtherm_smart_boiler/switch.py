@@ -19,7 +19,7 @@ from .coordinator import SmartBoilerConfigEntry, SmartBoilerCoordinator
 from .entity import ControlEntity, coded_text
 
 # Blockers that pass on their own; control switched on waits for them instead of refusing — the
-# control store that cannot be written (PB-16) too, once a write works again.
+# control store that cannot be written (PB-16) too, once it has written for a while again.
 TRANSIENT_BLOCKERS = frozenset(
     {"ha_starting", "vt_central_boiler_unknown", "monitor_failed", "control_state_not_saved"}
 )

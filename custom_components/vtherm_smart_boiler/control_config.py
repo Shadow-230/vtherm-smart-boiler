@@ -883,18 +883,32 @@ def hand_back_stops_heating(control: ControlOptions) -> bool | None:
     return None if effect is None else effect in _STOPS_HEATING
 
 
-def section_stops_heating(data: object) -> bool | None:
-    """Whether a hand-back through a stored control section — the options', or those the control
-    was taken with — stops heating; ``None`` where it holds no control or cannot be read. The
-    effect needs the section alone, so a bare installation stands in for one that may not be
+def _stored_section(data: object) -> ControlOptions | None:
+    """A stored control section as options; ``None`` where it cannot be read. The effect of a
+    hand-back needs the section alone, so a bare installation stands in for one that may not be
     readable."""
     if not isinstance(data, Mapping):
         return None
     try:
-        control = parse_control(data, Installation(Boiler(BoilerClass.READ_ONLY), ()), None)
+        return parse_control(data, Installation(Boiler(BoilerClass.READ_ONLY), ()), None)
     except Exception:  # whatever cannot be read tells nothing
         return None
-    return hand_back_stops_heating(control) if control.configured else None
+
+
+def section_stops_heating(data: object) -> bool | None:
+    """Whether a hand-back through a stored control section — the options', or those the control
+    was taken with — stops heating; ``None`` where it holds no control or cannot be read."""
+    control = _stored_section(data)
+    if control is None or not control.configured:
+        return None
+    return hand_back_stops_heating(control)
+
+
+def section_monitors_only(data: object) -> bool:
+    """A stored control section whose topology allows no control — ``monitor_mode``, refused by
+    today's form, so old data only: the plugin never takes the boiler with it."""
+    control = _stored_section(data)
+    return control is not None and control.topology is Topology.MONITOR_MODE
 
 
 class FailedSetupReport(StrEnum):
@@ -914,14 +928,20 @@ def failed_setup_report(
     not heated. A wish never stored or unreadable counts as "on" (the cautious side). Where
     neither section tells what a hand-back does, the house may not be heated. Nothing where the
     options hold no control section — a setup that worked would not heat either — or the
-    hand-back leaves heating to a thermostat or the boiler's own control."""
+    hand-back leaves heating to a thermostat or the boiler's own control; nor where the options'
+    section only monitors and the stored state shows no session holding the boiler: the plugin
+    never takes it there (finding 6 of the part-1 check D)."""
     if not isinstance(options, Mapping) or not has_control_section(options):
         return None
     if state is not None and state.get("enabled") is False:
         return None
-    stops = section_stops_heating(options[CONTROL])
+    section = options[CONTROL]
+    stops = section_stops_heating(section)
     if stops is None and state is not None:
-        stops = section_stops_heating(state.get("taken_with"))
+        taken_with = state.get("taken_with")
+        stops = section_stops_heating(taken_with)
+        if stops is None and taken_with is None and section_monitors_only(section):
+            return None
     if stops is False:
         return None
     return FailedSetupReport.NOT_HEATED if stops else FailedSetupReport.MAY_NOT_BE_HEATED

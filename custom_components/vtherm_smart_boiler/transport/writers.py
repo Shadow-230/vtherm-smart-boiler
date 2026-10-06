@@ -39,6 +39,7 @@ setpoint read-back shows the release.
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 from collections import deque
 from collections.abc import Awaitable, Callable, Collection
@@ -67,6 +68,8 @@ from .entities import grid_from_state
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant, State
+
+_LOGGER = logging.getLogger(__name__)
 
 OTGW_MIN_SETPOINT = 8.0  # below this (and above 0) an OTGW override never lapses
 MAX_SETPOINT = 90.0
@@ -171,7 +174,8 @@ class Writer(Protocol):
         the usual one (at a stop). ``skip``: targets not written this time — done, held by
         another controller, a third value being judged, a timeout never rewritten — whose checks
         are returned all the same. ``once``: a step aside — a relay's rest state is written
-        once and then left alone (answer L); the other writers make the whole hand-back."""
+        once and then left alone (answer L); on the entity path the heating switch's "on"
+        likewise, once "heating on" was ignored (SB-03); the gateways make the whole hand-back."""
         ...
 
 
@@ -432,7 +436,10 @@ class EntityWriter(_ServiceWriter):
         )
         # 2. Heating on, where the boiler returns to a thermostat or its own control.
         switch = self._switch
-        if switch and self._heating_on:
+        if switch and self._heating_on and once:
+            await self._heating_on_once(switch, skip, write_timeout_s)
+            checks.append(HandBackCheck(switch, "on", CheckKind.SWITCH, CheckSource.ASSUMED))
+        elif switch and self._heating_on:
             written = switch not in skip and await _part(
                 errors, lambda: self._call_entity("turn_on", switch, timeout_s=write_timeout_s)
             )
@@ -509,6 +516,23 @@ class EntityWriter(_ServiceWriter):
             written=written,
             before=before,
         )
+
+    async def _heating_on_once(
+        self, switch: str, skip: Collection[str], write_timeout_s: float | None
+    ) -> None:
+        """A step aside (``once``): the boiler did not take "heating on" from the start (SB-03),
+        so the heating switch's "on" — its rest state here — is written once, unless the switch
+        shows it already, whatever comes of it, and left out of the debt: written again every
+        minute it would be the very command the boiler does not take, toggling heating where
+        something turns it back off. A failure is logged, not owed; the latch's issue says
+        what to do."""
+        state = self._hass.states.get(switch)
+        if switch in skip or (state is not None and state.state == "on"):
+            return
+        try:
+            await self._call_entity("turn_on", switch, timeout_s=write_timeout_s)
+        except WriteError as err:
+            _LOGGER.warning("Could not switch %s back on in the hand-back: %s", switch, err)
 
     def _switch_check(self, entity: str, state: str, written: bool) -> HandBackCheck:
         """A switch has no separate report: its own state shows it, unverified."""

@@ -2376,7 +2376,7 @@
       "message": "Monitor wtyczki zawodzi od 5 minut, więc sterowanie oddało kocioł; wróci samo, gdy monitor znów zadziała. Sprawdź log. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_control_state_not_saved": {
-      "message": "Wtyczka nie może zapisać swojej pamięci o kotle (zobacz zgłoszenie naprawy), więc sterowanie nie przejmuje kotła; wróci samo, gdy zapis znów zadziała. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Wtyczka nie może zapisać swojej pamięci o kotle (zobacz zgłoszenie naprawy), więc sterowanie nie przejmuje kotła; wróci samo, gdy zapis znów będzie działał przez kilka minut. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_timeout_needs_expiring_writes": {
       "message": "Limit czasu urządzenia oddaje sterowanie tylko przy zapisach wygasających: wybierz w opcjach wartość oddania albo przełącznik. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
@@ -2527,7 +2527,7 @@
     },
     "control_state_not_saved": {
       "title": "Wtyczka nie może zapisać swojej pamięci o kotle",
-      "description": "Zapis pliku, w którym wtyczka pamięta, czy steruje kotłem, nie powiódł się — pełny dysk albo pamięć, która przeszła w tryb tylko do odczytu (błąd jest w logu Home Assistant). Po restarcie wtyczka mogłaby wtedy zapomnieć, że kocioł trzyma wartość przez nią zapisaną, więc sterowanie na razie nie przejmuje kotła: oddało go, a oddanie, które wtyczka już jest winna, i tak zostaje wysłane. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono teraz grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci. Wtyczka próbuje zapisać ponownie co minutę, a sterowanie wraca samo, gdy to się uda. Sprawdź pamięć Home Assistant: wolne miejsce i czy jej dysk lub karta SD nie zawodzi."
+      "description": "Zapis pliku, w którym wtyczka pamięta, czy steruje kotłem, nie powiódł się — pełny dysk albo pamięć, która przeszła w tryb tylko do odczytu (błąd jest w logu Home Assistant). Po restarcie wtyczka mogłaby wtedy zapomnieć, że kocioł trzyma wartość przez nią zapisaną, więc sterowanie na razie nie przejmuje kotła: oddało go, a oddanie, które wtyczka już jest winna, i tak zostaje wysłane. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono teraz grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci. Wtyczka zapisuje ponownie co minutę, a sterowanie wraca samo, gdy zapis działa bez błędu przez {minutes} min. Sprawdź pamięć Home Assistant: wolne miejsce i czy jej dysk lub karta SD nie zawodzi."
     },
     "hand_back_owed_after_removal": {
       "title": "Kocioł może nadal trzymać wartość z VTherm Smart Boiler",

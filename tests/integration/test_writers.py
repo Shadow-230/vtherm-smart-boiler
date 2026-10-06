@@ -315,6 +315,48 @@ async def test_each_hand_back_step_is_tried_whatever_the_others_do(hass: HomeAss
     ]
 
 
+@pytest.mark.parametrize("switch", ["off", "on", "skipped", "missing", "unavailable", "failing"])
+async def test_a_step_aside_writes_the_heating_switch_once_and_owes_nothing_for_it(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture, switch: str
+) -> None:
+    """SB-03 (finding 1 of the part-1 check D): at a step aside (``once``) — the boiler did not
+    take "heating on" from the start — the heating switch's "on" is written once, unless it
+    shows "on" already or is left alone (``skip``), and its check counts once written
+    (``ASSUMED``) whatever comes of the write: a switch missing, unavailable or whose call
+    fails is logged, not owed — no ``HandBackFailed`` for it. The release goes as before."""
+    services = [("number", "set_value")]
+    if switch != "failing":
+        services.append(("switch", "turn_on"))  # failing: the switch's service is missing
+    calls = record(hass, *services)
+    present(hass, "number.flow")
+    if switch != "missing":
+        shown = {"on": "on", "unavailable": "unavailable"}.get(switch, "off")
+        hass.states.async_set("switch.ch", shown)
+    writer = make_writer(
+        hass,
+        options(
+            write_path="entity",
+            setpoint_entity="number.flow",
+            ch_entity="switch.ch",
+            write_type="held",
+            ch_write_type="held",
+            hand_back="value",
+            hand_back_value=0,
+            hand_back_value_effect="own_control",
+        ),
+    )
+    skip = ("switch.ch",) if switch == "skipped" else ()
+    checks = await writer.hand_back(once=True, skip=skip)
+    turned_on = [call for call in calls if call[:2] == ("switch", "turn_on")]
+    assert len(turned_on) == (1 if switch == "off" else 0)
+    found = next(check for check in checks if check.key == "switch.ch")
+    assert found.source is CheckSource.ASSUMED
+    assert found.written
+    assert ("number", "set_value", {"entity_id": "number.flow", "value": 0.0}) in calls
+    logged = "Could not switch switch.ch back on in the hand-back" in caplog.text
+    assert logged == (switch in ("missing", "unavailable", "failing"))
+
+
 @pytest.mark.parametrize("state", [None, "unavailable"])
 async def test_a_missing_or_unavailable_target_is_a_failure(
     hass: HomeAssistant, state: str | None

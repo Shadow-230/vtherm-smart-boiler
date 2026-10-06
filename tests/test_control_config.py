@@ -2007,6 +2007,7 @@ def test_the_precedence_of_the_configuration_blockers(
 # A control section this version cannot read: a write path it does not know.
 UNREADABLE_SECTION = {"write_path": "carrier_pigeon"}
 NOT_HEATED, MAY_NOT_BE_HEATED = "setup_failed_not_heated", "setup_failed_may_not_be_heated"
+MONITOR = OTGW | {"topology": "monitor_mode"}
 
 
 @pytest.mark.parametrize(
@@ -2035,8 +2036,17 @@ NOT_HEATED, MAY_NOT_BE_HEATED = "setup_failed_not_heated", "setup_failed_may_not
         (UNREADABLE_SECTION, {"enabled": True, "taken_with": None}, MAY_NOT_BE_HEATED),
         (UNREADABLE_SECTION, {"taken_with": UNREADABLE_SECTION}, MAY_NOT_BE_HEATED),
         (UNREADABLE_SECTION, {"enabled": True, "taken_with": "damaged"}, MAY_NOT_BE_HEATED),
-        (OTGW | {"topology": "monitor_mode"}, {"enabled": True}, MAY_NOT_BE_HEATED),
         (UNREADABLE_SECTION, None, MAY_NOT_BE_HEATED),
+        # A stored monitor-only topology (refused by today's form): the plugin never takes the
+        # boiler with it, so nothing where the stored state shows no earlier session holding
+        # it (finding 6 of the part-1 check D); one taken with other options decides; a state
+        # not read, or options taken with that cannot be read, tell nothing — the cautious side.
+        (MONITOR, {"enabled": True}, None),
+        (MONITOR, {"enabled": True, "taken_with": None}, None),
+        (MONITOR, {"enabled": True, "taken_with": OTGW}, NOT_HEATED),
+        (MONITOR, {"enabled": True, "taken_with": OTGW | WITH_THERMOSTAT}, None),
+        (MONITOR, {"enabled": True, "taken_with": UNREADABLE_SECTION}, MAY_NOT_BE_HEATED),
+        (MONITOR, None, MAY_NOT_BE_HEATED),
         # No control section: control is not configured, so a setup that worked would not heat
         # either — whatever the last run took the boiler with.
         (None, {"enabled": True, "taken_with": OTGW}, None),

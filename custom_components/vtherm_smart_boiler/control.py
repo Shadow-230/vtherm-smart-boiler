@@ -61,8 +61,8 @@ How control resumes after it stopped (``SCOPE.md`` §7):
 - the boiler's own fault: on its own, in the step the fault reads off, unknown or unavailable;
 - the plugin's own monitor failing for five minutes: on its own, once it has worked for a minute
   without a failure, with an information note (the user's answer I);
-- the control store that cannot be written: on its own, once a write works again, tried every
-  minute (PB-16);
+- the control store that cannot be written: on its own, once it has written for
+  ``STORE_HOLD_S`` without a failure, tried every minute (PB-16);
 - a blocker: on its own, once it is gone — the configuration's own (``config_blockers``) and those
   found at every step: the gateway's or MQTT's integration removed or disabled, a zone that is
   no VT climate, a zone VT builds on the boiler's own thermostat (X5). Where a hand-back stops
@@ -333,10 +333,14 @@ STOPPED_HEATING_S = 60.0
 # Assistant's store only logs it. A crash would then forget that the boiler holds a value of
 # ours, so control does not take the boiler (a blocker of this name, which hands back what a
 # session holds; a hand-back already owed is still made) and an error-level repair issue of
-# this name says why. The store is tried again this often while it fails; the first write that
-# works ends both (provisional, K4).
+# this name says why. Both hold from a write that fails until the store has written for
+# ``STORE_HOLD_S`` without a failure — each failure starts that again — so a store that fails
+# now and then does not make control take the boiler and hand it back at every other write (M1
+# of the part-1 check); the store is written again every ``STORE_RETRY_S`` meanwhile, never
+# more often. A hand-back is never held back by it (provisional, K4).
 STORE_NOT_SAVED = "control_state_not_saved"
 STORE_RETRY_S = 60.0
+STORE_HOLD_S = 300.0
 # Blockers that raise no such issue: Home Assistant starting (the minute starts once it runs),
 # an internal error (its own alarm), the monitor failing (V6's own issue), heating off or on
 # ignored from the start or a relay's "off" no longer taken (the latch issue says so), and the
@@ -813,6 +817,7 @@ class ControlUnit:
         self._holding = False
         self._unknown_since: dict[str, float] = {}
         self._hand_back_retry_at = 0.0
+        self._hand_back_tried_at: float | None = None  # the step of the last attempt (L1)
         self._restored = False  # the user's wish is known: restored by the switch, or timed out
         # The wish as the last run stored it: ``None`` when none was stored (the first start of
         # 0.2.2). Stored as it is until the switch restores it.
@@ -926,10 +931,14 @@ class ControlUnit:
         # PB-14: the last run stored that the lost link's issue was up: raised again at the
         # start while the wish is on (Home Assistant brings it back inactive after a restart).
         self._link_issue_stored = False
-        # PB-16: while the control store cannot be written, when it is tried again, and whether
-        # the repair issue saying so is up.
+        # PB-16: while control is held off for the control store, when the store is written
+        # again, and whether the repair issue saying so is up; the hold — the failures seen so
+        # far, and since when the store has written without one.
         self._store_retry_at: float | None = None
         self._store_issue = False
+        self._store_held = False
+        self._store_failures_seen = 0
+        self._store_working_since: float | None = None
 
     # --- status, listeners, storage -----------------------------------------------------
 
@@ -1513,9 +1522,10 @@ class ControlUnit:
         if self._coordinator.monitor_lost(now):
             # A hand-back; control resumes on its own once the monitor works again (answer I).
             found.append("monitor_failed")
-        if self._coordinator.control_store_failing:
+        if self._store_hold(now):
             # PB-16: a crash would forget that the boiler holds a value of ours — a hand-back;
-            # control resumes on its own once a write of the control store works again.
+            # control resumes on its own once the control store has written for
+            # ``STORE_HOLD_S`` without a failure.
             found.append(STORE_NOT_SAVED)
         control = self._session.loop.control
         for cause in _NOT_TAKEN:
@@ -1765,9 +1775,12 @@ class ControlUnit:
                     _LOGGER.debug("Handing control back after an error failed again", exc_info=True)
                 if self._holding or self._hand_back_pending:
                     # The hand-back itself failed: still owed, stored below, and tried again a
-                    # minute later — never at every step (TB-02).
+                    # minute after this step's attempt — never at every step (TB-02). A step
+                    # that made none — its minute not yet over, something after it raising —
+                    # must not put the retry off (L1).
                     self._hand_back_pending = True
-                    self._hand_back_retry_at = now + HAND_BACK_RETRY_S
+                    if self._hand_back_tried_at == now:
+                        self._hand_back_retry_at = now + HAND_BACK_RETRY_S
             if self._forget_last_command():
                 # Only now: the hand-back judges its release against it (PB-04).
                 await self._coordinator.async_save_control_now()
@@ -2599,23 +2612,50 @@ class ControlUnit:
         ir.async_delete_issue(self._hass, DOMAIN, self._stopped_heating_issue_id())
 
     async def _async_follow_store(self, now: float) -> None:
-        """PB-16: while the control store cannot be written, control does not take the boiler
-        (the blocker ``STORE_NOT_SAVED``) and an error-level repair issue says why; the state as
-        it is now is written again every ``STORE_RETRY_S`` — never more often — and the first
-        write that works ends both. Before each step, so a store that works again lets control
-        resume in that very step."""
-        failing = self._coordinator.control_store_failing
-        if failing and self._store_retry_at is not None:
+        """PB-16: while the control store is held off (``_store_hold``), control does not take
+        the boiler (the blocker ``STORE_NOT_SAVED``) and an error-level repair issue says why;
+        the state as it is now is written again every ``STORE_RETRY_S`` — never more often — so
+        a store that still fails now and then keeps the hold, and one that works ends it once
+        it has written for ``STORE_HOLD_S`` without a failure. Before each step, so the hold's
+        end lets control resume in that very step."""
+        held = self._store_hold(now)
+        if held and self._store_retry_at is not None:
             due = clock_due(self._store_retry_at, now, STORE_RETRY_S)  # a clock set back (C9)
             if now >= due:
                 self._store_retry_at = None
                 await self._coordinator.async_save_control_now()
-                failing = self._coordinator.control_store_failing
-        if failing and self._store_retry_at is None:
+                held = self._store_hold(now)
+        if held and self._store_retry_at is None:
             self._store_retry_at = now + STORE_RETRY_S
-        elif not failing:
+        elif not held:
             self._store_retry_at = None
-        self._show_store_issue(failing)
+        self._show_store_issue(held)
+
+    def _store_hold(self, now: float) -> bool:
+        """PB-16: whether control is held off for the control store — from a write of it that
+        failed until it has written for ``STORE_HOLD_S`` without a failure; each failure, seen
+        here by the coordinator's count, starts the hold again. Without it a store failing now
+        and then would make control take the boiler at the first write that works and hand it
+        back at the next failure: a burner cycle each time (M1 of the part-1 check)."""
+        coordinator = self._coordinator
+        failing = coordinator.control_store_failing
+        failures = coordinator.control_store_failures
+        if failing or failures != self._store_failures_seen:
+            self._store_failures_seen = failures
+            self._store_held = True
+            self._store_working_since = None
+        if not self._store_held:
+            return False
+        if failing:
+            return True
+        # Working since the first step that found it so; a clock set back starts it again (C9).
+        since = clock_start(self._store_working_since, now)
+        self._store_working_since = since
+        if now - since < STORE_HOLD_S:
+            return True
+        self._store_held = False
+        self._store_working_since = None
+        return False
 
     def _show_store_issue(self, failing: bool) -> None:
         """The repair issue of a control store that cannot be written (PB-16): an error,
@@ -2635,6 +2675,7 @@ class ControlUnit:
             is_persistent=False,
             severity=ir.IssueSeverity.ERROR,
             translation_key=STORE_NOT_SAVED,
+            translation_placeholders={"minutes": f"{STORE_HOLD_S / MINUTE_S:.0f}"},
         )
 
     def _latched_now(self) -> None:
@@ -3169,6 +3210,7 @@ class ControlUnit:
             self._release_baseline = self._session_baseline()
         self._hand_back_pending = True
         self._hand_back_retry_at = now + HAND_BACK_RETRY_S
+        self._hand_back_tried_at = now
         await self._async_store_owed()
         skip = self._skip(new, only)
         self._attempt_whole = False
@@ -3311,9 +3353,13 @@ class ControlUnit:
             for key, target in self._targets.items()
             if not target.done and target.check.kind is not CheckKind.BACK_TO_BASELINE
         ]
-        if unconfirmed:
-            self._unconfirmed(now, unconfirmed)
-        await self._async_try_hand_back(now)
+        try:
+            if unconfirmed:
+                self._unconfirmed(now, unconfirmed)
+        finally:
+            # An owed issue that cannot be raised — the issue registry failing — does not stop
+            # the attempt (L1); its error is raised after it.
+            await self._async_try_hand_back(now)
 
     def _alarm_if_unconfirmed(self, now: float) -> None:
         """A held target keeps what it was given: not released a step after its release, the
@@ -3979,16 +4025,20 @@ class ControlUnit:
         return state.name if state is not None and state.name else relay
 
     def _step_aside(self) -> bool:
-        """The relay's hand-back is a step aside — another controller, its "off" or "on" ignored
-        from the start, or its "off" no longer taken in the session: its rest state written
-        once, then left alone (answers H, L, O; decisions 4 and 6 of 0.2.3)."""
+        """The hand-back is a step aside: the relay's — another controller, its "off" or "on"
+        ignored from the start, or its "off" no longer taken in the session: its rest state
+        written once, then left alone (answers H, L, O; decisions 4 and 6 of 0.2.3); on the
+        other paths, "heating on" ignored from the start (SB-03): the heating switch's "on" is
+        written once and left out of the debt — sent again every minute, it would be the very
+        command the boiler does not take, a write to it each time (finding 1 of the part-1
+        check D). A gateway's hand-back is whole all the same: its check is the release."""
         control = self._session.loop.control
+        if not control.latched:
+            return False
+        if not self._relay_path:
+            return HEATING_ON_IGNORED in control.latched_by
         causes = (ControlAlarm.OUTSIDE_CHANGE.value, *_NOT_TAKEN)
-        return (
-            self._relay_path
-            and control.latched
-            and any(cause in control.latched_by for cause in causes)
-        )
+        return any(cause in control.latched_by for cause in causes)
 
     def _relay_seen(self, now: float) -> RelaySeen:
         """The relay as Home Assistant shows it now (R6, R7): its state — a switch on or off, a
