@@ -452,7 +452,7 @@ async def async_setup_entry(
         if coordinator.control.options.write_path is not WritePath.RELAY:
             # A relay sets no water temperature (R15).
             entities.append(ControlSetpointSensor(coordinator))
-    coordinator.expect_entities(entities)
+    coordinator.expect_entities("sensor", entities)
     async_add_entities(entities)
 
 

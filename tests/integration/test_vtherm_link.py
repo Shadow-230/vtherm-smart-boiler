@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 
 from custom_components.vtherm_smart_boiler.vtherm_attributes import CentralMode
@@ -18,7 +20,7 @@ from custom_components.vtherm_smart_boiler.vtherm_link import (
     vt_loads_feature_managers,
 )
 
-from .harness import VT_PLATFORM, FakeZones
+from .harness import VT_PLATFORM, FakeZones, ha_started
 
 
 async def test_zones_from_vt_climate_entities(hass: HomeAssistant, zones: FakeZones) -> None:
@@ -172,11 +174,14 @@ def vt_boiler_shown(hass: HomeAssistant, entity_id: str, configured: bool) -> No
     hass.states.async_set(entity_id, "off", {"is_central_boiler_configured": configured})
 
 
-def stand_in(hass: HomeAssistant, entity_id: str) -> None:
+def stand_in(hass: HomeAssistant, entity_id: str, *, at_start: bool = True) -> None:
     """VT no longer provides the sensor (unloaded, reloading, or its feature unticked): Home
-    Assistant writes the registry entry's stand-in, "unavailable" and restored."""
+    Assistant writes the registry entry's stand-in, "unavailable" and restored — ``at_start``:
+    at its start, before the run's start is taken (decision 9), else later in the run."""
     er.async_get(hass).async_get(entity_id).write_unavailable_state(hass)
     assert hass.states.get(entity_id).attributes.get("restored") is True
+    if at_start:
+        ha_started(hass)
 
 
 async def test_vt_central_boiler_detection(hass: HomeAssistant) -> None:
@@ -314,7 +319,7 @@ async def test_vt_central_boiler_seen_once_blocks_until_the_restart(hass: HomeAs
     assert VThermLink(hass, []).vt_central_boiler_configured() is True
     hass.config_entries.async_update_entry(central, data={**central.data, FEATURE: False})
     central.mock_state(hass, ConfigEntryState.SETUP_IN_PROGRESS)
-    stand_in(hass, entity_id)
+    stand_in(hass, entity_id, at_start=False)
     central.mock_state(hass, ConfigEntryState.LOADED)
     assert VThermLink(hass, []).vt_central_boiler_configured() is True
     async with async_test_home_assistant() as restarted:
@@ -717,3 +722,214 @@ async def test_a_relay_a_vt_zone_drives_or_of_the_gateway_is_found(hass: HomeAss
     assert relay_of_boiler_interface(hass, gateway)
     assert relay_of_boiler_interface(hass, zone)  # a VT entity
     assert not relay_of_boiler_interface(hass, "switch.relay")  # not registered
+
+
+# --- PB-08 (decision 9 of plan 0.2.3): VT's central boiler unticked while nobody watched -------
+
+
+@pytest.mark.parametrize("sensor", ["stand_in", "deleted"])
+async def test_an_untick_no_entry_watched_latches_until_the_restart(
+    hass: HomeAssistant, freezer: Any, sensor: str
+) -> None:
+    """PB-08: VT's central boiler ticked and unticked again in this run before any entry of the
+    plugin watched VT — VT's manager may still switch the boiler until Home Assistant restarts:
+    there until the restart. Its sensor's stand-in written in this run says so at any look;
+    with the sensor's registry entry deleted, VT's central entry changed in this run does, at
+    the watch's start."""
+    central, entity_id = vt_central_entry(hass, False)
+    assert entity_id is not None
+    stand_in(hass, entity_id)  # from before this run: Home Assistant started after it
+    freezer.tick(60)
+    hass.config_entries.async_update_entry(central, data={**central.data, FEATURE: True})
+    vt_boiler_shown(hass, entity_id, True)  # nobody looks
+    freezer.tick(60)
+    hass.config_entries.async_update_entry(central, data={**central.data, FEATURE: False})
+    stand_in(hass, entity_id, at_start=False)
+    if sensor == "deleted":
+        er.async_get(hass).async_remove(entity_id)
+        hass.states.async_remove(entity_id)
+    # Before any watch: the stand-in tells; without the sensor, nothing does yet.
+    assert VThermLink(hass, []).vt_central_boiler_configured() is (sensor == "stand_in")
+    freezer.tick(60)
+    link = VThermLink(hass, [])
+    link.watch_vt_central()
+    assert link.vt_central_boiler_configured() is True
+    link.stop_watching_vt_central()
+    assert VThermLink(hass, []).vt_central_boiler_configured() is True  # the plugin reloaded
+    freezer.tick(60)
+    ha_started(hass)  # the restart
+    after = VThermLink(hass, [])
+    after.watch_vt_central()
+    assert after.vt_central_boiler_configured() is False
+
+
+@pytest.mark.parametrize("vt", ["absent", "unchanged", "changed_while_watched"])
+async def test_no_latch_without_a_change_no_entry_watched(
+    hass: HomeAssistant, freezer: Any, vt: str
+) -> None:
+    """Negatives: VT absent, or its central entry and its sensor's stand-in from before this
+    run — nothing latches at the watch. A change while an entry of the plugin watched (an
+    option VT's form saves) latches nothing — nor for a second entry's watch, nor the next one;
+    a change once none watched does, at the next watch."""
+    central = None
+    if vt == "absent":
+        ha_started(hass)
+    else:
+        central, entity_id = vt_central_entry(hass, False)
+        assert entity_id is not None
+        stand_in(hass, entity_id)
+    freezer.tick(60)
+    link = VThermLink(hass, [])
+    link.watch_vt_central()
+    link.watch_vt_central()  # once per link
+    assert link.vt_central_boiler_configured() is False
+    if central is not None and vt == "changed_while_watched":
+        freezer.tick(60)
+        hass.config_entries.async_update_entry(central, data={**central.data, "other": 1})
+        second = VThermLink(hass, [])
+        second.watch_vt_central()  # beside a watching one: watched all along
+        assert second.vt_central_boiler_configured() is False
+        second.stop_watching_vt_central()
+        second.stop_watching_vt_central()  # once per link
+        link.stop_watching_vt_central()
+        again = VThermLink(hass, [])
+        again.watch_vt_central()
+        assert again.vt_central_boiler_configured() is False
+        again.stop_watching_vt_central()
+        freezer.tick(60)
+        hass.config_entries.async_update_entry(central, data={**central.data, "other": 2})
+        freezer.tick(60)
+        last = VThermLink(hass, [])
+        last.watch_vt_central()
+        assert last.vt_central_boiler_configured() is True
+        return
+    assert VT_CENTRAL_SEEN not in hass.data
+
+
+async def test_while_home_assistant_starts_the_watch_begins_before_any_change(
+    hass: HomeAssistant, freezer: Any
+) -> None:
+    """The plugin set up while Home Assistant starts — its usual start — watches before Home
+    Assistant has started: VT's migration of its central entry at its setup and the stand-ins
+    Home Assistant writes at its start latch nothing. Its start is taken once it has started; a
+    stand-in written after it latches (decision 9)."""
+    from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+    from homeassistant.core import CoreState
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import VT_RUN, vt_run
+
+    hass.set_state(CoreState.not_running)
+    try:
+        assert vt_run(hass).started is None
+        central, entity_id = vt_central_entry(hass, False)  # VT set up, its entry migrated
+        assert entity_id is not None
+        stand_in(hass, entity_id, at_start=False)  # Home Assistant's own, at its start
+        link = VThermLink(hass, [])
+        link.watch_vt_central()
+        assert link.vt_central_boiler_configured() is False  # not judged before the start
+        freezer.tick(5)
+        hass.set_state(CoreState.running)
+        hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+        await hass.async_block_till_done()
+        assert hass.data[VT_RUN].started is not None
+        assert link.vt_central_boiler_configured() is False
+        freezer.tick(60)
+        hass.config_entries.async_update_entry(central, data={**central.data, FEATURE: True})
+        vt_boiler_shown(hass, entity_id, False)  # on, no commands: VT's sensor provided
+        freezer.tick(60)
+        hass.config_entries.async_update_entry(central, data={**central.data, FEATURE: False})
+        stand_in(hass, entity_id, at_start=False)
+        assert link.vt_central_boiler_configured() is True
+    finally:
+        hass.set_state(CoreState.running)
+
+
+@pytest.mark.parametrize("recorder", ["none", "before", "after", "broken"])
+async def test_a_plugin_first_set_up_after_the_start_takes_the_recorders(
+    hass: HomeAssistant, freezer: Any, monkeypatch: pytest.MonkeyPatch, recorder: str
+) -> None:
+    """The plugin first set up once Home Assistant runs — an entry added or enabled — has not
+    seen the start: the recorder's (before VT's setup) stands for it. VT's central entry changed
+    before it — no latch; after, or no recorder to say, or one that does not — a doubt: latched
+    until the restart."""
+    import homeassistant.helpers.recorder as ha_recorder
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import RUN_START_UNKNOWN, vt_run
+
+    vt_central_entry(hass, False, sensor=False)
+    freezer.tick(60)
+    began = dt_util.utcnow()
+
+    class Runs:
+        recording_start: Any = began if recorder != "broken" else "soon"
+
+    class Instance:
+        recorder_runs_manager = Runs()
+
+    if recorder != "none":
+        hass.config.components.add("recorder")
+        monkeypatch.setattr(ha_recorder, "get_instance", lambda _hass: Instance())
+    if recorder == "after":
+        Runs.recording_start = began - timedelta(minutes=5)
+    run = vt_run(hass)
+    expected = began if recorder in ("before", "after") else RUN_START_UNKNOWN
+    if recorder == "after":
+        expected = began - timedelta(minutes=5)
+    assert run.started == expected
+    link = VThermLink(hass, [])
+    link.watch_vt_central()
+    assert link.vt_central_boiler_configured() is (recorder != "before")
+
+
+async def test_the_recorders_start_unreadable_counts_as_unknown(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Negative: a recorder whose instance cannot be read gives no start."""
+    import homeassistant.helpers.recorder as ha_recorder
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import RUN_START_UNKNOWN, vt_run
+
+    def broken(_hass: HomeAssistant) -> Any:
+        raise KeyError("recorder_instance")
+
+    hass.config.components.add("recorder")
+    monkeypatch.setattr(ha_recorder, "get_instance", broken)
+    assert vt_run(hass).started == RUN_START_UNKNOWN
+
+
+@pytest.mark.parametrize("modified", [None, "naive"])
+async def test_a_central_entry_without_a_change_time_counts_as_changed(
+    hass: HomeAssistant, modified: str | None
+) -> None:
+    """Negative: VT's central entry without a change time, or one without a time zone — a
+    doubt: latched until the restart."""
+    central, _none = vt_central_entry(hass, False, sensor=False)
+    ha_started(hass)
+    value = None if modified is None else datetime(2026, 1, 1)
+    object.__setattr__(central, "modified_at", value)
+    link = VThermLink(hass, [])
+    link.watch_vt_central()
+    assert link.vt_central_boiler_configured() is True
+
+
+async def test_a_left_behind_or_disabled_vt_sensor_is_no_stand_in_of_this_run(
+    hass: HomeAssistant, freezer: Any
+) -> None:
+    """Negatives of decision 9's stand-in: VT's sensor left in the registry by a VT entry that
+    is gone — no VT central boiler, a stand-in written in this run or not (X7); a sensor the
+    user disabled whose state still shows — no stand-in, VT's entry says "off": not there."""
+    ha_started(hass)
+    freezer.tick(60)
+    registry = er.async_get(hass)
+    orphan = registry.async_get_or_create("binary_sensor", VT_PLATFORM, "central_boiler_state")
+    orphan.write_unavailable_state(hass)
+    link = VThermLink(hass, [])
+    assert link.vt_central_boiler_configured() is False
+    registry.async_remove(orphan.entity_id)
+    hass.states.async_remove(orphan.entity_id)
+    _central, entity_id = vt_central_entry(hass, False)
+    assert entity_id is not None
+    registry.async_update_entity(entity_id, disabled_by=er.RegistryEntryDisabler.USER)
+    vt_boiler_shown(hass, entity_id, True)
+    assert link.vt_central_boiler_configured() is False
+    assert VT_CENTRAL_SEEN not in hass.data

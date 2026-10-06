@@ -537,12 +537,17 @@ async def test_a_real_vt_central_entry_is_read_through_its_reload_and_its_untick
     change while VT sets its central entry up again — never unknown (P-105). The user unticks
     it (VT drops its two commands and reloads): VT's entry says "off", yet in this run the
     plugin keeps it as there — VT's manager may still switch the relay until Home Assistant
-    restarts."""
+    restarts. The stand-in VT's untick leaves, written in this run, says so by itself (decision 9
+    of plan 0.2.3)."""
     from custom_components.versatile_thermostat import const as vt
     from homeassistant.const import EVENT_STATE_CHANGED
     from homeassistant.core import Event, callback
 
-    from custom_components.vtherm_smart_boiler.vtherm_link import VT_CENTRAL_SEEN, VThermLink
+    from custom_components.vtherm_smart_boiler.vtherm_link import (
+        VT_CENTRAL_SEEN,
+        VThermLink,
+        vt_run,
+    )
 
     celsius = {"unit_of_measurement": "°C", "device_class": "temperature"}
     hass.states.async_set("sensor.outdoor_temperature", "5.0", celsius)
@@ -551,10 +556,12 @@ async def test_a_real_vt_central_entry_is_read_through_its_reload_and_its_untick
     )
     central = vt_central_with_boiler()
     hass.set_state(CoreState.starting)
+    run = vt_run(hass)  # the plugin set up while Home Assistant starts
     await setup(hass, central)
     hass.set_state(CoreState.running)
     hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
     await hass.async_block_till_done()
+    assert run.started is not None  # taken once Home Assistant has started
     link = VThermLink(hass, [])
     sensor = er.async_get(hass).async_get_entity_id(
         "binary_sensor", vt.DOMAIN, "central_boiler_state"
@@ -599,5 +606,7 @@ async def test_a_real_vt_central_entry_is_read_through_its_reload_and_its_untick
     stand_in = hass.states.get(sensor)
     assert stand_in is not None
     assert stand_in.attributes.get("restored") is True  # VT no longer provides the sensor
-    assert now() is False  # VT's entry says "off" now...
-    assert link.vt_central_boiler_configured() is True  # ...but not before the restart
+    assert stand_in.last_updated > run.started  # written in this run, after the start
+    assert central.data[vt.CONF_USE_CENTRAL_BOILER_FEATURE] is False  # VT's entry says "off"...
+    assert now() is True  # ...yet its stand-in tells VT ran its central boiler in this run
+    assert link.vt_central_boiler_configured() is True  # not before the restart

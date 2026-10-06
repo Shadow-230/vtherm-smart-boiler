@@ -42,10 +42,11 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     coordinator = entry.runtime_data
-    if coordinator.control is not None:
-        entities = [ControlSwitch(coordinator)]
-        coordinator.expect_entities(entities)
-        async_add_entities(entities)
+    entities: list[ControlSwitch] = (
+        [] if coordinator.control is None else [ControlSwitch(coordinator)]
+    )
+    coordinator.expect_entities("switch", entities)  # none: control removed, its switch goes
+    async_add_entities(entities)
 
 
 class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):

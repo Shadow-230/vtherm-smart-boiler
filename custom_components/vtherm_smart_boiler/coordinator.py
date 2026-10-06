@@ -388,6 +388,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._stopped = False
         # The entities the platforms create now (disabled ones too): the rest are stale.
         self.expected_unique_ids: set[str] = set()
+        # The platforms that set themselves up for this run: only they say what is stale (PB-07).
+        self.platforms_set_up: set[str] = set()
         self.control: ControlUnit | None = None
         # Control left the options while a hand-back was still owed: this unit only hands back.
         self.hand_back_unit: ControlUnit | None = None
@@ -439,6 +441,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         """Find VT, rebuild the history and start following the entities (after
         ``async_load``)."""
         now = dt_util.utcnow().timestamp()
+        self.link.watch_vt_central()  # first: a change to VT made unwatched latches (decision 9)
         await self.link.async_detect()
         self._restore_notices()
         self.report_installation()
@@ -500,6 +503,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     async def async_stop(self) -> None:
         """Stop every listener and timer and write what is pending."""
         self._stopped = True
+        self.link.stop_watching_vt_central()
         while self._unsubs:
             self._unsubs.pop()()
         for key in (
@@ -725,7 +729,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         if old in self._factors:
             self._factors[new] = self._factors.pop(old)
 
-    def expect_entities(self, entities: list[Any]) -> None:
+    def expect_entities(self, platform: str, entities: list[Any]) -> None:
+        """A platform's entities for this run — none where it creates none."""
+        self.platforms_set_up.add(platform)
         self.expected_unique_ids.update(e.unique_id for e in entities if e.unique_id)
 
     def schedule_save(self, delay: float = SAVE_DELAY_S) -> None:

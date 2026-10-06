@@ -41,7 +41,7 @@ async def async_setup_entry(
         # Only where there is a correction to reset: control that sets the water, with zones
         # and the correction on (the missing-data rule, Y4).
         entities.append(ResetCorrectionButton(coordinator))
-    coordinator.expect_entities(entities)
+    coordinator.expect_entities("button", entities)
     async_add_entities(entities)
 
 

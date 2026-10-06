@@ -73,7 +73,7 @@ async def async_setup_entry(
             for kind in kinds
             if feature_configured(coordinator, f"alarm_{kind.value}")
         ]
-    coordinator.expect_entities(entities)
+    coordinator.expect_entities("binary_sensor", entities)
     async_add_entities(entities)
 
 

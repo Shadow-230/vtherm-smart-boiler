@@ -271,3 +271,17 @@ def apply_event(boiler: FakeBoiler, zones: FakeZones | None, changes: list) -> N
                 attributes["valve_open_percent"] = round(state.valve_open * 100)
                 attributes["on_percent"] = state.valve_open
             zones.set(key, "heat" if state.heating_enabled else "off", **attributes)
+
+
+def ha_started(hass: HomeAssistant) -> None:
+    """Home Assistant (re)started now, as the plugin's run record keeps it (decision 9 of plan
+    0.2.3): what VT's entries and sensor show was written before this run, and the restart latch
+    is gone — what a restart does to Home Assistant's data."""
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import VT_CENTRAL_SEEN, vt_run
+
+    run = vt_run(hass)
+    run.started = dt_util.utcnow()
+    run.unwatched_since = None
+    hass.data.pop(VT_CENTRAL_SEEN, None)

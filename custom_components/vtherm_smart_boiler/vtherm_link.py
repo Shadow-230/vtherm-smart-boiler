@@ -17,16 +17,23 @@ import logging
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from enum import StrEnum
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 
 from awesomeversion import AwesomeVersion
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import ATTR_RESTORED, STATE_UNAVAILABLE, STATE_UNKNOWN
-from homeassistant.core import HomeAssistant, State
+from homeassistant.const import (
+    ATTR_RESTORED,
+    EVENT_HOMEASSISTANT_STARTED,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
+from homeassistant.core import CoreState, Event, HomeAssistant, State, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_loaded_integration
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, OPENTHERM_GW_DOMAIN, VT_DOMAIN
 from .core.readings import ZoneState
@@ -43,8 +50,17 @@ CENTRAL_BOILER_FEATURE = "use_central_boiler_feature"  # in VT's central entry (
 # VT's central boiler seen configured at any moment of this Home Assistant run (X7): VT's manager
 # lives in its API and may switch the boiler until Home Assistant restarts, even once unticked,
 # with or without its keep-alive. Kept in Home Assistant's data, so a reload of the plugin does
-# not clear it and a restart does; never from the entry's ``modified_at`` or VT's keep-alive.
+# not clear it and a restart does; never from VT's keep-alive. Also set (decision 9 of plan
+# 0.2.3) when VT's central entry changed in this run while no entry of the plugin watched VT —
+# its ``modified_at`` — or VT's sensor is a stand-in written in this run while the entry says
+# off: VT provided it in this run, so its central boiler was on, and removed it since.
 VT_CENTRAL_SEEN = f"{DOMAIN}_vt_central_seen"
+# What the plugin knows of this Home Assistant run for that latch (``VtRun``); a restart starts
+# it anew.
+VT_RUN = f"{DOMAIN}_vt_run"
+# Home Assistant's start neither seen by the plugin nor bounded by the recorder: anything VT's
+# entries show may be from this run — a doubt keeps the latch (decision 9).
+RUN_START_UNKNOWN = datetime.min.replace(tzinfo=UTC)
 # VT's central entry running or being set up again (a reload, Home Assistant starting): its
 # stored setting answers (P-105). In any other state — a failed setup (setup error or retry,
 # migration error, failed unload), or one a later Home Assistant adds — only "off" rules VT's
@@ -386,6 +402,65 @@ def vt_central_entry(hass: HomeAssistant) -> ConfigEntry | None:
     return None
 
 
+@dataclass
+class VtRun:
+    """What the plugin knows of this Home Assistant run, for VT's central boiler's restart latch
+    (decision 9): ``started`` — when Home Assistant had started, ``None`` while it starts;
+    ``watchers`` — the plugin's entries watching VT now; ``unwatched_since`` — when the last of
+    them stopped."""
+
+    started: datetime | None = None
+    watchers: int = 0
+    unwatched_since: datetime | None = None
+
+
+def vt_run(hass: HomeAssistant) -> VtRun:
+    """This run's record, made at the plugin's first setup in the run. While Home Assistant
+    starts, its start is taken once it has started — after it wrote the stand-ins of the
+    registered entities nobody provides, so those predate it. A plugin first set up later has
+    not seen it: the recorder's start (before VT was set up) stands for it, else nothing does
+    and everything counts as this run's (a doubt keeps the latch)."""
+    run = hass.data.get(VT_RUN)
+    if isinstance(run, VtRun):
+        return run
+    run = VtRun()
+    hass.data[VT_RUN] = run
+    if hass.state in (CoreState.not_running, CoreState.starting):
+
+        @callback
+        def _started(_event: Event) -> None:
+            run.started = dt_util.utcnow()
+
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _started)
+    else:
+        run.started = _recording_start(hass) or RUN_START_UNKNOWN
+    return run
+
+
+def _recording_start(hass: HomeAssistant) -> datetime | None:
+    """When the recorder began recording in this run; ``None`` without a recorder or one that
+    does not say."""
+    if "recorder" not in hass.config.components:
+        return None
+    try:
+        from homeassistant.helpers.recorder import get_instance
+
+        start = get_instance(hass).recorder_runs_manager.recording_start
+    except Exception:  # an older or changed recorder: not known
+        _LOGGER.debug("The recorder's start could not be read", exc_info=True)
+        return None
+    return start if isinstance(start, datetime) and start.tzinfo is not None else None
+
+
+def _changed_since(entry: ConfigEntry, since: datetime) -> bool:
+    """Whether a config entry changed after ``since``; a change time it does not give, or one
+    without a time zone, counts as changed (a doubt keeps the latch)."""
+    modified = getattr(entry, "modified_at", None)
+    if not isinstance(modified, datetime) or modified.tzinfo is None:
+        return True
+    return modified > since
+
+
 def vt_version(hass: HomeAssistant) -> str | None:
     """VT's version as its manifest gives it (Home Assistant refuses a custom integration
     without a valid one); ``None`` while VT is not loaded or on any loader problem."""
@@ -416,6 +491,7 @@ class VThermLink:
         self._hass = hass
         self._zones = tuple(zone_entities)
         self._api_version: str | None = None
+        self._watching = False
 
     async def async_detect(self) -> None:
         """Read what does not change while Home Assistant runs — the installed ``vtherm_api``
@@ -523,14 +599,16 @@ class VThermLink:
         while it cannot be ruled out (X7: P-20, P-105).
 
         In this order: seen configured at any moment of this Home Assistant run → there until the
-        restart VT needs (``VT_CENTRAL_SEEN``). VT's sensor for it provided → what it says. Else
-        VT's central entry answers — VT creates the sensor only while the feature is on, and Home
-        Assistant keeps its registry entry, with a stand-in "unavailable" state, once VT no
-        longer provides it: the entry gone or disabled by the user → not there; running or being
-        set up again (a reload, Home Assistant starting) → its stored setting, unknown without
-        it; stuck in a failed setup → not there only where its setting says "off". Without the
-        sensor in the registry, only VT's central entry saying "on" counts (VT has not registered
-        the sensor yet)."""
+        restart VT needs (``VT_CENTRAL_SEEN``; also set by ``watch_vt_central``). VT's sensor for
+        it provided → what it says. Else VT's central entry answers — VT creates the sensor only
+        while the feature is on, and Home Assistant keeps its registry entry, with a stand-in
+        "unavailable" state, once VT no longer provides it: the entry gone or disabled by the
+        user → not there; running or being set up again (a reload, Home Assistant starting) →
+        its stored setting, unknown without it; stuck in a failed setup → not there only where
+        its setting says "off" — unless the stand-in was written in this run after Home
+        Assistant had started, so VT provided the sensor in this run (decision 9): there. Without
+        the sensor in the registry, only VT's central entry saying "on" counts (VT has not
+        registered the sensor yet)."""
         hass = self._hass
         if hass.data.get(VT_CENTRAL_SEEN):
             return True
@@ -562,8 +640,54 @@ class VThermLink:
                 return None
             return configured is True
         owner = self._central_owner(entry)
-        # No owner: left behind by a VT entry that is gone.
-        return False if owner is None else _central_entry_says(owner)
+        if owner is None:
+            return False  # left behind by a VT entry that is gone
+        says = _central_entry_says(owner)
+        if says is False and state is not None and self._stand_in_of_this_run(state):
+            return True  # VT's central boiler on in this run, unticked since (decision 9)
+        return says
+
+    def _stand_in_of_this_run(self, state: State) -> bool:
+        """A stand-in Home Assistant wrote after it had started: the entity was provided in
+        this run and removed since. Not judged while Home Assistant starts — the stand-ins it
+        writes then are for entities nobody provided."""
+        if not state.attributes.get(ATTR_RESTORED):
+            return False
+        started = vt_run(self._hass).started
+        return started is not None and state.last_updated > started
+
+    def watch_vt_central(self) -> None:
+        """An entry of the plugin begins watching VT (its coordinator starts). VT's central
+        entry changed in this Home Assistant run while none watched — an untick the plugin did
+        not see, VT's manager perhaps still switching the boiler — latches VT's central boiler as
+        there until the restart (decision 9). A watch begun while Home Assistant starts has no
+        unwatched time of this run before it."""
+        if self._watching:
+            return
+        self._watching = True
+        run = vt_run(self._hass)
+        since = run.unwatched_since or run.started
+        run.watchers += 1
+        if run.watchers > 1 or since is None:
+            return
+        central = vt_central_entry(self._hass)
+        if central is None or not _changed_since(central, since):
+            return
+        self._hass.data[VT_CENTRAL_SEEN] = True
+        _LOGGER.info(
+            "Versatile Thermostat's central entry changed in this Home Assistant run before this "
+            "integration watched it: control stays blocked until Home Assistant restarts"
+        )
+
+    def stop_watching_vt_central(self) -> None:
+        """The entry's coordinator stops: once no entry watches, the time is kept."""
+        if not self._watching:
+            return
+        self._watching = False
+        run = vt_run(self._hass)
+        run.watchers = max(0, run.watchers - 1)
+        if run.watchers == 0:
+            run.unwatched_since = dt_util.utcnow()
 
     def _central_owner(self, sensor: er.RegistryEntry | None) -> ConfigEntry | None:
         """The entry of VT's central-boiler sensor; without the sensor in the registry, VT's

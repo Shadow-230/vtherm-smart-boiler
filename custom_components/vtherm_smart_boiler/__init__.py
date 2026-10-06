@@ -51,7 +51,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
     from .config import ConfigError, EntryConfig
     from .control import ControlUnit
     from .coordinator import SmartBoilerCoordinator
+    from .vtherm_link import vt_run
 
+    vt_run(hass)  # this run's record for VT's restart latch, begun at the first setup (decision 9)
     try:
         # A control section that cannot be used leaves control out, not the whole entry: the
         # monitor keeps running, and a hand-back still owed goes out.
@@ -78,6 +80,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
             },
         ) from err
     coordinator = SmartBoilerCoordinator(hass, entry, config)
+    forwarded = False
     try:
         # What the last run left, first: a hand-back it owed is made before anything else can
         # fail, and the unit that makes it is the one that runs (P-05, C14).
@@ -103,16 +106,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
         entry.runtime_data = coordinator
         await coordinator.async_load_texts()  # the coded lists' texts (P-39)
         await _async_migrate_zone_unique_ids(hass, entry, config)
+        forwarded = True  # before: a forward that fails part-way leaves platforms set up
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         feature_manager.async_attach(hass, coordinator)
-        _remove_stale_entities(hass, entry, coordinator.expected_unique_ids)
         entry.async_on_unload(entry.add_update_listener(_async_options_updated))
         coordinator.async_start_background()
-        # Last: renames and removals are followed only for an entry that runs (P-19).
+        # Renames and removals are followed only for an entry that runs (P-19).
         entry.async_on_unload(_follow_entities(hass, entry, coordinator))
         _forget_not_heated(hass, entry)  # the plugin runs: a failed setup's issue goes (SB-10)
+        # Last, once nothing can fail: a failed setup removes nothing from the registry (PB-07).
+        _remove_stale_entities(hass, entry, coordinator)
     except Exception:
-        await _async_setup_failed(hass, entry, coordinator)
+        await _async_setup_failed(hass, entry, coordinator, forwarded=forwarded)
         raise
     return True
 
@@ -130,13 +135,19 @@ async def _async_options_error_text(hass: HomeAssistant, code: str) -> str:
 
 
 async def _async_setup_failed(
-    hass: HomeAssistant, entry: SmartBoilerConfigEntry, coordinator: SmartBoilerCoordinator
+    hass: HomeAssistant,
+    entry: SmartBoilerConfigEntry,
+    coordinator: SmartBoilerCoordinator,
+    *,
+    forwarded: bool = False,
 ) -> None:
     """Nothing of a failed setup keeps running: the units hand back again if still owed (a
-    persistent issue tells of one that did not get through), then every clock, listener and
-    task stops. Home Assistant retries a setup that is not ready, which hands back first again;
-    after an error, the issue stays until a reload or an options change. Last, where the house
-    is left unheated, SB-10's issue says so (``_report_not_heated``)."""
+    persistent issue tells of one that did not get through), the platforms forwarded are
+    unloaded — their entities go, their registry entries stay — so the next setup sets them up
+    again (PB-07), then every clock, listener and task stops. Home Assistant retries a setup
+    that is not ready, which hands back first again; after an error, the issue stays until a
+    reload or an options change. Last, where the house is left unheated, SB-10's issue says so
+    (``_report_not_heated``)."""
     import logging
 
     from . import feature_manager
@@ -149,6 +160,11 @@ async def _async_setup_failed(
         logger.exception("Could not let go of VT after a failed setup")
     for unit in _units(coordinator):
         await unit.async_stop()  # hands back again if still owed; never raises
+    if forwarded:
+        try:
+            await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+        except Exception:
+            logger.exception("Could not unload the platforms after a failed setup")
     try:
         await coordinator.async_stop()
     except Exception:
@@ -526,14 +542,21 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
         await hass.config_entries.async_reload(entry.entry_id)
 
 
-def _remove_stale_entities(hass: HomeAssistant, entry: ConfigEntry, expected: set[str]) -> None:
+def _remove_stale_entities(
+    hass: HomeAssistant, entry: ConfigEntry, coordinator: SmartBoilerCoordinator
+) -> None:
     """Entities the options no longer create — a zone or circuit taken out, a signal unmapped,
-    control removed — go from the registry. Disabled ones the platforms still create stay."""
+    control removed — go from the registry. Disabled ones the platforms still create stay. Only
+    a platform that set itself up in this setup says what is stale: one that failed or did not
+    run keeps its registry entries — names, areas, disabled flags (PB-07)."""
     from homeassistant.helpers import entity_registry as er
 
     registry = er.async_get(hass)
+    expected = coordinator.expected_unique_ids
     for registered in er.async_entries_for_config_entry(registry, entry.entry_id):
-        if registered.unique_id not in expected:
+        if registered.domain in coordinator.platforms_set_up and (
+            registered.unique_id not in expected
+        ):
             registry.async_remove(registered.entity_id)
 
 

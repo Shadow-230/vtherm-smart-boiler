@@ -37,7 +37,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.vtherm_smart_boiler import control as control_module
-from custom_components.vtherm_smart_boiler.const import DOMAIN
+from custom_components.vtherm_smart_boiler.const import DOMAIN, SUMMARY_SECONDS
 from custom_components.vtherm_smart_boiler.control_config import (
     CONTROL_DEFAULTS,
     MIGRATED_HARD_MIN,
@@ -56,6 +56,7 @@ from .harness import (
     FakeZones,
     ServiceSpy,
     analyse_now,
+    ha_started,
 )
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -1164,6 +1165,7 @@ def vt_central_unknown(rig: Rig) -> MockConfigEntry:
         "binary_sensor", VT_PLATFORM, "central_boiler_state", config_entry=central
     )
     registry.async_get(sensor.entity_id).write_unavailable_state(rig.hass)
+    ha_started(rig.hass)  # all from before Home Assistant's start (decision 9)
     return central
 
 
@@ -2432,7 +2434,8 @@ async def test_a_switch_that_stays_on_is_no_hand_back(rig: Rig) -> None:
 
 def vt_central_entry(rig: Rig, feature: bool | None = False) -> MockConfigEntry:
     """VT's central entry, loaded, with its central boiler switched off — ``feature``: its
-    stored setting, ``None`` for none — and its sensor a stand-in (T6)."""
+    stored setting, ``None`` for none — and its sensor a stand-in (T6), all from before Home
+    Assistant's start (decision 9)."""
     data: dict[str, Any] = {"thermostat_type": "thermostat_central_config"}
     if feature is not None:
         data["use_central_boiler_feature"] = feature
@@ -2445,6 +2448,7 @@ def vt_central_entry(rig: Rig, feature: bool | None = False) -> MockConfigEntry:
         "binary_sensor", VT_PLATFORM, "central_boiler_state", config_entry=central
     )
     registry.async_get(sensor.entity_id).write_unavailable_state(rig.hass)
+    ha_started(rig.hass)
     return central
 
 
@@ -2490,7 +2494,7 @@ async def test_a_vt_central_boiler_unknown_does_not_hand_back_within_the_grace(
         assert "vt_central_boiler_unknown" in attributes["blockers"]
         assert attributes["blockers_waiting"] == []
         assert rig.gateway.setpoints()[-1] == 0.0
-    vt_sensor(rig, None)
+    vt_sensor(rig, "off", configured=False)  # a stand-in now would latch (decision 9)
     await rig.advance(20)
     attributes = rig.state("sensor", "control_state").attributes
     assert "vt_central_boiler_unknown" not in attributes["blockers"]
@@ -2578,6 +2582,7 @@ async def test_a_vt_central_entry_in_setup_error_is_told_after_ten_minutes(rig: 
     er.async_get(rig.hass).async_get_or_create(
         "binary_sensor", VT_PLATFORM, "central_boiler_state", config_entry=central
     )
+    ha_started(rig.hass)
     await start(rig)
     assert rig.entry is not None
     assert rig.entry.runtime_data.link.vt_central_boiler_configured() is None
@@ -2614,6 +2619,7 @@ async def test_no_vt_central_issue_without_a_wait_to_tell_of(rig: Rig, case: str
         state=ConfigEntryState.SETUP_ERROR,
     )
     central.add_to_hass(rig.hass)
+    ha_started(rig.hass)
     await start(rig)
     assert rig.entry is not None
     await rig.switch(True)
@@ -2659,12 +2665,175 @@ async def test_the_vt_boiler_blocker_waits_for_the_restart(rig: Rig) -> None:
     await rig.hass.async_block_till_done()
     await rig.advance(20)
     assert "vt_central_boiler_active" in blockers(rig)  # the plugin's reload changes nothing
-    rig.hass.data.pop(VT_CENTRAL_SEEN)  # what the restart does to Home Assistant's data
+    assert rig.hass.data[VT_CENTRAL_SEEN] is True
+    ha_started(rig.hass)  # what the restart does to Home Assistant's data
     await rig.advance(20)
     assert "vt_central_boiler_active" not in blockers(rig)
     await rig.switch(True)
     await rig.advance(20)
     assert rig.gateway.setpoints()[-1] == EXPECTED
+
+
+@pytest.mark.parametrize("sensor", ["stand_in", "deleted"])
+async def test_an_untick_before_the_plugins_setup_blocks_until_the_restart(
+    rig: Rig, sensor: str
+) -> None:
+    """PB-08 (decision 9): VT's central boiler ticked and unticked again in this Home Assistant
+    run before the plugin's setup — its sensor's stand-in written in this run, or its registry
+    entry deleted and VT's central entry changed in this run: "VT central boiler active" until
+    the restart, as VT's manager may still switch the boiler. Negative: unchanged in this run,
+    nothing blocks (``vt_central_entry`` in the tests above)."""
+    central = vt_central_entry(rig)
+    rig.freezer.tick(60)
+    feature = "use_central_boiler_feature"
+    rig.hass.config_entries.async_update_entry(central, data={**central.data, feature: True})
+    vt_sensor(rig, "off", configured=True)  # VT runs its central boiler; no plugin yet
+    rig.freezer.tick(60)
+    rig.hass.config_entries.async_update_entry(central, data={**central.data, feature: False})
+    vt_sensor(rig, None)
+    if sensor == "deleted":
+        registry = er.async_get(rig.hass)
+        entity_id = registry.async_get_entity_id(
+            "binary_sensor", VT_PLATFORM, "central_boiler_state"
+        )
+        assert entity_id is not None
+        registry.async_remove(entity_id)
+        rig.hass.states.async_remove(entity_id)
+    rig.freezer.tick(60)
+    await start(rig)
+    await rig.advance(10)
+    assert "vt_central_boiler_active" in blockers(rig)
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)
+    assert err.value.translation_key == "blocked_vt_central_boiler_active"
+    assert rig.gateway.setpoints() == []
+    ha_started(rig.hass)  # the restart
+    await rig.advance(20)
+    assert "vt_central_boiler_active" not in blockers(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.gateway.setpoints()[-1] == EXPECTED
+
+
+@pytest.mark.parametrize("seen", ["setup", "analysis"])
+async def test_a_monitor_only_entry_latches_vt_central_boiler_for_control_added_later(
+    rig: Rig, seen: str
+) -> None:
+    """TB-08 (X7): a monitor-only entry runs while VT's central-boiler sensor shows it
+    configured — seen at its setup, or by an analysis tick; VT's central boiler is then
+    unticked and control added in the same Home Assistant run: control is blocked by "VT central
+    boiler active" until the restart."""
+    central = vt_central_entry(rig, seen == "setup")
+    if seen == "setup":
+        vt_sensor(rig, "off", configured=True)
+    await set_up(rig, add_entry(rig, without_control(options(rig.zones))))
+    assert rig.entry is not None
+    entry = rig.entry
+    assert entry.runtime_data.control is None
+    feature = "use_central_boiler_feature"
+    if seen == "analysis":
+        assert VT_CENTRAL_SEEN not in rig.hass.data
+        rig.hass.config_entries.async_update_entry(central, data={**central.data, feature: True})
+        vt_sensor(rig, "off", configured=True)
+        await rig.advance(SUMMARY_SECONDS, step=60)
+    assert rig.hass.data[VT_CENTRAL_SEEN] is True  # the monitor-only entry's look
+    rig.hass.config_entries.async_update_entry(central, data={**central.data, feature: False})
+    vt_sensor(rig, None)
+    rig.hass.config_entries.async_update_entry(entry, options=options(rig.zones))
+    await rig.hass.async_block_till_done()
+    assert entry.runtime_data.control is not None
+    await rig.advance(10)
+    assert "vt_central_boiler_active" in blockers(rig)
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)
+    assert err.value.translation_key == "blocked_vt_central_boiler_active"
+    ha_started(rig.hass)  # the restart
+    await rig.advance(20)
+    assert "vt_central_boiler_active" not in blockers(rig)
+
+
+@pytest.mark.parametrize("unload", ["works", "raises"])
+async def test_a_setup_that_fails_after_its_platforms_keeps_the_registry(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, unload: str
+) -> None:
+    """PB-07: a setup that fails after its platforms were set up — here telling VT of the
+    plugin — unloads them: their entities go, their registry entries stay. Home Assistant's
+    reload then sets them up again for the new run, and the user's names and disabled flags —
+    the control switch's included — are kept, not removed as stale. Negative: an unload that
+    raises is logged and the setup still fails cleanly; the platforms left set up then do not
+    set up again, so they say nothing is stale: the registry entries are kept all the same."""
+    from custom_components.vtherm_smart_boiler import feature_manager
+
+    await start(rig)
+    assert rig.entry is not None
+    entry = rig.entry
+    registry = er.async_get(rig.hass)
+    switch_id = rig.entity("switch", "control")
+    state_id = rig.entity("sensor", "control_state")
+    registry.async_update_entity(state_id, name="Boiler control")
+    registry.async_update_entity(switch_id, disabled_by=er.RegistryEntryDisabler.USER)
+    await rig.advance(40)  # Home Assistant reloads the entry 30 s after a disable
+    attach = feature_manager.async_attach
+
+    unload_platforms = rig.hass.config_entries.async_unload_platforms
+
+    async def unload_fails(*_args: Any) -> bool:
+        raise RuntimeError("the platforms could not be unloaded")
+
+    def fail(*_args: Any) -> None:
+        if unload == "raises":  # only the failed setup's own unload
+            monkeypatch.setattr(rig.hass.config_entries, "async_unload_platforms", unload_fails)
+        raise RuntimeError("VT could not be told")
+
+    monkeypatch.setattr(feature_manager, "async_attach", fail)
+    assert not await rig.hass.config_entries.async_reload(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    if unload == "raises":
+        assert "Could not unload the platforms after a failed setup" in caplog.text
+        monkeypatch.setattr(rig.hass.config_entries, "async_unload_platforms", unload_platforms)
+    else:
+        unloaded = rig.hass.states.get(state_id)
+        assert unloaded is not None
+        assert unloaded.attributes.get("restored") is True
+    monkeypatch.setattr(feature_manager, "async_attach", attach)
+    assert await rig.hass.config_entries.async_reload(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    named = registry.async_get(state_id)
+    assert named is not None
+    assert named.name == "Boiler control"
+    switch = registry.async_get(switch_id)
+    assert switch is not None
+    assert switch.disabled_by is er.RegistryEntryDisabler.USER
+    if unload == "raises":
+        return  # the entities set up before stay as they were until a restart
+    back = rig.hass.states.get(state_id)
+    assert back is not None
+    assert not back.attributes.get("restored")
+
+
+async def test_a_platform_that_fails_its_setup_keeps_its_registry_entries(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PB-07: one platform raising in its own setup — Home Assistant logs it and the entry stays
+    loaded: that platform never said what is stale, so its registry entries stay; the others
+    are set up as before."""
+    from custom_components.vtherm_smart_boiler import switch as switch_platform
+
+    await start(rig)
+    assert rig.entry is not None
+    switch_id = rig.entity("switch", "control")
+
+    async def fail(*_args: Any) -> None:
+        raise RuntimeError("the switch could not be set up")
+
+    monkeypatch.setattr(switch_platform, "async_setup_entry", fail)
+    assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
+    await rig.hass.async_block_till_done()
+    assert rig.entry.state is ConfigEntryState.LOADED
+    assert er.async_get(rig.hass).async_get(switch_id) is not None
+    assert rig.state("sensor", "control_state") is not None
 
 
 @pytest.mark.usefixtures("low_setpoint_off")
