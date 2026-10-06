@@ -681,6 +681,24 @@ Left on purpose for a later release:
     9-min relay timer is recognised, a switch-off from 8 min matches it, and the latch issue rounds
     a refused 511–539-s switch-off up to "about every 9 min" (KDF-03); older rules still judge a
     working slow-polled heating switch after an outage or a restart (KDF-04, pre-existing).
+39. A relay without availability reporting that loses power still shows "on" and confirms every
+    command: a dead Zigbee relay may look available for a long time (ZHA), or always with
+    availability reporting off (Zigbee2MQTT); answer D covers a restart not seen, not a relay that
+    died (SB-09) — release set at K4.
+40. Days read from the recorder before the plugin's first run, and every day older than the 8-day
+    downtime record, cannot tell Home Assistant's downtime (Y2, SB-09) — release set at K4.
+41. The comfort correction's freeze in extreme weather (principle 13's rule 5), which X4 said was
+    named here, and its rule 3 (starts not rising) — 0.2.3 (decision 11 of `docs/plan-0.2.3.md`).
+42. X7's two limits: VT's central boiler unticked before any plugin entry watched VT in that Home
+    Assistant run is never latched (PB-08) — 0.2.3 (decision 9 of `docs/plan-0.2.3.md`); a second
+    rename of one entity within one batch is not followed — release set at K4.
+43. On a gateway with an OpenTherm thermostat and no thermostat field, control switched off and on
+    within one gateway report learns pyotgw's transient `CS=0` as the session's baseline (X1) —
+    release set at K4.
+44. An expiring external-control switch that lapses back after its hand-back can be judged taken
+    (V5) — release set at K4.
+45. Stored options with a section of another shape can still break the menu (X5, PB-06) — 0.2.3
+    (step 2.3 of `docs/plan-0.2.3.md`).
 
 What a step leaves open is added here by name, as the rules say.
 
