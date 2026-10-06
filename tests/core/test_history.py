@@ -180,3 +180,16 @@ def test_an_empty_backfill_changes_no_zone() -> None:
     live.prepend(History())
     assert _samples(live.zones["a"].temperature) == [(100.0, 20.0)]
     assert all(not len(series) for series in live.zones["a"].series()[1:])
+
+
+def test_overlapping_downtimes_are_one() -> None:
+    """TB-28: downtimes (1 h, 3 h) and (2 h, 4 h), a row every half hour: one ``None`` at 1 h,
+    the rows inside dropped, known again from the row at 4 h on."""
+    rows = [(k * 0.5 * HOUR, float(k)) for k in range(13)]
+    marked = list(with_downtime(rows, [(HOUR, 3 * HOUR), (2 * HOUR, 4 * HOUR)], 0.0, DAY))
+    assert marked == [
+        (0.0, 0.0),
+        (0.5 * HOUR, 1.0),
+        (HOUR, None),
+        *[(k * 0.5 * HOUR, float(k)) for k in range(8, 13)],
+    ]

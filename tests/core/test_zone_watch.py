@@ -298,3 +298,12 @@ def test_a_slow_home_assistant_start_does_not_use_up_the_recognition_period() ->
     assert all(w.unknown_since is None for w in seen[:2])
     assert seen[2].unknown_since == 710.0
     assert not no_zone_issue_due(seen[2], 710.0 + NO_ZONE_ISSUE_S - 1.0)
+
+
+def test_a_clock_set_back_restarts_the_every_zone_unknown_wait_now() -> None:
+    """TB-26 (C9): every zone unknown since 10 000, the clock set back to 6 400: the wait for
+    the no-zone issue counts from 6 400, not from 10 000."""
+    from custom_components.vtherm_smart_boiler.core.zone_watch import every_zone_unknown_since
+
+    assert every_zone_unknown_since(10_000.0, (gone("a"),), 6_400.0, None) == 6_400.0
+    assert every_zone_unknown_since(6_400.0, (gone("a"),), 10_000.0, None) == 6_400.0

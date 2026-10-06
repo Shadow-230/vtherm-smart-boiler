@@ -2875,3 +2875,60 @@ def test_the_precedence_of_the_controller(
     _state, decisions = run(steps, config)
     last = decisions[-1]
     assert (last.mode, last.reasons, last.command, last.hand_back) == expected
+
+
+@pytest.mark.parametrize(("room", "after"), [(20.75, 1.0), (20.7, 2.0)], ids=["0.25K", "0.3K"])
+def test_the_correction_rises_only_for_a_zone_short_by_short_k(room: float, after: float) -> None:
+    """TB-19: the correction at 1 K, the one zone fully open (none below 70 %) and its room
+    0.25 K short of 21 °C — under ``SHORT_K``: neither short nor satisfied, 30 min of heat flow
+    leave the correction at 1 K; 0.3 K short, it rises to 2 K."""
+    state, _ = run(minutes(0.0, 31, lambda t: (short(t),)), WATER)
+    assert state.correction == pytest.approx(1.0)
+
+    def near(t: float) -> tuple[ZoneState, ...]:
+        return (ZoneState("z", room, 21.0, True, reported_at=t, valve_open=1.0),)
+
+    state, _ = run(minutes(1860.0, 30, near), WATER, state)
+    assert state.correction == pytest.approx(after)
+
+
+@pytest.mark.parametrize("cap", [80.0, 31.0], ids=["below_cap", "target_at_the_cap"])
+def test_the_ramp_lands_exactly_on_its_target_and_never_passes_it(cap: float) -> None:
+    """TB-28: 1 K a minute in 10-s steps from 30 °C towards 31 °C — and towards a target equal
+    to the circuit's maximum: eight steps rise by 1/6 K each, land exactly on 31 °C and stay."""
+    from custom_components.vtherm_smart_boiler.core.controller import _ramp
+
+    setpoint = 30.0
+    seen = []
+    for _ in range(8):
+        setpoint, held = _ramp(setpoint, 31.0, cap, 10.0, 1.0)
+        seen.append((setpoint, held))
+    assert [s for s, _h in seen] == pytest.approx(
+        [30.0 + k / 6.0 for k in range(1, 6)] + [31.0] * 3
+    )
+    assert all(s <= 31.0 for s, _h in seen)
+    assert seen[-3:] == [(31.0, False)] * 3  # exactly the target, no longer held back
+    assert all(held for _s, held in seen[:5])
+    # 1.5 K a minute: 0.25 K a step, exact in binary — the fourth step's gap equals the step
+    # and lands on the target, no longer held back.
+    exact = [_ramp(30.0 + k * 0.25, 31.0, cap, 10.0, 1.5) for k in range(4)]
+    assert exact == [(30.25, True), (30.5, True), (30.75, True), (31.0, False)]
+
+
+def test_no_zone_configured_is_not_every_zone_unknown() -> None:
+    """TB-29: with no zone configured nothing is unknown — no "every zone unknown" issue."""
+    _state, [decision] = run([inputs(0.0, zones=())])
+    assert decision.zones_unknown is False
+
+
+def test_the_last_grace_ending_in_a_fallback_sets_the_lowest_water_at_once() -> None:
+    """TB-29 (decision 3): the outdoor unknown, the zones calling — the fallback at the design
+    flow, decided at 0, 300 and 600 s. The last zone's grace ends at 620 s: the lowest water
+    temperature that step, not at the next decision (900 s)."""
+    end = 20.0 + GRACE_S
+    steps = during(0.0, end + 30.0, gone_after(10.0), outdoor_sensor=None)
+    _state, decisions = run(steps)
+    at = {step.now: d for step, d in zip(steps, decisions, strict=True)}
+    assert at[end - 10.0].command == BoilerCommand(True, fallback_setpoint(CONFIG))
+    assert at[end].command == BoilerCommand(False, CONFIG.limits.hard_min)
+    assert at[end].zones_unknown

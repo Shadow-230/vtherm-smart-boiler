@@ -2019,3 +2019,23 @@ def test_a_gas_meter_not_known_at_the_on_takes_its_first_known_value() -> None:
     assert state.gas_at_on == 12.5
     state, shown, _alarm = follow_proof(state, True, ProofSeen(flame=False, gas=12.6), 20.0)
     assert shown is HeatEvidence.HEATS
+
+
+def test_a_fresh_relay_has_no_check_before_its_first_command() -> None:
+    """TB-28: nothing written yet — no check to show; an entity without reports is unverified."""
+    assert relay_check(RelayState(), REPORTING, reports=True) is None
+    assert relay_check(RelayState(), REPORTING, reports=False) is RelayCheck.UNVERIFIED
+
+
+def test_a_recognised_timer_is_renewed_at_half_its_length() -> None:
+    """TB-31 (Z4R2-05): a timer "I don't know", the relay's own recognised at 560 s, the repeat
+    interval 300 s: "on" is renewed every 280 s while commanded on — not every 300 s, which a
+    9-10-min timer would race."""
+    config = RelayConfig(reports=RelayReports.YES, timer=RelayTimer.UNKNOWN, repeat_s=300.0)
+    relay = Relay(timer_s=560.0)
+    state = replace(RelayState(), timer_seen_s=560.0)
+    state, _results = drive(relay, config, True, 0.0, 1200.0, state)
+    renewals = [t for t, on, kind in relay.writes if kind is WriteKind.KEEPALIVE and on]
+    assert renewals == [280.0, 560.0, 840.0, 1120.0]
+    assert state.timer_seen_s == 560.0
+    assert relay.on

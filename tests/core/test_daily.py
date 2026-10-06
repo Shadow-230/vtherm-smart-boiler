@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.daily import (
@@ -483,3 +485,32 @@ def test_the_change_report_counts_unknown_burns_in_burner_hours_too() -> None:
         assert result.report_unit is ReportUnit.BURNER_HOURS
         assert result.report is not None
         assert result.report.current_total == pytest.approx(8.0)
+
+
+def test_a_day_summarised_again_keeps_its_time_under_control() -> None:
+    """TB-24 (P-96): days kept with 2 h under control and other settings; the history no longer
+    holds any control state. Summarised again, each keeps its 2 h; one kept without a known
+    time keeps what the history tells (none), and a larger time found now is not lowered."""
+    from custom_components.vtherm_smart_boiler.core.analysis import analyse
+    from custom_components.vtherm_smart_boiler.core.daily import keep_known_control
+    from custom_components.vtherm_smart_boiler.core.monitor import MonitorOptions
+
+    history = cycling(9)
+    days = [(d * DAY, (d + 1) * DAY) for d in range(1, 9)]
+    old = [summarize_day(history, PARAMETERS, a, b, settings="old") for a, b in days]
+    kept = [replace(day, controlled_s=2 * HOUR) for day in old[1:]]
+    kept.insert(0, replace(old[0], controlled_s=None))
+    result = analyse(history, PARAMETERS, MonitorOptions(), 9 * DAY, days, kept, settings="new")
+    found = {day.start: day.controlled_s for day in result.new_days}
+    assert found == {a: (0.0 if a == DAY else 2 * HOUR) for a, _b in days}
+    more = replace(old[0], controlled_s=3 * HOUR)
+    assert keep_known_control(more, kept[1]) == more
+
+
+def test_a_stored_day_without_its_starts_is_broken() -> None:
+    """TB-28: a stored day missing "starts" is not read as one without starts — it raises, and
+    the caller drops it as broken."""
+    stored = DaySummary.empty(0.0, DAY).to_dict()
+    del stored["starts"]
+    with pytest.raises(KeyError):
+        DaySummary.from_dict(stored)

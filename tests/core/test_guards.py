@@ -16,6 +16,7 @@ from custom_components.vtherm_smart_boiler.core.guards import (
     HOUR,
     PREVIOUS_EXEMPT_S,
     REACTIONS,
+    TRACE_WINDOW_S,
     ChangeClass,
     Confirmation,
     GuardConfig,
@@ -34,6 +35,7 @@ from custom_components.vtherm_smart_boiler.core.guards import (
     for_new_session,
     losses_warning,
     plan_write,
+    trace_seen,
     value_not_shown,
     write_failed,
 )
@@ -2108,3 +2110,33 @@ def test_a_genuine_silent_fall_back_after_a_late_echo_is_a_lost_command() -> Non
     judged, _state = _late_echo_run(3000.0)
     assert judged[0] == (3000.0, ChangeClass.LOST_COMMAND)
     assert ChangeClass.ANOTHER_CONTROLLER not in [kind for _t, kind in judged]
+
+
+def test_an_outage_seen_later_than_now_is_still_a_trace() -> None:
+    """TB-26 (C9): an outage remembered at 9 000, the clock set back to 500: still a trace
+    (the cautious reading), as one within the window is; one older than the window is not."""
+    assert trace_seen(9_000.0, 500.0)
+    assert trace_seen(500.0, 500.0 + TRACE_WINDOW_S)
+    assert not trace_seen(500.0, 500.0 + TRACE_WINDOW_S + 1.0)
+    assert not trace_seen(None, 500.0)
+
+
+@pytest.mark.parametrize("config", [HELD, EXPIRING], ids=["held", "expiring"])
+@pytest.mark.parametrize("outage_at", [None, 325.0], ids=["no_trace", "trace"])
+def test_a_fall_back_while_the_rewrite_is_pending_is_judged_by_the_fall_back_rows(
+    config: GuardConfig, outage_at: float | None
+) -> None:
+    """TB-12 (SCOPE §7's matrix): the one rewrite sent at 310 and not read back yet; 20 s later,
+    within its timeout, the read-back falls back to the value from before the plugin. The
+    fall-back rows judge it — with a trace of an outage a lost command, without one a lost
+    command too (the plugin's latest send not read back explains it): sent again at once,
+    counted, no event, no block — rather than waiting as for another value."""
+    state = keep(held(config), config, 160.0, 290.0)
+    state, _, _ = step(state, 45.0, 60.0, 300.0, config)
+    state, action, _ = step(state, 45.0, 60.0, 310.0, config)  # another controller wrote 60
+    assert action == WriteAction(45.0, WriteKind.REWRITE)
+    assert state.rewrite_pending
+    result = result_of(state, 45.0, 0.0, 330.0, config, outage_at=outage_at)
+    assert result.judged is ChangeClass.LOST_COMMAND
+    assert (result.lost, result.action) == (True, WriteAction(45.0, WriteKind.RESEND))
+    assert (result.events, result.state.blocked) == ((), None)

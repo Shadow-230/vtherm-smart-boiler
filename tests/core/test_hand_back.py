@@ -323,3 +323,20 @@ def test_a_boiler_thermostats_modes_are_its_states() -> None:
     assert judge_switch("unavailable", "off", True, False, None) is SwitchVerdict.WAITING
     assert judge_switch(None, "off", True, False, None) is SwitchVerdict.WAITING
     assert judge_switch("auto", "off", True, False) is SwitchVerdict.WAITING  # a switch: on/off
+
+
+def test_a_restart_indicator_shows_a_restart_by_its_kind() -> None:
+    """TB-28 (Q3.7), the pure cases moved from the transport test: an uptime that falls, a
+    counter or a boot time that changes — a reset counter too, cautiously — show a restart; a
+    value not known shows nothing."""
+    from custom_components.vtherm_smart_boiler.core.hand_back import RestartKind, restart_seen
+
+    assert restart_seen(5000.0, 12.0, RestartKind.UPTIME)
+    assert not restart_seen(12.0, 72.0, RestartKind.UPTIME)  # counting on: no restart
+    assert not restart_seen(12.0, 12.0, RestartKind.UPTIME)
+    assert restart_seen(3.0, 4.0, RestartKind.COUNTER)
+    assert restart_seen(4.0, 0.0, RestartKind.COUNTER)  # a reset counter: cautious, a trace
+    assert not restart_seen(3.0, 3.0, RestartKind.COUNTER)
+    assert restart_seen(1.0, 2.0, RestartKind.BOOT_TIME)
+    assert not restart_seen(None, 2.0, RestartKind.BOOT_TIME)
+    assert not restart_seen(2.0, None, RestartKind.UPTIME)

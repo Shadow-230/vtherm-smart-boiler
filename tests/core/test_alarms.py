@@ -747,3 +747,95 @@ def test_a_high_pressure_alarm_with_the_pressure_unknown_is_unknown() -> None:
     """Negative: limits set, the pressure unknown from the start — unknown, never "OK"."""
     alarms = pressure_alarms(None, None, pressure_high_band(2.0, 2.3), {}, 0.0)
     assert (alarms[HIGH].active, alarms[HIGH].reason) == (None, UNKNOWN_INPUT)
+
+
+# --- TB-26 (C9): a "since" later than now — the wall clock set back — starts the wait now ------
+
+
+def test_a_clock_set_back_starts_the_fault_hold_again_now() -> None:
+    """A fault counted since 10 000, the clock set back an hour to 6 400: the hold counts from
+    6 400 — not yet at 6 699, held at 6 700 — rather than for an hour more."""
+    from custom_components.vtherm_smart_boiler.core.alarms import (
+        BOILER_FAULT_HOLD_S,
+        fault_holds,
+        follow_fault,
+    )
+
+    since = follow_fault(10_000.0, True, 6_400.0)
+    assert since == 6_400.0
+    assert not fault_holds(since, 6_400.0 + BOILER_FAULT_HOLD_S - 1.0)
+    assert fault_holds(since, 6_400.0 + BOILER_FAULT_HOLD_S)
+
+
+def test_a_clock_set_back_starts_the_alarm_level_count_again_now() -> None:
+    """A low pressure beyond its alarm limit since 10 000, the clock set back to 6 400: the
+    alarm level comes five minutes after 6 400, not after 10 000 + 5 min."""
+    start = banded_alarm(LOW, 0.5, ADD_WATER, None, 10_000.0)
+    back = banded_alarm(LOW, 0.5, ADD_WATER, start, 6_400.0)
+    assert back.since == 6_400.0
+    waiting = banded_alarm(LOW, 0.5, ADD_WATER, back, 6_400.0 + ALARM_HOLD_S - 1.0)
+    assert waiting.level is not Level.ALARM
+    held = banded_alarm(LOW, 0.5, ADD_WATER, waiting, 6_400.0 + ALARM_HOLD_S)
+    assert (held.active, held.level) == (True, Level.ALARM)
+
+
+def test_a_clock_set_back_starts_the_low_flow_wait_again_now() -> None:
+    from custom_components.vtherm_smart_boiler.core.alarms import LOW_FLOW_HOLD_S, low_flow
+    from custom_components.vtherm_smart_boiler.core.readings import ZoneState
+
+    def closed(t: float) -> list[ZoneState]:
+        return [ZoneState("z", valve_open=0.0, reported_at=t)]
+
+    first = low_flow(closed(10_000.0), True, 10_000.0, None, None, dhw=False)
+    back = low_flow(closed(6_400.0), True, 6_400.0, None, first, dhw=False)
+    assert back.since == 6_400.0
+    due = 6_400.0 + LOW_FLOW_HOLD_S
+    assert low_flow(closed(due - 1.0), True, due - 1.0, None, back, dhw=False).active is False
+    assert low_flow(closed(due), True, due, None, back, dhw=False).active is True
+
+
+def test_a_clock_set_back_starts_the_notice_hour_again_now() -> None:
+    from custom_components.vtherm_smart_boiler.core.alarms import (
+        NOTICE_CLOSE_S,
+        Notice,
+        follow_notice,
+    )
+
+    later = Notice(True, 10_000.0)  # normal since 10 000; the clock set back to 6 400
+    back = follow_notice(later, False, True, 6_400.0)
+    assert (back.open, back.normal_since) == (True, 6_400.0)
+    assert follow_notice(back, False, True, 6_400.0 + NOTICE_CLOSE_S - 1.0).open
+    assert not follow_notice(back, False, True, 6_400.0 + NOTICE_CLOSE_S).open
+
+
+# --- TB-27: which starts and short burns count -------------------------------------------------
+
+
+def test_frequent_starts_counts_only_seen_starts_within_the_hour() -> None:
+    """At 120 min: 13 starts 72-120 min ago, 5 within the hour and 13 within the hour whose
+    start was not seen (the flame already on when the record began): 5, below the limit of 12."""
+    now = 120 * MIN
+    old = [burn(i * 4, 1) for i in range(13)]
+    recent = [burn(65 + i * 10, 1) for i in range(5)]
+    unseen = [
+        ClassifiedBurn(Burn((62 + i * 4) * MIN, (63 + i * 4) * MIN, False, True), BurnKind.CH, 1.0)
+        for i in range(13)
+    ]
+    alarm = frequent_starts([*old, *recent, *unseen], now, 12)
+    assert (alarm.value, alarm.active) == (5, False)
+
+
+def test_unstable_ignition_counts_only_complete_short_burns_within_the_day() -> None:
+    """At two days: 12 short burns older than a day, 12 short ones whose start or end was not
+    seen, and 3 complete ones within the day: 3, below the limit of 10."""
+    now = 2 * DAY
+    old = [burn(i * 10, 0.5) for i in range(12)]
+    incomplete = [
+        ClassifiedBurn(
+            Burn(DAY + i * 600.0, DAY + i * 600.0 + 30.0, seen, not seen), BurnKind.CH, 1.0
+        )
+        for i, seen in enumerate([True, False] * 6)
+    ]
+    inside = [burn(24 * 60 + 200 + i * 10, 0.5) for i in range(3)]
+    alarm = unstable_ignition([*old, *incomplete, *inside], now, limit=10)
+    assert (alarm.value, alarm.active) == (3, False)

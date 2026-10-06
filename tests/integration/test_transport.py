@@ -119,7 +119,7 @@ def test_a_restart_indicator_is_read_by_its_kind() -> None:
     counter; a value not known reads as ``None``."""
     from homeassistant.core import State
 
-    from custom_components.vtherm_smart_boiler.core.hand_back import RestartKind, restart_seen
+    from custom_components.vtherm_smart_boiler.core.hand_back import RestartKind
     from custom_components.vtherm_smart_boiler.transport.entities import restart_reading
 
     uptime = State("sensor.up", "120", {"device_class": "duration", "unit_of_measurement": "s"})
@@ -138,13 +138,6 @@ def test_a_restart_indicator_is_read_by_its_kind() -> None:
     assert restart_reading(State("sensor.count", "7")) == (7.0, RestartKind.COUNTER)
     assert restart_reading(State("sensor.count", "unavailable"))[0] is None
     assert restart_reading(None) == (None, RestartKind.COUNTER)
-    assert restart_seen(5000.0, 12.0, RestartKind.UPTIME)
-    assert not restart_seen(12.0, 72.0, RestartKind.UPTIME)  # counting on: no restart
-    assert restart_seen(3.0, 4.0, RestartKind.COUNTER)
-    assert restart_seen(4.0, 0.0, RestartKind.COUNTER)  # a reset counter: cautious, a trace
-    assert not restart_seen(3.0, 3.0, RestartKind.COUNTER)
-    assert restart_seen(1.0, 2.0, RestartKind.BOOT_TIME)
-    assert not restart_seen(None, 2.0, RestartKind.BOOT_TIME)
 
 
 def test_a_setpoint_entitys_grid_is_read_in_its_unit() -> None:

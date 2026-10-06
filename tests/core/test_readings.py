@@ -254,3 +254,15 @@ def test_a_gateway_outdoor_zero_after_an_unknown_state_is_unknown() -> None:
     assert memory.last is None
     assert memory.read(-0.5) == -0.5
     assert memory.read(0.0) == 0.0
+
+
+def test_a_plausible_range_includes_its_bounds_and_may_be_open() -> None:
+    """TB-28, the pure cases of ``SignalSpec.plausible``: a value on either bound is plausible,
+    one past it is not; a bound not set limits nothing."""
+    from custom_components.vtherm_smart_boiler.core.signals import SignalKind, SignalSpec
+
+    both = SignalSpec(SignalKind.TEMPERATURE, low=0.0, high=110.0)
+    assert [both.plausible(v) for v in (-0.1, 0.0, 110.0, 110.1)] == [False, True, True, False]
+    assert SignalSpec(SignalKind.PRESSURE, low=0.0).plausible(1e6)
+    assert SignalSpec(SignalKind.PRESSURE, high=4.0).plausible(-1e6)
+    assert not SignalSpec(SignalKind.PRESSURE, high=4.0).plausible(4.01)

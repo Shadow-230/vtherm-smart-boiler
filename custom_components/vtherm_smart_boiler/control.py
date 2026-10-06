@@ -1639,7 +1639,9 @@ class ControlUnit:
             # VT starts its thermostats only once Home Assistant has started; `is_running` is
             # already true while it starts.
             found.append("ha_starting")
-        if now - self._coordinator.monitoring_since < config.monitor.monitoring_days * DAY:
+        # A start later than now — the wall clock set back (C9) — counts from now.
+        since = clock_start(self._coordinator.monitoring_since, now)
+        if now - since < config.monitor.monitoring_days * DAY:
             found.append("monitoring_period")
         vt_boiler = self._coordinator.link.vt_central_boiler_configured()
         if vt_boiler is None:

@@ -528,3 +528,16 @@ def test_the_precedence_of_the_verdict(given: dict, verdict: Verdict, reasons: l
     )
     assert result.verdict is verdict
     assert [(r.code, r.kind, r.changed_by_control, r.detail) for r in result.reasons] == reasons
+
+
+def test_the_stored_load_share_counts_heating_season_time_only() -> None:
+    """TB-24 (P-91): an hour each at 0, 10 and 20 °C, the season below 15 °C, the load equal to
+    the 1.5 kW minimum at 7.5 °C: the hour at 20 °C is outside the season — half of two hours."""
+    from custom_components.vtherm_smart_boiler.core.verdict import (
+        load_below_min_from_distribution,
+    )
+
+    model = LoadModel(loss_coefficient=0.2, heating_threshold=15.0)
+    share = load_below_min_from_distribution(((0, HOUR), (10, HOUR), (20, HOUR)), model, 1.5)
+    assert (share.value, share.basis_s) == (pytest.approx(0.5), 2 * HOUR)
+    assert load_below_min_from_distribution(((15, HOUR),), model, 1.5).value is None
