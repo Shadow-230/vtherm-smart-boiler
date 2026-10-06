@@ -110,7 +110,7 @@ and VT's not-started zones read as the user's "off".
 | 1.2 ✅ | No relay fights (decision 6): PB-01, PB-44, SB-05, SB-06. Keep the one rewrite through resends; a resend the relay never shows counts against another controller (answers C, N); the declared timer's lapse window bounded; a relay that stops taking commands mid-session raises an issue and, for "off", blocks and hands back. |
 | 1.3 ✅ | The control unit's wish and hand-back debt hold under errors and restarts: PB-02, PB-04, PB-05, PB-12, PB-13, PB-14, PB-16, TB-02, TB-05, TB-06. The restored wish saved before anything else; the error path keyed on the debt and routed through the minute gate and the confirmation; the fixable owed issue when a hand-back stays unconfirmed; the lost-link issue kept across restarts; the old debt folded at the session's first write; a control-store write that fails noticed. |
 | 1.4 ✅ | "Nothing heats" visible and decision 3's end states settled (decisions 1–4, 12): PB-03, PB-23, SB-01, SB-02, SB-03, SB-10, TB-01. |
-| 1.5 | The check of part 1. |
+| 1.5 ✅ | The check of part 1. |
 | 1.6 🔒 | Stop: the report to the user, with the tokens part 1 used; the user decides whether part 2 starts. |
 
 ## Part 2 — the rest of the five changes, and the user's other answers
@@ -197,6 +197,36 @@ Left on purpose for a later release; what a step leaves open is added here by na
     about 30 min while a zone calls in mild weather; the false-alarm rate is checked at K4 (J4's
     runs).
 18. Step 1.4 (SB-01): "the boiler heats" (`boiler_heats`) is shown on the relay path only — K4.
+19. Step 1.5 (relay): a declared timer that differs from the relay's real one by more than 60 s
+    makes the plugin step aside after about 2 h; the latch issue does not name the switch-offs'
+    regular age or say the declared length may be wrong — K4.
+20. Step 1.5 (relay): a rewrite retried at +115 s is judged at +120 s, before it can be read back,
+    so the plugin may step aside a little early — K4.
+21. Step 1.5 (relay): a declared timer is timed from the "on" sent at a restart, as before 0.2.3 —
+    K4.
+22. Step 1.5 (relay): a relay that reports its state and loses power every minute is sent "on" at
+    each return (R2), about 30 burner starts an hour, with "commands lost" raised — the user's
+    decision, K4.
+23. Step 1.5 (relay): for a relay that reports no state, a return within 120 s of the last write
+    waits for the regular repeat, so the boiler may stay off up to the repeat interval, as before
+    0.2.3; the lost command is counted — K4.
+24. Step 1.5 (control store): the 5-min hold after a failed write does not grow after repeated
+    failures — a store failing every 7th write takes and hands back the boiler about every 10 min
+    — and a flaky store logs an error and a note at each flip — K4.
+25. Step 1.5 (hand-back): while the "heating on ignored" latch and a debt last, each restart writes
+    the heating switch "on" once more, as a relay's step aside does — K4.
+26. Step 1.5 (hand-back): a release is judged against the new session's planned setpoint even when
+    that write failed, as before 0.2.3 — K4.
+27. Step 1.5 (demand): with the count at 0, an idle zone in a heating mode can give a criterion data
+    while a calling zone gives none; the calling zone is then named only by the information sensor
+    "a demand criterion has no data", with no repair issue (the form refuses that set-up; it arises
+    when a zone stops publishing later) — K4.
+28. Step 1.5 (decision 4): a heating read-back slower than 360 s latches control as "on ignored"
+    (the 120-s window is provisional) — K4.
+29. Step 1.5 (decision 2): on a water path without a flame input, a boiler holding the flow steady
+    below the plugin's setpoint raises "no sign the boiler heats" after 30 min — K4.
+30. Step 1.5 (decision 2): without a hot-water signal, a draw counts as a sign of heat, so with the
+    panel set to summer the alarm and its issue clear at each draw and return 30 min later — K4.
 
 ## After 0.2.3
 
