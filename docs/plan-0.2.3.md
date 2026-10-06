@@ -133,7 +133,7 @@ and VT's not-started zones read as the user's "off".
 | 3.1 | The remaining specification problems, settled in `SCOPE.md`, `PLAN.md` and the plans: SB-12, SB-13, SB-14, SB-15, SB-16, SB-17, SB-19, SB-20, SB-21, SB-22, SB-23, SB-24, SB-25, SB-26, SB-27, SB-28, SB-30, SB-31, SB-32, SB-33, SB-34, SB-35, SB-37, SB-38, SB-39. |
 | 3.2 ✅ | Control, guards, relay, transport, units, lifecycle, stores, repairs, forecasts, the monitor, the VT link and the feature manager: PB-15, PB-21, PB-28, PB-29, PB-30, PB-31, PB-32, PB-33, PB-34, PB-35, PB-36, PB-37, PB-38, PB-40, PB-41, PB-42, PB-43, PB-53, PB-70, PB-72, PB-73, PB-84, PB-17, PB-18, PB-47, PB-51, PB-52, PB-55, PB-56, PB-57, PB-58, PB-59, PB-60, PB-62, PB-19, PB-20, PB-63, PB-64, PB-65, PB-66, PB-67, PB-46, PB-48, PB-49, PB-50. |
 | 3.3 ✅ | The config and options flows, entities, texts, icons, the manifest, CI, scripts, tools, the simulator, the test HA files, and wrong or weak tests: PB-45, PB-54, PB-68, PB-69, PB-71, PB-83, PB-39, PB-61, PB-74, PB-75, PB-76, PB-77, PB-78, PB-79, PB-80, PB-81, PB-82, PB-85, PB-86, PB-87, PB-88, PB-89, PB-91, PB-92, PB-93, PB-25, PB-90, PB-94, PB-95, PB-96, PB-97, PB-98, PB-99, PB-100, PB-101. |
-| 3.4 | The check of part 3. |
+| 3.4 ✅ | The check of part 3. |
 | 3.5 🔒 | Stop: the report to the user, with the tokens part 3 used; the user decides whether part 4 starts. |
 
 ## Part 4 — missing tests, version, the final check
@@ -314,6 +314,21 @@ Left on purpose for a later release; what a step leaves open is added here by na
 64. Step 3.3: with the simulator's tick forced after the plugin's step, six relay acceptance tests
     (restart resent, unreported restarts, switched while available, Wi-Fi loss) fail at checks on
     exact time boundaries — looked at in the check 3.4; what is left — K4.
+65. Step 3.4 (settles item 64): the six failures came from the probe, which also delayed the
+    simulator's own scenario updates; with only its clock tick delayed every relay test passes —
+    at worst a reaction one step (10 s) later, never an extra start or a wrong step aside.
+66. Step 3.4 (PB-21): a gateway's outdoor 0.0 counts as a reading only after a known one within
+    2 K of 0 (provisional), so a steady 0 °C across a restart is unknown until the first other
+    reading; seeding it from the recorder, and using the control unit's outage trace (also when
+    the plugin only monitors) — K4.
+67. Step 3.4 (PB-30): an owed hand-back carried over a restart still counts a steady value away
+    from the plugin's as released, so a value saved but never written before a crash gives a
+    false "released" on a device that holds its value — K4.
+68. Step 3.4: a gas meter reading that drops below 90 % of its last value only briefly is taken
+    as a reset and that day's gas counted twice (the monitor only) — K4.
+69. Step 3.4 (PB-68, PB-39): an unknown signal key in stored options (after a downgrade at the
+    same entry version) is dropped with a log warning only; switching control off reports success
+    while its hand-back is sent but not yet confirmed — K4.
 
 ## After 0.2.3
 
