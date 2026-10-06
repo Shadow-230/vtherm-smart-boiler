@@ -124,7 +124,7 @@ and VT's not-started zones read as the user's "off".
 | 2.4 ✅ | The comfort correction meets principle 13's rules 3 and 5 (decision 11): SB-11. Rule 3: it moves only while the starts per hour do not rise against the same hours before it began, and steps back when they do; rule 5: it freezes in extreme weather — an outdoor temperature beyond the design outdoor temperature, or a change faster than a set rate per hour (provisional, K4) — with its tests and the simulator's starts measured with it on. |
 | 2.5 ✅ | The smaller answers: learning pauses (decision 14: SB-29); no default for the high-pressure alarm and the monitor's thresholds listed (decision 13: SB-18); the count pre-filled 0 from VT (decision 7: SB-07); the return by itself after the external-control switch as a separate opt-in (decision 10: SB-36); J4's starts criterion with its conditions and a test carrying the daily swing (decision 8: SB-08). |
 | 2.6 ✅ | The check of part 2. |
-| 2.7 🔒 | Stop: the report to the user, with the tokens part 2 used; the user decides whether part 3 starts. |
+| 2.7 🔒 ✅ | Stop: the report to the user, with the tokens part 2 used; the user decides whether part 3 starts. |
 
 ## Part 3 — the remaining problems in the specification, the code and the tests
 
