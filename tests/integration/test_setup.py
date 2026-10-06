@@ -1415,8 +1415,11 @@ async def test_the_gas_unit_follows_the_meter(hass: HomeAssistant) -> None:
 
 
 async def test_invalid_options_fail_setup_with_a_reason(hass: HomeAssistant) -> None:
-    # No signal is required any more (X8): a signal this version does not know is refused.
-    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", options={"signals": {"x": "a.b"}})
+    # No signal is required any more (X8), and an unknown key is ignored (PB-68): an
+    # implausible parameter is refused.
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", options={"parameters": {"boiler_min_power": 0.0}}
+    )
     entry.add_to_hass(hass)
     assert not await hass.config_entries.async_setup(entry.entry_id)
     assert entry.state is ConfigEntryState.SETUP_ERROR

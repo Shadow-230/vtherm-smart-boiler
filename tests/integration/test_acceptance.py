@@ -23,7 +23,7 @@ from custom_components.boiler_sim.plant import PlantOutput
 from custom_components.boiler_sim.simulation import ZoneMode
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.core import CoreState, Event, HomeAssistant, State
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
@@ -82,6 +82,9 @@ class Rig:
     vt_ready: bool | None = True
     fahrenheit: bool = False  # Home Assistant in US customary units: VT reports in °F
     spy: ServiceSpy | None = None  # every service call (P-118)
+    # PB-39: the translation key of the error the last switching off raised (its hand-back did
+    # not get through), else None.
+    switch_error: str | None = None
     smartpi: dict[str, bool] = field(default_factory=dict)  # SmartPI zones: learning on or off
 
     @property
@@ -177,13 +180,19 @@ class Rig:
     async def switch(self, on: bool) -> None:
         """The user's switch, as the test's own call: tagged, not taken for the plugin's."""
         assert self.spy is not None
-        await self.hass.services.async_call(
-            "switch",
-            "turn_on" if on else "turn_off",
-            {"entity_id": self.entity("switch", "control")},
-            blocking=True,
-            context=self.spy.own,
-        )
+        self.switch_error = None
+        try:
+            await self.hass.services.async_call(
+                "switch",
+                "turn_on" if on else "turn_off",
+                {"entity_id": self.entity("switch", "control")},
+                blocking=True,
+                context=self.spy.own,
+            )
+        except HomeAssistantError as err:
+            if on or isinstance(err, ServiceValidationError):
+                raise
+            self.switch_error = err.translation_key  # PB-39: off, its hand-back failed
         await self.hass.async_block_till_done()
 
     async def scenario(self, service: str, **data: Any) -> None:

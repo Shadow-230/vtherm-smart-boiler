@@ -221,6 +221,9 @@ class Rig:
     flame_reported: bool = True  # the same for the flame
     storage: dict[str, Any] = field(default_factory=dict)  # the test's stores (hass_storage)
     spy: ServiceSpy | None = None  # every service call (P-118)
+    # PB-39: the translation key of the error the last switching off raised (its hand-back did
+    # not get through), else None.
+    switch_error: str | None = None
 
     @property
     def services(self) -> list[tuple[str, str, dict[str, Any]]]:
@@ -269,13 +272,19 @@ class Rig:
         """The user's switch, as the test's own call: tagged, so it is not taken for the
         plugin's (P-118)."""
         assert self.spy is not None
-        await self.hass.services.async_call(
-            "switch",
-            "turn_on" if on else "turn_off",
-            {"entity_id": self.entity("switch", "control")},
-            blocking=True,
-            context=self.spy.own,
-        )
+        self.switch_error = None
+        try:
+            await self.hass.services.async_call(
+                "switch",
+                "turn_on" if on else "turn_off",
+                {"entity_id": self.entity("switch", "control")},
+                blocking=True,
+                context=self.spy.own,
+            )
+        except HomeAssistantError as err:
+            if on or isinstance(err, ServiceValidationError):
+                raise
+            self.switch_error = err.translation_key  # PB-39: off, its hand-back failed
         await self.hass.async_block_till_done()
 
     def plugin_calls(self) -> set[tuple[str, str]]:
@@ -3918,15 +3927,22 @@ async def test_a_flapping_write_target_is_one_warning(
 async def test_a_lasting_hand_back_failure_is_logged_once(
     rig: Rig, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """PB-39 too: switching off whose hand-back fails raises a translated error (the switch
+    stays off); one that gets through raises nothing."""
     await start(rig)
     await rig.switch(True)
     rig.hass.services.async_remove("opentherm_gw", "set_control_setpoint")
     await rig.switch(False)  # the hand-back fails, and is retried every minute
+    assert rig.switch_error == "hand_back_failed"  # PB-39: the user is told, not success
+    assert rig.state("switch", "control").state == "off"  # control is off all the same
     await rig.advance(300)
     assert _logged(caplog, logging.ERROR, "Handing control back failed") == 1
     rig.gateway.register()
     await rig.advance(70)
     assert _logged(caplog, logging.INFO, "hand-back went through") == 1
+    await rig.switch(True)
+    await rig.switch(False)
+    assert rig.switch_error is None  # handed back
 
 
 async def test_a_lasting_learning_failure_is_logged_once_per_zone(
@@ -8907,7 +8923,11 @@ async def test_the_external_control_switch_switched_off_steps_aside_without_a_re
     assert external.writes.count(True) == ons  # no fight
     assert number.writes[-1] == LOWEST  # the lowest water temperature, first
     assert not unit_of(rig).hand_back_owed  # the switch, off, shows the release
-    assert issue(rig, "control_latched") is not None
+    found = issue(rig, "control_latched")
+    assert found is not None
+    # PB-76: a switch's own text, with no raw "on"/"off" state in a translated sentence.
+    assert found.translation_key == "control_latched_switch"
+    assert found.translation_placeholders == {"target": external.entity_id}
     await rig.advance(180)
     assert external.writes.count(True) == ons
 
@@ -12681,6 +12701,25 @@ async def test_a_relay_a_vt_zone_drives_or_of_the_gateway_blocks_control(
     assert relay.calls == [True, False]  # handed back: the rest state
     await rig.advance(600)
     assert relay.calls == [True, False]
+
+
+async def test_a_heating_switch_a_vt_zone_drives_blocks_control(rig: Rig) -> None:
+    """PB-54 at run time: VT can be reconfigured without the options changing — a heating
+    switch a VT thermostat drives for a room blocks control on the entity path, as the relay
+    does. Negative: the same switch no zone drives does not."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    switch = FakeSwitch(rig.hass)
+    switch.register()
+    await start(rig, **held_entity(number, ch_entity=switch.entity_id, ch_write_type="held"))
+    await rig.advance(10)
+    assert "entity_used_by_zone" not in blockers(rig)
+    vt = MockConfigEntry(domain=VT_PLATFORM, data={"underlying_entity_ids": [switch.entity_id]})
+    vt.add_to_hass(rig.hass)
+    registry = er.async_get(rig.hass)
+    registry.async_update_entity(rig.zones.entities["living"], config_entry_id=vt.entry_id)
+    await rig.advance(10)
+    assert "entity_used_by_zone" in blockers(rig)
 
 
 async def test_a_relay_boiler_thermostat_without_both_modes_blocks_control(

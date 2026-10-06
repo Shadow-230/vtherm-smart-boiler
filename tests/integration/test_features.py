@@ -541,3 +541,52 @@ async def test_a_zone_reporting_late_does_not_keep_an_entity_from_being_created(
     assert state is not None
     assert state.state != "unavailable"
     assert features_state(hass, entry).attributes["low_flow"] == "available"
+
+
+# Attributes Home Assistant itself writes, which the integration does not name.
+HA_ATTRIBUTES = frozenset(
+    {
+        "friendly_name",
+        "icon",
+        "device_class",
+        "unit_of_measurement",
+        "state_class",
+        "options",
+        "restored",
+        "supported_features",
+        "assumed_state",
+        "attribution",
+        "entity_picture",
+        "last_reset",
+    }
+)
+
+
+@pytest.mark.parametrize("base", ["water", "relay"])
+async def test_every_attribute_has_a_translated_name(
+    hass: HomeAssistant, zones: FakeZones, forecasts: FakeForecasts, base: str
+) -> None:
+    """TB-36 (PB-76, PB-77): on the water and relay installations with a foreign-heat source,
+    once every entity has been written, every attribute outside Home Assistant's own has a
+    translated name, in English and Polish."""
+    hass.states.async_set("switch.fake_stove", "off")
+
+    def stove(options: dict[str, Any]) -> None:
+        options["zones"][0]["foreign_heat"] = [{"entity_id": "switch.fake_stove"}]
+
+    entry = await _setup(hass, zones, base, stove)
+    registry = er.async_get(hass)
+    missing: set[str] = set()
+    for registered in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if registered.disabled_by is not None:
+            continue  # disabled by default: written only once the user enables it
+        state = hass.states.get(registered.entity_id)
+        assert state is not None, registered.entity_id
+        key = registered.translation_key
+        for attribute in set(state.attributes) - HA_ATTRIBUTES:
+            for language in TEXTS:
+                entity = TEXTS[language]["entity"][registered.domain].get(key, {})
+                named = entity.get("state_attributes", {}).get(attribute, {}).get("name")
+                if not named:
+                    missing.add(f"{language} {registered.domain}.{key}.{attribute}")
+    assert not missing, "\n".join(sorted(missing))

@@ -68,6 +68,20 @@ async def step(hass: HomeAssistant, result: dict[str, Any], data: dict[str, Any]
     return await hass.config_entries.flow.async_configure(result["flow_id"], data)
 
 
+@pytest.mark.parametrize(
+    ("language", "name"), [("en", "Boiler"), ("pl", "Kocioł"), ("xx", "Boiler")]
+)
+async def test_the_default_name_is_in_home_assistants_language(
+    hass: HomeAssistant, language: str, name: str
+) -> None:
+    """PB-83: the device's default name comes from a translated text, so Polish entity names and
+    IDs do not start with the English "Boiler". Negative: a language without a translation
+    falls back to English."""
+    hass.config.language = language
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    assert form_default(result, "name") == name
+
+
 async def test_simple_flow_creates_an_entry(hass: HomeAssistant, entities: dict[str, str]) -> None:
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
     assert result["type"] is FlowResultType.FORM
@@ -502,8 +516,6 @@ async def test_control_at_the_advanced_level_and_back(
     assert result["errors"] == {"count_threshold": "count_threshold_above_zones"}
     result = await options_step(hass, result, {"count_threshold": 0})
     assert result["errors"] == {"count_threshold": "no_demand_criterion"}
-    result = await options_step(hass, result, {"off_setpoint": 30})  # hard minimum 25
-    assert result["errors"] == {"off_setpoint": "off_setpoint_not_below_hard_min"}
     result = await options_step(hass, result, {"ramp_k_per_min": 0.5, "off_setpoint": 12})
     assert result["step_id"] == "control_alarms"
     # Another controller always makes the plugin step aside: no reaction to choose (S-11); and
@@ -644,10 +656,33 @@ async def to_control_behaviour(hass: HomeAssistant, entry_id: str) -> dict[str, 
 async def test_off_must_be_at_least_1k_below_the_hard_minimum(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    """P-43: "off" sent as a low setpoint within a kelvin of the lowest water temperature would
-    not be seen as a change — refused: 24.5 against 25; 24 is allowed."""
+    """P-43: "off" sent as a low setpoint — on the entity path without a heating switch —
+    within a kelvin of the lowest water temperature would not be seen as a change — refused:
+    24.5 against 25; 24 is allowed. A gateway switches heating with CH: no check there (PB-69)."""
     entry_id = await create_entry(hass, entities, "advanced", ("living",))
     result = await to_control_behaviour(hass, entry_id)
+    result = await options_step(hass, result, {"off_setpoint": 24.5})
+    assert result["step_id"] == "control_alarms"  # the gateway's CH: "off" is no setpoint
+    hass.states.async_set("number.boiler_flow", "45", {"unit_of_measurement": "°C"})
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.boiler_flow"},
+    )
+    result = await options_step(
+        hass,
+        result,
+        {
+            "setpoint_entity": "number.boiler_flow",
+            "write_type": "expiring",
+            "hand_back": "value",
+            "hand_back_value_effect": "own_control",
+            "hand_back_value": 40,
+        },
+    )
+    result = await options_step(hass, result, ADVANCED_CURVE)
+    assert result["step_id"] == "control_behaviour"
     result = await options_step(hass, result, {"off_setpoint": 24.5})
     assert result["errors"] == {"off_setpoint": "off_setpoint_not_below_hard_min"}
     result = await options_step(hass, result, {"off_setpoint": 24})
@@ -877,6 +912,50 @@ async def test_control_limits_must_suit_the_setpoint_entity(
     assert result["step_id"] == "control_behaviour"
     result = await options_step(hass, result, {"off_setpoint": 10})
     assert result["errors"] == {"off_setpoint": "off_setpoint_outside_entity_range"}
+    result = await options_step(hass, result, {"off_setpoint": 20})
+    assert result["step_id"] == "control_alarms"
+
+
+async def test_off_is_not_checked_as_a_setpoint_with_a_heating_switch(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """PB-69: with a heating switch, "off" is never written as a setpoint, so the advanced
+    behaviour step does not require it inside the entity's range or 1 K below the lowest water
+    temperature — before, an entity whose minimum is the lowest (20 °C) left no "off" that
+    passed, and control could not be saved at the advanced level. Negative: without the
+    switch both checks stay (``test_control_limits_must_suit_the_setpoint_entity``)."""
+    hass.states.async_set(
+        "number.boiler_flow", "45", {"unit_of_measurement": "°C", "min": 20, "max": 60}
+    )
+    hass.states.async_set(CH_SWITCH, "on")
+    entry_id = await create_entry(hass, entities, "advanced", ("living",))
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.boiler_flow"},
+    )
+    details = {
+        "setpoint_entity": "number.boiler_flow",
+        "write_type": "expiring",
+        "ch_entity": CH_SWITCH,
+        "ch_write_type": "held",
+        "hand_back": "value",
+        "hand_back_value_effect": "own_control",
+        "hand_back_value": 30,
+    }
+    result = await options_step(hass, result, details)
+    curve = {
+        "design_outdoor": -15,
+        "design_flow": 50,
+        "room": 20,
+        "offset": 0,
+        "ceiling_band": 10,
+        "frost_limit": 5,
+        "frost_release": 7,
+    }
+    result = await options_step(hass, result, curve | {"hard_min": 20, "hard_max": 60})
+    assert result["step_id"] == "control_behaviour"
     result = await options_step(hass, result, {"off_setpoint": 20})
     assert result["step_id"] == "control_alarms"
 
@@ -1669,6 +1748,39 @@ async def test_same_switch_for_heating_and_external_control_is_refused(
     result = await options_step(
         hass, result, details | {"hand_back_entity": "switch.external_control"}
     )
+    assert result["step_id"] == "control_curve"
+
+
+@pytest.mark.parametrize("field", ["ch_entity", "hand_back_entity"])
+async def test_a_switch_a_vt_zone_drives_is_refused_on_the_entity_path(
+    hass: HomeAssistant, entities: dict[str, str], field: str
+) -> None:
+    """PB-54: on the entity path the heating switch and the external-control switch are checked
+    against the switches VT thermostats drive, as the relay is — VT's toggles would read as
+    another controller. Negative: a switch no zone drives is accepted."""
+    from homeassistant.helpers import entity_registry as er
+
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
+    vt = MockConfigEntry(
+        domain="versatile_thermostat", data={"underlying_entity_ids": ["switch.room_heater"]}
+    )
+    vt.add_to_hass(hass)
+    er.async_get(hass).async_update_entity(entities["bedroom"], config_entry_id=vt.entry_id)
+    hass.states.async_set("switch.room_heater", "off")
+    hass.states.async_set("switch.external_control", "off")
+    result = await to_control_entity(hass, entry_id)
+    details = {
+        "setpoint_entity": BOILER_FLOW,
+        "write_type": "held",
+        "ch_entity": CH_SWITCH,
+        "ch_write_type": "held",
+        "hand_back": "switch",
+        "hand_back_entity": "switch.external_control",
+        "hand_back_entity_write_type": "held",
+    }
+    result = await options_step(hass, result, details | {field: "switch.room_heater"})
+    assert result["errors"] == {field: "entity_used_by_zone"}
+    result = await options_step(hass, result, details)
     assert result["step_id"] == "control_curve"
 
 
@@ -2598,6 +2710,40 @@ async def test_the_relay_step_asks_the_relays_own_settings(
     assert config.control.relay.separate_contact
 
 
+async def test_a_new_relay_asks_the_separate_contact_tick_again(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """PB-45: the separate-contact declaration was about one entity; when the relay changes,
+    the step asks for the tick again before it saves, so the declaration does not carry over."""
+    entry_id = await create_entry(hass, entities, "simple", ("living",), "on_off")
+    result = await to_relay_step(hass, entry_id)
+    result = await options_step(hass, result, RELAY_ANSWERS)
+    result = await options_step(hass, result, {"activation_delay_s": 0})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.other_relay", "off")
+    other = RELAY_ANSWERS | {"relay_entity": "switch.other_relay"}
+    result = await to_relay_step(hass, entry_id)
+    assert form_default(result, "relay_is_separate_contact") is True  # the same relay's tick
+    result = await options_step(hass, result, other)
+    assert result["errors"] == {"relay_is_separate_contact": "relay_contact_confirm_again"}
+    result = await options_step(hass, result, other)  # confirmed for the new relay
+    assert result["step_id"] == "control_relay_behaviour"
+    result = await options_step(hass, result, {"activation_delay_s": 0})
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert control["relay_entity"] == "switch.other_relay"
+    assert control["relay_is_separate_contact"] is True
+    # Unticked for a new relay: saved as given, no second question (control will not start).
+    result = await to_relay_step(hass, entry_id)
+    result = await options_step(hass, result, RELAY_ANSWERS | {"relay_is_separate_contact": False})
+    assert result["step_id"] == "control_relay_behaviour"
+    # The same relay, ticked again: no question.
+    result = await to_relay_step(hass, entry_id)
+    result = await options_step(hass, result, other)
+    assert result["step_id"] == "control_relay_behaviour"
+
+
 @pytest.mark.parametrize("level", ["simple", "advanced"])
 async def test_the_relay_path_shows_the_activation_delay(
     hass: HomeAssistant, entities: dict[str, str], level: str
@@ -3366,6 +3512,21 @@ def test_a_reaction_stored_at_the_simple_level_is_not_hidden() -> None:
     }
     assert "write_ignored" in {str(m) for m in flow.control_alarms_schema(options).schema}
     assert not flow.has_hidden_advanced(options)
+
+
+def test_the_relays_power_threshold_is_a_hidden_setting_kept_by_restore_defaults() -> None:
+    """PB-71: the power above which the boiler counts as heating (advanced) stays active at the
+    simple level, so the menu flags it as a hidden setting; it is a fact about the boiler, so
+    "restore defaults" keeps it. Negative: without it nothing is hidden."""
+    from custom_components.vtherm_smart_boiler import config_flow as flow
+
+    control = {"write_path": "relay", "relay_entity": "switch.relay"}
+    options: dict[str, Any] = {"level": "simple", "control": dict(control)}
+    assert not flow.has_hidden_advanced(options)
+    options["control"]["boiler_heats_above_w"] = 300
+    assert flow.has_hidden_advanced(options)
+    flow.restore_advanced_defaults(options)
+    assert options["control"]["boiler_heats_above_w"] == 300
 
 
 # --- Z1: the config and options flows at 100 % with branches (P-34, Appendix D) -----------------

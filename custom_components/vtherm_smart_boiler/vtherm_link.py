@@ -31,6 +31,7 @@ from homeassistant.const import (
     STATE_UNKNOWN,
 )
 from homeassistant.core import CoreState, Event, HomeAssistant, State, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_loaded_integration
 from homeassistant.util import dt as dt_util
@@ -384,10 +385,20 @@ def zones_of_another_kind(hass: HomeAssistant, zones: Sequence[str]) -> list[str
 
 
 def zone_name(hass: HomeAssistant, entity_id: str) -> str:
-    """A zone's name as the user sees it; its entity ID while the thermostat is away."""
+    """A zone's name as the user sees it. While the thermostat has no state (VT not started
+    yet at the plugin's setup), its registry entry's — the user's name, its own, then its
+    device's (PB-80); its entity ID only outside the registry."""
     state = hass.states.get(entity_id)
     if state is not None and state.name:
         return state.name
+    entry = er.async_get(hass).async_get(entity_id)
+    if entry is None:
+        return entity_id
+    if entry.name or entry.original_name:
+        return str(entry.name or entry.original_name)
+    device = dr.async_get(hass).async_get(entry.device_id) if entry.device_id else None
+    if device is not None and (device.name_by_user or device.name):
+        return str(device.name_by_user or device.name)
     return entity_id
 
 

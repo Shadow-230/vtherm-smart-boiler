@@ -478,6 +478,7 @@ class BoilerSensor(SmartBoilerEntity, SensorEntity):
             "short_share",
             "reference",
             "missing",
+            "missing_text",
             "estimate_from_power",
             "estimate_gap",
             # The week's gas without the burner, recomputed with every analysis (S-31).
@@ -514,6 +515,15 @@ class BoilerSensor(SmartBoilerEntity, SensorEntity):
         attributes = attributes_fn(self.coordinator.data)
         if self.entity_description.key == "verdict":
             attributes["reasons_text"] = _reasons_text(self.coordinator, attributes["reasons"])
+        if "missing" in attributes and self.entity_description.key == "lowest_water_suggestion":
+            # PB-77: the missing inputs' texts, as the other coded lists have.
+            attributes["missing_text"] = coded_text(
+                self.coordinator,
+                "sensor",
+                "lowest_water_suggestion",
+                "missing",
+                attributes["missing"],
+            )
         return attributes
 
 

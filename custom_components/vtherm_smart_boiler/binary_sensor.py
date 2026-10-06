@@ -19,7 +19,7 @@ from .coordinator import SmartBoilerConfigEntry, SmartBoilerCoordinator
 from .core.alarms import AlarmKind
 from .core.signal_check import OutdoorStatus, link_problems
 from .core.signals import Signal
-from .entity import ControlEntity, SmartBoilerEntity, feature_configured
+from .entity import ControlEntity, SmartBoilerEntity, coded_text, feature_configured
 
 # Early warnings are advanced: created but hidden until the user shows them.
 EARLY_WARNINGS = frozenset(
@@ -100,7 +100,12 @@ class ConnectionSensor(SmartBoilerEntity, BinarySensorEntity):
             state = self.coordinator.hass.states.get(relay)
             if state is None or state.state in ("unavailable", "unknown"):
                 problems.append("relay")
-        return {"problems": problems}
+        return {
+            "problems": problems,
+            "problems_text": coded_text(
+                self.coordinator, "binary_sensor", "connection", "problems", problems
+            ),
+        }
 
 
 class HotWaterSensor(SmartBoilerEntity, BinarySensorEntity):
@@ -237,6 +242,13 @@ class ControlAlarmSensor(ControlEntity, BinarySensorEntity):
         if self.kind is ControlAlarm.DEMAND_CRITERION_NO_DATA:
             return {
                 "criteria": list(status.criteria_without_data),
+                "criteria_text": coded_text(
+                    self.coordinator,
+                    "binary_sensor",
+                    self.key,
+                    "criteria",
+                    status.criteria_without_data,
+                ),
                 "zones": list(status.zones_without_data),  # calling, seen by none (PB-23)
             }
         return None

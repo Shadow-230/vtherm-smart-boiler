@@ -133,6 +133,24 @@ def test_integrations_it_uses_are_set_up_before_it() -> None:
     assert used <= set(MANIFEST["after_dependencies"])
 
 
+def test_gateway_integrations_stay_optional_after_dependencies() -> None:
+    """PB-61: mqtt and opentherm_gw are after-dependencies, not dependencies: they start
+    first where they are set up (the start order the write paths need), and the plugin sets up
+    without them. Home Assistant still installs an after-dependency's own requirements (its
+    ``requirements.py`` walks ``dependencies + after_dependencies``), so on an installation
+    without network a failed pip install of their client packages would block the plugin's
+    setup — accepted for the start order (a README note for non-container installs is open)."""
+    import inspect
+
+    from homeassistant import requirements
+
+    source = inspect.getsource(requirements.RequirementsManager._async_process_integration)
+    assert "integration.dependencies + integration.after_dependencies" in source
+    for domain in ("mqtt", "opentherm_gw"):
+        assert domain in MANIFEST["after_dependencies"]
+        assert domain not in MANIFEST["dependencies"]
+
+
 def _imported_modules(tree: ast.AST) -> Iterator[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -221,7 +239,7 @@ SLUG = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*")
 REFERENCE = re.compile(r"\[%key:[^%\]]+%\]")
 URL = re.compile(r"\b[a-z][a-z0-9+.-]*://|\bwww\.", re.IGNORECASE)
 
-TOP_KEYS = {"title", "config", "options", "selector", "entity", "exceptions", "issues"}
+TOP_KEYS = {"title", "config", "options", "selector", "device", "entity", "exceptions", "issues"}
 FLOW_KEYS = {"step", "error", "abort", "progress", "create_entry"}
 STEP_KEYS = {
     "title",
@@ -348,6 +366,12 @@ class _Checker:
                     for state, value in texts.get("state", {}).items():
                         self.key(f"{where}.state", state)
                         self.text(f"{where}.state.{state}", value, placeholders=False)
+        for key, device in strings.get("device", {}).items():
+            # hassfest: a device's translated name only (verified 2026-10-06, PB-83).
+            self.key("device", key)
+            device = self.keys(f"device.{key}", device, {"name"})
+            if "name" in device:
+                self.text(f"device.{key}.name", device["name"], placeholders=False)
         for key, exception in strings.get("exceptions", {}).items():
             self.key("exceptions", key, SLUG)
             exception = self.keys(f"exceptions.{key}", exception, {"message"})

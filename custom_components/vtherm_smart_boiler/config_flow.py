@@ -280,10 +280,14 @@ def zones_not_vt(hass: HomeAssistant, entities: Iterable[object]) -> bool:
 # --- schemas ----------------------------------------------------------------------------------
 
 
-def user_schema(current: dict[str, Any]) -> vol.Schema:
+DEFAULT_NAME = "Boiler"  # the English text; the form offers the translated one (PB-83)
+DEFAULT_NAME_KEY = "boiler"  # its translation key, under "device"
+
+
+def user_schema(current: dict[str, Any], name: str = DEFAULT_NAME) -> vol.Schema:
     return vol.Schema(
         {
-            vol.Required("name", default=current.get("name", "Boiler")): str,
+            vol.Required("name", default=current.get("name", name)): str,
             vol.Required(LEVEL, default=current.get(LEVEL, LEVEL_SIMPLE)): _select(
                 "level", [LEVEL_SIMPLE, LEVEL_ADVANCED]
             ),
@@ -1318,6 +1322,16 @@ def mqtt_set_up(hass: HomeAssistant) -> bool:
     )
 
 
+def targets_used_by_zone(hass: HomeAssistant, user_input: Mapping[str, Any]) -> dict[str, str]:
+    """PB-54: the entity path's write targets checked against the entities VT thermostats
+    drive, as the relay is (R2) — VT's toggles would read as another controller's."""
+    return {
+        key: "entity_used_by_zone"
+        for key in TARGET_ENTITY_FIELDS
+        if isinstance(user_input.get(key), str) and relay_used_by_zone(hass, user_input[key])
+    }
+
+
 def control_details_error(
     user_input: dict[str, Any], bounds: tuple[float | None, float | None] = (None, None)
 ) -> dict[str, str]:
@@ -1690,6 +1704,9 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
         # The ignored write's reaction is shown at both levels, and a stored one it does not
         # offer only informs (decision 7, Y1): none is hidden.
         or _differ(control.get("curve", {}), curve_defaults, ("room", "exponent", "offset"))
+        # PB-71: a fact about the boiler the user gave at the advanced level; "restore
+        # defaults" keeps it, as it keeps the other facts.
+        or HEATS_ABOVE in control
     )
 
 
@@ -1708,7 +1725,6 @@ def validate_problem(options: dict[str, Any]) -> tuple[str, str | None] | None:
 
 _PROBLEM_STEPS = {
     "missing_signal": "signals",
-    "unknown_signal": "signals",
     "no_circuit": "circuit",
     "duplicate_circuit": "circuit",
     "unknown_circuit": "circuit",
@@ -1757,7 +1773,7 @@ def _hand_back_answer(data: Mapping[str, Any], key: str) -> Any:
 
 def problem_step(code: str, subject: str | None) -> str:
     """The step where the user can fix a problem the last check found."""
-    if code in ("unknown_parameter", "implausible_parameter"):
+    if code == "implausible_parameter":
         return "boiler" if subject in BOILER_PARAMETER_KEYS else "building"
     return _PROBLEM_STEPS.get(code, "signals")
 
@@ -2029,7 +2045,7 @@ class SmartBoilerConfigFlow(_Steps, ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}
-        self._title = "Boiler"
+        self._title = DEFAULT_NAME
         self._zone_queue = []
         self._zones_done = []
         self._circuits_done = []
@@ -2052,7 +2068,11 @@ class SmartBoilerConfigFlow(_Steps, ConfigFlow, domain=DOMAIN):
             self._title = user_input["name"]
             self.options[LEVEL] = user_input[LEVEL]
             return await self.async_step_signals()
-        return self.async_show_form(step_id="user", data_schema=user_schema({}))
+        texts = await async_get_translations(
+            self.hass, self.hass.config.language, "device", [DOMAIN]
+        )
+        name = texts.get(f"component.{DOMAIN}.device.{DEFAULT_NAME_KEY}.name") or DEFAULT_NAME
+        return self.async_show_form(step_id="user", data_schema=user_schema({}, name))
 
     async def async_step_finish(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         problem = validate_problem(self.options)
@@ -2075,6 +2095,8 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         self._blocking_confirmed = False
         # Stored sections of another shape, each shown first at the save (PB-06).
         self._unreadable: list[str] = []
+        # The new relay whose separate-contact tick was asked again (PB-45).
+        self._contact_asked_for: str | None = None
 
     @property
     def options(self) -> dict[str, Any]:  # type: ignore[override]
@@ -2353,7 +2375,10 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             grid = read_grid(self.hass, user_input["setpoint_entity"])
-            if found := entity_errors(self.hass, user_input, TARGET_ENTITY_FIELDS):
+            found = entity_errors(self.hass, user_input, TARGET_ENTITY_FIELDS) or (
+                targets_used_by_zone(self.hass, user_input)  # PB-54
+            )
+            if found:
                 errors = found
             elif temperature_unit_of(self.hass, user_input["setpoint_entity"]) is False:
                 errors = {"setpoint_entity": "setpoint_unit_not_supported"}
@@ -2485,6 +2510,8 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             problem = relay_entity_error(self.hass, self.options, user_input.get(RELAY_ENTITY))
             if problem is not None:
                 errors = {RELAY_ENTITY: problem}
+            elif self._contact_to_confirm(user_input):
+                errors = {"relay_is_separate_contact": "relay_contact_confirm_again"}
             elif user_input.get("relay_off_timer") == RelayTimer.MINUTES:
                 length = user_input.get(RELAY_TIMER_MIN)
                 if length in (None, ""):
@@ -2507,6 +2534,19 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             # VT's commands name no switch or boiler thermostat pair: the user picks the relay.
             errors = {"base": "vt_commands_not_supported"}
         return self._form(step_id=step_id, data_schema=schema, errors=errors)
+
+    def _contact_to_confirm(self, user_input: Mapping[str, Any]) -> bool:
+        """PB-45: the separate-contact tick declares one entity's contact. Where the relay
+        changes from a stored one with the tick kept, the step asks once more, so a declaration
+        about the old relay does not carry over to the new one."""
+        stored = self.options.get(CONTROL, {}).get(RELAY_ENTITY)
+        relay = user_input.get(RELAY_ENTITY)
+        if not stored or relay == stored or user_input.get("relay_is_separate_contact") is not True:
+            return False
+        if self._contact_asked_for == relay:
+            return False
+        self._contact_asked_for = relay if isinstance(relay, str) else None
+        return True
 
     async def async_step_control_relay_behaviour(
         self, user_input: dict[str, Any] | None = None
@@ -2606,9 +2646,12 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 self.options.get(CONTROL, {}).get("hard_min", CONTROL_DEFAULTS["hard_min"])
             )
             off = float(user_input.get("off_setpoint", CONTROL_DEFAULTS["off_setpoint"]))
-            if _outside(user_input.get("off_setpoint"), self._setpoint_bounds()):
+            # PB-69: with a heating switch "off" is never written as a setpoint, so neither its
+            # range nor its distance to the lowest is checked (as ``off_too_close_in``).
+            as_setpoint = not heating_writes(self.options.get(CONTROL, {}))
+            if as_setpoint and _outside(user_input.get("off_setpoint"), self._setpoint_bounds()):
                 errors["off_setpoint"] = "off_setpoint_outside_entity_range"
-            elif off_too_close_to_lowest(off, hard_min):
+            elif as_setpoint and off_too_close_to_lowest(off, hard_min):
                 errors["off_setpoint"] = "off_setpoint_not_below_hard_min"  # 1 K below (P-43)
             elif self._off_near_hand_back_value(user_input):
                 errors["off_setpoint"] = "off_setpoint_near_hand_back_value"

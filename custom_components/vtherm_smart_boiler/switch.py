@@ -8,7 +8,7 @@ from typing import Any
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import STATE_ON
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
@@ -166,5 +166,9 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        await self.control.async_set_enabled(False)
+        handed_back = await self.control.async_set_enabled(False)
         self.async_write_ha_state()
+        if not handed_back:
+            # PB-39: control is off, but the boiler did not take the hand-back — the user must
+            # not read success; it is retried every minute.
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="hand_back_failed")

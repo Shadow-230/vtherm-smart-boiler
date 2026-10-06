@@ -130,8 +130,6 @@ def test_every_config_error_code_can_be_shown() -> None:
 
     codes = {
         "missing_signal",
-        "unknown_signal",
-        "unknown_parameter",
         "implausible_parameter",
         "zone_without_circuit",
         "reference_zone_unknown",
@@ -557,7 +555,13 @@ def test_y3_texts_are_translated() -> None:
     verdict = SOURCE["entity"]["sensor"]["verdict"]["state_attributes"]
     not_changed = verdict["changed_by_control"]["state"]["false"]
     assert not_changed.startswith("Not changed yet")
-    assert "anti-cycling is planned for 0.3, still to be decided" in not_changed
+    assert "anti-cycling is planned" in not_changed
+    # PB-75: no version or file the user does not have, no nested parentheses (the text is
+    # shown inside parentheses after the reason).
+    for language in ALL_LANGUAGES:
+        texts = _texts(language)["entity"]["sensor"]["verdict"]["state_attributes"]
+        for text in texts["changed_by_control"]["state"].values():
+            assert not re.search(r"\d+\.\d+|PLAN|\(|\)", text), (language, text)
     buttons = SOURCE["entity"]["button"]
     assert buttons["reset_heating_threshold"]["name"] == "Reset measured heating threshold"
     assert buttons["reset_loss_coefficient"]["name"] == "Reset measured heat loss"
@@ -742,7 +746,7 @@ def _unused_keys(texts: dict) -> list[str]:
             ]
             if not all(_mentioned(code, literals, patterns) for code in codes):
                 unused.append(key)
-        elif section in ("exceptions", "issues"):
+        elif section in ("exceptions", "issues", "device"):
             if not _mentioned(parts[1], literals, patterns):
                 unused.append(key)
         else:
@@ -1150,3 +1154,66 @@ def test_the_unreadable_notice_does_not_claim_the_hand_back() -> None:
     text = SOURCE["issues"]["control_state_unreadable"]["description"]
     assert "handed it back" not in text
     assert "goes once the boiler shows that hand-back" in text
+
+
+def test_the_auto_tpi_advice_names_what_clearing_the_flag_costs() -> None:
+    """PB-74: clearing VT's "used by the central boiler" also removes VT's own guard — Auto-TPI
+    then learns while zones call and the boiler does not heat; the issue says so."""
+    text = SOURCE["issues"]["auto_tpi_blocked"]["description"]
+    assert "the boiler does not heat" in text
+    assert "activation delay" in text
+    assert "monitoring period" in text
+
+
+# PB-82: attributes the plugin keeps in °C whatever unit Home Assistant shows (its states are
+# converted, its attributes are not) — each names the unit.
+CELSIUS_ATTRIBUTES = (
+    ("sensor", "control_setpoint", "requested"),
+    ("sensor", "control_setpoint", "read_back"),
+    ("sensor", "control_state", "target"),
+    ("sensor", "reference_room", "temperature"),
+    ("sensor", "reference_room", "setpoint"),
+    ("sensor", "lowest_water_suggestion", "reference"),
+    ("sensor", "lowest_water_suggestion", "estimate_from_power"),
+    ("binary_sensor", "alarm_flue_gas_high", "limit"),
+    ("binary_sensor", "alarm_circuit_too_hot", "limit"),
+    ("switch", "control", "wall_thermostat_setpoint"),
+)
+
+
+@pytest.mark.parametrize("language", ALL_LANGUAGES)
+def test_temperature_attributes_name_their_unit(language: str) -> None:
+    entities = _texts(language)["entity"]
+    for platform, key, attribute in CELSIUS_ATTRIBUTES:
+        name = entities[platform][key]["state_attributes"][attribute]["name"]
+        assert "°C" in name, (language, key, attribute)
+
+
+# PB-78: the coded lists joined with ", " into one text (``coded_text``, the verdict's reasons
+# with their details): a text with a comma of its own would read as two items.
+JOINED_LISTS = (
+    ("sensor", "features", "missing"),
+    ("sensor", "control_state", "reasons"),
+    ("sensor", "control_state", "blockers"),
+    ("sensor", "control_state", "latched_by"),
+    ("sensor", "verdict", "reasons"),
+    ("sensor", "verdict", "detail"),
+    ("sensor", "verdict", "changed_by_control"),
+    ("sensor", "lowest_water_suggestion", "missing"),
+    ("switch", "control", "blockers"),
+    ("switch", "control", "blocked_by"),
+    ("binary_sensor", "connection", "problems"),
+    ("binary_sensor", "alarm_demand_criterion_no_data", "criteria"),
+)
+
+
+@pytest.mark.parametrize("language", ALL_LANGUAGES)
+def test_joined_list_texts_have_no_comma(language: str) -> None:
+    entities = _texts(language)["entity"]
+    found = [
+        (key, attribute, code)
+        for platform, key, attribute in JOINED_LISTS
+        for code, text in entities[platform][key]["state_attributes"][attribute]["state"].items()
+        if "," in text
+    ]
+    assert found == [], language

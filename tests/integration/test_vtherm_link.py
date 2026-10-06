@@ -1007,3 +1007,34 @@ async def test_a_running_vt_central_entry_is_preferred_to_a_stale_one(hass: Home
     assert vt_central_entry(hass) is failed
     central(300, ConfigEntryState.LOADED)
     assert VThermLink(hass, []).vt_central_activation_delay() == 300.0
+
+
+async def test_a_zone_without_a_state_is_named_from_its_registry_entry(hass: HomeAssistant) -> None:
+    """PB-80: a zone whose climate has no state yet at setup is named from its registry entry —
+    the user's name, its own name, then its device's — before its entity ID, so its entities
+    are not named "Boiler climate.x ..." until a reload. Negative: outside the registry, the
+    entity ID; with a state, the state's name."""
+    from homeassistant.helpers import device_registry as dr
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import zone_name
+
+    registry = er.async_get(hass)
+    named = registry.async_get_or_create("climate", VT_PLATFORM, "a", original_name="Living")
+    assert zone_name(hass, named.entity_id) == "Living"
+    registry.async_update_entity(named.entity_id, name="Salon")
+    assert zone_name(hass, named.entity_id) == "Salon"
+    source = MockConfigEntry(domain=VT_PLATFORM)
+    source.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=source.entry_id, identifiers={(VT_PLATFORM, "b")}, name="Bedroom"
+    )
+    by_device = registry.async_get_or_create(
+        "climate", VT_PLATFORM, "b", device_id=device.id, has_entity_name=True
+    )
+    assert zone_name(hass, by_device.entity_id) == "Bedroom"
+    assert zone_name(hass, "climate.not_registered") == "climate.not_registered"
+    bare = registry.async_get_or_create("climate", VT_PLATFORM, "c")
+    assert zone_name(hass, bare.entity_id) == bare.entity_id  # nothing to name it by
+    hass.states.async_set(named.entity_id, "heat", {"friendly_name": "Living room"})
+    assert zone_name(hass, named.entity_id) == "Living room"

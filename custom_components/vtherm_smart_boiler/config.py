@@ -14,6 +14,7 @@ gets a blocker without them.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -73,6 +74,14 @@ from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
 from .core.reference_room import DEFAULT_SWITCH_MARGIN_K, Strategy
 from .core.signals import SIGNAL_PRECEDENCE, Signal
 from .core.verdict import VerdictOptions
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _ignore_unknown(section: str, key: str) -> None:
+    """PB-68: a key this version does not know — saved by a later version, then a downgrade —
+    is left out rather than stopping the entry; the user sees it in the log."""
+    _LOGGER.warning("Ignoring the unknown %s key %r in the options", section, key)
 
 
 class ConfigError(ValueError):
@@ -409,8 +418,9 @@ def _signals(data: Mapping[str, Any]) -> tuple[dict[Signal, str], dict[Signal, S
             continue
         try:
             signal = Signal(key)
-        except ValueError as err:
-            raise ConfigError("unknown_signal", key) from err
+        except ValueError:
+            _ignore_unknown("signals", key)
+            continue
         given[signal] = str(entity)
     signals: dict[Signal, str] = {}
     shared: dict[Signal, Signal] = {}
@@ -568,8 +578,9 @@ def _parameters(data: Mapping[str, Any], building: Mapping[str, Any]) -> Paramet
             continue
         try:
             parameter = ParameterKey(key)
-        except ValueError as err:
-            raise ConfigError("unknown_parameter", key) from err
+        except ValueError:
+            _ignore_unknown("parameters", key)
+            continue
         try:
             parameters = parameters.with_estimate(parameter, Estimate(float(value), Source.ENTERED))
         except ValueError as err:
@@ -785,8 +796,9 @@ def _freshness(data: Mapping[str, Any]) -> tuple[dict[Signal, float | None], flo
             continue
         try:
             signal = Signal(key)
-        except ValueError as err:
-            raise ConfigError("unknown_signal", key) from err
+        except ValueError:
+            _ignore_unknown("freshness", key)
+            continue
         result[signal] = limit(key, value)
     return result, limit(WEATHER, data.get(WEATHER))
 

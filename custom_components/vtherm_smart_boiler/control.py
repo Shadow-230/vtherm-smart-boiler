@@ -324,6 +324,7 @@ TAKEN_ISSUE = "hand_back_taken_by_other"  # after the hand-back another controll
 # controller (naming the target and the value seen), an ignored write set to hand back, heating
 # off ignored from the start — its text naming the cause.
 LATCHED_ISSUE = "control_latched"
+_SWITCHED = "switched"  # the step aside was seen on a switch whose state is not known (PB-76)
 # Decision 7 (Y1): a hand-back an allowed alarm causes without a latch raises its own issue — the
 # lost boiler link, an internal error — deleted when control resumes or the user switches control
 # off; the monitor failing has V6's issue alone. Error where the hand-back stops heating, else a
@@ -472,6 +473,9 @@ RUNTIME_BLOCKERS = (
     "relay_used_by_zone",
     "relay_of_boiler_interface",
     "relay_climate_modes",
+    # PB-54: on the entity path, a write target a VT zone drives — VT's toggles would read as
+    # another controller's.
+    "entity_used_by_zone",
 )
 CONFIRMED_BY_GATEWAY = "confirmed_by_gateway"
 _SHOWN_CONFIRMED = frozenset({Confirmation.CONFIRMED.value, CONFIRMED_BY_GATEWAY})
@@ -867,6 +871,9 @@ class ControlUnit:
         # A hand-back is owed: it failed, or it has not been confirmed yet. Retried until it is.
         self._hand_back_pending = False
         self._hand_back_failed = False  # shown as an alarm: an attempt failed or went unconfirmed
+        # Hand-back attempts that did not get through, counted so the switch can tell the user
+        # when switching off could not hand back (PB-39).
+        self._attempts_failed = 0
         # The targets of the owed hand-back, each with what its read-back has shown (V5).
         self._targets: dict[str, _Target] = {}
         # What a release is judged against, kept and stored while its hand-back is owed — the
@@ -1609,6 +1616,8 @@ class ControlUnit:
         if (missing := self._integration_missing()) is not None:
             found.append(missing)
         found += self._relay_blockers()
+        if self._targets_used_by_zone():
+            found.append("entity_used_by_zone")
         found += self._vt_blockers(now)
         found += self._setpoint_entity_blockers()
         found += self._run_blockers(now)
@@ -1677,6 +1686,17 @@ class ControlUnit:
                 # fixing it (X5.21).
                 found.append(cause)
         return found
+
+    def _targets_used_by_zone(self) -> bool:
+        """PB-54: on the entity path, a setpoint entity, heating switch or external-control
+        switch that a VT thermostat drives for a room (read at every step, as VT can be
+        reconfigured without the options changing)."""
+        options = self.options
+        if options.write_path is not WritePath.ENTITY:
+            return False
+        targets = (options.setpoint_entity, options.ch_entity, options.hand_back_entity)
+        link = self._coordinator.link
+        return any(target and link.relay_used_by_zone(target) for target in targets)
 
     def _relay_blockers(self) -> list[str]:
         """R2 at run time: a relay a VT zone drives (VT can be reconfigured without the options
@@ -1823,12 +1843,15 @@ class ControlUnit:
             grid.put(value, below, above) is None for value, below, above in values
         )
 
-    async def async_set_enabled(self, enabled: bool, now: float | None = None) -> None:
-        """Switch control on or off; switching off hands back at once."""
+    async def async_set_enabled(self, enabled: bool, now: float | None = None) -> bool:
+        """Switch control on or off; switching off hands back at once. ``False`` where switching
+        off made a hand-back attempt that did not get through (PB-39): it stays owed and is
+        retried every minute; ``True`` otherwise."""
+        failed_before = self._attempts_failed
         async with self._lock:
             self._restored = True
             if self._stopped or self._stopping or enabled == self.enabled:
-                return
+                return True
             now = dt_util.utcnow().timestamp() if now is None else now
             self.enabled = enabled
             # Any change of the switch by the user clears an internal error (a latch needs off,
@@ -1853,6 +1876,7 @@ class ControlUnit:
                 self._delete_monitor_issue()
         await self._async_learning_calls()
         self._notify()
+        return enabled or self._attempts_failed == failed_before or not self._hand_back_pending
 
     def _end_session(self) -> None:
         """A new session starts fresh; only the learning pauses carry on (a pending hand-back and
@@ -2898,7 +2922,7 @@ class ControlUnit:
         elif after.switch.blocked is not None and before.switch.blocked is None:
             entity = self.options.ch_confirmed_entity
             heating = self._confirmed_heating()
-            value = "-" if heating is None else ("on" if heating else "off")
+            value = _SWITCHED if heating is None else ("on" if heating else "off")
         elif self._relay_path:
             entity = self.options.relay.entity
             state = self._hass.states.get(entity) if entity else None
@@ -2959,6 +2983,10 @@ class ControlUnit:
             key = LATCHED_ISSUE
             seen = self._step_aside_seen or {}
             placeholders = {"target": seen.get("target", "-"), "value": seen.get("value", "-")}
+            if placeholders["value"] in (_SWITCHED, "on", "off"):
+                # PB-76: a switch has its own text; only a temperature fills ``{value}``.
+                key = f"{LATCHED_ISSUE}_switch"
+                placeholders = {"target": placeholders["target"]}
         elif cause == _OTHER_LATCH:
             latched_by = self._session.loop.control.latched_by
             placeholders = {"alarm": ", ".join(latched_by) or "-"}
@@ -3493,6 +3521,7 @@ class ControlUnit:
         Within the start grace a target not back yet (``expected``: a failed write) is only sent
         again at the next step, logged at DEBUG (P-50); anything else — a bug — shows at once."""
         self._hand_back_pending = True
+        self._attempts_failed += 1
         if expected and self._in_start_grace(now):
             _LOGGER.debug("The hand-back the last run left owed did not get through yet: %s", err)
             self._hand_back_retry_at = now

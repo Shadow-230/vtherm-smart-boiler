@@ -152,9 +152,7 @@ def test_coarse_building_answers_give_a_default_loss() -> None:
 @pytest.mark.parametrize(
     ("options", "code"),
     [
-        (MINIMAL | {"signals": MINIMAL["signals"] | {"bogus": "a.b"}}, "unknown_signal"),
         (MINIMAL | {"parameters": {"boiler_min_power": 0.0}}, "implausible_parameter"),
-        (MINIMAL | {"parameters": {"nope": 1}}, "unknown_parameter"),
         (MINIMAL | {"zones": [{"entity_id": "climate.a", "circuit": "ghost"}]}, "unknown_circuit"),
         (
             MINIMAL
@@ -180,6 +178,27 @@ def test_unusable_options(options: dict, code: str) -> None:
     with pytest.raises(ConfigError) as err:
         EntryConfig.from_options(options)
     assert err.value.code == code
+
+
+def test_unknown_keys_from_a_later_version_are_ignored_and_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """PB-68: a signal, parameter or freshness key this version does not know (an entry saved
+    by a later version, then a downgrade) is left out and logged, rather than stopping the
+    entry; what is known is still read. Negative: an empty unknown key logs nothing."""
+    options = MINIMAL | {
+        "signals": MINIMAL["signals"] | {"bogus": "a.b", "empty": ""},
+        "parameters": {"nope": 1, "boiler_max_power": 24},
+        "freshness": {"flow": 600, "later": 300},
+    }
+    config = EntryConfig.from_options(options)
+    assert config.signals == {Signal.FLAME: "binary_sensor.flame", Signal.FLOW: "sensor.flow"}
+    assert config.freshness == {Signal.FLOW: 600.0}
+    assert config.parameters.value(ParameterKey.BOILER_MAX_POWER) == 24.0
+    logged = caplog.text
+    for key in ("bogus", "nope", "later"):
+        assert key in logged
+    assert "empty" not in logged
 
 
 def test_alarm_thresholds_default_and_options() -> None:
