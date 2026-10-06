@@ -123,7 +123,7 @@ and VT's not-started zones read as the user's "off".
 | 2.3 ✅ | Setup and stored options safe, and K4 given the full list (decision 9): PB-06, PB-07, PB-08, PB-24, SB-09, TB-03, TB-08, TB-25. Wrong shapes and non-finite or out-of-range numbers refused with a reason and an owed hand-back reported; platforms unloaded after a late setup failure without wiping the registry; the restart latch's untick gap; SB-09's additions to "Open after 0.2.2" committed at once, and K4's rows pointing to every item marked K4. |
 | 2.4 ✅ | The comfort correction meets principle 13's rules 3 and 5 (decision 11): SB-11. Rule 3: it moves only while the starts per hour do not rise against the same hours before it began, and steps back when they do; rule 5: it freezes in extreme weather — an outdoor temperature beyond the design outdoor temperature, or a change faster than a set rate per hour (provisional, K4) — with its tests and the simulator's starts measured with it on. |
 | 2.5 ✅ | The smaller answers: learning pauses (decision 14: SB-29); no default for the high-pressure alarm and the monitor's thresholds listed (decision 13: SB-18); the count pre-filled 0 from VT (decision 7: SB-07); the return by itself after the external-control switch as a separate opt-in (decision 10: SB-36); J4's starts criterion with its conditions and a test carrying the daily swing (decision 8: SB-08). |
-| 2.6 | The check of part 2. |
+| 2.6 ✅ | The check of part 2. |
 | 2.7 🔒 | Stop: the report to the user, with the tokens part 2 used; the user decides whether part 3 starts. |
 
 ## Part 3 — the remaining problems in the specification, the code and the tests
@@ -266,6 +266,20 @@ Left on purpose for a later release; what a step leaves open is added here by na
 46. Step 2.5 (decision 10): entries that used the external-control switch's return by itself lose
     it until the user ticks the new option, with no notice; the second confirmation's text names
     only the general return — K4.
+47. Step 2.6 (changes item 42): rule 5 now stops only the comfort correction's rise — every fall
+    passes, through an outage of the outdoor sensor too — while hot water and foreign heat still
+    stop it both ways; confirm both — K4.
+48. Step 2.6: rule 3 can step the correction back minutes after its first rise (one start after it
+    against none before), and the starts kept from before it began are compared across a new
+    session with starts days later — K4.
+49. Step 2.6: an entry whose `monitor` section is stored in another shape skips the migration of
+    decision 13 and loses its high-pressure limits — K4.
+50. Step 2.6: the restart latch also holds for any other change to VT's central entry in this run
+    (a migration, another setting), and a reset of the recorder moves the run's start — K4.
+51. Step 2.6: with the thermostat's request not mapped, an OTGW hand-back over MQTT with an
+    OpenTherm thermostat stays owed with its alarm (see item 31); with a device timeout up to
+    60 min, a restart before the release writes the lowest again, so the device may hold it about
+    2 h; a stored timeout out of range falls back to 1 min rather than being refused — K4.
 
 ## After 0.2.3
 
