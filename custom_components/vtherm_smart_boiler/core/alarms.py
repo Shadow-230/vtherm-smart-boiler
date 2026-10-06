@@ -227,9 +227,10 @@ def _count_alarm(
     now: float,
 ) -> Alarm:
     """A count above ``limit`` raises it; once raised, it clears only at ``limit`` minus
-    ``COUNT_CLEAR_MARGIN`` (P-82)."""
+    ``COUNT_CLEAR_MARGIN`` (P-82), and never lower than 0: at the smallest limits it clears at 0
+    rather than never (PB-63)."""
     was = previous is not None and previous.active is True
-    active = count > limit or (was and count > limit - COUNT_CLEAR_MARGIN)
+    active = count > limit or (was and count > max(0, limit - COUNT_CLEAR_MARGIN))
     alarm = Alarm(kind, active, Level.WARNING if active else None, float(count), float(limit))
     return settle(alarm, previous, now)
 
@@ -475,8 +476,8 @@ def hysteresis_samples(
     Only pauses between two heating burns with both edges seen count, during which the zones'
     demand (``History.zone_calling``) was known "asking" throughout — a pause without demand
     comes from the zones, not the burner's hysteresis (P-29); without zone data, none — and,
-    when the setpoint is known, only those during which it moved less than
-    ``max_setpoint_change``.
+    when the setpoint is mapped, only those during which it was known throughout and its range
+    stayed within ``max_setpoint_change`` (PB-67).
     """
     samples: list[float] = []
     if demand is None:
@@ -493,12 +494,19 @@ def hysteresis_samples(
         off_flow, on_flow = flow.value_at(stop), flow.value_at(restart)
         if off_flow is None or on_flow is None:
             continue
-        if setpoint is not None:
-            a, b = setpoint.value_at(stop), setpoint.value_at(restart)
-            if a is None or b is None or abs(a - b) > max_setpoint_change:
-                continue
+        if setpoint is not None and not _steady(setpoint, stop, restart, max_setpoint_change):
+            continue
         samples.append(off_flow - on_flow)
     return samples
+
+
+def _steady(series: Series[float], start: float, end: float, max_range: float) -> bool:
+    """Known throughout ``[start, end]`` and its range within ``max_range`` — a value that
+    moves and comes back inside counts as moved (PB-67)."""
+    values = [segment.value for segment in series.segments(start, end)]
+    values.append(series.value_at(end))
+    known = [value for value in values if value is not None]
+    return len(known) == len(values) and max(known) - min(known) <= max_range
 
 
 # A pump runs on after the burner, and rooms close their valves as they warm: only a closed
@@ -525,7 +533,8 @@ def low_flow(
     it), nor on a boiler with hot water (``has_dhw``) whose hot water is unknown (P-27: storage
     charging with the valves closed); off with a bypass or a low-loss header (the water always
     has a path). ``reason`` says why it cannot be judged or does not apply; what cannot be
-    judged is held, then unknown (``settle``), and the wait starts again after it.
+    judged is held, then unknown (``settle``), and the wait starts again after it; an active
+    warning is held with its first ``since``, so it stays on once judged again (PB-64).
     """
     kind = AlarmKind.LOW_FLOW
     if bypass:
@@ -543,7 +552,10 @@ def low_flow(
     elif any(z.valve_open is None for z in fresh):
         reason = "zone_without_valve"
     if reason is not None:
-        return settle(Alarm(kind, None, reason=reason), previous, now)
+        held = settle(Alarm(kind, None, reason=reason), previous, now)
+        if held.reason == HELD and held.active is True and previous is not None:
+            held = replace(held, since=previous.since)
+        return held
     widest = max(z.valve_open for z in fresh if z.valve_open is not None)
     if not (pump_running and widest <= ZONE_OPEN):
         return Alarm(kind, False, None, widest, ZONE_OPEN, known_at=now)

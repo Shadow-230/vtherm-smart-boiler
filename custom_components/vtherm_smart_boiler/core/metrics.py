@@ -172,17 +172,20 @@ class Consumption:
     complete: bool
 
 
-# A meter restarted from zero reads far below its last value; a small step back is a correction.
-METER_RESET_FRACTION = 0.1
+# A reading below 90 % of the mark is a meter restarted from zero, as Home Assistant takes a
+# total_increasing sensor (PB-19): a daily meter or a "today" sensor read hourly, or a reset
+# first seen hours later, reads well above a tenth of the old value. A smaller step back is a
+# correction.
+METER_RESET_FRACTION = 0.9
 
 
 def meter_rise(high: float | None, value: float) -> tuple[float, float]:
     """What a new reading of a cumulative meter adds, and the highest reading since (P-97): one
     rule for the consumption and its split alike. Above the highest reading so far (``high``;
     ``None`` before the first), the difference counts; a small step back — rounding, a
-    correction — counts nothing, and neither does the way back up to the mark (it was counted
-    once already); a reading below a tenth of the mark is a meter restarted from zero, counted
-    from zero."""
+    correction under a tenth — counts nothing, and neither does the way back up to the mark (it
+    was counted once already); a reading below 90 % of the mark is a meter restarted from zero,
+    counted from zero (PB-19)."""
     if high is None:
         return 0.0, value
     if high > 0 and value < METER_RESET_FRACTION * high:
@@ -194,8 +197,8 @@ def meter_rise(high: float | None, value: float) -> tuple[float, float]:
 
 def meter_consumption(meter: Series[float], start: float, end: float) -> Consumption | None:
     """Consumption from a cumulative meter in ``[start, end)``, reading by reading
-    (``meter_rise``: only a rise above the highest reading counts; a drop to under a tenth of
-    it is a reset to zero — adding a whole reading would count years of gas at once).
+    (``meter_rise``: only a rise above the highest reading counts; a drop to under 90 % of it
+    is a reset to zero — adding a whole reading would count years of gas at once).
 
     The meter keeps counting through a gap in the data, so known values on both sides of a gap
     still give the consumption in between. Complete when the meter is known at both ends of the

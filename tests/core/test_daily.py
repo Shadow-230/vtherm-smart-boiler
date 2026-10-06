@@ -438,3 +438,48 @@ def test_the_analysis_gives_no_verdict_without_a_flame_signal() -> None:
     assert result.verdict.reasons == (Reason(ReasonCode.NO_BURNER_SIGNAL, ReasonKind.DATA),)
     mapped = analyse(cycling(8), PARAMETERS, MonitorOptions(), 8 * DAY, days)
     assert ReasonCode.NO_BURNER_SIGNAL not in {r.code for r in mapped.verdict.reasons}
+
+
+def test_a_stuck_outdoor_sensor_is_left_out_of_the_whole_analysis() -> None:
+    """PB-20: the outdoor check finds the sensor stuck at 12 °C while the weather swings
+    between 0 and 6 °C; the analysis' degree-days, gas per degree-day, bins and change report
+    use the weather, not only its day summaries. Negative: without the weather the sensor
+    cannot be judged and is used as it is."""
+    from custom_components.vtherm_smart_boiler.core.analysis import analyse
+    from custom_components.vtherm_smart_boiler.core.monitor import MonitorOptions
+    from custom_components.vtherm_smart_boiler.core.signal_check import OutdoorStatus
+
+    history = cycling(3)
+    history.signals[Signal.OUTDOOR] = Series([(0, 12.0)])
+    history.weather = Series([(k * HOUR, 6.0 * (k % 2)) for k in range(3 * 24)])  # mean 3 °C
+    days = [(0, DAY), (DAY, 2 * DAY)]
+    result = analyse(history, PARAMETERS, MonitorOptions(), 3 * DAY, days)
+    assert result.outdoor is not None
+    assert result.outdoor.status is OutdoorStatus.STUCK
+    for summary in (result.day, result.week):
+        assert summary.degree_days is not None
+        per_day = summary.degree_days.value * DAY / summary.degree_days.known_s
+        assert per_day == pytest.approx(12.0, rel=0.05)  # 15 − 3 °C, not 15 − 12 °C
+        assert summary.gas_per_degree_day is None  # no gas meter here
+        assert set(summary.by_outdoor) <= {0.0, 5.0}  # the weather's bins, not 12 °C's
+    history.weather = Series()
+    alone = analyse(history, PARAMETERS, MonitorOptions(), 3 * DAY, days)
+    assert alone.day.degree_days is not None
+    assert alone.day.degree_days.estimated_total() == pytest.approx(3.0)
+
+
+def test_the_change_report_counts_unknown_burns_in_burner_hours_too() -> None:
+    """PB-66: the kWh mode counts burns of unknown kind as heating; the burner-hours mode
+    (no modulation here) counts the same burns — 8 h a day whether the hot water is known
+    (heating) or not mapped (unknown kind)."""
+    from custom_components.vtherm_smart_boiler.core.analysis import ReportUnit, analyse
+    from custom_components.vtherm_smart_boiler.core.monitor import MonitorOptions
+
+    for known in (True, False):
+        history = cycling(2)
+        if not known:
+            del history.signals[Signal.DHW_ACTIVE]
+        result = analyse(history, PARAMETERS, MonitorOptions(), 2 * DAY, [(0, DAY)])
+        assert result.report_unit is ReportUnit.BURNER_HOURS
+        assert result.report is not None
+        assert result.report.current_total == pytest.approx(8.0)

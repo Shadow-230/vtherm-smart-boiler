@@ -1800,11 +1800,29 @@ async def test_home_assistants_downtime_is_unknown_after_a_restart(
     assert series.value_at(now) is True  # known again from the start
     freezer.tick(60)
     assert await hass.config_entries.async_unload(entry.entry_id)
+    from custom_components.vtherm_smart_boiler.coordinator import RUN_KEY
+
     record = hass_storage[_alive_key(entry)]["data"]
-    assert record == {"alive_at": pytest.approx(now + 60), "down": [[STOPPED, now]]}
+    run = hass.data[RUN_KEY]
+    assert record == {"alive_at": pytest.approx(now + 60), "down": [[STOPPED, now]], "run": run}
     main = hass_storage[f"{DOMAIN}.{entry.entry_id}"]["data"]
     assert "alive_at" not in main
     assert main["down"] == [[STOPPED, now]]
+    # PB-65: set up again in the same Home Assistant run (a reload, the entry enabled again):
+    # the recorder ran through it — no downtime, the steady flow known throughout.
+    freezer.tick(60)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert entry.runtime_data.down == [(STOPPED, now)]
+    assert entry.runtime_data.history.signals[Signal.FLOW].value_at(now + 90) == 40.0
+    # Negative: a record from another run (Home Assistant restarted) is a downtime.
+    freezer.tick(60)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    hass.data[RUN_KEY] = "another run"
+    freezer.tick(60)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert entry.runtime_data.down == [(STOPPED, now), (now + 180, now + 240)]
 
 
 async def test_home_assistants_stop_writes_the_last_run_record(

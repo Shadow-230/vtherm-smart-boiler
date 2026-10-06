@@ -70,7 +70,9 @@ class MonitorSummary:
     gas: Consumption | None
     gas_source: GasSource | None
     gas_per_degree_day: float | None
-    heat_output_kwh: Consumption | None  # heating only, estimated from modulation
+    # Burns not known to be hot water — heating and unknown-kind burns (PB-66) — estimated
+    # from modulation.
+    heat_output_kwh: Consumption | None
     dhw_output_kwh: Consumption | None  # DHW only, estimated from modulation
     by_outdoor: dict[float, CycleStats]
     load_below_min: Share | None

@@ -174,36 +174,50 @@ def with_downtime[X](
     """One entity's recorded rows, in time order, with its downtime unknown (P-95, A11).
 
     ``down`` holds the ``[from, to)`` intervals the plugin was not running — Home Assistant
-    stopped, crashed or reloading the entry. Over each one that overlaps ``[start, end)``, the
-    value is unknown from ``from`` on: a ``None`` row there, and the rows inside dropped — one
-    may be from before a crash the last sign of life (``from``) came minutes earlier than, and
-    none says how long its value held. The first row from ``to`` on makes it known again. An
-    interval that began before ``start`` makes ``start`` itself unknown, as the recorder's
-    state for it is the one from before."""
-    marks: list[tuple[float, float]] = []
-    for low, high in sorted((max(a, start), b) for a, b in down if a < b and b > start and a < end):
+    stopped or crashed (PB-65: a reload is not recorded, the recorder ran through it). Over each
+    one that overlaps ``[start, end)``, the value is unknown from ``from`` on: a ``None`` row
+    there, and the rows inside dropped — one may be from before a crash the last sign of life
+    (``from``) came minutes earlier than, and none says how long its value held. At ``to`` — the
+    plugin's setup — the latest row inside is the entity's state then (Home Assistant writes
+    every state at its start, before the plugin's setup): known again from ``to`` (PB-65);
+    without a row inside, from the first row after ``to``. An interval that began before
+    ``start`` makes ``start`` itself unknown, as the recorder's state for it is the one from
+    before — that row is not the state at ``to`` either."""
+    marks: list[tuple[float, float, bool]] = []  # from, to, began before ``start``
+    for a, b in sorted((a, b) for a, b in down if a < b and b > start and a < end):
+        low = max(a, start)
         if marks and low <= marks[-1][1]:
-            marks[-1] = (marks[-1][0], max(marks[-1][1], high))  # overlapping: one downtime
+            marks[-1] = (marks[-1][0], max(marks[-1][1], b), marks[-1][2])  # one downtime
         else:
-            marks.append((low, high))
+            marks.append((low, b, a < start))
     index = 0
     marked = False  # the current interval's ``None`` is out
+    last: list[X] = []  # the latest row inside the current interval: its state at ``to``
     for t, value in rows:
         while index < len(marks) and marks[index][1] <= t:
+            low, high, _before = marks[index]
             if not marked:
-                yield marks[index][0], None
+                yield low, None
+            if last and high < t:
+                yield high, last[0]
             index += 1
             marked = False
+            last = []
         if index < len(marks) and marks[index][0] <= t:
             if not marked:
                 yield marks[index][0], None
                 marked = True
-            continue  # inside the downtime: its value is not known to hold
+            if t > start or not marks[index][2]:
+                last = [value]
+            continue  # inside the downtime: its value is not known to hold before ``to``
         yield t, value
-    for low, _high in marks[index:]:
+    for low, high, _before in marks[index:]:
         if not marked:
             yield low, None
+        if last and high < end:
+            yield high, last[0]
         marked = False
+        last = []
 
 
 def _zone_wants_heat(values: Sequence[object]) -> bool | None:

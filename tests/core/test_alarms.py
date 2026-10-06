@@ -234,6 +234,19 @@ def test_unstable_ignition_clears_two_below_its_limit() -> None:
     assert unstable_ignition(short_burns(10), DAY, limit=10).active is False
 
 
+def test_a_count_alarm_clears_at_zero_at_the_smallest_limits() -> None:
+    """PB-63: at limit 1 the alarm cleared never (its clear level −1), at limit 2 only at 0;
+    the clear level is never below 0 — limit 1 and 2: on, on at 1, off at 0."""
+    for limit in (1, 2):
+        alarm: Alarm | None = None
+        shown = []
+        for count in (3, 1, 0):
+            alarm = unstable_ignition(short_burns(count), DAY, limit=limit, previous=alarm)
+            shown.append(alarm.active)
+        assert shown == [True, True, False]
+    assert frequent_starts(starts(0), HOUR, 1, None).active is False
+
+
 def test_a_short_burn_ending_at_its_setpoint_is_not_unstable() -> None:
     """P-81: a 40 s burn that ends with the flow within 2 K of the CH setpoint then in force
     ended on the boiler's own hysteresis — not counted; one ending 10 K below lost its flame.
@@ -428,6 +441,21 @@ def test_hysteresis_samples() -> None:
     assert hysteresis_samples(flow, burns, moving, demand=asking) == []
 
 
+def test_hysteresis_samples_judge_the_setpoint_over_the_whole_pause() -> None:
+    """PB-67: a setpoint that moves 10 K and comes back inside the pause (10 to 25 min) reads
+    the same at both ends, yet the pause is no plain hysteresis — no sample; one unknown for a
+    moment inside the pause, none either. A steady setpoint gives the sample."""
+    flow = Series([(0, 40.0), (10 * MIN, 55.0), (25 * MIN, 45.0), (35 * MIN, 56.0)])
+    burns = [burn(0, 10), burn(25, 10)]
+    asking = Series([(0.0, True)])
+    steady = Series([(0, 50.0), (15 * MIN, 50.5)])
+    assert hysteresis_samples(flow, burns, steady, demand=asking) == [10.0]
+    back = Series([(0, 50.0), (15 * MIN, 60.0), (20 * MIN, 50.0)])
+    assert hysteresis_samples(flow, burns, back, demand=asking) == []
+    gap = Series([(0, 50.0), (15 * MIN, None), (20 * MIN, 50.0)])
+    assert hysteresis_samples(flow, burns, gap, demand=asking) == []
+
+
 def test_hysteresis_samples_only_from_pauses_with_demand_throughout() -> None:
     """P-29: a pause during which the zones' demand turned off comes from no demand, not the
     burner's hysteresis — no sample. Negative: demand unknown during the pause, or no zone data
@@ -512,6 +540,29 @@ def test_the_low_flow_wait_starts_again_after_a_gap() -> None:
     )
     due = 660.0 + LOW_FLOW_HOLD_S
     assert low_flow(closed(due), True, due, None, alarm, dhw=False).active
+
+
+def test_an_active_low_flow_warning_stays_on_through_a_held_refresh() -> None:
+    """PB-64: an active warning, then one refresh it cannot judge (a draw, then hot water
+    unknown), then the same closed circuit again: still on, with its first "since" — no new
+    fifteen minutes' wait. Negative: a warning not active yet still starts its wait again."""
+    from custom_components.vtherm_smart_boiler.core.alarms import LOW_FLOW_HOLD_S, low_flow
+    from custom_components.vtherm_smart_boiler.core.readings import ZoneState
+
+    def closed(t: float) -> list[ZoneState]:
+        return [ZoneState("z", valve_open=0.0, reported_at=t)]
+
+    first = low_flow(closed(0.0), True, 0.0, None, None, dhw=False)
+    on = low_flow(closed(LOW_FLOW_HOLD_S), True, LOW_FLOW_HOLD_S, None, first, dhw=False)
+    assert on.active is True
+    for dhw in (True, None):
+        t = LOW_FLOW_HOLD_S + 60.0
+        held = low_flow(closed(t), True, t, None, on, dhw=dhw)
+        assert (held.active, held.reason, held.since) == (True, HELD, 0.0)
+        again = low_flow(closed(t + 60.0), True, t + 60.0, None, held, dhw=False)
+        assert (again.active, again.since) == (True, 0.0)
+    waiting = low_flow(closed(60.0), True, 60.0, None, first, dhw=None)
+    assert (waiting.active, waiting.since) == (False, None)
 
 
 def test_a_short_burn_ended_by_the_demand_is_no_ignition_problem() -> None:

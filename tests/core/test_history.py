@@ -88,15 +88,46 @@ def test_a_downtime_across_the_window_start_starts_it_unknown() -> None:
 def test_states_inside_a_downtime_do_not_hold() -> None:
     """After a crash the downtime starts at the last sign of life, up to minutes before the
     crash: a state recorded between the two, and one Home Assistant wrote at its start before
-    the plugin's, say nothing of how long they held — the first state from the plugin's start
-    on makes it known again. A state at the very moment of the stop is hidden too."""
+    the plugin's, say nothing of how long they held before the plugin's start — the latest of
+    them is the state at that start, known from then on (PB-65). A state at the very moment of
+    the stop is hidden too."""
     rows = [(0.0, False), (HOUR, True), (1.5 * HOUR, False), (3 * HOUR, True), (4 * HOUR, False)]
     marked = list(with_downtime(rows, [(HOUR, 3.5 * HOUR)], 0.0, DAY))
-    assert marked == [(0.0, False), (HOUR, None), (4 * HOUR, False)]
+    assert marked == [(0.0, False), (HOUR, None), (3.5 * HOUR, True), (4 * HOUR, False)]
     # Two downtimes, one without any row inside, one reaching past the window's end.
     marked = list(with_downtime(rows, [(0.5 * HOUR, 0.7 * HOUR), (3.5 * HOUR, 2 * DAY)], 0.0, DAY))
     assert marked == [(0.0, False), (0.5 * HOUR, None), (HOUR, True), (1.5 * HOUR, False),
                       (3 * HOUR, True), (3.5 * HOUR, None)]  # fmt: skip
+
+
+def test_a_steady_signal_is_known_again_from_the_plugins_setup() -> None:
+    """PB-65: the flame off for hours; Home Assistant down 10:00–16:00, its start writing the
+    flame off at 15:59, the plugin set up at 16:00 — the flame is known off from 16:00, not
+    unknown until its next change. Negatives: no row inside (a sub-second gap the recorder
+    wrote nothing in) leaves it unknown until the next row; a row at ``to`` itself is used as
+    it is; the window-start state of a downtime begun before the window is not the state at
+    ``to``; a downtime past the window's end gives nothing at its end."""
+    rows = [(0.0, False), (15 * HOUR + 59 * MIN, False)]
+    marked = list(with_downtime(rows, [(10 * HOUR, 16 * HOUR)], 0.0, DAY))
+    assert marked == [(0.0, False), (10 * HOUR, None), (16 * HOUR, False)]
+    assert list(with_downtime([(0.0, False)], [(HOUR, 2 * HOUR)], 0.0, DAY)) == [
+        (0.0, False),
+        (HOUR, None),
+    ]
+    at_to = [(0.0, False), (1.5 * HOUR, True), (2 * HOUR, False)]
+    assert list(with_downtime(at_to, [(HOUR, 2 * HOUR)], 0.0, DAY)) == [
+        (0.0, False),
+        (HOUR, None),
+        (2 * HOUR, False),
+    ]
+    assert list(with_downtime([(0.0, True)], [(-HOUR, HOUR)], 0.0, DAY)) == [(0.0, None)]
+    # Two overlapping downtimes are one: known again at the later end.
+    merged = list(with_downtime(rows, [(10 * HOUR, 15 * HOUR), (12 * HOUR, 16 * HOUR)], 0.0, DAY))
+    assert merged == [(0.0, False), (10 * HOUR, None), (16 * HOUR, False)]
+    assert list(with_downtime(rows, [(10 * HOUR, 2 * DAY)], 0.0, DAY)) == [
+        (0.0, False),
+        (10 * HOUR, None),
+    ]
 
 
 # --- the backfill (P-117) ----------------------------------------------------------------------

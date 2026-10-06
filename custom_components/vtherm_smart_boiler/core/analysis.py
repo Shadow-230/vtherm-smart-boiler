@@ -37,8 +37,8 @@ from .history import History
 from .monitor import MonitorOptions, MonitorSummary, summarize
 from .parameters import ParameterKey, ParameterSet
 from .report import ChangeReport, PeriodSummary, explain_change
-from .series import duration_where, time_weighted_mean
-from .signal_check import OutdoorCheck, check_outdoor
+from .series import Series, duration_where, time_weighted_mean
+from .signal_check import OutdoorCheck, OutdoorStatus, check_outdoor
 from .signals import Signal
 from .verdict import LoadBasis, VerdictResult
 
@@ -85,8 +85,11 @@ def analyse(
     trends of the last analysis — a trend that cannot be judged now keeps its state for an hour
     (S-16). The building fit gets the heating threshold in use with its source (P-32);
     ``fit_since``: a measured value the user reset is fitted from the days after the reset
-    only (P-90)."""
-    full = summarize(history, parameters, now - HISTORY_DAYS * DAY, now, options)
+    only (P-90). A sensor the outdoor check finds stuck is left out of every summary and
+    per-degree-day figure of the analysis, the weather alone in its place (PB-20)."""
+    check = _outdoor(history, now)
+    outdoor = _analysis_outdoor(history, check)
+    full = summarize(history, parameters, now - HISTORY_DAYS * DAY, now, options, outdoor=outdoor)
     earlier = {day.start: day for day in kept}
     kept = [day for day in kept if day.settings == settings]
     known = {day.start for day in kept}
@@ -103,14 +106,14 @@ def analyse(
     new_days = tuple(settled)
     today_start = max((end for _start, end in days), default=now - DAY)
     today = summarize_day(history, parameters, today_start, now, options, settings, known_until=now)
-    week = summarize(history, parameters, now - 7 * DAY, now, options)
-    day = summarize(history, parameters, now - DAY, now, options)
+    week = summarize(history, parameters, now - 7 * DAY, now, options, outdoor=outdoor)
+    day = summarize(history, parameters, now - DAY, now, options, outdoor=outdoor)
     threshold = parameters.get(ParameterKey.HEATING_THRESHOLD).effective()
     fit = (  # every day kept, not only the rolling few
         None if threshold is None else fit_building([*kept, *new_days], threshold, now, fit_since)
     )
     report, unit = _report(
-        history, parameters, options, now, None if threshold is None else threshold.value
+        history, parameters, options, now, None if threshold is None else threshold.value, outdoor
     )
     return Analysis(
         at=now,
@@ -127,7 +130,7 @@ def analyse(
         trends=_trends(history, full, now, options.verdict.condensing_boiler, previous or {}),
         report=report,
         report_unit=unit,
-        outdoor=_outdoor(history, now),
+        outdoor=check,
         fit=fit,
         new_days=tuple(day for day in new_days if day.has_data),
     )
@@ -195,8 +198,9 @@ def _period(
     start: float,
     end: float,
     threshold: float,
+    outdoor: Series[float],
 ) -> tuple[PeriodSummary, ReportUnit] | None:
-    summary = summarize(history, parameters, start, end, options)
+    summary = summarize(history, parameters, start, end, options, outdoor=outdoor)
     if summary.observed_s < 0.9 * (end - start) or summary.degree_days is None:
         return None
     degree_days = summary.degree_days.estimated_total()
@@ -205,11 +209,11 @@ def _period(
     heat, dhw_heat = summary.heat_output_kwh, summary.dhw_output_kwh
     if heat is not None and dhw_heat is not None and heat.complete and dhw_heat.complete:
         heating, dhw, unit = heat.amount, dhw_heat.amount, ReportUnit.KWH
-    else:
-        heating = summary.heating.burn_s / 3600.0
+    else:  # the burns the kWh mode counts as heating: heating and unknown kind (PB-66)
+        heating = (summary.heating.burn_s + summary.unknown.burn_s) / 3600.0
         dhw = summary.dhw.burn_s / 3600.0
         unit = ReportUnit.BURNER_HOURS
-    heating_days = duration_where(history.outdoor(), start, end, lambda v: v < threshold) / DAY
+    heating_days = duration_where(outdoor, start, end, lambda v: v < threshold) / DAY
     targets = [time_weighted_mean(z.target, start, end).value for z in history.zones.values()]
     known = [t for t in targets if t is not None]
     mean_target = sum(known) / len(known) if known else None
@@ -222,14 +226,24 @@ def _report(
     options: MonitorOptions,
     now: float,
     threshold: float | None,
+    outdoor: Series[float],
 ) -> tuple[ChangeReport | None, ReportUnit | None]:
     if threshold is None:
         return None, None
-    previous = _period(history, parameters, options, now - 2 * DAY, now - DAY, threshold)
-    current = _period(history, parameters, options, now - DAY, now, threshold)
+    previous = _period(history, parameters, options, now - 2 * DAY, now - DAY, threshold, outdoor)
+    current = _period(history, parameters, options, now - DAY, now, threshold, outdoor)
     if previous is None or current is None or previous[1] is not current[1]:
         return None, None
     return explain_change(previous[0], current[0]), current[1]
+
+
+def _analysis_outdoor(history: History, check: OutdoorCheck | None) -> Series[float]:
+    """The outdoor series of one analysis (PB-20): the weather alone when the check finds the
+    sensor stuck — where the weather is not known either, unknown — else the sensor with the
+    weather where the sensor is unknown."""
+    if check is not None and check.status is OutdoorStatus.STUCK:
+        return history.weather
+    return history.outdoor()
 
 
 def _outdoor(history: History, now: float) -> OutdoorCheck | None:

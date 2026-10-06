@@ -186,12 +186,20 @@ def test_a_small_meter_drop_is_no_reset() -> None:
 
 def test_one_rule_for_a_meter_rise() -> None:
     """P-97: one function says what a new reading adds — above the highest reading so far, the
-    difference; a small step back, nothing (the mark stays); below a tenth of the mark, a reset:
-    counted from zero. The first reading adds nothing."""
+    difference; a small step back, nothing (the mark stays); below 90 % of the mark, a reset:
+    counted from zero (PB-19). The first reading adds nothing."""
     assert meter_rise(None, 100.0) == (0.0, 100.0)
     assert meter_rise(100.0, 99.9) == (0.0, 100.0)
     assert meter_rise(100.0, 100.0) == (0.0, 100.0)
     rise, high = meter_rise(100.0, 100.2)
     assert (rise, high) == (pytest.approx(0.2), 100.2)
     assert meter_rise(100.0, 5.0) == (5.0, 5.0)  # restarted from zero
-    assert meter_rise(100.0, 10.0) == (0.0, 100.0)  # a tenth exactly: a step back
+    assert meter_rise(100.0, 90.0) == (0.0, 100.0)  # 90 % exactly: a step back
+    assert meter_rise(100.0, 89.9) == (89.9, 89.9)  # below: a reset
+
+
+def test_a_reset_first_seen_above_a_tenth_is_a_reset() -> None:
+    """PB-19: a daily meter read hourly (or Home Assistant down over midnight) is first seen
+    after its reset well above a tenth of the old reading; the rest of the day still counts."""
+    daily = Series([(0, 20.0), (10, 24.0), (20, 3.0), (30, 5.0)])
+    assert meter_consumption(daily, 0, 40) == Consumption(pytest.approx(9.0), True)

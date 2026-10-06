@@ -51,6 +51,7 @@ from __future__ import annotations
 import copy
 import logging
 import math
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
@@ -244,6 +245,10 @@ ANALYSIS_JOB = "The periodic analysis"
 # entry's store with a year of days in it (SD cards, eMMC). After a crash the downtime starts at
 # its last write. Downtimes are kept as long as the rolling history.
 ALIVE_SAVE_S = 10 * 60
+# PB-65: the record names the Home Assistant run that wrote it (a token made once per run, kept
+# in ``hass.data``); a setup in the same run — a reload, the entry enabled again — follows no
+# stop of Home Assistant: the recorder ran through it, so no downtime is recorded.
+RUN_KEY = f"{DOMAIN}_run"
 UNAVAILABLE_STATES = ("unavailable", "unknown")
 
 
@@ -565,7 +570,11 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         stored = _mapping(read.main)
         self.monitoring_since = self._monitoring_start(stored, now)
         self.down = _downtimes(
-            await _async_try_load(self._alive_store), read.main, now, _created_at(entry)
+            await _async_try_load(self._alive_store),
+            read.main,
+            now,
+            _created_at(entry),
+            _run_token(self.hass),
         )
         self.stored_control = dict(read.state)
         self.control_readable = read.readable
@@ -1695,7 +1704,11 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         now = dt_util.utcnow().timestamp()
         floor = now - HISTORY_DAYS * DAY
         self.down = [(since, until) for since, until in self.down if until >= floor]
-        record = {"alive_at": now, "down": [[since, until] for since, until in self.down]}
+        record = {
+            "alive_at": now,
+            "down": [[since, until] for since, until in self.down],
+            "run": _run_token(self.hass),
+        }
         try:
             await self._alive_store.async_save(record)
         except Exception:  # a full disk, say: the stop and the monitor go on
@@ -2157,8 +2170,16 @@ def _append(series: Series[Any], t: float, value: object) -> None:
     series.append(max(t, last.t) if last is not None else t, value)
 
 
+def _run_token(hass: HomeAssistant) -> str:
+    """This Home Assistant run's token (PB-65): made at the first call in a run."""
+    token = hass.data.get(RUN_KEY)
+    if not isinstance(token, str):
+        token = hass.data[RUN_KEY] = uuid.uuid4().hex
+    return token
+
+
 def _downtimes(
-    record: object, main: object, now: float, created: float | None
+    record: object, main: object, now: float, created: float | None, run: str | None = None
 ) -> list[tuple[float, float]]:
     """P-95 (A11): the downtimes still within the rolling history, and the one that ends now.
 
@@ -2169,12 +2190,17 @@ def _downtimes(
     the plugin running (``_last_seen``: a build that kept ``alive_at`` there is read once so).
     Without the main store either — a first run, or both lost — it counts from the entry's
     creation: a new entry marks only the moments since. Never further back than the rolling
-    history (what the recorder gives back)."""
+    history (what the recorder gives back). A record written in this same Home Assistant run
+    (``run``) adds none: the plugin was reloaded or set up again while Home Assistant — and its
+    recorder — ran on (PB-65)."""
     floor = now - HISTORY_DAYS * DAY
     found = record if isinstance(record, dict) else None
     since = _timestamp(found.get("alive_at")) if found is not None else None
     kept: object = found.get("down") if found is not None else None
     stored = main if isinstance(main, dict) else None
+    same_run = (
+        since is not None and run is not None and found is not None and found.get("run") == run
+    )
     if since is None:
         if record is not None:
             _LOGGER.warning("The record of when the plugin last ran cannot be read")
@@ -2193,7 +2219,7 @@ def _downtimes(
             continue
         if math.isfinite(begin) and begin < end <= now and end >= floor:
             down.append((begin, end))
-    if since < now:
+    if since < now and not same_run:
         down.append((since, now))
     return sorted(down)
 
