@@ -2236,4 +2236,22 @@ def test_what_judges_a_release_is_fixed_on_its_path(path: str | None, judged: se
     owed = set(fixed_keys(path, owed=True))
     assert holding == set(HAND_BACK_KEYS) | judged
     lowest = {"hard_min"} if judged else set()
-    assert owed == holding | lowest
+    request = {"thermostat_setpoint_entity"} if path in ("opentherm_gw", "otgw_mqtt") else set()
+    assert owed == holding | lowest | request
+
+
+@pytest.mark.parametrize(
+    ("path", "fixed"),
+    [
+        ("opentherm_gw", True), ("otgw_mqtt", True),
+        ("entity", False), ("relay", False), (None, False),
+    ],
+)  # fmt: skip
+def test_the_thermostats_request_is_fixed_while_a_gateway_hand_back_is_owed(
+    path: str | None, fixed: bool
+) -> None:
+    """L1 of the part-2 check: on a gateway the thermostat's request confirms a hand-back
+    (PB-10), so it is fixed while one is owed (PB-09). Only then: while control holds the
+    boiler it may be mapped or changed. Negative: on other paths it judges nothing."""
+    assert "thermostat_setpoint_entity" not in fixed_keys(path, owed=False)
+    assert ("thermostat_setpoint_entity" in fixed_keys(path, owed=True)) is fixed

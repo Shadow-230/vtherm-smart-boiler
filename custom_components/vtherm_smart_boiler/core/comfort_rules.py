@@ -11,10 +11,12 @@ hours the correction itself made busier. A start is a burn seen to begin; hot-wa
 left out and a burn of unknown kind counts, in both windows alike. With the starts unknown it
 does not rise.
 
-**Rule 5 — it freezes in extreme weather**, neither rising nor falling: the outdoor reading
-below the curve's design outdoor temperature, or changing faster than ``EXTREME_RATE_K_PER_H``
-— more than that spread within the last hour of readings. With the reading unknown, or less than
-an hour of readings to judge the rate by, it freezes too.
+**Rule 5 — it does not rise in extreme weather**: the outdoor reading below the curve's design
+outdoor temperature, or changing faster than ``EXTREME_RATE_K_PER_H`` — more than that spread
+within the last hour of readings. With the reading unknown, or less than an hour of readings to
+judge the rate by, it does not rise either. Every fall passes — the rooms satisfied or too warm,
+rule 3's step back: a fast outdoor rise (sun on the sensor, a warm front) or a long outage must
+not hold the water up while rooms overshoot (M1 of the part-2 check, the cautious side).
 
 The values are provisional, K4.
 """
@@ -130,7 +132,7 @@ def follow_outdoor(seen: Readings, reading: float | None, now: float) -> Reading
 def extreme_weather(
     seen: Readings, reading: float | None, now: float, design_outdoor: float
 ) -> bool:
-    """Rule 5: the correction freezes — the reading unknown or below the design outdoor
+    """Rule 5: the correction does not rise — the reading unknown or below the design outdoor
     temperature, less than an hour of readings, or a spread above ``EXTREME_RATE_K_PER_H`` within
     the last hour (a rise counts as a fall does)."""
     if reading is None or reading < design_outdoor:

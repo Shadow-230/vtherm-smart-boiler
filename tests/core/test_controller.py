@@ -2223,31 +2223,65 @@ def falls_from_2k(seen: tuple[tuple[float, float], ...], **kw: float | None) -> 
     return state.correction
 
 
-def test_rule_5_extreme_weather_freezes_the_correction() -> None:
+def rises_from_1k(seen: tuple[tuple[float, float], ...], **kw: float | None) -> float:
+    """The correction after ten minutes with a zone short, from 1 K (a third of a kelvin when
+    it rises)."""
+    start = ControlState(correction=1.0, outdoor_seen=seen)
+    state, _ = run(minutes(0.0, 11, lambda t: (short(t),), **kw), WATER, start)
+    return state.correction
+
+
+def too_warm(t: float) -> ZoneState:
+    """A zone still taking heat (its valve wide open) with the room 1.5 K over its setpoint."""
+    return ZoneState("z", 22.5, 21.0, True, reported_at=t, valve_open=0.9)
+
+
+def test_rule_5_extreme_weather_freezes_only_the_rise() -> None:
     """Below the design outdoor temperature (-15 °C), or changing faster than 2 K per hour —
-    falling or rising: neither fall nor rise. Negatives: steady weather, a slow change, the
-    design temperature itself — it falls."""
-    assert falls_from_2k(hour_read(lambda _t: 5.0)) < 2.0
-    assert falls_from_2k(hour_read(lambda t: 5.0 - t / 3600.0)) < 2.0  # 1 K per hour
-    assert falls_from_2k(hour_read(lambda t: 5.0 - 3.0 * t / 3600.0)) == 2.0  # 3 K per hour
-    assert falls_from_2k(hour_read(lambda t: 5.0 + 3.0 * t / 3600.0)) == 2.0
-    cold = hour_read(lambda _t: -16.0)
-    assert falls_from_2k(cold, outdoor_sensor=-16.0) == 2.0
-    design = hour_read(lambda _t: -15.0)
-    assert falls_from_2k(design, outdoor_sensor=-15.0) < 2.0
-    start = ControlState(correction=1.0, outdoor_seen=cold)
-    state, _ = run(minutes(0.0, 31, lambda t: (short(t),), outdoor_sensor=-16.0), WATER, start)
-    assert state.correction == 1.0  # no rise either
-
-
-def test_rule_5_unknown_weather_freezes_the_correction() -> None:
-    """No reading, or less than an hour of readings to judge the rate by: frozen. Negative: the
-    weather entity's reading serves without the sensor."""
+    falling or rising: no rise. The fall — the rooms satisfied or too warm — passes: a fast
+    outdoor rise (sun on the sensor, a warm front) must not hold the water up while rooms
+    overshoot (M1 of the part-2 check). Negatives: steady weather, a slow change, the design
+    temperature itself — it rises."""
     steady = hour_read(lambda _t: 5.0)
-    assert falls_from_2k(steady, outdoor_sensor=None) == 2.0
-    assert falls_from_2k(steady[6:]) == 2.0  # half an hour of readings
-    assert falls_from_2k((), outdoor_sensor=None) == 2.0
-    assert falls_from_2k(steady, outdoor_sensor=None, outdoor_weather=5.0) < 2.0
+    assert rises_from_1k(steady) > 1.2
+    assert rises_from_1k(hour_read(lambda t: 5.0 - t / 3600.0)) > 1.2  # 1 K per hour
+    design = hour_read(lambda _t: -15.0)
+    assert rises_from_1k(design, outdoor_sensor=-15.0) > 1.2
+    falling = hour_read(lambda t: 5.0 - 3.0 * t / 3600.0)  # 3 K per hour
+    rising = hour_read(lambda t: 5.0 + 3.0 * t / 3600.0)
+    cold = hour_read(lambda _t: -16.0)
+    for seen, kw in ((falling, {}), (rising, {}), (cold, {"outdoor_sensor": -16.0})):
+        assert rises_from_1k(seen, **kw) == 1.0  # no rise
+        assert falls_from_2k(seen, **kw) < 2.0  # rooms satisfied: it falls
+        start = ControlState(correction=2.0, outdoor_seen=seen)
+        state, _ = run(minutes(0.0, 10, lambda t: (too_warm(t),), **kw), WATER, start)
+        assert state.correction < 2.0  # rooms too warm: it falls
+
+
+def test_rule_5_rule_3s_step_back_passes_the_freeze() -> None:
+    """Rule 3's step back — more starts since it began — is a fall: extreme weather does not
+    stop it."""
+    state, _ = run(short_with_starts(0.0, 31, ()), WATER)
+    assert state.correction == pytest.approx(1.0)
+    steps = [
+        replace(step, outdoor_sensor=-16.0)  # below the design outdoor temperature
+        for step in short_with_starts(1860.0, 20, (1900.0,))
+    ]
+    state, _ = run(steps, WATER, state)
+    assert state.correction < 0.5  # 20 minutes at the fall rate
+
+
+def test_rule_5_unknown_weather_freezes_only_the_rise() -> None:
+    """No reading, or less than an hour of readings to judge the rate by: no rise; the fall
+    passes. Negative: the weather entity's reading serves without the sensor — it rises."""
+    steady = hour_read(lambda _t: 5.0)
+    assert rises_from_1k(steady, outdoor_sensor=None) == 1.0
+    assert rises_from_1k(steady[6:]) == 1.0  # half an hour of readings
+    assert rises_from_1k((), outdoor_sensor=None) == 1.0
+    assert rises_from_1k(steady, outdoor_sensor=None, outdoor_weather=5.0) > 1.2
+    assert falls_from_2k(steady, outdoor_sensor=None) < 2.0
+    assert falls_from_2k(steady[6:]) < 2.0
+    assert falls_from_2k((), outdoor_sensor=None) < 2.0
 
 
 def test_rule_5_the_first_hour_after_a_start_reads_the_weather() -> None:

@@ -611,7 +611,9 @@ class VThermLink:
         user → not there; running or being set up again (a reload, Home Assistant starting) →
         its stored setting, unknown without it; stuck in a failed setup → not there only where
         its setting says "off" — unless the stand-in was written in this run after Home
-        Assistant had started, so VT provided the sensor in this run (decision 9): there. Without
+        Assistant had started and VT's central entry changed since, so VT provided the sensor in
+        this run (decision 9): there; one from Home Assistant's start, the entry unchanged
+        since, is not (M1 of the part-2 check). Without
         the sensor in the registry, only VT's central entry saying "on" counts (VT has not
         registered the sensor yet)."""
         hass = self._hass
@@ -648,18 +650,32 @@ class VThermLink:
         if owner is None:
             return False  # left behind by a VT entry that is gone
         says = _central_entry_says(owner)
-        if says is False and state is not None and self._stand_in_of_this_run(state):
+        if says is False and state is not None and self._stand_in_of_this_run(state, owner):
             return True  # VT's central boiler on in this run, unticked since (decision 9)
         return says
 
-    def _stand_in_of_this_run(self, state: State) -> bool:
-        """A stand-in Home Assistant wrote after it had started: the entity was provided in
-        this run and removed since. Not judged while Home Assistant starts — the stand-ins it
-        writes then are for entities nobody provided."""
+    def _stand_in_of_this_run(self, state: State, owner: ConfigEntry) -> bool:
+        """A stand-in Home Assistant wrote after it had started, with VT's central entry
+        changed since: the entity was provided in this run and removed since. Not judged while
+        Home Assistant starts — the stand-ins it writes then are for entities nobody provided.
+
+        VT's central entry unchanged since the run's start (M1 of the part-2 check): the
+        stand-in is the one Home Assistant writes at its start for every registered entity
+        nobody provides (``entity_registry.py``, ``_write_unavailable_states`` on
+        ``EVENT_HOMEASSISTANT_START``, Home Assistant 2026.9.3) — VT's central boiler was off
+        before this run began. VT creates the sensor only while its central entry's setting is
+        on (VT 10.4.0 ``binary_sensor.py``), and the setting changes only through an update of
+        the entry, which moves its ``modified_at`` (``config_entries.py``): a sensor VT provided
+        in this run, now off, means the entry changed in this run. Home Assistant keeps no time
+        of its start a plugin set up later could read — the recorder's start, before it, stands
+        for it — so the entry's change, not the stand-in's time, tells the two apart. A change
+        time unknown, or no start known, keeps the latch (a doubt)."""
         if not state.attributes.get(ATTR_RESTORED):
             return False
         started = vt_run(self._hass).started
-        return started is not None and state.last_updated > started
+        return (
+            started is not None and state.last_updated > started and _changed_since(owner, started)
+        )
 
     def watch_vt_central(self) -> None:
         """An entry of the plugin begins watching VT (its coordinator starts). VT's central

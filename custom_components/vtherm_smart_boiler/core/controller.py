@@ -1076,22 +1076,21 @@ def _correction(
 ) -> tuple[float, tuple[tuple[float, float], ...], StartsBaseline | None]:
     """The comfort correction for this water decision, within its firm band (bounded learning),
     the rises within the last day and rule 3's baseline. ``held``: a cap or a clip holds the
-    setpoint — no rise. Frozen — neither rise nor fall — while hot water runs, foreign heat warms
-    a zone or the weather is extreme or unknown (rule 5); rising only while the starts are known
-    and do not rise, stepping back while they do (rule 3)."""
+    setpoint — no rise. Frozen — neither rise nor fall — while hot water runs or foreign heat
+    warms a zone; no rise while the weather is extreme or unknown (rule 5), while every fall —
+    rooms satisfied or too warm, rule 3's step back — passes, the cautious side (M1 of the part-2
+    check); rising only while the starts are known and do not rise, stepping back while they do
+    (rule 3)."""
     now = inputs.now
     rises = tuple((t, k) for t, k in state.rises if abs(now - t) < DAY)
     if not config.comfort_correction:
         return 0.0, rises, None
     baseline = state.starts_baseline
-    if (
-        inputs.dhw is True
-        or inputs.foreign_heat is True
-        or extreme_weather(
-            state.outdoor_seen, _outdoor_reading(inputs), now, config.curve.design_outdoor
-        )
-    ):
+    if inputs.dhw is True or inputs.foreign_heat is True:
         return state.correction, rises, baseline
+    extreme = extreme_weather(
+        state.outdoor_seen, _outdoor_reading(inputs), now, config.curve.design_outdoor
+    )
     baseline = follow_baseline(baseline, state.correction, now)
     starts = inputs.starts
     rose = starts is not None and baseline is not None and starts_rose(baseline, starts, now)
@@ -1109,7 +1108,13 @@ def _correction(
     correction = state.correction
     if too_warm or (satisfied and not short) or rose:
         correction -= 2.0 * state.water_s / CORRECTION_RISE_S
-    elif short and not held and starts is not None and may_rise(baseline, starts, now):
+    elif (
+        short
+        and not held
+        and not extreme
+        and starts is not None
+        and may_rise(baseline, starts, now)
+    ):
         # Only while heat flows; never while a cap or the boiler holds the water; at most
         # ``CORRECTION_DAY_K`` within a day; the first rise keeps the starts before it.
         spent = sum(k for _t, k in rises)

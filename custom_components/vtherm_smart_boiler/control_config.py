@@ -307,19 +307,21 @@ HAND_BACK_KEYS = (
 )  # fmt: skip
 # What judges a hand-back's release on each write path, or shapes what it writes first (PB-09):
 # fixed as ``HAND_BACK_KEYS`` are — the read-backs, the write types, the device's timeout, and
-# on the gateways their read-back. The lowest water temperature only while a hand-back is owed:
-# one made after a change writes the new lowest first and is judged by it.
+# on the gateways their read-back and the thermostat's request, which confirms a gateway's
+# hand-back (PB-10). The lowest water temperature and the thermostat's request only while a
+# hand-back is owed: one made after a change writes the new lowest first and is judged by it,
+# and the request judges nothing while control holds the boiler.
 RELEASE_JUDGED_BY: Mapping[WritePath, tuple[str, ...]] = MappingProxyType(
     {
         WritePath.ENTITY: (
             "confirmed_entity", "ch_confirmed_entity", "write_type", "ch_write_type",
             "hand_back_timeout_min", "hard_min",
         ),
-        WritePath.OPENTHERM_GW: ("confirmed_entity", "hard_min"),
-        WritePath.OTGW_MQTT: ("confirmed_entity", "hard_min"),
+        WritePath.OPENTHERM_GW: ("confirmed_entity", "hard_min", "thermostat_setpoint_entity"),
+        WritePath.OTGW_MQTT: ("confirmed_entity", "hard_min", "thermostat_setpoint_entity"),
     }
 )  # fmt: skip
-FIXED_WHILE_OWED_ONLY = frozenset({"hard_min"})
+FIXED_WHILE_OWED_ONLY = frozenset({"hard_min", "thermostat_setpoint_entity"})
 # The relay's own settings unanswered: each its cautious reading (R3; provisional, K4) — its
 # state report "I don't know" (blind repeats), its state after a power cut "I don't know" (maybe
 # on), a timer "I don't know" (it may have one), the rest state "off", the tick not given. The

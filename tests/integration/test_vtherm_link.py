@@ -881,6 +881,50 @@ async def test_a_plugin_first_set_up_after_the_start_takes_the_recorders(
     assert link.vt_central_boiler_configured() is (recorder != "before")
 
 
+@pytest.mark.parametrize("case", ["at_start", "untick_in_the_run", "start_unknown"])
+async def test_a_stand_in_from_home_assistants_start_does_not_latch_a_later_setup(
+    hass: HomeAssistant, freezer: Any, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    """M1 of the part-2 check: VT's central boiler unticked and Home Assistant restarted in an
+    earlier run; Home Assistant writes the stand-in of VT's sensor at its start, after the
+    recorder began; a day later the plugin's entry is added. VT's central entry unchanged since
+    the run began — VT never provided the sensor in this run: no latch. Unticked in this run —
+    VT provided it, its manager perhaps still switching: latched. No start known — a doubt:
+    latched (decision 9)."""
+    import homeassistant.helpers.recorder as ha_recorder
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import vt_run
+
+    central, entity_id = vt_central_entry(hass, case == "untick_in_the_run")
+    assert entity_id is not None  # its sensor's registry entry kept
+    freezer.tick(60)
+    began = dt_util.utcnow()  # the recorder's start, early in the bootstrap
+
+    class Runs:
+        recording_start: Any = began
+
+    class Instance:
+        recorder_runs_manager = Runs()
+
+    if case != "start_unknown":
+        hass.config.components.add("recorder")
+        monkeypatch.setattr(ha_recorder, "get_instance", lambda _hass: Instance())
+    freezer.tick(10)
+    if case == "untick_in_the_run":
+        vt_boiler_shown(hass, entity_id, False)  # provided in this run
+        freezer.tick(3600)
+        hass.config_entries.async_update_entry(central, data={**central.data, FEATURE: False})
+    else:
+        object.__setattr__(central, "modified_at", began - timedelta(days=2))  # an earlier run
+    er.async_get(hass).async_get(entity_id).write_unavailable_state(hass)
+    freezer.tick(86400)  # a day later the plugin's entry is added
+    vt_run(hass)
+    link = VThermLink(hass, [])
+    assert link.vt_central_boiler_configured() is (case != "at_start")
+    link.watch_vt_central()
+    assert link.vt_central_boiler_configured() is (case != "at_start")
+
+
 async def test_the_recorders_start_unreadable_counts_as_unknown(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
