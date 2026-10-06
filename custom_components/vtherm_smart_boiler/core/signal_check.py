@@ -187,6 +187,8 @@ def features(
     comfort_correction: bool = False,
     circuit_maximum: bool = False,
     circuit_flow: bool = False,
+    circuit_maximum_unmixed: bool = True,
+    circuit_maximum_flow: bool = False,
     wall_thermostat: bool = False,
     read_back: bool = False,
     power_threshold: bool = False,
@@ -205,6 +207,9 @@ def features(
     Y4: ``condensing`` — the boiler is declared condensing; ``control`` — what control drives,
     ``None`` without control; ``comfort_correction`` — its option; ``circuit_maximum`` — a
     circuit has a maximum flow; ``circuit_flow`` — a circuit has its own flow sensor;
+    ``circuit_maximum_unmixed`` — a circuit with a maximum is unmixed, so the boiler's flow shows
+    its water; ``circuit_maximum_flow`` — one has its own flow sensor (SB-32: a passive circuit
+    with neither is not measured, and its too-hot alarm is inactive);
     ``wall_thermostat`` — control through a gateway with an OpenTherm thermostat (X6);
     ``read_back`` — control's read-back stands in for the CH setpoint signal (X6);
     ``power_threshold`` — the relay's proof has a power threshold (X8); ``shared`` — signals
@@ -270,7 +275,11 @@ def features(
         _control_features(mapped, control, comfort_correction, zone_data, wall_thermostat)
     )
     result[Feature.CIRCUIT_OVERSHOOT_ALARM] = _state(
-        ([] if Signal.FLOW in mapped or circuit_flow else [Signal.FLOW.value])
+        (
+            []
+            if circuit_maximum_flow or (circuit_maximum_unmixed and Signal.FLOW in mapped)
+            else [Signal.FLOW.value]
+        )
         + ([] if circuit_maximum else [CIRCUIT_MAXIMUM])
     )
     suggestion = lacking(Signal.FLAME, Signal.FLOW)

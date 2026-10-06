@@ -12,6 +12,7 @@ from custom_components.vtherm_smart_boiler.core.alarms import (
     BOILER_FAULT_HOLD_S,
     fault_counts,
     fault_holds,
+    fault_stops,
     follow_fault,
 )
 from custom_components.vtherm_smart_boiler.core.controller import (
@@ -2524,6 +2525,35 @@ def test_the_fault_stop_ends_at_once_when_the_signal_is_unknown() -> None:
     assert decisions[-1].mode is ControlMode.HEATING  # on again: five more minutes first
     assert fault_counts(None, gated=False, gate=None) is False
     assert follow_fault(250.0, False, 310.0) is None
+
+
+def test_the_fault_stop_holds_while_any_mapped_fault_still_counts() -> None:
+    """SB-31: low pressure on for 30 min stops heating; the lockout flag comes on, the user
+    refills — the stop holds while the lockout still reads on, though it has counted under
+    five minutes, and ends in the step no mapped fault counts."""
+    pressure: float | None = None
+    lockout: float | None = None
+    stopped = False
+    seen: dict[float, bool] = {}
+    for t in stepped(0.0, 2400.0):
+        pressure = follow_fault(pressure, t < 1800.0, t)
+        lockout = follow_fault(lockout, 1700.0 <= t < 2200.0, t)
+        stopped = fault_stops(stopped, (pressure, lockout), t)
+        seen[t] = stopped
+    assert not seen[290.0]
+    assert seen[300.0]
+    assert seen[1800.0]  # refilled: the lockout has counted 100 s, the stop holds
+    assert seen[2190.0]
+    assert not seen[2200.0]  # no fault counts: heating again in that step
+
+
+def test_the_fault_stop_without_a_counting_fault_ends_or_never_begins() -> None:
+    """SB-31's negative: unknown flags (no ``since``) never keep or start a stop; a fault
+    counting under five minutes starts none."""
+    assert not fault_stops(True, (None, None), 10.0)
+    assert not fault_stops(False, (), 10.0)
+    assert not fault_stops(False, (5.0,), 10.0)
+    assert fault_stops(True, (5.0, None), 10.0)
 
 
 def test_frost_heating_waits_while_the_boiler_reports_its_fault() -> None:

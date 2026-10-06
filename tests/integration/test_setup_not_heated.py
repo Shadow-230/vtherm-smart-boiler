@@ -165,7 +165,7 @@ async def test_an_unreadable_control_store_counts_as_control_on(
     )
     await failed_setup(rig, entry, ConfigEntryState.SETUP_ERROR)
     assert rig.gateway.calls[-3:] == HAND_BACK
-    assert issue(rig, "control_state_unreadable") is not None
+    assert issue(rig, "control_state_unreadable") is None  # SB-39: the hand-back confirmed
     assert_raised(rig, ISSUE)
 
 

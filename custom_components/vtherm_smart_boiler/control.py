@@ -169,7 +169,7 @@ from .control_config import (
     rename_in_control,
     working_thermostat,
 )
-from .core.alarms import UNKNOWN_HOLD_S, fault_holds, follow_fault
+from .core.alarms import UNKNOWN_HOLD_S, fault_stops, follow_fault
 from .core.controller import (
     HA_STARTING,
     BoilerCommand,
@@ -383,6 +383,17 @@ MONITOR_NOTE = "monitor_recovered"
 # (provisional, K4). Shown again when a room's temperature has moved this much.
 FROST_CLOSED_ISSUE = "frost_zone_closed"
 FROST_CLOSED_SHOWN_K = 1.0
+# SB-27: the issue's advice by VT's reason for keeping a room off (``hvac_off_reason``, VT
+# 10.4.0): "off" by hand or in sleep mode, or a reason not known — VT's frost preset instead;
+# an open window, VT's central mode, another VT function (safety, auto start/stop) — the room
+# stays unheated until VT opens it; rooms closed for different reasons get every advice.
+_FROST_ADVICE: dict[str, str] = {
+    "hvac_off_window_detection": "_window",
+    "hvac_off_central_mode": "_central_mode",
+    "hvac_off_safety_detection": "_vt_function",
+    "hvac_off_auto_start_stop": "_vt_function",
+}
+_FROST_ADVICE_MIXED = "_mixed"
 ZONE_UNKNOWN_ALARM_S = 30 * 60.0  # a zone unknown this long is reported
 # PB-40: a write that failed is logged as working again only after this long without a failure,
 # so a flapping target (a Wi-Fi device dropping out every minute) is one warning, not one a
@@ -966,6 +977,7 @@ class ControlUnit:
         self._external_unseen_since: float | None = None
         # Decision 4: the rooms the frost issue shows now, with the temperature it shows.
         self._frost_issue_shown: dict[str, float] = {}
+        self._frost_issue_advice = ""  # the shown issue's advice (SB-27)
         # X8, the relay: whether its last change carried one of the plugin's own write contexts,
         # and whether it has shown a state since the unit started (its first report after a
         # start finds a lost command, answer C); the proof that the boiler heats (R12); and the
@@ -997,6 +1009,7 @@ class ControlUnit:
         # Y1, boiler protection: since when each mapped fault signal has counted, on the control
         # clock; the stop follows once one has counted for five minutes.
         self._fault_since: dict[Signal, float | None] = {}
+        self._fault_stopped = False  # the fault stop holds (SB-31)
         # Y1 (S-16): when the alarm "handed back in frost" was last judged — it holds its state
         # for an hour without a watched room known, then shows unknown.
         self._frost_known_at: float | None = None
@@ -2640,13 +2653,16 @@ class ControlUnit:
         release, or able to take heat — or control is switched off."""
         flagged = tuple(closed) if self.enabled and self.options.configured else ()
         temperatures = {z.zone_id: z.temperature for z in zones if z.temperature is not None}
-        self._show_frost_closed(
-            {zone: temperatures[zone] for zone in flagged if zone in temperatures}
-        )
+        rooms = {zone: temperatures[zone] for zone in flagged if zone in temperatures}
+        link = self._coordinator.link
+        advice = {_FROST_ADVICE.get(link.zone_off_reason(zone) or "", "") for zone in rooms}
+        self._show_frost_closed(rooms, advice.pop() if len(advice) == 1 else _FROST_ADVICE_MIXED)
 
-    def _show_frost_closed(self, rooms: Mapping[str, float]) -> None:
-        """The frost issue for these rooms (°C): raised, updated when the rooms change or a
-        temperature moved by ``FROST_CLOSED_SHOWN_K``, deleted when there are none."""
+    def _show_frost_closed(self, rooms: Mapping[str, float], advice: str = "") -> None:
+        """The frost issue for these rooms (°C), at error level (SB-27), its advice by VT's
+        reason (``advice``, a translation key's suffix): raised, updated when the rooms or the
+        advice change or a temperature moved by ``FROST_CLOSED_SHOWN_K``, deleted when there are
+        none."""
         shown = self._frost_issue_shown
         issue_id = f"{FROST_CLOSED_ISSUE}_{self._coordinator.config_entry.entry_id}"
         if not rooms:
@@ -2655,8 +2671,10 @@ class ControlUnit:
                 _LOGGER.info("No watched room below the frost limit is kept closed any more")
                 self._frost_issue_shown = {}
             return
-        moved = rooms.keys() != shown.keys() or any(
-            abs(rooms[zone] - shown[zone]) >= FROST_CLOSED_SHOWN_K for zone in rooms
+        moved = (
+            rooms.keys() != shown.keys()
+            or advice != self._frost_issue_advice
+            or any(abs(rooms[zone] - shown[zone]) >= FROST_CLOSED_SHOWN_K for zone in rooms)
         )
         if not moved:
             return
@@ -2678,11 +2696,12 @@ class ControlUnit:
             issue_id,
             is_fixable=False,
             is_persistent=False,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key=FROST_CLOSED_ISSUE,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key=f"{FROST_CLOSED_ISSUE}{advice}",
             translation_placeholders={"zones": named},
         )
         self._frost_issue_shown = dict(rooms)
+        self._frost_issue_advice = advice
 
     def _note_blocker_release(self, out: LoopOutput, blockers: tuple[str, ...]) -> None:
         """S-10: a blocker ends the session that held the boiler, where a hand-back stops
@@ -3034,14 +3053,16 @@ class ControlUnit:
     def _boiler_fault(self, now: float, snapshot: BoilerSnapshot) -> bool:
         """Boiler protection (Y1): a fault the boiler reports has counted for five minutes,
         measured on the control clock — the coordinator reads the flags, the OpenTherm Gateway's
-        only with the boiler's fault indication on (Q3.9). An unknown or unavailable flag counts
-        as none, and the stop ends in that very step."""
+        only with the boiler's fault indication on (Q3.9). The stop holds while any mapped fault
+        still counts (SB-31); an unknown or unavailable flag counts as none, and the stop ends in
+        the step none counts."""
         flags = self._coordinator.fault_flags(snapshot)
         self._fault_since = {
             signal: follow_fault(self._fault_since.get(signal), on, now)
             for signal, on in flags.items()
         }
-        return any(fault_holds(since, now) for since in self._fault_since.values())
+        self._fault_stopped = fault_stops(self._fault_stopped, self._fault_since.values(), now)
+        return self._fault_stopped
 
     def _boiler_link(self, snapshot: BoilerSnapshot) -> bool:
         """The boiler's own signals are fresh at this step: flame and flow known, each within its
@@ -3496,6 +3517,7 @@ class ControlUnit:
         self._hand_back_shown = self._shown_now()
         self._holding = False
         self._hand_back_done()
+        self._coordinator.unreadable_handed_back()  # SB-39: its notice goes
         if self._forget_last_command():
             await self._coordinator.async_save_control_now()
 

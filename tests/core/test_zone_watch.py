@@ -154,17 +154,36 @@ def test_a_zone_never_known_this_session_gets_no_grace() -> None:
     assert graced(seen[-1]) == {}
 
 
-def test_a_zone_still_unknown_when_the_recognition_ends_drops_out_at_once() -> None:
-    """A zone that answered during the recognition, then went away: no grace beyond it."""
+def test_a_zone_away_when_the_recognition_ends_keeps_its_grace_from_when_it_went_away() -> None:
+    """SB-28: a zone that answered during the recognition, then went away, keeps its last
+    answer for the grace counted from when it went away — not dropped as the period ends."""
     steps = [
         (0.0, (zone("a", 0.0), placeholder("b", 0.0))),
         (10.0, (gone("a"), placeholder("b", 10.0))),
-        (RECOGNITION_S, (gone("a"), zone("b", RECOGNITION_S))),
+        (60.0, (gone("a"), zone("b", 60.0))),
+        (10.0 + GRACE_S - 1.0, (gone("a"), zone("b", 10.0 + GRACE_S - 1.0))),
+        (10.0 + GRACE_S, (gone("a"), zone("b", 10.0 + GRACE_S))),
     ]
     seen = run(steps)
     assert graced(seen[1]) == {"a": steps[0][1][0]}
     assert not in_recognition(seen[2])
-    assert graced(seen[2]) == {}
+    assert graced(seen[2]) == {"a": steps[0][1][0]}
+    assert graced(seen[3]) == {"a": steps[0][1][0]}
+    assert graced(seen[4]) == {}
+    assert "a" not in seen[4].last
+
+
+def test_a_zone_that_never_answered_drops_out_when_the_recognition_ends() -> None:
+    """SB-28's negative: a zone with no answer in the period has no grace when it ends."""
+    steps = [
+        (0.0, (zone("a", 0.0), placeholder("b", 0.0))),
+        (RECOGNITION_S, (zone("a", RECOGNITION_S), placeholder("b", RECOGNITION_S))),
+    ]
+    seen = run(steps)
+    assert in_recognition(seen[0])
+    assert not in_recognition(seen[1])
+    assert graced(seen[1]) == {}
+    assert set(seen[1].last) == {"a"}
 
 
 def test_a_zone_taken_out_of_the_options_is_forgotten() -> None:

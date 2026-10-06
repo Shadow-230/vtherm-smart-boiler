@@ -14,7 +14,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .control_config import WritePath, hand_back_effect, wall_thermostat_applies
+from .control_config import Topology, WritePath, hand_back_effect, wall_thermostat_applies
 from .coordinator import SmartBoilerConfigEntry, SmartBoilerCoordinator
 from .entity import ControlEntity, coded_text
 
@@ -101,6 +101,13 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
             # The relay path (R15): controlled without confirmation where the relay reports no
             # state, without confirmation that the boiler heats where no proof is mapped.
             **({"confirmation": status.confirmation} if relay else {}),
+            # SB-16: a stand-alone gateway drops the plugin's setpoint (CS) within about a
+            # minute without Home Assistant, so an outage stops heating as a hand-back does.
+            **(
+                {"outage_effect": "heating_stops"}
+                if not relay and options.topology is Topology.GATEWAY_STANDALONE
+                else {}
+            ),
             **self._wall_thermostat(),
             # S-43: the monitor's verdict; "not enough data" says control starts without one.
             "verdict": self._verdict(),

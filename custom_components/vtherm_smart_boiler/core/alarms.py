@@ -19,9 +19,10 @@ reaches its alarm level only after ``ALARM_HOLD_S`` of known readings beyond the
 Boiler protection (a stated exception of principle 12): while the boiler itself reports a fault
 that stops it — its own low-water-pressure fault, or another fault the user maps as stopping it —
 for ``BOILER_FAULT_HOLD_S``, control sends its usual "off", with no hand-back and no latch, and
-heats again in the step the fault reads off, unknown or unavailable. On the OpenTherm Gateway a
-fault flag counts only while the boiler's general fault indication reads "on" too: the gateway
-reads the fault details once per new fault and never again after it clears (Q3.9).
+heats again in the step every mapped fault reads off, unknown or unavailable (SB-31). On the
+OpenTherm Gateway a fault flag counts only while the boiler's general fault indication reads "on"
+too: the gateway reads the fault details once per new fault and never again after it clears
+(Q3.9).
 """
 
 from __future__ import annotations
@@ -663,7 +664,8 @@ def follow_notice(notice: Notice, raised: bool, normal: bool | None, now: float)
 # --- boiler protection: the boiler's own fault (Y1) -------------------------------------------
 
 # A fault the boiler reports stops heating once it has read a known "on" this long (decision 7's
-# hold; provisional, K4); it ends in the step it reads off, unknown or unavailable.
+# hold; provisional, K4); it ends in the step every mapped fault reads off, unknown or
+# unavailable (SB-31).
 BOILER_FAULT_HOLD_S = ALARM_HOLD_S
 
 
@@ -686,3 +688,13 @@ def follow_fault(since: float | None, on: bool, now: float) -> float | None:
 def fault_holds(since: float | None, now: float) -> bool:
     """The fault has counted for ``BOILER_FAULT_HOLD_S``: control sends its usual "off"."""
     return since is not None and now - since >= BOILER_FAULT_HOLD_S
+
+
+def fault_stops(stopped: bool, since: Iterable[float | None], now: float) -> bool:
+    """The fault stop after this step: it begins once a mapped fault has counted for
+    ``BOILER_FAULT_HOLD_S``, and holds while any mapped fault still counts — one that began
+    during the stop included, however short (SB-31) — ending in the step none does."""
+    sinces = list(since)
+    if any(fault_holds(s, now) for s in sinces):
+        return True
+    return stopped and any(s is not None for s in sinces)

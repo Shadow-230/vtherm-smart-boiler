@@ -101,6 +101,7 @@ from .const import (
 )
 from .control_config import Topology, WritePath, wall_thermostat_applies
 from .core.alarms import (
+    CIRCUIT_NOT_MEASURED,
     HELD,
     UNKNOWN_HOLD_S,
     UNKNOWN_INPUT,
@@ -137,7 +138,7 @@ from .core.emitters import FactorResult, FactorStatus, update_factor
 from .core.foreign_heat import ForeignHeatState, update_foreign_heat
 from .core.history import History, ZoneSeries, with_downtime
 from .core.hot_water import HotWater, hot_water_available
-from .core.installation import IssueCode, Severity
+from .core.installation import CircuitControl, IssueCode, Severity
 from .core.lowest_water import (
     LowestWaterSuggestion,
     SetpointSource,
@@ -557,6 +558,15 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             await self.forecasts.async_stop()
 
     # --- storage --------------------------------------------------------------------------
+
+    def unreadable_handed_back(self) -> None:
+        """SB-39: a hand-back is confirmed — where the control state could not be read, the one
+        that made: its notice goes. Where no hand-back is made (no unit to make it), the notice
+        stays until a restart or the user's release."""
+        if not self.control_readable:
+            ir.async_delete_issue(
+                self.hass, DOMAIN, f"{UNREADABLE_ISSUE}_{self.config_entry.entry_id}"
+            )
 
     async def _async_load_store(self, now: float) -> None:
         """What the last run stored, field by field: a broken field is skipped, not the rest.
@@ -1219,6 +1229,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         if control.configured:
             kind = ControlKind.RELAY if control.write_path is WritePath.RELAY else ControlKind.WATER
         circuits = config.installation.circuits
+        # SB-32: the too-hot alarm judges a circuit with a maximum by its own flow sensor, or by
+        # the boiler's flow where the circuit is unmixed; a passive one with neither is not
+        # measured.
+        capped = [c for c in circuits if c.max_flow is not None]
         return features(
             mapped,
             has_weather,
@@ -1238,6 +1252,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             or control.loop.control.comfort_correction,
             circuit_maximum=any(c.max_flow is not None for c in circuits),
             circuit_flow=bool(config.circuit_flow_entities),
+            circuit_maximum_unmixed=not capped
+            or any(c.control is CircuitControl.UNMIXED_SHARED for c in capped),
+            circuit_maximum_flow=any(c.circuit_id in config.circuit_flow_entities for c in capped),
             wall_thermostat=wall_thermostat_applies(control),
             read_back=config.setpoint_read_back is not None if read_back is None else read_back,
             power_threshold=control.relay.heats_above_w is not None,
@@ -1669,7 +1686,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             return None
         active = [alarm for alarm in found if alarm.active]
         judged = [alarm for alarm in found if alarm.reason is None]
-        return (active or judged or found)[0]
+        # SB-32: a circuit no reading can show never stands for the others as "OK".
+        measured = [alarm for alarm in found if alarm.reason != CIRCUIT_NOT_MEASURED]
+        return (active or judged or measured or found)[0]
 
     # --- analysis -------------------------------------------------------------------------
 

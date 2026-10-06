@@ -11,10 +11,11 @@ thermostat — "off", before its first refresh neither ``is_ready`` nor the rest
   configured zone has reported since it began — VT shows it started, and its mode and data are
   known — or for at most ``RECOGNITION_S``, and never before Home Assistant runs.
 - **The grace:** a zone that stops answering after it answered — unknown, or showing again that
-  VT has not started it (a thermostat's reload) — keeps its last answer for ``GRACE_S``; then it
-  drops out and the known zones decide. A zone that never answered has no last answer; one still
-  not answering when the recognition period ends drops out at once. Nothing of it is stored: the
-  recognition period covers restarts.
+  VT has not started it (a thermostat's reload) — keeps its last answer for ``GRACE_S`` from when
+  it went away, also when the recognition period ends meanwhile (SB-28); then it drops out and
+  the known zones decide. A zone that never answered has no last answer: one still not answering
+  when the recognition period ends drops out at once. Nothing of it is stored: the recognition
+  period covers restarts.
 - **Every zone unknown:** since when no configured zone is known, for the repair issue that
   follows after ``NO_ZONE_ISSUE_S`` (every mode, the monitor only included).
 - **No criterion judged** (PB-03, decision 3 of 0.2.3): since when the zones are known but no
@@ -119,7 +120,6 @@ def follow_zones(
         since, reported = now, frozenset()
     elif since is None and ids and not answering and watch.all_answering:
         since, reported = now, frozenset()  # every zone stopped answering at once: VT reloads
-    ended = False
     if since is not None:
         # PB-53: while Home Assistant starts the clock waits — the period runs from the first
         # step with Home Assistant running, however long the start took.
@@ -127,7 +127,7 @@ def follow_zones(
         reported = reported | answering.keys()
         done = all(zone_id in reported for zone_id in ids) or now - since >= RECOGNITION_S
         if done and not starting:
-            since, reported, ended = None, frozenset(), True
+            since, reported = None, frozenset()
     last = {zone_id: state for zone_id, state in watch.last.items() if zone_id in ids}
     lost_at: dict[str, float] = {}
     for zone_id in ids:
@@ -137,7 +137,7 @@ def follow_zones(
         if zone_id not in last:
             continue  # never answered: no last answer, no grace
         lost = _not_after(watch.lost_at.get(zone_id, now), now)
-        if ended or now - lost >= GRACE_S:
+        if now - lost >= GRACE_S:
             del last[zone_id]  # dropped out: the known zones decide
         else:
             lost_at[zone_id] = lost

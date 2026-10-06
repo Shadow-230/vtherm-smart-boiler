@@ -221,9 +221,11 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
         no_criterion = SOURCE["issues"][f"no_criterion_judged_{kind}"]
         assert no_criterion["title"], kind
         assert set(PLACEHOLDER.findall(no_criterion["description"])) == {"criteria"}, kind
-    frost = SOURCE["issues"]["frost_zone_closed"]  # decision 4 (X4)
-    assert frost["title"]
-    assert set(PLACEHOLDER.findall(frost["description"])) == {"zones"}
+    # Decision 4 (X4); SB-27: the advice by VT's reason for closing the room.
+    for advice in ("", "_window", "_central_mode", "_vt_function", "_mixed"):
+        frost = SOURCE["issues"][f"frost_zone_closed{advice}"]
+        assert frost["title"], advice
+        assert set(PLACEHOLDER.findall(frost["description"])) == {"zones"}, advice
     assert SOURCE["entity"]["button"]["reset_comfort_correction"]["name"]  # answer J (X4)
     too_hot = SOURCE["entity"]["binary_sensor"]["alarm_circuit_too_hot"]["state_attributes"]
     # Y1 (S-16): held through a gap in the flow, then unknown with its reason.
@@ -280,6 +282,8 @@ def test_coded_states_and_attributes_are_translated() -> None:
     assert _values(SOURCE["entity"]["switch"]["control"], "hand_back_effect") == {
         effect.value for effect in HandBackEffect
     }
+    # SB-16: a stand-alone gateway's setpoint lapses within about a minute of an outage.
+    assert _values(SOURCE["entity"]["switch"]["control"], "outage_effect") == {"heating_stops"}
 
 
 def test_every_icon_belongs_to_an_entity() -> None:
@@ -1111,3 +1115,38 @@ def test_sb10_texts_are_translated() -> None:
         assert issue["description"], report
         assert "{" not in issue["title"] + issue["description"], report
         assert "reload the entry" in issue["description"], report
+
+
+# Step 3.1's specification points that are texts: each option description named here says it,
+# wherever the option is asked (``data_description``), and the issue is worded as settled.
+SAID: list[tuple[str, str, str]] = [
+    ("SB-12", "design_flow", "SmartPI (0.4.0) learns its own outdoor term"),
+    ("SB-35", "max_flow", "own maximum is the only one"),
+    ("SB-35", "topology", "own maximum, not the plugin's"),
+    ("SB-35", "hand_back", "own maximum is the only one"),
+    ("SB-35", "hard_max", "own maximum holds"),
+    ("SB-37", "setpoint_entity", "the water would not follow the curve"),
+    ("SB-37", "hand_back_value_effect", "leaves the house unheated"),
+    ("SB-37", "gateway_id", "another one would get the plugin's commands"),
+    ("SB-37", "hard_max", "too low: rooms stay cold"),
+    ("SB-37", "boiler_heats_above_w", "Too low:"),
+    ("SB-38", "relay_is_separate_contact", "for a boiler thermostat entity"),
+]
+
+
+@pytest.mark.parametrize(("point", "key", "phrase"), SAID, ids=[f"{p}-{k}" for p, k, _ in SAID])
+def test_the_settled_texts_say_it(point: str, key: str, phrase: str) -> None:
+    found = {
+        path: text
+        for path, text in flatten(SOURCE).items()
+        if ".data_description." in f".{path}" and path.endswith(f".{key}")
+    }
+    assert found, (point, key)
+    assert all(phrase in text for text in found.values()), (point, key)
+
+
+def test_the_unreadable_notice_does_not_claim_the_hand_back() -> None:
+    """SB-39: the notice goes once its hand-back is confirmed, so it never says it was made."""
+    text = SOURCE["issues"]["control_state_unreadable"]["description"]
+    assert "handed it back" not in text
+    assert "goes once the boiler shows that hand-back" in text

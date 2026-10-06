@@ -93,6 +93,7 @@ COUNT_THRESHOLD_UNIQUE_ID = "boiler_activation_threshold"
 POWER_THRESHOLD_UNIQUE_ID = "boiler_power_activation_threshold"
 # The plugin's repeat interval takes VT's keep-alive only within its own range (R3).
 REPEAT_RANGE_S = (10.0, 300.0)
+HVAC_OFF_REASON = "hvac_off_reason"  # a thermostat's attribute (VT 10.4.0)
 ROOM_SENSOR = "temperature_sensor_entity_id"  # in a thermostat's entry data (VT 10.4.0)
 # The entities a thermostat drives — switches, valves or climates — in its entry's data (VT 10.4.0
 # ``const.py:63``, ``CONF_UNDERLYING_LIST``; migrated there from the older per-slot keys).
@@ -583,6 +584,15 @@ class VThermLink:
     def recorded_state(self, entity_id: str) -> State | None:
         """A zone's current state as the history records it."""
         return self._hass.states.get(entity_id)
+
+    def zone_off_reason(self, entity_id: str) -> str | None:
+        """Why VT keeps a zone off (SB-27): its ``hvac_off_reason`` attribute (VT 10.4.0
+        ``base_thermostat.py``: ``hvac_off_manual``, ``hvac_off_sleep_mode``,
+        ``hvac_off_window_detection``, ``hvac_off_central_mode``, ``hvac_off_safety_detection``,
+        ``hvac_off_auto_start_stop``); ``None`` when it is away, missing or not a text."""
+        state = self._hass.states.get(entity_id)
+        reason = None if state is None else state.attributes.get(HVAC_OFF_REASON)
+        return reason if isinstance(reason, str) else None
 
     def shows_attribute(self, entity_id: str, attribute: str) -> bool | None:
         """Whether a zone's thermostat carries an attribute now; ``None`` when it is away."""

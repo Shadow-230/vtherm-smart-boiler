@@ -17,7 +17,9 @@ from custom_components.vtherm_smart_boiler.core.signals import (
 )
 
 
-def test_every_signal_has_a_spec_and_flame_and_flow_are_required() -> None:
+def test_every_signal_has_a_spec_and_flame_and_flow_form_the_boiler_link() -> None:
+    """SB-21: flame and flow are optional for the entry (X8); they are the boiler link's
+    signals, which water-temperature control needs mapped."""
     assert set(SIGNAL_SPECS) == set(Signal)
     assert LINK_SIGNALS == {Signal.FLAME, Signal.FLOW}
 

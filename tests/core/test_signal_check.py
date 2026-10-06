@@ -295,6 +295,26 @@ CASES: list[tuple[Feature, dict[str, Any], FeatureStatus, tuple[str, ...]]] = [
         FeatureStatus.INACTIVE,
         ("circuit_maximum",),
     ),
+    (
+        # SB-32: a passive circuit with a maximum, without its own flow reading: the boiler's
+        # flow does not show its water, so the alarm cannot judge it.
+        Feature.CIRCUIT_OVERSHOOT_ALARM,
+        {"circuit_maximum_unmixed": False},
+        FeatureStatus.INACTIVE,
+        ("flow",),
+    ),
+    (
+        Feature.CIRCUIT_OVERSHOOT_ALARM,
+        {"circuit_maximum_unmixed": False, "circuit_maximum_flow": True},
+        FeatureStatus.AVAILABLE,
+        (),
+    ),
+    (
+        Feature.CIRCUIT_OVERSHOOT_ALARM,
+        {"circuit_maximum_unmixed": False, "circuit_flow": True},
+        FeatureStatus.INACTIVE,
+        ("flow",),
+    ),
     *(
         (
             Feature.LOWEST_WATER_SUGGESTION,

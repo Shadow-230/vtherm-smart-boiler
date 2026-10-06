@@ -44,6 +44,7 @@ from custom_components.vtherm_smart_boiler.control_config import (
 )
 from custom_components.vtherm_smart_boiler.core.alarms import AlarmKind
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
+from custom_components.vtherm_smart_boiler.core.signal_check import Feature, FeatureStatus
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 from custom_components.vtherm_smart_boiler.vtherm_link import VT_CENTRAL_SEEN
 
@@ -3330,9 +3331,13 @@ async def test_a_lost_boiler_link_raises_an_alarm_and_hands_back(rig: Rig, topol
     goes, once the data has been back for a minute (X2)."""
     await start(rig, topology=topology)
     await rig.switch(True)
-    effect = rig.state("switch", "control").attributes["hand_back_effect"]
+    attributes = rig.state("switch", "control").attributes
+    effect = attributes["hand_back_effect"]
     standalone = topology == "gateway_standalone"
     assert effect == ("heating_stops" if standalone else "thermostat_takes_over")
+    # SB-16: stand-alone, a Home Assistant outage of more than about a minute stops heating too
+    # (the gateway's CS lapses); with a thermostat, the switch says nothing of it.
+    assert attributes.get("outage_effect") == ("heating_stops" if standalone else None)
     rig.flow = None
     rig.live()
     count = len(rig.gateway.calls)
@@ -4138,7 +4143,7 @@ async def _corrupt_store_file_hands_back_first(rig: Rig, storage: Path) -> None:
     )
     assert rig.gateway.calls[:3] == HAND_BACK  # the first step hands back in full
     assert rig.gateway.setpoints()[-1] == EXPECTED  # then control takes the boiler afresh
-    assert issue(rig, "control_state_unreadable") is not None
+    assert issue(rig, "control_state_unreadable") is None  # SB-39: the hand-back confirmed
     assert entry.runtime_data.monitoring_since == entry.created_at.timestamp()
 
 
@@ -4155,7 +4160,7 @@ async def test_a_missing_control_store_of_an_entry_that_ran_hands_back_first(
     await set_up(rig, entry)
     await rig.advance(30)
     assert rig.gateway.calls == HAND_BACK
-    assert issue(rig, "control_state_unreadable") is not None
+    assert issue(rig, "control_state_unreadable") is None  # SB-39: the hand-back confirmed
     stored = stored_control(hass_storage, rig)  # written afresh, the hand-back confirmed
     assert (stored["controlling"], stored["hand_back_pending"]) == (False, False)
 
@@ -4176,7 +4181,24 @@ async def test_a_lost_control_store_without_control_hands_back_what_the_copy_owe
     await set_up(rig, entry)
     await rig.advance(20)
     assert number.writes == [DEFAULT_LOWEST, 50.0]
+    assert issue(rig, "control_state_unreadable") is None  # SB-39: the hand-back confirmed
+
+
+async def test_the_unreadable_notice_stays_while_its_hand_back_is_unconfirmed(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """SB-39: the control store is lost and the boiler does not show the hand-back: the notice
+    stays while it is owed, and goes once the hand-back shows."""
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.add_to_hass(rig.hass)
+    seed_main(hass_storage, entry, control={"controlling": False})
+    rig.gateway.ignore_release = True
+    await set_up(rig, entry)
+    await rig.advance(120)
     assert issue(rig, "control_state_unreadable") is not None
+    rig.gateway.ignore_release = False
+    await rig.advance(120)
+    assert issue(rig, "control_state_unreadable") is None
 
 
 def unit_state(**changes: Any) -> dict[str, Any]:
@@ -10399,7 +10421,7 @@ async def test_a_blocker_while_the_restore_waits_hands_back_and_tells_where_heat
 # pauses by cause and the flow's own age limit (P-89) ---------------------------------------------
 
 
-def closed_room(rig: Rig, zone: str, temperature: float) -> None:
+def closed_room(rig: Rig, zone: str, temperature: float, **extra: Any) -> None:
     """VT keeps the zone off: valve closed, device off (as VT 10.4.0 shows it)."""
     rig.zones.set(
         zone,
@@ -10409,6 +10431,7 @@ def closed_room(rig: Rig, zone: str, temperature: float) -> None:
         valve_open_percent=0,
         on_percent=0.0,
         specific_states={"is_device_active": False},
+        **extra,
     )
 
 
@@ -10445,7 +10468,7 @@ async def test_a_cold_zone_vt_keeps_closed_raises_a_repair_issue(rig: Rig) -> No
     found = frost_issue(rig)
     assert found is not None
     assert found.translation_key == "frost_zone_closed"
-    assert found.severity is ir.IssueSeverity.WARNING
+    assert found.severity is ir.IssueSeverity.ERROR  # SB-27: a room left to freeze
     assert found.translation_placeholders == {"zones": "fake garage (4.0 °C)"}
     assert not heating(rig)
     assert rig.state("sensor", "control_state").state == "idle"
@@ -10471,6 +10494,63 @@ async def test_a_cold_zone_vt_keeps_closed_raises_a_repair_issue(rig: Rig) -> No
     assert frost_issue(rig) is None
     assert rig.state("sensor", "control_state").state == "frost"
     assert heating(rig)
+
+
+@pytest.mark.parametrize(
+    ("reasons", "key"),
+    [
+        ((None,), "frost_zone_closed"),
+        (("hvac_off_manual",), "frost_zone_closed"),
+        (("hvac_off_sleep_mode",), "frost_zone_closed"),
+        (("something_new",), "frost_zone_closed"),
+        ((42,), "frost_zone_closed"),
+        (("hvac_off_window_detection",), "frost_zone_closed_window"),
+        (("hvac_off_central_mode",), "frost_zone_closed_central_mode"),
+        (("hvac_off_safety_detection",), "frost_zone_closed_vt_function"),
+        (("hvac_off_auto_start_stop",), "frost_zone_closed_vt_function"),
+        (("hvac_off_window_detection", "hvac_off_window_detection"), "frost_zone_closed_window"),
+        (("hvac_off_window_detection", "hvac_off_manual"), "frost_zone_closed_mixed"),
+    ],
+)
+async def test_the_closed_zone_advice_follows_vts_reason(
+    rig: Rig, reasons: tuple[object, ...], key: str
+) -> None:
+    """SB-27: the advice is worded by VT's ``hvac_off_reason`` — "off" (or a reason unknown,
+    missing or of another VT version): VT's frost preset; an open window or VT's central mode:
+    the room stays unheated until VT opens it; rooms closed for different reasons: every
+    advice. An error-level issue whichever it is, and the boiler is not started for them."""
+    satisfied_room(rig)
+    rooms = [f"cold{index}" for index in range(len(reasons))]
+    for room, reason in zip(rooms, reasons, strict=True):
+        rig.zones.add(room)
+        closed_room(rig, room, 4.0, **({} if reason is None else {"hvac_off_reason": reason}))
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(10)
+    found = frost_issue(rig)
+    assert found is not None
+    assert found.translation_key == key
+    assert found.severity is ir.IssueSeverity.ERROR
+    assert not heating(rig)
+
+
+async def test_a_closed_zone_whose_reason_changes_is_advised_anew(rig: Rig) -> None:
+    """SB-27: the same room, the same temperature — the window closes, the user switches the
+    thermostat off: the issue is shown again with the new advice."""
+    rig.zones.add("garage")
+    satisfied_room(rig)
+    closed_room(rig, "garage", 4.0, hvac_off_reason="hvac_off_window_detection")
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(10)
+    found = frost_issue(rig)
+    assert found is not None
+    assert found.translation_key == "frost_zone_closed_window"
+    closed_room(rig, "garage", 4.0, hvac_off_reason="hvac_off_manual")
+    await rig.advance(10)
+    found = frost_issue(rig)
+    assert found is not None
+    assert found.translation_key == "frost_zone_closed"
 
 
 async def test_no_closed_zone_issue_during_recognition(rig: Rig) -> None:
@@ -10816,7 +10896,8 @@ async def test_a_pauses_causes_come_back_after_a_restart(
 async def test_a_fixed_circuit_is_judged_by_its_own_flow_sensor(rig: Rig, own_sensor: bool) -> None:
     """Decision 10: the circuit's own flow sensor where mapped — here 46 °C behind a
     thermostatic valve while the boiler's flow reads 35 °C; without one, a passive fixed circuit
-    is not measured: the alarm is off, with its reason."""
+    is not measured: the alarm's feature is inactive and its entity not created (SB-32) — never
+    "OK" for a circuit no reading can show."""
     circuit: dict[str, Any] = {"control": "passive_fixed", "fixed_temperature": 35, "max_flow": 40}
     if own_sensor:
         circuit["flow_entity"] = "sensor.floor_flow"
@@ -10828,13 +10909,18 @@ async def test_a_fixed_circuit_is_judged_by_its_own_flow_sensor(rig: Rig, own_se
     entry = add_entry(rig, with_circuit(rig, circuit))
     await set_up(rig, entry)
     await rig.advance(660, step=30)
-    alarm = rig.state("binary_sensor", "alarm_circuit_too_hot")
     if own_sensor:
+        alarm = rig.state("binary_sensor", "alarm_circuit_too_hot")
         assert alarm.state == "on"
         assert entry.runtime_data.data.alarms[AlarmKind.CIRCUIT_TOO_HOT].value == 46.0
     else:
-        assert alarm.state == "off"
-        assert alarm.attributes["reason"] == "circuit_not_measured"
+        found = er.async_get(rig.hass).async_get_entity_id(
+            "binary_sensor", DOMAIN, f"{entry.entry_id}_alarm_circuit_too_hot"
+        )
+        assert found is None
+        feature = entry.runtime_data.data.features[Feature.CIRCUIT_OVERSHOOT_ALARM]
+        assert feature.status is FeatureStatus.INACTIVE
+        assert feature.missing == ("flow",)
 
 
 async def test_a_reset_once_the_unit_stops_does_nothing(rig: Rig) -> None:
