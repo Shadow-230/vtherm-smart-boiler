@@ -294,6 +294,7 @@ from .transport.writers import (
     writer_services,
 )
 from .units import parse_binary
+from .vtherm_link import VThermLink
 
 if TYPE_CHECKING:
     from .coordinator import SmartBoilerCoordinator
@@ -482,6 +483,46 @@ def _cancelled_from_outside() -> bool:
     rather than a ``CancelledError`` raised inside a call it made."""
     task = asyncio.current_task()
     return task is not None and task.cancelling() > 0
+
+
+async def async_resume_left_learning(hass: HomeAssistant, stored: Mapping[str, Any]) -> list[str]:
+    """PB-51: at the entry's removal, SmartPI's learning in the zones a stored control state
+    left paused — or still resuming — is switched back on and read back from SmartPI's flag;
+    the zones whose learning is not seen on are returned, by name. Nothing else is written."""
+    zones = sorted(
+        {
+            str(zone)
+            for key in ("paused", "resuming")
+            if isinstance(stored.get(key), Mapping)
+            for zone in stored[key]
+        }
+    )
+
+    async def resume(zone_id: str) -> None:
+        try:
+            async with asyncio.timeout(LEARNING_TIMEOUT_S):
+                await hass.services.async_call(
+                    SMARTPI_DOMAIN,
+                    SMARTPI_SERVICE,
+                    {"entity_id": zone_id, "learning_enabled": True},
+                    blocking=True,
+                )
+        except asyncio.CancelledError:
+            if _cancelled_from_outside():
+                raise
+            _LOGGER.warning("Could not resume SmartPI learning of %s at the removal", zone_id)
+        except Exception as err:  # read back below whatever the call reported
+            _LOGGER.warning(
+                "Could not resume SmartPI learning of %s at the removal: %s", zone_id, err
+            )
+
+    await asyncio.gather(*(resume(zone_id) for zone_id in zones))
+    link = VThermLink(hass, zones)
+    return [
+        link.zone_name(zone_id)
+        for zone_id in zones
+        if link.zone_algorithm(zone_id).smartpi_learning is not True
+    ]
 
 
 def _local_minute(t: float) -> str:
@@ -1936,7 +1977,7 @@ class ControlUnit:
         unknown = self._follow_unknown_zones(now, zones)
         self._follow_no_zone_known(now, out.decision)
         self._follow_read_back_wait(now, out.decision.reasons)
-        self._follow_decision_alarms(out, monitor_failed)
+        self._follow_decision_alarms(now, out, monitor_failed)
         self._follow_heat_sign(now, snapshot, out, dhw)
         self._follow_link_issue()
         ignored = self._follow_target_alarms(out)
@@ -2102,7 +2143,7 @@ class ControlUnit:
         elif not self.enabled:
             self._delete_hand_back_issue(HAND_BACK_LINK)
 
-    def _follow_decision_alarms(self, out: LoopOutput, monitor_failed: bool) -> None:
+    def _follow_decision_alarms(self, now: float, out: LoopOutput, monitor_failed: bool) -> None:
         """The alarms the decision sets or clears, and those its guard events raise."""
         session = self._session
         decision = out.decision
@@ -2128,7 +2169,7 @@ class ControlUnit:
             (self.enabled and out.relay_unreachable, ControlAlarm.RELAY_UNREACHABLE),
             (out.decision.frost_stuck, ControlAlarm.FROST_NOT_WARMING),  # heating goes on
             (out.decision.correction_at_limit, ControlAlarm.CORRECTION_AT_LIMIT),  # information
-            (self._outdoor_suspect(), ControlAlarm.OUTDOOR_SENSOR_SUSPECT),  # left out
+            (self._outdoor_suspect(now), ControlAlarm.OUTDOOR_SENSOR_SUSPECT),  # left out
             (monitor_failed, ControlAlarm.MONITOR_FAILED),  # a blocker: control is handed back
         ):
             if flagged:
@@ -3087,9 +3128,10 @@ class ControlUnit:
         never be seen to get through, so control does not take the boiler (P-21)."""
         return self.options.write_path not in OTGW_PATHS or self._confirmed() is not None
 
-    def _outdoor_suspect(self) -> bool:
-        """The monitor's check found the outdoor sensor stuck, or far from the weather."""
-        check = getattr(self._coordinator.analysis, "outdoor", None)
+    def _outdoor_suspect(self, now: float) -> bool:
+        """The monitor's check found the outdoor sensor stuck, or far from the weather — from an
+        analysis recent enough to judge by (PB-18)."""
+        check = self._coordinator.outdoor_check(now)
         return check is not None and check.status in (OutdoorStatus.STUCK, OutdoorStatus.DEVIATES)
 
     def _hand_back_alarms(self) -> tuple[str, ...]:

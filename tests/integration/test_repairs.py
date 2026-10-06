@@ -59,3 +59,46 @@ async def test_a_release_by_hand_without_an_entry_store_writes_the_control_store
     assert hass_storage[key]["data"]["controlling"] is False
     assert hass_storage[key]["data"]["hand_back_pending"] is False
     assert f"{DOMAIN}.{entry.entry_id}" not in hass_storage
+
+
+@pytest.mark.parametrize(
+    ("state", "locked", "busy"),
+    [
+        ("setup_in_progress", False, True),
+        ("unload_in_progress", False, True),
+        ("not_loaded", True, True),  # between a reload's unload and its setup
+        ("not_loaded", False, False),
+    ],
+)
+async def test_a_release_confirmed_while_the_entry_is_busy_is_refused(
+    hass: HomeAssistant, hass_storage: dict[str, Any], state: str, locked: bool, busy: bool
+) -> None:
+    """PB-56: a release confirmed while the entry is set up, unloaded or reloaded wrote the
+    stores directly, then the entry's own save overwrote them and the debt came back. The flow
+    is aborted then, asking to retry, and nothing is written; an idle entry (negative) is
+    released as before."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", options={})
+    entry.add_to_hass(hass)
+    entry.mock_state(hass, ConfigEntryState(state))
+    key = f"{DOMAIN}.{entry.entry_id}.control"
+    owed = {"controlling": True, "hand_back_pending": True}
+    hass_storage[key] = {"version": 1, "key": key, "data": dict(owed)}
+    flow = ReturnedByHandFlow(entry.entry_id)
+    flow.hass = hass
+    if locked:
+        await entry.setup_lock.acquire()
+    try:
+        result = await flow.async_step_confirm({})
+    finally:
+        if locked:
+            entry.setup_lock.release()
+    await hass.async_block_till_done()
+    if busy:
+        assert result["type"] == "abort"
+        assert result["reason"] == "entry_busy"
+        assert hass_storage[key]["data"] == owed
+    else:
+        assert result["type"] == "create_entry"
+        assert hass_storage[key]["data"]["hand_back_pending"] is False

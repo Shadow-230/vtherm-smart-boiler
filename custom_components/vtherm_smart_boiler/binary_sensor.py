@@ -190,23 +190,20 @@ class OutdoorSensorProblem(SmartBoilerEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        analysis = self.coordinator.data.analysis
-        if analysis is None or analysis.outdoor is None:
+        check = self.coordinator.outdoor_check(self.coordinator.data.now)
+        if check is None:
             return None
-        status = analysis.outdoor.status
+        status = check.status
         if status is OutdoorStatus.UNKNOWN:
             return None
         return status is not OutdoorStatus.OK
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        analysis = self.coordinator.data.analysis
-        if analysis is None or analysis.outdoor is None:
+        check = self.coordinator.outdoor_check(self.coordinator.data.now)
+        if check is None:
             return {}
-        return {
-            "status": analysis.outdoor.status.value,
-            "mean_difference": analysis.outdoor.mean_difference,
-        }
+        return {"status": check.status.value, "mean_difference": check.mean_difference}
 
 
 class ControlAlarmSensor(ControlEntity, BinarySensorEntity):

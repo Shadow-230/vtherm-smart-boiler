@@ -105,6 +105,9 @@ class ZoneAlgorithm:
     smartpi_learning: bool | None = None  # SmartPI's learning flag; None: not SmartPI
     auto_tpi: bool = False  # Auto-TPI learning is on (a session or continuous kext)
     used_by_central_boiler: bool | None = None
+    # PB-47: VT's state was read — the zone known and its configuration published; else none
+    # of the above can be told (VT not started, the zone unknown or unavailable).
+    known: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -593,6 +596,10 @@ class VThermLink:
             return ZoneAlgorithm()
         configuration = state.attributes.get("configuration")
         specific = state.attributes.get("specific_states")
+        known = isinstance(configuration, dict) and state.state not in (
+            STATE_UNAVAILABLE,
+            STATE_UNKNOWN,
+        )
         configuration = configuration if isinstance(configuration, dict) else {}
         specific = specific if isinstance(specific, dict) else {}
         smartpi = specific.get("smartpi_learning_enabled")
@@ -605,6 +612,7 @@ class VThermLink:
             auto_tpi="on"
             in (specific.get("auto_tpi_state"), specific.get("auto_tpi_continuous_kext")),
             used_by_central_boiler=used if isinstance(used, bool) else None,
+            known=known,
         )
 
     def vt_central_boiler_configured(self) -> bool | None:

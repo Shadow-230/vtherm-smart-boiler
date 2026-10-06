@@ -592,6 +592,61 @@ async def test_a_renamed_entity_is_followed(
     assert len(setups) == 2
 
 
+@pytest.mark.parametrize("change", ["rename", "remove"])
+async def test_a_registry_change_during_setup_is_followed(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    """PB-55: the registry follower is registered last, so a rename or removal reaching Home
+    Assistant while the entry was set up was never followed nor reported — the options kept an
+    ID no longer in the registry. Found at the end of setup now: a rename followed (one more
+    setup), a removal reported. Negative: a named entity outside the registry (the fire
+    signal's plain state) changes nothing."""
+    from homeassistant.helpers import issue_registry as ir
+
+    import custom_components.vtherm_smart_boiler as plugin
+
+    registry = er.async_get(hass)
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    flow = registry.async_get_or_create(
+        "sensor", "fake_boiler", "flow", suggested_object_id="fake_boiler_flow"
+    )
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    real = plugin._async_migrate_zone_unique_ids
+    done: list[bool] = []
+
+    async def meanwhile(*args: Any) -> None:
+        if not done:  # the first setup only
+            done.append(True)
+            if change == "rename":
+                registry.async_update_entity(flow.entity_id, new_entity_id="sensor.boiler_flow")
+            else:
+                registry.async_remove(flow.entity_id)
+        await real(*args)
+
+    monkeypatch.setattr(plugin, "_async_migrate_zone_unique_ids", meanwhile)
+    setups = count_setups(monkeypatch)
+    await setup(hass, entry)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert entry.state is ConfigEntryState.LOADED
+    removed = ir.async_get(hass).async_get_issue(
+        DOMAIN, f"entity_removed_{entry.entry_id}_{flow.entity_id}"
+    )
+    if change == "rename":
+        assert entry.options["signals"]["flow"] == "sensor.boiler_flow"
+        assert len(setups) == 2  # the reload the options' save starts
+        assert removed is None
+    else:
+        assert entry.options["signals"]["flow"] == flow.entity_id
+        assert len(setups) == 1
+        assert removed is not None
+    assert entry.options["signals"]["flame"] == boiler.entity(Signal.FLAME)
+    other = ir.async_get(hass).async_get_issue(
+        DOMAIN, f"entity_removed_{entry.entry_id}_{boiler.entity(Signal.FLAME)}"
+    )
+    assert other is None
+
+
 async def test_other_registry_changes_are_not_followed(
     hass: HomeAssistant, zones: FakeZones, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1752,6 +1807,136 @@ async def test_home_assistants_downtime_is_unknown_after_a_restart(
     assert main["down"] == [[STOPPED, now]]
 
 
+async def test_home_assistants_stop_writes_the_last_run_record(
+    hass: HomeAssistant, hass_storage: dict[str, Any], freezer
+) -> None:
+    """PB-57: Home Assistant's stop unloads no entry, so the record was written only every ten
+    minutes — up to ten minutes before each restart counted as downtime. A shutdown job writes
+    it at the stop, and stays in Home Assistant's list while the jobs run; an unload without a
+    stop removes it (negative: nothing of the entry left behind)."""
+    freezer.move_to(datetime(2026, 2, 1, tzinfo=UTC))
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    name = f"{DOMAIN} last run"
+
+    def ours() -> list[Any]:
+        return [j for j in hass._shutdown_jobs if j.job.name == name]
+
+    assert len(ours()) == 1
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert ours() == []
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len(ours()) == 1
+    freezer.tick(5 * 60)  # before the ten-minute write
+    stop = datetime(2026, 2, 1, 0, 5, tzinfo=UTC).timestamp()
+    await ours()[0].job.target()
+    await hass.async_block_till_done()
+    assert hass_storage[_alive_key(entry)]["data"]["alive_at"] == pytest.approx(stop)
+    assert len(ours()) == 1  # the job does not remove itself while the jobs run
+
+
+@pytest.mark.parametrize("platforms_unload", [False, True])
+async def test_the_coordinator_stops_whatever_the_platforms_report(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, platforms_unload: bool
+) -> None:
+    """PB-59: a failed platform unload left the coordinator running — timers, the state
+    listener, store writes and notices — in FAILED_UNLOAD until a restart. It stops either
+    way; the platforms' answer is still Home Assistant's (negative: a clean unload)."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    assert coordinator._unsubs
+
+    async def unload_platforms(*_args: Any) -> bool:
+        return platforms_unload
+
+    monkeypatch.setattr(hass.config_entries, "async_unload_platforms", unload_platforms)
+    assert await hass.config_entries.async_unload(entry.entry_id) is platforms_unload
+    expected = ConfigEntryState.NOT_LOADED if platforms_unload else ConfigEntryState.FAILED_UNLOAD
+    assert entry.state is expected
+    assert coordinator._stopped
+    assert coordinator._unsubs == []
+    assert not [j for j in hass._shutdown_jobs if j.job.name == f"{DOMAIN} last run"]
+
+
+async def test_a_control_save_writes_the_entry_store_slowly_unless_the_hold_changed(
+    hass: HomeAssistant, freezer
+) -> None:
+    """PB-60: the entry store — a year of day summaries — was rewritten within 120 s of
+    almost every control save. Its copy of the control state now waits the slow delay while
+    the boiler's hold and an owed hand-back stay as they are; a change of them is written at
+    once (negative)."""
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.vtherm_smart_boiler.coordinator import FACTOR_SAVE_DELAY_S
+
+    freezer.move_to(datetime(2026, 2, 1, tzinfo=UTC))
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    now = dt_util.utcnow().timestamp()
+    for save in ("scheduled", "now"):
+        await coordinator.async_save_now()
+        assert coordinator._save_due is None
+        if save == "scheduled":
+            coordinator.schedule_control_save()
+        else:
+            assert await coordinator.async_save_control_now()
+        assert coordinator._save_due == pytest.approx(now + FACTOR_SAVE_DELAY_S)
+    await coordinator.async_save_now()
+    coordinator._main_owed = (True, True)  # the copy says held: the hold changed
+    coordinator.schedule_control_save()
+    assert coordinator._save_due == pytest.approx(now)
+
+
+@pytest.mark.parametrize("polling", [False, True])
+async def test_the_quick_path_follows_its_own_clock(
+    hass: HomeAssistant, freezer, polling: bool
+) -> None:
+    """PB-62: the monitor's 30-s refresh ran only while an entity listened and polling was
+    enabled for the entry; with polling disabled the monitor — and V6's failure window — ran
+    only on state changes. It runs on the plugin's own clock either way, once per tick (not
+    twice with polling on); after the unload it stops (negative)."""
+    from homeassistant.util import dt as dt_util
+
+    freezer.move_to(datetime(2026, 2, 1, tzinfo=UTC))
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    options = entry_for(boiler).options
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=options, pref_disable_polling=not polling
+    )
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    refreshes: list[float] = []
+    real = coordinator._async_update_data
+
+    async def counted() -> Any:
+        refreshes.append(dt_util.utcnow().timestamp())
+        return await real()
+
+    coordinator._async_update_data = counted
+    for _ in range(3):
+        freezer.tick(30)
+        async_fire_time_changed(hass, dt_util.utcnow())
+        await hass.async_block_till_done()
+    assert len(refreshes) == 3
+    assert coordinator.data.now == pytest.approx(dt_util.utcnow().timestamp())
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    refreshes.clear()
+    freezer.tick(60)
+    async_fire_time_changed(hass, dt_util.utcnow())
+    await hass.async_block_till_done()
+    assert refreshes == []
+
+
 async def test_a_dev_builds_alive_at_is_read_once(
     hass: HomeAssistant, hass_storage: dict[str, Any], freezer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1977,6 +2162,77 @@ async def test_an_unrelated_option_keeps_the_stored_days(
     assert verdict == ("not_worth_it" if kept else "not_enough_data")
 
 
+async def test_a_renamed_signal_keeps_the_stored_days(
+    hass: HomeAssistant, hass_storage: dict[str, Any], freezer
+) -> None:
+    """PB-17: the day-summary key held the entity IDs, so a rename the plugin follows (P-19)
+    dropped every stored day from the verdict. It holds the registry entry now: the flame
+    entity renamed, the days still count; a different entity mapped instead does not keep
+    them (negative)."""
+    from custom_components.vtherm_smart_boiler.config import EntryConfig
+    from custom_components.vtherm_smart_boiler.coordinator import summary_settings
+    from custom_components.vtherm_smart_boiler.core.daily import settings_key
+
+    freezer.move_to(datetime(2026, 2, 1, tzinfo=UTC))
+    now = datetime(2026, 2, 1, tzinfo=UTC).timestamp()
+    registry = er.async_get(hass)
+    flame = registry.async_get_or_create(
+        "binary_sensor", "fake_boiler", "flame", suggested_object_id="fake_boiler_flame"
+    )
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.RETURN))
+    assert flame.entity_id == boiler.entity(Signal.FLAME)
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0, Signal.RETURN: 28.0})
+    entry = entry_for(boiler)
+
+    def source(entity: str) -> str:
+        return flame.id if entity == flame.entity_id else entity
+
+    stored = settings_key(summary_settings(EntryConfig.from_options(entry.options), source))
+    assert stored != _settings_of(entry)  # keyed on the registry entry, not the entity ID
+    key = f"{DOMAIN}.{entry.entry_id}"
+    hass_storage[key] = {
+        "version": 1,
+        "key": key,
+        "data": {
+            "monitoring_since": now - 30 * DAY,
+            "daily": _stored_days(now - 20 * DAY, 20, stored),
+        },
+    }
+    await setup(hass, entry)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert entry.runtime_data.settings_key == stored
+    registry.async_update_entity(flame.entity_id, new_entity_id="binary_sensor.burner")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert entry.options["signals"]["flame"] == "binary_sensor.burner"
+    hass.states.async_set("binary_sensor.burner", "off")
+    coordinator = entry.runtime_data
+    assert coordinator.settings_key == stored
+    await analyse_now(coordinator)
+    assert coordinator.analysis.verdict.verdict.value == "not_worth_it"
+    # Negative: another entity in its place is another source — the days no longer count.
+    signals = dict(entry.options["signals"]) | {"flame": "binary_sensor.other_flame"}
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "signals": signals})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert entry.runtime_data.settings_key != stored
+
+
+@pytest.mark.parametrize(("meter", "kept"), [(True, True), (False, False)])
+def test_gas_rates_shape_the_days_only_without_a_meter(
+    hass: HomeAssistant, meter: bool, kept: bool
+) -> None:
+    """PB-17: with a gas meter the gas comes from it, so a gas rate entered keeps the stored
+    days; without one the rates give the gas, and a changed rate does not (negative)."""
+    signals = (Signal.FLAME, Signal.GAS_METER) if meter else (Signal.FLAME, Signal.MODULATION)
+    entry = entry_for(FakeBoiler(hass, signals))
+    rates = {"gas_at_min_power": 0.4, "gas_at_max_power": 2.5}
+    changed = MockConfigEntry(
+        domain=DOMAIN,
+        data={},
+        options={**entry.options, "parameters": {**entry.options["parameters"], **rates}},
+    )
+    assert (_settings_of(changed) == _settings_of(entry)) is kept
+
+
 async def test_burns_are_classified_per_analysis(
     hass: HomeAssistant, freezer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2053,6 +2309,76 @@ async def test_burns_are_classified_per_analysis(
     assert (starts.active, starts.reason) == (True, HELD)
     release.set()
     await hass.async_block_till_done(wait_background_tasks=True)
+
+
+async def test_trends_and_the_outdoor_check_age_with_the_analysis(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PB-18: the trend alarms and the outdoor check came from the last successful analysis
+    with no age — an analysis failing at every run left them at their last state for good.
+    Older than three runs, each trend is not judged: it holds for an hour after that
+    analysis, then is unknown; the outdoor check likewise; the failing analysis is shown."""
+    from dataclasses import replace
+
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.vtherm_smart_boiler import coordinator as coordinator_module
+    from custom_components.vtherm_smart_boiler.core.alarms import (
+        HELD,
+        UNKNOWN_INPUT,
+        Alarm,
+        AlarmKind,
+    )
+    from custom_components.vtherm_smart_boiler.core.signal_check import (
+        OutdoorCheck,
+        OutdoorStatus,
+    )
+
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    now = dt_util.utcnow().timestamp()
+    assert coordinator.analysis is not None
+    kind = AlarmKind.PRESSURE_FALLING
+    stuck = OutdoorCheck(OutdoorStatus.STUCK)
+
+    def analysed(age: float) -> None:
+        at = now - age
+        trend = Alarm(kind, True, limit=0.2, known_at=at)
+        coordinator.analysis = replace(
+            coordinator.analysis, at=at, trends={kind: trend}, outdoor=stuck
+        )
+
+    analysed(0)
+    assert coordinator.trends(now)[kind].active is True
+    assert coordinator.outdoor_check(now) is stuck
+    analysed(3 * 300 + 1)  # stopped: not judged, held
+    held = coordinator.trends(now)[kind]
+    assert (held.active, held.reason) == (True, HELD)
+    assert coordinator.outdoor_check(now) is stuck
+    analysed(3600 + 1)  # an hour after it: unknown
+    gone = coordinator.trends(now)[kind]
+    assert (gone.active, gone.reason, gone.limit) == (None, UNKNOWN_INPUT, 0.2)
+    assert coordinator.outdoor_check(now) is None
+    # Negative: no analysis at all, nothing to show.
+    coordinator.analysis = None
+    assert coordinator.trends(now) == {}
+    assert coordinator.outdoor_check(now) is None
+    # The failing analysis is shown, and no longer once it works.
+    assert coordinator.analysis_failing is False
+
+    def broken(*args: Any, **kwargs: Any) -> Any:
+        raise ValueError("a data-dependent failure")
+
+    real = coordinator_module.analyse
+    monkeypatch.setattr(coordinator_module, "analyse", broken)
+    await analyse_now(coordinator)
+    assert coordinator.analysis_failing is True
+    monkeypatch.setattr(coordinator_module, "analyse", real)
+    await analyse_now(coordinator)
+    assert coordinator.analysis_failing is False
 
 
 @pytest.mark.parametrize("reported", [True, False])

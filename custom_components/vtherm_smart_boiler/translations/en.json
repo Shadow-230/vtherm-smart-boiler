@@ -2536,6 +2536,9 @@
             "title": "Handing the boiler back has not got through",
             "description": "The plugin cannot hand the boiler back: its setpoint entity, heating switch or gateway does not take it. It retries every minute; until it gets through, the boiler may keep the last value the plugin wrote. Check that the device is available.\n\nIf you have returned the boiler to its own control by hand — or the device is gone for good — confirm here: the plugin stops retrying and forgets what it owed, and the options accept another device. Confirm only once the boiler really runs on its own."
           }
+        },
+        "abort": {
+          "entry_busy": "The integration is being set up or reloaded just now, so nothing was changed. Wait a moment and confirm again."
         }
       }
     },
@@ -2562,6 +2565,10 @@
     "hand_back_owed_after_removal": {
       "title": "The boiler may still hold a value from VTherm Smart Boiler",
       "description": "The integration was removed before its hand-back reached the boiler. Return the boiler to its own control by hand — reset the setpoint entity, or clear the gateway's overrides — and then ignore this issue."
+    },
+    "learning_left_off_after_removal": {
+      "title": "SmartPI's learning may still be off in some zones",
+      "description": "The integration was removed while control had paused SmartPI's learning in these zones, and it could not be seen switched back on: {zones}. SmartPI keeps learning off until it is switched on — in SmartPI's own settings, or with its service \"set_smartpi_learning\". Switch it on there, and then ignore this issue."
     },
     "learning_not_paused": {
       "title": "The plugin cannot pause learning in some zones",

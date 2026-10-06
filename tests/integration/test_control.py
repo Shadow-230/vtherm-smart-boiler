@@ -1210,6 +1210,33 @@ async def test_auto_tpi_zones_that_cannot_learn_raise_a_repair_issue(rig: Rig) -
     )
 
 
+@pytest.mark.parametrize("state", ["unavailable", "heat"])
+async def test_an_ignored_learning_issue_outlives_a_zone_that_cannot_be_read(
+    rig: Rig, state: str
+) -> None:
+    """PB-47: a zone whose VT state was unknown — or whose configuration VT had not published
+    yet — deleted the Auto-TPI issue, raised anew once the zone was back: the user's "ignore"
+    was lost. The zone's last answer holds while it cannot be read. Negative: read again and
+    no longer blocked, the issue goes."""
+    configuration = {"proportional_function": "tpi", "is_used_by_central_boiler": True}
+    rig.zones.set("living", configuration=configuration, specific_states={"auto_tpi_state": "on"})
+    await start(rig)
+    assert rig.entry is not None
+    hass, coordinator = rig.hass, rig.entry.runtime_data
+    blocked = f"auto_tpi_blocked_{rig.entry.entry_id}"
+    ir.async_ignore_issue(hass, DOMAIN, blocked, True)
+    rig.zones.set("living", state=state)  # no configuration: cannot be read
+    coordinator.check_learning()
+    rig.zones.set("living", configuration=configuration, specific_states={"auto_tpi_state": "on"})
+    coordinator.check_learning()
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, blocked)
+    assert issue is not None
+    assert issue.dismissed_version is not None  # still ignored
+    rig.zones.set("living", configuration=configuration, specific_states={"auto_tpi_state": "off"})
+    coordinator.check_learning()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, blocked) is None
+
+
 def vt_central_unknown(rig: Rig) -> MockConfigEntry:
     """VT's central entry stuck in a failed setup with its central boiler on in its data: VT's
     central boiler cannot be ruled out (X7, P-20)."""
@@ -4444,6 +4471,95 @@ async def test_removing_an_entry_with_an_unreadable_store_raises_the_issue(
         assert found.is_persistent
     assert control_key(entry) not in hass_storage
     assert main_key(entry) not in hass_storage
+
+
+@pytest.mark.parametrize("lost", [False, True], ids=["control_store", "lost_control_store"])
+@pytest.mark.parametrize("resumes", [True, False], ids=["resumed", "left_off"])
+async def test_removing_the_entry_resumes_the_learning_it_left_paused(
+    rig: Rig, hass_storage: dict[str, Any], lost: bool, resumes: bool
+) -> None:
+    """PB-51: an entry removed while a SmartPI zone is paused had its resume tried only within
+    the stop's budget and never read back: a failure left the zone's learning off unseen. At
+    the removal it is resumed and read back; a zone still off is told, with an issue that
+    outlives the entry; one seen on is not (negative). PB-52: with the control store lost and
+    control gone from the options, the entry store copy's pauses are still read."""
+    from custom_components.vtherm_smart_boiler.coordinator import async_read_control_state
+    from custom_components.vtherm_smart_boiler.vtherm_link import VThermLink
+
+    hass = rig.hass
+    zone = rig.zones.entities["living"]
+    calls: list[tuple[str, bool]] = []
+
+    def smartpi(enabled: bool) -> None:
+        rig.zones.set(
+            "living",
+            configuration={"proportional_function": "smartpi"},
+            specific_states={"smartpi_learning_enabled": enabled},
+        )
+
+    async def set_learning(call: ServiceCall) -> None:
+        calls.append((call.data["entity_id"], call.data["learning_enabled"]))
+        if not resumes:
+            raise HomeAssistantError("SmartPI refused")
+        smartpi(call.data["learning_enabled"])
+
+    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    smartpi(False)
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=without_control(options(rig.zones))
+    )
+    entry.add_to_hass(hass)
+    paused = {"paused": {zone: 1000.0}}
+    if lost:
+        seed_main(hass_storage, entry, control=paused)
+        seed_control(hass_storage, entry, "damaged")
+    else:
+        seed_main(hass_storage, entry)
+        seed_control(hass_storage, entry, paused)
+    read = await async_read_control_state(hass, entry.entry_id, entry.options)
+    assert read.state.get("paused") == {zone: 1000.0}
+    assert not read.owed
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert calls == [(zone, True)]
+    found = ir.async_get(hass).async_get_issue(
+        DOMAIN, f"learning_left_off_after_removal_{entry.entry_id}"
+    )
+    assert (found is not None) is not resumes
+    if found is not None:
+        assert found.is_persistent
+        name = VThermLink(hass, [zone]).zone_name(zone)
+        assert found.translation_placeholders == {"zones": name}
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, f"hand_back_owed_after_removal_{entry.entry_id}")
+        is None
+    )
+
+
+async def test_removing_an_entry_with_nothing_paused_calls_no_smartpi(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """PB-51, negative: no pause stored, no SmartPI call and no learning issue."""
+    hass = rig.hass
+    calls: list[ServiceCall] = []
+
+    async def set_learning(call: ServiceCall) -> None:
+        calls.append(call)
+
+    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.add_to_hass(hass)
+    seed_main(hass_storage, entry)
+    seed_control(hass_storage, entry, {"paused": {}, "resuming": "not a mapping"})
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert calls == []
+    assert (
+        ir.async_get(hass).async_get_issue(
+            DOMAIN, f"learning_left_off_after_removal_{entry.entry_id}"
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize("section", [True, False], ids=["control", "monitor_only"])

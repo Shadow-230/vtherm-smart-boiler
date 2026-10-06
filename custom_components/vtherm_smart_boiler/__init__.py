@@ -79,6 +79,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
                 "subject": subject,
             },
         ) from err
+    # PB-55: the registry entry of every entity the options name, as setup starts — the follower
+    # is registered last, so a rename or removal during setup is found by these at its end.
+    registered = _registry_ids(hass, entry)
     coordinator = SmartBoilerCoordinator(hass, entry, config)
     forwarded = False
     try:
@@ -112,7 +115,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
         entry.async_on_unload(entry.add_update_listener(_async_options_updated))
         coordinator.async_start_background()
         # Renames and removals are followed only for an entry that runs (P-19).
-        entry.async_on_unload(_follow_entities(hass, entry, coordinator))
+        entry.async_on_unload(_follow_entities(hass, entry, coordinator, registered))
         _forget_not_heated(hass, entry)  # the plugin runs: a failed setup's issue goes (SB-10)
         # Last, once nothing can fail: a failed setup removes nothing from the registry (PB-07).
         _remove_stale_entities(hass, entry, coordinator)
@@ -281,8 +284,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry)
     for unit in _units(coordinator):
         await unit.async_stop()  # hand back before anything else goes
     feature_manager.async_detach(hass, coordinator)
-    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unloaded:
+    try:
+        unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    finally:
+        # PB-59: the units have handed back; a platform that failed to unload must not leave
+        # the timers, listeners, store writes and notices running until a restart.
         await coordinator.async_stop()
     return unloaded
 
@@ -349,6 +355,23 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     read = await async_read_control_state(
         hass, entry.entry_id, entry.options, main=store, control=control
     )
+    # PB-51: SmartPI zones left paused are resumed and read back; any still off is told, with
+    # an issue that outlives the entry.
+    await async_import_module(hass, f"{__package__}.control")
+    from .control import async_resume_left_learning
+
+    left = await async_resume_left_learning(hass, read.state)
+    if left:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            f"learning_left_off_after_removal_{entry.entry_id}",
+            is_fixable=False,
+            is_persistent=True,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="learning_left_off_after_removal",
+            translation_placeholders={"zones": ", ".join(left)},
+        )
     if read.owed:
         ir.async_create_issue(
             hass,
@@ -605,8 +628,25 @@ async def _async_migrate_zone_unique_ids(
     await er.async_migrate_entries(hass, entry.entry_id, migrate)
 
 
+def _registry_ids(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, str]:
+    """Each entity the options name that is in the entity registry, with its registry entry."""
+    from homeassistant.helpers import entity_registry as er
+
+    from .config import named_entities
+
+    registry = er.async_get(hass)
+    return {
+        entity: found.id
+        for entity in named_entities(entry.options)
+        if (found := registry.async_get(entity)) is not None
+    }
+
+
 def _follow_entities(
-    hass: HomeAssistant, entry: ConfigEntry, coordinator: SmartBoilerCoordinator
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordinator: SmartBoilerCoordinator,
+    registered: Mapping[str, str] | None = None,
 ) -> Callable[[], None]:
     """P-19 (follow, provisional, K4): every entity the options name — and, for a unit that
     only hands back, the options the boiler was taken with — is followed in the entity registry.
@@ -648,7 +688,52 @@ def _follow_entities(
         else:  # registered again: back in Home Assistant
             ir.async_delete_issue(hass, DOMAIN, _removed_issue_id(entry.entry_id, entity))
 
+    # PB-55: what changed while the entry was set up, before this listener — found through the
+    # registry entries noted as setup began (``registered``): followed or reported as above.
+    registry = er.async_get(hass)
+    missed: list[tuple[str, str]] = []
+    for entity, registry_id in (registered or {}).items():
+        found = registry.entities.get_entry(registry_id)
+        if found is None:
+            _report_removed(hass, entry, entity, named.get(entity, ()))
+        elif found.entity_id != entity:
+            missed.append((entity, found.entity_id))
+    if missed:
+        _follow_once_set_up(hass, entry, coordinator, missed)
     return async_track_entity_registry_updated_event(hass, list(named), changed)
+
+
+def _follow_once_set_up(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordinator: SmartBoilerCoordinator,
+    renames: list[tuple[str, str]],
+) -> None:
+    """PB-55: renames found at the end of setup are followed — an options save, so a reload —
+    only once the entry is loaded and the integration set up: Home Assistant does not reload an
+    entry whose setup is still running, nor one of an integration it is still setting up. An
+    entry unloaded or set up again meanwhile follows nothing: its own setup looks again."""
+    from homeassistant.config_entries import ConfigEntryState
+    from homeassistant.core import callback
+    from homeassistant.setup import async_when_setup
+
+    done = False
+
+    async def follow(_hass: HomeAssistant, _component: str) -> None:
+        if entry.state is ConfigEntryState.LOADED and entry.runtime_data is coordinator:
+            _follow_renames(hass, entry, coordinator, renames)
+
+    @callback
+    def loaded() -> None:
+        nonlocal done
+        if done or entry.state is not ConfigEntryState.LOADED:
+            return
+        done = True
+        # Not removed while Home Assistant goes through the listeners: at the next turn.
+        hass.loop.call_soon(unsubscribe)
+        async_when_setup(hass, DOMAIN, follow)
+
+    unsubscribe = entry.async_on_state_change(loaded)
 
 
 def _named_entities(

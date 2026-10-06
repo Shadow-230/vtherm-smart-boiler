@@ -2536,6 +2536,9 @@
             "title": "Oddanie kotła nie dotarło",
             "description": "Wtyczka nie może oddać kotła: encja nastawy, przełącznik grzania albo bramka tego nie przyjmuje. Ponawia co minutę; dopóki oddanie nie dotrze, kocioł może trzymać ostatnią wartość zapisaną przez wtyczkę. Sprawdź, czy urządzenie jest dostępne.\n\nJeśli przywróciłeś kotłu własne sterowanie ręcznie — albo urządzenia nie ma już na dobre — potwierdź tutaj: wtyczka przestanie ponawiać i zapomni, co była winna, a opcje przyjmą inne urządzenie. Potwierdź dopiero, gdy kocioł naprawdę działa sam."
           }
+        },
+        "abort": {
+          "entry_busy": "Integracja właśnie się uruchamia albo przeładowuje, więc niczego nie zmieniono. Odczekaj chwilę i potwierdź ponownie."
         }
       }
     },
@@ -2562,6 +2565,10 @@
     "hand_back_owed_after_removal": {
       "title": "Kocioł może nadal trzymać wartość z VTherm Smart Boiler",
       "description": "Integrację usunięto, zanim oddanie sterowania dotarło do kotła. Przywróć kotłu własne sterowanie ręcznie — ustaw na nowo encję nastawy albo wyczyść nadpisania bramki — a potem zignoruj to zgłoszenie."
+    },
+    "learning_left_off_after_removal": {
+      "title": "Nauka SmartPI może być nadal wyłączona w części stref",
+      "description": "Integrację usunięto, gdy sterowanie miało wstrzymaną naukę SmartPI w tych strefach, i nie widać, by nauka znów się włączyła: {zones}. SmartPI trzyma naukę wyłączoną, dopóki się jej nie włączy — w ustawieniach samego SmartPI albo jego usługą „set_smartpi_learning”. Włącz ją tam, a potem zignoruj to zgłoszenie."
     },
     "learning_not_paused": {
       "title": "Wtyczka nie może wstrzymać nauki w części stref",

@@ -30,9 +30,25 @@ class ReturnedByHandFlow(RepairsFlow):
 
     async def async_step_confirm(self, user_input: dict[str, str] | None = None) -> FlowResult:
         if user_input is not None:
+            if entry_busy(self.hass, self._entry_id):
+                # PB-56: the stores written now would be overwritten by the unload's or the
+                # setup's own save, and the debt would come back: the user is asked to retry.
+                return self.async_abort(reason="entry_busy")
             await async_release(self.hass, self._entry_id)
             return self.async_create_entry(data={})
         return self.async_show_form(step_id="confirm", data_schema=vol.Schema({}))
+
+
+def entry_busy(hass: HomeAssistant, entry_id: str) -> bool:
+    """The entry is being set up, unloaded or reloaded — Home Assistant holds its setup lock
+    for all of these — so its stores are about to be written by the entry itself."""
+    entry = hass.config_entries.async_get_entry(entry_id)
+    if entry is None:
+        return False
+    if entry.state in (ConfigEntryState.SETUP_IN_PROGRESS, ConfigEntryState.UNLOAD_IN_PROGRESS):
+        return True
+    lock = getattr(entry, "setup_lock", None)
+    return lock is not None and lock.locked()
 
 
 async def async_release(hass: HomeAssistant, entry_id: str) -> None:

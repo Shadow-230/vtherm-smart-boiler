@@ -317,3 +317,39 @@ async def test_get_forecasts_times_out_after_30_s(
     timed_out = [r for r in caplog.records if "hourly" in r.getMessage()]
     assert timed_out
     assert all(r.levelno == logging.DEBUG for r in timed_out)
+
+
+async def test_a_forecast_call_in_flight_at_the_unload_stores_nothing(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    """PB-58: a forecast call still running when the entry unloads (removed or reloaded)
+    stored its week afterwards — an orphan file after a removal, a second writer of the week
+    after a reload. Once stopped, the recorder stores nothing; a take after it asks nothing.
+    Negative: a flush alone (the tests above) does not stop it."""
+    import asyncio
+
+    asked: list[str] = []
+    called, release = asyncio.Event(), asyncio.Event()
+
+    async def handle(call: ServiceCall) -> dict[str, Any]:
+        asked.append(call.data["type"])
+        called.set()
+        await release.wait()
+        start = datetime.fromtimestamp(NOW, UTC)
+        return {WEATHER_ENTITY: {"forecast": canned_forecast("daily", start, 7, 3.0)}}
+
+    hass.services.async_register(
+        "weather", "get_forecasts", handle, supports_response=SupportsResponse.ONLY
+    )
+    hass.states.async_set(WEATHER_ENTITY, "cloudy", {"temperature_unit": "°C"})
+    recorder = ForecastRecorder(hass, "entry", WEATHER_ENTITY)
+    taking = asyncio.ensure_future(recorder.async_take(NOW))
+    await called.wait()
+    await recorder.async_stop()  # the unload
+    release.set()
+    assert await taking == 0
+    await hass.async_block_till_done()
+    assert _key(partition_of(NOW)) not in hass_storage
+    assert recorder.store.count() == 0
+    assert await recorder.async_take(NOW + 60) == 0
+    assert asked == ["hourly"]  # nothing asked after the stop

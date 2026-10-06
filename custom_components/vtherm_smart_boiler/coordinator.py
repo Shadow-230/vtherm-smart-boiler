@@ -62,6 +62,7 @@ from homeassistant.core import (
     CoreState,
     Event,
     EventStateChangedData,
+    HassJob,
     HomeAssistant,
     State,
     callback,
@@ -100,6 +101,8 @@ from .const import (
 from .control_config import Topology, WritePath, wall_thermostat_applies
 from .core.alarms import (
     HELD,
+    UNKNOWN_HOLD_S,
+    UNKNOWN_INPUT,
     Alarm,
     AlarmKind,
     Level,
@@ -114,6 +117,7 @@ from .core.alarms import (
     frequent_starts,
     low_flow,
     pressure_alarms,
+    settle,
     unstable_ignition,
 )
 from .core.analysis import Analysis, analyse
@@ -159,6 +163,7 @@ from .core.signal_check import (
     ControlKind,
     Feature,
     FeatureState,
+    OutdoorCheck,
     SignalHealth,
     SignalStatus,
     check_signals,
@@ -178,7 +183,7 @@ from .transport.entities import (
     weather_from_state,
 )
 from .vtherm_attributes import CentralMode
-from .vtherm_link import VtCapabilities, VThermLink
+from .vtherm_link import VtCapabilities, VThermLink, ZoneAlgorithm
 
 if TYPE_CHECKING:
     from .control import ControlUnit
@@ -233,6 +238,7 @@ RESETTABLE = (ParameterKey.LOSS_COEFFICIENT, ParameterKey.HEATING_THRESHOLD)
 # older than this (three missed runs) has stopped, and its burns judge nothing (provisional,
 # K4): the alarms hold their state for an hour, then show unknown (S-16).
 ANALYSIS_BURNS_MAX_AGE_S = 3 * SUMMARY_SECONDS
+ANALYSIS_JOB = "The periodic analysis"
 # P-95 (A11): the last-run record says when the plugin was last known to run (``alive_at``),
 # written this often (provisional, K4) and at a clean stop — to a small store of its own, not the
 # entry's store with a year of days in it (SD cards, eMMC). After a crash the downtime starts at
@@ -254,7 +260,8 @@ def _degrees(value: float | None) -> str:
 
 
 # An emitter factor is recomputed at every update while its zone heats: saved at this pace, so
-# the store is not rewritten every two minutes all winter.
+# the store is not rewritten every two minutes all winter. So is the entry store's copy of the
+# control state while the boiler's hold and an owed hand-back stay as they are (PB-60).
 FACTOR_SAVE_DELAY_S = 15 * 60
 MONITOR_REFRESH = "The monitor refresh"  # the quick path, as its failure and recovery are logged
 
@@ -309,7 +316,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             _LOGGER,
             config_entry=entry,
             name=DOMAIN,
-            update_interval=timedelta(seconds=TICK_SECONDS),
+            # PB-62: no polling of Home Assistant's own — it runs only while an entity listens
+            # and polling is enabled for the entry; the quick path has its own clock instead.
+            update_interval=None,
             request_refresh_debouncer=Debouncer(
                 hass, _LOGGER, cooldown=REFRESH_COOLDOWN_SECONDS, immediate=False
             ),
@@ -330,7 +339,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self.history = self._empty_history()
         self.parameters = config.parameters
         # Days summarised with other settings no longer count (A4): the key of the current ones.
-        self.settings_key = settings_key(summary_settings(config))
+        self.settings_key = settings_key(summary_settings(config, self._registry_source))
         # Counts from the entry's creation (set when the store is read), so a lost store never
         # starts the monitoring period again.
         self.monitoring_since = dt_util.utcnow().timestamp()
@@ -371,6 +380,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._analysing = False
         # A lasting failure of a periodic job is logged once, with its trace, and its end once.
         self._failing: set[str] = set()
+        self._alive_stop_unsub: CALLBACK_TYPE | None = None
+        self._zone_algorithms: dict[str, ZoneAlgorithm] = {}  # the last read of each (PB-47)
         # The monitor's refreshes of the last ten minutes, each failed or not: control hands back
         # while they fail for five (V6); and the first failure of the current streak, shown.
         self._refreshes = OutageWindow()
@@ -478,6 +489,16 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 self.hass, self._async_alive_tick, timedelta(seconds=ALIVE_SAVE_S)
             )
         )
+        self._unsubs.append(
+            async_track_time_interval(
+                self.hass, self._async_quick_tick, timedelta(seconds=TICK_SECONDS)
+            )
+        )
+        # PB-57: Home Assistant's stop unloads no entry, so the record is also written from a
+        # shutdown job — the downtime of a clean stop starts at the stop.
+        self._alive_stop_unsub = self.hass.async_add_shutdown_job(
+            HassJob(self._async_alive_at_stop, f"{DOMAIN} last run")
+        )
         if self.forecasts is not None:
             try:
                 await self.forecasts.async_load(now)
@@ -508,6 +529,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self.link.stop_watching_vt_central()
         while self._unsubs:
             self._unsubs.pop()()
+        if self._alive_stop_unsub is not None:  # not from the shutdown job, which keeps it
+            self._alive_stop_unsub()
+            self._alive_stop_unsub = None
         for key in (
             "auto_tpi_blocked",
             "learning_not_paused",
@@ -525,7 +549,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             await self._async_save_alive()
             await self._store.async_save(self._stored_data())
         if self.forecasts is not None:
-            await self.forecasts.async_flush()
+            await self.forecasts.async_stop()
 
     # --- storage --------------------------------------------------------------------------
 
@@ -661,7 +685,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     async def async_save_control_now(self) -> bool:
         """Write the control state at once: for what a crash must not lose (the controlling
         marker, a latch). The entry store's copy is written at once too when the boiler's hold
-        or an owed hand-back changed, otherwise with the delayed save. Whether the control
+        or an owed hand-back changed, otherwise with the slow delayed save — the entry store
+        holds up to a year of day summaries, and the control store is the one read (PB-60).
+        Whether the control
         state may be taken as stored: ``False`` once a write of it failed and none has worked
         since (PB-16) — before the stores were read, or once stopped, nothing is written and
         nothing failed."""
@@ -675,7 +701,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         if _owed_flags(self._stored_control()) != self._main_owed:
             await self.async_save_now()
         else:
-            self.schedule_save()
+            self.schedule_save(FACTOR_SAVE_DELAY_S)  # PB-60: not the year of days every change
         return not self.control_store_failing
 
     def _control_written(self, ok: bool) -> None:
@@ -700,7 +726,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             return
         self._control_store.async_delay_save(self._stored_control, 0)
         changed = _owed_flags(self._stored_control()) != self._main_owed
-        self.schedule_save(0 if changed else SAVE_DELAY_S)
+        self.schedule_save(0 if changed else FACTOR_SAVE_DELAY_S)
 
     async def async_save_now(self) -> None:
         """Write the entry's store at once."""
@@ -906,6 +932,12 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             moment = moment.timestamp()
         self._record(event.data["entity_id"], state, float(moment))
         self.config_entry.async_create_task(self.hass, self.async_request_refresh())
+
+    def _registry_source(self, entity_id: str) -> str:
+        """PB-17: what an entity is — its registry entry, which stays when its ID is renamed;
+        the entity ID only for an entity outside the registry."""
+        registered = er.async_get(self.hass).async_get(entity_id)
+        return registered.id if registered is not None else entity_id
 
     def _empty_history(self) -> History:
         return History(
@@ -1122,8 +1154,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             due = issue_due(self._zones_unknown_since, now)
             self.report_no_zone_known("monitor" if due else None)
         alarms = dict(self._alarms)
-        if self.analysis is not None:
-            alarms.update(self.analysis.trends)
+        alarms.update(self.trends(now))
         self._follow_notices(snapshot, alarms, now)
         wall = self._follow_wall_thermostat(snapshot, now)
         return MonitorData(
@@ -1275,6 +1306,35 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 translation_placeholders=placeholders,
             )
         return wanted
+
+    @property
+    def analysis_failing(self) -> bool:
+        """The periodic analysis failed at its last run (PB-18): its results are getting old."""
+        return ANALYSIS_JOB in self._failing
+
+    def trends(self, now: float) -> dict[AlarmKind, Alarm]:
+        """The trend alarms of the last analysis (PB-18). Once it is older than
+        ``ANALYSIS_BURNS_MAX_AGE_S`` — it has stopped, or fails at every run — none is judged:
+        each keeps its last state for ``UNKNOWN_HOLD_S`` after that analysis, then is unknown
+        (S-16), never its last state for good."""
+        analysed = self.analysis
+        if analysed is None:
+            return {}
+        if now - analysed.at <= ANALYSIS_BURNS_MAX_AGE_S:
+            return dict(analysed.trends)
+        return {
+            kind: settle(Alarm(kind, None, limit=trend.limit, reason=UNKNOWN_INPUT), trend, now)
+            for kind, trend in analysed.trends.items()
+        }
+
+    def outdoor_check(self, now: float) -> OutdoorCheck | None:
+        """The last analysis' outdoor-sensor check, kept for ``UNKNOWN_HOLD_S`` after that
+        analysis, then unknown (PB-18): an analysis that stopped or keeps failing judges it no
+        longer."""
+        analysed = self.analysis
+        if analysed is None or now - analysed.at >= UNKNOWN_HOLD_S:
+            return None
+        return analysed.outdoor
 
     def heating_starts(self, now: float) -> tuple[float, ...] | None:
         """The heating starts the comfort correction's rule 3 judges by (decision 11 of 0.2.3):
@@ -1608,6 +1668,19 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self.check_learning()
         await self.async_run_analysis()
 
+    async def _async_quick_tick(self, _now: datetime) -> None:
+        """The monitor's quick path every ``TICK_SECONDS`` whatever listens, so its alarms and
+        V6's failure window follow the clock, not only the boiler's state changes (PB-62)."""
+        if not self._stopped:
+            await self.async_refresh()
+
+    async def _async_alive_at_stop(self) -> None:
+        # Home Assistant is going through its shutdown jobs: removing this one from the list
+        # now would make it skip the next job, so it stays.
+        self._alive_stop_unsub = None
+        if not self._stopped:
+            await self._async_save_alive()
+
     async def _async_alive_tick(self, _now: datetime) -> None:
         if not self._stopped:
             await self._async_save_alive()
@@ -1635,7 +1708,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         and, while control runs with learning pauses, learning it cannot pause: Auto-TPI (only a
         reset would pause it) and SmartPI without its learning flag. VT's central boiler unknown
         says nothing about Auto-TPI's learning in the zones VT's central boiler uses: the first
-        issue is left as it is, and those zones are in neither (P-54)."""
+        issue is left as it is, and those zones are in neither (P-54). A zone whose algorithm
+        cannot be read — VT not started, the zone unknown — keeps its last answer (PB-47), so
+        an issue the user ignored is not deleted and raised anew."""
         central = self.link.vt_central_boiler_configured()
         control = self.config.control
         pauses = control.configured and control.learning_pauses
@@ -1643,6 +1718,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         unpaused: list[str] = []
         for zone_id in self.config.zone_entities:
             algorithm = self.link.zone_algorithm(zone_id)
+            if algorithm.known:
+                self._zone_algorithms[zone_id] = algorithm
+            elif (last := self._zone_algorithms.get(zone_id)) is not None:
+                algorithm = last
             flagless_smartpi = (
                 algorithm.proportional_function == "smartpi" and algorithm.smartpi_learning is None
             )
@@ -1810,9 +1889,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             # refresh itself, so a failure of it is counted and logged there, once (V6).
             await self.async_refresh()
         except Exception:  # the monitor keeps its last results; the next run tries again
-            self._job_failed("The periodic analysis")
+            self._job_failed(ANALYSIS_JOB)
         else:
-            self._job_works("The periodic analysis")
+            self._job_works(ANALYSIS_JOB)
         finally:
             self._analysing = False
 
@@ -1983,6 +2062,9 @@ def alive_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
     return Store(hass, ALIVE_STORE_VERSION, alive_store_key(entry_id), atomic_writes=True)
 
 
+LEARNING_FIELDS = ("paused", "resuming")  # the stored SmartPI pauses and resumes
+
+
 @dataclass(frozen=True, slots=True)
 class ControlRead:
     """The control state as read, with the cautious answer to whether a hand-back is owed."""
@@ -2051,7 +2133,9 @@ async def async_read_control_state(
     _LOGGER.warning(
         "No stored control state could be read; control is not configured, so nothing is owed"
     )
-    return ControlRead({}, False, False, raw_main, True)
+    # PB-52: the copy's SmartPI pauses still say which zones' learning to switch back on.
+    learning = {key: copy[key] for key in LEARNING_FIELDS if isinstance(copy, dict) and key in copy}
+    return ControlRead(learning, False, False, raw_main, True)
 
 
 def _owed_flags(control: object) -> tuple[bool, bool] | None:
@@ -2208,11 +2292,22 @@ SUMMARY_SIGNALS = (
 )
 
 
-def summary_settings(config: EntryConfig) -> dict[str, Any]:
+def summary_settings(
+    config: EntryConfig, source: Callable[[str], str] | None = None
+) -> dict[str, Any]:
     """What shapes a day's summary, and only that (P-87): the monitor's options, the parameters
-    it uses as the user entered them, the entities feeding the signals it reads, the weather
-    entity and the zones."""
+    it uses as the user entered them — the gas rates only without a gas meter, which decides
+    the gas then — and what feeds the signals it reads and the weather. PB-17: an entity
+    counts by ``source`` — its registry entry, which a rename keeps — so a rename the plugin
+    follows (P-19) keeps the stored days; the zones shape no stored field and are not here."""
     options = config.monitor.monitor
+    named = source if source is not None else str
+    parameters = [
+        key
+        for key in SUMMARY_PARAMETERS
+        if config.signals.get(Signal.GAS_METER) is None
+        or key not in (ParameterKey.GAS_AT_MIN_POWER, ParameterKey.GAS_AT_MAX_POWER)
+    ]
     return {
         "options": {
             "condensing_return": options.condensing_return,
@@ -2221,10 +2316,12 @@ def summary_settings(config: EntryConfig) -> dict[str, Any]:
             "has_dhw": options.has_dhw,
             "setpoint_margin": options.setpoint_margin,
         },
-        "parameters": {key.value: config.parameters.value(key) for key in SUMMARY_PARAMETERS},
-        "signals": {signal.value: config.signals.get(signal) for signal in SUMMARY_SIGNALS},
-        "weather": config.weather,
-        "zones": sorted(config.zone_entities),
+        "parameters": {key.value: config.parameters.value(key) for key in parameters},
+        "signals": {
+            signal.value: None if (entity := config.signals.get(signal)) is None else named(entity)
+            for signal in SUMMARY_SIGNALS
+        },
+        "weather": named(config.weather) if config.weather else config.weather,
     }
 
 

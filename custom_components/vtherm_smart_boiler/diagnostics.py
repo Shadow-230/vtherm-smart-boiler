@@ -112,6 +112,7 @@ async def async_get_config_entry_diagnostics(
         week, day = analysis.week, analysis.day
         summary = {
             "at": analysis.at,
+            "failing": coordinator.analysis_failing,  # its last run failed (PB-18)
             "verdict": analysis.verdict.verdict.value,
             "reasons": [asdict(reason) for reason in analysis.verdict.reasons],
             "days_left_out": analysis.verdict.days_left_out,

@@ -94,6 +94,9 @@ class ForecastRecorder:
         # what the flush at unload writes — the week may have left memory since (P-23).
         self._dirty: dict[int, tuple[ForecastSnapshot, ...]] = {}
         self.unsupported: set[ForecastKind] = set()
+        # PB-58: set by the stop at unload — a call still in flight then (an entry removed or
+        # reloaded) stores nothing: no orphan file, no second writer of a week.
+        self._stopped = False
 
     def _storage(self, partition: int) -> Store[dict[str, Any]]:
         if partition not in self._stores:
@@ -141,7 +144,10 @@ class ForecastRecorder:
 
     async def async_take(self, now: float) -> int:
         """Take one snapshot of every supported forecast type; returns how many were stored.
-        Nothing is asked while the weather entity is missing, unavailable or unknown (P-55)."""
+        Nothing is asked while the weather entity is missing, unavailable or unknown (P-55),
+        and nothing is stored once the recorder has stopped (PB-58)."""
+        if self._stopped:
+            return 0
         state = self._hass.states.get(self._weather)
         if state is None or state.state in _NO_WEATHER:
             _LOGGER.debug("No forecast asked for: %s is not available", self._weather)
@@ -177,6 +183,8 @@ class ForecastRecorder:
             except HomeAssistantError as err:
                 _LOGGER.debug("No %s forecast from %s: %s", kind, self._weather, err)
                 continue
+            if self._has_stopped():
+                return taken  # unloaded while the call ran: the snapshot is not the plugin's
             answer = (response or {}).get(self._weather)
             items = answer.get("forecast") if isinstance(answer, dict) else None
             if not isinstance(items, list) or not items:
@@ -219,6 +227,15 @@ class ForecastRecorder:
                 {"snapshots": [snapshot.to_dict() for snapshot in snapshots]}
             )
         self._dirty.clear()
+
+    def _has_stopped(self) -> bool:
+        """Read anew after each await: the unload may have come meanwhile."""
+        return self._stopped
+
+    async def async_stop(self) -> None:
+        """At unload: the changed weeks are written, and nothing is stored after it (PB-58)."""
+        self._stopped = True
+        await self.async_flush()
 
 
 def partition_key(entry_id: str, partition: int) -> str:
