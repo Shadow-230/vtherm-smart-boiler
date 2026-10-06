@@ -267,3 +267,15 @@ def test_since_when_no_criterion_is_judged() -> None:
     assert unjudged_since(700.0, True, 100.0) == 100.0
     assert unjudged_since(100.0, False, 700.0) is None
     assert unjudged_since(None, False, 700.0) is None
+
+
+def test_a_slow_home_assistant_start_does_not_use_up_the_recognition_period() -> None:
+    """PB-53: the period's clock starts with Home Assistant running — a start slower than ten
+    minutes does not end it at the first running step, so VT's placeholders do not read as
+    "no demand" then; and no no-zone-known issue rises while Home Assistant starts."""
+    steps = [(t, (placeholder("a", t),)) for t in (0.0, 700.0, 710.0, 720.0 + RECOGNITION_S)]
+    seen = run(steps, starting=lambda t: t < 710.0)
+    assert [in_recognition(w) for w in seen] == [True, True, True, False]
+    assert all(w.unknown_since is None for w in seen[:2])
+    assert seen[2].unknown_since == 710.0
+    assert not no_zone_issue_due(seen[2], 710.0 + NO_ZONE_ISSUE_S - 1.0)

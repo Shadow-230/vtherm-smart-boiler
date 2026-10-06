@@ -399,12 +399,20 @@ def vt_climate_entities(hass: HomeAssistant) -> list[str]:
 
 def vt_central_entry(hass: HomeAssistant) -> ConfigEntry | None:
     """VT's central configuration entry — the VT entry whose ``thermostat_type`` says so (VT
-    10.4.0) — whatever its state; ``None`` without one. Read only: the plugin never writes to
-    VT's entries."""
-    for entry in hass.config_entries.async_entries(VT_DOMAIN):
-        if entry.data.get(THERMOSTAT_TYPE) == CENTRAL_CONFIG:
-            return entry
-    return None
+    10.4.0) — whatever its state; ``None`` without one. With more than one, an enabled entry in
+    a running state, else an enabled one, else the first: not a disabled or failed one VT has
+    replaced (PB-49). Read only: the plugin never writes to VT's entries."""
+    centrals = [
+        entry
+        for entry in hass.config_entries.async_entries(VT_DOMAIN)
+        if entry.data.get(THERMOSTAT_TYPE) == CENTRAL_CONFIG
+    ]
+
+    def preference(entry: ConfigEntry) -> tuple[bool, bool]:
+        enabled = entry.disabled_by is None
+        return enabled and entry.state in _CENTRAL_RUNNING, enabled
+
+    return max(centrals, key=preference, default=None)  # the first of the best
 
 
 @dataclass

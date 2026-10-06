@@ -210,7 +210,9 @@ CONFIG_BLOCKERS = (
     "timeout_needs_expiring_writes",
     "no_gateway",
     "no_mqtt_topic",
+    "mqtt_topic_invalid",  # a wildcard or a space in a topic level (PB-70)
     "no_confirmed_setpoint",
+    "thermostat_setpoint_same_as_read_back",  # PB-70
     "no_topology",
     "topology_no_control",
     "curve_not_entered",
@@ -236,6 +238,7 @@ CONFIG_BLOCKERS = (
     # X6: what is wired to the gateway's thermostat terminals (decision 1).
     "thermostat_on_off",
     "thermostat_kind_unknown",
+    "thermostat_kind_dont_know",  # "I don't know" answered, not the missing answer (PB-73)
     "thermostat_kind_contradicts_topology",
     # X8: water-temperature control needs the boiler link mapped; the relay path its relay, as a
     # switch or a boiler thermostat entity used in no other role, and the separate-contact tick.
@@ -872,17 +875,18 @@ def _write_ignored_offered(control: ControlOptions) -> bool:
 
 def migrated_reactions(control: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """Y1's entry migration of the stored alarm reactions: only the one decision 7 still
-    offers stays — an ignored write's, where it is offered; and the names of those that were
-    set to hand back and now only inform (the fixed hand-backs are not among them)."""
+    offers stays — an ignored write's, kept even where it is not offered now (a gateway entry
+    whose thermostat question is not answered yet: answered, it is offered again; until then
+    ``ControlOptions.reaction`` makes it inform, PB-72); and the names of those that were set
+    to hand back and now only inform (the fixed hand-backs are not among them)."""
     stored = control.get("alarm_reactions")
     if not isinstance(stored, Mapping):
         return {}, []
-    offered = write_ignored_offered(control)
     kept: dict[str, Any] = {}
     removed: list[str] = []
     for alarm, reaction in stored.items():
         name = str(alarm)
-        if name in OPTIONAL_HAND_BACK_ALARMS and offered:
+        if name in OPTIONAL_HAND_BACK_ALARMS:
             kept[name] = reaction
         elif reaction == AlarmReaction.HAND_BACK.value and name not in ALWAYS_HAND_BACK_ALARMS:
             removed.append(name)
@@ -922,8 +926,10 @@ def thermostat_kind_blocker(control: ControlOptions) -> str | None:
     if topology is None or topology not in GATEWAY_TOPOLOGIES:
         return None
     kind = control.thermostat_kind
-    if kind is None or kind is ThermostatKind.UNKNOWN:
+    if kind is None:
         return "thermostat_kind_unknown"
+    if kind is ThermostatKind.UNKNOWN:
+        return "thermostat_kind_dont_know"  # its own text (PB-73)
     if kind is ThermostatKind.ON_OFF:
         return "thermostat_on_off"
     if kind_contradicts_topology(topology, kind):
@@ -1217,14 +1223,18 @@ def curve_problems(
 
 
 def relay_in_another_role(
-    control: ControlOptions, signals: Collection[Signal] | Mapping[Signal, str] | None = None
+    control: ControlOptions,
+    signals: Collection[Signal] | Mapping[Signal, str] | None = None,
+    others: Collection[str] = (),
 ) -> bool:
     """R2: the relay is an entity the options already use in another role — one control reads
-    or writes, or a mapped signal (``signals``, where given as their entities)."""
+    or writes, a mapped signal (``signals``, where given as their entities), or any other the
+    options name (``others``: zones, their foreign-heat sources, circuits, weather — PB-70: a
+    stove's switch would be switched as the boiler and read back as foreign heat)."""
     entity = control.relay.entity
     if not entity:
         return False
-    others = [
+    roles = [
         e
         for e in (
             control.setpoint_entity,
@@ -1238,12 +1248,14 @@ def relay_in_another_role(
         if e
     ]
     if isinstance(signals, Mapping):
-        others += [str(e) for e in signals.values()]
-    return entity in others
+        roles += [str(e) for e in signals.values()]
+    return entity in roles or entity in others
 
 
 def relay_blockers(
-    control: ControlOptions, signals: Collection[Signal] | Mapping[Signal, str] | None = None
+    control: ControlOptions,
+    signals: Collection[Signal] | Mapping[Signal, str] | None = None,
+    others: Collection[str] = (),
 ) -> list[str]:
     """What the relay path lacks (R1–R3): the relay, a switch or a boiler thermostat entity used
     in no other role, and the separate-contact tick (answer G)."""
@@ -1253,7 +1265,7 @@ def relay_blockers(
         found.append("no_relay_entity")
     elif entity.split(".", 1)[0] not in RELAY_DOMAINS:
         found.append("relay_domain_not_supported")
-    elif relay_in_another_role(control, signals):
+    elif relay_in_another_role(control, signals, others):
         found.append("relay_in_another_role")
     if not control.relay.separate_contact:
         found.append("relay_contact_not_confirmed")
@@ -1274,19 +1286,26 @@ def config_blockers(
     shared_signals: Mapping[Signal, Signal] | None = None,
     *,
     signals: Collection[Signal] | Mapping[Signal, str] | None = None,
+    others: Collection[str] = (),
 ) -> list[str]:
     """What the configuration still lacks for control (translation keys). ``shared_signals``:
     signals dropped because their entity feeds an earlier one (``EntryConfig.shared_signals``,
     X5.2). ``signals``: the mapped signals (``EntryConfig.signals``) — water-temperature control
-    needs flame and flow among them (X8); ``None``: not given here, not checked. The order is
-    the one the table in ``tests/test_control_config.py`` pins (P-115)."""
+    needs flame and flow among them (X8); ``None``: not given here, not checked. ``others``:
+    every other entity the options name (``EntryConfig.watched_entities``), none of which may
+    be the relay (PB-70). The order is the one the table in ``tests/test_control_config.py``
+    pins (P-115)."""
     if not control.configured:
         return ["no_write_path"]
     found = _class_blockers(control, installation, shared_signals)
     if control.write_path is WritePath.RELAY:
         # The relay sets no water temperature: the setpoint, topology, read-back, curve and
         # circuit rules do not apply; the demand thresholds do (R1).
-        return [*found, *relay_blockers(control, signals), *_zone_blockers(control, installation)]
+        return [
+            *found,
+            *relay_blockers(control, signals, others),
+            *_zone_blockers(control, installation),
+        ]
     return [
         *found,
         *_signal_blockers(signals),
@@ -1342,9 +1361,30 @@ def _target_blockers(control: ControlOptions) -> list[str]:
         found.append("no_gateway")
     elif path is WritePath.OTGW_MQTT and not (control.mqtt_top and control.mqtt_node):
         found.append("no_mqtt_topic")
+    elif path is WritePath.OTGW_MQTT and not (
+        _stored_topic_valid(control.mqtt_top) and _stored_topic_valid(control.mqtt_node)
+    ):
+        found.append("mqtt_topic_invalid")
     if not control.confirmed_entity:
         found.append("no_confirmed_setpoint")
+    elif control.thermostat_setpoint_entity == control.confirmed_entity:
+        # The boiler's read-back shows the plugin's value, not the thermostat's request (PB-70).
+        found.append("thermostat_setpoint_same_as_read_back")
     return found
+
+
+def mqtt_topic_valid(value: object) -> bool:
+    """A topic level the plugin can publish under: no wildcards, spaces or empty text — spaces
+    around it aside, which the form drops."""
+    if not isinstance(value, str):
+        return False
+    level = value.strip().strip("/")
+    return bool(level) and not any(c in "+#" or c.isspace() for c in level)
+
+
+def _stored_topic_valid(value: object) -> bool:
+    """A stored topic level: valid, and without the spaces around it the form would drop."""
+    return mqtt_topic_valid(value) and isinstance(value, str) and value == value.strip()
 
 
 def _entity_path_blockers(control: ControlOptions) -> list[str]:

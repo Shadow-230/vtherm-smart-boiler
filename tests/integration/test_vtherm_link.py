@@ -977,3 +977,33 @@ async def test_a_left_behind_or_disabled_vt_sensor_is_no_stand_in_of_this_run(
     vt_boiler_shown(hass, entity_id, True)
     assert link.vt_central_boiler_configured() is False
     assert VT_CENTRAL_SEEN not in hass.data
+
+
+async def test_a_running_vt_central_entry_is_preferred_to_a_stale_one(hass: HomeAssistant) -> None:
+    """PB-49: a disabled or failed central entry VT has replaced is not read — the enabled one
+    in a running state is; without one, an enabled entry; with only stale ones, the first."""
+    from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import vt_central_entry
+
+    def central(delay: int, state: ConfigEntryState, disabled: bool = False) -> MockConfigEntry:
+        entry = MockConfigEntry(
+            domain=VT_PLATFORM,
+            data={
+                "thermostat_type": "thermostat_central_config",
+                "central_boiler_activation_delay_sec": delay,
+            },
+            state=state,
+            disabled_by=ConfigEntryDisabler.USER if disabled else None,
+        )
+        entry.add_to_hass(hass)
+        return entry
+
+    assert vt_central_entry(hass) is None
+    disabled = central(100, ConfigEntryState.NOT_LOADED, disabled=True)
+    assert vt_central_entry(hass) is disabled
+    failed = central(200, ConfigEntryState.SETUP_ERROR)
+    assert vt_central_entry(hass) is failed
+    central(300, ConfigEntryState.LOADED)
+    assert VThermLink(hass, []).vt_central_activation_delay() == 300.0

@@ -815,7 +815,8 @@ async def test_the_alarm_migration_moves_to_the_add_water_threshold(
     """Y1 (minor version 4; feeds P-124): 0.2.1's two low-pressure limits go; one stored other
     than its default — the warning, else the alarm — becomes the "add water" threshold (none at
     the defaults). Stored alarm reactions decision 7 no longer offers go, and one warning issue
-    names those that were set to hand back; the ignored write's stays where it is offered."""
+    names those that were set to hand back; the ignored write's stays — offered again once the
+    gateway's thermostat question allows it, informing until then (PB-72)."""
     from homeassistant.helpers import issue_registry as ir
 
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
@@ -847,10 +848,12 @@ async def test_the_alarm_migration_moves_to_the_add_water_threshold(
     assert "pressure_low_alarm" not in stored
     assert stored.get("add_water_below") == threshold
     assert stored["monitoring_days"] == 7
-    assert entry.options["control"]["alarm_reactions"] == {}  # stand-alone: none is offered
+    # PB-72: stand-alone the ignored write's reaction is not offered, but kept: it informs.
+    assert entry.options["control"]["alarm_reactions"] == {"write_ignored": "hand_back"}
+    assert entry.runtime_data.config.control.reaction("write_ignored").value == "info"
     found = ir.async_get(hass).async_get_issue(DOMAIN, f"reactions_removed_{entry.entry_id}")
     assert found is not None
-    assert found.translation_placeholders == {"alarms": "pressure_low, write_ignored"}
+    assert found.translation_placeholders == {"alarms": "pressure_low"}
     assert found.severity is ir.IssueSeverity.WARNING
 
 

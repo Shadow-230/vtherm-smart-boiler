@@ -1379,7 +1379,9 @@
               "timeout_needs_expiring_writes": "The timeout hand-back needs expiring writes",
               "no_gateway": "No OpenTherm Gateway ID",
               "no_mqtt_topic": "No MQTT topic prefix or node name",
+              "mqtt_topic_invalid": "An MQTT topic prefix or node name with a space or a wildcard (+, #)",
               "no_confirmed_setpoint": "No setpoint read-back picked",
+              "thermostat_setpoint_same_as_read_back": "The thermostat's own setpoint is the setpoint read-back",
               "no_topology": "The gateway's connection is not declared",
               "topology_no_control": "The gateway runs in monitor mode",
               "curve_not_entered": "The heating curve is not entered",
@@ -1402,6 +1404,7 @@
               "no_heating_switch": "No heating switch the plugin may use",
               "thermostat_on_off": "An on/off contact on the gateway's thermostat terminals",
               "thermostat_kind_unknown": "Not answered: what is wired to the gateway's thermostat terminals",
+              "thermostat_kind_dont_know": "\"I don't know\" answered: what is wired to the gateway's thermostat terminals",
               "thermostat_kind_contradicts_topology": "The answer on the thermostat terminals does not fit the gateway's connection",
               "no_flame_signal": "No flame signal",
               "no_flow_signal": "No flow temperature signal",
@@ -2250,7 +2253,9 @@
               "timeout_needs_expiring_writes": "The timeout hand-back needs expiring writes",
               "no_gateway": "No OpenTherm Gateway ID",
               "no_mqtt_topic": "No MQTT topic prefix or node name",
+              "mqtt_topic_invalid": "An MQTT topic prefix or node name with a space or a wildcard (+, #)",
               "no_confirmed_setpoint": "No setpoint read-back picked",
+              "thermostat_setpoint_same_as_read_back": "The thermostat's own setpoint is the setpoint read-back",
               "no_topology": "The gateway's connection is not declared",
               "topology_no_control": "The gateway runs in monitor mode",
               "curve_not_entered": "The heating curve is not entered",
@@ -2273,6 +2278,7 @@
               "no_heating_switch": "No heating switch the plugin may use",
               "thermostat_on_off": "An on/off contact on the gateway's thermostat terminals",
               "thermostat_kind_unknown": "Not answered: what is wired to the gateway's thermostat terminals",
+              "thermostat_kind_dont_know": "\"I don't know\" answered: what is wired to the gateway's thermostat terminals",
               "thermostat_kind_contradicts_topology": "The answer on the thermostat terminals does not fit the gateway's connection",
               "no_flame_signal": "No flame signal",
               "no_flow_signal": "No flow temperature signal",
@@ -2345,8 +2351,14 @@
     "blocked_no_mqtt_topic": {
       "message": "Enter the gateway's MQTT topic prefix and node name. Other reasons: {count} (all are listed on the control state)."
     },
+    "blocked_mqtt_topic_invalid": {
+      "message": "Enter the gateway's MQTT topic prefix and node name as its firmware uses them, without spaces or the wildcards + and #. Other reasons: {count} (all are listed on the control state)."
+    },
     "blocked_no_confirmed_setpoint": {
       "message": "Pick the entity that reports the setpoint the boiler received (read-back). Other reasons: {count} (all are listed on the control state)."
+    },
+    "blocked_thermostat_setpoint_same_as_read_back": {
+      "message": "The thermostat's own setpoint and the setpoint read-back are one entity: the read-back shows the plugin's value, not the thermostat's request. Pick the thermostat's own entity in the control options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_topology": {
       "message": "Declare how the gateway is connected. Other reasons: {count} (all are listed on the control state)."
@@ -2470,6 +2482,9 @@
     },
     "blocked_thermostat_kind_unknown": {
       "message": "Control waits until you say, in the control options, what is wired to the gateway's thermostat terminals. Other reasons: {count} (all are listed on the control state)."
+    },
+    "blocked_thermostat_kind_dont_know": {
+      "message": "Control waits: the control options say \"I don't know\" about what is wired to the gateway's thermostat terminals. Check the wiring and give the answer there. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_thermostat_kind_contradicts_topology": {
       "message": "This answer does not fit the gateway connection: an OpenTherm thermostat means \"Gateway with a thermostat\", nothing means stand-alone. Pick the other connection. Other reasons: {count} (all are listed on the control state)."

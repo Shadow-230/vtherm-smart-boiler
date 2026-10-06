@@ -101,6 +101,7 @@ from .control_config import (
     heating_writes,
     kind_contradicts_topology,
     lowest_above_max,
+    mqtt_topic_valid,
     off_too_close_to_lowest,
     own_room_controller_offered,
     parse_thermostat_kind,
@@ -1317,14 +1318,6 @@ def mqtt_set_up(hass: HomeAssistant) -> bool:
     )
 
 
-def mqtt_topic_valid(value: object) -> bool:
-    """A topic level the plugin can publish under: no wildcards, spaces or empty text."""
-    if not isinstance(value, str):
-        return False
-    level = value.strip().strip("/")
-    return bool(level) and not any(c in "+#" or c.isspace() for c in level)
-
-
 def control_details_error(
     user_input: dict[str, Any], bounds: tuple[float | None, float | None] = (None, None)
 ) -> dict[str, str]:
@@ -1409,7 +1402,11 @@ def options_blockers(options: Mapping[str, Any]) -> list[str] | None:
     if not config.control.configured:
         return None
     return config_blockers(
-        config.control, config.installation, config.shared_signals, signals=config.signals
+        config.control,
+        config.installation,
+        config.shared_signals,
+        signals=config.signals,
+        others=config.watched_entities,
     )
 
 

@@ -142,3 +142,20 @@ def test_a_gas_meter_at_zero_is_unknown() -> None:
     assert signal_value(Signal.GAS_METER, "0.0", "m³") is None
     assert signal_value(Signal.GAS_METER, "0.1", "m³") == 0.1  # a new meter counting up
     assert signal_value(Signal.GAS_METER, "5000.4", "m³") == 5000.4
+
+
+@pytest.mark.parametrize("unit", [["°C"], {"unit": "°C"}, 3])
+def test_a_unit_that_is_not_text_is_unknown(unit: object) -> None:
+    """PB-41: a malformed unit on one mapped entity reads as unknown, never raises."""
+    assert temperature_to_celsius(20.0, unit) is None
+    assert celsius_to(20.0, unit) is None
+    assert pressure_to_bar(1.0, unit) is None
+    assert power_to_kw(1.0, unit) is None
+    assert signal_value(Signal.FLOW, "50", unit) is None
+
+
+def test_a_number_too_large_for_a_float_is_unknown() -> None:
+    """PB-41: an integer above 1e308 is not a reading."""
+    assert parse_number(10**400) is None
+    assert parse_number(-(10**400)) is None
+    assert parse_number("1e400") is None

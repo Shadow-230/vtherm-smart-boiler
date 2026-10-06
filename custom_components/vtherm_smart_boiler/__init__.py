@@ -339,6 +339,11 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         *(f"{INSTALLATION_ISSUE}_{code.value}" for code in INSTALLATION_WARNINGS),
     ):
         ir.async_delete_issue(hass, DOMAIN, f"{key}_{entry.entry_id}")
+    # The one entry (P-125) is gone: VT's feature-manager issue goes with it (PB-50).
+    await async_import_module(hass, f"{__package__}.feature_manager")
+    from .feature_manager import async_remove_issue
+
+    async_remove_issue(hass)
     store = main_store(hass, entry.entry_id)
     control = control_store(hass, entry.entry_id)
     read = await async_read_control_state(

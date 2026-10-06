@@ -109,7 +109,8 @@ def follow_zones(
     starting: bool = False,
 ) -> ZoneWatch:
     """The watch after a step that saw ``zones`` — every configured zone — at ``now``.
-    ``starting``: Home Assistant is starting, so the recognition period cannot end yet."""
+    ``starting``: Home Assistant is starting, so the recognition period cannot end yet and
+    its clock has not started (PB-53)."""
     ids = [zone.zone_id for zone in zones]
     answering = {zone.zone_id: zone for zone in zones if zone.has_reported(now, max_age)}
     since = watch.recognition_since
@@ -120,7 +121,9 @@ def follow_zones(
         since, reported = now, frozenset()  # every zone stopped answering at once: VT reloads
     ended = False
     if since is not None:
-        since = _not_after(since, now)
+        # PB-53: while Home Assistant starts the clock waits — the period runs from the first
+        # step with Home Assistant running, however long the start took.
+        since = now if starting else _not_after(since, now)
         reported = reported | answering.keys()
         done = all(zone_id in reported for zone_id in ids) or now - since >= RECOGNITION_S
         if done and not starting:
@@ -138,7 +141,10 @@ def follow_zones(
             del last[zone_id]  # dropped out: the known zones decide
         else:
             lost_at[zone_id] = lost
-    unknown_since = every_zone_unknown_since(watch.unknown_since, zones, now, max_age)
+    # No zone known while Home Assistant starts is VT not started yet: no issue then (PB-53).
+    unknown_since = (
+        None if starting else every_zone_unknown_since(watch.unknown_since, zones, now, max_age)
+    )
     return ZoneWatch(
         begun=True,
         recognition_since=since,

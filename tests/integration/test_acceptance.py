@@ -1313,7 +1313,7 @@ async def test_otgw_on_off_thermostat_heats_after_an_unclean_exit_while_off(
     await start(rig, sim={"wall_thermostat": "on_off"}, thermostat_kind=kind)
     with pytest.raises(ServiceValidationError) as err:
         await rig.switch(True)
-    blocker = {"on_off": "thermostat_on_off", "unknown": "thermostat_kind_unknown"}[kind]
+    blocker = {"on_off": "thermostat_on_off", "unknown": "thermostat_kind_dont_know"}[kind]
     assert err.value.translation_key == f"blocked_{blocker}"
     plant = rig.sim.plant
     plant.room[0] = 18.0  # the contact's room is cold: it closes

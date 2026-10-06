@@ -47,30 +47,38 @@ _POWER: dict[str, float] = {
 }
 
 
-def temperature_to_celsius(value: float, unit: str | None) -> float | None:
+def _unit(unit: object, default: str) -> str | None:
+    """An entity's unit as a lookup key: none (or empty) is ``default``; a unit that is not text
+    (a malformed attribute) is unknown (PB-41)."""
+    if unit is None or unit == "":
+        return default
+    return unit if isinstance(unit, str) else None
+
+
+def temperature_to_celsius(value: float, unit: object) -> float | None:
     """``None`` for an unknown unit; no unit is taken as °C."""
-    convert = _TEMPERATURE.get(unit or "°C")
+    convert = _TEMPERATURE.get(_unit(unit, "°C") or "")
     return None if convert is None else convert(value)
 
 
-def celsius_to(value: float, unit: str | None) -> float | None:
+def celsius_to(value: float, unit: object) -> float | None:
     """A °C value in an entity's unit, for writing; ``None`` for an unknown unit; no unit is
     taken as °C, as on reading."""
-    convert = _FROM_CELSIUS.get(unit or "°C")
+    convert = _FROM_CELSIUS.get(_unit(unit, "°C") or "")
     return None if convert is None else convert(value)
 
 
-def temperature_unit_known(unit: str | None) -> bool:
-    return (unit or "°C") in _FROM_CELSIUS
+def temperature_unit_known(unit: object) -> bool:
+    return (_unit(unit, "°C") or "") in _FROM_CELSIUS
 
 
-def pressure_to_bar(value: float, unit: str | None) -> float | None:
-    factor = _PRESSURE.get(unit or "bar")
+def pressure_to_bar(value: float, unit: object) -> float | None:
+    factor = _PRESSURE.get(_unit(unit, "bar") or "")
     return None if factor is None else value * factor
 
 
-def power_to_kw(value: float, unit: str | None) -> float | None:
-    factor = _POWER.get(unit or "W")
+def power_to_kw(value: float, unit: object) -> float | None:
+    factor = _POWER.get(_unit(unit, "W") or "")
     return None if factor is None else value * factor
 
 
@@ -78,14 +86,12 @@ def parse_number(state: object) -> float | None:
     """A finite number from a state or attribute; ``None`` for 'unavailable', text or NaN."""
     if isinstance(state, bool):
         return None
-    if isinstance(state, int | float):
+    if not isinstance(state, int | float | str):
+        return None
+    try:
         number = float(state)
-    elif isinstance(state, str):
-        try:
-            number = float(state)
-        except ValueError:
-            return None
-    else:
+    except ValueError, OverflowError:
+        # Text, or an integer beyond a float (PB-41).
         return None
     return number if number == number and abs(number) != float("inf") else None
 
@@ -102,7 +108,7 @@ def parse_binary(state: object) -> bool | None:
 
 
 def signal_value(
-    signal: Signal, state: object, unit: str | None, *, zero_is_unknown: bool = False
+    signal: Signal, state: object, unit: object, *, zero_is_unknown: bool = False
 ) -> float | bool | None:
     """A boiler signal's value from an entity state, in core units and within the plausible
     range; ``None`` when unknown, unavailable, in an unknown unit or implausible.

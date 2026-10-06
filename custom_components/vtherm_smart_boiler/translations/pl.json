@@ -1379,7 +1379,9 @@
               "timeout_needs_expiring_writes": "Oddanie przez limit czasu wymaga zapisów wygasających",
               "no_gateway": "Brak ID bramki OpenTherm",
               "no_mqtt_topic": "Brak prefiksu tematu MQTT lub nazwy węzła",
+              "mqtt_topic_invalid": "Prefiks tematu MQTT lub nazwa węzła ze spacją lub symbolem wieloznacznym (+, #)",
               "no_confirmed_setpoint": "Nie wybrano odczytu zwrotnego nastawy",
+              "thermostat_setpoint_same_as_read_back": "Własna nastawa termostatu to odczyt zwrotny nastawy",
               "no_topology": "Nie zadeklarowano podłączenia bramki",
               "topology_no_control": "Bramka działa w trybie monitora",
               "curve_not_entered": "Nie wpisano krzywej grzewczej",
@@ -1402,6 +1404,7 @@
               "no_heating_switch": "Brak przełącznika ogrzewania, którego wtyczka może użyć",
               "thermostat_on_off": "Styk wł./wył. na zaciskach termostatu bramki",
               "thermostat_kind_unknown": "Brak odpowiedzi: co jest podłączone do zacisków termostatu bramki",
+              "thermostat_kind_dont_know": "Odpowiedź „Nie wiem”: co jest podłączone do zacisków termostatu bramki",
               "thermostat_kind_contradicts_topology": "Odpowiedź o zaciskach termostatu nie pasuje do podłączenia bramki",
               "no_flame_signal": "Brak sygnału płomienia",
               "no_flow_signal": "Brak sygnału temperatury zasilania",
@@ -2250,7 +2253,9 @@
               "timeout_needs_expiring_writes": "Oddanie przez limit czasu wymaga zapisów wygasających",
               "no_gateway": "Brak ID bramki OpenTherm",
               "no_mqtt_topic": "Brak prefiksu tematu MQTT lub nazwy węzła",
+              "mqtt_topic_invalid": "Prefiks tematu MQTT lub nazwa węzła ze spacją lub symbolem wieloznacznym (+, #)",
               "no_confirmed_setpoint": "Nie wybrano odczytu zwrotnego nastawy",
+              "thermostat_setpoint_same_as_read_back": "Własna nastawa termostatu to odczyt zwrotny nastawy",
               "no_topology": "Nie zadeklarowano podłączenia bramki",
               "topology_no_control": "Bramka działa w trybie monitora",
               "curve_not_entered": "Nie wpisano krzywej grzewczej",
@@ -2273,6 +2278,7 @@
               "no_heating_switch": "Brak przełącznika ogrzewania, którego wtyczka może użyć",
               "thermostat_on_off": "Styk wł./wył. na zaciskach termostatu bramki",
               "thermostat_kind_unknown": "Brak odpowiedzi: co jest podłączone do zacisków termostatu bramki",
+              "thermostat_kind_dont_know": "Odpowiedź „Nie wiem”: co jest podłączone do zacisków termostatu bramki",
               "thermostat_kind_contradicts_topology": "Odpowiedź o zaciskach termostatu nie pasuje do podłączenia bramki",
               "no_flame_signal": "Brak sygnału płomienia",
               "no_flow_signal": "Brak sygnału temperatury zasilania",
@@ -2345,8 +2351,14 @@
     "blocked_no_mqtt_topic": {
       "message": "Podaj prefiks tematu MQTT bramki i nazwę węzła. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
+    "blocked_mqtt_topic_invalid": {
+      "message": "Podaj prefiks tematu MQTT bramki i nazwę węzła tak, jak używa ich jej firmware, bez spacji i symboli wieloznacznych + oraz #. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
     "blocked_no_confirmed_setpoint": {
       "message": "Wybierz encję, która pokazuje nastawę odebraną przez kocioł (odczyt zwrotny). Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
+    "blocked_thermostat_setpoint_same_as_read_back": {
+      "message": "Własna nastawa termostatu i odczyt zwrotny nastawy to ta sama encja: odczyt zwrotny pokazuje wartość wtyczki, nie żądanie termostatu. Wybierz w opcjach sterowania własną encję termostatu. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_topology": {
       "message": "Określ, jak podłączona jest bramka. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
@@ -2470,6 +2482,9 @@
     },
     "blocked_thermostat_kind_unknown": {
       "message": "Sterowanie czeka, aż w opcjach sterowania podasz, co jest podłączone do zacisków termostatu bramki. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
+    "blocked_thermostat_kind_dont_know": {
+      "message": "Sterowanie czeka: w opcjach sterowania zaznaczono „Nie wiem” przy pytaniu, co jest podłączone do zacisków termostatu bramki. Sprawdź okablowanie i podaj tam odpowiedź. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_thermostat_kind_contradicts_topology": {
       "message": "Ta odpowiedź nie pasuje do podłączenia bramki: termostat OpenTherm oznacza „Bramka z termostatem”, brak termostatu oznacza pracę samodzielną. Wybierz drugie podłączenie. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."

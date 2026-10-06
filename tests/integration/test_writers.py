@@ -1341,3 +1341,73 @@ async def test_a_value_hand_back_without_its_value_fails_and_stays_owed(
     assert calls == [("number", "set_value", {"entity_id": "number.flow", "value": LOWEST})]
     (check,) = failed.value.checks
     assert (check.expected, check.written) == (None, False)
+
+
+class _NumberComponent:
+    """Home Assistant's ``number`` component as far as the step's unit goes (PB-42)."""
+
+    def __init__(self, native_unit: str | None) -> None:
+        self._native_unit = native_unit
+
+    def get_entity(self, entity_id: str) -> object:
+        from types import SimpleNamespace
+
+        return SimpleNamespace(native_unit_of_measurement=self._native_unit)
+
+
+async def test_a_celsius_number_shown_in_fahrenheit_keeps_its_device_grid(
+    hass: HomeAssistant,
+) -> None:
+    """PB-42: Home Assistant shows a °C number in °F but keeps its step in °C — 0.5 °C is a
+    0.9 °F grid from its shown ``min``; a value on it is written, and the too-coarse check
+    measures the device's step (1.5 °C is 1.5 K, not 0.83 K)."""
+    from custom_components.vtherm_smart_boiler.transport.entities import read_grid
+
+    hass.data["number"] = _NumberComponent("°C")
+    calls = record(hass, ("number", "set_value"))
+    shown = {"unit_of_measurement": "°F", "step": 0.5, "min": 68.0, "max": 176.0}
+    hass.states.async_set("number.flow", "113.0", shown)
+    writer = make_writer(
+        hass,
+        options(
+            write_path="entity",
+            setpoint_entity="number.flow",
+            write_type="held",
+            hand_back="value",
+            hand_back_value=40,
+            hand_back_value_effect="own_control",
+        ),
+    )
+    await writer.write_setpoint(45.5)
+    assert calls[-1][2]["value"] == pytest.approx(113.9)
+    with pytest.raises(WriteError):
+        await writer.write_setpoint(45.3)  # 113.54 °F: off the device's 0.9 °F grid
+    grid = read_grid(hass, "number.flow")
+    assert grid is not None
+    assert grid.step == pytest.approx(0.9)
+    assert grid.step_k == pytest.approx(0.5)
+    hass.states.async_set("number.flow", "113.0", {**shown, "step": 1.5})
+    coarse = read_grid(hass, "number.flow")
+    assert coarse is not None
+    assert coarse.too_coarse
+
+
+@pytest.mark.parametrize("component", [None, object(), _NumberComponent(None)])
+async def test_a_number_whose_device_unit_is_not_known_keeps_its_shown_step(
+    hass: HomeAssistant, component: object
+) -> None:
+    """PB-42, negative: without the entity object or its unit the step is taken in the shown
+    unit, as before."""
+    from custom_components.vtherm_smart_boiler.transport.entities import read_grid
+
+    hass.data["number"] = component
+    hass.states.async_set(
+        "number.flow", "113.0", {"unit_of_measurement": "°F", "step": 0.5, "min": 68.0}
+    )
+    grid = read_grid(hass, "number.flow")
+    assert grid is not None
+    assert grid.step == pytest.approx(0.5)
+    hass.states.async_set("input_number.flow", "45", {"unit_of_measurement": "°C", "step": 0.5})
+    plain = read_grid(hass, "input_number.flow")
+    assert plain is not None
+    assert plain.step == pytest.approx(0.5)

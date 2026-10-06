@@ -158,3 +158,51 @@ async def test_unreadable_or_missing_inputs_read_as_unknown(hass: HomeAssistant)
     assert weather_from_state(hot).value is None  # outside -60..60 °C
     assert bounds_from_state(None) == (None, None)
     assert temperature_unit_of(hass, "number.gone") is None
+
+
+def test_a_malformed_restart_indicator_or_unit_is_unknown() -> None:
+    """PB-41: a timestamp naming a date that does not exist, or a unit that is not text, reads
+    as unknown, never raises."""
+    from homeassistant.core import State
+
+    from custom_components.vtherm_smart_boiler.core.hand_back import RestartKind
+    from custom_components.vtherm_smart_boiler.transport.entities import (
+        restart_reading,
+        temperature_from_state,
+        weather_from_state,
+    )
+
+    for bad in ("2026-13-45T00:00:00+00:00", "2026-02-30T08:00:00+00:00"):
+        boot = State("sensor.boot", bad, {"device_class": "timestamp"})
+        assert restart_reading(boot) == (None, RestartKind.BOOT_TIME)
+    listed = State("sensor.up", "5", {"unit_of_measurement": ["min"]})
+    assert restart_reading(listed) == (5.0, RestartKind.COUNTER)
+    flow = State("sensor.flow", "50", {"unit_of_measurement": {"u": "°C"}})
+    assert temperature_from_state(flow).value is None
+    weather = State("weather.home", "sunny", {"temperature": 10**400, "temperature_unit": "°C"})
+    assert weather_from_state(weather).value is None
+    weather = State("weather.home", "sunny", {"temperature": 10.0, "temperature_unit": ["°C"]})
+    assert weather_from_state(weather).value is None
+
+
+@pytest.mark.parametrize(
+    ("kind", "state", "unit"),
+    [
+        ("power", "150000", "W"),  # a meter's spike above 100 kW
+        ("power", "-20", "W"),
+        ("temperature", "-40", "°C"),
+        ("temperature", "127", "°C"),  # a probe's fault value
+    ],
+)
+async def test_an_implausible_foreign_heat_reading_is_unknown(
+    hass: HomeAssistant, kind: str, state: str, unit: str
+) -> None:
+    """PB-43: a foreign-heat power or temperature source outside -30..110 °C or 0..100 kW reads
+    as unknown, so one spike does not flag the zone as foreign-heated for an hour."""
+    from custom_components.vtherm_smart_boiler.core.foreign_heat import SourceKind
+    from custom_components.vtherm_smart_boiler.transport.entities import read_source
+
+    hass.states.async_set("sensor.source", state, {"unit_of_measurement": unit})
+    assert read_source(hass, "sensor.source", SourceKind(kind)) is None
+    hass.states.async_set("sensor.source", "100", {"unit_of_measurement": unit})
+    assert read_source(hass, "sensor.source", SourceKind(kind)) is not None

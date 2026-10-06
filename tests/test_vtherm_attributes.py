@@ -272,3 +272,13 @@ def test_vts_placeholder_is_unknown_after_the_recognition_too() -> None:
     assert values.ready is None
     assert not values.reported
     assert not _known_after_recognition("off", {})
+
+
+@pytest.mark.parametrize("action", [["heating"], {"a": 1}])
+def test_a_malformed_hvac_action_or_unit_is_unknown(action: object) -> None:
+    """PB-41: an action or a temperature unit that is not text reads as unknown, never raises."""
+    values = zone_values(
+        "heat", {"current_temperature": 19.0, "hvac_action": action}, temperature_unit=["°C"]
+    )
+    assert values.calling is None
+    assert values.temperature is None

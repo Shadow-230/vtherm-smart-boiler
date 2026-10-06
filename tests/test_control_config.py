@@ -220,7 +220,11 @@ def test_every_blocker_is_listed() -> None:
         # X6: what is wired to the gateway's thermostat terminals (decision 1).
         (OTGW | {"thermostat_kind": "on_off"}, RADIATORS),
         (OTGW | {"thermostat_kind": "unknown"}, RADIATORS),
+        (_without_kind(OTGW), RADIATORS),
         (OTGW | {"thermostat_kind": "opentherm"}, RADIATORS),
+        # PB-70: what the form refuses, for options that bypass it.
+        (OTGW | {"thermostat_setpoint_entity": OTGW["confirmed_entity"]}, RADIATORS),
+        (OTGW | {"write_path": "otgw_mqtt", "mqtt_top": "OTGW/#", "mqtt_node": "x"}, RADIATORS),
     ]
     for data, installation in cases:
         found |= set(config_blockers(parse_control(data, RADIATORS, None), installation))
@@ -1317,6 +1321,7 @@ GATEWAY_PATHS = {
 KIND_BLOCKERS = {
     "thermostat_on_off",
     "thermostat_kind_unknown",
+    "thermostat_kind_dont_know",
     "thermostat_kind_contradicts_topology",
 }
 
@@ -1336,7 +1341,7 @@ def _without_kind(data: dict) -> dict:
     ("kind", "blocker"),
     [
         ("on_off", "thermostat_on_off"),
-        ("unknown", "thermostat_kind_unknown"),
+        ("unknown", "thermostat_kind_dont_know"),  # its own text (PB-73)
         ("missing", "thermostat_kind_unknown"),  # an entry from before 0.2.2 (answer K)
         (None, "thermostat_kind_unknown"),
         ("", "thermostat_kind_unknown"),
@@ -2004,7 +2009,7 @@ BLOCKER_PRECEDENCE = [
         RADIATORS,
         None,
         _ALL_SIGNALS,
-        ["thermostat_kind_unknown"],
+        ["thermostat_kind_dont_know"],
     ),
     (
         "the curve's own problems only once it is entered",
@@ -2255,3 +2260,43 @@ def test_the_thermostats_request_is_fixed_while_a_gateway_hand_back_is_owed(
     boiler it may be mapped or changed. Negative: on other paths it judges nothing."""
     assert "thermostat_setpoint_entity" not in fixed_keys(path, owed=False)
     assert ("thermostat_setpoint_entity" in fixed_keys(path, owed=True)) is fixed
+
+
+@pytest.mark.parametrize(
+    ("data", "others", "blocker"),
+    [
+        (RELAY, ("switch.boiler_relay",), "relay_in_another_role"),  # a zone's stove switch
+        (OTGW | {"thermostat_setpoint_entity": "sensor.otgw_control_setpoint"}, (), None),
+        (OTGW | {"write_path": "otgw_mqtt", "mqtt_top": "OTGW", "mqtt_node": "+"}, (), None),
+        (OTGW | {"write_path": "otgw_mqtt", "mqtt_top": "my top", "mqtt_node": "n"}, (), None),
+        (OTGW | {"write_path": "otgw_mqtt", "mqtt_top": " OTGW", "mqtt_node": "n"}, (), None),
+    ],
+)
+def test_what_the_form_refuses_blocks_options_that_bypass_it(
+    data: dict, others: tuple[str, ...], blocker: str | None
+) -> None:
+    """PB-70: the relay named elsewhere in the options — a zone's foreign-heat switch, which the
+    plugin would switch as the boiler and read back as foreign heat; the thermostat's own
+    setpoint picked as the read-back; an MQTT topic level with a wildcard or a space."""
+    expected = {
+        "relay_in_another_role",
+        "thermostat_setpoint_same_as_read_back",
+        "mqtt_topic_invalid",
+    }
+    installation = ON_OFF if data is RELAY else RADIATORS
+    control = parse_control(data, installation, None)
+    found = set(config_blockers(control, installation, others=others)) & expected
+    if blocker is None:
+        assert len(found) == 1
+    else:
+        assert found == {blocker}
+    # Negative: nothing named elsewhere, the read-back not the thermostat's, valid topics.
+    clean = {
+        k: v
+        for k, v in data.items()
+        if k not in ("thermostat_setpoint_entity", "mqtt_top", "mqtt_node")
+    }
+    if data.get("write_path") == "otgw_mqtt":
+        clean |= {"mqtt_top": "OTGW", "mqtt_node": "otgw"}
+    control = parse_control(clean, installation, None)
+    assert not set(config_blockers(control, installation, others=())) & expected

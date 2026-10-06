@@ -59,7 +59,7 @@ class ZoneValues:
 
 
 def zone_values(
-    state: str, attributes: Mapping[str, Any], temperature_unit: str | None = "°C"
+    state: str, attributes: Mapping[str, Any], temperature_unit: object = "°C"
 ) -> ZoneValues:
     """Zone values from a VT climate entity; anything missing or implausible is ``None``."""
     specific = attributes.get("specific_states")
@@ -100,7 +100,7 @@ def zone_values(
     )
 
 
-def _temperature(raw: object, unit: str | None) -> float | None:
+def _temperature(raw: object, unit: object) -> float | None:
     number = parse_number(raw)
     return None if number is None else temperature_to_celsius(number, unit)
 
@@ -114,6 +114,8 @@ def _heating_enabled(state: str) -> bool | None:
 
 
 def _calling(action: object) -> bool | None:
+    if not isinstance(action, str):
+        return None  # e.g. a list: not hashable, unknown (PB-41)
     if action in ACTIVE_ACTIONS:
         return True
     if action in INACTIVE_ACTIONS:

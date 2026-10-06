@@ -263,7 +263,7 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ),
     (
         'thermostat terminals: "I don\'t know" blocks control',
-        lambda: "thermostat_kind_unknown" in _gateway_blockers(thermostat_kind="unknown"),
+        lambda: "thermostat_kind_dont_know" in _gateway_blockers(thermostat_kind="unknown"),
         True,
     ),
     # "The boiler has its own room controller" | not ticked

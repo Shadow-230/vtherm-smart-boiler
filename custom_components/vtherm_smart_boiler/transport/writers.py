@@ -64,7 +64,7 @@ from ..core.hand_back import RELEASE_TOLERANCE_K, CheckKind, CheckSource, Releas
 from ..core.limits import GRID_EPSILON, Grid, is_on_grid
 from ..core.relay import CONTEXTS_KEPT
 from ..units import celsius_to, parse_number
-from .entities import grid_from_state, reported_at
+from .entities import grid_from_state, reported_at, shown_step, step_scale
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant, State
@@ -196,26 +196,27 @@ def _finite(value: float) -> float:
     return value
 
 
-def _as_entity_takes_it(state: State, value: float) -> float:
+def _as_entity_takes_it(state: State, value: float, scale: float = 1.0) -> float:
     """A °C value in a number entity's own unit (a °F entity gets °F). It must already lie on
     the entity's grid (``min`` + n * ``step``) and inside its ``min`` and ``max`` — the loop and
     the hand-back put it there, inside the limits (P-15, P-98); anything else is refused, never
-    rounded here, so the guard compares the value the device gets."""
+    rounded here, so the guard compares the value the device gets. ``scale``: the step's
+    factor into the shown unit (PB-42)."""
     unit = state.attributes.get("unit_of_measurement")
-    step = parse_number(state.attributes.get("step"))
-    if step is None or step <= 0:
+    step = shown_step(state, scale)
+    if step is None:
         value = round(value, 1)  # no grid: a tenth of a kelvin, as always
     converted = celsius_to(value, unit if isinstance(unit, str) else None)
     if converted is None:
         raise WriteError(f"{state.entity_id}: unit {unit!r} is not a temperature unit")
     low = parse_number(state.attributes.get("min"))
     high = parse_number(state.attributes.get("max"))
-    slack = GRID_EPSILON * (step if step is not None and step > 0 else 1.0)
+    slack = GRID_EPSILON * (1.0 if step is None else step)
     if (low is not None and converted < low - slack) or (
         high is not None and converted > high + slack
     ):
         raise WriteError(f"{state.entity_id}: {converted:g} outside its range")
-    if step is not None and step > 0:
+    if step is not None:
         base = 0.0 if low is None else low
         if not is_on_grid(converted, step, base):
             raise WriteError(f"{state.entity_id}: {converted:g} is not on its step {step:g}")
@@ -390,7 +391,8 @@ class EntityWriter(_ServiceWriter):
             self._taken = True
 
     async def write_setpoint(self, value: float) -> None:
-        checked = _as_entity_takes_it(self._check_target(self._setpoint), _finite(value))
+        target = self._check_target(self._setpoint)
+        checked = _as_entity_takes_it(target, _finite(value), step_scale(self._hass, target))
         await self._take()
         await self._call_entity("set_value", self._setpoint, value=checked)
 
@@ -402,7 +404,8 @@ class EntityWriter(_ServiceWriter):
         await self._call_entity("turn_on" if on else "turn_off", self._switch)
 
     async def _set_value(self, celsius: float, timeout_s: float | None) -> None:
-        value = _as_entity_takes_it(self._check_target(self._setpoint), celsius)
+        target = self._check_target(self._setpoint)
+        value = _as_entity_takes_it(target, celsius, step_scale(self._hass, target))
         await self._call_entity("set_value", self._setpoint, timeout_s=timeout_s, value=value)
 
     async def hand_back(
@@ -427,7 +430,8 @@ class EntityWriter(_ServiceWriter):
         releasing = self._hand_back is not None and release is not None and release not in skip
         # The values on the setpoint entity's grid, inside the limits (P-15): the lowest never
         # below itself, the hand-back value never above the highest water temperature.
-        grid = grid_from_state(self._hass.states.get(self._setpoint))
+        setpoint = self._hass.states.get(self._setpoint)
+        grid = grid_from_state(setpoint, step_scale(self._hass, setpoint))
         lowest = self._lowest_to_write(grid)
         # 1. The lowest water temperature, with the release target only; one the entity cannot
         # take fails in its own part (PB-27).

@@ -59,6 +59,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import (
     CALLBACK_TYPE,
+    CoreState,
     Event,
     EventStateChangedData,
     HomeAssistant,
@@ -1108,8 +1109,13 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             read_back=self._read_back_serves(),
         )
         self._alarms = self._current_alarms(snapshot, now, list(zone_states.values()))
-        self._zones_unknown_since = every_zone_unknown_since(
-            self._zones_unknown_since, list(zone_states.values()), now, ZONE_MAX_AGE_S
+        # No zone known while Home Assistant starts is VT not started yet (PB-53).
+        self._zones_unknown_since = (
+            every_zone_unknown_since(
+                self._zones_unknown_since, list(zone_states.values()), now, ZONE_MAX_AGE_S
+            )
+            if self.hass.state is CoreState.running
+            else None
         )
         if self.control is None:
             # No control unit (monitor only, or one that only hands back): the monitor tells.

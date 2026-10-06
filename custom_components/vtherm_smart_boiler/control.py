@@ -1546,11 +1546,25 @@ class ControlUnit:
         """Why control may not run now (translation keys); empty when it may."""
         config = self._coordinator.config
         found = config_blockers(
-            self.options, config.installation, config.shared_signals, signals=config.signals
+            self.options,
+            config.installation,
+            config.shared_signals,
+            signals=config.signals,
+            others=config.watched_entities,
         )
         if (missing := self._integration_missing()) is not None:
             found.append(missing)
         found += self._relay_blockers()
+        found += self._vt_blockers(now)
+        found += self._setpoint_entity_blockers()
+        found += self._run_blockers(now)
+        return tuple(found)
+
+    def _vt_blockers(self, now: float) -> list[str]:
+        """What VT and Home Assistant say now: zones that are not VT's or sit on the boiler's
+        thermostat, Home Assistant starting, the monitoring period, VT's central boiler."""
+        config = self._coordinator.config
+        found: list[str] = []
         link = self._coordinator.link
         if link.zones_of_another_kind():
             found.append("zone_not_vt")  # a hand edit: only VT climates are zones (X5.7)
@@ -1570,6 +1584,11 @@ class ControlUnit:
                 found.append("vt_central_boiler_unknown")  # cannot be ruled out: wait
         elif vt_boiler:
             found.append("vt_central_boiler_active")
+        return found
+
+    def _setpoint_entity_blockers(self) -> list[str]:
+        """The setpoint entity's unit, grid and range (P-15)."""
+        found: list[str] = []
         if self._unit_not_supported():
             found.append("setpoint_unit_not_supported")  # its range cannot be checked either
         else:
@@ -1579,6 +1598,12 @@ class ControlUnit:
                 found.append("setpoint_step_too_coarse")
             if self._outside_entity_range(grid):
                 found.append("setpoint_outside_entity_range")
+        return found
+
+    def _run_blockers(self, now: float) -> list[str]:
+        """What this run has found: a control error, the monitor lost, the control store not
+        saved, a latch."""
+        found: list[str] = []
         if self._session.failed:
             found.append("control_error")
         if self._coordinator.monitor_lost(now):
@@ -1597,7 +1622,7 @@ class ControlUnit:
                 # (decision 6 of 0.2.3): blocked until the user switches control off and on after
                 # fixing it (X5.21).
                 found.append(cause)
-        return tuple(found)
+        return found
 
     def _relay_blockers(self) -> list[str]:
         """R2 at run time: a relay a VT zone drives (VT can be reconfigured without the options

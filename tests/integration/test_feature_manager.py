@@ -233,6 +233,7 @@ class BrokenApi:
     def __init__(self, fail: str) -> None:
         self.fail = fail
         self.registered: list[Any] = []
+        self.attempts = 0
 
     def __getattr__(self, name: str) -> Any:
         if self.fail == "hasattr" and name == "register_feature_manager":
@@ -240,6 +241,7 @@ class BrokenApi:
         raise AttributeError(name)
 
     def register(self, factory: Any) -> None:
+        self.attempts += 1
         if self.fail == "register":
             raise RuntimeError("boom")
         self.registered.append(factory)
@@ -299,6 +301,12 @@ async def test_registration_errors_never_reach_vt(
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.NOT_LOADED
     assert feature_manager.registration(hass) is None
+    # PB-50: an unload leaves the issue as it is; it goes with the entry.
+    unsupported = expected is feature_manager.RegistrationState.UNSUPPORTED
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, "vt_feature_manager_unsupported")
+    assert (issue is not None) is unsupported
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
     assert ir.async_get(hass).async_get_issue(DOMAIN, "vt_feature_manager_unsupported") is None
     hass.data.pop(VT_DOMAIN)  # the stand-in API cannot be reset
 
@@ -513,3 +521,87 @@ async def test_installations_attach_and_detach_in_any_order(hass: HomeAssistant)
     feature_manager.async_detach(hass, first)  # type: ignore[arg-type]
     assert feature_manager.DATA_KEY not in hass.data
     feature_manager.async_detach(hass, first)  # type: ignore[arg-type]
+
+
+async def test_a_refused_registration_is_not_retried_on_the_same_api(
+    hass: HomeAssistant,
+    zones: FakeZones,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """PB-46: an API that refuses the factory is not asked again at every climate state and
+    update — one warning with its trace; a new API VT creates is asked once, its refusal logged
+    at debug."""
+    import logging
+
+    caplog.set_level(logging.DEBUG, logger="custom_components.vtherm_smart_boiler")
+    api = broken_vt(hass, monkeypatch, "register")
+    entry = await setup(hass, zones)
+    for index in range(50):
+        hass.states.async_set("climate.other", "heat", {"n": index})
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    assert api.attempts == 1
+    registration = feature_manager.registration(hass)
+    assert registration is not None
+    assert registration.state is feature_manager.RegistrationState.UNSUPPORTED
+    refusals = [r for r in caplog.records if "Could not register" in r.getMessage()]
+    assert [r.levelno for r in refusals] == [logging.WARNING]
+    assert refusals[0].exc_info is not None
+    newer = BrokenApi("register")
+    newer.register_feature_manager = newer.register  # type: ignore[attr-defined]
+    hass.data[VT_DOMAIN] = {"vtherm_api": newer}
+    monkeypatch.setattr(VThermAPI, "get_vtherm_api", staticmethod(lambda _hass=None: newer))
+    hass.states.async_set("climate.other", "heat", {"n": "new"})
+    hass.states.async_set("climate.other", "heat", {"n": "again"})
+    assert newer.attempts == 1
+    refusals = [r for r in caplog.records if "Could not register" in r.getMessage()]
+    assert [r.levelno for r in refusals] == [logging.WARNING, logging.DEBUG]
+    hass.data.pop(VT_DOMAIN)  # the stand-in API cannot be reset
+
+
+async def test_an_ignored_unsupported_issue_stays_ignored(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """PB-50: the issue is neither deleted at an unload nor while VT is not known yet (Home
+    Assistant starting), so the user's "ignore" sticks; VT able to load the manager deletes
+    it."""
+    hass.config.components.add(VT_DOMAIN)
+    hass.data[VT_DOMAIN] = {"vtherm_api": object()}  # an API without feature managers
+    entry = await setup(hass, zones)
+    issues = ir.async_get(hass)
+    issues.async_ignore(DOMAIN, feature_manager.UNSUPPORTED_ISSUE, True)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.data.pop(VT_DOMAIN)  # VT not set up yet at the next start: waiting
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    registration = feature_manager.registration(hass)
+    assert registration is not None
+    assert registration.state is feature_manager.RegistrationState.WAITING
+    hass.data[VT_DOMAIN] = {"vtherm_api": object()}
+    registration.check()
+    issue = issues.async_get_issue(DOMAIN, feature_manager.UNSUPPORTED_ISSUE)
+    assert issue is not None
+    assert issue.dismissed_version is not None
+    hass.data.pop(VT_DOMAIN)
+    vt_is_set_up(hass)
+    registration.check()
+    assert registration.state is feature_manager.RegistrationState.REGISTERED
+    assert issues.async_get_issue(DOMAIN, feature_manager.UNSUPPORTED_ISSUE) is None
+
+
+async def test_a_failed_refresh_publishes_no_zone_values(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """PB-48: while the monitor's refresh fails — the plugin's own entities unavailable — VT's
+    thermostat shows no stale values either; they come back with the next good refresh."""
+    vt_is_set_up(hass)
+    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
+    entry = await setup(hass, zones)
+    coordinator = entry.runtime_data
+    assert feature_manager.zone_values([coordinator], living) is not None
+    coordinator.last_update_success = False
+    assert feature_manager.zone_values([coordinator], living) is None
+    coordinator.last_update_success = True
+    assert feature_manager.zone_values([coordinator], living) is not None

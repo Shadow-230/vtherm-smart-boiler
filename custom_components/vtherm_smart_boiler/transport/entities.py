@@ -156,8 +156,15 @@ def read_on_off(hass: HomeAssistant, entity_id: str) -> bool | None:
     return None if state is None else parse_binary(state.state)
 
 
+# A foreign-heat source's plausible readings (PB-43): outside them a probe's fault value or a
+# meter's spike is unknown rather than an hour of foreign heat.
+SOURCE_LOW, SOURCE_HIGH = -30.0, 110.0  # °C
+SOURCE_KW_LOW, SOURCE_KW_HIGH = 0.0, 100.0  # kW
+
+
 def read_source(hass: HomeAssistant, entity_id: str, kind: SourceKind) -> bool | float | None:
-    """A foreign-heat source: on/off for switches and binary sensors, W or °C for sensors."""
+    """A foreign-heat source: on/off for switches and binary sensors, W or °C for sensors;
+    unknown outside the plausible range (PB-43)."""
     state = hass.states.get(entity_id)
     if state is None:
         return None
@@ -169,8 +176,13 @@ def read_source(hass: HomeAssistant, entity_id: str, kind: SourceKind) -> bool |
     unit = state.attributes.get("unit_of_measurement")
     if kind is SourceKind.POWER:
         kw = power_to_kw(number, unit)
-        return None if kw is None else kw * 1000.0
-    return temperature_to_celsius(number, unit)
+        if kw is None or not SOURCE_KW_LOW <= kw <= SOURCE_KW_HIGH:
+            return None
+        return kw * 1000.0
+    celsius = temperature_to_celsius(number, unit)
+    if celsius is None or not SOURCE_LOW <= celsius <= SOURCE_HIGH:
+        return None
+    return celsius
 
 
 def read_weather_temperature(hass: HomeAssistant, entity_id: str) -> Reading:
@@ -223,20 +235,47 @@ def temperature_unit_of(hass: HomeAssistant, entity_id: str) -> bool | None:
 
 def read_grid(hass: HomeAssistant, entity_id: str) -> Grid | None:
     """A setpoint entity's grid in its own unit (P-15)."""
-    return grid_from_state(hass.states.get(entity_id))
+    state = hass.states.get(entity_id)
+    return grid_from_state(state, step_scale(hass, state))
 
 
-def grid_from_state(state: State | None) -> Grid | None:
+def step_scale(hass: HomeAssistant, state: State | None) -> float:
+    """PB-42: Home Assistant shows a temperature ``number`` in the system's unit (or one the
+    user picked) but keeps its ``step`` in the device's own unit (HA 2026.9.3,
+    ``number/__init__.py``, ``_calculate_step``): the factor that turns that step into the
+    shown unit — 1.8 for a °C device shown in °F. 1 where the units match, for any other
+    domain, or where the device's unit is not known (the entity object not found: assumed
+    the shown unit, as before)."""
+    if state is None or state.domain != "number":
+        return 1.0
+    component = hass.data.get("number")
+    get_entity = getattr(component, "get_entity", None)
+    entity = get_entity(state.entity_id) if callable(get_entity) else None
+    native = getattr(entity, "native_unit_of_measurement", None)
+    shown = state.attributes.get("unit_of_measurement")
+    native_k, shown_k = _kelvin_size(native), _kelvin_size(shown)
+    if native is None or native_k is None or shown_k is None:
+        return 1.0
+    return shown_k / native_k
+
+
+def _kelvin_size(unit: object) -> float | None:
+    """How many of a temperature unit make one kelvin; ``None`` for a unit that is not one."""
+    zero, one = celsius_to(0.0, unit), celsius_to(1.0, unit)
+    return None if zero is None or one is None else one - zero
+
+
+def grid_from_state(state: State | None, step_scale: float = 1.0) -> Grid | None:
     """A number or input_number entity's grid: its ``step``, counted from its ``min`` (else 0),
     within its ``min`` and ``max``, in its own unit, with that unit's conversion from °C.
+    ``step_scale`` turns the ``step`` into the shown unit (PB-42, ``step_scale()``).
     ``None`` without a step above 0, or in a unit that is not a temperature."""
     if state is None:
         return None
     unit = state.attributes.get("unit_of_measurement")
-    unit = unit if isinstance(unit, str) else None
     zero, one = celsius_to(0.0, unit), celsius_to(1.0, unit)
-    step = parse_number(state.attributes.get("step"))
-    if zero is None or one is None or step is None or step <= 0:
+    step = shown_step(state, step_scale)
+    if zero is None or one is None or step is None:
         return None
     return Grid(
         step,
@@ -245,6 +284,12 @@ def grid_from_state(state: State | None) -> Grid | None:
         scale=one - zero,
         offset=zero,
     )
+
+
+def shown_step(state: State, step_scale: float = 1.0) -> float | None:
+    """A number entity's ``step`` in its shown unit (PB-42); ``None`` without a step above 0."""
+    step = parse_number(state.attributes.get("step"))
+    return None if step is None or step <= 0 else step * step_scale
 
 
 _DURATION_UNITS = frozenset({"ms", "s", "min", "h", "d", "w"})
@@ -259,10 +304,15 @@ def restart_reading(state: State | None) -> tuple[float | None, RestartKind]:
     if attributes.get("device_class") == "timestamp":
         from homeassistant.util import dt as dt_util
 
-        moment = dt_util.parse_datetime(state.state)
-        return (None if moment is None else moment.timestamp()), RestartKind.BOOT_TIME
+        try:
+            moment = dt_util.parse_datetime(state.state)
+            boot = None if moment is None else moment.timestamp()
+        except ValueError, OverflowError:
+            boot = None  # a date that does not exist, or beyond the clock's range (PB-41)
+        return boot, RestartKind.BOOT_TIME
+    unit = attributes.get("unit_of_measurement")
     duration = attributes.get("device_class") == "duration" or (
-        attributes.get("unit_of_measurement") in _DURATION_UNITS
+        isinstance(unit, str) and unit in _DURATION_UNITS
     )
     kind = RestartKind.UPTIME if duration else RestartKind.COUNTER
     return parse_number(state.state), kind

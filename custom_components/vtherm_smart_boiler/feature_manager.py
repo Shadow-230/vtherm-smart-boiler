@@ -63,8 +63,10 @@ def zone_values(
     coordinators: list[SmartBoilerCoordinator], entity_id: str
 ) -> dict[str, Any] | None:
     """Whether heat reaches the zone now, and its emitter power factor, from the first
-    installation that has the zone; ``None`` when none has it."""
+    installation that has the zone and whose last refresh worked; ``None`` when none has it."""
     for coordinator in coordinators:
+        if not coordinator.last_update_success:
+            continue  # its entities are unavailable: no stale values on VT's either (PB-48)
         data = coordinator.data
         view = data.zones.get(entity_id) if data is not None else None
         if view is None:
@@ -256,6 +258,10 @@ class FeatureRegistration:
             hass, lambda entity_id: zone_values(_running(hass), entity_id)
         )
         self._api: Any | None = None
+        # PB-46: the API object that refused the factory is not asked again; only the first
+        # refusal is logged with its trace.
+        self._refused: Any | None = None
+        self._refusal_logged = False
         self._unsub: CALLBACK_TYPE | None = None
         self._unsub_states: CALLBACK_TYPE | None = None
         self.state = RegistrationState.WAITING
@@ -278,7 +284,7 @@ class FeatureRegistration:
         except Exception:  # never into VT's state writes
             _LOGGER.debug("VT's API could not be looked up", exc_info=True)
             return
-        if stored is not None and stored is not self._api:
+        if stored is not None and stored is not self._api and stored is not self._refused:
             self.check()
 
     @callback
@@ -301,11 +307,16 @@ class FeatureRegistration:
 
     def _check(self) -> bool:
         api, state = _api(self._hass)
-        if api is not None and api is not self._api:
+        if api is not None and api is self._refused:
+            state = RegistrationState.UNSUPPORTED  # refused before: not asked again (PB-46)
+        elif api is not None and api is not self._api:
             try:
                 api.register_feature_manager(self._factory)
             except Exception:
-                _LOGGER.warning("Could not register the VT feature manager", exc_info=True)
+                log = _LOGGER.debug if self._refusal_logged else _LOGGER.warning
+                log("Could not register the VT feature manager", exc_info=True)
+                self._refusal_logged = True
+                self._refused = api
                 api, state = None, RegistrationState.UNSUPPORTED
             else:
                 self._api = api
@@ -317,6 +328,9 @@ class FeatureRegistration:
         return self._api is not None
 
     def _set_state(self, state: RegistrationState) -> None:
+        """The issue rises while unsupported and goes only once registered — not while VT is
+        not known yet (Home Assistant starting) nor at an unload, so the user's "ignore" sticks
+        (PB-50); it goes with the entry (``async_remove_issue``)."""
         self.state = state
         if state is RegistrationState.UNSUPPORTED:
             ir.async_create_issue(
@@ -328,7 +342,7 @@ class FeatureRegistration:
                 translation_key=UNSUPPORTED_ISSUE,
                 translation_placeholders={"version": vtherm_link.VT_FEATURE_MANAGERS_FROM},
             )
-        else:
+        elif state is RegistrationState.REGISTERED:
             ir.async_delete_issue(self._hass, DOMAIN, UNSUPPORTED_ISSUE)
 
     def stop(self) -> None:
@@ -338,7 +352,6 @@ class FeatureRegistration:
         if self._unsub_states is not None:
             self._unsub_states()
             self._unsub_states = None
-        ir.async_delete_issue(self._hass, DOMAIN, UNSUPPORTED_ISSUE)
         api, self._api = self._api, None
         if api is None:
             return
@@ -348,6 +361,11 @@ class FeatureRegistration:
                 unregister(MANAGER_NAME)
         except Exception:
             _LOGGER.debug("Could not unregister the VT feature manager", exc_info=True)
+
+
+def async_remove_issue(hass: HomeAssistant) -> None:
+    """The entry is removed: the issue goes with it (PB-50)."""
+    ir.async_delete_issue(hass, DOMAIN, UNSUPPORTED_ISSUE)
 
 
 def registration(hass: HomeAssistant) -> FeatureRegistration | None:

@@ -9840,6 +9840,24 @@ async def test_no_zone_known_raises_the_repair_issue_with_the_monitor_only(rig: 
     assert no_zone_issue(rig) is None
 
 
+async def test_no_zone_known_does_not_rise_while_home_assistant_starts(rig: Rig) -> None:
+    """PB-53: the monitor's clock for the issue starts with Home Assistant running — VT starts
+    its thermostats only then, so a slow start raises no issue."""
+    from homeassistant.core import CoreState
+
+    rig.zones.set("living", "unavailable")
+    rig.hass.set_state(CoreState.starting)
+    entry = add_entry(rig, without_control(options(rig.zones)))
+    await set_up(rig, entry)
+    await rig.advance(900, step=30.0)
+    assert no_zone_issue(rig) is None
+    rig.hass.set_state(CoreState.running)
+    await rig.advance(570, step=30.0)
+    assert no_zone_issue(rig) is None
+    await rig.advance(60, step=30.0)
+    assert no_zone_issue(rig) is not None
+
+
 async def test_no_zone_known_with_control_switched_off_is_the_monitors_issue(rig: Rig) -> None:
     rig.zones.set("living", "unavailable")
     await start(rig)
@@ -11005,7 +11023,7 @@ async def test_the_kind_issue_is_raised_only_for_a_gateway_without_an_answer(
     await rig.advance(10)
     assert (issue(rig, KIND_ISSUE) is not None) is raised
     blockers = rig.state("switch", "control").attributes["blockers"]
-    blocked = {"unknown": "thermostat_kind_unknown", "on_off": "thermostat_on_off"}.get(
+    blocked = {"unknown": "thermostat_kind_dont_know", "on_off": "thermostat_on_off"}.get(
         str(changes.get("thermostat_kind"))
     )
     if blocked is not None:
