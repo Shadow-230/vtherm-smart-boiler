@@ -10,7 +10,7 @@ the boiler does not heat on the water-temperature paths (SB-01); VT's not-starte
 as the user's "off" (SB-02). The user answered the review's 15 open questions on 2026-10-05
 (decisions 1–15 below). The steps of `docs/plan-0.2.md` still open (J2, J4, K1–K7) follow this plan.
 The first published version stays the user's decision at K4 and K5 (`docs/plan-0.2.2.md`, decision
-16); provisionally pre-release 0.2.3b1, set at Z1.
+16); provisionally pre-release 0.2.3b1, set at step 4.3.
 Scope: `SCOPE.md`; overview: `PLAN.md`; the previous corrections: `docs/plan-0.2.2.md`.
 
 The plan is cut into four parts, run in order. **Each part ends with a stop (🔒): the main session
@@ -19,7 +19,8 @@ next part starts** (the user's wish of 2026-10-05, to control the tokens spent).
 document step comes first; its diff waits for the user's consent, and the part's code steps may
 start meanwhile.
 
-Status on 2026-10-05: written, nothing built.
+Status on 2026-10-06: part 1 done (its documents consented by the user at the stop 1.6); part 2
+under way.
 
 ## How to read this plan
 
@@ -106,12 +107,12 @@ and VT's not-started zones read as the user's "off".
 
 | Step | Work |
 |---|---|
-| 1.1 | `SCOPE.md` and `docs/plan-0.2.2.md` take decisions 1–4, 6 and 12 (SB-01, SB-02, SB-03, SB-05, SB-06, SB-10; PB-03's one rule in SCOPE §7 and X3); `CLAUDE.md` "Where to continue" names this plan. |
+| 1.1 ✅ | `SCOPE.md` and `docs/plan-0.2.2.md` take decisions 1–4, 6 and 12 (SB-01, SB-02, SB-03, SB-05, SB-06, SB-10; PB-03's one rule in SCOPE §7 and X3); `CLAUDE.md` "Where to continue" names this plan. |
 | 1.2 ✅ | No relay fights (decision 6): PB-01, PB-44, SB-05, SB-06. Keep the one rewrite through resends; a resend the relay never shows counts against another controller (answers C, N); the declared timer's lapse window bounded; a relay that stops taking commands mid-session raises an issue and, for "off", blocks and hands back. |
 | 1.3 ✅ | The control unit's wish and hand-back debt hold under errors and restarts: PB-02, PB-04, PB-05, PB-12, PB-13, PB-14, PB-16, TB-02, TB-05, TB-06. The restored wish saved before anything else; the error path keyed on the debt and routed through the minute gate and the confirmation; the fixable owed issue when a hand-back stays unconfirmed; the lost-link issue kept across restarts; the old debt folded at the session's first write; a control-store write that fails noticed. |
 | 1.4 ✅ | "Nothing heats" visible and decision 3's end states settled (decisions 1–4, 12): PB-03, PB-23, SB-01, SB-02, SB-03, SB-10, TB-01. |
 | 1.5 ✅ | The check of part 1. |
-| 1.6 🔒 | Stop: the report to the user, with the tokens part 1 used; the user decides whether part 2 starts. |
+| 1.6 🔒 ✅ | Stop: the report to the user, with the tokens part 1 used; the user decides whether part 2 starts. |
 
 ## Part 2 — the rest of the five changes, and the user's other answers
 
@@ -164,9 +165,9 @@ Left on purpose for a later release; what a step leaves open is added here by na
 5. Step 1.2: a declared timer must match the relay's real one within 60 s (or its 2× or 3×); a
    longer real timer makes the plugin step aside after the fourth lapse within a day (before:
    answered for good); the field's text says so — K4.
-6. Step 1.2: a relay that reports no state gets its command at once at every return from
-   unavailable or unknown (at least 5 s apart), so one that drops every minute is written more
-   often than the repeat interval — K4.
+6. Step 1.2, bounded at 1.5: a relay that reports no state gets its command at once at a return
+   from unavailable or unknown — at most once per relay check (5 min) and not within 120 s of the
+   last write — and each such return counts toward "commands lost"; the bounds — K4.
 7. Step 1.3 (PB-16): while the control store cannot be written, control does not take the boiler
    and hands back what it holds — stand-alone, nothing heats until a write works again (an
    error-level issue says so); the store is tried again every minute (provisional) — K4.

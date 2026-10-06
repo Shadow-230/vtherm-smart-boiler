@@ -568,7 +568,7 @@ Legend:
   - Every rule of principle 13 is mapped, and the correction freezes while a cap holds the setpoint.
   - Its value is published and can be reset (P-38) with a "Reset comfort correction" button, in a new `button.py` (answer J; X4 builds it).
 - S-34, S-35, S-06, S-04, and the power criterion: §7 demand.
-  - A zone whose mode is "off" has no demand, whatever `is_ready` says.
+  - A started zone whose mode is "off" has no demand; one VT has not started (`is_ready` not true) is unknown, also after the recognition period (decision 1 of `docs/plan-0.2.3.md`).
   - VT's `safety_state` counts as a lost sensor.
   - Power shedding removes a zone's demand.
   - Control needs at least one VT zone.
@@ -2635,8 +2635,7 @@ Done when:
 
 Zone states (`ZoneState.is_known` and a new `ZoneState.reported`):
 - unknown: no state; unavailable or unknown; a mode not listed; stale beyond a user age limit;
-- unknown: heat or auto with `is_ready: false`, because VT does not run it;
-- known, no demand: off, cool, dry or fan_only with `is_ready: false` (S-34), but only outside the recognition period;
+- unknown: any mode with `is_ready: false`, because VT does not run it — also after the recognition period (decision 1 of `docs/plan-0.2.3.md`; until 0.2.3, off, cool, dry or fan_only with `is_ready: false` counted as known, no demand, outside the recognition period);
 - as today: `is_ready` absent.
 
 A zone has reported when:
@@ -2696,7 +2695,8 @@ End state:
 - Alarm and repair issue:
   - the control alarm `no_zone_known` comes at once when the end state begins, while the switch is on;
   - the coordinator raises the repair issue `no_zone_known_<entry_id>` in every mode, the monitor only included, when every configured zone has been unknown for 600 s. There are three translation keys: `no_zone_known_off`, `no_zone_known_handed_back` and `no_zone_known_monitor`. Severity: error for `no_zone_known_off` (heating stops), warning for the others (provisional, K4);
-  - with zero zones configured: no issue.
+  - with zero zones configured: no issue;
+  - where the zones are known but no configured criterion can be judged, the same end state raises the same alarm and a repair issue that names the criterion — error where heating stops, warning after a hand-back or with the monitor only (decision 3 of `docs/plan-0.2.3.md`, as SCOPE §7).
 
 The P-105 part:
 - `vt_central_boiler_unknown` does not count as a blocker for up to 600 s when VT's central boiler was known to be not configured (`False`) at the last step before it became unknown. The status shows it with the suffix "(grace)" in `blockers_waiting`.
@@ -2715,7 +2715,7 @@ Opening criterion: the widest opening among the zones that call (`zone_wants_hea
 Criterion without data:
 - power: no known zone has a power above 0;
 - opening: no known heating zone publishes an opening.
-- Only that criterion is left out. When no configured criterion can be judged → `wanted` is `None` → the end state after the zones' grace. The control alarm `demand_criterion_no_data` names the criterion.
+- Only that criterion is left out. When no configured criterion can be judged → `wanted` is `None` → the end state after the zones' grace. The control alarm `demand_criterion_no_data` names the criterion; the end state's alarm `no_zone_known` and its repair issue rise as above.
 - In the form: refused when at least one zone is readable and none can feed the criterion.
 
 Other zone rules:
