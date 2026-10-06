@@ -28,11 +28,15 @@ class RecorderDatabase:
 
     def __init__(self, path: Path) -> None:
         if not path.is_file():
-            raise FileNotFoundError(path)
+            raise FileNotFoundError(f"{path}: no such file")
         self.path = path
         uri = f"file:{quote(str(path.resolve()))}?mode=ro&immutable=1"
         self._db = sqlite3.connect(uri, uri=True)
-        tables = {row[0] for row in self._db.execute("SELECT name FROM sqlite_master")}
+        try:
+            tables = {row[0] for row in self._db.execute("SELECT name FROM sqlite_master")}
+        except sqlite3.DatabaseError as err:  # PB-88: not an SQLite file
+            self._db.close()
+            raise ValueError(f"{path}: not an SQLite database ({err})") from err
         if not {"states", "states_meta"} <= tables:
             self._db.close()
             raise ValueError(f"{path}: not a recorder database with states_meta (HA 2023.4+)")

@@ -52,6 +52,25 @@ ZONE_LAYOUTS: dict[str, Callable[[], tuple[ZoneProfile, ...]]] = {
     "shared_loop": shared_loop_zones,
 }
 FAULTS = ("low_pressure_fault", "boiler_lockout")  # each stops the boiler while it holds
+# PB-93: the boiler's signals an OpenTherm Gateway carries (its boiler and thermostat devices);
+# the failed signal "gateway_all" takes them with the gateway, as a lost gateway link does. The
+# weather, the pump and the relay are not read through it.
+GATEWAY_CARRIED = frozenset(
+    {
+        "flame",
+        "flow",
+        "return",
+        "modulation",
+        "ch_setpoint",
+        "dhw_active",
+        "pressure",
+        "outdoor",
+        "ch_active",
+        "thermostat_setpoint",
+        *FAULTS,
+        "fault_indication",
+    }
+)
 
 
 class Topology(StrEnum):
@@ -124,6 +143,7 @@ class Commands:
 class Simulation:
     def __init__(self, config: SimConfig, now: float) -> None:
         self.config = config
+        self.topology = config.topology  # switched by ``set_topology`` (PB-89)
         self.zones = ZONE_LAYOUTS[config.zones]()
         self._index = {z.zone_id: i for i, z in enumerate(self.zones)}
         boiler = BOILERS[config.boiler]
@@ -149,9 +169,11 @@ class Simulation:
         self.tpi = {z.zone_id: TpiZone(config.tpi) for z in self.zones}
         self.failed: set[str] = set()
         self.forced: float | None = None  # another controller keeps writing this setpoint
-        self.ignore_writes = False  # the boiler ignores every write
+        self.ignore_writes = False  # every write dropped before the boiler, unacknowledged
         self.refuses_id1 = False  # the boiler answers ID 1 with Data-Invalid: the PIC drops CS
-        self.clip: float | None = None  # the boiler takes no setpoint above this (its own limit)
+        # No setpoint above this, shown in the acknowledgement (a device's own limit); a limit in
+        # the boiler behind a gateway is ``plant.boiler_clip`` (PB-91).
+        self.clip: float | None = None
         self.device_away_until: float | None = None  # a held device restarting (entity path)
         self.device_restarts = 0  # each loses what the device was given
         self.external_control = True  # the switch that lets writes through
@@ -256,7 +278,11 @@ class Simulation:
     # --- what the gateway shows (``opentherm_gw``'s boiler device) -------------------------
 
     def gateway_reachable(self) -> bool:
-        return "gateway" not in self.failed and self.gateway_away_until is None
+        return not {"gateway", "gateway_all"} & self.failed and self.gateway_away_until is None
+
+    def signal_failed(self, key: str) -> bool:
+        """A signal failed by a scenario, or carried by a gateway whose whole link is lost."""
+        return key in self.failed or ("gateway_all" in self.failed and key in GATEWAY_CARRIED)
 
     def gateway_read_back(self) -> float | None:
         """The boiler's "Control setpoint 1" as ``opentherm_gw`` shows it: the acknowledgement of
@@ -278,7 +304,7 @@ class Simulation:
             curve = boiler_setpoint(self.plant.boiler, self.outdoor)
             request = self.wall.request(curve, self.plant.boiler.max_setpoint)
             return request.setpoint if request.setpoint is not None else curve
-        if self.config.topology is Topology.STANDALONE:
+        if self.topology is Topology.STANDALONE:
             return 0.0
         return boiler_setpoint(self.plant.boiler, self.outdoor)
 
@@ -308,7 +334,9 @@ class Simulation:
 
     def _gateway_takes(self) -> bool:
         """The gateway's commands are dropped while it is out of reach (``opentherm_gw``'s
-        services return all the same) or the boiler ignores every write."""
+        services return all the same) or every write is dropped before the boiler
+        (``ignore_writes``; a boiler that ignores what the gateway sends is
+        ``plant.boiler_ignores_override``, PB-91)."""
         return self.gateway_reachable() and not self.ignore_writes
 
     def gateway_setpoint(self, now: float, value: float) -> None:
@@ -449,6 +477,11 @@ class Simulation:
         self.dhw_until = now + minutes * 60.0
 
     def set_topology(self, topology: Topology) -> None:
+        """A gateway with or without a thermostat behind it (J4). A wall thermostat or relay
+        decides what passes without an override, so there the switch is refused (PB-89)."""
+        if self.relay is not None or self.wall is not None:
+            raise ValueError("the topology cannot change with a wall thermostat or relay")
+        self.topology = topology
         self.plant.without_override = (
             WithoutOverride.OFF if topology is Topology.STANDALONE else WithoutOverride.OWN_CURVE
         )

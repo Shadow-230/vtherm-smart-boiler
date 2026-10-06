@@ -357,7 +357,11 @@ def _run(args: argparse.Namespace) -> int:
                 raise _UsageError(f"--{name} {text}: expected a date as YYYY-MM-DD") from err
     if "start" in requested and "end" in requested and requested["end"] <= requested["start"]:
         raise _UsageError("--end must come after --start")
-    with RecorderDatabase(args.db) as db:
+    try:
+        database = RecorderDatabase(args.db)
+    except (OSError, ValueError) as err:  # PB-88: missing, not SQLite, not a recorder
+        raise _UsageError(f"--db {err}") from err
+    with database as db:
         if db.wal_warning:
             print(
                 "warning: a -wal file lies next to the database; recent states may be missing",

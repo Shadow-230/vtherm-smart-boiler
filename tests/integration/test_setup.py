@@ -1478,7 +1478,7 @@ async def test_replayed_history_reaches_the_verdict(
         daily_cycle([9.0] * 8),
         days=8,
         start=start,
-        step_s=60.0,
+        step_s=30.0,  # at most MAX_STEP_S (PB-92)
     )
     history = simulate(scenario).history
     freezer.move_to(datetime.fromtimestamp(start, UTC))

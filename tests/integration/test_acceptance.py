@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 from custom_components.boiler_sim import SimHub
-from custom_components.boiler_sim.plant import PlantOutput
+from custom_components.boiler_sim.plant import PlantOutput, boiler_setpoint
 from custom_components.boiler_sim.simulation import ZoneMode
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.core import CoreState, Event, HomeAssistant, State
@@ -526,13 +526,18 @@ async def test_a_failed_outdoor_sensor_falls_back_to_the_weather(rig: Rig) -> No
 
 
 async def test_a_command_never_taken_is_detected_and_not_fought(rig: Rig) -> None:
-    """S-48, decision 6 (replaces "another controller" here): the boiler keeps its own steady
-    value from the start and never takes ours — ignored from the start once three counted sends
+    """S-48, decision 6 (replaces "another controller" here): the read-back keeps its own steady
+    value from the start and never shows ours — ignored from the start once three counted sends
     (the first five minutes after the unit's start carry its trace and do not count) went
     unanswered: reported, not sent again this session, never another controller; control stays
-    on and nothing is handed back."""
+    on and nothing is handed back.
+
+    What it shows (PB-91): the commands are dropped before the boiler without an
+    acknowledgement — a gateway, or a write path, that never passes them on. A boiler behind an
+    OpenTherm Gateway that ignores what the gateway sends is not seen this way: the gateway
+    shows what it sends (see the next test)."""
     await start(rig)
-    await rig.scenario("ignore_writes", enabled=True)
+    await rig.scenario("ignore_writes", enabled=True, at="gateway")
     await rig.switch(True)
     await rig.advance(700)
     assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"
@@ -544,6 +549,25 @@ async def test_a_command_never_taken_is_detected_and_not_fought(rig: Rig) -> Non
     count = len(rig.setpoints())
     await rig.advance(300)
     assert len(rig.setpoints()) == count  # not sent again this session
+
+
+async def test_a_boiler_ignoring_what_the_gateway_sends_is_not_seen_by_the_read_back(
+    rig: Rig,
+) -> None:
+    """PB-91, the real path's limit: a real OpenTherm Gateway echoes the setpoint it sends, not
+    the boiler's acceptance, so a boiler that ignores it leaves the read-back showing ours — no
+    write-ignored alarm, and none of another controller. The boiler heats by its own curve;
+    control stays on, nothing is handed back."""
+    await start(rig)
+    await rig.scenario("ignore_writes", enabled=True, at="boiler")
+    await rig.switch(True)
+    await rig.advance(900)
+    assert rig.setpoints()
+    assert rig.state("binary_sensor", "alarm_write_ignored").state == "off"
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
+    assert rig.state("sensor", "control_state").state != "handed_back"
+    assert 0.0 not in rig.setpoints()
+    assert rig.sim.last.setpoint == boiler_setpoint(rig.sim.plant.boiler, rig.sim.outdoor)
 
 
 async def test_vt_stopped_means_no_demand_not_a_hand_back(rig: Rig) -> None:
@@ -1042,6 +1066,25 @@ async def test_a_short_cycling_boiler_is_never_held_off(rig: Rig) -> None:
         before = [calling for at, calling in seen if at < written_at]
         if on is False and before:
             assert not before[-1], written_at  # off only when no zone called
+
+
+async def test_a_lost_gateway_link_is_judged_a_lost_boiler_link(rig: Rig) -> None:
+    """PB-93: Z3's J4 means for a lost boiler link — the gateway out of reach with every boiler
+    signal it carries — is judged as one: a hand-back attempted, and retried while the gateway
+    takes nothing, control's state saying why (with "gateway" alone the plugin still saw the
+    boiler's data, and judged only failed writes)."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(60)
+    await rig.scenario("fail_signal", signal="gateway_all")
+    lost_at = rig.now()
+    await rig.advance(600)
+    state = rig.state("sensor", "control_state")
+    assert state.state == "handed_back"
+    assert "boiler_link_stale" in state.attributes["reasons"]
+    assert 0.0 in [value for at, kind, value in rig.gateway("setpoint") if at > lost_at]
+    # The gateway takes nothing while its link is lost: the hand-back is retried and told.
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
 
 
 async def test_without_any_outdoor_reading_the_fallback_setpoint_heats(rig: Rig) -> None:

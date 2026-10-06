@@ -59,6 +59,11 @@ __all__ = [
 ]
 
 DAY = 86400.0
+# PB-92: the plant is stepped explicitly; above this a step gives impossible water temperatures
+# with an exact energy balance, and starts that depend on the step. The default resolves every
+# profile's starts within a few per cent of a step four times smaller (tests/sim).
+MAX_STEP_S = 30.0
+DEFAULT_STEP_S = 20.0
 
 DEFAULT_SIGNALS = frozenset(
     {
@@ -138,7 +143,7 @@ class Scenario:
     outdoor: Callable[[float], float]
     days: float = 1.0
     start: float = 0.0
-    step_s: float = 20.0
+    step_s: float = DEFAULT_STEP_S  # at most MAX_STEP_S
     dhw: DhwSchedule | None = None
     signals: frozenset[Signal] = DEFAULT_SIGNALS
     weather_bias_k: float = 0.5  # the weather entity reads slightly off the boiler's sensor
@@ -175,6 +180,8 @@ def reference_outputs(scenario: Scenario) -> list[float]:
 def simulate(scenario: Scenario) -> SimResult:
     boiler, zones = scenario.boiler, scenario.zones
     dt = scenario.step_s
+    if not 0.0 < dt <= MAX_STEP_S:
+        raise ValueError(f"step_s {dt}: must be above 0 and at most {MAX_STEP_S} s (PB-92)")
     dt_h = dt / HOUR
     steps = round(scenario.days * DAY / dt)
     t0 = scenario.start

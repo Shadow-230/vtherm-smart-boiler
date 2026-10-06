@@ -225,6 +225,29 @@ def test_the_cli_explains_a_broken_mapping(
     assert message in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("kind", ["missing", "not sqlite", "no states_meta"])
+def test_the_cli_explains_a_bad_database(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], kind: str
+) -> None:
+    """PB-88: a missing, non-SQLite or non-recorder ``--db`` ends in the one-line usage error
+    (exit 2), not a traceback."""
+    db = tmp_path / "db.sqlite"
+    if kind == "not sqlite":
+        db.write_text("not a database at all, just text\n" * 10, encoding="utf-8")
+    elif kind == "no states_meta":
+        import sqlite3
+
+        connection = sqlite3.connect(db)
+        connection.execute("CREATE TABLE other (x)")
+        connection.commit()
+        connection.close()
+    assert main(["--db", str(db), "--mapping", str(_mapping_file(tmp_path))]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error: --db ")
+    assert len(err.strip().splitlines()) == 1
+    assert "Traceback" not in err
+
+
 def test_the_cli_on_an_empty_database(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     empty = RecorderWriter(tmp_path / "empty.db").close()
     assert main(["--db", str(empty), "--mapping", str(_mapping_file(tmp_path))]) == 1

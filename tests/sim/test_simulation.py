@@ -387,3 +387,74 @@ def test_decision_6s_classes_can_be_produced() -> None:
     s.advance(START + 50.0)
     assert s.device_reachable()
     assert s.device_restarts == 1
+
+
+# --- PB-89: switching the topology ----------------------------------------------------------
+
+
+def test_switching_to_stand_alone_changes_what_the_gateway_passes() -> None:
+    """PB-89: after ``set_topology`` the read-back shows the switched topology — a stand-alone
+    gateway passes zero, not the boiler's own curve."""
+    s = sim(outdoor=-5.0)
+    assert s.passed_setpoint() == boiler_setpoint(s.plant.boiler, -5.0)
+    s.set_topology(Topology.STANDALONE)
+    assert s.topology is Topology.STANDALONE
+    assert s.passed_setpoint() == 0.0
+    s.set_topology(Topology.WITH_THERMOSTAT)
+    assert s.passed_setpoint() == boiler_setpoint(s.plant.boiler, -5.0)
+
+
+@pytest.mark.parametrize(
+    "changes", [{"relay": RelaySetup()}, {"wall_thermostat": WallKind.OPENTHERM}]
+)
+def test_the_topology_cannot_be_switched_with_a_wall_thermostat_or_relay(changes: dict) -> None:
+    """PB-89: a wall thermostat or relay decides what passes without an override, so a switch to
+    stand-alone would change nothing; it is refused, not silently ignored."""
+    s = sim(**changes)
+    with pytest.raises(ValueError, match="topology"):
+        s.set_topology(Topology.STANDALONE)
+    assert s.topology is Topology.WITH_THERMOSTAT
+
+
+# --- PB-91: a gateway or a boiler ignoring or limiting the setpoint ----------------------------
+
+
+def test_a_boiler_ignoring_an_acknowledged_command_shows_it_in_the_read_back() -> None:
+    """PB-91: a real OpenTherm Gateway echoes what it sends the boiler. A boiler that ignores
+    the command leaves the read-back showing our value while it heats by its own curve; only a
+    gateway that drops the command shows no acknowledgement."""
+    s = sim(outdoor=0.0)
+    s.plant.boiler_ignores_override = True
+    s.gateway_setpoint(START, 60.0)
+    s.advance(START + 20.0)
+    assert s.gateway_read_back() == 60.0  # what the gateway sends
+    assert s.last.setpoint == boiler_setpoint(s.plant.boiler, 0.0)  # what the boiler works to
+    dropped = sim(outdoor=0.0)
+    dropped.ignore_writes = True
+    dropped.gateway_setpoint(START, 60.0)
+    dropped.advance(START + 20.0)
+    assert dropped.gateway_read_back() == boiler_setpoint(dropped.plant.boiler, 0.0)
+
+
+def test_a_boiler_limit_is_not_shown_by_the_gateway() -> None:
+    """PB-91: the boiler's own limit acts in the boiler: the gateway still sends and shows our
+    value, the boiler works to the lower one."""
+    s = sim(outdoor=0.0)
+    s.plant.boiler_clip = 45.0
+    s.gateway_setpoint(START, 60.0)
+    s.advance(START + 20.0)
+    assert s.gateway_read_back() == 60.0
+    assert s.last.setpoint == 45.0
+
+
+def test_a_lost_gateway_link_takes_the_boiler_signals_it_carries() -> None:
+    """PB-93: "gateway" alone fails only the gateway's own read-back and commands;
+    "gateway_all" takes every boiler signal the gateway carries with it, not the weather."""
+    s = sim()
+    s.failed.add("gateway")
+    assert not s.gateway_reachable()
+    assert not s.signal_failed("flame")
+    s.failed = {"gateway_all"}
+    assert not s.gateway_reachable()
+    assert all(s.signal_failed(key) for key in ("flame", "flow", "return", "modulation"))
+    assert not s.signal_failed("weather")

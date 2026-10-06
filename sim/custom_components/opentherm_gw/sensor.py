@@ -67,7 +67,7 @@ class Temperature(StubEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
-        failed = self._failable is not None and self._failable in self.hub.sim.failed
+        failed = self._failable is not None and self.hub.sim.signal_failed(self._failable)
         return super().available and not failed
 
     @property

@@ -54,14 +54,15 @@ BOILERS: dict[str, BoilerProfile] = {
         min_setpoint=40.0,
         max_setpoint=80.0,
     ),
-    # Oversized and holding little water: in mild weather it starts every few minutes.
+    # Oversized and holding little water: in mild weather it starts every few minutes, as fast
+    # as its restart lockout lets it (PB-92: with 8 L and a 30-s lockout it started about every
+    # minute, and its starts depended on the simulator's step).
     "short_cycling": BoilerProfile(
         8.0,
         24.0,
-        8.0,
+        25.0,
         hysteresis_on_k=3.0,
         hysteresis_off_k=3.0,
-        anti_cycle_s=30.0,
     ),
 }
 

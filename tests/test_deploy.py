@@ -130,3 +130,59 @@ def test_the_stub_goes_only_where_compose_mounts_it() -> None:
     script = SCRIPT.read_text(encoding="utf-8")
     assert "boiler_sim opentherm_gw)" in script
     assert "custom_components/boiler_sim custom_components/opentherm_gw" in script
+
+
+def _copy_root(tmp_path: Path, test_ha_dir: str) -> Path:
+    """A copy of the script's root with stub vendor/ folders, a local.env naming an unreachable
+    host and the given directory, and no SSH key — so a run that got past the directory check
+    would still stop at the missing key before any connection."""
+    root = tmp_path / "root"
+    (root / "scripts").mkdir(parents=True)
+    script = root / "scripts/deploy_test.sh"
+    script.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    for name in ("versatile_thermostat", "vtherm_smartpi"):
+        (root / "vendor/custom_components" / name).mkdir(parents=True)
+    (root / "devenv").mkdir()
+    (root / "devenv/local.env").write_text(
+        f"TEST_HA_HOST=host.invalid\nTEST_HA_SSH_USER=nobody\nTEST_HA_DIR='{test_ha_dir}'\n",
+        encoding="utf-8",
+    )
+    return script
+
+
+@pytest.mark.parametrize(
+    "test_ha_dir",
+    ["/opt/", "/opt/..", "/opt/./", "//etc", "/opt/./ha", "/srv/ha/", "/opt/../etc", "/opt/h a"],
+)
+def test_a_directory_that_only_looks_deeper_is_refused(tmp_path: Path, test_ha_dir: str) -> None:
+    """PB-87: "/opt/.." is "/", "//etc" is "/etc"; such a TEST_HA_DIR, a trailing slash and an
+    unusual character are refused before anything else happens."""
+    script = _copy_root(tmp_path, test_ha_dir)
+    result = subprocess.run(
+        ["bash", str(script)], capture_output=True, text=True, timeout=30, check=False
+    )
+    assert result.returncode == 1
+    assert "TEST_HA_DIR must be" in result.stderr
+
+
+def test_a_plain_directory_passes_the_check(tmp_path: Path) -> None:
+    """The check refuses only what it should: a plain path goes on, and stops at the missing
+    key (the copy has none), so nothing connects."""
+    script = _copy_root(tmp_path, "/srv/test-ha")
+    result = subprocess.run(
+        ["bash", str(script)], capture_output=True, text=True, timeout=30, check=False
+    )
+    assert result.returncode == 1
+    assert "id_ed25519 is missing" in result.stderr
+
+
+def test_the_host_must_show_the_test_marker_before_anything_changes() -> None:
+    """PB-87: on the host, the marker the user creates at J2 is checked before anything is
+    unpacked, replaced or restarted, and a missing directory is not created."""
+    script = SCRIPT.read_text(encoding="utf-8")
+    remote = script[script.index('pack | "${SSH[@]}"') :]
+    marker = remote.index("if [ ! -f '$MARKER' ]")
+    assert "MARKER=.vtherm-smart-boiler-test-ha" in script
+    for change in ("rm -rf", "tar -x", "mv ", "docker compose"):
+        assert remote.index(change) > marker, change
+    assert "mkdir -p '$TEST_HA_DIR'" not in script

@@ -70,11 +70,20 @@ fi
 : "${TEST_HA_HOST:?TEST_HA_HOST is empty in devenv/local.env}"
 : "${TEST_HA_SSH_USER:?TEST_HA_SSH_USER is empty in devenv/local.env}"
 : "${TEST_HA_DIR:?TEST_HA_DIR is empty in devenv/local.env}"
-# The deploy replaces directories under TEST_HA_DIR: never a top-level directory or a relative one.
+# The deploy replaces directories under TEST_HA_DIR: never a top-level directory or a relative
+# one, and nothing that only looks deeper — no "." or ".." component, no "//", no trailing slash
+# (PB-87: "/opt/.." is "/"), and only plain path characters.
 case "$TEST_HA_DIR" in
     /*/*) ;;
     *)
         echo "TEST_HA_DIR must be an absolute path below a top-level directory." >&2
+        exit 1
+        ;;
+esac
+case "$TEST_HA_DIR/" in
+    *//* | */./* | */../* | *[!A-Za-z0-9._/-]*)
+        echo "TEST_HA_DIR must be a plain absolute path: no '.' or '..' component, no '//'," \
+            "no trailing slash, only letters, digits, '.', '_', '-' and '/'." >&2
         exit 1
         ;;
 esac
@@ -97,10 +106,17 @@ SSH=(ssh -F /dev/null -i "$KEY" -o IdentitiesOnly=yes -o BatchMode=yes
      -o "UserKnownHostsFile=$SSH_DIR/known_hosts" -o GlobalKnownHostsFile=/dev/null
      -o StrictHostKeyChecking=accept-new "$TEST_HA_SSH_USER@$TEST_HA_HOST")
 
-# Unpacked into a fresh directory first; each integration then replaces its old copy whole, so
-# nothing removed here stays behind there.
+# Nothing is replaced and Home Assistant is not restarted unless the host shows it is the test
+# LXC: the user creates the marker file in TEST_HA_DIR there at J2 (PB-87; devenv/README.md). A
+# missing directory is not created. Then everything is unpacked into a fresh directory first;
+# each integration replaces its old copy whole, so nothing removed here stays behind there.
+MARKER=.vtherm-smart-boiler-test-ha
 pack | "${SSH[@]}" "set -eu
-cd '$TEST_HA_DIR' 2>/dev/null || { mkdir -p '$TEST_HA_DIR' && cd '$TEST_HA_DIR'; }
+cd '$TEST_HA_DIR'
+if [ ! -f '$MARKER' ]; then
+    echo 'No $MARKER in $TEST_HA_DIR on this host: not the test LXC, nothing changed.' >&2
+    exit 3
+fi
 rm -rf .incoming && mkdir .incoming && tar -x -f - -C .incoming
 mkdir -p config custom_components
 mv .incoming/compose.yaml compose.yaml

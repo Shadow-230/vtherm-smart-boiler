@@ -223,6 +223,51 @@ def test_ci_runs_the_core_tests_on_their_own_then_the_rest() -> None:
     assert all("--cov --cov-branch" in run for run in tests)
 
 
+def _workflow(name: str) -> dict[Any, Any]:
+    import yaml
+
+    loaded: dict[Any, Any] = yaml.safe_load(
+        (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
+    )
+    return loaded
+
+
+def test_ci_canaries_run_weekly_on_demand_and_check_types() -> None:
+    """PB-85: the upstream canaries run on a weekly schedule and on demand, not only on a push;
+    the newest-vtherm_api job runs mypy; a job runs the newest VT and SmartPI releases."""
+    workflow = _workflow("tests.yml")
+    triggers = workflow[True]  # YAML 1.1 reads the key ``on`` as true
+    assert triggers["schedule"]
+    assert "workflow_dispatch" in triggers
+    jobs = workflow["jobs"]
+    for job in ("latest-vtherm-api", "latest-vt-smartpi"):
+        runs = [step.get("run", "") for step in jobs[job]["steps"]]
+        assert "mypy" in [run.strip() for run in runs]
+        assert any("pytest" in run for run in runs)
+    newest = "\n".join(step.get("run", "") for step in jobs["latest-vt-smartpi"]["steps"])
+    assert "releases/latest" in newest
+    assert "vtherm-api" in newest
+    assert "workflow_dispatch" in _workflow("validate.yml")[True]
+
+
+def test_ci_fetches_upstream_by_full_commit_and_pins_actions() -> None:
+    """PB-86: VT and SmartPI are fetched by the full commit, not by a tag that can move, and
+    every action runs from a full commit, not from a branch or tag."""
+    commit = re.compile(r"[0-9a-f]{40}")
+    tests = _workflow("tests.yml")
+    for job in ("tests", "latest-vtherm-api"):
+        fetch = "\n".join(step.get("run", "") for step in tests["jobs"][job]["steps"])
+        assert "archive/$commit.tar.gz" in fetch
+        assert "refs/tags" not in fetch
+        assert re.search(r"versatile_thermostat [0-9a-f]{40}", fetch)
+        assert re.search(r"vtherm_smartpi [0-9a-f]{40}", fetch)
+    for name in ("tests.yml", "validate.yml"):
+        for job in _workflow(name)["jobs"].values():
+            for step in job["steps"]:
+                if "uses" in step:
+                    assert commit.fullmatch(step["uses"].rpartition("@")[2]), step["uses"]
+
+
 def test_hacs_checks_the_brand() -> None:
     """P93: since Home Assistant 2026.3 the brand ships in the integration's ``brand/`` folder,
     which the HACS action checks — no longer ignored (the icon itself is R2)."""

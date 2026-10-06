@@ -1,14 +1,20 @@
 # Tests, lint, formatting and types on every push and pull request (docs/plan-0.2.md, K2;
 # docs/plan-0.2.1.md, R3), on the Home Assistant version tested and on the declared minimum
 # (hacs.json). vendor/ (VT 10.4.0 and SmartPI 0.4.0) is not in the repository: CI fetches both
-# from their release tags on GitHub's servers, checks each tag's commit, and so runs the
-# real-VT tests on every change (docs/plan-0.2.2.md, decision 14; nothing is downloaded on the
-# developer's machine). Coverage counts branches, and every module keeps its own floor (P-35).
+# on GitHub's servers by the full commit their release tags pointed at, so a tag moved later
+# changes nothing, and so runs the real-VT tests on every change (docs/plan-0.2.2.md, decision
+# 14; PB-86; nothing is downloaded on the developer's machine). Coverage counts branches, and
+# every module keeps its own floor (P-35). The canaries (newest vtherm_api; newest VT and
+# SmartPI releases) also run weekly and on demand, so an upstream break shows without a push
+# (PB-85). Actions are pinned to full commits (PB-86); the comment names the version.
 name: Tests
 
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -24,8 +30,8 @@ jobs:
         # Dependency groups in pyproject.toml.
         homeassistant: [ha, ha-minimum]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
       - name: Install the pinned test environment under Home Assistant's constraints
@@ -45,25 +51,22 @@ jobs:
           minimum = json.load(open("hacs.json", encoding="utf-8"))["homeassistant"]
           assert __version__ == minimum, (__version__, minimum)
           PY
-      # Decision 14 (P-119): the tags' commits are those docs/plan-0.1.md A5 checked; a tag that
-      # moved, or an archive that cannot be reached, fails the job rather than skipping tests.
-      - name: VT 10.4.0 and SmartPI 0.4.0 from their release tags
+      # Decision 14 (P-119): the commits are those the 10.4.0 and 0.4.0 tags pointed at when
+      # docs/plan-0.1.md A5 checked them, fetched by their full hash (PB-86); an archive that
+      # cannot be reached fails the job rather than skipping tests.
+      - name: VT 10.4.0 and SmartPI 0.4.0 by their release commits
         run: |
           set -euo pipefail
-          fetch() {  # repository, tag, the commit the tag must point at (a prefix)
-            local repo="$1" tag="$2" commit="$3" found
-            found="$(git ls-remote --tags "https://github.com/$repo.git" \
-              | awk -v t="refs/tags/$tag" '$2 == t "^{}" {peeled = $1} $2 == t {plain = $1}
-                                            END {print (peeled != "" ? peeled : plain)}')"
-            case "$found" in
-              "$commit"*) ;;
-              *) echo "$repo tag $tag points at '$found', not $commit" >&2; exit 1 ;;
-            esac
-            curl -fsSL "https://github.com/$repo/archive/refs/tags/$tag.tar.gz" | tar -xz -C vendor
+          fetch() {  # repository, the full commit, the folder under vendor/
+            local repo="$1" commit="$2" folder="$3"
+            mkdir -p "vendor/$folder"
+            curl -fsSL "https://github.com/$repo/archive/$commit.tar.gz" \
+              | tar -xz -C "vendor/$folder" --strip-components=1
           }
           mkdir -p vendor/custom_components
-          fetch jmcollin78/versatile_thermostat 10.4.0 78090166e88a
-          fetch KipK/vtherm_smartpi 0.4.0 51db763bb0db
+          fetch jmcollin78/versatile_thermostat 78090166e88a77dfbae619eb8eb842bdd1d7259e \
+            versatile_thermostat-10.4.0
+          fetch KipK/vtherm_smartpi 51db763bb0db7b74747613fe9003b4c22e696b76 vtherm_smartpi-0.4.0
           ln -s ../versatile_thermostat-10.4.0/custom_components/versatile_thermostat \
             vendor/custom_components/versatile_thermostat
           ln -s ../vtherm_smartpi-0.4.0/custom_components/vtherm_smartpi \
@@ -112,8 +115,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
       - name: Install the pinned test environment, then the newest vtherm_api
@@ -124,27 +127,87 @@ jobs:
           python -m pip install --group test --group ha -c "$constraints"
           python -m pip install -U vtherm-api
           python -m pip show vtherm-api | head -2
-      - name: VT 10.4.0 and SmartPI 0.4.0 from their release tags
+      - name: VT 10.4.0 and SmartPI 0.4.0 by their release commits
         run: |
           set -euo pipefail
-          fetch() {
-            local repo="$1" tag="$2" commit="$3" found
-            found="$(git ls-remote --tags "https://github.com/$repo.git" \
-              | awk -v t="refs/tags/$tag" '$2 == t "^{}" {peeled = $1} $2 == t {plain = $1}
-                                            END {print (peeled != "" ? peeled : plain)}')"
-            case "$found" in
-              "$commit"*) ;;
-              *) echo "$repo tag $tag points at '$found', not $commit" >&2; exit 1 ;;
-            esac
-            curl -fsSL "https://github.com/$repo/archive/refs/tags/$tag.tar.gz" | tar -xz -C vendor
+          fetch() {  # repository, the full commit, the folder under vendor/
+            local repo="$1" commit="$2" folder="$3"
+            mkdir -p "vendor/$folder"
+            curl -fsSL "https://github.com/$repo/archive/$commit.tar.gz" \
+              | tar -xz -C "vendor/$folder" --strip-components=1
           }
           mkdir -p vendor/custom_components
-          fetch jmcollin78/versatile_thermostat 10.4.0 78090166e88a
-          fetch KipK/vtherm_smartpi 0.4.0 51db763bb0db
+          fetch jmcollin78/versatile_thermostat 78090166e88a77dfbae619eb8eb842bdd1d7259e \
+            versatile_thermostat-10.4.0
+          fetch KipK/vtherm_smartpi 51db763bb0db7b74747613fe9003b4c22e696b76 vtherm_smartpi-0.4.0
           ln -s ../versatile_thermostat-10.4.0/custom_components/versatile_thermostat \
             vendor/custom_components/versatile_thermostat
           ln -s ../vtherm_smartpi-0.4.0/custom_components/vtherm_smartpi \
             vendor/custom_components/vtherm_smartpi
+      - name: Types
+        run: mypy
+      - name: All tests
+        run: |
+          mkdir -p .tmp
+          python -m pytest -q -p no:homeassistant --disable-socket --allow-unix-socket tests/core
+          python -m pytest -q --ignore=tests/core
+
+  # PB-85: the newest VT and SmartPI releases (and the newest vtherm_api VT runs with) — a
+  # failure here is a finding: VT or SmartPI changed under the plugin, not a broken change of
+  # ours. Each release tag is resolved to its commit and fetched by that commit.
+  latest-vt-smartpi:
+    name: Tests (newest VT and SmartPI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: The newest VT and SmartPI releases by their commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          fetch() {  # repository, the folder under custom_components/
+            local repo="$1" component="$2" tag commit
+            tag="$(gh api "repos/$repo/releases/latest" --jq .tag_name)"
+            commit="$(git ls-remote --tags "https://github.com/$repo.git" \
+              | awk -v t="refs/tags/$tag" '$2 == t "^{}" {peeled = $1} $2 == t {plain = $1}
+                                            END {print (peeled != "" ? peeled : plain)}')"
+            case "$commit" in
+              [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
+              *) echo "$repo release $tag has no commit ('$commit')" >&2; exit 1 ;;
+            esac
+            echo "$repo $tag $commit"
+            mkdir -p "vendor/$component-latest"
+            curl -fsSL "https://github.com/$repo/archive/$commit.tar.gz" \
+              | tar -xz -C "vendor/$component-latest" --strip-components=1
+            ln -s "../$component-latest/custom_components/$component" \
+              "vendor/custom_components/$component"
+            test -f "vendor/custom_components/$component/manifest.json"
+          }
+          mkdir -p vendor/custom_components
+          fetch jmcollin78/versatile_thermostat versatile_thermostat
+          fetch KipK/vtherm_smartpi vtherm_smartpi
+      - name: Install the pinned test environment, the newest vtherm_api and VT's requirements
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --group ha
+          constraints="$(python -c 'import homeassistant, pathlib; print(pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt")')"
+          python -m pip install --group test --group ha -c "$constraints"
+          python -m pip install -U vtherm-api
+          mkdir -p .tmp
+          python - <<'PY' > .tmp/upstream-requirements.txt
+          import json
+          for component in ("versatile_thermostat", "vtherm_smartpi"):
+              path = f"vendor/custom_components/{component}/manifest.json"
+              print("\n".join(json.load(open(path, encoding="utf-8")).get("requirements", [])))
+          PY
+          python -m pip install -r .tmp/upstream-requirements.txt -c "$constraints"
+          python -m pip show vtherm-api | head -2
+      - name: Types
+        run: mypy
       - name: All tests
         run: |
           mkdir -p .tmp

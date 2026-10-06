@@ -48,6 +48,9 @@ from .thermostat import WallKind
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "boiler_sim"
 PLATFORMS = ("sensor", "binary_sensor", "number", "switch", "weather")
+# Where a write is ignored or limited (PB-91): before the boiler, unacknowledged, or in the
+# boiler behind a gateway that acknowledges and shows it.
+WHERE = ("gateway", "boiler")
 SIGNALS = (
     "flame",
     "flow",
@@ -62,6 +65,9 @@ SIGNALS = (
     "weather",
     # The gateway out of reach: the stub's entities unavailable, its commands dropped.
     "gateway",
+    # The gateway's whole link lost: as "gateway", and every boiler signal it carries goes with
+    # it (PB-93; ``simulation.GATEWAY_CARRIED``).
+    "gateway_all",
     # The relay reports no state ("unknown") while it stays available.
     "relay",
     # The wall thermostat's room setpoint (ID 16), as the gateway's thermostat device shows it.
@@ -244,7 +250,13 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
         hub.refresh()
 
     async def ignore_writes(call: ServiceCall) -> None:
-        sim.ignore_writes = bool(call.data.get("enabled", True))
+        # PB-91: "gateway" drops every write unacknowledged; "boiler" ignores what an
+        # acknowledging gateway sends it, as a real OpenTherm Gateway shows it.
+        enabled = bool(call.data.get("enabled", True))
+        if call.data.get("at", "gateway") == "boiler":
+            sim.plant.boiler_ignores_override = enabled
+        else:
+            sim.ignore_writes = enabled
         hub.refresh()
 
     async def refuse_id1(call: ServiceCall) -> None:
@@ -256,7 +268,10 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
         hub.refresh()
 
     async def set_topology(call: ServiceCall) -> None:
-        sim.set_topology(Topology(call.data["topology"]))
+        try:
+            sim.set_topology(Topology(call.data["topology"]))
+        except ValueError as err:  # PB-89: not with a wall thermostat or relay
+            raise ServiceValidationError(str(err)) from err
         hub.refresh()
 
     async def set_zone_mode(call: ServiceCall) -> None:
@@ -273,7 +288,11 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
 
     async def clip_setpoint(call: ServiceCall) -> None:
         value = call.data.get("value")
-        sim.clip = None if value is None else float(value)
+        clip = None if value is None else float(value)
+        if call.data.get("at", "gateway") == "boiler":  # PB-91: behind the gateway, not shown
+            sim.plant.boiler_clip = clip
+        else:
+            sim.clip = clip
         hub.refresh()
 
     async def restart_device(call: ServiceCall) -> None:
@@ -318,7 +337,10 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
             force_setpoint,
             {vol.Optional("value"): vol.Any(None, vol.Coerce(float))},
         ),
-        "ignore_writes": (ignore_writes, {vol.Optional("enabled"): cv.boolean}),
+        "ignore_writes": (
+            ignore_writes,
+            {vol.Optional("enabled"): cv.boolean, vol.Optional("at"): vol.In(WHERE)},
+        ),
         "refuse_id1": (refuse_id1, {vol.Optional("enabled"): cv.boolean}),
         "start_dhw": (start_dhw, {vol.Optional("minutes"): vol.Coerce(float)}),
         "set_topology": (
@@ -336,7 +358,10 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
         "drop_override": (drop_override, {}),
         "clip_setpoint": (
             clip_setpoint,
-            {vol.Optional("value"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(0, 90)))},
+            {
+                vol.Optional("value"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(0, 90))),
+                vol.Optional("at"): vol.In(WHERE),
+            },
         ),
         "restart_device": (
             restart_device,

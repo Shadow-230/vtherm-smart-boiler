@@ -403,3 +403,22 @@ def test_the_test_ha_configuration_is_valid() -> None:
     conf = CONFIG_SCHEMA({"boiler_sim": phase | relay})["boiler_sim"]
     assert sim_config(conf).relay is not None
     assert conf["restart_lockout_s"] == 1200
+
+
+async def test_a_boiler_side_limit_or_refusal_is_not_shown_by_the_gateway(
+    hass: HomeAssistant, freezer
+) -> None:
+    """PB-91: with ``at: boiler`` the gateway acknowledges and shows what it sends; the boiler
+    limits or ignores it behind the gateway."""
+    await setup_sim(hass, freezer, outdoor=0.0)
+    hub = hass.data["boiler_sim"]
+    await scenario(hass, "clip_setpoint", value=45, at="boiler")
+    await gateway(hass, "set_control_setpoint", temperature=60.0)
+    assert float(value(hass, READ_BACK)) == 60.0
+    assert hub.sim.plant.boiler_clip == 45.0
+    await scenario(hass, "clip_setpoint", at="boiler")
+    await scenario(hass, "ignore_writes", enabled=True, at="boiler")
+    assert hub.sim.plant.boiler_ignores_override
+    assert not hub.sim.ignore_writes
+    await gateway(hass, "set_control_setpoint", temperature=50.0)
+    assert float(value(hass, READ_BACK)) == 50.0

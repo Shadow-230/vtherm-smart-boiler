@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import itertools
 
 import pytest
 from custom_components.boiler_sim.profiles import BOILERS, HOUSES, radiator_zones
@@ -17,6 +18,8 @@ from custom_components.vtherm_smart_boiler.core.verdict import ReasonCode, Verdi
 from sim.simulator import (
     DAY,
     DEFAULT_SIGNALS,
+    DEFAULT_STEP_S,
+    MAX_STEP_S,
     WATER_KWH_PER_L_K,
     DhwSchedule,
     Scenario,
@@ -50,10 +53,10 @@ def test_energy_balance() -> None:
     assert len(result.daily_ch_kwh) == 2
 
 
-@pytest.mark.parametrize("step_s", [20.0, 70.0])
+@pytest.mark.parametrize("step_s", [20.0, 23.0])
 def test_daily_sums_are_kept(step_s: float) -> None:
     """P-112: one sum per day of the run, adding up to the heating total, whether or not the
-    step divides a day (70 s does not: the sums were lost)."""
+    step divides a day (23 s does not: the sums were lost)."""
     result = simulate(scenario([5.0, 5.0], step_s=step_s))
     assert len(result.daily_ch_kwh) == 2
     assert all(day > 0.0 for day in result.daily_ch_kwh)
@@ -145,3 +148,34 @@ def test_building_fit_recovers_the_simulated_house() -> None:
     assert fit.threshold is not None
     expected_threshold = 20.5 - house.gains_kw / house.loss_kw_per_k
     assert fit.threshold.value == pytest.approx(expected_threshold, abs=2.0)
+
+
+# --- PB-92: the step ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("step_s", [0.0, -10.0, MAX_STEP_S + 0.1, 120.0])
+def test_a_step_out_of_bounds_is_refused(step_s: float) -> None:
+    """PB-92: a large step gives impossible water temperatures with an exact energy balance; the
+    simulator refuses a step not above 0 and at most ``MAX_STEP_S``."""
+    with pytest.raises(ValueError, match="step_s"):
+        simulate(scenario([5.0], step_s=step_s))
+
+
+def _starts(result_flame: list[bool | None]) -> int:
+    return sum(1 for a, b in itertools.pairwise(result_flame) if b and not a)
+
+
+@pytest.mark.parametrize("profile", ["short_cycling", "condensing_large"])
+def test_starts_converge_with_the_step(profile: str) -> None:
+    """PB-92: the starts a profile gives at the default step are those of a step four times
+    smaller, within 5 % — comparisons of starts mean something. The short-cycling boiler starts
+    every few minutes in mild weather, as its docstring says, not every minute."""
+    counts = []
+    for step_s in (DEFAULT_STEP_S / 4, DEFAULT_STEP_S):
+        result = simulate(scenario([5.0, 5.0], boiler=BOILERS[profile], step_s=step_s))
+        counts.append(_starts([s.value for s in result.history.signals[Signal.FLAME]]))
+    fine, default = counts
+    assert default == pytest.approx(fine, rel=0.05)
+    if profile == "short_cycling":
+        assert 2 * DAY / fine >= 3 * 60.0  # every few minutes
+        assert 2 * DAY / fine <= 10 * 60.0  # still short cycling

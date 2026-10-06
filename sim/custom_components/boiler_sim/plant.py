@@ -149,6 +149,10 @@ class Plant:
         self.gateway_ch_off = False
         self.max_modulation: float | None = None  # a gateway's MM=, 0–100 % of the range
         self.fault = False  # a fault the boiler reports as stopping it
+        # PB-91: the boiler itself ignoring an override it was sent, or taking none above its own
+        # limit; a gateway in between still sends, and shows, the commanded value.
+        self.boiler_ignores_override = False
+        self.boiler_clip: float | None = None
         self.outputs = reference_outputs(house, self.zones)
         self.references = [EMITTER_REFERENCE[z.emitter] for z in self.zones]
         self.ref_excess = [(r.flow + r.return_) / 2.0 - r.room for r in self.references]
@@ -246,8 +250,10 @@ class Plant:
         """The setpoint the boiler works to, its heating demand and whether an override holds."""
         boiler = self.boiler
         active = self.override_active(t)
-        if active and self.override_setpoint is not None:
+        if active and self.override_setpoint is not None and not self.boiler_ignores_override:
             setpoint = self.override_setpoint
+            if self.boiler_clip is not None:
+                setpoint = min(setpoint, self.boiler_clip)
             demand = not self.gateway_ch_off
         elif request is not None:
             setpoint = (

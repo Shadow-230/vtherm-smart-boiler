@@ -26,7 +26,7 @@ class SimEntity(Entity):
     def available(self) -> bool:
         if self._on_device and not self.hub.sim.device_reachable():
             return False
-        return self.key not in self.hub.sim.failed
+        return not self.hub.sim.signal_failed(self.key)
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(self.hub.add_listener(self.async_write_ha_state))
