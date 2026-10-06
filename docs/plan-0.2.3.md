@@ -131,8 +131,8 @@ and VT's not-started zones read as the user's "off".
 | Step | Work |
 |---|---|
 | 3.1 | The remaining specification problems, settled in `SCOPE.md`, `PLAN.md` and the plans: SB-12, SB-13, SB-14, SB-15, SB-16, SB-17, SB-19, SB-20, SB-21, SB-22, SB-23, SB-24, SB-25, SB-26, SB-27, SB-28, SB-30, SB-31, SB-32, SB-33, SB-34, SB-35, SB-37, SB-38, SB-39. |
-| 3.2 | Control, guards, relay, transport, units, lifecycle, stores, repairs, forecasts, the monitor, the VT link and the feature manager: PB-15, PB-21, PB-28, PB-29, PB-30, PB-31, PB-32, PB-33, PB-34, PB-35, PB-36, PB-37, PB-38, PB-40, PB-41, PB-42, PB-43, PB-53, PB-70, PB-72, PB-73, PB-84, PB-17, PB-18, PB-47, PB-51, PB-52, PB-55, PB-56, PB-57, PB-58, PB-59, PB-60, PB-62, PB-19, PB-20, PB-63, PB-64, PB-65, PB-66, PB-67, PB-46, PB-48, PB-49, PB-50. |
-| 3.3 | The config and options flows, entities, texts, icons, the manifest, CI, scripts, tools, the simulator, the test HA files, and wrong or weak tests: PB-45, PB-54, PB-68, PB-69, PB-71, PB-83, PB-39, PB-61, PB-74, PB-75, PB-76, PB-77, PB-78, PB-79, PB-80, PB-81, PB-82, PB-85, PB-86, PB-87, PB-88, PB-89, PB-91, PB-92, PB-93, PB-25, PB-90, PB-94, PB-95, PB-96, PB-97, PB-98, PB-99, PB-100, PB-101. |
+| 3.2 ✅ | Control, guards, relay, transport, units, lifecycle, stores, repairs, forecasts, the monitor, the VT link and the feature manager: PB-15, PB-21, PB-28, PB-29, PB-30, PB-31, PB-32, PB-33, PB-34, PB-35, PB-36, PB-37, PB-38, PB-40, PB-41, PB-42, PB-43, PB-53, PB-70, PB-72, PB-73, PB-84, PB-17, PB-18, PB-47, PB-51, PB-52, PB-55, PB-56, PB-57, PB-58, PB-59, PB-60, PB-62, PB-19, PB-20, PB-63, PB-64, PB-65, PB-66, PB-67, PB-46, PB-48, PB-49, PB-50. |
+| 3.3 ✅ | The config and options flows, entities, texts, icons, the manifest, CI, scripts, tools, the simulator, the test HA files, and wrong or weak tests: PB-45, PB-54, PB-68, PB-69, PB-71, PB-83, PB-39, PB-61, PB-74, PB-75, PB-76, PB-77, PB-78, PB-79, PB-80, PB-81, PB-82, PB-85, PB-86, PB-87, PB-88, PB-89, PB-91, PB-92, PB-93, PB-25, PB-90, PB-94, PB-95, PB-96, PB-97, PB-98, PB-99, PB-100, PB-101. |
 | 3.4 | The check of part 3. |
 | 3.5 🔒 | Stop: the report to the user, with the tokens part 3 used; the user decides whether part 4 starts. |
 
@@ -287,6 +287,33 @@ Left on purpose for a later release; what a step leaves open is added here by na
     a stand-alone gateway's `CS` lapses within about a minute (an extra start) and a held command
     stays up to 5 min against VT (`SCOPE.md` principle 12, exception 7); whether "heating off" is
     exempt from the guard — K4.
+54. Step 3.2 (PB-34): a setpoint read-back whose entity has `assumed_state` is shown
+    "unverified" but still judged; whether to block control or refuse it in the form — K4.
+55. Step 3.2 (PB-84): nine functions on the control path stay above the complexity limit — split
+    them behind their precedence tables, or a relaxed limit — K4.
+56. Step 3.2 (PB-43): a DS18B20's 85 °C power-on value, or a stuck reading, on a temperature
+    source of foreign heat is not caught — K4.
+57. Step 3.2 (PB-42, PB-55): a number's device unit is read through Home Assistant's internal
+    `hass.data["number"]`, and the follow of a rename during setup through its private
+    `setup_tasks` (on a version without it the first setup can race again); a hand-back unit's
+    `taken_with` entities renamed during setup are not followed — K5.
+58. Step 3.2 (PB-64): a banded alarm level restarts its 5-min count after a gap (only the low-flow
+    warning keeps its "since"); J4 confirms that a restart writes one recorder row per entity
+    (PB-65) — K4.
+59. Step 3.2 (SB-27, SB-32): the closed-room frost issue's advice texts, and the circuit-too-hot
+    feature left inactive for a passive circuit without its own flow reading (rather than the
+    boiler's flow as an upper bound) — K4.
+60. Step 3.3 (PB-61, PB-79, PB-82): a README note for installs without a container about the
+    packages of `mqtt` and `opentherm_gw`; `pl.json` read by a native speaker; temperature
+    attributes named "(°C)" rather than converted to Home Assistant's unit — K5.
+61. Step 3.3 (PB-75): `docs/plan-0.2.2-details.md` Y3 rule 7 worded as the new verdict text — K4.
+62. Step 3.3 (PB-85, PB-86): no canary job on the newest Home Assistant (it needs a matching
+    pytest-homeassistant-custom-component); the pinned actions are updated by hand — K2.
+63. Step 3.3: on the real OTGW path, a boiler that ignores or limits a setpoint the gateway
+    acknowledged cannot be seen in the read-back — K4.
+64. Step 3.3: with the simulator's tick forced after the plugin's step, six relay acceptance tests
+    (restart resent, unreported restarts, switched while available, Wi-Fi loss) fail at checks on
+    exact time boundaries — looked at in the check 3.4; what is left — K4.
 
 ## After 0.2.3
 
