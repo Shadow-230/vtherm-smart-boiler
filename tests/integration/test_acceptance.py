@@ -222,13 +222,15 @@ async def start(
     entry_options: dict[str, Any] | None = None,
     emitter: str | None = None,
     with_control: bool = True,
+    control_stored: object = None,
     **control: Any,
 ) -> None:
     """The simulator, VT's zones and the plugin; ``stored``: what an earlier run left in the
     entry store (0.2.1's layout). Without it, the entry ran before and its control store owes
     nothing: an entry with control and no stores at all would hand back first (V1).
     ``entry_options``: sections of the entry's options to replace (circuits, signals, the
-    boiler); ``emitter``: every zone's; ``with_control``: no control section at all."""
+    boiler); ``emitter``: every zone's; ``with_control``: no control section at all;
+    ``control_stored``: what the control store holds, next to ``stored`` (lost or damaged)."""
     hass = rig.hass
     assert await async_setup_component(hass, SIM, {SIM: {"outdoor": -2.0} | (sim or {})})
     await hass.async_block_till_done()
@@ -263,6 +265,9 @@ async def start(
         key = f"{DOMAIN}.{entry.entry_id}"
         version = stored.pop("__version__", 1)  # another version: a store this one cannot read
         rig.storage[key] = {"version": version, "key": key, "data": stored}
+        if control_stored is not None:
+            key = f"{DOMAIN}.{entry.entry_id}.control"
+            rig.storage[key] = {"version": 1, "key": key, "data": control_stored}
     else:
         key = f"{DOMAIN}.{entry.entry_id}.control"
         rig.storage[key] = {"version": 1, "key": key, "data": {}}
@@ -2196,3 +2201,353 @@ async def test_relay_proof_of_heat_outlasts_the_restart_lockout(rig: Rig) -> Non
     await rig.advance(60, step=30.0)
     assert alarm(rig, "boiler_not_responding") == "on"
     assert rig.state("sensor", "control_state").state == "heating"  # information only
+
+
+# --- TB-14, the rest (step 4.2d of plan 0.2.3): J4's remaining scenarios on the simulator ------
+
+LOW_PRESSURE_FAULT = "binary_sensor.boiler_sim_low_pressure_fault"
+
+
+def sent_since(rig: Rig, count: int) -> list[tuple[str, object]]:
+    """What the plugin sent the gateway after its first ``count`` commands."""
+    return [(kind, value) for _t, kind, value in rig.gateway()[count:]]
+
+
+def entity_heating(rig: Rig) -> list[bool]:
+    """The heating switch as the plugin wrote it on the entity path."""
+    return [bool(value) for _t, kind, value in rig.sim.commands.entity if kind == "ch"]
+
+
+async def test_a_boiler_fault_known_on_switches_heating_off_after_five_minutes(rig: Rig) -> None:
+    """TB-14 (decision 7, Y1): the boiler's own low-water-pressure fault, mapped and reading
+    "on". Nothing changes for five minutes; then the usual "off" (CH=0) — no hand-back, no latch
+    — and a notification naming the fault. The fault gone: heating on again by itself."""
+    signals = SIGNALS | {"low_pressure_fault": LOW_PRESSURE_FAULT}
+    await start(rig, entry_options={"signals": signals})
+    await rig.switch(True)
+    await rig.advance(START_TRACE_S)
+    assert rig.gateway("ch")[-1][2] is True
+    assert rig.hass.states.get(LOW_PRESSURE_FAULT).state == "off"
+    count = len(rig.gateway())
+    await rig.scenario("set_fault", fault="low_pressure_fault")
+    assert rig.hass.states.get(LOW_PRESSURE_FAULT).state == "on"
+    await rig.advance(240)
+    assert ("ch", False) not in sent_since(rig, count)  # four minutes: nothing yet
+    await rig.advance(90)
+    sent = sent_since(rig, count)
+    assert ("ch", False) in sent
+    assert ("setpoint", 0.0) not in sent  # no hand-back
+    assert rig.sim.plant.override_active(rig.now())  # the plugin keeps the boiler
+    state = rig.state("sensor", "control_state")
+    assert state.state == "boiler_fault"
+    assert state.attributes["latched_by"] == []
+    assert repair(rig, "boiler_fault") is not None
+    count = len(rig.gateway())
+    await rig.scenario("set_fault", fault="low_pressure_fault", on=False)
+    await rig.advance(30)
+    assert ("ch", True) in sent_since(rig, count)
+    assert rig.state("sensor", "control_state").state == "heating"
+
+
+async def test_the_monitor_failing_hands_back_then_control_resumes_by_itself(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TB-14 (answer I): the plugin's own monitor fails. For five minutes control goes on; then
+    the full safe hand-back, with no latch and a repair issue. Once the monitor has worked again
+    for a minute, control takes the boiler back by itself and the issue becomes an information
+    note."""
+    from .test_control import break_monitor
+
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(60)
+    assert rig.sim.plant.override_active(rig.now())
+    breaker = break_monitor(monkeypatch)
+    breaker.failing = True
+    count = len(rig.gateway())
+    await rig.advance(240)
+    assert ("setpoint", 0.0) not in sent_since(rig, count)
+    assert rig.sim.plant.override_active(rig.now())
+    await rig.advance(90)
+    sent = sent_since(rig, count)
+    assert sent[-3:] == SAFE_HAND_BACK
+    assert not rig.sim.plant.override_active(rig.now())
+    state = rig.state("sensor", "control_state")
+    assert state.state == "not_allowed"  # a blocker, not a latch
+    assert state.attributes["latched_by"] == []
+    assert "monitor_failed" in rig.state("switch", "control").attributes["blockers"]
+    assert repair(rig, "monitor_failed").translation_key == "monitor_failed"
+    count = len(rig.gateway())
+    await rig.advance(120)
+    assert sent_since(rig, count) == []  # handed back: nothing written while it fails
+    breaker.failing = False
+    await rig.advance(30)
+    assert not rig.sim.plant.override_active(rig.now())  # it must work for a minute first
+    await rig.advance(150)
+    assert rig.sim.plant.override_active(rig.now())  # resumed by itself
+    assert rig.state("switch", "control").state == "on"
+    assert repair(rig, "monitor_failed").translation_key == "monitor_recovered"
+
+
+@pytest.mark.parametrize(
+    ("path", "tick", "handed_back"),
+    [
+        ("entity", True, True),
+        ("entity", False, False),
+        ("relay_rests_on", True, True),
+        ("relay_rests_off", True, False),
+    ],
+)
+async def test_every_zone_unknown_with_and_without_the_own_room_controller_tick(
+    rig: Rig, path: str, tick: bool, handed_back: bool
+) -> None:
+    """TB-14 (decision 3, answers F and M): every VT zone unavailable while the plugin heats.
+    The command is kept through the grace period; then nothing can ask for heat. With the "own
+    room controller" tick the boiler is handed back to its own control — on the entity path its
+    hand-back value, on the relay path the rest state "on"; without the tick, or with the relay
+    resting "off", the usual "off" — never heating with no zone known. The alarm and the repair
+    issue come at once."""
+    own = {"own_room_controller": True} if tick else {}
+    relay = path.startswith("relay")
+    if relay:
+        rest = "on" if path == "relay_rests_on" else "off"
+        await start_relay(rig, relay_rest_state=rest, **own)
+        await relay_on_under_control(rig)
+    else:
+        await start(rig, sim={"write_type": "held"}, **ENTITY_CONTROL, **own)
+        rooms_call(rig, True)
+        await rig.switch(True)
+        await rig.advance(60)
+        assert entity_heating(rig)[-1] is True
+        assert rig.sim.plant.override_active(rig.now())
+    rig.vt_mode = "unavailable"
+    rig.mirror_zones()
+    await rig.advance(540, step=30.0)
+    assert rig.state("sensor", "control_state").attributes["reasons"] == ["zones_recognition"]
+    assert relay_model(rig).on if relay else entity_heating(rig)[-1] is True
+    await rig.advance(90, step=30.0)
+    state = rig.state("sensor", "control_state")
+    assert alarm(rig, "no_zone_known") == "on"
+    issue = repair(rig, "no_zone_known")
+    assert issue is not None
+    assert issue.translation_key == (
+        "no_zone_known_handed_back" if handed_back else "no_zone_known_off"
+    )
+    if relay:
+        assert relay_model(rig).on is handed_back  # its rest state "on", or the usual "off"
+        assert state.state == ("handed_back" if handed_back else "idle")
+    elif handed_back:
+        assert state.state == "handed_back"
+        assert entity_setpoints(rig)[-1] == 0.0  # the hand-back value: the boiler's own curve
+        assert not rig.sim.plant.override_active(rig.now())
+    else:
+        assert state.state == "idle"
+        assert entity_heating(rig)[-1] is False  # heating off, no hand-back
+        assert 0.0 not in entity_setpoints(rig)
+
+
+@pytest.mark.parametrize("path", ["opentherm_gw", "relay"])
+async def test_the_activation_delay_holds_a_start_on_both_paths(rig: Rig, path: str) -> None:
+    """TB-14 (decision 5): VT's activation delay of 120 s. The rooms warm when control starts;
+    then they call. Heating is not switched on for 120 s from that first call, and a call that
+    drops and comes back meanwhile neither cancels nor restarts the wait; at its end heating
+    starts. Switching off is at once."""
+    relay = path == "relay"
+
+    def heating() -> bool:
+        if relay:
+            return bool(relay_model(rig).on)
+        switched = rig.gateway("ch")
+        return bool(switched) and switched[-1][2] is True
+
+    if relay:
+        await start_relay(rig, activation_delay_s=120)
+    else:
+        await start(rig, activation_delay_s=120)
+    rooms_call(rig, False)
+    await rig.switch(True)
+    await rig.advance(60)
+    assert not heating()
+    rooms_call(rig, True)
+    await rig.advance(60)
+    assert not heating()
+    assert "activation_delay" in rig.state("sensor", "control_state").attributes["reasons"]
+    rooms_call(rig, False)  # the call drops for 10 s...
+    await rig.advance(10)
+    rooms_call(rig, True)  # ...and comes back
+    await rig.advance(40)  # 110 s after the first call
+    assert not heating()
+    await rig.advance(20)  # past 120 s
+    assert heating()
+    rooms_call(rig, False)
+    await rig.advance(10)
+    assert not heating()  # at once
+
+
+async def test_a_planned_relay_restart_rests_then_restores_at_once(rig: Rig) -> None:
+    """TB-14 (R9): a planned restart — the entry stopped and started again, as Home Assistant
+    does. The relay goes to its rest state ("off") at the stop, and gets its last command ("on")
+    again at once at the start — no activation delay, no hand-back first — and keeps it."""
+    await start_relay(rig, activation_delay_s=120)
+    rooms_call(rig, True)
+    await rig.switch(True)
+    await rig.advance(130)
+    assert relay_model(rig).on
+    before = len(relay_commands(rig))
+    hass = rig.hass
+    assert rig.entry is not None
+    assert await hass.config_entries.async_unload(rig.entry.entry_id)
+    await hass.async_block_till_done()
+    assert relay_commands(rig)[before:] == [False]  # the rest state at the stop
+    assert not relay_model(rig).on
+    assert await hass.config_entries.async_setup(rig.entry.entry_id)
+    await hass.async_block_till_done()
+    assert relay_commands(rig)[before:] == [False, True]  # at once, before any delay
+    assert relay_model(rig).on
+    await rig.advance(600, step=30.0)
+    assert False not in relay_commands(rig)[before + 1 :]
+    assert rig.state("sensor", "control_state").state == "heating"
+    assert alarm(rig, "outside_change") == "off"
+
+
+async def test_control_is_refused_without_a_heating_switch(rig: Rig) -> None:
+    """TB-14 (decision 11): the entity path with a setpoint entity but no heating switch: a low
+    setpoint is not "off", so control is refused. Nothing is written; the boiler heats by its
+    own control."""
+    control = {k: v for k, v in ENTITY_CONTROL.items() if not k.startswith("ch_")}
+    await start(rig, sim={"write_type": "held"}, **control)
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)
+    assert err.value.translation_key == "blocked_no_heating_switch"
+    rooms_call(rig, True)
+    await rig.advance(300, step=30.0)
+    assert rig.sim.commands.entity == []
+    assert not rig.sim.plant.override_active(rig.now())
+    assert rig.sim.last.setpoint == boiler_setpoint(rig.sim.plant.boiler, rig.sim.outdoor)
+
+
+async def test_a_boiler_ignoring_heating_off_from_the_start_is_blocked_and_handed_back(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TB-14 (answer O): the gateway passes on the setpoint but the boiler never takes CH=0 —
+    its CH enable, read back from the gateway, stays "on" as the wall thermostat asked before
+    the session, through the session's first three sends of "off". Control is blocked and the
+    boiler handed back at once (the full safe hand-back), with the latch and a blocker naming
+    the cause, whatever reaction "write ignored" has; nothing more is written until the user
+    switches control off and on."""
+    await start(
+        rig,
+        sim={"wall_thermostat": "opentherm"},
+        ch_confirmed_entity=CH_ENABLED,
+        alarm_reactions={"write_ignored": "info"},
+    )
+    taken = rig.sim.gateway_heating
+
+    def ignores_off(now: float, on: bool) -> None:
+        taken(now, on)
+        if not on:
+            rig.sim.plant.gateway_ch_off = False  # the boiler keeps heating enabled
+
+    monkeypatch.setattr(rig.sim, "gateway_heating", ignores_off)
+    rooms_call(rig, False)  # no zone calls: control asks "off"
+    await rig.scenario("set_wall_setpoint", temperature=30)  # the thermostat asks for heat
+    await rig.advance(START_TRACE_S)
+    await rig.switch(True)
+    for _ in range(60):
+        await rig.advance(10)
+        if rig.state("sensor", "control_state").state == "handed_back":
+            break
+    state = rig.state("sensor", "control_state")
+    assert state.state == "handed_back"
+    assert state.attributes["latched_by"] == ["heating_off_ignored"]
+    assert "heating_off_ignored" in rig.state("switch", "control").attributes["blockers"]
+    assert recent_gateway(rig, 3) == SAFE_HAND_BACK
+    assert repair(rig, "control_latched") is not None
+    count = len(rig.gateway())
+    rooms_call(rig, True)
+    await rig.advance(300, step=30.0)
+    assert len(rig.gateway()) == count  # nothing written after the hand-back
+    await rig.switch(False)
+    await rig.switch(True)
+    await rig.advance(30)
+    assert rig.sim.plant.override_active(rig.now())  # the user's off and on cleared it
+
+
+async def test_a_gateway_entry_without_the_terminals_answer_keeps_control_stopped(
+    rig: Rig,
+) -> None:
+    """TB-14 (answer K): a gateway entry made before 0.2.2, its user's wish "control on", with
+    no answer on what is wired to the gateway's thermostat terminals. Control stays stopped —
+    nothing is written, the wall thermostat heats the house — and a repair issue asks for the
+    answer. Once it is given, the issue goes and control may start."""
+    await start(
+        rig,
+        sim={"wall_thermostat": "opentherm"},
+        stored={"control": {"enabled": True}},
+        thermostat_kind=None,
+    )
+    rig.sim.plant.room[0] = 17.0  # the thermostat's room is cold
+    await rig.advance(600, step=30.0)
+    assert rig.gateway() == []
+    assert rig.sim.wall is not None
+    assert rig.sim.last.demand  # the thermostat heats
+    assert repair(rig, "thermostat_kind_missing") is not None
+    assert "thermostat_kind_unknown" in rig.state("switch", "control").attributes["blockers"]
+    assert rig.entry is not None
+    control = dict(rig.entry.options["control"]) | {"thermostat_kind": "opentherm"}
+    rig.hass.config_entries.async_update_entry(
+        rig.entry, options=dict(rig.entry.options) | {"control": control}
+    )
+    await rig.hass.async_block_till_done()
+    assert repair(rig, "thermostat_kind_missing") is None
+    if rig.state("switch", "control").state != "on":
+        await rig.switch(True)
+    await rig.advance(60)
+    assert rig.sim.plant.override_active(rig.now())
+
+
+@pytest.mark.parametrize("store", ["lost", "truncated"])
+async def test_a_lost_or_truncated_control_store_hands_back_first(rig: Rig, store: str) -> None:
+    """TB-14 (answer K): the entry ran under 0.2.2 — its entry store says so — but its control
+    store is gone, or holds a truncated piece of it. It may hide a boiler still held: the full
+    safe hand-back first, and control stays off until the user switches it on."""
+    from custom_components.vtherm_smart_boiler.const import CONTROL_STORE_MARKER
+
+    await start(
+        rig,
+        stored={CONTROL_STORE_MARKER: 1},
+        control_stored='{"controlling": tr' if store == "truncated" else None,
+    )
+    await rig.advance(30)
+    assert recent_gateway(rig, len(rig.gateway()))[:3] == SAFE_HAND_BACK
+    assert rig.state("switch", "control").state == "off"
+    count = len(rig.gateway())
+    await rig.advance(180)
+    assert len(rig.gateway()) == count
+
+
+async def test_after_another_controller_control_returns_by_itself_once_quiet(rig: Rig) -> None:
+    """TB-14 (decision 6, the optional return by itself): another controller's value held after
+    the one rewrite — the plugin steps aside with the full safe hand-back and the latch. The
+    other controller gone, the read-back shows the hand-back state for an hour: a new session
+    takes the boiler by itself, the latch gone. Not before the hour."""
+    await start(rig, return_after_outside_change=True)
+    await rig.switch(True)
+    await rig.advance(START_TRACE_S)
+    await rig.scenario("force_setpoint", value=62)
+    for _ in range(30):
+        await rig.advance(10)
+        if rig.state("sensor", "control_state").state == "handed_back":
+            break
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
+    assert recent_gateway(rig, 3) == SAFE_HAND_BACK
+    await rig.scenario("force_setpoint", value=None)  # the other controller is gone
+    count = len(rig.gateway())
+    await rig.advance(3000, step=30.0)
+    assert len(rig.gateway()) == count  # quiet for less than an hour: no return yet
+    assert not rig.sim.plant.override_active(rig.now())
+    await rig.advance(900, step=30.0)
+    assert rig.sim.plant.override_active(rig.now())  # a new session
+    state = rig.state("sensor", "control_state")
+    assert state.state in ("heating", "idle")
+    assert state.attributes["latched_by"] == []
