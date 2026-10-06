@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from functools import cache
 
 import pytest
+from custom_components.boiler_sim.plant import boiler_setpoint
 from custom_components.boiler_sim.profiles import BOILERS, HOUSES, BoilerProfile, radiator_zones
 
 from custom_components.vtherm_smart_boiler.control_config import parse_control
@@ -235,7 +237,12 @@ def test_hand_back_returns_the_boiler_to_its_own_control() -> None:
     own = BOILERS["condensing_large"]
     later = setpoint.value_at(switch_off + HOUR)
     assert later is not None
-    assert own.min_setpoint <= later <= own.max_setpoint  # the boiler's own curve again
+    # PB-95: the boiler's own curve again, exactly — not merely within its range, which the
+    # plugin's own setpoint also is — and no override after the hand-back.
+    outdoor = result.history.signal(Signal.OUTDOOR).value_at(switch_off + HOUR)
+    assert outdoor is not None
+    assert later == pytest.approx(boiler_setpoint(own, outdoor), abs=0.05)
+    assert result.override_s <= controller.hand_backs[0] + 60.0
 
 
 def test_summer_heating_follows_vt_at_the_minimum_water_temperature() -> None:
@@ -332,6 +339,13 @@ def starts_both_ways(
     swing: float = 0.0,
     flow_shift: float = 0.0,
 ) -> tuple[SimResult, SimResult]:
+    return _starts_both_ways(mean, comfort_correction, swing, flow_shift)
+
+
+@cache  # each pair runs once per session: the band test reads the xfail runs again (PB-94)
+def _starts_both_ways(
+    mean: float, comfort_correction: bool | None, swing: float, flow_shift: float
+) -> tuple[SimResult, SimResult]:
     """24 h at an outdoor temperature around ``mean`` — steady, or with a daily swing of
     ±``swing`` K — after a day to settle, in the same simulated house: three radiator zones
     under TPI, the boiler on its own regulation — its own curve, heating whenever a zone valve
@@ -375,15 +389,14 @@ def test_tpi_switch_zones_starts_per_hour_under_control(mean: float) -> None:
     assert comfort_parity(own, controlled), comfort_shortfall(own, controlled)
 
 
-@pytest.mark.parametrize("mean", [8.0, -5.0])
-def test_tpi_switch_zones_starts_per_hour_with_the_defaults(mean: float) -> None:
+def test_the_defaults_are_the_correction_off_run() -> None:
     """J4's criterion with the plugin's defaults — the comfort correction off since the user's
-    decision of 2026-10-03 (K4.1) — in the same house: the plugin starts the burner no more than
-    1.10 times as often per hour as the boiler's own regulation."""
-    own, controlled = starts_both_ways(mean, comfort_correction=None)
-    assert controlled.override_s > 0.95 * 2 * DAY  # the control held the boiler throughout
-    assert starts(controlled, DAY, 2 * DAY) <= STARTS_CRITERION * starts(own, DAY, 2 * DAY)
-    assert comfort_parity(own, controlled), comfort_shortfall(own, controlled)
+    decision of 2026-10-03 (K4.1): the defaults' loop is the one the correction-off test runs,
+    so that test is J4's criterion with the defaults too (PB-94: no second run of the same).
+    Negative: the correction on is another loop."""
+    boiler = BOILERS["condensing_large"]
+    assert own_curve_loop(boiler, None) == own_curve_loop(boiler, False)
+    assert own_curve_loop(boiler, None) != own_curve_loop(boiler, True)
 
 
 @pytest.mark.parametrize("mean", [8.0, -5.0])
@@ -405,6 +418,7 @@ def test_comfort_parity_without_rooms_is_not_met() -> None:
 
 @pytest.mark.xfail(
     strict=True,
+    raises=AssertionError,
     reason=(
         "K4 (S-15, decision 8 of 0.2.3): with the ±3 K daily outdoor swing the defaults on the "
         "boiler's own curve keep the rooms as warm (within 0.01 K) but start the burner x1.20 "
@@ -427,6 +441,7 @@ def test_j4s_starts_criterion_with_the_daily_swing(mean: float) -> None:
 
 @pytest.mark.xfail(
     strict=True,
+    raises=AssertionError,
     reason=(
         "K4.1 (S-15): the comfort correction, when switched on, rises to +3 K while a TPI zone "
         "sits at full duty short of its target, and every zone's cycle then stops the burner: "
@@ -442,3 +457,26 @@ def test_tpi_switch_zones_starts_per_hour_with_the_correction_on(mean: float) ->
     house fails J4's criterion."""
     own, controlled = starts_both_ways(mean, comfort_correction=True)
     assert starts(controlled, DAY, 2 * DAY) <= STARTS_CRITERION * starts(own, DAY, 2 * DAY)
+
+
+@pytest.mark.parametrize(
+    ("mean", "correction", "swing", "low", "high"),
+    [
+        (8.0, None, SWING_K, 1.15, 1.25),
+        (-5.0, None, SWING_K, 2.0, 2.3),
+        (8.0, True, 0.0, 1.65, 1.85),
+        (-5.0, True, 0.0, 4.7, 5.5),
+    ],
+    ids=["swing_plus_8", "swing_minus_5", "correction_on_plus_8", "correction_on_minus_5"],
+)
+def test_the_documented_starts_ratios_hold(
+    mean: float, correction: bool | None, swing: float, low: float, high: float
+) -> None:
+    """PB-94: the two strict xfails above fail on the starts criterion alone; this pins the
+    ratios their reasons document (x1.20 and x2.16 with the daily swing, x1.75 and x5 with the
+    correction on), so a far worse ratio — or a crash — shows here instead of passing as the
+    expected failure. Comfort parity holds in each (within 0.05 K)."""
+    own, controlled = starts_both_ways(mean, comfort_correction=correction, swing=swing)
+    ratio = starts(controlled, DAY, 2 * DAY) / starts(own, DAY, 2 * DAY)
+    assert low <= ratio <= high, ratio
+    assert all(short <= 0.05 for short in comfort_shortfall(own, controlled).values())

@@ -103,6 +103,12 @@ OWN_CONTROL_FORM = form_defaults(
 RELAY_FORM = form_defaults(config_flow.control_relay_schema({}))
 ZONE_FORM = form_defaults(config_flow.zone_schema({}, {}))
 BEHAVIOUR_FORM = form_defaults(config_flow.control_behaviour_schema(ADVANCED))
+SIGNALS_FORM = form_defaults(config_flow.signals_schema({}))
+# An entity field offers its entity as a suggested value, not a default.
+SIGNALS_SUGGESTED = {
+    str(key): (key.description or {}).get("suggested_value")
+    for key in config_flow.signals_schema({}).schema
+}
 CONFIG = EntryConfig.from_options(MINIMAL_OPTIONS)
 
 # (the SCOPE §7 row, what the plugin holds, the table's value)
@@ -249,10 +255,15 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ('"add water" threshold (form)', lambda: MONITOR_FORM["add_water_below"], vol.UNDEFINED),
     ('"add water" threshold (parser)', lambda: CONFIG.monitor.alarms.add_water_below, None),
     # Boiler-fault signals | none
+    # PB-95: read from the signals form, which offers every signal — not from options that map
+    # other signals only.
     (
-        "boiler-fault signals",
-        lambda: {Signal.LOW_PRESSURE_FAULT, Signal.FAULT_INDICATION} & set(CONFIG.signals),
-        set(),
+        "boiler-fault signals (form)",
+        lambda: {
+            (SIGNALS_FORM[signal.value], SIGNALS_SUGGESTED[signal.value])
+            for signal in (Signal.LOW_PRESSURE_FAULT, Signal.FAULT_INDICATION)
+        },
+        {(vol.UNDEFINED, None)},
     ),
     # Thermostat terminals (gateway) | none — required; "I don't know" blocks control
     ("thermostat terminals (parser)", lambda: BARE.thermostat_kind, None),

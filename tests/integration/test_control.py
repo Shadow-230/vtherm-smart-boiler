@@ -253,7 +253,8 @@ class Rig:
             elapsed += step
             self.live()
             async_fire_time_changed(self.hass)
-            await self.hass.async_block_till_done()
+            # The control step runs as a background task (PB-25).
+            await self.hass.async_block_till_done(wait_background_tasks=True)
 
     def entity(self, domain: str, key: str) -> str:
         assert self.entry is not None
@@ -390,7 +391,8 @@ async def rig(
     rig = new_rig(hass, freezer, zones, hass_storage, monkeypatch)
     yield rig
     await hass.async_block_till_done()  # a reload an options flow started, done before teardown
-    marks_stop_unloaded(hass, ("opentherm_gw", "mqtt"))
+    # PB-101: VT central entries are only marked loaded too.
+    marks_stop_unloaded(hass, ("opentherm_gw", "mqtt", "versatile_thermostat"))
 
 
 # The OTGW firmware's MQTT names in the tests: its top topic and its node.
@@ -472,7 +474,7 @@ async def mqtt_rig(
     await mqtt_mock_entry()
     yield rig
     await hass.async_block_till_done()
-    marks_stop_unloaded(hass, ("opentherm_gw",))
+    marks_stop_unloaded(hass, ("opentherm_gw", "versatile_thermostat"))
 
 
 def published(client: Any) -> list[tuple[str, str]]:

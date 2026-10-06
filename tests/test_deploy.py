@@ -98,12 +98,35 @@ def test_the_dry_run_reads_no_private_file(tmp_path: Path) -> None:
     )
 
 
-def test_an_unknown_argument_is_refused() -> None:
+def test_an_unknown_argument_is_refused(tmp_path: Path) -> None:
+    """PB-90: run from a copy of its root with stub vendor/ folders, no ``devenv/local.env``
+    and no key, and with fake ssh, scp, rsync and sftp first in PATH that leave a mark — so a
+    regression in the argument check could never reach the test HA from a plain test run."""
+    root = tmp_path / "root"
+    (root / "scripts").mkdir(parents=True)
+    script = root / "scripts/deploy_test.sh"
+    script.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    for name in ("versatile_thermostat", "vtherm_smartpi"):
+        (root / "vendor/custom_components" / name).mkdir(parents=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    marker = tmp_path / "connected"
+    for tool in ("ssh", "scp", "rsync", "sftp"):
+        fake = bin_dir / tool
+        fake.write_text(f'#!/bin/sh\ntouch "{marker}"\nexit 97\n')
+        fake.chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
     result = subprocess.run(
-        ["bash", str(SCRIPT), "--now"], capture_output=True, text=True, timeout=30, check=False
+        ["bash", str(script), "--now"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+        check=False,
     )
     assert result.returncode == 2
     assert "usage" in result.stderr
+    assert not marker.exists()
 
 
 def test_ssh_reads_no_configuration_but_its_own() -> None:

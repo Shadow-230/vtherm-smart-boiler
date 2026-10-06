@@ -158,7 +158,6 @@ async def test_reset_buttons_forget_measured_values_and_refit_from_new_days_only
     reloaded, and control, which never reads the building model, goes on without a hand-back."""
     hass = rig.hass
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
-    entry.add_to_hass(hass)
     ran_before(rig, entry)
     await setup(hass, entry)
     rig.entry = entry
@@ -407,7 +406,6 @@ async def test_the_switch_says_control_starts_without_a_verdict(rig: Rig) -> Non
     monitored = options(rig.zones) | {"monitor": {"monitoring_days": 7}}
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=monitored)
     entry.created_at = START - timedelta(days=8)  # the period has passed
-    entry.add_to_hass(hass)
     ran_before(rig, entry)
     await setup(hass, entry)
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -445,7 +443,6 @@ async def test_switching_on_is_refused_before_the_monitoring_days_have_passed(ri
     monitored = options(rig.zones) | {"monitor": {"monitoring_days": 7}}
     young = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=monitored)
     young.created_at = START - timedelta(days=3)
-    young.add_to_hass(hass)
     ran_before(rig, young)
     await setup(hass, young)
     rig.entry = young
@@ -462,7 +459,6 @@ async def test_without_a_flame_signal_the_verdict_names_it(rig: Rig) -> None:
     no_flame = options(rig.zones)
     no_flame["signals"] = {s.value: rig.boiler.entity(s) for s in SIGNALS if s is not Signal.FLAME}
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=no_flame)
-    entry.add_to_hass(hass)
     ran_before(rig, entry)
     await setup(hass, entry)
     await hass.async_block_till_done(wait_background_tasks=True)

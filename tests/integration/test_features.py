@@ -19,7 +19,13 @@ from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.core.signals import SIGNAL_SPECS, Signal, SignalKind
 from custom_components.vtherm_smart_boiler.entity import FEATURE_ENTITIES
 
-from .harness import BOILER_ENTITIES, WEATHER_ENTITY, FakeForecasts, FakeZones
+from .harness import (
+    BOILER_ENTITIES,
+    WEATHER_ENTITY,
+    FakeForecasts,
+    FakeZones,
+    left_control_store,
+)
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -285,7 +291,7 @@ CASES: list[tuple[str, str, Change, str, str]] = [
 
 
 async def _setup(
-    hass: HomeAssistant, zones: FakeZones, base: str, change: Change
+    hass: HomeAssistant, zones: FakeZones, base: str, change: Change, *, store: bool = True
 ) -> MockConfigEntry:
     MockConfigEntry(domain="opentherm_gw", data={"id": "gw"}).add_to_hass(hass)
     zone = zones.add("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
@@ -294,6 +300,8 @@ async def _setup(
     change(options)
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
     entry.add_to_hass(hass)
+    if store:
+        await left_control_store(hass, entry)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     return entry
@@ -358,6 +366,31 @@ def _feature(value: str) -> Any:
     from custom_components.vtherm_smart_boiler.core.signal_check import Feature
 
     return Feature(value)
+
+
+@pytest.mark.parametrize("base", ["water", "relay"])
+async def test_the_features_read_the_same_with_a_hand_back_owed(
+    hass: HomeAssistant,
+    zones: FakeZones,
+    forecasts: FakeForecasts,
+    base: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """PB-100: the "Features" sensor is the same whether the entry's control store is there,
+    owing nothing, or lost — a hand-back owed: what the plugin can do does not depend on it.
+    Negative: the store's loss is seen — a hand-back owed at setup."""
+    lost = "The stored control state cannot be read"
+    entry = await _setup(hass, zones, base, lambda options: None, store=False)
+    assert lost in caplog.text
+    owed = dict(features_state(hass, entry).attributes)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    caplog.clear()
+    await left_control_store(hass, entry)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert lost not in caplog.text
+    assert dict(features_state(hass, entry).attributes) == owed
 
 
 @pytest.mark.parametrize("base", ["water", "relay"])
@@ -523,6 +556,7 @@ async def test_a_zone_reporting_late_does_not_keep_an_entity_from_being_created(
     set_signals(hass)
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=water_options(zone))
     entry.add_to_hass(hass)
+    await left_control_store(hass, entry)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert features_state(hass, entry).attributes["low_flow"] == "inactive"

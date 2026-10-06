@@ -161,7 +161,8 @@ class Rig:
             self.freezer.tick(step)
             elapsed += step
             async_fire_time_changed(self.hass)
-            await self.hass.async_block_till_done()
+            # The control step runs as a background task (PB-25).
+            await self.hass.async_block_till_done(wait_background_tasks=True)
             self.mirror_zones()
 
     def entity(self, domain: str, key: str) -> str:
@@ -440,6 +441,10 @@ async def test_hand_back_on_every_exit(rig: Rig, exit_path: str) -> None:
         count = len(rig.gateway())
         await rig.advance(120)
         assert len(rig.gateway()) == count  # no loop left running
+    if exit_path == "switch_off":  # PB-95: the hand-back confirmed, nothing owed
+        assert rig.entry.runtime_data.control is not None
+        assert not rig.entry.runtime_data.control.hand_back_owed
+        assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
 
 
 async def test_a_thermostat_heats_again_after_a_hand_back_that_followed_off(rig: Rig) -> None:
@@ -513,6 +518,8 @@ async def test_stale_data_hands_back(rig: Rig) -> None:
     await rig.advance(90)
     assert rig.setpoints()[-1] == 0.0
     assert rig.state("sensor", "control_state").state == "handed_back"
+    # PB-95: J4's "an alarm, then hand-back" — the alarm too.
+    assert rig.state("binary_sensor", "alarm_boiler_link_lost").state == "on"
 
 
 async def test_a_failed_outdoor_sensor_falls_back_to_the_weather(rig: Rig) -> None:
@@ -1767,18 +1774,20 @@ async def test_relay_off_timer_lapses_without_repeats(rig: Rig, restarts: bool) 
 
 
 async def test_an_undeclared_relay_timer_is_recognised_and_heating_goes_on(rig: Rig) -> None:
-    """Z4R-02: the timer left at "I don't know"; the relay's own 30-minute timer, which a
-    repeated "on" does not restart (a Shelly's auto-off, say), switches it off 30 min into every
+    """Z4R-02: the timer left at "I don't know"; the relay's own 31-minute timer, which a
+    repeated "on" does not restart (a Shelly's auto-off, say), switches it off 31 min into every
     on-period while the rooms call for hours. The first switch-off counts as a possible restart;
     the second, at the same time into its on-period, shows the relay's own timer: answered at
-    once and no longer counted, and a warning repair issue asks to declare it, naming about 30
+    once and no longer counted, and a warning repair issue asks to declare it, naming about 31
     minutes. After two and a half hours control still heats — before, the fourth switch-off
-    stepped aside to the rest state "off" after two hours."""
+    stepped aside to the rest state "off" after two hours. 31, not 30 (PB-25): a timer that is
+    a multiple of the 5-min renewal lapses together with one, and which comes first then
+    decided whether the lapse was seen at all (the next test)."""
     from homeassistant.helpers import issue_registry as ir
 
     await start_relay(
         rig,
-        relay={"off_timer_min": 30, "timer_restarts_on_repeat": False},
+        relay={"off_timer_min": 31, "timer_restarts_on_repeat": False},
         relay_off_timer="unknown",
     )
     await relay_on_under_control(rig)
@@ -1787,12 +1796,49 @@ async def test_an_undeclared_relay_timer_is_recognised_and_heating_goes_on(rig: 
         await rig.advance(1000)
         assert rig.state("sensor", "control_state").state == "heating"
     assert relay_model(rig).own_changes - lapsed >= 4  # its timer, again and again
-    assert relay_model(rig).on  # each answered at once
+    # Each answered at once: at the next step, so one more step where the last lapse came with
+    # the last one, the relay's tick after the plugin's (PB-25).
+    await rig.advance(10)
+    assert relay_model(rig).on
     assert alarm(rig, "outside_change") == "off"
     found = repair(rig, "relay_timer_seen")
     assert found is not None
     assert found.severity is ir.IssueSeverity.WARNING
-    assert found.translation_placeholders["minutes"] == "30"
+    assert found.translation_placeholders["minutes"] == "31"
+
+
+@pytest.mark.parametrize("plugin_first", [False, True], ids=["relay_first", "plugin_first"])
+async def test_a_relay_timer_lapsing_with_a_renewal_leaves_heating_on(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, plugin_first: bool
+) -> None:
+    """PB-25: the timer left at "I don't know"; the relay's own 30-minute timer, which a
+    repeated "on" does not restart, lapses at the very moment a 5-min renewal is due. Whichever
+    reaches the relay first — its own switch-off or the renewal — heating goes on: the relay
+    on, control heating throughout, never a step aside, no lost command nor outside change
+    counted. Whether such a lapse is seen at all is left open: the renewal may hide it."""
+    from homeassistant.core import callback
+
+    if plugin_first:  # the simulator's tick after everything else due at the same moment
+        real = SimHub.refresh
+
+        @callback
+        def after(self: Any, now: Any = None) -> None:
+            self.hass.loop.call_soon(real, self, now)
+
+        monkeypatch.setattr(SimHub, "refresh", after)
+    await start_relay(
+        rig,
+        relay={"off_timer_min": 30, "timer_restarts_on_repeat": False},
+        relay_off_timer="unknown",
+    )
+    await relay_on_under_control(rig)
+    for _ in range(9):
+        await rig.advance(1000)
+        assert rig.state("sensor", "control_state").state == "heating"
+    assert relay_model(rig).on
+    assert relay_commands(rig).count(False) == 0
+    assert alarm(rig, "commands_lost") == "off"
+    assert alarm(rig, "outside_change") == "off"
 
 
 @pytest.mark.parametrize("event", ["link_drop", "restart", "options_save"])

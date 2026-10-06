@@ -710,30 +710,65 @@ def _follow_once_set_up(
     renames: list[tuple[str, str]],
 ) -> None:
     """PB-55: renames found at the end of setup are followed — an options save, so a reload —
-    only once the entry is loaded and the integration set up: Home Assistant does not reload an
-    entry whose setup is still running, nor one of an integration it is still setting up. An
-    entry unloaded or set up again meanwhile follows nothing: its own setup looks again."""
+    only once the setup has returned to whoever started it: a reload begun earlier would unload
+    the entry before that caller reads its state, and the setup would read as failed. The last
+    step of a setup is the entry's state set to loaded or, while the integration itself is set
+    up, the integration's loaded event (Home Assistant 2026.9.3, ``setup.py`` and
+    ``config_entries.py``); the caller resumes in the same turn of the event loop, so the
+    follow runs at the next turn. An entry unloaded or set up again meanwhile follows nothing:
+    its own setup looks again."""
     from homeassistant.config_entries import ConfigEntryState
-    from homeassistant.core import callback
-    from homeassistant.setup import async_when_setup
+    from homeassistant.const import EVENT_COMPONENT_LOADED
+    from homeassistant.core import Event, callback
 
     done = False
 
-    async def follow(_hass: HomeAssistant, _component: str) -> None:
+    @callback
+    def follow() -> None:
         if entry.state is ConfigEntryState.LOADED and entry.runtime_data is coordinator:
             _follow_renames(hass, entry, coordinator, renames)
 
     @callback
-    def loaded() -> None:
+    def last_step() -> None:
         nonlocal done
-        if done or entry.state is not ConfigEntryState.LOADED:
+        if done:
             return
         done = True
-        # Not removed while Home Assistant goes through the listeners: at the next turn.
+        # Not removed while Home Assistant goes through the listeners: at the next turn, as the
+        # follow itself, which so starts after the caller of the setup has resumed.
         hass.loop.call_soon(unsubscribe)
-        async_when_setup(hass, DOMAIN, follow)
+        hass.loop.call_soon(follow)
 
-    unsubscribe = entry.async_on_state_change(loaded)
+    if _integration_setting_up(hass):
+
+        @callback
+        def component_loaded(event: Event[Any]) -> None:
+            if event.data.get("component") == DOMAIN:
+                last_step()
+
+        unsubscribe = hass.bus.async_listen(EVENT_COMPONENT_LOADED, component_loaded)
+    else:
+
+        @callback
+        def state_changed() -> None:
+            if entry.state is ConfigEntryState.LOADED:
+                last_step()
+
+        unsubscribe = entry.async_on_state_change(state_changed)
+
+
+def _integration_setting_up(hass: HomeAssistant) -> bool:
+    """Whether Home Assistant is still setting the integration itself up — its entries are set
+    up within that and its loaded event comes last. Read from the setup's own record (Home
+    Assistant 2026.9.3, ``setup.py``: the integration's future is kept under ``setup_tasks``
+    until its entries are set up); where that record is not found, false: the follow then
+    waits for the entry's own state only."""
+    try:
+        from homeassistant.setup import _DATA_SETUP
+    except ImportError:  # pragma: no cover - an older or newer Home Assistant
+        return False
+    setting_up = hass.data.get(_DATA_SETUP)
+    return isinstance(setting_up, dict) and DOMAIN in setting_up
 
 
 def _named_entities(

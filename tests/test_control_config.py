@@ -1037,7 +1037,8 @@ def test_the_activation_delay_is_read_with_its_cautious_default() -> None:
     assert parse_control(OTGW, RADIATORS, None).loop.control.activation_delay_s == 0.0
     stored = parse_control(OTGW | {"activation_delay_s": 120}, RADIATORS, None)
     assert stored.loop.control.activation_delay_s == 120.0
-    assert parse_control(OTGW | {"activation_delay_s": None}, RADIATORS, None).loop.control
+    unset = parse_control(OTGW | {"activation_delay_s": None}, RADIATORS, None)
+    assert unset.loop.control.activation_delay_s == 0.0  # PB-95: the default, not just parsed
     for bad in (-10, 700):
         with pytest.raises(ValueError, match="activation_delay_s"):
             parse_control(OTGW | {"activation_delay_s": bad}, RADIATORS, None)

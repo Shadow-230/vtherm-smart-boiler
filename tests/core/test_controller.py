@@ -2655,7 +2655,8 @@ def test_switched_on_with_the_link_lost_control_shows_handed_back_at_once() -> N
 # reasons, command and whether it hands back.
 
 _TAKEN = [inputs(0.0)]
-_STALE = [inputs(t, boiler_link=False) for t in stepped(10.0, 320.0)]
+# PB-96: stale up to 300 s, so a row's own step at 310 s is the one where the loss hands back.
+_STALE = [inputs(t, boiler_link=False) for t in stepped(10.0, 310.0)]
 _R = Reason
 _ON, _OFF = BoilerCommand(True, 35.0), BoilerCommand(False, 35.0)
 _COLD_OFF = {"temperature": 3.0, "heating_enabled": False}  # below the frost limit, VT off
@@ -2708,15 +2709,26 @@ CONTROLLER_PRECEDENCE = [
     ),
     (
         "the blockers before a lost link",
-        [*_TAKEN, *_STALE, inputs(320.0, boiler_link=False, blockers=("no_hand_back",))],
+        [*_TAKEN, *_STALE, inputs(310.0, boiler_link=False, blockers=("no_hand_back",))],
+        CONFIG,
+        (ControlMode.NOT_ALLOWED, (_R.PRECONDITION,), None, True),
+    ),
+    (
+        "a blocker after a lost link's hand-back",
+        [
+            *_TAKEN,
+            *_STALE,
+            inputs(310.0, boiler_link=False),
+            inputs(320.0, boiler_link=False, blockers=("no_hand_back",)),
+        ],
         CONFIG,
         (ControlMode.NOT_ALLOWED, (_R.PRECONDITION,), None, False),
     ),
     (
         "a link lost while controlling hands back",
-        [*_TAKEN, *_STALE, inputs(320.0, boiler_link=False)],
+        [*_TAKEN, *_STALE, inputs(310.0, boiler_link=False)],
         CONFIG,
-        (ControlMode.HANDED_BACK, (_R.BOILER_LINK_STALE,), None, False),
+        (ControlMode.HANDED_BACK, (_R.BOILER_LINK_STALE,), None, True),
     ),
     (
         "a stale link short of a loss waits, writing nothing",

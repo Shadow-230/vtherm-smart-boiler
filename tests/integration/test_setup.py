@@ -27,6 +27,7 @@ from .harness import (
     analyse_now,
     analysis_idle,
     apply_event,
+    left_control_store,
     replay_events,
 )
 
@@ -626,7 +627,11 @@ async def test_a_registry_change_during_setup_is_followed(
 
     monkeypatch.setattr(plugin, "_async_migrate_zone_unique_ids", meanwhile)
     setups = count_setups(monkeypatch)
-    await setup(hass, entry)
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    # 3.3c: nothing followed before the setup has returned — a reload begun earlier made the
+    # setup read as failed now and then.
+    assert entry.options["signals"]["flow"] == flow.entity_id
     await hass.async_block_till_done(wait_background_tasks=True)
     assert entry.state is ConfigEntryState.LOADED
     removed = ir.async_get(hass).async_get_issue(
@@ -645,6 +650,48 @@ async def test_a_registry_change_during_setup_is_followed(
         DOMAIN, f"entity_removed_{entry.entry_id}_{boiler.entity(Signal.FLAME)}"
     )
     assert other is None
+
+
+@pytest.mark.parametrize("record", [True, False], ids=["setup_record", "no_setup_record"])
+async def test_a_rename_during_a_reload_is_followed_once_it_has_returned(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, record: bool
+) -> None:
+    """3.3c (PB-55): a rename reaching Home Assistant while the entry is set up again — the
+    integration itself already set up — is followed only after that setup has returned to its
+    caller, which so reads it as loaded; then once: one more setup. Also where Home Assistant's
+    record of integrations being set up is not found (another version): the entry's own state
+    is then the last step waited for."""
+    import homeassistant.setup as ha_setup
+
+    import custom_components.vtherm_smart_boiler as plugin
+
+    registry = er.async_get(hass)
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    flow = registry.async_get_or_create(
+        "sensor", "fake_boiler", "flow", suggested_object_id="fake_boiler_flow"
+    )
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    real = plugin._async_migrate_zone_unique_ids
+    done: list[bool] = []
+
+    async def meanwhile(*args: Any) -> None:
+        if not done:
+            done.append(True)
+            registry.async_update_entity(flow.entity_id, new_entity_id="sensor.boiler_flow")
+        await real(*args)
+
+    monkeypatch.setattr(plugin, "_async_migrate_zone_unique_ids", meanwhile)
+    if not record:
+        monkeypatch.delattr(ha_setup, "_DATA_SETUP")
+    setups = count_setups(monkeypatch)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    assert entry.options["signals"]["flow"] == flow.entity_id  # not yet
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert entry.options["signals"]["flow"] == "sensor.boiler_flow"
+    assert len(setups) == 2  # the reload asked for, then the one the options' save starts
+    assert entry.state is ConfigEntryState.LOADED
 
 
 async def test_other_registry_changes_are_not_followed(
@@ -847,6 +894,7 @@ async def test_an_entry_from_before_drops_the_options_that_are_gone(
         version=1,
         minor_version=1,
     )
+    await left_control_store(hass, entry)
     await setup(hass, entry)
     assert entry.minor_version == 5
     # Minor version 3 (X6): the lowest water temperature 0.2.1 used, kept.
@@ -895,6 +943,7 @@ async def test_the_alarm_migration_moves_to_the_add_water_threshold(
         domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=3
     )
     entry.add_to_hass(hass)
+    await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.minor_version == 5
@@ -934,6 +983,7 @@ async def test_the_alarm_migration_keeps_an_offered_reaction_and_raises_no_issue
         domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=3
     )
     entry.add_to_hass(hass)
+    await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.minor_version == 5
@@ -969,6 +1019,7 @@ async def test_migration_keeps_the_floor_of_a_control_section_without_it(
         domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=2
     )
     entry.add_to_hass(hass)
+    await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.minor_version == 5
@@ -1080,6 +1131,7 @@ async def test_an_entry_of_any_earlier_minor_version_migrates_to_this_ones_optio
         version=1,
         minor_version=minor,
     )
+    await left_control_store(hass, entry)
     await setup(hass, entry)
     assert entry.state is ConfigEntryState.LOADED
     assert (entry.version, entry.minor_version) == (1, SmartBoilerConfigFlow.MINOR_VERSION)
@@ -1126,6 +1178,13 @@ async def test_a_newer_entry_is_refused(
     if refused:
         assert entry.state is ConfigEntryState.MIGRATION_ERROR
         assert created == []
+        # PB-99: Home Assistant refuses a newer major version before migrating; the plugin's
+        # own guard is reached only when called directly — it refuses too, changing nothing.
+        from custom_components.vtherm_smart_boiler import async_migrate_entry
+
+        assert await async_migrate_entry(hass, entry) is False
+        assert (entry.version, entry.minor_version) == (version, minor)
+        assert dict(entry.options) == options
     else:
         assert entry.state is ConfigEntryState.LOADED
         assert created
@@ -1684,6 +1743,7 @@ async def test_the_connection_follows_the_relay(
             "control": {"write_path": "relay", "relay_entity": "switch.boiler_relay"},
         },
     )
+    await left_control_store(hass, entry)
     await setup(hass, entry)
     connection = hass.states.get(entity_id(hass, entry, "binary_sensor", "connection"))
     assert connection is not None

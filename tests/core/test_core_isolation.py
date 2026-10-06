@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 CORE_DIR = ROOT / "custom_components" / "vtherm_smart_boiler" / "core"
 CORE_PACKAGE = "custom_components.vtherm_smart_boiler.core"
@@ -89,25 +91,46 @@ BUILDING_MODEL = frozenset({"building", "analysis", "daily", "verdict", "monitor
 CONTROL_CORE = ("controller", "loop", "limits", "demand")
 
 
-def _core_modules_imported(name: str) -> set[str]:
-    """The core modules ``core/<name>.py`` imports directly, by their short names (core imports
-    its own modules with ``from``)."""
-    path = CORE_DIR / f"{name}.py"
+def _core_modules_in(path: Path, package: str | None = None) -> set[str]:
+    """The core modules a file imports directly, by their short names: ``from`` imports,
+    relative or absolute (``from .core import building`` too), and plain ``import`` statements
+    (PB-97). ``package``: what its relative imports resolve against, by default its own
+    directory's."""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    package = _module_package(path)
+    if package is None:
+        package = ".".join(path.parent.relative_to(ROOT).parts)
     found: set[str] = set()
     for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        if node.level:
-            module = _resolve_relative(package, node.level, node.module)
+        if isinstance(node, ast.Import):
+            modules = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                module = _resolve_relative(package, node.level, node.module)
+            else:
+                module = node.module or ""
+            if module == CORE_PACKAGE:  # ``from . import x``, ``from .core import x``
+                found.update(alias.name for alias in node.names)
+                continue
+            modules = [module]
         else:
-            module = node.module or ""
-        if module == CORE_PACKAGE:  # ``from . import x``
-            found.update(alias.name for alias in node.names)
-        elif module.startswith(CORE_PACKAGE + "."):
-            found.add(module.removeprefix(CORE_PACKAGE + ".").split(".")[0])
+            continue
+        found.update(
+            module.removeprefix(CORE_PACKAGE + ".").split(".")[0]
+            for module in modules
+            if module.startswith(CORE_PACKAGE + ".")
+        )
     return {module for module in found if (CORE_DIR / f"{module}.py").is_file()}
+
+
+def _core_reached(path: Path) -> set[str]:
+    """Every core module a file reaches, through any chain of imports."""
+    reached: set[str] = set()
+    todo = [path]
+    while todo:
+        for imported in _core_modules_in(todo.pop()) - reached:
+            reached.add(imported)
+            todo.append(CORE_DIR / f"{imported}.py")
+    return reached
 
 
 def test_control_uses_no_building_model() -> None:
@@ -115,18 +138,35 @@ def test_control_uses_no_building_model() -> None:
     building model, through any chain of imports; and the Home Assistant side of control reads
     none of its values."""
     for start in CONTROL_CORE:
-        reached: set[str] = set()
-        todo = [start]
-        while todo:
-            module = todo.pop()
-            for imported in _core_modules_imported(module) - reached:
-                reached.add(imported)
-                todo.append(imported)
+        reached = _core_reached(CORE_DIR / f"{start}.py")
         assert not reached & BUILDING_MODEL, (start, sorted(reached & BUILDING_MODEL))
     package = CORE_DIR.parent
     for name in ("control.py", "control_config.py"):
+        reached = _core_reached(package / name)  # PB-97: the same resolver
+        assert not reached & BUILDING_MODEL, (name, sorted(reached & BUILDING_MODEL))
         text = (package / name).read_text(encoding="utf-8")
         for word in ("core.building", "LoadModel", "LOSS_COEFFICIENT", "HEATING_THRESHOLD"):
             assert word not in text, (name, word)
     # The check itself sees a chain: the analysis reaches the building model.
-    assert "building" in _core_modules_imported("analysis")
+    assert "building" in _core_modules_in(CORE_DIR / "analysis.py")
+
+
+@pytest.mark.parametrize(
+    ("source", "package"),
+    [
+        (f"import {CORE_PACKAGE}.building\n", CORE_PACKAGE),
+        (f"import {CORE_PACKAGE}.building as model\n", CORE_PACKAGE),
+        ("from .core import building\n", "custom_components.vtherm_smart_boiler"),
+        ("from .core.building import fit_daily_load\n", "custom_components.vtherm_smart_boiler"),
+        ("from . import building\n", CORE_PACKAGE),
+        ("from .building import fit_daily_load\n", CORE_PACKAGE),
+    ],
+)
+def test_the_isolation_check_sees_every_form_of_import(
+    tmp_path: Path, source: str, package: str
+) -> None:
+    """PB-97, negative: a plain ``import`` of a core module, and a ``from .core import`` in
+    control.py, are seen — the check once followed only ``from`` imports within core."""
+    path = tmp_path / "module.py"
+    path.write_text(source, encoding="utf-8")
+    assert _core_modules_in(path, package) == {"building"}

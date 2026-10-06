@@ -285,3 +285,13 @@ def ha_started(hass: HomeAssistant) -> None:
     run.started = dt_util.utcnow()
     run.unwatched_since = None
     hass.data.pop(VT_CENTRAL_SEEN, None)
+
+
+async def left_control_store(hass: Any, entry: Any) -> None:
+    """PB-100: the entry ran before and left its control store, owing nothing. Control is
+    configured only in the options of an entry that ran, so one with a control section and no
+    store has lost it — it is taken as holding the boiler and hands back first (V1, R4), which
+    a test of something else must not set off."""
+    from custom_components.vtherm_smart_boiler.coordinator import control_store
+
+    await control_store(hass, entry.entry_id).async_save({})

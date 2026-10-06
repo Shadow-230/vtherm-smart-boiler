@@ -206,17 +206,11 @@ def test_a_threshold_from_a_narrow_cold_band_is_not_trusted() -> None:
     is extrapolated 16 K beyond the days; it is not fitted at all under an 8 K spread — with the
     class default given, nothing is; with the user's threshold, the loss alone."""
     days = _noisy(0.2, 16.0, _band(-4.5, 0.0), 0.08, seed=41)
-    for given in (DEFAULT_15, ENTERED_15):
-        fit = fit_daily_load(days, given)
-        assert (
-            fit is None
-            or fit.threshold is None
-            or fit.threshold.confidence < MIN_CONFIDENCE
-            or abs(fit.threshold.value - 16.0) <= 2.0
-        )
+    assert fit_daily_load(days, DEFAULT_15) is None  # PB-95: exactly nothing
     fit = fit_daily_load(days, ENTERED_15)
     assert fit is not None
     assert fit.threshold is None  # not fitted, not merely distrusted
+    assert fit.loss is not None
 
 
 def test_a_threshold_far_beyond_a_wide_cold_band_is_capped() -> None:
@@ -267,8 +261,7 @@ def test_loss_alone_through_a_default_threshold_is_not_trusted() -> None:
     default = ParameterSet().get(ParameterKey.HEATING_THRESHOLD).effective()
     assert default is not None
     assert default.source is Source.DEFAULT
-    fit = fit_daily_load(days, default)
-    assert fit is None or fit.loss is None or fit.loss.confidence < MIN_CONFIDENCE
+    assert fit_daily_load(days, default) is None  # PB-95: not fitted at all
     # Nor through a measured threshold without the confidence the plugin counts, or unknown.
     for weak in (Estimate(15.0, Source.MEASURED, 0.3), Estimate(15.0, Source.LEARNED, 0.0)):
         assert fit_daily_load(days, weak) is None, weak
