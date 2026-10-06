@@ -1288,25 +1288,17 @@ def test_a_transient_loss_of_every_zone_does_not_start_the_boiler() -> None:
     assert decisions[-1].mode is ControlMode.IDLE
 
 
-def test_an_off_zone_not_started_without_is_ready_means_no_demand() -> None:
-    """T-17 (S-34): the only zone "off", VT not having started it and showing no ``is_ready``
-    (its placeholder, an older VT), its temperature fresh: no demand once the recognition period
-    is over — IDLE with ``NO_DEMAND``, not unknown."""
-    steps = during(0.0, RECOGNITION_S + 10.0, lambda t: (placeholder("a", t, temperature=19.0),))
-    _state, decisions = run(steps)
-    assert decisions[0].mode is ControlMode.WAITING_DATA  # not known during the recognition
-    assert decisions[-1].mode is ControlMode.IDLE
-    assert Reason.NO_DEMAND in decisions[-1].reasons
-    assert not decisions[-1].zones_unknown
-
-
-def unstarted(zone_id: str, t: float, heating_enabled: bool = False) -> ZoneState:
+def unstarted(
+    zone_id: str, t: float, heating_enabled: bool = False, ready: bool | None = False
+) -> ZoneState:
     """What VT 10.4.0 shows for a thermostat it cannot start (an underlying device unavailable):
-    "off" — "heat" for over_valve — with ``is_ready`` false, its room temperature fresh."""
+    "off" — "heat" for over_valve — with ``is_ready`` false, or (``ready`` ``None``) its
+    placeholder with neither ``is_ready`` nor ``specific_states``, kept for good while none of
+    its devices has reported; its room temperature fresh."""
     return ZoneState(
         zone_id,
         heating_enabled=heating_enabled,
-        ready=False,
+        ready=ready,
         reported=False,
         reported_at=t,
         temperature=19.0,
@@ -1314,30 +1306,35 @@ def unstarted(zone_id: str, t: float, heating_enabled: bool = False) -> ZoneStat
     )
 
 
+@pytest.mark.parametrize("ready", [False, None], ids=["not_ready", "placeholder"])
 @pytest.mark.parametrize("heating_enabled", [False, True], ids=["off", "heat"])
 @pytest.mark.parametrize("config", [CONFIG, THERMOSTAT], ids=["off", "handed_back"])
 @pytest.mark.parametrize("how", ["restart", "one_by_one"])
 def test_zones_vt_cannot_start_end_in_decision_3s_end_state(
-    how: str, config: ControlConfig, heating_enabled: bool
+    how: str, config: ControlConfig, heating_enabled: bool, ready: bool | None
 ) -> None:
     """SB-02 (decision 1 of 2026-10-05): VT cannot start any thermostat — after a restart with
     the Zigbee or Z-Wave integration down (the recognition period), or one after another (each
-    zone's grace) — and shows each with ``is_ready`` false. After the recognition period and the
-    grace every zone is unknown: the usual "off" stand-alone, a hand-back to a working
-    thermostat — never IDLE with ``NO_DEMAND``."""
+    zone's grace) — and shows each with ``is_ready`` false, or, its devices never reporting,
+    with its placeholder (check C's F1). After the recognition period and the grace every zone
+    is unknown: the usual "off" stand-alone, a hand-back to a working thermostat — never IDLE
+    with ``NO_DEMAND``."""
     if how == "restart":
         end = RECOGNITION_S
 
         def zones(t: float) -> tuple[ZoneState, ...]:
-            return (unstarted("a", t, heating_enabled), unstarted("b", t, heating_enabled))
+            return (
+                unstarted("a", t, heating_enabled, ready),
+                unstarted("b", t, heating_enabled, ready),
+            )
 
     else:
         end = 20.0 + GRACE_S
 
         def zones(t: float) -> tuple[ZoneState, ...]:
             return (
-                started("a", t) if t < 10.0 else unstarted("a", t, heating_enabled),
-                started("b", t) if t < 20.0 else unstarted("b", t, heating_enabled),
+                started("a", t) if t < 10.0 else unstarted("a", t, heating_enabled, ready),
+                started("b", t) if t < 20.0 else unstarted("b", t, heating_enabled, ready),
             )
 
     steps = during(0.0, end + 60.0, zones)
@@ -1465,8 +1462,9 @@ def test_no_criterion_judged_and_since_when_follow_the_zones_data() -> None:
     zone without a device power. The decision says so at once (the alarm "no zone known"), and
     the zones' watch keeps since when, for the repair issue after ``NO_ZONE_ISSUE_S``: through a
     hand-back and switched off alike. The step a power is published both end. Negative: never in
-    the recognition period, nor with every zone unknown (decision 3's own case), nor with no
-    zone calling (nothing to judge)."""
+    the recognition period, nor with every zone unknown (decision 3's own case), nor with every
+    zone "off" (summer: no demand). A zone in "heat" that stops calling changes nothing (check
+    C's F2): the criterion still has no data."""
     demand = DemandConfig(count_threshold=0, power_threshold_kw=1.0)
     end = NO_ZONE_ISSUE_S + 10.0
     for base, enabled in ((CONFIG, True), (THERMOSTAT, True), (CONFIG, False)):
@@ -1490,10 +1488,60 @@ def test_no_criterion_judged_and_since_when_follow_the_zones_data() -> None:
     for zones in (
         lambda t: (placeholder("a", t),),  # the recognition period
         lambda _t: (away("a"),),  # every zone unknown
-        lambda t: (started("a", t, valve_open=0.0),),  # nothing calls
+        lambda t: (started("a", t, heating_enabled=False, valve_open=0.0),),  # summer
     ):
         state, decisions = run(during(0.0, NO_ZONE_ISSUE_S + 10.0, zones), config)
         assert not any(d.no_criterion_judged for d in decisions)
+        assert state.zones.unjudged_since is None
+    idle = during(0.0, NO_ZONE_ISSUE_S + 10.0, lambda t: (started("a", t, valve_open=0.0),))
+    state, decisions = run(idle, config)
+    assert all(d.no_criterion_judged for d in decisions)
+    assert criteria_issue_due(state.zones, NO_ZONE_ISSUE_S + 10.0)
+
+
+def tpi_cycle(t: float, on_s: float = 120.0, period_s: float = 300.0) -> tuple[ZoneState, ...]:
+    """A switch zone in "heat" whose VT shows no device power, its device on for ``on_s`` of
+    every ``period_s`` (VT's TPI cycle): its calls start and stop."""
+    on = t % period_s < on_s
+    return (started("a", t, valve_open=None, on_percent=0.4, device_active=on),)
+
+
+@pytest.mark.parametrize("period_s", [300.0, 60.0], ids=["five_minutes", "thirty_seconds"])
+@pytest.mark.parametrize("config", [CONFIG, THERMOSTAT], ids=["off", "handed_back"])
+def test_no_criterion_judged_holds_through_calls_starting_and_stopping(
+    config: ControlConfig, period_s: float
+) -> None:
+    """Check C's F2 and F3: a count of 0, only a power threshold, and the only zone in "heat"
+    without a device power, its calls starting and stopping with VT's cycle. Nothing can be
+    judged whether it calls or not: decision 3's end state holds steadily — a working thermostat
+    keeps the boiler, nothing is taken at a call's end and handed back at the next start; stand-
+    alone heating stays off — and the repair issue's ten minutes run through the calls."""
+    config = replace(config, demand=DemandConfig(count_threshold=0, power_threshold_kw=1.0))
+    end = 4 * NO_ZONE_ISSUE_S
+    state, decisions = run(
+        during(0.0, end, lambda t: tpi_cycle(t, period_s / 2.5, period_s)), config
+    )
+    assert all(d.no_criterion_judged and Reason.ZONES_UNKNOWN in d.reasons for d in decisions)
+    assert not any(Reason.NO_DEMAND in d.reasons for d in decisions)
+    assert not any(d.hand_back for d in decisions)  # nothing was ever taken to hand back
+    if config.working_thermostat:
+        assert all(d.mode is ControlMode.HANDED_BACK and d.command is None for d in decisions)
+    else:
+        assert all(d.mode is ControlMode.IDLE and not d.command.ch_enable for d in decisions)
+    assert state.zones.unjudged_since == 0.0
+    assert criteria_issue_due(state.zones, end)
+
+
+def test_every_zone_off_is_no_demand_without_the_end_state() -> None:
+    """Summer, negative: the only zone "off", publishing no device power, under a power-only
+    criterion — no demand; no end state, no hand-back, no alarm, no issue."""
+    demand = DemandConfig(count_threshold=0, power_threshold_kw=1.0)
+    off = during(0.0, 2 * NO_ZONE_ISSUE_S, lambda t: (started("a", t, heating_enabled=False),))
+    for config in (CONFIG, THERMOSTAT):
+        state, decisions = run(off, replace(config, demand=demand))
+        assert all(d.mode is ControlMode.IDLE and Reason.NO_DEMAND in d.reasons for d in decisions)
+        assert not any(d.no_criterion_judged or d.hand_back for d in decisions)
+        assert not any(d.criteria_without_data or d.zones_without_data for d in decisions)
         assert state.zones.unjudged_since is None
 
 

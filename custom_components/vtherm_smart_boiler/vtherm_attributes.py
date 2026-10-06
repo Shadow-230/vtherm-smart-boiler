@@ -13,8 +13,10 @@ not power management is configured, with ``device_power`` 0 when no power is set
 ``safety_state`` only where the safety feature is configured.
 
 Before VT's first refresh of a thermostat (at a start, or during its reload) the climate shows a
-placeholder "off" with neither ``is_ready`` nor ``specific_states``; then, before its start,
-``is_ready`` false — observed with VT 10.4.0 (``tests/integration/test_vendor.py``).
+placeholder "off" with neither ``is_ready`` nor ``specific_states``; then, once one of its
+devices has reported and before its start, ``is_ready`` false — observed with VT 10.4.0
+(``tests/integration/test_vendor.py``). While none of its devices ever reports (their
+integration not set up), VT 10.4.0 keeps the placeholder for good (check C, 2026-10-06).
 
 No Home Assistant imports: the history importer uses this module too.
 """

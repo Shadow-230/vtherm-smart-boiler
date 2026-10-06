@@ -206,13 +206,14 @@ def test_an_opening_criterion_without_data_is_not_no_demand() -> None:
 
 @pytest.mark.parametrize(("calling", "wanted"), [(True, True), (False, False)])
 def test_only_the_criterion_without_data_is_left_out(calling: bool, wanted: bool) -> None:
-    """A count of 1 and a power threshold without data: the count decides. With no zone
-    calling there is nothing to judge, so no criterion lacks data (PB-23)."""
+    """A count of 1 and a power threshold without data: the count decides. The power lacks
+    data whether the zone calls or not — what the zones in a heating mode publish decides — so
+    the criterion's state does not flip with each call (check C's F2)."""
     zones = [zone("a", valve_open=0.6 if calling else 0.0)]
     config = DemandConfig(count_threshold=1, power_threshold_kw=1.0)
     result = boiler_demand(zones, NOW, AGE, config)
     assert result.wanted is wanted
-    assert result.criteria_without_data == (("power",) if calling else ())
+    assert result.criteria_without_data == ("power",)
 
 
 def test_a_device_power_of_zero_is_no_data_but_a_mean_power_of_zero_is_none_now() -> None:
@@ -225,18 +226,39 @@ def test_a_device_power_of_zero_is_no_data_but_a_mean_power_of_zero_is_none_now(
     assert result.wanted is False
 
 
-@pytest.mark.parametrize(("ready", "known"), [(None, True), (False, False)])
-def test_an_off_zone_not_started_after_the_recognition(ready: bool | None, known: bool) -> None:
-    """T-17 (S-34): "off" VT has not started, without ``is_ready`` (VT's placeholder, an older
-    VT), has no demand once the recognition period is over; with ``is_ready`` false VT cannot
-    start it, so it stays unknown (SB-02). During the recognition period neither is known yet."""
-    off = zone("a", heating_enabled=False, ready=ready, reported=False, temperature=19.0)
+@pytest.mark.parametrize(
+    ("ready", "reported", "known"),
+    [
+        (None, False, False),  # VT's placeholder: neither ``is_ready`` nor ``specific_states``
+        (False, False, False),  # ``is_ready`` false: VT cannot start it
+        (None, True, True),  # an older VT: ``specific_states`` without ``is_ready``
+        (True, True, True),  # started
+    ],
+)
+def test_an_off_zone_not_started_after_the_recognition(
+    ready: bool | None, reported: bool, known: bool
+) -> None:
+    """T-17 (S-34) and SB-02: "off" is the user's "off" — no demand — only on a zone VT has
+    started. VT's placeholder, which VT 10.4.0 keeps for good while none of the thermostat's
+    devices reports, and ``is_ready`` false stay unknown after the recognition period too
+    (check C's F1)."""
+    off = zone("a", heating_enabled=False, ready=ready, reported=reported, temperature=19.0)
     result = boiler_demand([off], NOW, AGE, DemandConfig())
     assert result.wanted is (False if known else None)
     assert result.unknown == (() if known else ("a",))
-    during = boiler_demand([off], NOW, AGE, DemandConfig(), recognition=True)
-    assert during.wanted is None
-    assert during.unknown == ("a",)
+
+
+@pytest.mark.parametrize("ready", [None, False], ids=["placeholder", "not_ready"])
+def test_a_zone_vt_has_not_started_never_blocks_the_count(ready: bool | None) -> None:
+    """Check C's F1: a count of 2 over two zones, one calling, the other a thermostat VT has not
+    started — its placeholder "off" or ``is_ready`` false. It is unknown, the count is capped by
+    the known zones and the calling room gets heat: never a zone without demand."""
+    calling = zone("a", valve_open=0.6, device_active=True, ready=True, reported=True)
+    dead = zone("b", heating_enabled=False, ready=ready, reported=False, temperature=18.0)
+    result = boiler_demand([calling, dead], NOW, AGE, DemandConfig(count_threshold=2))
+    assert result.wanted is True
+    assert result.unknown == ("b",)
+    assert result.fresh_zones == 1
 
 
 @pytest.mark.parametrize("ready", [False, None])
@@ -311,15 +333,16 @@ def test_an_off_zone_publishing_an_opening_gives_the_criterion_no_data() -> None
     assert result.zones_without_data == ("trv",)
 
 
-def test_an_idle_zone_with_a_device_power_gives_the_power_criterion_no_data() -> None:
-    """PB-23: a zone in a heating mode with a device power but no cycle running (it does not
-    call) does not make the power criterion "with data" for a calling zone without one."""
+def test_an_idle_zone_with_a_device_power_gives_the_power_criterion_data() -> None:
+    """A zone in a heating mode with a device power, idle — no cycle running, its power 0 now:
+    a value, not "no data" — gives the power criterion data whether a zone calls or not (check
+    C's F2); the calling zone that cannot feed it is named for the alarm (PB-23)."""
     zones = [zone("idle", power=2.0, on_percent=0.0), zone("valve", valve_open=0.6)]
     config = DemandConfig(count_threshold=0, power_threshold_kw=1.0)
     result = boiler_demand(zones, NOW, AGE, config)
-    assert result.wanted is None
-    assert result.criteria_without_data == ("power",)
-    assert result.power_kw is None
+    assert result.wanted is False
+    assert result.criteria_without_data == ()
+    assert result.power_kw == 0.0
     assert result.zones_without_data == ("valve",)
 
 
@@ -359,12 +382,12 @@ def test_a_calling_zone_no_criterion_can_see_is_named_while_others_decide() -> N
         DemandConfig(count_threshold=1, power_threshold_kw=1.0),
     ],
 )
-def test_with_no_zone_calling_every_criterion_says_no(config: DemandConfig) -> None:
-    """Nothing calls — zones idle, off, or not known: every criterion says no, whatever the
-    zones publish (power ``None``, no opening): there is no call to judge, so nothing lacks data
-    and nothing is handed back while the house needs no heat."""
+def test_with_no_zone_in_a_heating_mode_there_is_no_demand(config: DemandConfig) -> None:
+    """Summer: every known zone "off", the others not known — whatever the zones publish (power
+    ``None``, no opening, an opening of 0): no demand, and no criterion lacks data, so no end
+    state, no alarm and nothing handed back while the house needs no heat."""
     zones = [
-        zone("idle", calling=False),
+        zone("blind", heating_enabled=False, calling=False),
         zone("off", heating_enabled=False, valve_open=0.0),
         zone("gone", heating_enabled=None, calling=True),
     ]
@@ -372,6 +395,47 @@ def test_with_no_zone_calling_every_criterion_says_no(config: DemandConfig) -> N
     assert result.wanted is False
     assert result.criteria_without_data == ()
     assert result.zones_without_data == ()
+
+
+@pytest.mark.parametrize(
+    ("config", "without"),
+    [(POWER_ONLY, ("power",)), (OPENING_ONLY, ("opening",)), (BOTH, ("power", "opening"))],
+)
+def test_a_criterion_lacks_data_whether_a_zone_calls_or_not(
+    config: DemandConfig, without: tuple[str, ...]
+) -> None:
+    """Check C's F2: whether a criterion lacks data follows what the zones in a heating mode can
+    feed — here a device power ``None`` and no opening — not whether one calls now. The answer
+    stays "unknown" through every start and end of a call; a "no" at each call's end would take
+    the boiler again at each edge."""
+    for calling in (True, False, True, False):
+        blind = zone("z", calling=calling, power=None, mean_power=None)
+        result = boiler_demand([blind], NOW, AGE, config)
+        assert result.wanted is None
+        assert result.criteria_without_data == without
+        assert result.power_kw is None
+        assert result.zones_without_data == (("z",) if calling else ())
+
+
+def test_an_opening_or_a_mean_power_of_0_is_a_value() -> None:
+    """Negative: an idle zone in a heating mode publishing an opening of 0, or a mean power of
+    0 beside its device power, gives its criterion data: "no", never "unknown"."""
+    idle = zone("z", valve_open=0.0, power=2.0, mean_power=0.0, calling=False)
+    result = boiler_demand([idle], NOW, AGE, BOTH)
+    assert result.wanted is False
+    assert result.criteria_without_data == ()
+    assert result.power_kw == 0.0
+
+
+def test_power_shedding_does_not_change_which_criteria_have_data() -> None:
+    """A zone VT's power shedding holds off is still in its heating mode: it removes the zone's
+    demand and power, not its data — the criterion does not flip to "unknown" while it lasts."""
+    fed = zone("fed", power=2.0, on_percent=0.6, device_active=True)
+    blind = zone("blind", valve_open=0.6)
+    for shedding, wanted in ((False, True), (True, False)):
+        result = boiler_demand([replace(fed, shedding=shedding), blind], NOW, AGE, POWER_ONLY)
+        assert result.wanted is wanted
+        assert result.criteria_without_data == ()
 
 
 @pytest.mark.parametrize(
@@ -490,16 +554,14 @@ def test_an_open_window_switching_a_zone_off_leaves_it_known_without_demand() ->
 
 def test_a_vt_restart_off_and_not_ready_then_started() -> None:
     """VT reloads: before its first refresh each thermostat shows a placeholder "off", without
-    ``is_ready``. During the recognition period such a zone is not known yet; after it, "off" is
-    known without demand (S-34), while a heating mode VT has not started stays unknown. Once
-    VT has started the zone, it counts as it shows."""
+    ``is_ready`` — kept by VT 10.4.0 while none of its devices reports. Such a zone is unknown,
+    during the recognition period and after it (check C's F1), as is a heating mode VT has not
+    started. Once VT has started the zone, it counts as it shows."""
     placeholder = zone("a", heating_enabled=False, ready=None, reported=False, temperature=None)
     heat_unstarted = zone("a", valve_open=0.6, ready=False, reported=False)
     started = zone("a", valve_open=0.6, ready=True, reported=True)
-    assert demand_over([[placeholder]], recognition=True) == [(None, 0, ("a",))]
     assert demand_over([[placeholder], [heat_unstarted], [started]]) == [
-        (False, 1, ()),
+        (None, 0, ("a",)),
         (None, 0, ("a",)),
         (True, 1, ()),
     ]
-    assert demand_over([[heat_unstarted]], recognition=True) == [(None, 0, ("a",))]

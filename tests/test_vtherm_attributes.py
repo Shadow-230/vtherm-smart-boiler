@@ -251,14 +251,24 @@ def test_a_zone_vt_shows_not_ready_is_unknown_after_the_recognition(
     [
         ("off", {"is_ready": True, "specific_states": {}}, True),  # started: the user's "off"
         ("cool", {"is_ready": True}, True),
-        ("off", {}, None),  # VT 10.4.0's placeholder: as before, S-34
         ("off", {"specific_states": {}}, None),  # an older VT without ``is_ready`` (assumed)
     ],
 )
 def test_an_off_zone_started_or_without_is_ready_stays_known_without_demand(
     state: str, attributes: dict[str, object], ready: bool | None
 ) -> None:
-    """S-34 kept: "off" on a zone VT has started, or that shows no ``is_ready`` at all, is
-    known — without demand — once the recognition period is over."""
+    """S-34 kept: "off" on a zone VT has started, or an older VT's state with its
+    ``specific_states`` but no ``is_ready``, is known — without demand — once the recognition
+    period is over."""
     assert zone_values(state, attributes).ready is ready
     assert _known_after_recognition(state, attributes)
+
+
+def test_vts_placeholder_is_unknown_after_the_recognition_too() -> None:
+    """Check C's F1: "off" with neither ``is_ready`` nor ``specific_states`` — VT 10.4.0's
+    placeholder, kept for good while none of the thermostat's devices reports — is not the
+    user's "off": unknown after the recognition period too."""
+    values = zone_values("off", {})
+    assert values.ready is None
+    assert not values.reported
+    assert not _known_after_recognition("off", {})

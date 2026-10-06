@@ -348,6 +348,51 @@ async def test_what_a_vt_zone_shows_before_its_start_during_a_reload_and_after(
         assert zone.started
 
 
+async def test_a_vt_thermostat_whose_devices_never_report_stays_unknown(
+    hass: HomeAssistant, freezer: Any
+) -> None:
+    """Check C's F1 (SB-02): the devices' integration never sets up after a restart — Home
+    Assistant shows their entities restored "unavailable", and no state event ever comes. VT
+    10.4.0 keeps its placeholder "off", with neither ``is_ready`` nor ``specific_states``, for
+    good — through 30 minutes of its cycles and room readings; the over_climate thermostat shows
+    "off" with ``is_ready`` false. The plugin reads each as unknown after the recognition period
+    too, never as the user's "off": demand is unknown, not "no"."""
+    from custom_components.vtherm_smart_boiler.core.demand import DemandConfig, boiler_demand
+    from custom_components.vtherm_smart_boiler.vtherm_link import VThermLink
+
+    celsius = {"unit_of_measurement": "°C", "device_class": "temperature"}
+    for sensor in ("living", "office", "outdoor"):
+        hass.states.async_set(f"sensor.{sensor}_temperature", "19.0", celsius)
+    hass.states.async_set("input_boolean.living_valve", "unavailable", {"restored": True})
+    hass.states.async_set("climate.office_trv", "unavailable", {"restored": True})
+    hass.set_state(CoreState.starting)
+    await setup(hass, vt_central())
+    await setup(hass, vt_thermostat())
+    await setup(hass, vt_over_climate())
+    hass.set_state(CoreState.running)
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done()
+    for step in range(6):  # room readings change and VT's cycles run, for 30 minutes
+        for sensor in ("living", "office"):
+            hass.states.async_set(f"sensor.{sensor}_temperature", f"{18.0 + step / 10}", celsius)
+        await later(hass, freezer, 300.0)
+    living, office = hass.states.get(LIVING), hass.states.get(OFFICE)
+    assert living is not None
+    assert office is not None
+    assert living.state == "off"
+    assert "is_ready" not in living.attributes
+    assert "specific_states" not in living.attributes
+    assert (office.state, office.attributes.get("is_ready")) == ("off", False)
+    link = VThermLink(hass, (LIVING, OFFICE))
+    for state in (living, office):
+        zone = link.zone_from_state(state.entity_id, state)
+        now = zone.reported_at or 0.0
+        assert zone.heating_enabled is False
+        assert not zone.is_known(now, None)
+        result = boiler_demand([zone], now, None, DemandConfig())
+        assert (result.wanted, result.unknown) == (None, (state.entity_id,))
+
+
 async def started_with_the_plugin(hass: HomeAssistant, *thermostats: MockConfigEntry) -> Any:
     """VT's entries and the plugin's, set up through Home Assistant's start, the zone heating
     towards 21 °C: the plugin's entry."""

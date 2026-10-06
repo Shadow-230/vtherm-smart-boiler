@@ -85,8 +85,9 @@ class ZoneState:
     thermostat — ``False`` for any published value but true, ``None`` where VT shows none (its
     placeholder before the first refresh, an older VT). ``reported``: VT shows it started —
     ``is_ready`` true, or an older VT's state without that key — and ``False`` while it does not
-    (before VT's first refresh a thermostat shows a placeholder "off" with neither); ``None``:
-    not said, ``ready`` alone decides.
+    (before VT's first refresh a thermostat shows a placeholder "off" with neither, which VT
+    10.4.0 keeps for good while none of its devices reports); ``None``: not said, ``ready``
+    alone decides.
     ``temperature_at``: when the room temperature was last measured; the zone is fresh by it,
     else by the entity's report. ``room_sensor_lost``: the room sensor VT reads is gone,
     unavailable or unknown now, or VT's own safety mode is on — VT keeps the last temperature it
@@ -162,23 +163,22 @@ class ZoneState:
             return False
         return max_age is None or now - at <= max_age
 
-    def is_known(self, now: float, max_age: float | None, recognition: bool = False) -> bool:
-        """Its mode is known and its data fresh, and VT has started it — or, once the
-        recognition period is over, it is in a mode that does not heat: such a zone has no
-        demand whether VT runs it or not (S-34). A heating mode VT does not run is unknown, and
-        so is any mode VT shows with ``is_ready`` not true: VT cannot start the thermostat (a
-        device unavailable) and shows "off" for as long as it cannot — not the user's "off"
-        (SB-02, decision 1 of 2026-10-05)."""
+    def is_known(self, now: float, max_age: float | None) -> bool:
+        """Its mode is known, its data fresh, and VT has started it. A thermostat VT has not
+        started is unknown whatever its mode, during the recognition period and after it: VT
+        shows it "off" ("heat" for over_valve) until it starts and for as long as a device is
+        unavailable — ``is_ready`` not true, or, while none of its devices has ever reported,
+        neither ``is_ready`` nor ``specific_states`` (VT 10.4.0) — not the user's "off" (SB-02,
+        decision 1 of 0.2.3; check C's F1). A started zone in "off" is known without demand
+        (S-34)."""
         if self.heating_enabled is None or not self.is_fresh(now, max_age):
             return False
-        if self.started:
-            return True
-        return not self.heating_enabled and not recognition and self.ready is not False
+        return self.started
 
     def has_reported(self, now: float, max_age: float | None) -> bool:
         """VT shows it started, and its mode and data are known: what the recognition period
-        waits for (decision 3)."""
-        return self.started and self.heating_enabled is not None and self.is_fresh(now, max_age)
+        waits for (decision 3) — the same as known."""
+        return self.is_known(now, max_age)
 
 
 @dataclass(frozen=True, slots=True)

@@ -2611,15 +2611,15 @@
     },
     "no_criterion_judged_off": {
       "title": "No demand criterion can be judged: the boiler is not heating",
-      "description": "The zones answer, but a room calls for heat and none of the demand criteria set in the plugin's options can see it ({criteria}: \"power\" needs a device power set in Versatile Thermostat, \"opening\" a valve opening or duty cycle). The plugin keeps the boiler's heating off and resumes as soon as a criterion has data again. Set the device power in VT, or set the zone count to 1 or more in the plugin's control options."
+      "description": "The zones answer, but none of the demand criteria set in the plugin's options gets data from the zones that may heat, so no room's call for heat can be seen ({criteria}: \"power\" needs a device power set in Versatile Thermostat, \"opening\" a valve opening or duty cycle). The plugin keeps the boiler's heating off and resumes as soon as a criterion has data again. Set the device power in VT, or set the zone count to 1 or more in the plugin's control options."
     },
     "no_criterion_judged_handed_back": {
       "title": "No demand criterion can be judged: the boiler is back on its thermostat or its own room controller",
-      "description": "The zones answer, but a room calls for heat and none of the demand criteria set in the plugin's options can see it ({criteria}: \"power\" needs a device power set in Versatile Thermostat, \"opening\" a valve opening or duty cycle). The plugin handed the boiler back to the thermostat on the gateway, or to the boiler's own room controller, and takes it again as soon as a criterion has data again. Set the device power in VT, or set the zone count to 1 or more in the plugin's control options."
+      "description": "The zones answer, but none of the demand criteria set in the plugin's options gets data from the zones that may heat, so no room's call for heat can be seen ({criteria}: \"power\" needs a device power set in Versatile Thermostat, \"opening\" a valve opening or duty cycle). The plugin handed the boiler back to the thermostat on the gateway, or to the boiler's own room controller, and takes it again as soon as a criterion has data again. Set the device power in VT, or set the zone count to 1 or more in the plugin's control options."
     },
     "no_criterion_judged_monitor": {
       "title": "No demand criterion can be judged",
-      "description": "The zones answer, but a room calls for heat and none of the demand criteria set in the plugin's options can see it ({criteria}: \"power\" needs a device power set in Versatile Thermostat, \"opening\" a valve opening or duty cycle); switched on, control could not heat for it. Set the device power in VT, or set the zone count to 1 or more in the plugin's control options."
+      "description": "The zones answer, but none of the demand criteria set in the plugin's options gets data from the zones that may heat, so no room's call for heat can be seen ({criteria}: \"power\" needs a device power set in Versatile Thermostat, \"opening\" a valve opening or duty cycle); switched on, control could not heat for any room. Set the device power in VT, or set the zone count to 1 or more in the plugin's control options."
     },
     "frost_zone_closed": {
       "title": "A room below the frost limit cannot get heat",

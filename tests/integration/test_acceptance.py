@@ -77,7 +77,9 @@ class Rig:
     vt_mode: str = "heat"  # the HVAC mode VT gives its thermostats (VT's own modes act on it)
     over_climate: set[str] = field(default_factory=set)  # zones of VT's over_climate type
     modes: dict[str, str] = field(default_factory=dict)  # a zone's own mode, over ``vt_mode``
-    vt_ready: bool = True  # VT's ``is_ready`` on every thermostat; false: VT cannot start them
+    # VT's ``is_ready`` on every thermostat; false: VT cannot start them; ``None``: its
+    # placeholder, neither ``is_ready`` nor ``specific_states`` (no device has reported).
+    vt_ready: bool | None = True
     fahrenheit: bool = False  # Home Assistant in US customary units: VT reports in °F
     spy: ServiceSpy | None = None  # every service call (P-118)
     smartpi: dict[str, bool] = field(default_factory=dict)  # SmartPI zones: learning on or off
@@ -118,17 +120,17 @@ class Rig:
             if zone.zone_id in self.over_climate:
                 # It drives a device with its own regulation: no opening, only whether it heats
                 # — and, as VT 10.4.0 shows every started thermostat, that it has started.
-                self.hass.states.async_set(
-                    entity_id,
-                    mode,
-                    {
-                        "current_temperature": self.degrees(self.sim.room(zone.zone_id)),
-                        "temperature": self.degrees(self.sim.plant.targets[index]),
-                        "hvac_action": action,
+                shown: dict[str, Any] = {
+                    "current_temperature": self.degrees(self.sim.room(zone.zone_id)),
+                    "temperature": self.degrees(self.sim.plant.targets[index]),
+                    "hvac_action": action,
+                }
+                if self.vt_ready is not None:
+                    shown |= {
                         "is_ready": self.vt_ready,
                         "specific_states": {"is_device_active": active},
-                    },
-                )
+                    }
+                self.hass.states.async_set(entity_id, mode, shown)
                 continue
             # What real VT publishes for every thermostat, and what demand follows first (T4):
             # whether its device heats now, and that it has started; a SmartPI zone, its flag.
@@ -145,7 +147,7 @@ class Rig:
                 hvac_action=action,
                 valve_open_percent=round(opening * 100),
                 on_percent=0.0 if mode == "off" else round(opening, 2),
-                specific_states=specific,
+                specific_states=specific if self.vt_ready is not None else None,
                 is_ready=self.vt_ready,
                 **extra,
             )
@@ -875,30 +877,33 @@ async def test_zones_that_cannot_be_read_end_in_decision_3s_end_state(
     )
 
 
+@pytest.mark.parametrize("shown", [False, None], ids=["not_ready", "placeholder"])
 @pytest.mark.parametrize("when", ["restart", "reload"])
 @pytest.mark.parametrize(
     ("topology", "handed_back"),
     [("gateway_with_thermostat", True), ("gateway_standalone", False)],
 )
 async def test_zones_vt_cannot_start_end_in_decision_3s_end_state(
-    rig: Rig, topology: str, handed_back: bool, when: str
+    rig: Rig, topology: str, handed_back: bool, when: str, shown: bool | None
 ) -> None:
     """SB-02 (decision 1 of 2026-10-05): VT cannot start any thermostat — the Zigbee or Z-Wave
     integration down after a restart, or after VT's reload — and shows each "off" with
-    ``is_ready`` false for as long as it cannot. That is not the user's "off": once the
+    ``is_ready`` false for as long as it cannot, or, no device ever reporting, its placeholder
+    with neither ``is_ready`` nor ``specific_states`` (check C's F1). That is not the user's
+    "off": once the
     recognition period is over every zone is unknown — with the thermostat on the gateway the
     boiler is handed back to it; stand-alone, heating off — with the alarm and the repair issue,
     never "no demand"; control resumes once VT starts them."""
     from homeassistant.helpers import issue_registry as ir
 
     if when == "restart":
-        rig.vt_mode, rig.vt_ready = "off", False
+        rig.vt_mode, rig.vt_ready = "off", shown
     await start(rig, topology=topology)
     await rig.switch(True)
     if when == "reload":
         await rig.advance(60)
         assert rig.gateway("ch")[-1][2] is True
-        rig.vt_mode, rig.vt_ready = "off", False
+        rig.vt_mode, rig.vt_ready = "off", shown
         rig.mirror_zones()
     reasons: set[str] = set()
     for _ in range(22):  # 11 minutes: the recognition period and a little more

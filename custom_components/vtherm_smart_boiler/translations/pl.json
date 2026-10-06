@@ -2611,15 +2611,15 @@
     },
     "no_criterion_judged_off": {
       "title": "Żadnego kryterium zapotrzebowania nie da się ocenić: kocioł nie grzeje",
-      "description": "Strefy odpowiadają, ale pokój prosi o ciepło, a żadne kryterium zapotrzebowania ustawione w opcjach wtyczki go nie widzi ({criteria}: „power” to moc urządzenia ustawiona w Versatile Thermostat, „opening” to otwarcie zaworu albo wypełnienie). Wtyczka trzyma grzanie kotła wyłączone i wznowi je, gdy tylko kryterium znów będzie miało dane. Ustaw moc urządzenia w VT albo ustaw w opcjach sterowania wtyczki liczbę stref na 1 lub więcej."
+      "description": "Strefy odpowiadają, ale żadne kryterium zapotrzebowania ustawione w opcjach wtyczki nie dostaje danych ze stref, które mogą grzać, więc nie widać, czy któryś pokój prosi o ciepło ({criteria}: „power” to moc urządzenia ustawiona w Versatile Thermostat, „opening” to otwarcie zaworu albo wypełnienie). Wtyczka trzyma grzanie kotła wyłączone i wznowi je, gdy tylko kryterium znów będzie miało dane. Ustaw moc urządzenia w VT albo ustaw w opcjach sterowania wtyczki liczbę stref na 1 lub więcej."
     },
     "no_criterion_judged_handed_back": {
       "title": "Żadnego kryterium zapotrzebowania nie da się ocenić: kocioł wrócił do termostatu albo własnego regulatora pokojowego",
-      "description": "Strefy odpowiadają, ale pokój prosi o ciepło, a żadne kryterium zapotrzebowania ustawione w opcjach wtyczki go nie widzi ({criteria}: „power” to moc urządzenia ustawiona w Versatile Thermostat, „opening” to otwarcie zaworu albo wypełnienie). Wtyczka oddała kocioł termostatowi na bramce albo własnemu regulatorowi pokojowemu kotła i przejmie go znów, gdy tylko kryterium będzie miało dane. Ustaw moc urządzenia w VT albo ustaw w opcjach sterowania wtyczki liczbę stref na 1 lub więcej."
+      "description": "Strefy odpowiadają, ale żadne kryterium zapotrzebowania ustawione w opcjach wtyczki nie dostaje danych ze stref, które mogą grzać, więc nie widać, czy któryś pokój prosi o ciepło ({criteria}: „power” to moc urządzenia ustawiona w Versatile Thermostat, „opening” to otwarcie zaworu albo wypełnienie). Wtyczka oddała kocioł termostatowi na bramce albo własnemu regulatorowi pokojowemu kotła i przejmie go znów, gdy tylko kryterium będzie miało dane. Ustaw moc urządzenia w VT albo ustaw w opcjach sterowania wtyczki liczbę stref na 1 lub więcej."
     },
     "no_criterion_judged_monitor": {
       "title": "Żadnego kryterium zapotrzebowania nie da się ocenić",
-      "description": "Strefy odpowiadają, ale pokój prosi o ciepło, a żadne kryterium zapotrzebowania ustawione w opcjach wtyczki go nie widzi ({criteria}: „power” to moc urządzenia ustawiona w Versatile Thermostat, „opening” to otwarcie zaworu albo wypełnienie); włączone sterowanie nie mogłoby dla niego grzać. Ustaw moc urządzenia w VT albo ustaw w opcjach sterowania wtyczki liczbę stref na 1 lub więcej."
+      "description": "Strefy odpowiadają, ale żadne kryterium zapotrzebowania ustawione w opcjach wtyczki nie dostaje danych ze stref, które mogą grzać, więc nie widać, czy któryś pokój prosi o ciepło ({criteria}: „power” to moc urządzenia ustawiona w Versatile Thermostat, „opening” to otwarcie zaworu albo wypełnienie); włączone sterowanie nie mogłoby grzać dla żadnego pokoju. Ustaw moc urządzenia w VT albo ustaw w opcjach sterowania wtyczki liczbę stref na 1 lub więcej."
     },
     "frost_zone_closed": {
       "title": "Pokój poniżej progu mrozu nie może dostać ciepła",

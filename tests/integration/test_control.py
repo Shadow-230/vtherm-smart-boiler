@@ -9184,6 +9184,97 @@ async def test_the_no_criterion_issue_gives_way_to_every_zone_unknown(rig: Rig) 
     assert rig.state("binary_sensor", "alarm_no_zone_known").state == "on"
 
 
+# Check C's F2 and F3: a switch zone without a VT device power whose calls start and stop with
+# VT's cycle — the power criterion cannot see it, whether it calls or not.
+CYCLE_ON = BLIND | {"specific_states": {"is_device_active": True}, "on_percent": 0.4}
+CYCLE_OFF = CYCLE_ON | {
+    "hvac_action": "idle",
+    "valve_open_percent": 0,
+    "specific_states": {"is_device_active": False},
+}
+
+
+@pytest.mark.parametrize(
+    ("topology", "kind"),
+    [("gateway_with_thermostat", "handed_back"), ("gateway_standalone", "off")],
+)
+async def test_no_criterion_judged_holds_while_calls_start_and_stop(
+    rig: Rig, topology: str, kind: str
+) -> None:
+    """Check C's F2 and F3: a count of 0, a 1-kW power threshold, and the zone's calls following
+    VT's 5-minute cycle (2 minutes on) for 40 minutes. Nothing can be judged whether it calls or
+    not, so decision 3's end state holds: the thermostat on the gateway keeps the boiler —
+    nothing is taken at a call's end (no CH=0 masking it) and handed back at the next start —
+    and stand-alone heating stays off; the alarm never flickers, and the repair issue rises
+    after ten minutes."""
+    rig.zones.set("living", **CYCLE_ON)
+    await start(rig, topology=topology, count_threshold=0, power_threshold_kw=1.0)
+    await rig.switch(True)
+    await rig.advance(20)
+    seen = len(rig.gateway.calls)
+    for cycle in range(8):
+        for attributes, seconds in ((CYCLE_ON, 120), (CYCLE_OFF, 180)):
+            rig.zones.set("living", **attributes)
+            await rig.advance(seconds)
+            state = rig.state("sensor", "control_state")
+            assert state.state == ("handed_back" if kind == "handed_back" else "idle")
+            assert "zones_unknown" in state.attributes["reasons"]
+            assert "no_demand" not in state.attributes["reasons"]
+            assert rig.state("binary_sensor", "alarm_no_zone_known").state == "on"
+            found = no_zone_issue(rig)
+            if cycle >= 2:  # 15 minutes on
+                assert found is not None
+                assert found.translation_key == f"no_criterion_judged_{kind}"
+    calls = rig.gateway.calls[seen:]
+    assert ("ch", True) not in calls  # heating never switched on for a call nothing can see
+    if kind == "handed_back":
+        assert calls == []  # nothing taken, nothing handed back again
+    else:
+        assert len({call for call in calls if call[0] == "setpoint"}) <= 1
+
+
+async def test_a_relay_with_its_own_control_is_not_switched_at_each_call_edge(
+    rig: Rig, relay: FakeRelay
+) -> None:
+    """Check C's F2 on the relay path: the boiler's own room controller behind the relay (the
+    tick, rest "on"), a count of 0 and a power threshold, and the zone's calls starting and
+    stopping every 30 s. Nothing can be judged: the relay is handed back and stays so — never
+    switched at each edge."""
+    rig.zones.set("living", **CYCLE_OFF)
+    await start_relay(
+        rig,
+        relay_rest_state="on",
+        own_room_controller=True,
+        count_threshold=0,
+        power_threshold_kw=1.0,
+    )
+    await rig.switch(True)
+    await rig.advance(START_TRACE_S)
+    seen = len(relay.calls)
+    for _ in range(6):
+        for attributes in (CYCLE_ON, CYCLE_OFF):
+            rig.zones.set("living", **attributes)
+            await rig.advance(30)
+            assert rig.state("sensor", "control_state").state == "handed_back"
+    assert relay.calls[seen:] == []
+
+
+async def test_every_zone_off_is_no_demand_without_an_alarm_or_an_issue(rig: Rig) -> None:
+    """Summer, negative: the only zone "off", without a VT device power, under a power-only
+    criterion — no demand: no end state, no alarm, no repair issue."""
+    rig.zones.set("living", "off", **(CYCLE_OFF | {"hvac_action": "off"}))
+    await start(rig, count_threshold=0, power_threshold_kw=1.0)
+    await rig.switch(True)
+    await rig.advance(11 * 60)
+    state = rig.state("sensor", "control_state")
+    assert state.state == "idle"
+    assert "no_demand" in state.attributes["reasons"]
+    assert "zones_unknown" not in state.attributes["reasons"]
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"
+    assert rig.state("binary_sensor", "alarm_demand_criterion_no_data").state == "off"
+    assert no_zone_issue(rig) is None
+
+
 async def test_the_switch_shows_the_boilers_own_room_controller(rig: Rig) -> None:
     """Answer F: with the tick on the entity path, every hand-back goes to the boiler's own
     control, and the switch says so."""

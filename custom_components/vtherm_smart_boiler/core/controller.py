@@ -542,7 +542,6 @@ def decide(
         config.zone_max_age_s,
         config.demand,
         memory=graced(watch),
-        recognition=recognition,
     )
     # PB-03: the zones known, and no configured criterion can be judged — decision 3's end
     # state too, and since when, for its repair issue; held through a recognition period.
@@ -584,7 +583,7 @@ def _decide(
     now = inputs.now
     recognition = in_recognition(state.zones)
     max_age = config.zone_max_age_s
-    watched = [z for z in inputs.zones if not recognition or z.is_known(now, max_age, True)]
+    watched = [z for z in inputs.zones if not recognition or z.is_known(now, max_age)]
     frost = frost_needed(watched, now, max_age, state.frost, config.frost)
     if inputs.boiler_fault:
         # Boiler protection (Y1): the usual "off" while the boiler reports its own fault — frost

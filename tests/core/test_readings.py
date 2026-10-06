@@ -99,7 +99,7 @@ def zone(**kw) -> ZoneState:
 
 
 @pytest.mark.parametrize(
-    ("state", "known", "known_in_recognition"),
+    ("state", "known", "reported"),
     [
         (zone(), False, False),  # no mode: unavailable, unknown, a mode not listed
         (zone(heating_enabled=True, reported=True), True, True),
@@ -107,9 +107,10 @@ def zone(**kw) -> ZoneState:
         # Heat or auto that VT does not run yet: unknown.
         (zone(heating_enabled=True, reported=False, ready=False), False, False),
         (zone(heating_enabled=True, reported=False), False, False),
-        # "Off" that VT has not started, without ``is_ready`` (VT's placeholder before its first
-        # refresh, an older VT): no demand once the recognition period is over (S-34).
-        (zone(heating_enabled=False, reported=False), True, False),
+        # "Off" that VT has not started, neither ``is_ready`` nor ``specific_states`` shown: VT's
+        # placeholder, kept for good while none of its devices has reported (VT 10.4.0) — not
+        # the user's "off": unknown after the recognition period too (SB-02, check C's F1).
+        (zone(heating_enabled=False, reported=False), False, False),
         # VT says it has not started it (``is_ready`` false): it cannot — a device unavailable —
         # so its "off" is not the user's: unknown after the recognition period too (SB-02).
         (zone(heating_enabled=False, reported=False, ready=False), False, False),
@@ -121,9 +122,9 @@ def zone(**kw) -> ZoneState:
         (zone(heating_enabled=True, reported=True, reported_at=None), False, False),  # never
     ],
 )
-def test_which_zones_are_known(state: ZoneState, known: bool, known_in_recognition: bool) -> None:
+def test_which_zones_are_known(state: ZoneState, known: bool, reported: bool) -> None:
     assert state.is_known(NOW, None) is known
-    assert state.is_known(NOW, None, recognition=True) is known_in_recognition
+    assert state.has_reported(NOW, None) is reported  # what the recognition period waits for
 
 
 def test_a_zone_beyond_its_age_limit_is_unknown() -> None:

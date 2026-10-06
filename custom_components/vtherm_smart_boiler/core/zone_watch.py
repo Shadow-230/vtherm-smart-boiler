@@ -2,7 +2,8 @@
 
 The zones report one by one after a start, and VT shows a placeholder while it starts a
 thermostat — "off", before its first refresh neither ``is_ready`` nor the rest of its state
-(observed with VT 10.4.0, 2026-09-28) — so nothing VT shows then is taken for an answer:
+(observed with VT 10.4.0, 2026-09-28), kept for good while none of its devices reports (check C,
+2026-10-06) — so nothing VT shows then is taken for an answer, nor after the recognition period:
 
 - **The recognition period** runs from the control unit's start (Home Assistant starting, the
   entry reloading), and again whenever every configured zone stops answering at once — all of
@@ -86,11 +87,10 @@ def every_zone_unknown_since(
     zones: Sequence[ZoneState],
     now: float,
     max_age: float | None,
-    recognition: bool = False,
 ) -> float | None:
     """Since when no configured zone is known (``None``: one is, or none is configured); the
     monitor follows it without a recognition period."""
-    if not zones or any(zone.is_known(now, max_age, recognition) for zone in zones):
+    if not zones or any(zone.is_known(now, max_age) for zone in zones):
         return None
     return now if previous is None else _not_after(previous, now)
 
@@ -138,9 +138,7 @@ def follow_zones(
             del last[zone_id]  # dropped out: the known zones decide
         else:
             lost_at[zone_id] = lost
-    unknown_since = every_zone_unknown_since(
-        watch.unknown_since, zones, now, max_age, recognition=since is not None
-    )
+    unknown_since = every_zone_unknown_since(watch.unknown_since, zones, now, max_age)
     return ZoneWatch(
         begun=True,
         recognition_since=since,
