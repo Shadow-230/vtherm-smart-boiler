@@ -647,6 +647,7 @@ CONTROL_ADVANCED_KEYS = (
     "comfort_correction",
     "alarm_reactions",
     "return_after_outside_change",
+    "return_after_switch_hand_back",
 )
 CURVE_KEYS = ("design_outdoor", "design_flow", "room", "exponent", "offset")
 OWN_ROOM_CONTROLLER = "own_room_controller"
@@ -1085,6 +1086,8 @@ def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
 
 
 RETURN_KEY = "return_after_outside_change"
+# SB-36 (decision 10 of 0.2.3): after the external-control switch's hand-back, its own opt-in.
+RETURN_SWITCH_KEY = "return_after_switch_hand_back"
 
 
 def _relay_path(options: Mapping[str, Any]) -> bool:
@@ -1103,7 +1106,8 @@ def reaction_alarms(options: Mapping[str, Any]) -> tuple[str, ...]:
 def control_alarms_schema(options: dict[str, Any]) -> vol.Schema:
     """The alarm step: the reaction to an ignored write where it is offered, at both levels —
     a reaction stored earlier is never hidden (Y1); and, at the advanced level, the return by
-    itself after another controller (not for relays)."""
+    itself after another controller (not for relays), and where the hand-back turns off the
+    external-control switch, its own opt-in for that method (SB-36), off by default."""
     control = options.get(CONTROL, {})
     reactions = control.get("alarm_reactions", {})
     choices = [r.value for r in AlarmReaction]
@@ -1118,6 +1122,10 @@ def control_alarms_schema(options: dict[str, Any]) -> vol.Schema:
         fields[vol.Required(RETURN_KEY, default=control.get(RETURN_KEY) is True)] = (
             selector.BooleanSelector()
         )
+        if control.get("hand_back") == HandBack.SWITCH:
+            fields[
+                vol.Required(RETURN_SWITCH_KEY, default=control.get(RETURN_SWITCH_KEY) is True)
+            ] = selector.BooleanSelector()
     return vol.Schema(fields)
 
 
@@ -1227,10 +1235,13 @@ def apply_control_alarms(options: dict[str, Any], user_input: dict[str, Any]) ->
         alarm: user_input[alarm] for alarm in reaction_alarms(options) if alarm in user_input
     }
     if RETURN_KEY in shown:
-        if user_input.get(RETURN_KEY) is True:
-            control[RETURN_KEY] = True
-        else:
-            control.pop(RETURN_KEY, None)  # off: the default
+        # The switch's own opt-in is dropped where it is not shown: a method changed away from
+        # the switch and back does not bring an old tick back unseen (SB-36).
+        for key in (RETURN_KEY, RETURN_SWITCH_KEY):
+            if key in shown and user_input.get(key) is True:
+                control[key] = True
+            else:
+                control.pop(key, None)  # off: the default
     options[CONTROL] = control
 
 
@@ -1646,7 +1657,7 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
     control_defaults = (
         curve_defaults
         | _schema_defaults(control_behaviour_schema({}))
-        | {RETURN_KEY: alarm_defaults[RETURN_KEY]}
+        | {RETURN_KEY: alarm_defaults[RETURN_KEY], RETURN_SWITCH_KEY: False}
     )
     return bool(
         any(key in options.get(SIGNALS, {}) for key in ADVANCED_SIGNALS)
@@ -2713,9 +2724,13 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         if user_input is not None:
-            was_on = self.options.get(CONTROL, {}).get(RETURN_KEY) is True
-            if user_input.get(RETURN_KEY) is True and not was_on:
-                # Switched on: confirmed a second time before it is saved (decision 6).
+            stored = self.options.get(CONTROL, {})
+            if any(
+                user_input.get(key) is True and stored.get(key) is not True
+                for key in (RETURN_KEY, RETURN_SWITCH_KEY)
+            ):
+                # Switched on: confirmed a second time before it is saved (decision 6; the
+                # switch's own opt-in too, SB-36).
                 self._alarms_answer = user_input
                 return await self.async_step_control_return_confirm()
             apply_control_alarms(self.options, user_input)

@@ -602,7 +602,11 @@ async def test_the_form_no_longer_offers_a_reaction_to_outside_changes(
     ):
         texts = json.loads((translations / f"{language}.json").read_text(encoding="utf-8"))
         step = texts["options"]["step"]["control_alarms"]
-        assert set(step["data"]) == {"write_ignored", "return_after_outside_change"}
+        assert set(step["data"]) == {
+            "write_ignored",
+            "return_after_outside_change",
+            "return_after_switch_hand_back",  # SB-36: the switch method's own opt-in
+        }
         assert set(step["data_description"]) == set(step["data"])
         for sentence in sentences:
             assert sentence in step["description"]
@@ -680,6 +684,78 @@ async def test_the_return_option_needs_a_second_confirmation(
     await hass.async_block_till_done()
     control = hass.config_entries.async_get_entry(entry_id).options["control"]
     assert "return_after_outside_change" not in control
+
+
+async def to_switch_alarms(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
+    """The advanced control flow through an entity with the external-control switch's
+    hand-back, up to the alarm step."""
+    result = await to_control_entity(hass, entry_id)
+    hass.states.async_set("switch.external_control", "off")
+    details = {
+        "setpoint_entity": BOILER_FLOW,
+        "write_type": "held",
+        "hand_back": "switch",
+        "hand_back_entity": "switch.external_control",
+        "hand_back_entity_write_type": "held",
+    }
+    result = await options_step(hass, result, details)
+    assert result["step_id"] == "control_curve"
+    result = await options_step(hass, result, ADVANCED_CURVE)
+    assert result["step_id"] == "control_behaviour"
+    result = await options_step(hass, result, {"off_setpoint": 10})
+    assert result["step_id"] == "control_alarms"
+    return result
+
+
+async def test_the_switch_hand_backs_return_is_its_own_opt_in(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """SB-36 (decision 10): with the external-control switch's hand-back the alarm step offers
+    the return by itself after it as its own option, off by default; switched on, it is
+    confirmed a second time like the general one, and saved; switched off, dropped. Negatives:
+    a hand-back value offers no such option, and an earlier tick left from the switch is
+    dropped once the method is no longer the switch."""
+    entry_id = await create_entry(hass, entities, "advanced", ("living",))
+    result = await to_switch_alarms(hass, entry_id)
+    shown = result["data_schema"]({})
+    assert shown["return_after_switch_hand_back"] is False  # off by default
+    assert shown["return_after_outside_change"] is False
+    answers = {"return_after_outside_change": True, "return_after_switch_hand_back": True}
+    result = await options_step(hass, result, answers)
+    assert result["step_id"] == "control_return_confirm"
+    result = await options_step(hass, result, {"understood": True})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry.options["control"]["return_after_switch_hand_back"] is True
+    assert entry.runtime_data.config.control.return_after_switch_hand_back
+
+    # The general return already on: the switch's own opt-in still asks for the confirmation.
+    result = await to_switch_alarms(hass, entry_id)
+    off = {"return_after_outside_change": True, "return_after_switch_hand_back": False}
+    result = await options_step(hass, result, off)
+    assert result["type"] is FlowResultType.CREATE_ENTRY  # off: no confirmation
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert "return_after_switch_hand_back" not in control
+    result = await to_switch_alarms(hass, entry_id)
+    result = await options_step(hass, result, answers)
+    assert result["step_id"] == "control_return_confirm"
+    result = await options_step(hass, result, {"understood": True})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    # Away from the switch: no such option, and the old tick goes.
+    result = await to_control_behaviour(hass, entry_id)
+    result = await options_step(hass, result, {"off_setpoint": 10})
+    assert result["step_id"] == "control_alarms"
+    assert "return_after_switch_hand_back" not in result["data_schema"]({})
+    result = await options_step(hass, result, {"return_after_outside_change": True})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert control["return_after_outside_change"] is True
+    assert "return_after_switch_hand_back" not in control
 
 
 async def test_the_thermostats_own_setpoint_is_not_the_read_back(
@@ -2778,7 +2854,7 @@ async def test_the_relay_step_is_prefilled_from_vts_central_boiler(
     assert result["step_id"] == "control_relay_behaviour"
     assert form_default(result, "activation_delay_s") == 60
     assert form_default(result, "power_threshold_kw") == 1.5  # 1500 W as VT used it
-    assert form_default(result, "count_threshold") == 1  # VT's count 0: not carried over
+    assert form_default(result, "count_threshold") == 1  # VT's count missing: not carried over
     assert dict(central.data) == before  # nothing written to VT
 
 
@@ -2832,6 +2908,70 @@ async def test_the_count_and_long_keep_alive_prefill_rules(
     assert settings is not None
     assert settings.count_threshold is None
     assert settings.power_threshold_kw is None
+
+
+@pytest.mark.parametrize(
+    ("count", "power", "unit", "expected"),
+    [
+        ("0", "1500.9", "W", 0),  # SB-07: VT's count off beside its power: carried as off
+        ("0.6", "2", "kW", 0),  # int() as VT reads it
+        ("0", "0", "W", None),  # no power threshold: no criterion to stand beside
+        ("0", "1500", "BTU/h", None),  # the power not carried over: neither is the count
+        (None, "1500", "W", None),  # VT's count missing
+        ("unavailable", "1500", "W", None),  # VT's count unreadable
+        ("-1", "1500", "W", None),  # below 0: not a value VT uses
+    ],
+)
+async def test_vts_count_of_0_beside_a_power_threshold_is_prefilled_0(
+    hass: HomeAssistant,
+    entities: dict[str, str],
+    count: str | None,
+    power: str,
+    unit: str,
+    expected: int | None,
+) -> None:
+    """SB-07 (decision 7): VT 10.4.0 treats a count of 0 as off, so where it stands beside a
+    power threshold the plugin carries it over as 0 — the power criterion alone, as VT used
+    it, not an OR with a count of 1 that starts the boiler on any single call. A count
+    missing or unreadable, or a power threshold not carried over, pre-fills nothing."""
+    from custom_components.vtherm_smart_boiler.vtherm_link import vt_central_boiler_settings
+
+    vt_central(
+        hass,
+        use_central_boiler_feature=True,
+        central_boiler_activation_service="switch.r/switch.turn_on",
+        central_boiler_deactivation_service="switch.r/switch.turn_off",
+    )
+    if count is not None:
+        vt_threshold(hass, "boiler_activation_threshold", count)
+    vt_threshold(hass, "boiler_power_activation_threshold", power, unit)
+    settings = vt_central_boiler_settings(hass, [entities["living"]])
+    assert settings is not None
+    assert settings.count_threshold == expected
+
+
+async def test_the_relay_behaviour_form_offers_vts_count_of_0(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """SB-07: the advanced relay behaviour form shows VT's count 0 beside its power threshold."""
+    hass.states.async_set("climate.boiler", "off", {"hvac_modes": ["heat", "off"]})
+    vt_central(
+        hass,
+        use_central_boiler_feature=True,
+        central_boiler_activation_service=f"{RELAY}/switch.turn_on",
+        central_boiler_deactivation_service=f"{RELAY}/switch.turn_off",
+    )
+    vt_threshold(hass, "boiler_activation_threshold", "0")
+    vt_threshold(hass, "boiler_power_activation_threshold", "2", "kW")
+    entry_id = await create_entry(hass, entities, "advanced", ("living",), "on_off")
+    result = await open_control(hass, entry_id)
+    result = await options_step(hass, result, {"write_path": "relay"})
+    assert result["step_id"] == "control_relay_from_vt"
+    hass.states.async_set(RELAY, "off")
+    result = await options_step(hass, result, RELAY_ANSWERS | {"relay_entity": RELAY})
+    assert result["step_id"] == "control_relay_behaviour"
+    assert form_default(result, "power_threshold_kw") == 2.0
+    assert form_default(result, "count_threshold") == 0
 
 
 async def test_prefill_without_a_vt_central_entry_leaves_the_fields_empty(

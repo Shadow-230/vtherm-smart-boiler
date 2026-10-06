@@ -14,6 +14,7 @@ from custom_components.vtherm_smart_boiler.core.controller import ControlConfig,
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.cycles import find_burns
 from custom_components.vtherm_smart_boiler.core.guards import GuardConfig, WriteType
+from custom_components.vtherm_smart_boiler.core.history import History
 from custom_components.vtherm_smart_boiler.core.installation import (
     Boiler,
     BoilerClass,
@@ -259,14 +260,22 @@ def test_summer_heating_follows_vt_at_the_minimum_water_temperature() -> None:
 # --- S-15, T-24: starts under control against the boiler's own regulation --------------------
 
 STARTS_CRITERION = 1.10  # J4's criterion (Z3 rule 6; provisional, K4)
+# J4's comfort parity (decision 8 of 0.2.3, SB-08): each room's mean temperature over the day at
+# most this far below its mean under the boiler's own regulation (provisional, K4), so a cooler
+# curve cannot meet the starts criterion by leaving the rooms colder.
+COMFORT_PARITY_K = 0.3
+SWING_K = 3.0  # J4's daily outdoor swing, ± (decision 8 of 0.2.3)
 
 
-def own_curve_loop(boiler: BoilerProfile, comfort_correction: bool | None) -> LoopConfig:
+def own_curve_loop(
+    boiler: BoilerProfile, comfort_correction: bool | None, flow_shift: float = 0.0
+) -> LoopConfig:
     """The control the plugin runs on an OpenTherm Gateway (``parse_control``), its curve set to
     the boiler's own — linear (exponent 1) through the same points, shifted by the boiler's
     offset — and its lowest water temperature the boiler's own minimum, so that the comparison
     is of the control, not of two curves (research/2026-10-02-z3-starts-ratio.md).
-    ``comfort_correction``: ``None`` leaves the option out — the parser's default."""
+    ``comfort_correction``: ``None`` leaves the option out — the parser's default.
+    ``flow_shift``: K added to the curve's design flow, for a curve that is not the boiler's."""
     room = 20.0
     installation = Installation(
         Boiler(BoilerClass.FLOW_SETPOINT),
@@ -281,7 +290,7 @@ def own_curve_loop(boiler: BoilerProfile, comfort_correction: bool | None) -> Lo
         "thermostat_kind": "opentherm",
         "curve": {
             "design_outdoor": -15.0,
-            "design_flow": room + boiler.curve_slope * (room + 15.0),
+            "design_flow": room + boiler.curve_slope * (room + 15.0) + flow_shift,
             "exponent": 1.0,
             "offset": boiler.curve_offset - room,
         },
@@ -298,17 +307,42 @@ def starts(result: SimResult, start: float, end: float) -> int:
     return len([burn for burn in find_burns(flame, start, end) if burn.start_seen])
 
 
-def starts_both_ways(mean: float, comfort_correction: bool | None) -> tuple[SimResult, SimResult]:
-    """24 h at a steady outdoor temperature (after a day to settle), in the same simulated
-    house: three radiator zones under TPI, the boiler on its own regulation — its own curve,
-    heating whenever a zone valve is open, as VT's central boiler switches it — and under the
-    plugin's control, stepped every 10 s as the control unit is."""
+def comfort_shortfall(own: SimResult, controlled: SimResult) -> dict[str, float]:
+    """Per room, how far its mean temperature over the compared day (sampled every 10 min)
+    lies below its mean under the boiler's own regulation; J4's comfort parity allows at most
+    ``COMFORT_PARITY_K``."""
+    own_rooms, controlled_rooms = (
+        late_rooms(own, DAY, 2 * DAY),
+        late_rooms(controlled, DAY, 2 * DAY),
+    )
+    return {
+        zid: sum(temps) / len(temps) - sum(controlled_rooms[zid]) / len(controlled_rooms[zid])
+        for zid, temps in own_rooms.items()
+    }
+
+
+def comfort_parity(own: SimResult, controlled: SimResult) -> bool:
+    shortfall = comfort_shortfall(own, controlled)
+    return bool(shortfall) and all(short <= COMFORT_PARITY_K for short in shortfall.values())
+
+
+def starts_both_ways(
+    mean: float,
+    comfort_correction: bool | None,
+    swing: float = 0.0,
+    flow_shift: float = 0.0,
+) -> tuple[SimResult, SimResult]:
+    """24 h at an outdoor temperature around ``mean`` — steady, or with a daily swing of
+    ±``swing`` K — after a day to settle, in the same simulated house: three radiator zones
+    under TPI, the boiler on its own regulation — its own curve, heating whenever a zone valve
+    is open, as VT's central boiler switches it — and under the plugin's control, stepped every
+    10 s as the control unit is."""
     boiler = BOILERS["condensing_large"]
     base = Scenario(
         boiler,
         HOUSES["average"],
         radiator_zones(),
-        daily_cycle([mean, mean], amplitude=0.0),
+        daily_cycle([mean, mean], amplitude=swing),
         days=2,
         step_s=10.0,
         control_period_s=10.0,
@@ -316,7 +350,10 @@ def starts_both_ways(mean: float, comfort_correction: bool | None) -> tuple[SimR
     )
     own = simulate(base)
     controlled = simulate(
-        replace(base, controller=LoopController(own_curve_loop(boiler, comfort_correction)))
+        replace(
+            base,
+            controller=LoopController(own_curve_loop(boiler, comfort_correction, flow_shift)),
+        )
     )
     return own, controlled
 
@@ -335,6 +372,7 @@ def test_tpi_switch_zones_starts_per_hour_under_control(mean: float) -> None:
     assert controlled_starts / 24.0 <= STARTS_CRITERION * own_starts / 24.0
     assert controlled.ch_switchings <= STARTS_CRITERION * own.ch_switchings
     assert controlled.override_s > 0.95 * 2 * DAY  # the control held the boiler throughout
+    assert comfort_parity(own, controlled), comfort_shortfall(own, controlled)
 
 
 @pytest.mark.parametrize("mean", [8.0, -5.0])
@@ -344,6 +382,46 @@ def test_tpi_switch_zones_starts_per_hour_with_the_defaults(mean: float) -> None
     1.10 times as often per hour as the boiler's own regulation."""
     own, controlled = starts_both_ways(mean, comfort_correction=None)
     assert controlled.override_s > 0.95 * 2 * DAY  # the control held the boiler throughout
+    assert starts(controlled, DAY, 2 * DAY) <= STARTS_CRITERION * starts(own, DAY, 2 * DAY)
+    assert comfort_parity(own, controlled), comfort_shortfall(own, controlled)
+
+
+@pytest.mark.parametrize("mean", [8.0, -5.0])
+def test_a_cooler_curve_meets_the_starts_but_not_comfort_parity(mean: float) -> None:
+    """SB-08 (decision 8), negative: a curve 10 K cooler at the design point than the boiler's
+    own starts the burner less often — the starts criterion alone would pass it — and leaves the
+    rooms colder, which J4's comfort parity refuses."""
+    own, controlled = starts_both_ways(mean, comfort_correction=None, flow_shift=-10.0)
+    assert starts(controlled, DAY, 2 * DAY) <= STARTS_CRITERION * starts(own, DAY, 2 * DAY)
+    assert not comfort_parity(own, controlled), comfort_shortfall(own, controlled)
+
+
+def test_comfort_parity_without_rooms_is_not_met() -> None:
+    """Negative: with no room temperatures to compare, parity is not taken as met."""
+    empty = SimResult(History())
+    assert comfort_shortfall(empty, empty) == {}
+    assert not comfort_parity(empty, empty)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "K4 (S-15, decision 8 of 0.2.3): with the ±3 K daily outdoor swing the defaults on the "
+        "boiler's own curve keep the rooms as warm (within 0.01 K) but start the burner x1.20 "
+        "as often at +8 °C and x2.16 at -5 °C as the boiler's own regulation (open #27 of "
+        "0.2.2; research/2026-10-06-p2-5b-report.md); the acceptable ratio is decided at K4"
+    ),
+)
+@pytest.mark.parametrize("mean", [8.0, -5.0])
+def test_j4s_starts_criterion_with_the_daily_swing(mean: float) -> None:
+    """J4's starts criterion with its conditions (SB-08, decision 8): 24 h at +8 °C and at
+    −5 °C, each with a ±3 K daily outdoor swing, the plugin's defaults on the boiler's own curve:
+    at most 1.10 times the boiler's own regulation's starts per hour, with every room as warm as
+    under it (comfort parity)."""
+    own, controlled = starts_both_ways(mean, comfort_correction=None, swing=SWING_K)
+    assert controlled.override_s > 0.95 * 2 * DAY  # the control held the boiler throughout
+    assert starts(own, DAY, 2 * DAY) > 0
+    assert comfort_parity(own, controlled), comfort_shortfall(own, controlled)
     assert starts(controlled, DAY, 2 * DAY) <= STARTS_CRITERION * starts(own, DAY, 2 * DAY)
 
 

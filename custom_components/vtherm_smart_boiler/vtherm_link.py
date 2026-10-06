@@ -138,7 +138,7 @@ class VtCentralBoiler:
     keep_alive_s: float | None = None  # VT's keep-alive, above 0
     repeat_s: float | None = None  # the keep-alive where it lies within 10–300 s
     power_threshold_kw: float | None = None  # as VT used it: whole numbers in its unit
-    count_threshold: int | None = None  # only where every zone VT counts has one device
+    count_threshold: int | None = None  # one device per zone VT counts; VT's 0 beside power
 
     @property
     def exists(self) -> bool:
@@ -278,8 +278,8 @@ def vt_central_boiler_settings(hass: HomeAssistant, zones: Sequence[str]) -> VtC
     thresholds as VT used them — each the whole number of its state in VT's own unit — the
     power converted to kW (``W`` ÷ 1000, ``kW`` as is, any other unit not pre-filled), each only
     above 0; the count only where every zone VT counts has one heating device, as VT counts
-    devices and the plugin rooms. VT's keep-alive becomes the repeat interval only within
-    10–300 s."""
+    devices and the plugin rooms, or 0 where VT's count is 0 beside a power threshold. VT's
+    keep-alive becomes the repeat interval only within 10–300 s."""
     entry = vt_central_entry(hass)
     if entry is None:
         return None
@@ -329,9 +329,14 @@ def _vt_power_threshold(hass: HomeAssistant) -> float | None:
 
 def _vt_count_threshold(hass: HomeAssistant, zone_count: int) -> int | None:
     """VT's device-count threshold, as a count of rooms: only where every thermostat VT's
-    central boiler counts has exactly one device, capped at the plugin's zone count."""
+    central boiler counts has exactly one device, capped at the plugin's zone count. VT's
+    count of 0 is "off" in VT 10.4.0 (``is_nb_active_active_for_boiler_exceeded``): beside a
+    power threshold the plugin carries over, it is pre-filled 0, the power criterion alone as
+    VT used it (SB-07, decision 7); a count missing or unreadable pre-fills nothing."""
     state = _vt_number(hass, COUNT_THRESHOLD_UNIQUE_ID)
     value = None if state is None else parse_number(state.state)
+    if value is not None and int(value) == 0 and value >= 0:
+        return 0 if _vt_power_threshold(hass) is not None else None
     if value is None or int(value) <= 0 or zone_count <= 0:
         return None
     link = VThermLink(hass, ())

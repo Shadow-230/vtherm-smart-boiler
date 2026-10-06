@@ -514,9 +514,14 @@ def test_the_new_options_are_read_with_cautious_defaults() -> None:
     assert not options.return_after_outside_change
     assert options.thermostat_setpoint_entity is None
     assert options.restart_entity is None
+    assert not options.return_after_switch_hand_back  # SB-36: its own option, off by default
     for stored in ("yes", 1, None):
         parsed = parse_control(ENTITY | {"return_after_outside_change": stored}, RADIATORS, None)
         assert not parsed.return_after_outside_change
+        parsed = parse_control(ENTITY | {"return_after_switch_hand_back": stored}, RADIATORS, None)
+        assert not parsed.return_after_switch_hand_back
+    switch = {"return_after_switch_hand_back": True}
+    assert parse_control(ENTITY | switch, RADIATORS, None).return_after_switch_hand_back
     extra = {
         "return_after_outside_change": True,
         "thermostat_setpoint_entity": "sensor.thermostat_setpoint",

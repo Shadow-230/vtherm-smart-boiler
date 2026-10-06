@@ -462,6 +462,10 @@ class ControlOptions:
     # After stepping aside from another controller, take the boiler back by itself once nothing
     # else wrote for an hour (decision 6; off by default, confirmed twice; not for relays).
     return_after_outside_change: bool = False
+    # After a hand-back through the external-control switch, the return by itself needs this
+    # option too: the switch also reads "off" when a person turned external control off on
+    # purpose (SB-36, decision 10 of 0.2.3; off by default, an entry without it included).
+    return_after_switch_hand_back: bool = False
     # With an OpenTherm thermostat on a gateway: the thermostat's own requested water setpoint,
     # which a fall-back after an outage shows (a lost command, not another controller).
     thermostat_setpoint_entity: str | None = None
@@ -790,6 +794,7 @@ def parse_control(
         alarm_reactions=reactions,
         # Decision 6: the return by itself is not offered for relays.
         return_after_outside_change=data.get("return_after_outside_change") is True and not on_off,
+        return_after_switch_hand_back=data.get("return_after_switch_hand_back") is True,
         thermostat_setpoint_entity=data.get("thermostat_setpoint_entity") or None,
         restart_entity=data.get("restart_entity") or None,
         own_room_controller=data.get("own_room_controller") is True,

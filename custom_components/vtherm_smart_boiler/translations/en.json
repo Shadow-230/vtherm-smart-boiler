@@ -664,11 +664,13 @@
         "description": "What control does when the boiler ignores a value the plugin writes. Other alarms only inform; the plugin stops heating only while the boiler itself reports a fault that stops it. Another controller writing to the boiler always makes the plugin step aside; it never fights it. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "write_ignored": "Boiler ignores a value",
-          "return_after_outside_change": "Return by itself after another controller"
+          "return_after_outside_change": "Return by itself after another controller",
+          "return_after_switch_hand_back": "Also after the external-control switch's hand-back"
         },
         "data_description": {
           "write_ignored": "Offered only where a hand-back returns the boiler to a thermostat or to its own control. Hand back: after the boiler ignores a write, control steps aside until you switch it off and on, and the thermostat or the boiler's own control heats meanwhile. Information (default): the plugin keeps trying and tells you. If the boiler ignores \"heating off\" from the start, control always stops and hands the boiler back, whatever you choose here.",
-          "return_after_outside_change": "Off (default): after another controller changed the boiler twice, the plugin hands the boiler back and steps aside until you switch control off and on. On: it takes the boiler back by itself after an hour in which nothing else wrote to it. Risk: if the other controller only pauses, the two take turns; with a thermostat that keeps changing its request, the hour never passes."
+          "return_after_outside_change": "Off (default): after another controller changed the boiler twice, the plugin hands the boiler back and steps aside until you switch control off and on. On: it takes the boiler back by itself after an hour in which nothing else wrote to it. Risk: if the other controller only pauses, the two take turns; with a thermostat that keeps changing its request, the hour never passes.",
+          "return_after_switch_hand_back": "Shown only where the hand-back turns off the external-control switch, and used only with the return by itself above on. Off (default): after a hand-back through that switch, control does not take the boiler back by itself, as with a relay; you switch control off and on. On: it returns as above once the switch has read \"off\" for an hour. Risk: the switch also reads \"off\" when a person turned external control off on purpose, or while another controller writes the setpoint, and the return takes the boiler back from them."
         }
       },
       "control_return_confirm": {

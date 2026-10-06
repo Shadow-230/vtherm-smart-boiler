@@ -306,6 +306,8 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ),
     # Return by itself after another controller | off
     ("return by itself (parser)", lambda: BARE.return_after_outside_change, False),
+    # Return by itself after an external-control switch's hand-back | off — its own option
+    ("return after the switch (parser)", lambda: BARE.return_after_switch_hand_back, False),
     # Freshness age limit | none — availability only
     (
         "freshness age limit",

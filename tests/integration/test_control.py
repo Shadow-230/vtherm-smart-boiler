@@ -8882,6 +8882,7 @@ async def test_the_return_by_itself_comes_only_while_each_paths_hand_back_state_
         }[path]
         if path == "switch":
             external.register()
+            control["return_after_switch_hand_back"] = True  # SB-36: its own option
         await start(rig, **control, return_after_outside_change=True)
     await rig.switch(True)
     await rig.advance(30)
@@ -8938,6 +8939,43 @@ async def test_the_return_by_itself_comes_only_while_each_paths_hand_back_state_
     returned = rig.state("sensor", "control_state").attributes["latched_by"] == []
     assert returned is (case == "returns")
     assert (issue(rig, "control_latched") is None) is (case == "returns")
+
+
+@pytest.mark.parametrize("own_option", [False, None, "yes"])
+@pytest.mark.usefixtures("low_setpoint_off")
+async def test_the_switch_hand_back_returns_by_itself_only_with_its_own_option(
+    rig: Rig, own_option: bool | str | None
+) -> None:
+    """SB-36 (decision 10): after a hand-back through the external-control switch, the return by
+    itself needs its own option, off by default — the switch also reads "off" when a person
+    switched external control off on purpose. With only the general return on (its own option
+    off, missing or not a clear true) control stays aside for hours of a quiet hand-back state,
+    as with relays; with it on, it returns (the test above)."""
+    number = FakeNumber(rig.hass, value=45.0)
+    external = FakeSwitch(rig.hass, entity_id="input_boolean.fake_external", on=False)
+    number.register()
+    external.register()
+    control = switch_method(number, external.entity_id, "held")
+    if own_option is not None:
+        control["return_after_switch_hand_back"] = own_option
+    await start(rig, **control, return_after_outside_change=True)
+    await rig.switch(True)
+    await rig.advance(30)
+    number.forced = number.value = 60.0
+    number.publish(60.0)
+    for _ in range(30):
+        await rig.advance(10)
+        if rig.state("sensor", "control_state").state == "handed_back":
+            break
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
+    number.forced = None
+    number.value = 47.0
+    number.publish(number.value)
+    assert not external.on
+    await rig.advance(3 * 3600, step=60.0)
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
+    assert issue(rig, "control_latched") is not None
+    assert not external.on  # never taken back
 
 
 # --- X2: the boiler link and freshness (P-08, P-41; T-03; Open after R6 #8) --------------------

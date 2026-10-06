@@ -659,6 +659,7 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
         },
         {"write_path": "otgw_mqtt", "topology": "gateway_standalone"},
         {"write_path": "entity", "topology": "virtual", "hand_back": "value"},
+        {"write_path": "entity", "topology": "virtual", "hand_back": "switch"},
         {"write_path": "relay"},
     ]
     fields: dict[str, set[str]] = {}

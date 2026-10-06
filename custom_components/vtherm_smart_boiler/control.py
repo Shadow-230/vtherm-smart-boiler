@@ -3826,11 +3826,15 @@ class ControlUnit:
         """The optional return by itself (off by default; not for relays): after the plugin
         stepped aside from another controller, control comes back — a new session, which clears
         the latch and its issue and keeps the one rewrite — once the read-backs have shown only
-        the hand-back state for an hour without a break; an unknown read-back breaks it. Whether
+        the hand-back state for an hour without a break; an unknown read-back breaks it. After a
+        hand-back through the external-control switch only with that method's own option too
+        (SB-36): the switch reads "off" also when a person turned external control off. Whether
         it returned now."""
         control = self._session.loop.control
+        options = self.options
         if not (
-            self.options.return_after_outside_change
+            options.return_after_outside_change
+            and (options.hand_back is not HandBack.SWITCH or options.return_after_switch_hand_back)
             and self.enabled
             and control.latched
             and ControlAlarm.OUTSIDE_CHANGE.value in control.latched_by
