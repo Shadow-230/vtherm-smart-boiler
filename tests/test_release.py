@@ -126,8 +126,8 @@ def test_manifest_links_to_the_repository() -> None:
 def test_integrations_it_uses_are_set_up_before_it() -> None:
     """P90: when present, the integrations it reads or calls start first."""
     from custom_components.vtherm_smart_boiler.const import VT_DOMAIN
-    from custom_components.vtherm_smart_boiler.control import SMARTPI_DOMAIN
     from custom_components.vtherm_smart_boiler.transport.writers import OPENTHERM_GW
+    from custom_components.vtherm_smart_boiler.vtherm_link import SMARTPI_DOMAIN
 
     used = {"mqtt", OPENTHERM_GW, "recorder", SMARTPI_DOMAIN, VT_DOMAIN, "weather"}
     assert used <= set(MANIFEST["after_dependencies"])

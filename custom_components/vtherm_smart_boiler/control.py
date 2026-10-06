@@ -294,7 +294,7 @@ from .transport.writers import (
     writer_services,
 )
 from .units import parse_binary
-from .vtherm_link import VThermLink
+from .vtherm_link import SMARTPI_DOMAIN, VThermLink
 
 if TYPE_CHECKING:
     from .coordinator import SmartBoilerCoordinator
@@ -444,7 +444,6 @@ NO_HEAT_SIGN_ISSUE = "no_sign_boiler_heats"
 # on for a day — no longer tried: a warning repair issue naming them, told once in the log, until
 # the zone's learning is on again or the plugin pauses it again.
 LEARNING_NOT_RESUMED_ISSUE = "learning_not_resumed"
-SMARTPI_DOMAIN = "vtherm_smartpi"
 SMARTPI_SERVICE = "set_smartpi_learning"
 # Blockers found while running, besides those of the configuration (translation keys).
 RUNTIME_BLOCKERS = (

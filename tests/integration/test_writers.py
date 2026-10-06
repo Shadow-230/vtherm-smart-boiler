@@ -96,6 +96,28 @@ async def test_opentherm_gw_writer(hass: HomeAssistant) -> None:
     }
 
 
+async def test_opentherm_gw_writes_fail_while_the_read_back_is_unavailable(
+    hass: HomeAssistant,
+) -> None:
+    """TB-30: opentherm_gw's services return while its gateway is away (the command dropped); the
+    read-back unavailable makes each write a failure, sent all the same."""
+    calls = record(
+        hass, ("opentherm_gw", "set_control_setpoint"), ("opentherm_gw", "set_central_heating_ovrd")
+    )
+    hass.states.async_set(READ_BACK, "unavailable")
+    writer = make_writer(
+        hass, options(write_path="opentherm_gw", gateway_id="gw1", confirmed_entity=READ_BACK)
+    )
+    with pytest.raises(WriteError, match="not connected"):
+        await writer.write_setpoint(45.0)
+    with pytest.raises(WriteError, match="not connected"):
+        await writer.write_heating(True)
+    assert [service for _, service, _ in calls] == [
+        "set_control_setpoint",
+        "set_central_heating_ovrd",
+    ]
+
+
 @pytest.mark.parametrize("value", [5.0, 0.5, 7.9, 95.0, float("nan")])
 async def test_otgw_refuses_setpoints_that_never_lapse_or_are_implausible(
     hass: HomeAssistant, value: float

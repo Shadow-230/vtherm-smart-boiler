@@ -752,6 +752,82 @@ def entity_setpoints(rig: Rig) -> list[float]:
 # --- hand-back kept and retried; a restart without a clean stop -----------------------------
 
 
+def recent_gateway(rig: Rig, count: int) -> list[tuple[str, object]]:
+    return [(kind, value) for _t, kind, value in rig.gateway()[-count:]]
+
+
+async def test_dropped_overrides_are_resent_then_rewritten_once_then_stepped_aside(
+    rig: Rig,
+) -> None:
+    """TB-14 (J4, decision 6, M4 and M5): the boiler drops the override with no trace of an
+    outage. The first is a lost command, sent again at once; a second within the hour is another
+    controller, written again once; a third within that hour steps aside with the full safe
+    hand-back and the latch, and is not fought."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(START_TRACE_S)  # past the start's trace of an outage; confirmed
+    for wait in (0, 600):  # at t, then 10 minutes later
+        await rig.advance(wait)
+        count = len(rig.setpoints())
+        await rig.scenario("drop_override")
+        assert not rig.sim.plant.override_active(rig.now())
+        await rig.advance(10)
+        assert len(rig.setpoints()) > count  # written again within 10 s
+        assert rig.sim.plant.override_active(rig.now())
+        assert rig.state("sensor", "control_state").state == "heating"
+        assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
+    await rig.advance(1200)  # 30 minutes after the first
+    await rig.scenario("drop_override")
+    await rig.advance(20)
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
+    assert recent_gateway(rig, 3) == SAFE_HAND_BACK
+    count = len(rig.gateway())
+    await rig.advance(600)
+    assert len(rig.gateway()) == count  # no fight
+
+
+async def test_a_flat_setpoint_the_gateway_clips_is_judged_another_controller(
+    rig: Rig,
+) -> None:
+    """TB-14 (J4, decision 6, M7's known limit): the boiler clips a setpoint that stays flat —
+    it cannot be told from another controller: written again once, then the plugin steps aside
+    with the full safe hand-back and the latch."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(START_TRACE_S)
+    await rig.scenario("clip_setpoint", value=40)
+    await rig.advance(300)
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
+    assert recent_gateway(rig, 3) == SAFE_HAND_BACK
+
+
+async def test_a_gateway_reset_is_a_lost_command_sent_again_when_it_returns(rig: Rig) -> None:
+    """TB-14 (J4, decision 6, M1): the gateway's PIC resets just after a keep-alive and loses
+    the override: once the gateway is back (10 s) the command is sent again at once — before the
+    next keep-alive would be due (30 s) — no alarm rises and nothing is handed back."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(START_TRACE_S)
+    while rig.gateway("setpoint")[-1][0] < rig.now() - 1:  # until a keep-alive has just gone
+        await rig.advance(10)
+    reset_at = rig.now()
+    await rig.scenario("reset_gateway")
+    assert not rig.sim.plant.override_active(rig.now())
+    await rig.advance(20)
+    sent = [t for t, _kind, value in rig.gateway("setpoint") if t > reset_at and value != 0.0]
+    assert sent
+    assert sent[0] - reset_at <= 20.0  # not the keep-alive, due 30 s after the last
+    assert rig.sim.plant.override_active(rig.now())
+    await rig.advance(60)
+    assert 0.0 not in [value for t, _k, value in rig.gateway("setpoint") if t > reset_at]
+    assert rig.state("sensor", "control_state").state == "heating"
+    for kind in GUARD_ALARMS:
+        assert rig.state("binary_sensor", f"alarm_{kind}").state == "off", kind
+
+
 async def test_a_hand_back_is_kept_and_retried_until_the_gateway_takes_it(rig: Rig) -> None:
     """A hand-back whose target is away is shown as failed, kept and sent again every minute;
     once it goes through, the alarm clears and nothing more is sent."""

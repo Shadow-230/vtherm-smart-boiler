@@ -14,7 +14,7 @@ from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from vtherm_api.vtherm_api import VThermAPI
 
-from custom_components.vtherm_smart_boiler.const import DOMAIN
+from custom_components.vtherm_smart_boiler.const import DOMAIN, control_store_key
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 
 from .conftest import requires_vendor
@@ -36,11 +36,16 @@ async def test_vendored_integration_loads(hass: HomeAssistant, domain: str, vers
 LIVING = "climate.living"
 
 
-def vt_thermostat() -> MockConfigEntry:
-    """A VT over_switch thermostat in the entry format of VT 10.4.0."""
+def vt_thermostat(current: bool = False, **changes: Any) -> MockConfigEntry:
+    """A VT over_switch thermostat in the entry format of VT 10.4.0; ``changes`` replace its
+    data's keys. ``current``: stored at VT's own entry version, which VT does not migrate — its
+    migration from an older version switches Auto-TPI off."""
     from custom_components.versatile_thermostat import const as vt
 
+    version = (vt.CONFIG_VERSION, vt.CONFIG_MINOR_VERSION) if current else (1, 1)
     return MockConfigEntry(
+        version=version[0],
+        minor_version=version[1],
         domain=vt.DOMAIN,
         title="Living",
         unique_id="living",
@@ -68,7 +73,8 @@ def vt_thermostat() -> MockConfigEntry:
             vt.CONF_SAFETY_DELAY_MIN: 5,
             vt.CONF_SAFETY_MIN_ON_PERCENT: 0.4,
             vt.CONF_SAFETY_DEFAULT_ON_PERCENT: 0.3,
-        },
+        }
+        | changes,
     )
 
 
@@ -100,13 +106,13 @@ async def setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     await hass.async_block_till_done()
 
 
-async def heat_to(hass: HomeAssistant, target: float) -> None:
+async def heat_to(hass: HomeAssistant, target: float, zone: str = LIVING) -> None:
     for service, data in (
         ("set_hvac_mode", {"hvac_mode": "heat"}),
         ("set_temperature", {"temperature": target}),
     ):
         await hass.services.async_call(
-            "climate", service, {"entity_id": LIVING, **data}, blocking=True
+            "climate", service, {"entity_id": zone, **data}, blocking=True
         )
     await hass.async_block_till_done()
 
@@ -610,3 +616,235 @@ async def test_a_real_vt_central_entry_is_read_through_its_reload_and_its_untick
     assert central.data[vt.CONF_USE_CENTRAL_BOILER_FEATURE] is False  # VT's entry says "off"...
     assert now() is True  # ...yet its stand-in tells VT ran its central boiler in this run
     assert link.vt_central_boiler_configured() is True  # not before the restart
+
+
+# --- Control on, with VT's learning (TB-15) ------------------------------------------------
+
+FLOW_NUMBER = "input_number.boiler_flow"
+CH_SWITCH = "input_boolean.boiler_ch"
+
+
+async def controlling_with_the_plugin(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    *thermostats: MockConfigEntry,
+    smartpi: bool = False,
+    office: bool = False,
+) -> tuple[MockConfigEntry, FakeBoiler]:
+    """VT's thermostats (and SmartPI) and the plugin set up through Home Assistant's start, the
+    plugin controlling a boiler through a setpoint number and a heating switch, every zone
+    heating towards 21 °C; ``office``: the over_climate zone too, over its own climate. The
+    plugin's entry ran before and owes nothing."""
+
+    celsius = {"unit_of_measurement": "°C", "device_class": "temperature"}
+    hass.states.async_set("sensor.living_temperature", "19.0", celsius)
+    hass.states.async_set("sensor.outdoor_temperature", "5.0", celsius)
+    hass.states.async_set("sensor.office_temperature", "19.0", celsius)
+    switches = {"living_valve": {}, "boiler_ch": {}, "office_heater": {}}
+    assert await async_setup_component(hass, "input_boolean", {"input_boolean": switches})
+    zones = [LIVING, OFFICE] if office else [LIVING]
+    if office:
+        trv = {
+            "platform": "generic_thermostat",
+            "name": "office_trv",
+            "heater": "input_boolean.office_heater",
+            "target_sensor": "sensor.office_temperature",
+        }
+        assert await async_setup_component(hass, "climate", {"climate": trv})
+    number = {"min": 20, "max": 80, "step": 0.5, "unit_of_measurement": "°C", "initial": 40}
+    assert await async_setup_component(
+        hass, "input_number", {"input_number": {"boiler_flow": number}}
+    )
+    signals = (Signal.FLAME, Signal.FLOW, Signal.OUTDOOR, Signal.DHW_ACTIVE)
+    boiler = FakeBoiler(hass, signals)
+    boiler.set_many(
+        {Signal.FLAME: False, Signal.FLOW: 30.0, Signal.OUTDOOR: 5.0, Signal.DHW_ACTIVE: False}
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options={
+            "signals": boiler.mapping(),
+            "boiler": {"class": "flow_setpoint", "dhw": "combi"},
+            "parameters": {"boiler_min_power": 4.0, "boiler_max_power": 25.0},
+            "zones": [{"entity_id": zone} for zone in zones],
+            "monitor": {"monitoring_days": 0},
+            "control": {
+                "write_path": "entity",
+                "setpoint_entity": FLOW_NUMBER,
+                "write_type": "held",
+                "ch_entity": CH_SWITCH,
+                "ch_write_type": "held",
+                "hand_back": "value",
+                "hand_back_value": 50,
+                "hand_back_value_effect": "own_control",
+                "confirmed_entity": FLOW_NUMBER,
+                "topology": "virtual",
+                "curve": {"design_outdoor": -15, "design_flow": 55},
+            },
+        },
+    )
+    hass.set_state(CoreState.starting)
+    for thermostat in thermostats:
+        await setup(hass, thermostat)
+    if smartpi:
+        assert await async_setup_component(hass, "vtherm_smartpi", {})
+    entry.add_to_hass(hass)
+    key = control_store_key(entry.entry_id)
+    hass_storage[key] = {"version": 1, "key": key, "data": {}}
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.set_state(CoreState.running)
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done()
+    for zone in zones:
+        await heat_to(hass, 21.0, zone)
+    control = er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_control")
+    assert control is not None
+    await hass.services.async_call("switch", "turn_on", {"entity_id": control}, blocking=True)
+    await hass.async_block_till_done()
+    assert hass.states.get(control).state == "on"
+    return entry, boiler
+
+
+async def test_a_hot_water_draw_pauses_and_resumes_a_real_smartpi_zones_learning(
+    hass: HomeAssistant, freezer: Any, hass_storage: dict[str, Any]
+) -> None:
+    """TB-15: with control on, a hot-water draw pauses the learning of a real SmartPI zone
+    through SmartPI's own service, and its end switches it back on — read in VT's climate."""
+    thermostat = vt_thermostat(proportional_function="smartpi")
+    _, boiler = await controlling_with_the_plugin(hass, hass_storage, thermostat, smartpi=True)
+
+    def learning() -> object:
+        return hass.states.get(LIVING).attributes["specific_states"]["smartpi_learning_enabled"]
+
+    await later(hass, freezer, 10.0)
+    assert hass.states.get(LIVING).attributes["configuration"]["proportional_function"] == (
+        "smartpi"
+    )
+    assert learning() is True
+    boiler.set(Signal.DHW_ACTIVE, True)
+    await later(hass, freezer, 10.0)
+    assert learning() is False
+    boiler.set(Signal.DHW_ACTIVE, False)
+    for _ in range(120):  # the resume waits for the minimum pause
+        await later(hass, freezer, 10.0)
+        if learning() is True:
+            break
+    assert learning() is True
+
+
+async def test_a_real_vt_auto_tpi_session_is_read_and_raises_the_learning_issue(
+    hass: HomeAssistant, freezer: Any, hass_storage: dict[str, Any]
+) -> None:
+    """TB-15: a VT TPI zone whose Auto-TPI session the user starts — VT publishes
+    ``auto_tpi_state`` "on" — is learning the plugin cannot pause: with control on and learning
+    pauses, its warning names the zone."""
+    from homeassistant.helpers import issue_registry as ir
+
+    thermostat = vt_thermostat(current=True, auto_tpi_mode=True)
+    entry, _ = await controlling_with_the_plugin(hass, hass_storage, thermostat)
+    issue_id = f"learning_not_paused_{entry.entry_id}"
+    await later(hass, freezer, 10.0)
+    specific = hass.states.get(LIVING).attributes["specific_states"]
+    assert specific["auto_tpi_state"] == "off"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+    await hass.services.async_call(
+        "versatile_thermostat",
+        "set_auto_tpi_mode",
+        {"entity_id": LIVING, "auto_tpi_mode": True, "reinitialise": False},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    for _ in range(6):  # the plugin looks again at its next five-minute analysis
+        await later(hass, freezer, 60.0)
+    specific = hass.states.get(LIVING).attributes["specific_states"]
+    assert specific["auto_tpi_state"] == "on"
+    found = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert found is not None
+    assert found.translation_placeholders == {"zones": "Living"}
+
+
+async def test_a_vt_central_entry_update_reloads_every_zone_without_a_hand_back(
+    hass: HomeAssistant, freezer: Any, hass_storage: dict[str, Any], monkeypatch: Any
+) -> None:
+    """TB-35: VT's central entry updated — VT reloads every entry at once. Each thermostat shows
+    unavailable, then its placeholder, then ready. Its setups held back for two control steps
+    (a slow reload: in-process VT 10.4.0 otherwise brings each zone back before the next one
+    goes), every zone is gone at once: the recognition period begins again and keeps the
+    command — no hand-back, heating neither switched off nor on — and ends once the zones are
+    back."""
+    import asyncio
+
+    from homeassistant.const import EVENT_STATE_CHANGED
+    from homeassistant.core import Event, callback
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    central = vt_central()
+    entry, _ = await controlling_with_the_plugin(
+        hass, hass_storage, central, vt_thermostat(), vt_over_climate(), office=True
+    )
+    control_state = er.async_get(hass).async_get_entity_id(
+        "sensor", DOMAIN, f"{entry.entry_id}_control_state"
+    )
+    assert control_state is not None
+    await later(hass, freezer, 30.0)
+
+    def reasons() -> list[str]:
+        state = hass.states.get(control_state)
+        assert state is not None
+        return list(state.attributes["reasons"])
+
+    assert "zones_recognition" not in reasons()
+    shown: dict[str, list[tuple[str, object]]] = {LIVING: [], OFFICE: []}
+    writes: list[tuple[str, str]] = []
+
+    @callback
+    def note(event: Event) -> None:
+        entity_id = event.data["entity_id"]
+        new = event.data["new_state"]
+        if new is None:
+            return
+        if entity_id in shown:
+            shown[entity_id].append((new.state, new.attributes.get("is_ready", "absent")))
+        elif entity_id in (FLOW_NUMBER, CH_SWITCH):
+            writes.append((entity_id, new.state))
+
+    hass.bus.async_listen(EVENT_STATE_CHANGED, note)
+    hold = asyncio.Event()
+    original_setup = hass.config_entries.async_setup
+
+    async def held_setup(entry_id: str, **kwargs: Any) -> bool:
+        held = hass.config_entries.async_get_entry(entry_id)
+        if held is not None and held.domain == "versatile_thermostat":
+            await hold.wait()
+        return await original_setup(entry_id, **kwargs)
+
+    monkeypatch.setattr(hass.config_entries, "async_setup", held_setup)
+    ch_before = hass.states.get(CH_SWITCH).state
+    number_before = hass.states.get(FLOW_NUMBER).state
+    hass.config_entries.async_update_entry(central, data={**central.data, "temp_max": 29.0})
+    for _ in range(2):  # two control steps while VT's thermostats are away
+        freezer.tick(10)
+        async_fire_time_changed(hass)
+        for _ in range(20):
+            await asyncio.sleep(0)
+    assert hass.states.get(LIVING).state == "unavailable"
+    assert hass.states.get(OFFICE).state == "unavailable"
+    assert "zones_recognition" in reasons()  # begun again: no new decision meanwhile
+    hold.set()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    for entity_id, states in shown.items():
+        assert states[0] == ("unavailable", "absent"), entity_id
+        assert ("off", "absent") in states[1:], entity_id  # VT's placeholder
+        assert states[-1] == ("heat", True), entity_id
+    await later(hass, freezer, 10.0)
+    assert "zones_recognition" not in reasons()  # every zone reported again
+    switch = er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_control")
+    assert switch is not None
+    assert hass.states.get(switch).state == "on"
+    assert not entry.runtime_data.control.hand_back_owed
+    assert writes == []  # no hand-back value, heating neither off nor on
+    assert hass.states.get(CH_SWITCH).state == ch_before
+    assert hass.states.get(FLOW_NUMBER).state == number_before

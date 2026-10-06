@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import attr
 import pytest
 from homeassistant.components.climate import ClimateEntity, ClimateEntityFeature, HVACMode
 from homeassistant.components.switch import SwitchEntity
@@ -675,13 +676,43 @@ async def test_vt_stopped_acts_through_the_zones(rig: Rig) -> None:
     assert ("ch", True) in rig.gateway.calls[-2:]
 
 
+def plugin_shutdown_jobs(hass: HomeAssistant) -> list[str]:
+    return sorted(j.job.name for j in hass._shutdown_jobs if (j.job.name or "").startswith(DOMAIN))
+
+
+def state_trackers(hass: HomeAssistant) -> dict[str, int]:
+    """How many state-change callbacks Home Assistant holds per entity."""
+    data = hass.data.get("track_state_change_data")
+    if data is None:
+        return {}
+    return {entity: len(jobs) for entity, jobs in data.callbacks.items() if jobs}
+
+
 async def test_unload_and_reload_hand_back_and_leave_no_loop(rig: Rig) -> None:
+    """TB-33: a control entry holding the boiler, reloaded: one plugin shutdown job and the same
+    state trackers per entity as before; then unloaded: handed back, no job, no tracker of the
+    plugin's, and nothing more written."""
+    hass = rig.hass
+    before = state_trackers(hass)
     await start(rig)
     await rig.switch(True)
+    await rig.advance(30)
     assert rig.entry is not None
-    assert await rig.hass.config_entries.async_unload(rig.entry.entry_id)
-    await rig.hass.async_block_till_done()
+    jobs = plugin_shutdown_jobs(hass)
+    trackers = state_trackers(hass)
+    assert len(jobs) == len(set(jobs)) >= 1
+    assert trackers != before
+    assert await hass.config_entries.async_reload(rig.entry.entry_id)
+    await hass.async_block_till_done()
+    await rig.advance(30)
+    assert rig.state("switch", "control").state == "on"
+    assert plugin_shutdown_jobs(hass) == jobs
+    assert state_trackers(hass) == trackers
+    assert await hass.config_entries.async_unload(rig.entry.entry_id)
+    await hass.async_block_till_done()
     assert rig.gateway.calls[-1] == ("setpoint", 0.0)
+    assert plugin_shutdown_jobs(hass) == []
+    assert state_trackers(hass) == before
     count = len(rig.gateway.calls)
     await rig.advance(120)
     assert len(rig.gateway.calls) == count
@@ -799,6 +830,28 @@ async def test_confirmation_missing_never_hands_back(rig: Rig, shown: str) -> No
     rig.gateway.read_back_shown = None
     await rig.advance(10)
     assert rig.state("binary_sensor", "alarm_confirmation_missing").state == "off"
+
+
+async def test_a_write_with_the_gateway_read_back_unavailable_fails_and_is_retried(
+    rig: Rig,
+) -> None:
+    """TB-30: opentherm_gw's services return while its gateway is away; with the read-back
+    unavailable — flame and flow still fresh — a setpoint write counts as failed: the alarm
+    rises and the write is sent again; it clears once the read-back is back."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(30)  # confirmed
+    assert rig.state("binary_sensor", "alarm_write_failed").state == "off"
+    rig.gateway.read_back_shown = "unavailable"
+    count = len(rig.gateway.setpoints())
+    await rig.advance(60)
+    assert rig.state("binary_sensor", "alarm_write_failed").state == "on"
+    sent = rig.gateway.setpoints()[count:]
+    assert len(sent) >= 2  # sent again
+    assert 0.0 not in sent  # no hand-back
+    rig.gateway.read_back_shown = None
+    await rig.advance(60)
+    assert rig.state("binary_sensor", "alarm_write_failed").state == "off"
 
 
 async def test_a_value_never_taken_from_the_start_is_ignored_from_the_start(rig: Rig) -> None:
@@ -1240,6 +1293,52 @@ async def test_a_failing_listener_does_not_stop_the_others(
     failing = True
     await rig.switch(False)
     assert _logged(caplog, logging.ERROR, "A control listener failed") == 2
+
+
+async def test_the_entity_path_calls_only_its_configured_entities(rig: Rig) -> None:
+    """TB-32: through a setpoint number, a heating switch and an expiring external-control
+    switch, a session and its hand-back make only allowed calls, each to a configured entity —
+    none to another entity of the same services."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    heating = FakeSwitch(rig.hass)
+    heating.register()
+    external = FakeSwitch(rig.hass, entity_id="input_boolean.fake_external", on=False)
+    external.register()
+    other = FakeSwitch(rig.hass, entity_id="input_boolean.someone_elses")
+    other.register()
+    await start(
+        rig,
+        write_path="entity",
+        setpoint_entity=number.entity_id,
+        write_type="held",
+        ch_entity=heating.entity_id,
+        ch_write_type="held",
+        hand_back="switch",
+        hand_back_entity=external.entity_id,
+        hand_back_entity_write_type="expiring",
+        confirmed_entity=number.entity_id,
+        topology="virtual",
+    )
+    await rig.switch(True)
+    await rig.advance(1800)
+    rig.dhw = True
+    await rig.advance(60)
+    rig.dhw = False
+    await rig.advance(60)
+    await rig.switch(False)
+    assert rig.entry is not None
+    allowed = rig.entry.runtime_data.control.allowed_services | {("weather", "get_forecasts")}
+    calls = rig.spy.plugin_calls() if rig.spy is not None else []
+    assert {(domain, service) for domain, service, _ in calls} <= allowed
+    configured = {number.entity_id, heating.entity_id, external.entity_id}
+    targets = {data.get("entity_id") for domain, _, data in calls if domain != "weather"}
+    assert targets == configured
+    assert number.writes
+    assert heating.writes
+    assert external.writes.count(True) > 1  # renewed while it holds the boiler
+    assert external.writes[-1] is False  # handed back
+    assert other.writes == []
 
 
 async def test_only_allowed_services_are_called(rig: Rig) -> None:
@@ -12762,12 +12861,9 @@ async def test_a_relay_without_a_state_gets_its_command_at_once_when_it_returns(
     assert control_alarm(rig, "commands_lost") == "on"  # the third within a day
 
 
-async def test_a_relay_a_vt_zone_drives_or_of_the_gateway_blocks_control(
-    rig: Rig, relay: FakeRelay
-) -> None:
+async def test_a_relay_a_vt_zone_drives_blocks_control(rig: Rig, relay: FakeRelay) -> None:
     """R2 at run time: VT can be reconfigured without the options changing — a relay a VT
-    thermostat drives for a room, one of the gateway integration or VT, or a boiler thermostat
-    entity that cannot be set to heat and off, blocks control; nothing is written to it."""
+    thermostat drives for a room blocks control; it is handed back, nothing more is written."""
     await start_relay(rig)
     await rig.switch(True)
     assert relay.calls == [True]
@@ -12777,6 +12873,28 @@ async def test_a_relay_a_vt_zone_drives_or_of_the_gateway_blocks_control(
     registry.async_update_entity(rig.zones.entities["living"], config_entry_id=vt.entry_id)
     await rig.advance(10)
     assert "relay_used_by_zone" in blockers(rig)
+    assert relay.calls == [True, False]  # handed back: the rest state
+    await rig.advance(600)
+    assert relay.calls == [True, False]
+
+
+@pytest.mark.parametrize("platform", ["opentherm_gw", "versatile_thermostat"])
+async def test_a_relay_of_the_gateway_or_of_vt_blocks_control(
+    rig: Rig, relay: FakeRelay, platform: str
+) -> None:
+    """R2 at run time (TB-20): a relay whose registry entry turns out to belong to the boiler's
+    gateway integration or to VT — a setting of the boiler interface, not a relay contact —
+    blocks control; it is handed back, nothing more is written."""
+    await start_relay(rig)
+    await rig.switch(True)
+    assert relay.calls == [True]
+    assert "relay_of_boiler_interface" not in blockers(rig)
+    registry = er.async_get(rig.hass)
+    registered = registry.async_get(RELAY)
+    assert registered is not None
+    registry.entities[RELAY] = attr.evolve(registered, platform=platform)
+    await rig.advance(10)
+    assert "relay_of_boiler_interface" in blockers(rig)
     assert relay.calls == [True, False]  # handed back: the rest state
     await rig.advance(600)
     assert relay.calls == [True, False]
