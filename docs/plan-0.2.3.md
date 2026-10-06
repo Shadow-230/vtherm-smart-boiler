@@ -109,7 +109,7 @@ and VT's not-started zones read as the user's "off".
 | 1.1 | `SCOPE.md` and `docs/plan-0.2.2.md` take decisions 1–4, 6 and 12 (SB-01, SB-02, SB-03, SB-05, SB-06, SB-10; PB-03's one rule in SCOPE §7 and X3); `CLAUDE.md` "Where to continue" names this plan. |
 | 1.2 ✅ | No relay fights (decision 6): PB-01, PB-44, SB-05, SB-06. Keep the one rewrite through resends; a resend the relay never shows counts against another controller (answers C, N); the declared timer's lapse window bounded; a relay that stops taking commands mid-session raises an issue and, for "off", blocks and hands back. |
 | 1.3 ✅ | The control unit's wish and hand-back debt hold under errors and restarts: PB-02, PB-04, PB-05, PB-12, PB-13, PB-14, PB-16, TB-02, TB-05, TB-06. The restored wish saved before anything else; the error path keyed on the debt and routed through the minute gate and the confirmation; the fixable owed issue when a hand-back stays unconfirmed; the lost-link issue kept across restarts; the old debt folded at the session's first write; a control-store write that fails noticed. |
-| 1.4 | "Nothing heats" visible and decision 3's end states settled (decisions 1–4, 12): PB-03, PB-23, SB-01, SB-02, SB-03, SB-10, TB-01. |
+| 1.4 ✅ | "Nothing heats" visible and decision 3's end states settled (decisions 1–4, 12): PB-03, PB-23, SB-01, SB-02, SB-03, SB-10, TB-01. |
 | 1.5 | The check of part 1. |
 | 1.6 🔒 | Stop: the report to the user, with the tokens part 1 used; the user decides whether part 2 starts. |
 
@@ -182,6 +182,21 @@ Left on purpose for a later release; what a step leaves open is added here by na
 11. Step 1.3 (TB-05): after a stop that ran out of time, the hand-back stays owed with the
     persistent issue until the next start; a disabled entry has no next start, so that issue is
     the only alarm (as before) — K4.
+12. Step 1.4 (PB-03): the issue names the criteria by their codes ("power", "opening"), explained
+    in its text, and the alarm keeps its name "no zone known" in this case — wording, K4.
+13. Step 1.4 (SB-03): with "off" confirmed first in a session and the heating read-back then frozen
+    at "off", a later "on" counts as a lost command, sent again about every 120 s with only
+    "commands lost", and the broken read-back is never named — K4.
+14. Step 1.4 (SB-03): a relay remembers only the last command it ignored, so an ignored "off"
+    followed by an ignored "on" is named "on" (the same latch; its text only) — K4.
+15. Step 1.4 (SB-10): a wish never stored counts as "on" at a failed setup; the control switch's
+    restored state could tell it — K4.
+16. Step 1.4 (SB-01): the 5-K rise of the flow counts from its value at the start of the count, not
+    from its lowest since (a boiler firing again after a pause) — K4.
+17. Step 1.4 (SB-01): at low load a boiler's restart wait and slow cooling could keep the flame off
+    about 30 min while a zone calls in mild weather; the false-alarm rate is checked at K4 (J4's
+    runs).
+18. Step 1.4 (SB-01): "the boiler heats" (`boiler_heats`) is shown on the relay path only — K4.
 
 ## After 0.2.3
 
