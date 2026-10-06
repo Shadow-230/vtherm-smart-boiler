@@ -329,6 +329,10 @@ Left on purpose for a later release; what a step leaves open is added here by na
 69. Step 3.4 (PB-68, PB-39): an unknown signal key in stored options (after a downgrade at the
     same entry version) is dropped with a log warning only; switching control off reports success
     while its hand-back is sent but not yet confirmed — K4.
+70. Step 4.2: with the clock set back within an hour of a restart, the restart counts as a sign of
+    an outage, so an external-control switch that never shows "on" is switched on again at each
+    keep-alive (a lost command each time) rather than stepped aside from, until the clock passes
+    the restart time — K4.
 
 ## After 0.2.3
 
