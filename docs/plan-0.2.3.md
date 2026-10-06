@@ -120,7 +120,7 @@ and VT's not-started zones read as the user's "off".
 |---|---|
 | 2.1 | `SCOPE.md` and the plans take decisions 5, 7–11, 13 and 14 (SB-04, SB-07, SB-08, SB-11, SB-18, SB-29, SB-36; PB-08's latch rule); `devenv/README.md` takes Z3's J4 proposal (`research/2026-10-02-z3-readme-proposal.md`) with J4's starts criterion as decision 8 states it. |
 | 2.2 ✅ | Hand-backs confirmed correctly, and what judges them frozen while one is owed (decision 5): PB-09, PB-10, PB-11, PB-22, PB-26, PB-27, SB-04, TB-04, TB-13. |
-| 2.3 | Setup and stored options safe, and K4 given the full list (decision 9): PB-06, PB-07, PB-08, PB-24, SB-09, TB-03, TB-08, TB-25. Wrong shapes and non-finite or out-of-range numbers refused with a reason and an owed hand-back reported; platforms unloaded after a late setup failure without wiping the registry; the restart latch's untick gap; SB-09's additions to "Open after 0.2.2" committed at once, and K4's rows pointing to every item marked K4. |
+| 2.3 ✅ | Setup and stored options safe, and K4 given the full list (decision 9): PB-06, PB-07, PB-08, PB-24, SB-09, TB-03, TB-08, TB-25. Wrong shapes and non-finite or out-of-range numbers refused with a reason and an owed hand-back reported; platforms unloaded after a late setup failure without wiping the registry; the restart latch's untick gap; SB-09's additions to "Open after 0.2.2" committed at once, and K4's rows pointing to every item marked K4. |
 | 2.4 | The comfort correction meets principle 13's rules 3 and 5 (decision 11): SB-11. Rule 3: it moves only while the starts per hour do not rise against the same hours before it began, and steps back when they do; rule 5: it freezes in extreme weather — an outdoor temperature beyond the design outdoor temperature, or a change faster than a set rate per hour (provisional, K4) — with its tests and the simulator's starts measured with it on. |
 | 2.5 | The smaller answers: learning pauses (decision 14: SB-29); no default for the high-pressure alarm and the monitor's thresholds listed (decision 13: SB-18); the count pre-filled 0 from VT (decision 7: SB-07); the return by itself after the external-control switch as a separate opt-in (decision 10: SB-36); J4's starts criterion with its conditions and a test carrying the daily swing (decision 8: SB-08). |
 | 2.6 | The check of part 2. |
@@ -239,6 +239,17 @@ Left on purpose for a later release; what a step leaves open is added here by na
     block control catches it — K4.
 35. Step 2.2: on the entity path, a hand-back retry rewrites a lowest that already shows (the
     gateways skip it) — K4.
+36. Step 2.3: boiler and building parameters read from stored options are checked against the
+    core's plausible ranges, not the form's (nan and inf are refused) — K4.
+37. Step 2.3: an untick of VT's central boiler in the seconds between Home Assistant's start and its
+    "started" event, before any plugin entry watches VT, is not caught by the restart latch — K4.
+38. Step 2.3: an entry first set up while Home Assistant runs takes the recorder's start time, so
+    any stand-in of VT's central-boiler sensor latches until the restart, and without a recorder
+    any VT central entry does — K4.
+39. Step 2.3: VT's central entry removed during a run while its central boiler was on still counts
+    as "not there", as before 0.2.3 — K4.
+40. Step 2.3: if the unload in a failed setup itself fails, the old entities stay attached to the
+    stopped coordinator until a restart (the registry is kept) — K4.
 
 ## After 0.2.3
 
