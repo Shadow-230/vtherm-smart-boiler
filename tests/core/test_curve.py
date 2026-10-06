@@ -83,6 +83,19 @@ def test_average_follows_the_time_constant() -> None:
     assert later.average == pytest.approx(10.0 * (1 - math.exp(-1)), rel=1e-6)
 
 
+def test_a_clock_set_back_holds_the_outdoor_value_its_own_time_only() -> None:
+    """PB-28: the wall clock set back a day — a reading "later than now" counts from now, so the
+    hold lasts its three hours, not 27."""
+    state = update_outdoor(OutdoorState(), 2.0, None, 86_400.0)
+    held = update_outdoor(state, None, None, 0.0, hold_s=3 * HOUR)
+    assert held.source is OutdoorSource.HELD
+    assert held.updated_at == 0.0
+    later = update_outdoor(held, None, None, 3 * HOUR - 1.0, hold_s=3 * HOUR)
+    assert later.source is OutdoorSource.HELD
+    gone = update_outdoor(later, None, None, 3 * HOUR + 1.0, hold_s=3 * HOUR)
+    assert gone.source is OutdoorSource.NONE
+
+
 def test_missing_readings_hold_the_last_value_then_give_up() -> None:
     state = update_outdoor(OutdoorState(), 2.0, None, 0.0)
     held = update_outdoor(state, None, None, 1800.0, hold_s=HOUR)

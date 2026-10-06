@@ -2029,3 +2029,47 @@ def test_the_precedence_of_a_write_plan(
         result.lost,
         result.state.blocked,
     ) == expected
+
+
+def _late_echo_run(
+    fall_back_at: float | None,
+) -> tuple[list[tuple[float, ChangeClass]], GuardState]:
+    """A held setpoint at the baseline's value for 20 min, then moved by 1 K; every read-back
+    20 s (two steps) late; at ``fall_back_at`` the device goes back to its own value (the
+    baseline) without a trace."""
+    config = GuardConfig(write_type=WriteType.HELD)
+    state = GuardState()
+    shown = 45.0
+    pending: list[tuple[int, float]] = []
+    judged: list[tuple[float, ChangeClass]] = []
+    for i in range(600):
+        now = i * 10.0
+        setpoint = 45.0 if now < 1200 else 46.0
+        if now == fall_back_at:
+            pending.append((i, 45.0))
+        while pending and pending[0][0] <= i:
+            shown = pending.pop(0)[1]
+        result = plan_write(state, setpoint, shown, now, config, GuardContext())
+        state = result.state
+        if result.judged not in (ChangeClass.NOT_JUDGED, ChangeClass.CONFIRMED):
+            judged.append((now, result.judged))
+        if result.action is not None:
+            pending.append((i + 2, result.action.value))
+    return judged, state
+
+
+def test_a_late_echo_of_the_previous_setpoint_at_the_baseline_is_no_fall_back() -> None:
+    """PB-29: the setpoint moves off a previous value equal to the baseline, its read-back late
+    — the exempt previous value is checked before the baseline: nothing judged, no fall-back
+    recorded."""
+    judged, state = _late_echo_run(None)
+    assert judged == []
+    assert state.fallbacks == ()
+
+
+def test_a_genuine_silent_fall_back_after_a_late_echo_is_a_lost_command() -> None:
+    """PB-29: the late echo leaves no fall-back on record, so a genuine silent fall-back half an
+    hour later is a lost command (resent), not another controller taking the day's rewrite."""
+    judged, _state = _late_echo_run(3000.0)
+    assert judged[0] == (3000.0, ChangeClass.LOST_COMMAND)
+    assert ChangeClass.ANOTHER_CONTROLLER not in [kind for _t, kind in judged]

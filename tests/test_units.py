@@ -118,7 +118,21 @@ def test_a_pressure_of_zero_is_unknown_only_from_the_gateway() -> None:
     assert signal_value(Signal.PRESSURE, "0", "bar") == 0.0
     assert signal_value(Signal.PRESSURE, "0.0", "kPa") == 0.0
     assert signal_value(Signal.PRESSURE, "-0.1", "bar") is None  # below the plausible range
-    assert signal_value(Signal.FLOW, "0", "°C", zero_is_unknown=True) == 0.0  # pressure only
+    assert signal_value(Signal.CH_SETPOINT, "0", "°C", zero_is_unknown=True) == 0.0
+
+
+@pytest.mark.parametrize(
+    "signal", [Signal.FLOW, Signal.RETURN, Signal.FLUE_GAS, Signal.OUTDOOR, Signal.ROOM_TEMPERATURE]
+)
+def test_a_gateway_temperature_of_zero_is_unknown(signal: Signal) -> None:
+    """PB-21: opentherm_gw shows 0 after a PIC reset, and for good where the boiler never
+    answers the ID — from it, 0 °C is unknown (no outdoor 0 °C into the degree-days, no
+    condensing 100 %); from another source it is a reading."""
+    assert signal_value(signal, "0", "°C", zero_is_unknown=True) is None
+    assert signal_value(signal, "0.0", "°C", zero_is_unknown=True) is None
+    assert signal_value(signal, "21.5", "°C", zero_is_unknown=True) == 21.5
+    assert signal_value(signal, "0", "°C") == 0.0
+    assert signal_value(signal, None, "°C", zero_is_unknown=True) is None
 
 
 def test_a_gas_meter_at_zero_is_unknown() -> None:

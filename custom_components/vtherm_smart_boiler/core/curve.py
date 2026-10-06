@@ -84,15 +84,11 @@ def update_outdoor(
     elif weather is not None:
         current, source = weather, OutdoorSource.WEATHER
     else:
-        if (
-            previous.effective is not None
-            and previous.updated_at is not None
-            and now - previous.updated_at <= hold_s
-        ):
-            return OutdoorState(
-                previous.average, previous.effective, OutdoorSource.HELD, previous.updated_at
-            )
-        return OutdoorState(previous.average, None, OutdoorSource.NONE, previous.updated_at)
+        # A reading "later than now" (the wall clock set back) counts from now (PB-28).
+        since = None if previous.updated_at is None else min(previous.updated_at, now)
+        if previous.effective is not None and since is not None and now - since <= hold_s:
+            return OutdoorState(previous.average, previous.effective, OutdoorSource.HELD, since)
+        return OutdoorState(previous.average, None, OutdoorSource.NONE, since)
     if previous.average is None or previous.updated_at is None:
         average = current
     else:

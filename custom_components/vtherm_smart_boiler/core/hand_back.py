@@ -107,12 +107,11 @@ def _near(value: float, other: float | None, tolerance: float) -> bool:
 def _away_from_ours(
     rule: ReleaseRule, read_back: float, reported_after: bool, tolerance: float
 ) -> bool:
-    """More than ``tolerance`` from the lowest and from the plugin's last value; that value
-    unknown, reported after the command instead."""
-    if _near(read_back, rule.lowest, tolerance):
+    """Reported after the command, and more than ``tolerance`` from the lowest and from the
+    plugin's last value (where known): a polled read-back one ramp step behind, not reported
+    since the command, is no release (PB-30)."""
+    if not reported_after or _near(read_back, rule.lowest, tolerance):
         return False
-    if rule.release_from is None:
-        return reported_after
     return not _near(read_back, rule.release_from, tolerance)
 
 

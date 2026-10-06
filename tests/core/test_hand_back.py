@@ -73,9 +73,24 @@ def test_a_gateway_without_the_plugins_last_value_needs_a_report_after_the_comma
 
 def test_a_gateway_release_is_its_zero_or_the_thermostats_value() -> None:
     assert released(GATEWAY, 0.0, reported_after=True)
-    assert released(GATEWAY, 40.0, reported_after=False)  # the thermostat's own value
+    assert released(GATEWAY, 40.0, reported_after=True)  # the thermostat's own value
     assert not released(GATEWAY, 25.0, reported_after=True)  # still the lowest written first
     assert not released(GATEWAY, 45.3, reported_after=True)  # still the plugin's
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        GATEWAY,
+        ReleaseRule(CheckKind.BACK_TO_BASELINE, release_from=45.3, lowest=25.0, baseline=52.0),
+    ],
+)
+def test_away_from_ours_counts_only_once_reported_after_the_command(rule: ReleaseRule) -> None:
+    """PB-30: a polled read-back one ramp step behind the plugin's last value, not reported
+    since the command, is no release — away from ours counts only once reported after it."""
+    assert not released(rule, 43.5, reported_after=False)
+    assert released(rule, 43.5, reported_after=True)
+    assert not released(rule, None, reported_after=True)
 
 
 @pytest.mark.parametrize(

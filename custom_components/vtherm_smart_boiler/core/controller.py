@@ -906,7 +906,8 @@ def _heating_decision(
         water_reasons, decided_at = state.water_reasons, state.decided_at
     previous = state.command.setpoint if state.command is not None else None
     cap = install_cap(config.limits, config.circuit_max, config.boiler_max)
-    setpoint, ramping = _ramp(previous, target, cap, step_s, config.ramp_k_per_min)
+    # A step counts a minute at most here too: a clock jumping forward is no hour of ramp (PB-28).
+    setpoint, ramping = _ramp(previous, target, cap, counted_s, config.ramp_k_per_min)
 
     mode = _heating_mode(fault, frost_on, want_heat, outdoor.effective is None)
     reasons = (*water_reasons[:1], heat_reason, *water_reasons[1:])

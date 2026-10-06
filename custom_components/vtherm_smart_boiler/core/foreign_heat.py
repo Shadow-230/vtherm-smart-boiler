@@ -72,6 +72,8 @@ def update_foreign_heat(
     if heating:
         return ForeignHeatState(True, tuple(heating), tuple(unknown), now)
     last = previous.last_active_at if previous is not None else None
+    if last is not None:
+        last = min(last, now)  # "later than now": the wall clock set back (PB-28)
     if last is not None and now - last < hold_s:
         return ForeignHeatState(True, (), tuple(unknown), last, holding=True)
     return ForeignHeatState(False, (), tuple(unknown), last)

@@ -35,7 +35,8 @@ def reading_from_state(
     signal: Signal, state: State | None, *, from_gateway: bool = False
 ) -> Reading:
     """A signal's reading from its entity's state; a missing entity is unknown.
-    ``from_gateway``: the entity is the OpenTherm Gateway's — its 0 bar is unknown (P-17)."""
+    ``from_gateway``: the entity is the OpenTherm Gateway's — its 0 is unknown for pressure and
+    measured temperatures (P-17, PB-21)."""
     if state is None:
         return Reading(None, None)
     unit = state.attributes.get("unit_of_measurement")

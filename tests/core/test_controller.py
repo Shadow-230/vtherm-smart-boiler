@@ -317,8 +317,24 @@ def test_the_ramp_moves_at_every_step() -> None:
     _state, decisions = run(steps, config)
     first = decisions[0].command.setpoint
     raised = [d.command.setpoint - first for d in decisions[1:]]
-    # The colder curve arrives with the decision at 300 s; from there 1/6 K every 10 s step.
-    assert raised == pytest.approx([k / 6.0 + 5.0 for k in range(7)], abs=1e-6)
+    # The colder curve arrives with the decision at 300 s; a step counts a minute at most
+    # (PB-28), so 1 K there; from there 1/6 K every 10 s step.
+    assert raised == pytest.approx([k / 6.0 + 1.0 for k in range(7)], abs=1e-6)
+
+
+def test_a_clock_jumping_forward_moves_the_ramp_one_step_only() -> None:
+    """PB-28: a forward jump of the wall clock (a VM resumed after a backup) is no hour of ramp:
+    the setpoint moves as after one minute, not to its target at once."""
+    config = replace(CONFIG, ramp_k_per_min=1.0, decision_interval_s=60.0)
+    _state, decisions = run(
+        [inputs(0.0, outdoor_sensor=15.0), inputs(3600.0, outdoor_sensor=-10.0)], config
+    )
+    first = decisions[0].command
+    second = decisions[1].command
+    assert first is not None
+    assert second is not None
+    assert second.setpoint == pytest.approx(first.setpoint + 1.0)
+    assert Reason.RAMP in decisions[1].reasons
 
 
 def test_weather_entity_stands_in_for_the_sensor() -> None:

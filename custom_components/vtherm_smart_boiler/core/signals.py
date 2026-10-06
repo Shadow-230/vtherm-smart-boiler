@@ -62,12 +62,17 @@ class SignalSpec:
     ``link``: the signal is part of the boiler link — the connection sensor, and the link of
     water-temperature control, which needs it mapped (X8: no signal is required for the entry;
     a home with only a relay is monitored too).
+
+    ``gateway_zero_unknown``: from an OpenTherm Gateway a 0 is unknown — it shows 0 after a
+    reset until a real reading, and for good where the boiler never answers the ID (P-17,
+    PB-21). Measured values only; a setpoint's 0 is a value.
     """
 
     kind: SignalKind
     link: bool = False
     low: float | None = None
     high: float | None = None
+    gateway_zero_unknown: bool = False
 
     def plausible(self, value: float) -> bool:
         """Whether a numeric value lies inside the plausible range."""
@@ -78,16 +83,27 @@ class SignalSpec:
 
 SIGNAL_SPECS: dict[Signal, SignalSpec] = {
     Signal.FLAME: SignalSpec(SignalKind.BINARY, link=True),
-    Signal.FLOW: SignalSpec(SignalKind.TEMPERATURE, link=True, low=-20.0, high=110.0),
-    Signal.RETURN: SignalSpec(SignalKind.TEMPERATURE, low=-20.0, high=110.0),
+    # Water below 0 °C is a broken sensor, not a heating circuit (PB-21).
+    Signal.FLOW: SignalSpec(
+        SignalKind.TEMPERATURE, link=True, low=0.0, high=110.0, gateway_zero_unknown=True
+    ),
+    Signal.RETURN: SignalSpec(
+        SignalKind.TEMPERATURE, low=0.0, high=110.0, gateway_zero_unknown=True
+    ),
     Signal.MODULATION: SignalSpec(SignalKind.PERCENT, low=0.0, high=100.0),
     Signal.CH_SETPOINT: SignalSpec(SignalKind.TEMPERATURE, low=0.0, high=100.0),
     Signal.DHW_ACTIVE: SignalSpec(SignalKind.BINARY),
-    Signal.PRESSURE: SignalSpec(SignalKind.PRESSURE, low=0.0, high=6.0),
-    Signal.FLUE_GAS: SignalSpec(SignalKind.TEMPERATURE, low=-20.0, high=300.0),
-    Signal.OUTDOOR: SignalSpec(SignalKind.TEMPERATURE, low=-60.0, high=60.0),
+    Signal.PRESSURE: SignalSpec(SignalKind.PRESSURE, low=0.0, high=6.0, gateway_zero_unknown=True),
+    Signal.FLUE_GAS: SignalSpec(
+        SignalKind.TEMPERATURE, low=-20.0, high=300.0, gateway_zero_unknown=True
+    ),
+    Signal.OUTDOOR: SignalSpec(
+        SignalKind.TEMPERATURE, low=-60.0, high=60.0, gateway_zero_unknown=True
+    ),
     Signal.ROOM_SETPOINT: SignalSpec(SignalKind.TEMPERATURE, low=0.0, high=40.0),
-    Signal.ROOM_TEMPERATURE: SignalSpec(SignalKind.TEMPERATURE, low=-10.0, high=50.0),
+    Signal.ROOM_TEMPERATURE: SignalSpec(
+        SignalKind.TEMPERATURE, low=-10.0, high=50.0, gateway_zero_unknown=True
+    ),
     Signal.CH_ACTIVE: SignalSpec(SignalKind.BINARY),
     Signal.PUMP_RUNNING: SignalSpec(SignalKind.BINARY),
     Signal.GAS_METER: SignalSpec(SignalKind.COUNTER, low=0.0),

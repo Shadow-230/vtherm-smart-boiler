@@ -919,10 +919,11 @@ def _kind(
     if ours:
         return ReadKind.OURS
     tolerance = config.tolerance
-    if config.two_valued and not trace and _previous(state, value, now, config):
-        # Heating on/off's previous state, its successor not read back, within
+    if not trace and _previous(state, value, now, config):
+        # The previous value, its successor not read back — heating on/off's within
         # ``PREVIOUS_EXEMPT_S`` — the value from before the plugin too: an echo not in yet, or a
-        # poll not made yet, is no fall-back (K4.3).
+        # poll not made yet, is no fall-back (K4.3); a setpoint's equal to the baseline too
+        # (PB-29).
         return ReadKind.PREVIOUS
     if _near(value, state.baseline, tolerance):
         return ReadKind.FALL_BACK

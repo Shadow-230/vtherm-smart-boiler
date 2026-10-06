@@ -22,6 +22,31 @@ def test_every_signal_has_a_spec_and_flame_and_flow_are_required() -> None:
     assert LINK_SIGNALS == {Signal.FLAME, Signal.FLOW}
 
 
+def test_a_gateway_zero_is_unknown_for_pressure_and_every_measured_temperature() -> None:
+    """PB-21: an OpenTherm Gateway shows 0 after a PIC reset (and for good where the boiler
+    never answers an ID) — for pressure and every measured temperature it is unknown; a
+    setpoint's 0 is a value (a hand-back, no request); binary and counter signals are apart."""
+    measured = {
+        Signal.PRESSURE,
+        Signal.FLOW,
+        Signal.RETURN,
+        Signal.FLUE_GAS,
+        Signal.OUTDOOR,
+        Signal.ROOM_TEMPERATURE,
+    }
+    assert {s for s, spec in SIGNAL_SPECS.items() if spec.gateway_zero_unknown} == measured
+    assert not SIGNAL_SPECS[Signal.CH_SETPOINT].gateway_zero_unknown
+    assert not SIGNAL_SPECS[Signal.ROOM_SETPOINT].gateway_zero_unknown
+
+
+def test_water_below_freezing_is_implausible() -> None:
+    """PB-21: a flow or return below 0 °C is a broken sensor, not water in a heating circuit."""
+    for signal in (Signal.FLOW, Signal.RETURN):
+        assert not SIGNAL_SPECS[signal].plausible(-0.5)
+        assert SIGNAL_SPECS[signal].plausible(0.0)
+        assert SIGNAL_SPECS[signal].plausible(20.0)
+
+
 def test_reading_freshness() -> None:
     reading = Reading(45.0, reported_at=100.0)
     assert reading.age(160.0) == 60.0

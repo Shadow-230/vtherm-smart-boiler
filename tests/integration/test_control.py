@@ -1094,6 +1094,65 @@ async def test_learning_is_paused_during_hot_water_and_released_on_switch_off(
     assert learning[-1] == (zone, True)
 
 
+async def test_a_cancel_inside_smartpi_does_not_break_the_stop(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """PB-35: a ``CancelledError`` raised inside SmartPI's service — not the caller's own
+    cancellation — is a failed call: the stop goes on and the unload completes."""
+    hass = rig.hass
+    raising = False
+
+    async def set_learning(call: ServiceCall) -> None:
+        if raising:
+            raise asyncio.CancelledError
+
+    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    rig.zones.set(
+        "living",
+        hvac_action="heating",
+        valve_open_percent=60,
+        on_percent=0.6,
+        configuration={"proportional_function": "smartpi"},
+        specific_states={"smartpi_learning_enabled": True},
+    )
+    await start(rig)
+    await rig.switch(True)
+    rig.dhw = True
+    await rig.advance(10)  # paused: the stop resumes it
+    raising = True
+    assert rig.entry is not None
+    assert await hass.config_entries.async_unload(rig.entry.entry_id)
+    await hass.async_block_till_done()
+    assert _logged(caplog, logging.WARNING, "Could not resume SmartPI learning") == 1
+
+
+async def test_a_failing_listener_does_not_stop_the_others(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """PB-38: a listener whose state write raises is isolated — the later ones still update —
+    and logged once while it keeps failing; it is logged again only after it has worked."""
+    await start(rig)
+    unit = unit_of(rig)
+    failing = True
+    seen: list[str] = []
+
+    def broken() -> None:
+        if failing:
+            raise RuntimeError("a broken entity")
+
+    unit._listeners.insert(0, broken)
+    unit.async_add_listener(lambda: seen.append(unit.status.mode.value))
+    await rig.switch(True)
+    await rig.switch(False)
+    assert len(seen) >= 2
+    assert _logged(caplog, logging.ERROR, "A control listener failed") == 1
+    failing = False
+    await rig.switch(True)
+    failing = True
+    await rig.switch(False)
+    assert _logged(caplog, logging.ERROR, "A control listener failed") == 2
+
+
 async def test_only_allowed_services_are_called(rig: Rig) -> None:
     hass = rig.hass
 
@@ -2951,6 +3010,45 @@ async def test_a_stop_that_cancels_a_hand_back_makes_its_own(rig: Rig) -> None:
     assert rig.gateway.calls[-3:] == HAND_BACK
 
 
+async def test_a_home_assistant_stop_waits_for_an_unloads_hand_back(rig: Rig) -> None:
+    """PB-36: Home Assistant stops while an unload's hand-back hangs on a slow gateway: the
+    shutdown job is still there and waits for it, so the hand-back is made before the stop goes
+    on; once the unload's stop is over the job is gone."""
+    await start(rig)
+    await rig.switch(True)
+    assert rig.entry is not None
+    hass = rig.hass
+    hanging = rig.gateway.block_hand_back = asyncio.Event()
+    unload = asyncio.ensure_future(hass.config_entries.async_unload(rig.entry.entry_id))
+    await settle(rounds=50)
+    assert rig.gateway.calls[-1] == ("ch", True)  # the hand-back's first call hangs
+
+    def ours() -> list[Any]:
+        return [j for j in hass._shutdown_jobs if j.job.name == "vtherm_smart_boiler hand-back"]
+
+    jobs = ours()
+    assert len(jobs) == 1  # kept while the hand-back runs
+    shutdown = asyncio.ensure_future(jobs[0].job.target())
+    assert not await settle(shutdown), "the shutdown job waits for the hand-back"
+    hanging.set()
+    assert await unload
+    await shutdown
+    assert rig.gateway.calls[-3:] == HAND_BACK
+
+
+async def test_an_unload_removes_the_shutdown_job_once_its_stop_is_over(rig: Rig) -> None:
+    """PB-36's negative: without a Home Assistant stop, the unload's stop removes the job at its
+    end — nothing of the entry is left in Home Assistant's list."""
+    await start(rig)
+    await rig.switch(True)
+    assert rig.entry is not None
+    hass = rig.hass
+    name = "vtherm_smart_boiler hand-back"
+    assert [j for j in hass._shutdown_jobs if j.job.name == name]
+    assert await hass.config_entries.async_unload(rig.entry.entry_id)
+    assert not [j for j in hass._shutdown_jobs if j.job.name == name]
+
+
 async def test_a_step_waiting_behind_a_slow_one_does_not_run_before_the_stop(rig: Rig) -> None:
     """C4: a tick queued behind a slow step would run a whole step — with its writes — before
     the stop's hand-back; once the stop has begun, it does nothing."""
@@ -3169,6 +3267,19 @@ async def test_a_day_after_the_one_rewrite_another_outside_change_is_rewritten(
     assert guard_rewritten_at(rig) == now + 40.0  # rewritten once more
     assert rig.gateway.setpoints()[-1] == EXPECTED
     assert rig.state("binary_sensor", "alarm_outside_change").state == "off"
+
+
+@pytest.mark.parametrize("latched_by", [["write_ignored"], ["pressure_low"]])
+async def test_a_restored_write_ignored_latch_shows_its_alarm(
+    rig: Rig, hass_storage: dict[str, Any], latched_by: list[str]
+) -> None:
+    """PB-32: a write-ignored latch restored after a restart shows its alarm, as its issue;
+    negative: another latch does not."""
+    await start_with_stored(rig, hass_storage, {"latched": True, "latched_by": latched_by})
+    await rig.switch(True)
+    await rig.advance(20)
+    shown = rig.state("binary_sensor", "alarm_write_ignored").state
+    assert shown == ("on" if latched_by == ["write_ignored"] else "off")
 
 
 async def test_a_latch_holds_through_a_day_and_a_night(
@@ -3476,6 +3587,34 @@ async def test_heating_switched_from_outside_is_written_once_then_handed_back(ri
     assert rig.gateway.calls[-3:] == HAND_BACK  # the whole safe hand-back, the lowest first
 
 
+async def test_an_optimistic_heating_echo_confirms_nothing_and_is_not_judged(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PB-34 (S-09): a heating echo carrying ``assumed_state`` shows what it was given — shown
+    "unverified", never "confirmed", and a change in it is judged as none: another controller
+    switching heating off in it raises nothing and makes no rewrite."""
+    publish = rig.gateway.publish
+
+    def optimistic() -> None:
+        publish()
+        state = rig.hass.states.get(CH_ECHO)
+        assert state is not None
+        rig.hass.states.async_set(CH_ECHO, state.state, {"assumed_state": True})
+
+    monkeypatch.setattr(rig.gateway, "publish", optimistic)
+    await start(rig, ch_confirmed_entity=CH_ECHO)
+    await rig.advance(310)
+    await rig.switch(True)
+    await rig.advance(150)
+    shown = rig.state("sensor", "control_state").attributes["heating_confirmation"]
+    assert shown == "unverified"
+    rig.gateway.forced_ch = False
+    await rig.advance(600)
+    for alarm in ("outside_change", "write_ignored", "commands_lost"):
+        assert rig.state("binary_sensor", f"alarm_{alarm}").state == "off"
+    assert rig.state("sensor", "control_state").state != "handed_back"
+
+
 async def test_a_heating_switch_that_never_shows_its_new_state_is_judged(rig: Rig) -> None:
     """Z4R2-03: OTGW with a heating echo, "on" before the plugin. The plugin switched heating off
     (read back), then on again — and the echo never shows "on" (the switch stuck, or an
@@ -3710,19 +3849,38 @@ def _logged(caplog: pytest.LogCaptureFixture, level: int, text: str) -> int:
 async def test_a_lasting_write_failure_is_logged_once_and_its_recovery_once(
     rig: Rig, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """P42: a write failing at every step for minutes is one warning, with its trace, not one
-    every ten seconds; its recovery is one line too."""
+    """P42: a write failing at every step for minutes is one warning, not one every ten
+    seconds — its message without a trace, an expected failure (PB-40); its recovery is one line
+    too, once it has worked for five minutes."""
     await start(rig)
     await rig.switch(True)
     rig.hass.services.async_remove("opentherm_gw", "set_control_setpoint")
     await rig.advance(120)
     assert _logged(caplog, logging.WARNING, "boiler write failed") == 1
     failure = next(r for r in caplog.records if "boiler write failed" in r.getMessage())
-    assert failure.exc_info is not None  # with the trace
+    assert failure.exc_info is None  # no trace
     rig.gateway.register()
     await rig.advance(30)
+    assert _logged(caplog, logging.INFO, "works again") == 0  # not yet
+    await rig.advance(300)
     assert _logged(caplog, logging.INFO, "works again") == 1
     assert _logged(caplog, logging.WARNING, "boiler write failed") == 1
+
+
+async def test_a_flapping_write_target_is_one_warning(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """PB-40: a target that fails, works for a minute, then fails again, over and over (a Wi-Fi
+    device dropping out), is one warning and no "works again" line while it keeps flapping."""
+    await start(rig)
+    await rig.switch(True)
+    for _ in range(4):
+        rig.hass.services.async_remove("opentherm_gw", "set_control_setpoint")
+        await rig.advance(60)
+        rig.gateway.register()
+        await rig.advance(60)
+    assert _logged(caplog, logging.WARNING, "boiler write failed") == 1
+    assert _logged(caplog, logging.INFO, "works again") == 0
 
 
 async def test_a_lasting_hand_back_failure_is_logged_once(
@@ -5909,6 +6067,26 @@ async def test_the_value_a_release_must_leave_outlives_a_restart(
     assert warned == (1 if stored == "unreadable" else 0)
 
 
+async def test_a_lagging_read_back_away_from_ours_is_no_release(rig: Rig) -> None:
+    """PB-30: a read-back one ramp step behind the plugin's last value, not reported again after
+    the hand-back's command, does not confirm it: the hand-back stays owed. Once the gateway
+    reports after the command, a value away from ours does."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    unit = unit_of(rig)
+    rig.hass.states.async_set(CONFIRMED, str(EXPECTED - 2.0), {"unit_of_measurement": "°C"})
+    rig.gateway.deaf = True  # nothing new is reported after the command
+    await rig.switch(False)
+    assert unit.hand_back_owed
+    rig.gateway.deaf = False
+    rig.gateway.override = None  # the override lapsed
+    rig.gateway.thermostat = EXPECTED - 3.0
+    rig.gateway.publish()  # the gateway's report after the command: the thermostat's value
+    await rig.advance(10)
+    assert not unit.hand_back_owed
+
+
 async def test_a_clock_set_back_does_not_hold_up_the_owed_retry(rig: Rig) -> None:
     """R8 (C9): a hand-back failed and is due again in a minute; then the wall clock is set back
     an hour. The retry comes at the next step, not once the clock has caught up. Negative:
@@ -7995,6 +8173,8 @@ async def test_stepping_aside_on_a_gateway_makes_the_whole_safe_hand_back(rig: R
         if rig.state("sensor", "control_state").state == "handed_back":
             break
     assert rig.gateway.calls[-3:] == HAND_BACK
+    await rig.advance(10)  # the gateway's next report after the command shows it (PB-30)
+    assert rig.gateway.calls[-3:] == HAND_BACK
     assert not unit_of(rig).hand_back_owed
     count = len(rig.gateway.calls)
     await rig.advance(180)
@@ -8854,7 +9034,9 @@ THERMOSTAT_REQUEST = "sensor.fake_thermostat_control_setpoint"
 
 
 @pytest.mark.parametrize("case", ["returns", "unknown", "third_value"])
-@pytest.mark.parametrize("path", ["value", "thermostat", "timeout", "switch"])
+@pytest.mark.parametrize(
+    "path", ["value", "thermostat", "thermostat_unmapped", "timeout", "switch"]
+)
 @pytest.mark.usefixtures("low_setpoint_off")
 async def test_the_return_by_itself_comes_only_while_each_paths_hand_back_state_shows(
     rig: Rig, path: str, case: str
@@ -8865,7 +9047,8 @@ async def test_the_return_by_itself_comes_only_while_each_paths_hand_back_state_
     thermostat's own request, where the optional field is mapped; the timeout hand-back the value
     from before the session (45 °C); the external-control switch off — then a new session starts
     and the latch issue goes. Negative: the read-back unknown, or a third value (the switch on),
-    within the hour — no return."""
+    within the hour — no return. PB-33: the thermostat's field not mapped, the value from before
+    the session (its request then, 40 °C) counts as the hand-back state."""
     number = FakeNumber(rig.hass, value=45.0)
     external = FakeSwitch(rig.hass, entity_id="input_boolean.fake_external", on=False)
     if path == "thermostat":
@@ -8873,6 +9056,8 @@ async def test_the_return_by_itself_comes_only_while_each_paths_hand_back_state_
         await start(
             rig, thermostat_setpoint_entity=THERMOSTAT_REQUEST, return_after_outside_change=True
         )
+    elif path == "thermostat_unmapped":
+        await start(rig, return_after_outside_change=True)
     else:
         number.register()
         control = {
@@ -8886,7 +9071,7 @@ async def test_the_return_by_itself_comes_only_while_each_paths_hand_back_state_
         await start(rig, **control, return_after_outside_change=True)
     await rig.switch(True)
     await rig.advance(30)
-    if path == "thermostat":
+    if path.startswith("thermostat"):
         rig.gateway.forced = 60.0
     else:
         number.forced = number.value = 60.0
@@ -8898,7 +9083,7 @@ async def test_the_return_by_itself_comes_only_while_each_paths_hand_back_state_
     assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
     assert issue(rig, "control_latched") is not None
     # The other controller is gone; the read-back shows the hand-back state.
-    if path == "thermostat":
+    if path.startswith("thermostat"):
         rig.gateway.forced = None  # the gateway shows the thermostat's request (40)
     else:
         number.forced = None
@@ -8908,7 +9093,7 @@ async def test_the_return_by_itself_comes_only_while_each_paths_hand_back_state_
         assert not external.on  # handed back at the step aside
     await rig.advance(1800, step=60.0)
     if case == "unknown":
-        if path == "thermostat":
+        if path.startswith("thermostat"):
             rig.gateway.read_back_shown = "unknown"
             rig.gateway.publish()
         elif path == "switch":
@@ -8916,7 +9101,7 @@ async def test_the_return_by_itself_comes_only_while_each_paths_hand_back_state_
         else:
             rig.hass.states.async_set(number.entity_id, "unknown", {"unit_of_measurement": "°C"})
     elif case == "third_value":
-        if path == "thermostat":
+        if path.startswith("thermostat"):
             rig.gateway.forced = 33.0
             rig.gateway.publish()
         elif path == "switch":
@@ -8926,7 +9111,7 @@ async def test_the_return_by_itself_comes_only_while_each_paths_hand_back_state_
             number.publish(38.0)
     await rig.advance(60, step=60.0)
     if case != "returns":  # the hour broken: it starts again once the hand-back state is back
-        if path == "thermostat":
+        if path.startswith("thermostat"):
             rig.gateway.read_back_shown = None
             rig.gateway.forced = None
             rig.gateway.publish()
@@ -9700,6 +9885,30 @@ async def test_a_zone_unknown_for_long_raises_an_alarm(rig: Rig) -> None:
     started(rig)
     await rig.advance(10)
     assert rig.state("binary_sensor", "alarm_zone_unknown").state == "off"
+
+
+async def test_a_clock_set_back_does_not_delay_the_zone_unknown_alarm(rig: Rig) -> None:
+    """PB-28 (C9): a zone unknown, then the wall clock set back an hour — its half hour counts
+    from the set back, not from the clock catching up."""
+    rig.zones.add("bedroom", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    rig.zones.set("living", "unavailable")
+    await rig.advance(60)
+    rig.freezer.move_to(datetime.now(UTC) - timedelta(hours=1))
+    unit = unit_of(rig)
+
+    async def steps(seconds: int) -> None:  # the timer's steps, the scheduler left behind
+        for _ in range(seconds // 10):
+            rig.freezer.tick(10)
+            rig.live()
+            await unit._async_timer(datetime.now(UTC))
+
+    await steps(29 * 60)
+    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "off"  # not yet
+    await steps(2 * 60)
+    assert rig.state("binary_sensor", "alarm_zone_unknown").state == "on"
 
 
 async def test_a_transient_loss_of_every_zone_does_not_start_the_boiler(rig: Rig) -> None:
@@ -11651,6 +11860,8 @@ async def test_the_rest_state_notice_when_a_zone_calls(rig: Rig, relay: FakeRela
     near freezing too; it goes once control takes the relay, or the relay is on (another
     controller took it)."""
     await start_relay(rig)
+    await rig.switch(True)
+    await rig.switch(False)  # control held the relay and handed it back
     await rig.advance(10)
     found = issue(rig, "relay_rests_off")
     assert found is not None
@@ -11669,6 +11880,20 @@ async def test_the_rest_state_notice_when_a_zone_calls(rig: Rig, relay: FakeRela
     calling(rig)
     await rig.switch(True)
     await rig.advance(10)
+    assert issue(rig, "relay_rests_off") is None
+
+
+@pytest.mark.parametrize("vt_heats", [False, True])
+async def test_no_rest_state_notice_before_control_held_the_relay(
+    rig: Rig, relay: FakeRelay, vt_heats: bool
+) -> None:
+    """PB-15: control never held the relay in this run — before it was ever switched on, or in
+    the migration's monitoring week while VT's central boiler still drives the relay: no notice
+    that the boiler does not heat while control is off."""
+    if vt_heats:
+        vt_central_boiler(rig, True)
+    await start_relay(rig)  # control cannot be switched on while VT's central boiler is
+    await rig.advance(30)
     assert issue(rig, "relay_rests_off") is None
 
 

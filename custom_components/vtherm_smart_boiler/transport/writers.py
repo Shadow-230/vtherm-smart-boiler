@@ -64,7 +64,7 @@ from ..core.hand_back import RELEASE_TOLERANCE_K, CheckKind, CheckSource, Releas
 from ..core.limits import GRID_EPSILON, Grid, is_on_grid
 from ..core.relay import CONTEXTS_KEPT
 from ..units import celsius_to, parse_number
-from .entities import grid_from_state
+from .entities import grid_from_state, reported_at
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant, State
@@ -112,6 +112,9 @@ class HandBackCheck:
     baseline: float | None = None
     written: bool = True
     before: State | None = field(default=None, compare=False, repr=False)
+    # When ``before`` was last reported, as the command went out: Home Assistant moves a steady
+    # state's ``last_reported`` in place, so a later report is told by it (PB-30).
+    before_at: float | None = field(default=None, compare=False, repr=False)
     known: tuple[str, ...] | None = ("on", "off")
 
     @property
@@ -551,6 +554,7 @@ class EntityWriter(_ServiceWriter):
             baseline=baseline,
             written=written,
             before=before,
+            before_at=None if before is None else reported_at(before),
         )
 
     async def _heating_on_once(
@@ -643,6 +647,7 @@ class _GatewayWriter(_ServiceWriter):
             release_from=release_from,
             lowest=self._lowest,
             before=before,
+            before_at=None if before is None else reported_at(before),
         )
 
 

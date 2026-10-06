@@ -279,6 +279,7 @@ from .transport.entities import (
     read_temperature,
     read_weather_temperature,
     relay_hvac_modes,
+    reported_at,
     restart_reading,
     temperature_from_state,
     temperature_unit_of,
@@ -382,6 +383,10 @@ MONITOR_NOTE = "monitor_recovered"
 FROST_CLOSED_ISSUE = "frost_zone_closed"
 FROST_CLOSED_SHOWN_K = 1.0
 ZONE_UNKNOWN_ALARM_S = 30 * 60.0  # a zone unknown this long is reported
+# PB-40: a write that failed is logged as working again only after this long without a failure,
+# so a flapping target (a Wi-Fi device dropping out every minute) is one warning, not one a
+# minute (provisional, K4).
+WRITE_RECOVERED_S = 5 * 60.0
 # VT's central boiler unknown — its central entry reloading — does not block control for this long
 # where it was known to be off at the step before (P-105; provisional, K4). A restorable store
 # after a restart stands for "known off just before": a session cannot run while it is on.
@@ -599,6 +604,16 @@ def _shown(check: Confirmation | None, gateway: bool, self_echo: bool) -> str | 
     return None if check is None else check.value
 
 
+def _reported_after(state: State | None, check: HandBackCheck) -> bool:
+    """Whether the read-back reported after the hand-back's command: a new state, or the same
+    one reported again since (``last_reported``, PB-30)."""
+    if state is None:
+        return False
+    if state is not check.before:
+        return True
+    return check.before_at is not None and reported_at(state) > check.before_at
+
+
 def report_owed_hand_back(hass: HomeAssistant, entry_id: str, persistent: bool = False) -> None:
     """The repair issue of a hand-back still owed; fixable by saying the boiler was returned."""
     ir.async_create_issue(
@@ -806,6 +821,12 @@ class ControlUnit:
         # session and its last command may be gone: the setpoint the plugin last wrote, and the
         # read-back from before the session (a timeout releases back to it).
         self._release_from: float | None = None
+        self._follow_after_decision = False  # PB-31: the owed hand-back's follow waits
+        # PB-30: a setpoint written in this run — a polled read-back may lag behind it, so a
+        # value away from ours shows a release only once reported after the hand-back's command.
+        # None written in this run (an owed hand-back carried over a restart): the read-back,
+        # reported since, cannot lag behind a write, and its steady value counts (R7).
+        self._wrote_setpoint = False
         self._release_baseline: float | None = None
         self._baseline: float | None = None  # this session's, noted before a step may reset it
         # Targets another controller holds after the hand-back: done, never written again.
@@ -837,6 +858,10 @@ class ControlUnit:
         self._lock = asyncio.Lock()
         self._tick_waiting = False
         self._listeners: list[Callable[[], None]] = []
+        self._listeners_failing: set[Callable[[], None]] = set()
+        # PB-40: each kind of write warned of as failing — since when it has worked again
+        # (``None``: still failing); dropped once it has worked for ``WRITE_RECOVERED_S``.
+        self._write_warned: dict[str, float | None] = {}
         self._unsubs: list[CALLBACK_TYPE] = []
         self._stop_unsub: CALLBACK_TYPE | None = None
         self._stopped = False
@@ -924,6 +949,9 @@ class ControlUnit:
         self._relay_ignored_issue: tuple[str, str] | None = None
         self._relay_not_taking_issue: tuple[str, str] | None = None
         self._rests_off_issue: tuple[str, str] | None = None
+        # PB-15: whether this run's control has held the relay; the rest-state notice only
+        # follows a hand-back of control's own, not a relay control never took.
+        self._relay_held = False
         self._relay_timer_issue: tuple[str, str] | None = None
         # Y1, boiler protection: since when each mapped fault signal has counted, on the control
         # clock; the stop follows once one has counted for five minutes.
@@ -1031,7 +1059,18 @@ class ControlUnit:
             return
         self._published = self._status
         for update in list(self._listeners):
-            update()
+            # PB-38: one entity failing to write its state does not stop the others, nor the
+            # history recorder; logged once until it works again.
+            try:
+                update()
+            except Exception:
+                if update in self._listeners_failing:
+                    _LOGGER.debug("A control listener failed again")
+                else:
+                    self._listeners_failing.add(update)
+                    _LOGGER.exception("A control listener failed; the others still update")
+            else:
+                self._listeners_failing.discard(update)
 
     def stored(self) -> dict[str, Any]:
         """What must survive a restart: whether the boiler may hold a value of ours, paused zones,
@@ -1392,9 +1431,9 @@ class ControlUnit:
         deadline = self._hass.loop.time() + STOP_BUDGET_S
         while self._unsubs:
             self._unsubs.pop()()
-        if self._stop_unsub is not None:
-            self._stop_unsub()
-            self._stop_unsub = None
+        # PB-36: the shutdown job stays until this stop's hand-back is over, so a Home Assistant
+        # stop beginning meanwhile waits for it (the job waits for the lock), rather than
+        # finding nothing to wait for.
         self._stopping = True
         step = self._step_task
         if step is not None and not step.done():
@@ -1427,6 +1466,9 @@ class ControlUnit:
             _LOGGER.exception("Could not update the repair issues at the stop")
         await self._async_learning_calls(deadline)
         self._coordinator.schedule_control_save()
+        if self._stop_unsub is not None:  # not from the shutdown job itself, which keeps it
+            self._stop_unsub()
+            self._stop_unsub = None
 
     def _stop_issues(self) -> None:
         """The repair issues at the stop."""
@@ -1851,6 +1893,9 @@ class ControlUnit:
         session = self._session
         before = session.loop
         out, blockers, confirmed = self._decide(now, snapshot, zones, blockers, dhw)
+        takes = not out.hand_back and (out.setpoint is not None or out.heating is not None)
+        if self._follow_after_decision and not takes:
+            await self._async_follow_hand_back(now)
         if out.hand_back:
             self._note_blocker_release(out, blockers)  # stored with the hand-back, at once
             await self._async_hand_back_writes(now)
@@ -1934,6 +1979,7 @@ class ControlUnit:
         decision 3's restore comes first, or a relay's waits for the step's command (R9); a unit
         left only to hand back does nothing more; and until the switch restores the user's
         choice, nothing is decided (answer K). Whether the step goes on to decide."""
+        self._follow_after_decision = False
         if (
             self._hand_back_pending
             and not self._session.loop.control.controlling
@@ -1942,7 +1988,13 @@ class ControlUnit:
             # R9: a relay's owed hand-back waits for the step's command, which folds it.
             and not (self._relay_path and not self.hand_back_only)
         ):
-            await self._async_follow_hand_back(now)
+            if self._enabled_now() and not self.hand_back_only:
+                # PB-31: control is on — the step's decision may take the boiler, and its first
+                # write folds the debt; followed after the decision only where it does not, so a
+                # retry and a retake never go out in one step.
+                self._follow_after_decision = True
+            else:
+                await self._async_follow_hand_back(now)
         if self.hand_back_only:
             # Resumes the last run left are followed until SmartPI's flag reads on (C15).
             await self._async_release_learning(now)
@@ -2073,8 +2125,10 @@ class ControlUnit:
         not_taken = any(cause in latch.latched_by for cause in _NOT_TAKEN)
         if latch.latched and not_taken and target not in ignored:
             ignored = (*ignored, target)
+        # PB-32: a write-ignored latch, a restart included, keeps its alarm as its issue.
+        kept = latch.latched and ControlAlarm.WRITE_IGNORED.value in latch.latched_by
         for flagged, alarm in (
-            (bool(ignored), ControlAlarm.WRITE_IGNORED),
+            (bool(ignored) or kept, ControlAlarm.WRITE_IGNORED),
             (out.commands_lost, ControlAlarm.COMMANDS_LOST),  # information: sent again
             (bool(out.unconfirmed), ControlAlarm.CONFIRMATION_MISSING),  # information only
         ):
@@ -2417,7 +2471,10 @@ class ControlUnit:
                 )
             ),
         }
-        self._unknown_since = {z: self._unknown_since.get(z, now) for z in sorted(blind)}
+        # A start later than now — the clock set back — counts from now (C9, PB-28).
+        self._unknown_since = {
+            z: clock_start(self._unknown_since.get(z), now) for z in sorted(blind)
+        }
         long_unknown = any(now - t >= ZONE_UNKNOWN_ALARM_S for t in self._unknown_since.values())
         if self.enabled and long_unknown:
             self._session.alarms.add(ControlAlarm.ZONE_UNKNOWN)
@@ -2484,6 +2541,8 @@ class ControlUnit:
             active=was is True,
         )
         raised: bool | None = judged
+        if self._frost_known_at is not None:  # a clock set back (C9, PB-28)
+            self._frost_known_at = clock_start(self._frost_known_at, now)
         if judged is not None:
             self._frost_known_at = now
         elif (
@@ -3031,8 +3090,11 @@ class ControlUnit:
             return None, None
         loop = self._session.loop
         gateway = options.write_path in OTGW_PATHS
-        self_echo = bool(options.confirmed_entity) and (
-            options.confirmed_entity == options.setpoint_entity
+        # S-09 (PB-34): an optimistic read-back (``assumed_state``) shows what it was given, as
+        # the written entity itself does: it confirms nothing.
+        read_back = options.confirmed_entity
+        self_echo = bool(read_back) and (
+            read_back == options.setpoint_entity or self._assumed(read_back or "")
         )
         setpoint = _shown(
             confirmation(loop.setpoint, options.loop.setpoint_guard), gateway, self_echo
@@ -3040,15 +3102,26 @@ class ControlUnit:
         if not options.loop.ch_writes:
             return setpoint, setpoint  # "off" goes as a low setpoint
         switch: GuardConfig = options.loop.switch_guard
-        self_echo = bool(options.ch_confirmed_entity) and (
-            options.ch_confirmed_entity == options.ch_entity
-        )
-        return setpoint, _shown(confirmation(loop.switch, switch), gateway, self_echo)
+        echo = options.ch_confirmed_entity
+        self_echo = bool(echo) and echo == options.ch_entity
+        heating = _shown(confirmation(loop.switch, switch), gateway, self_echo)
+        if echo and self._assumed(echo) and heating is not None:
+            # S-09 (PB-34): an optimistic echo is judged as none; it confirms nothing either.
+            heating = Confirmation.UNVERIFIED.value
+        return setpoint, heating
+
+    def _assumed(self, entity: str) -> bool:
+        """Whether an entity is optimistic (``assumed_state``): it shows what it was given."""
+        state = self._hass.states.get(entity)
+        return state is not None and state.attributes.get("assumed_state") is True
 
     def _confirmed_heating(self) -> bool | None:
-        """Heating on/off as its echo reports it; ``None`` without one."""
+        """Heating on/off as its echo reports it; ``None`` without one, or with an optimistic
+        echo (``assumed_state``), which shows what it was given: judged as none (S-09, PB-34)."""
         entity = self.options.ch_confirmed_entity
-        return read_on_off(self._hass, entity) if entity else None
+        if not entity or self._assumed(entity):
+            return None
+        return read_on_off(self._hass, entity)
 
     def _confirmed(self) -> float | None:
         """The setpoint the boiler reports back; ``None`` when unknown. A read-back that reports
@@ -3074,6 +3147,7 @@ class ControlUnit:
         setpoint_ok = heating_ok = False
         if out.setpoint is not None:
             value = out.setpoint.value
+            self._wrote_setpoint = True  # a failed write may reach the device too (PB-30)
             setpoint_ok = await self._async_write(
                 "setpoint", lambda: writer.write_setpoint(value), now, out.setpoint
             )
@@ -3175,19 +3249,24 @@ class ControlUnit:
         try:
             await write()  # made only now, after the save (P-52)
         except WriteError as err:
-            if kind in session.failing:
+            # An expected failure: its message, no trace (PB-40).
+            if kind in self._write_warned:
                 _LOGGER.debug("The boiler %s write failed again: %s", kind, err)
             else:
                 _LOGGER.warning(
-                    "A boiler write failed; sent again at every step until it works: %s",
-                    err,
-                    exc_info=err,
+                    "A boiler write failed; sent again at every step until it works: %s", err
                 )
+            self._write_warned[kind] = None
             session.failing.add(kind)
             session.alarms.add(ControlAlarm.WRITE_FAILED)
             return False
-        if kind in session.failing:
-            _LOGGER.info("The boiler %s write works again", kind)
+        if kind in self._write_warned:
+            since = clock_start(self._write_warned[kind], now)  # a clock set back too (C9)
+            if now - since >= WRITE_RECOVERED_S:
+                _LOGGER.info("The boiler %s write works again", kind)
+                del self._write_warned[kind]
+            else:
+                self._write_warned[kind] = since
         session.failing.discard(kind)
         if not session.failing:  # each kind of write clears only its own failure
             session.alarms.discard(ControlAlarm.WRITE_FAILED)
@@ -3397,6 +3476,8 @@ class ControlUnit:
         writes nothing more: not released three minutes after the device's own timeout since
         its last write, an alarm (decision 5 of 0.2.3)."""
         timeout_s = self.options.hand_back_timeout_s
+        for target in self._targets.values():
+            target.sent_at = clock_start(target.sent_at, now)  # a clock set back (C9, PB-28)
         late = [
             key
             for key, target in self._targets.items()
@@ -3509,7 +3590,10 @@ class ControlUnit:
                 state = self._hass.states.get(check.entity_id)
                 value = temperature_from_state(state).value
                 rule = replace(check.rule, own=own)
-                if released(rule, value, reported_after=state is not check.before):
+                # The plugin's last value unknown: a report after the command, as ever.
+                carried = not self._wrote_setpoint and rule.release_from is not None
+                reported = carried or _reported_after(state, check)
+                if released(rule, value, reported_after=reported):
                     target.released = True
         self._hand_back_shown = self._shown_now()
 
@@ -3810,6 +3894,8 @@ class ControlUnit:
             return False
         if self._external_unseen_since is None:
             self._external_unseen_since = on_at  # the turn-on not seen since
+        # A clock set back (C9, PB-28): the exemption counts from now, not until it catches up.
+        self._external_unseen_since = clock_start(self._external_unseen_since, now)
         return now - self._external_unseen_since > PREVIOUS_EXEMPT_S
 
     def _external_lapsed(self, now: float) -> bool:
@@ -3857,7 +3943,8 @@ class ControlUnit:
         """Whether the read-backs show only the hand-back state: the gateway's released override
         (0), the hand-back value, the value from before the session (a timeout), or the external
         switch off — with an OpenTherm thermostat also its own request, where that field is
-        mapped. Without a known value to compare, never: the return does not come."""
+        mapped, else the value from before the session. Without a known value to compare,
+        never: the return does not come."""
         options = self.options
         read_back = self._confirmed()
         if read_back is None:
@@ -3867,6 +3954,16 @@ class ControlUnit:
             return True
         expected: float | None = None
         if options.write_path in OTGW_PATHS:
+            baseline = self._session.loop.setpoint.baseline
+            if (
+                options.topology is Topology.GATEWAY_WITH_THERMOSTAT
+                and not options.thermostat_setpoint_entity
+                and baseline is not None
+                and abs(read_back - baseline) <= TOLERANCE_K
+            ):
+                # PB-33: the gateway passes the thermostat's request on, not 0; its field not
+                # mapped, its request from before the session stands in (as for a timeout).
+                return True
             expected = 0.0
         elif options.hand_back is HandBack.VALUE and options.hand_back_value is not None:
             grid = self._grid()
@@ -4317,7 +4414,9 @@ class ControlUnit:
                 "minutes": "" if timer is None else f"{timer / MINUTE_S:.0f}",
             },
         )
-        asking = self._rest_off_zones(now, zones, out)
+        if self._holding:
+            self._relay_held = True
+        asking = self._rest_off_zones(now, zones, out) if self._relay_held else []
         rests_off = None if not asking else RELAY_RESTS_OFF_ISSUE
         self._rests_off_issue = self._show_relay_issue(
             f"{RELAY_RESTS_OFF_ISSUE}_{entry_id}",
@@ -4554,17 +4653,13 @@ class ControlUnit:
                     {"entity_id": zone_id, "learning_enabled": enabled},
                     blocking=True,
                 )
+        except asyncio.CancelledError as err:
+            if _cancelled_from_outside():
+                raise  # a real cancellation (a stop): it passes
+            # PB-35: raised inside SmartPI's service — a failed call, not ours to pass on.
+            return self._learning_failed(zone_id, enabled, err)
         except (HomeAssistantError, TimeoutError, vol.Invalid) as err:
-            if zone_id not in self._learning_failing:
-                action = "resume" if enabled else "pause"
-                _LOGGER.warning(
-                    "Could not %s SmartPI learning of %s; tried again every minute: %s",
-                    action,
-                    zone_id,
-                    err,
-                )
-            self._learning_failing.add(zone_id)
-            return False
+            return self._learning_failed(zone_id, enabled, err)
         except Exception:  # a learning pause must never break control; any other error is a bug
             if zone_id not in self._learning_failing:
                 _LOGGER.exception("Setting SmartPI learning of %s failed unexpectedly", zone_id)
@@ -4574,3 +4669,16 @@ class ControlUnit:
             _LOGGER.info("SmartPI learning of %s can be set again", zone_id)
             self._learning_failing.discard(zone_id)
         return True
+
+    def _learning_failed(self, zone_id: str, enabled: bool, err: BaseException) -> bool:
+        """A SmartPI call that failed: logged once until it works again; always ``False``."""
+        if zone_id not in self._learning_failing:
+            action = "resume" if enabled else "pause"
+            _LOGGER.warning(
+                "Could not %s SmartPI learning of %s; tried again every minute: %s",
+                action,
+                zone_id,
+                err,
+            )
+        self._learning_failing.add(zone_id)
+        return False

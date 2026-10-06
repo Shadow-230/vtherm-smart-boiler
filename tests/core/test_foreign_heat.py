@@ -52,6 +52,19 @@ def test_hold_after_the_source_stops_then_clear() -> None:
     assert not cleared.holding
 
 
+def test_a_clock_set_back_holds_foreign_heat_its_own_time_only() -> None:
+    """PB-28: the wall clock set back a day — the source's last heat counts from now, so the
+    hold lasts its own time, not a day more."""
+    on = update_foreign_heat(None, [(FIREPLACE, True)], now=86_400.0)
+    holding = update_foreign_heat(on, [(FIREPLACE, False)], now=0.0)
+    assert holding.holding
+    assert holding.last_active_at == 0.0
+    still = update_foreign_heat(holding, [(FIREPLACE, False)], now=DEFAULT_HOLD_S - 1)
+    assert still.holding
+    cleared = update_foreign_heat(still, [(FIREPLACE, False)], now=DEFAULT_HOLD_S)
+    assert not cleared.active
+
+
 def test_unknown_sources_are_listed_but_do_not_activate() -> None:
     state = update_foreign_heat(None, [(FIREPLACE, None), (STOVE, 20.0)], now=5.0)
     assert state == ForeignHeatState(False, (), ("switch.fireplace",), None)
