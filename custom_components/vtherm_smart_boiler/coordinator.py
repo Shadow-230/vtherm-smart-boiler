@@ -116,6 +116,7 @@ from .core.alarms import (
     unstable_ignition,
 )
 from .core.analysis import Analysis, analyse
+from .core.comfort_rules import heating_starts
 from .core.controller import OutageWindow, follow_outage
 from .core.critical_zone import CriticalZone, critical_zone
 from .core.daily import (
@@ -1267,6 +1268,16 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 translation_placeholders=placeholders,
             )
         return wanted
+
+    def heating_starts(self, now: float) -> tuple[float, ...] | None:
+        """The heating starts the comfort correction's rule 3 judges by (decision 11 of 0.2.3):
+        the burns of the last analysis seen to begin within its window — hot-water draws left
+        out, a burn of unknown kind counted. ``None`` before the first analysis or once it has
+        stopped: the correction then does not rise. They lag by up to one analysis."""
+        analysed = self.analysis
+        if analysed is None or now - analysed.at > ANALYSIS_BURNS_MAX_AGE_S:
+            return None
+        return heating_starts(analysed.day.burns, now)
 
     def dhw_now(self, snapshot: BoilerSnapshot) -> bool | None:
         """DHW running now: its own signal, else flame on without heating demand from the CH

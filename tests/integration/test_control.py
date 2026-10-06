@@ -10178,6 +10178,7 @@ async def test_the_comfort_correction_is_published(rig: Rig) -> None:
 
     short_room(rig)
     await start(rig, comfort_correction=True)  # off by default since K4.1
+    await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
     await rig.switch(True)
     assert correction(rig) == 0.0
     await rig.advance(3600, step=60)
@@ -10205,6 +10206,7 @@ async def test_the_reset_button_resets_the_comfort_correction(rig: Rig) -> None:
     what is left of the day's 3 K."""
     short_room(rig)
     await start(rig, comfort_correction=True)  # off by default since K4.1
+    await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
     await rig.switch(True)
     await rig.advance(3600, step=60)
     assert correction(rig) >= 1.5
@@ -10458,6 +10460,7 @@ async def test_a_fixed_circuit_is_judged_by_its_own_flow_sensor(rig: Rig, own_se
 async def test_a_reset_once_the_unit_stops_does_nothing(rig: Rig) -> None:
     short_room(rig)
     await start(rig, comfort_correction=True)  # off by default since K4.1
+    await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
     await rig.switch(True)
     await rig.advance(1860, step=60)
     assert rig.entry is not None

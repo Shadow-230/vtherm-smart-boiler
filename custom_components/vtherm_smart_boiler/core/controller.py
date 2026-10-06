@@ -66,14 +66,17 @@ rules of bounded learning (principle 13), each mapped:
    (provisional, K4).
 3. Other criteria: the rise only for a saturated zone short of its setpoint (comfort); none while
    another zone taking heat — an opening above 5 % or its device on — is more than 1 K too warm
-   (S-08); cycling not rising: not applicable in 0.2.2 (anti-cycling is decision 13's 0.3); every
+   (S-08); cycling not rising: the rise only while the boiler's heating starts since it began
+   are no more than in the same hours before it began, stepping back (the fall) while they are
+   more, no rise with the starts unknown (``core.comfort_rules``, decision 11 of 0.2.3); every
    limit kept: no rise while an upper cap (the hard maximum, the circuit's, the boiler's, the
    weather ceiling) or a clip holds the setpoint, the "at limit" timer paused meanwhile (S-25,
    T-48); stepping back: the fall.
 4. Good enough: the rise stops once no zone is 0.3 K short.
 5. Freezes: hot water and foreign heat — neither rise nor fall (foreign heat unknown freezes
    nothing); data gaps — held while the link is stale or no zone is known; hand-back — reset;
-   extreme weather — no agreed definition (open after 0.2.2).
+   extreme weather — the outdoor reading below the design outdoor temperature or changing faster
+   than 2 K per hour, or unknown (``core.comfort_rules``, decision 11 of 0.2.3).
 6. At the edge: "at limit" after 3 h at 3 K.
 7. Visible and resettable: published with each decision (the control state, diagnostics); reset
    at hand-back, at a session's end and by the user (``reset_correction``, the "Reset comfort
@@ -100,6 +103,15 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
+from .comfort_rules import (
+    Readings,
+    StartsBaseline,
+    extreme_weather,
+    follow_baseline,
+    follow_outdoor,
+    may_rise,
+    starts_rose,
+)
 from .curve import (
     DEFAULT_HOLD_S,
     DEFAULT_TIME_CONSTANT_S,
@@ -280,6 +292,10 @@ class ControlInputs:
     # Foreign heat warms a zone (the monitor's view): the comfort correction freezes. ``None``:
     # not known — no freeze.
     foreign_heat: bool | None = None
+    # The boiler's heating starts within ``comfort_rules.STARTS_WINDOW_S`` up to ``now``
+    # (``comfort_rules.heating_starts``), for the comfort correction's rule 3. ``None``: not
+    # known — the correction does not rise.
+    starts: tuple[float, ...] | None = None
     # Decision 3: the last command V3 stored, given again at once after a restart where the
     # control unit found every condition for it; kept with its keep-alives while the
     # recognition period runs. ``target_ready``: the write target can take it — until it can,
@@ -321,6 +337,12 @@ class ControlState:
     # The correction's rises within the last day, (time, K): at most ``CORRECTION_DAY_K``. Kept
     # through a hand-back (the day's rate is not reset by one); a new session starts afresh.
     rises: tuple[tuple[float, float], ...] = ()
+    # Rule 3 (decision 11 of 0.2.3): when the correction began and the starts before it; kept
+    # through a hand-back, a reset and a new session until it has stayed at 0 for the window.
+    starts_baseline: StartsBaseline | None = None
+    # Rule 5: the outdoor readings of the last hour, at every step — a fact about the weather,
+    # kept through a hand-back and a new session; empty after a restart.
+    outdoor_seen: Readings = ()
     # VT's activation delay (decision 5): seconds a pending start has waited (``None``: none
     # pending), and the step it was last counted or paused at.
     activation_s: float | None = None
@@ -517,6 +539,7 @@ def decide(
         config.outdoor_time_constant_s,
         config.outdoor_hold_s,
     )
+    seen = follow_outdoor(state.outdoor_seen, _outdoor_reading(inputs), now)
     link = follow_link(state, inputs, config)
     watch = follow_zones(
         state.zones,
@@ -526,7 +549,12 @@ def decide(
         starting=HA_STARTING in inputs.blockers,
     )
     state = replace(
-        state, outdoor=outdoor, link=link, link_unreported=inputs.link_unreported, zones=watch
+        state,
+        outdoor=outdoor,
+        outdoor_seen=seen,
+        link=link,
+        link_unreported=inputs.link_unreported,
+        zones=watch,
     )
     recognition = in_recognition(watch)
     if not recognition:
@@ -852,12 +880,13 @@ def _heating_decision(
         # An upper cap — the hard maximum, the circuit's, the boiler's, the weather ceiling — or
         # a clip holds the setpoint: a rise could not show, so it is not learned (S-25).
         held = inputs.clipped or curve_value + state.correction >= upper - _EPSILON
-        correction, rises = _correction(state, inputs, config, held)
+        correction, rises, baseline = _correction(state, inputs, config, held)
         state = replace(
             state,
             heat_s=0.0,
             water_s=0.0,
             rises=rises,
+            starts_baseline=baseline,
             correction_limit_s=_limit_time(state, correction, held),
         )
         if correction > 0:
@@ -1037,18 +1066,35 @@ def _taking_heat(zone: ZoneState) -> bool:
     return zone.device_active is True or (opening is not None and opening > ZONE_OPEN)
 
 
+def _outdoor_reading(inputs: ControlInputs) -> float | None:
+    """The outdoor reading the curve takes now: the sensor's, else the weather entity's."""
+    return inputs.outdoor_sensor if inputs.outdoor_sensor is not None else inputs.outdoor_weather
+
+
 def _correction(
     state: ControlState, inputs: ControlInputs, config: ControlConfig, held: bool
-) -> tuple[float, tuple[tuple[float, float], ...]]:
+) -> tuple[float, tuple[tuple[float, float], ...], StartsBaseline | None]:
     """The comfort correction for this water decision, within its firm band (bounded learning),
-    and the rises within the last day. ``held``: a cap or a clip holds the setpoint — no rise.
-    Frozen — neither rise nor fall — while hot water runs or foreign heat warms a zone."""
+    the rises within the last day and rule 3's baseline. ``held``: a cap or a clip holds the
+    setpoint — no rise. Frozen — neither rise nor fall — while hot water runs, foreign heat warms
+    a zone or the weather is extreme or unknown (rule 5); rising only while the starts are known
+    and do not rise, stepping back while they do (rule 3)."""
     now = inputs.now
     rises = tuple((t, k) for t, k in state.rises if abs(now - t) < DAY)
     if not config.comfort_correction:
-        return 0.0, rises
-    if inputs.dhw is True or inputs.foreign_heat is True:
-        return state.correction, rises
+        return 0.0, rises, None
+    baseline = state.starts_baseline
+    if (
+        inputs.dhw is True
+        or inputs.foreign_heat is True
+        or extreme_weather(
+            state.outdoor_seen, _outdoor_reading(inputs), now, config.curve.design_outdoor
+        )
+    ):
+        return state.correction, rises, baseline
+    baseline = follow_baseline(baseline, state.correction, now)
+    starts = inputs.starts
+    rose = starts is not None and baseline is not None and starts_rose(baseline, starts, now)
     known = [
         z
         for z in inputs.zones
@@ -1061,11 +1107,11 @@ def _correction(
     opened = [z for z in known if z.demand is not None]  # no opening: never blocks the fall
     satisfied = bool(opened) and all(z.demand is not None and z.demand < SATISFIED for z in opened)
     correction = state.correction
-    if too_warm or (satisfied and not short):
+    if too_warm or (satisfied and not short) or rose:
         correction -= 2.0 * state.water_s / CORRECTION_RISE_S
-    elif short and not held:
+    elif short and not held and starts is not None and may_rise(baseline, starts, now):
         # Only while heat flows; never while a cap or the boiler holds the water; at most
-        # ``CORRECTION_DAY_K`` within a day.
+        # ``CORRECTION_DAY_K`` within a day; the first rise keeps the starts before it.
         spent = sum(k for _t, k in rises)
         rise = min(
             state.heat_s / CORRECTION_RISE_S,
@@ -1073,11 +1119,13 @@ def _correction(
             CORRECTION_MAX_K - correction,
         )
         if rise > _EPSILON:
+            if baseline is None:
+                baseline = StartsBaseline(now, tuple(t for t in starts if t < now))
             correction += rise
             rises = (*rises, (now, rise))
     if correction > CORRECTION_MAX_K - _EPSILON:
         correction = CORRECTION_MAX_K  # the band's edge, not a rounding error below it
-    return max(0.0, correction), rises
+    return max(0.0, correction), rises, baseline
 
 
 def _limit_time(state: ControlState, correction: float, held: bool) -> float:

@@ -2985,6 +2985,7 @@ class ControlUnit:
             zones=tuple(zones),
             foreign_heat=self._foreign_heat(),
             boiler_fault=self._boiler_fault(now, snapshot),
+            starts=coordinator.heating_starts(now),
         )
 
     def _foreign_heat(self) -> bool | None:

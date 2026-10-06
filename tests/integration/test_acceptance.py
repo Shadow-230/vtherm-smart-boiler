@@ -976,7 +976,8 @@ async def test_the_comfort_correction_stays_within_3_k(rig: Rig) -> None:
     base = attributes["target"]
     rig.sim.plant.targets[0] = 30.0  # out of reach: its valve stays fully open
     targets = []
-    for _ in range(60):  # five hours
+    # Six hours: the first reads the weather (rule 5 judges its rate by an hour of readings).
+    for _ in range(72):
         await rig.advance(300, step=30.0)
         targets.append(rig.state("sensor", "control_state").attributes["target"])
     assert max(targets) > base + 1.0  # the correction worked

@@ -9,6 +9,7 @@ import pytest
 from custom_components.boiler_sim.profiles import BOILERS, HOUSES, BoilerProfile, radiator_zones
 
 from custom_components.vtherm_smart_boiler.control_config import parse_control
+from custom_components.vtherm_smart_boiler.core.comfort_rules import STARTS_WINDOW_S
 from custom_components.vtherm_smart_boiler.core.controller import ControlConfig, ControlInputs
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.cycles import find_burns
@@ -61,12 +62,24 @@ class LoopController:
     switches: list[tuple[float, bool]] = field(default_factory=list)  # heating on/off writes
     hand_backs: list[float] = field(default_factory=list)
     heating: list[tuple[float, bool | None, bool]] = field(default_factory=list)  # t, on, called
+    # The heating starts seen (the comfort correction's rule 3), as the coordinator gives them:
+    # the flame seen going on without hot water, within the window.
+    flame_seen: bool | None = None
+    started: list[float] = field(default_factory=list)
 
     def writes(self, start: float, end: float) -> list[tuple[float, object]]:
         """Every setpoint and heating write ``loop_step`` asked for in ``[start, end)``."""
         return sorted(
             (t, value) for t, value in [*self.setpoints, *self.switches] if start <= t < end
         )
+
+    def _starts(self, t: float, view: SimView, link: bool) -> tuple[float, ...] | None:
+        flame = view.flame if link else None
+        if flame is True and self.flame_seen is False and not view.dhw:
+            self.started.append(t)
+        self.flame_seen = flame
+        self.started = [s for s in self.started if t - s <= STARTS_WINDOW_S]
+        return tuple(self.started) if link else None
 
     def __call__(self, t: float, view: SimView) -> SimCommand | None:
         link = self.link(t)
@@ -78,6 +91,7 @@ class LoopController:
             dhw=view.dhw if link else None,
             outdoor_sensor=view.outdoor if link else None,
             zones=tuple(zone_state(z, t) for z in view.zones),
+            starts=self._starts(t, view, link),
         )
         confirmed = view.confirmed_setpoint if link else None
         self.state, out = loop_step(self.state, inputs, confirmed, self.config)
@@ -339,7 +353,9 @@ def test_tpi_switch_zones_starts_per_hour_with_the_defaults(mean: float) -> None
         "K4.1 (S-15): the comfort correction, when switched on, rises to +3 K while a TPI zone "
         "sits at full duty short of its target, and every zone's cycle then stops the burner: "
         "x1.75 at +8 °C, x5 at -5 °C (research/2026-10-02-z3-starts-ratio.md) — why it is off "
-        "by default"
+        "by default. Rule 3 (decision 11 of 0.2.3) leaves it so: the hours before the "
+        "correction began, the house warming up, show as many starts as after "
+        "(research/2026-10-06-p2-4-report.md)"
     ),
 )
 @pytest.mark.parametrize("mean", [8.0, -5.0])

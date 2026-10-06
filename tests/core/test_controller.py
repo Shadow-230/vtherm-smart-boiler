@@ -71,11 +71,18 @@ def inputs(t: float, **kw) -> ControlInputs:
     kw.setdefault("dhw", False)
     kw.setdefault("outdoor_sensor", 5.0)
     kw.setdefault("zones", (zone(t),))
+    kw.setdefault("starts", ())  # rule 3: the starts known, none (the flame steady)
     return ControlInputs(now=t, **kw)
 
 
 def run(steps, config: ControlConfig = CONFIG, state: ControlState | None = None):
+    """The steps from ``state``. Rule 5 judges the outdoor temperature's rate by an hour of
+    readings: one without any is given the first step's reading an hour before it — the
+    comfort correction's own rule 5 tests start without."""
     state = state or ControlState()
+    first = steps[0].outdoor_sensor if steps else None
+    if not state.outdoor_seen and first is not None:
+        state = replace(state, outdoor_seen=((steps[0].now - HOUR, first),))
     decisions = []
     for step in steps:
         state, decision = decide(state, step, config)
@@ -2091,6 +2098,7 @@ def test_the_correction_rises_at_most_3_k_a_day() -> None:
     state, _ = run(minutes(8220.0, 60, lambda t: (short(t),)), WATER, state)
     assert state.correction == 0.0  # the day's rise is spent
     next_day = 86400.0 + 5460.0
+    state = replace(state, outdoor_seen=())  # the hour before it read (rule 5)
     state, _ = run(minutes(next_day, 30, lambda t: (short(t),)), WATER, state)
     assert state.correction == pytest.approx(1.0)
 
@@ -2144,6 +2152,115 @@ def test_the_decision_carries_the_correction() -> None:
     assert decisions[-1].correction == pytest.approx(1.0) == state.correction
     _state, [off] = run([inputs(1900.0, enabled=False)], WATER, state)
     assert off.correction == 0.0
+
+
+# --- Decision 11 of 0.2.3 (SB-11): principle 13's rules 3 and 5 --------------------------------
+
+
+def short_with_starts(start: float, count: int, starts: tuple[float, ...]) -> list[ControlInputs]:
+    """A step a minute, a zone short, the flame on; the starts seen up to each step."""
+    return [
+        inputs(t, zones=(short(t),), flame=True, starts=tuple(x for x in starts if x <= t))
+        for t in (start + m * 60.0 for m in range(count))
+    ]
+
+
+def test_rule_3_the_correction_rises_while_the_starts_do_not_rise() -> None:
+    """As many starts since it began as in the same hours before it — equal spans, each
+    start counted once its span reaches it: it rises."""
+    state, _ = run(short_with_starts(0.0, 31, (-1200.0, 1400.0)), WATER)
+    assert state.correction == pytest.approx(1.0)
+    assert state.starts_baseline is not None
+    assert state.starts_baseline.before == (-1200.0,)  # the starts before it began
+
+
+def test_rule_3_the_correction_steps_back_while_the_starts_rise() -> None:
+    """A start after it began, none in the same hours before: it falls at its fall rate, and a
+    rise after it reached 0 is judged against the same hours — no rise while they still show
+    more starts."""
+    state, _ = run(short_with_starts(0.0, 31, ()), WATER)
+    assert state.correction == pytest.approx(1.0)
+    began = state.starts_baseline
+    assert began is not None
+    state, decisions = run(short_with_starts(1860.0, 20, (1900.0,)), WATER, state)
+    assert decisions[1].correction < 1.0  # stepping back from the step after the start
+    assert state.correction == 0.0
+    state, _ = run(short_with_starts(3060.0, 30, (1900.0,)), WATER, state)
+    assert state.correction == 0.0
+    assert state.starts_baseline is not None
+    assert state.starts_baseline.began == began.began  # the same hours, not new ones
+
+
+def test_rule_3_unknown_starts_never_raise_the_correction() -> None:
+    """Negative: the starts unknown — no rise; the fall goes on."""
+    state, _ = run(minutes(0.0, 31, lambda t: (short(t),), starts=None), WATER)
+    assert state.correction == 0.0
+    assert state.starts_baseline is None
+    start = replace(ControlState(), correction=2.0)
+    state, _ = run(minutes(0.0, 10, lambda t: (satisfied(t),), starts=None), WATER, start)
+    assert state.correction < 2.0
+
+
+def test_rules_3_and_5_change_nothing_with_the_correction_off() -> None:
+    """Negative: the correction off — 0, no baseline, whatever the starts and the weather."""
+    off = replace(WATER, comfort_correction=False)
+    for kw in ({"starts": (100.0,)}, {"starts": None}, {"outdoor_sensor": -20.0}):
+        state, _ = run(minutes(0.0, 31, lambda t: (short(t),), **kw), off)
+        assert state.correction == 0.0, kw
+        assert state.starts_baseline is None, kw
+
+
+def hour_read(values: Callable[[float], float]) -> tuple[tuple[float, float], ...]:
+    """Readings every 5 minutes over the hour before 0."""
+    return tuple((t, values(t)) for t in (-3600.0 + 300.0 * k for k in range(12)))
+
+
+def falls_from_2k(seen: tuple[tuple[float, float], ...], **kw: float | None) -> float:
+    """The correction after ten minutes with every zone satisfied, from 2 K."""
+    start = ControlState(correction=2.0, outdoor_seen=seen)
+    steps = minutes(0.0, 10, lambda t: (satisfied(t),), **kw)
+    state, _ = run(steps, WATER, start)
+    return state.correction
+
+
+def test_rule_5_extreme_weather_freezes_the_correction() -> None:
+    """Below the design outdoor temperature (-15 °C), or changing faster than 2 K per hour —
+    falling or rising: neither fall nor rise. Negatives: steady weather, a slow change, the
+    design temperature itself — it falls."""
+    assert falls_from_2k(hour_read(lambda _t: 5.0)) < 2.0
+    assert falls_from_2k(hour_read(lambda t: 5.0 - t / 3600.0)) < 2.0  # 1 K per hour
+    assert falls_from_2k(hour_read(lambda t: 5.0 - 3.0 * t / 3600.0)) == 2.0  # 3 K per hour
+    assert falls_from_2k(hour_read(lambda t: 5.0 + 3.0 * t / 3600.0)) == 2.0
+    cold = hour_read(lambda _t: -16.0)
+    assert falls_from_2k(cold, outdoor_sensor=-16.0) == 2.0
+    design = hour_read(lambda _t: -15.0)
+    assert falls_from_2k(design, outdoor_sensor=-15.0) < 2.0
+    start = ControlState(correction=1.0, outdoor_seen=cold)
+    state, _ = run(minutes(0.0, 31, lambda t: (short(t),), outdoor_sensor=-16.0), WATER, start)
+    assert state.correction == 1.0  # no rise either
+
+
+def test_rule_5_unknown_weather_freezes_the_correction() -> None:
+    """No reading, or less than an hour of readings to judge the rate by: frozen. Negative: the
+    weather entity's reading serves without the sensor."""
+    steady = hour_read(lambda _t: 5.0)
+    assert falls_from_2k(steady, outdoor_sensor=None) == 2.0
+    assert falls_from_2k(steady[6:]) == 2.0  # half an hour of readings
+    assert falls_from_2k((), outdoor_sensor=None) == 2.0
+    assert falls_from_2k(steady, outdoor_sensor=None, outdoor_weather=5.0) < 2.0
+
+
+def test_rule_5_the_first_hour_after_a_start_reads_the_weather() -> None:
+    """After a restart no reading is kept: the correction waits an hour of readings, then
+    rises; the readings are followed whatever control does."""
+    state = ControlState()
+    for step in minutes(0.0, 31, lambda t: (short(t),)):
+        state, _ = decide(state, step, WATER)
+    assert state.correction == 0.0
+    assert state.outdoor_seen[0] == (0.0, 5.0)
+    for step in minutes(1860.0, 60, lambda t: (short(t),)):
+        state, _ = decide(state, step, WATER)
+    assert 0.5 < state.correction < 1.5  # rising from the hour on
 
 
 # --- X8: on/off control through a relay (class 3) ---------------------------------------------

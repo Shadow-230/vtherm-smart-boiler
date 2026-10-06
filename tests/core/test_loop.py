@@ -6,7 +6,12 @@ from dataclasses import replace
 
 import pytest
 
-from custom_components.vtherm_smart_boiler.core.controller import ControlConfig, ControlInputs
+from custom_components.vtherm_smart_boiler.core.comfort_rules import StartsBaseline
+from custom_components.vtherm_smart_boiler.core.controller import (
+    ControlConfig,
+    ControlInputs,
+    ControlState,
+)
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.guards import (
     DAY,
@@ -152,6 +157,19 @@ def test_a_new_session_keeps_only_the_one_rewrite() -> None:
     assert fresh.setpoint == GuardState(rewritten_at=0.0)
     assert fresh.switch == GuardState()
     assert new_session(state, DAY).setpoint == GuardState()
+
+
+def test_a_new_session_keeps_the_comfort_corrections_weather_and_starts() -> None:
+    """Decision 11 of 0.2.3: the outdoor readings (rule 5) and the starts baseline (rule 3)
+    are kept through a new session; the correction itself starts afresh."""
+    baseline = StartsBaseline(100.0, (50.0,), zero_since=200.0)
+    control = ControlState(
+        correction=2.0, starts_baseline=baseline, outdoor_seen=((0.0, 5.0), (300.0, 5.0))
+    )
+    fresh = new_session(LoopState(control=control), 400.0).control
+    assert fresh.starts_baseline == baseline
+    assert fresh.outdoor_seen == control.outdoor_seen
+    assert fresh.correction == 0.0
 
 
 def test_a_new_session_keeps_the_boiler_link_window() -> None:
@@ -327,7 +345,8 @@ def test_a_clip_is_never_learned_as_a_limit() -> None:
         state = LoopState(setpoint=GuardState(clip=clip))
         t = 0.0
         while t <= 7200.0:
-            step = inputs(t, zones=(short_zone(t),), flame=True)  # heat flows (S-24)
+            # Heat flows (S-24); no start (rule 3); the first hour reads the outdoor (rule 5).
+            step = inputs(t, zones=(short_zone(t),), flame=True, starts=())
             state, _ = loop_step(state, step, None, config)
             t += 10.0
         assert (state.control.correction > 0.0) is rises

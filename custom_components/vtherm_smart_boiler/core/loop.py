@@ -155,11 +155,18 @@ def new_session(state: LoopState, now: float) -> LoopState:
     """A new session: everything afresh but each guard's one rewrite, kept for its day, the
     boiler link's window and the zones' watch — facts about the link and the zones, not the
     session: switching control off and on does not make a lost link fresh (X2), nor start the
-    recognition period again or drop a zone's last answer in its grace (decision 3)."""
+    recognition period again or drop a zone's last answer in its grace (decision 3) — and the
+    comfort correction's outdoor readings and starts baseline (rules 3 and 5, decision 11 of
+    0.2.3): the weather's last hour stays known, and a new session's rise is judged against the
+    hours before the last one began until it has stayed at 0 for the window."""
     control = state.control
     return LoopState(
         control=ControlState(
-            link=control.link, link_unreported=control.link_unreported, zones=control.zones
+            link=control.link,
+            link_unreported=control.link_unreported,
+            zones=control.zones,
+            starts_baseline=control.starts_baseline,
+            outdoor_seen=control.outdoor_seen,
         ),
         setpoint=for_new_session(state.setpoint, now),
         switch=for_new_session(state.switch, now),

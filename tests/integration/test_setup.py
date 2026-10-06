@@ -1984,6 +1984,8 @@ async def test_burns_are_classified_per_analysis(
     coordinator.analysis = None  # as before the first analysis
     coordinator._alarms = {}
     calls.clear()
+    now = dt_util.utcnow().timestamp()
+    assert coordinator.heating_starts(now) is None  # the comfort correction's rule 3: unknown
     await coordinator.async_refresh()
     assert calls == []  # the quick path classifies nothing
     starts = coordinator.data.alarms[AlarmKind.FREQUENT_STARTS]
@@ -1997,9 +1999,13 @@ async def test_burns_are_classified_per_analysis(
     starts = coordinator.data.alarms[AlarmKind.FREQUENT_STARTS]
     assert starts.active is True
     assert starts.value == 15  # the starts of the last hour, from the analysis' burns
+    seen = coordinator.heating_starts(dt_util.utcnow().timestamp())
+    assert seen is not None
+    assert len(seen) == 20  # rule 3's two hours hold every burn
     # An analysis that has stopped for three runs judges nothing: the alarm holds (S-16).
     now = dt_util.utcnow().timestamp()
     coordinator.analysis = replace(coordinator.analysis, at=now - 3 * 300 - 1)
+    assert coordinator.heating_starts(now) is None  # stopped: rule 3 does not judge
     await coordinator.async_refresh()
     starts = coordinator.data.alarms[AlarmKind.FREQUENT_STARTS]
     assert (starts.active, starts.reason) == (True, HELD)
