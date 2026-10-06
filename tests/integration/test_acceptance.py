@@ -1358,6 +1358,56 @@ async def test_a_dhw_draw_under_control_raises_no_outside_change(rig: Rig) -> No
     }
 
 
+GUARD_ALARMS = ("write_failed", "write_ignored", "outside_change", "commands_lost")
+
+
+def zones_calling(rig: Rig) -> bool:
+    """VT's demand as the plugin reads it: a thermostat whose device heats now."""
+    for entity_id in rig.zones.entities.values():
+        state = rig.hass.states.get(entity_id)
+        if state is not None and state.attributes.get("hvac_action") == "heating":
+            return True
+    return False
+
+
+@pytest.mark.parametrize("outdoor", [8.0, -5.0])
+async def test_tpi_zones_under_control_with_the_heating_read_back(rig: Rig, outdoor: float) -> None:
+    """TB-09: the simulator's TPI stand-in drives VT-like switch zones — each open for its
+    on-percent of every 5-minute cycle, so VT's demand pulses — and the heating switch is read
+    back from the boiler's "Central heating 1". Twelve hours, mild and cold: the plugin's own
+    heating toggles are never judged an outside change or an ignored write, nothing latches,
+    and every heating write follows VT's demand as the step read it."""
+    await start(rig, sim={"outdoor": outdoor, "valves": "tpi"}, ch_confirmed_entity=CH_ENABLED)
+    await rig.switch(True)
+    mismatched: list[tuple[float, object, bool]] = []
+    behind: list[float] = []  # steps after which the last heating write is not the demand
+    raised: set[str] = set()
+    latched: set[str] = set()
+    seen = len(rig.gateway("ch"))
+    for _ in range(12 * 360):
+        calling = zones_calling(rig)  # what the next step reads
+        await rig.advance(10)
+        ch = rig.gateway("ch")
+        mismatched += [(t, v, calling) for t, _k, v in ch[seen:] if bool(v) is not calling]
+        seen = len(ch)
+        if not ch or bool(ch[-1][2]) is not calling:
+            behind.append(rig.now())
+        raised |= {
+            a for a in GUARD_ALARMS if rig.state("binary_sensor", f"alarm_{a}").state == "on"
+        }
+        control_state = rig.state("sensor", "control_state")
+        latched |= set(control_state.attributes["latched_by"])
+        assert control_state.state in ("heating", "idle")
+    writes = rig.gateway("ch")
+    toggles = sum(1 for a, b in pairwise(writes) if a[2] != b[2])
+    assert toggles >= 12 * 3  # VT's demand pulses: the heating switch follows it
+    assert mismatched == []
+    assert behind == []
+    assert raised == set()
+    assert latched == set()
+    assert rig.sim.commands.dhw_enable_writes == 0
+
+
 @pytest.mark.parametrize("kind", ["on_off", "unknown"])
 async def test_otgw_on_off_thermostat_heats_after_an_unclean_exit_while_off(
     rig: Rig, kind: str

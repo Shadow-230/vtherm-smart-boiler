@@ -20,8 +20,10 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from homeassistant.components.climate import ClimateEntity, ClimateEntityFeature, HVACMode
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import UnitOfTemperature
 from homeassistant.core import Context, HomeAssistant, ServiceCall, State, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
@@ -1136,6 +1138,81 @@ async def test_a_cancel_inside_smartpi_does_not_break_the_stop(
     assert await hass.config_entries.async_unload(rig.entry.entry_id)
     await hass.async_block_till_done()
     assert _logged(caplog, logging.WARNING, "Could not resume SmartPI learning") == 1
+
+
+@pytest.mark.parametrize("inner_cancel", [False, True])
+async def test_a_smartpi_error_is_logged_once_and_its_recovery_once(
+    rig: Rig, caplog: pytest.LogCaptureFixture, inner_cancel: bool
+) -> None:
+    """TB-07 (P21-90, PB-35): the pause goes through; SmartPI's service then raises twice on the
+    resume — an unexpected error (a bug in it) or a ``CancelledError`` raised inside it — and
+    then works. Control goes on controlling; the failure is logged once (the unexpected error
+    with its trace), its recovery once; the resume is sent again every minute until SmartPI's
+    flag reads on; the unload completes and calls nothing more. (A pause that does not take is
+    not sent again: it is no longer the plugin's.)"""
+    hass = rig.hass
+    calls: list[bool] = []
+    failures = 0
+
+    def smartpi(learning: bool) -> None:
+        rig.zones.set(
+            "living",
+            hvac_action="heating",
+            valve_open_percent=60,
+            on_percent=0.6,
+            configuration={"proportional_function": "smartpi"},
+            specific_states={"smartpi_learning_enabled": learning},
+        )
+
+    async def set_learning(call: ServiceCall) -> None:
+        nonlocal failures
+        calls.append(call.data["learning_enabled"])
+        if call.data["learning_enabled"] and failures < 2:
+            failures += 1
+            if inner_cancel:
+                raise asyncio.CancelledError
+            raise RuntimeError("a bug in SmartPI")
+        smartpi(call.data["learning_enabled"])
+
+    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    zone = rig.zones.entities["living"]
+    smartpi(True)
+    await start(rig)
+    await rig.switch(True)
+    rig.dhw = True
+    await rig.advance(10)
+    assert calls == [False]
+    state = rig.state("sensor", "control_state")
+    assert state.attributes["learning_paused"] == [zone]
+    rig.dhw = False
+    rig.flow = EXPECTED  # the water back at its setpoint: the pause may end
+    for _ in range(15):
+        await rig.advance(60)
+        smartpi(len(calls) == 4)  # the zone reports again: on once the fourth call took
+        if len(calls) == 4:
+            break
+    assert calls == [False, True, True, True]  # the resume sent again until it took
+    gateway_calls = len(rig.gateway.calls)
+    await rig.advance(60)
+    assert unit_of(rig)._session.learning.resuming == {}  # read back on: no longer followed
+    assert calls == [False, True, True, True]
+    assert rig.state("sensor", "control_state").state == "heating"  # control went on
+    assert len(rig.gateway.calls) > gateway_calls
+    errors = [r for r in caplog.records if "SmartPI learning of" in r.getMessage()]
+    if inner_cancel:
+        assert _logged(caplog, logging.WARNING, "Could not resume SmartPI learning") == 1
+        assert not any(r.levelno >= logging.ERROR for r in errors)
+    else:
+        assert _logged(caplog, logging.ERROR, "failed unexpectedly") == 1
+        (failed,) = (r for r in errors if r.levelno == logging.ERROR)
+        assert failed.exc_info is not None
+        assert isinstance(failed.exc_info[1], RuntimeError)
+        assert _logged(caplog, logging.WARNING, "SmartPI learning") == 0
+    assert _logged(caplog, logging.INFO, "can be set again") == 1
+    assert rig.entry is not None
+    assert await hass.config_entries.async_unload(rig.entry.entry_id)
+    await hass.async_block_till_done()
+    assert calls == [False, True, True, True]  # nothing paused: nothing to resume
 
 
 async def test_a_failing_listener_does_not_stop_the_others(
@@ -12734,6 +12811,93 @@ async def test_a_relay_boiler_thermostat_without_both_modes_blocks_control(
     rig.hass.states.async_set("climate.boiler", "off", {"hvac_modes": ["off", "heat"]})
     await rig.advance(10)
     assert "relay_climate_modes" not in blockers(rig)
+
+
+CLIMATE_RELAY = "climate.fake_boiler_thermostat"
+
+
+class _ClimateRelay(ClimateEntity):
+    """A boiler thermostat entity as the relay — a real climate entity with the modes off and
+    heat that reports its state; ``calls``: the modes the plugin's calls set."""
+
+    _attr_should_poll = False
+    _attr_name = "Fake boiler thermostat"
+    _attr_unique_id = "fake_boiler_thermostat"
+    _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_supported_features = ClimateEntityFeature.TURN_OFF | ClimateEntityFeature.TURN_ON
+
+    def __init__(self) -> None:
+        self.entity_id = CLIMATE_RELAY
+        self._attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
+        self._attr_hvac_mode = HVACMode.OFF
+        self.calls: list[str] = []
+
+    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        self.calls.append(hvac_mode.value)
+        self._attr_hvac_mode = hvac_mode
+        self.async_write_ha_state()
+
+    def person(self, mode: HVACMode) -> None:
+        """A person sets it on the device itself: a report with a context of its own."""
+        self._attr_hvac_mode = mode
+        self.async_set_context(Context())
+        self.async_write_ha_state()
+
+
+async def test_a_boiler_thermostat_relay_follows_vt_and_judges_only_a_persons_change(
+    rig: Rig,
+) -> None:
+    """TB-11: a real climate entity on the test platform (modes off and heat, reporting its
+    state) as the relay. Control follows a zone that calls and stops with
+    ``climate.set_hvac_mode`` heat and off; an hour of the plugin's own changes is never judged
+    an outside change. Commanded off, a person sets it to heat: written back once; the second
+    time within a day the plugin steps aside — the rest state "off" written once (answer C)."""
+    from homeassistant.setup import async_setup_component
+    from pytest_homeassistant_custom_component.common import setup_test_component_platform
+
+    hass = rig.hass
+    relay = _ClimateRelay()
+    setup_test_component_platform(hass, "climate", [relay])
+    assert await async_setup_component(hass, "climate", {"climate": {"platform": "test"}})
+    await hass.async_block_till_done()
+    assert hass.states.get(CLIMATE_RELAY).state == "off"
+    rig.zones.set("living")  # not calling
+    await start_relay(rig, relay_entity=CLIMATE_RELAY)
+    await rig.switch(True)
+    await rig.advance(START_TRACE_S)
+    assert relay.calls == []  # it reads "off" already
+    for _ in range(6):  # an hour: the zone calls and stops every five minutes
+        for zone_calls in (True, False):
+            if zone_calls:
+                calling(rig)
+            else:
+                rig.zones.set("living")
+            await rig.advance(300)
+            state = rig.state("sensor", "control_state")
+            assert state.state == ("heating" if zone_calls else "idle")
+            assert state.attributes["relay_state"] == ("on" if zone_calls else "off")
+            assert state.attributes["relay_check"] == "confirmed"
+            assert state.attributes["latched_by"] == []
+            for kind in ("outside_change", "write_ignored", "write_failed", "commands_lost"):
+                assert control_alarm(rig, kind) == "off", kind
+    assert relay.calls == ["heat", "off"] * 6  # each change once, never repeated
+    assert hass.states.get(CLIMATE_RELAY).state == "off"
+    assert issue(rig, "control_latched") is None
+    written = len(relay.calls)
+    relay.person(HVACMode.HEAT)
+    await rig.advance(10)
+    assert relay.calls[written:] == ["off"]  # rewritten once
+    await rig.advance(130)  # past the rewrite's own confirmation window
+    relay.person(HVACMode.HEAT)
+    await rig.advance(20)
+    assert relay.calls[written:] == ["off", "off"]  # the rest state, once
+    relay.person(HVACMode.HEAT)
+    await rig.advance(600)
+    assert relay.calls[written:] == ["off", "off"]  # left alone
+    assert rig.state("sensor", "control_state").state == "handed_back"
+    found = issue(rig, "control_latched")
+    assert found is not None
+    assert found.translation_key == "control_latched_relay_off"
 
 
 async def test_the_relay_path_needs_no_boiler_signal_but_the_water_path_does(

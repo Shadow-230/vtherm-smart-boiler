@@ -245,6 +245,41 @@ def test_a_lapse_after_our_own_silence_is_resent_not_rewritten() -> None:
     assert result.state.rewritten_at is None  # the one rewrite is kept for another controller
 
 
+@pytest.mark.parametrize(
+    ("now", "start_done", "judged"),
+    [
+        (71.0, False, ChangeClass.OWN_LAPSE),  # 61 s of silence: more than 2 keep-alives
+        (71.0, True, ChangeClass.OWN_LAPSE),
+        (69.0, False, ChangeClass.FAILED_ATTEMPT),  # 59 s: the fall-back rows judge it
+        (69.0, True, ChangeClass.LOST_COMMAND),
+    ],
+)
+def test_own_lapse_starts_just_past_two_keepalives_of_silence(
+    now: float, start_done: bool, judged: ChangeClass
+) -> None:
+    """TB-10: an expiring setpoint confirmed and last written at 10 s (keep-alive 30 s), nothing
+    desired since; the read-back shows the value from before the plugin (the baseline). At 71 s
+    (61 s of silence) the override lapsed in the plugin's own silence: sent again, not judged;
+    at 69 s (59 s) it did not, and the fall-back rows judge it — a failed attempt in the start
+    phase, a lost command after it."""
+    assert EXPIRING.keepalive_s == 30.0
+    state, action, _ = step(GuardState(), 45.0, 40.0, 10.0, EXPIRING)
+    assert action == WriteAction(45.0, WriteKind.CHANGE)
+    for t in (20.0, 30.0, 40.0, 50.0, 60.0):  # confirmed; stale data: nothing desired
+        state, action, events = step(state, None, 45.0, t, EXPIRING)
+        assert action is None
+        assert events == ()
+    assert state.written_at == 10.0
+    if start_done:
+        state = replace(state, start_done=True)
+    result = result_of(state, 45.0, 40.0, now, EXPIRING)
+    assert result.judged is judged
+    assert result.action == WriteAction(45.0, WriteKind.RESEND)
+    assert result.events == ()
+    assert result.lost is (judged is ChangeClass.LOST_COMMAND)
+    assert result.state.failed_attempts == (1 if judged is ChangeClass.FAILED_ATTEMPT else 0)
+
+
 def test_nothing_desired_writes_nothing() -> None:
     _, action, _ = step(GuardState(), None, None, 0.0, EXPIRING)
     assert action is None
