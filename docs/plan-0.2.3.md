@@ -121,7 +121,7 @@ and VT's not-started zones read as the user's "off".
 | 2.1 | `SCOPE.md` and the plans take decisions 5, 7–11, 13 and 14 (SB-04, SB-07, SB-08, SB-11, SB-18, SB-29, SB-36; PB-08's latch rule); `devenv/README.md` takes Z3's J4 proposal (`research/2026-10-02-z3-readme-proposal.md`) with J4's starts criterion as decision 8 states it. |
 | 2.2 ✅ | Hand-backs confirmed correctly, and what judges them frozen while one is owed (decision 5): PB-09, PB-10, PB-11, PB-22, PB-26, PB-27, SB-04, TB-04, TB-13. |
 | 2.3 ✅ | Setup and stored options safe, and K4 given the full list (decision 9): PB-06, PB-07, PB-08, PB-24, SB-09, TB-03, TB-08, TB-25. Wrong shapes and non-finite or out-of-range numbers refused with a reason and an owed hand-back reported; platforms unloaded after a late setup failure without wiping the registry; the restart latch's untick gap; SB-09's additions to "Open after 0.2.2" committed at once, and K4's rows pointing to every item marked K4. |
-| 2.4 | The comfort correction meets principle 13's rules 3 and 5 (decision 11): SB-11. Rule 3: it moves only while the starts per hour do not rise against the same hours before it began, and steps back when they do; rule 5: it freezes in extreme weather — an outdoor temperature beyond the design outdoor temperature, or a change faster than a set rate per hour (provisional, K4) — with its tests and the simulator's starts measured with it on. |
+| 2.4 ✅ | The comfort correction meets principle 13's rules 3 and 5 (decision 11): SB-11. Rule 3: it moves only while the starts per hour do not rise against the same hours before it began, and steps back when they do; rule 5: it freezes in extreme weather — an outdoor temperature beyond the design outdoor temperature, or a change faster than a set rate per hour (provisional, K4) — with its tests and the simulator's starts measured with it on. |
 | 2.5 | The smaller answers: learning pauses (decision 14: SB-29); no default for the high-pressure alarm and the monitor's thresholds listed (decision 13: SB-18); the count pre-filled 0 from VT (decision 7: SB-07); the return by itself after the external-control switch as a separate opt-in (decision 10: SB-36); J4's starts criterion with its conditions and a test carrying the daily swing (decision 8: SB-08). |
 | 2.6 | The check of part 2. |
 | 2.7 🔒 | Stop: the report to the user, with the tokens part 2 used; the user decides whether part 3 starts. |
@@ -250,6 +250,14 @@ Left on purpose for a later release; what a step leaves open is added here by na
     as "not there", as before 0.2.3 — K4.
 40. Step 2.3: if the unload in a failed setup itself fails, the old entities stay attached to the
     stopped coordinator until a restart (the registry is kept) — K4.
+41. Step 2.4: rule 3's reference — the same length of time just before the comfort correction
+    began — does not lower the starts in J4's simulated house, where they were already as high
+    before it began (with the correction on, 1.39 to 6.28 times the boiler's own regulation's
+    starts, `research/2026-10-06-p2-4-report.md`): another reference, or the correction kept off —
+    the user's decision, K4.
+42. Step 2.4: rule 5's freeze also stops the correction from falling, so through a long outage of
+    the outdoor sensor it keeps its value (at most +3 K) until a hand-back — K4.
+43. Step 2.4: the control state does not say why the comfort correction is held — K4.
 
 ## After 0.2.3
 
