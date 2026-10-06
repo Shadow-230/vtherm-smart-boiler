@@ -10,9 +10,13 @@ confirmation waits for the read-back, and what counts as a release depends on th
   like): only the hand-back value, read back within half a kelvin;
 - an expiring value target, or a gateway: the hand-back value (``CS=0`` read back as 0), or a
   value more than half a kelvin from both the plugin's last value and the lowest just written —
-  the device's own value, back once the override lapsed;
-- the timeout method: the read-back back at the session's baseline (the value from before the
-  plugin); with that unknown, a value away from both the plugin's last value and the lowest;
+  the device's own value, back once the override lapsed; on a gateway with an OpenTherm
+  thermostat also its own request, where its entity is mapped (PB-10: the OTGW firmware over
+  MQTT passes it on after ``CS=0`` and never shows 0);
+- the timeout method, judged only once the device's own timeout has run since the last write
+  (before it, by the user's declaration, the device holds the lowest): the read-back back at the
+  session's baseline (the value from before the plugin), or away from both the plugin's last
+  value and the lowest — a device whose own value moves (decision 5 of 0.2.3, SB-04);
 - a two-valued target (the heating switch, the external-control switch): its hand-back state.
 
 Where the plugin's last value is unknown, a value away from the lowest counts only once it was
@@ -35,7 +39,12 @@ from enum import StrEnum
 
 RELEASE_TOLERANCE_K = 0.5  # a read-back within this of a value shows it
 HELD_UNCONFIRMED_S = 10.0  # a held target not released this long after its release: an alarm
-TIMEOUT_RELEASE_S = 180.0  # a timeout hand-back not released this long after it: an alarm
+# The timeout method (decision 5 of 0.2.3): the device's own timeout as the form takes it, 1 to
+# 60 min, and where none is stored (an entry from before the field) the shortest — the alarm
+# then rather too early than too late; provisional, K4.
+DEVICE_TIMEOUT_BOUNDS_S = (60.0, 3600.0)
+DEVICE_TIMEOUT_DEFAULT_S = 60.0
+TIMEOUT_RELEASE_S = 180.0  # not released this long after the device's timeout: an alarm
 FOREIGN_CHECKS = 2  # retry checks, a minute apart, showing the same third value
 FOREIGN_CHECKS_DHW_UNKNOWN = 3  # the same with hot water unknown: over two minutes
 DHW_QUIET_S = 120.0  # no judgement during a hot-water draw or this long after it (W6)
@@ -87,6 +96,8 @@ class ReleaseRule:
     release_from: float | None = None  # the plugin's last value
     lowest: float | None = None  # the lowest water temperature the hand-back wrote first
     baseline: float | None = None  # the value from before the session (the timeout method)
+    # The device's own request as another entity shows it: a gateway's OpenTherm thermostat.
+    own: float | None = None
 
 
 def _near(value: float, other: float | None, tolerance: float) -> bool:
@@ -118,14 +129,29 @@ def released(
     if rule.kind is CheckKind.VALUE:
         return _near(read_back, rule.expected, tolerance)
     if rule.kind is CheckKind.BACK_TO_BASELINE:
-        if rule.baseline is not None:
-            return _near(read_back, rule.baseline, tolerance)
-        return _away_from_ours(rule, read_back, reported_after, tolerance)
-    if rule.kind is CheckKind.LEAVES_VALUE:
-        return _near(read_back, rule.expected, tolerance) or _away_from_ours(
+        return _near(read_back, rule.baseline, tolerance) or _away_from_ours(
             rule, read_back, reported_after, tolerance
         )
+    if rule.kind is CheckKind.LEAVES_VALUE:
+        return (
+            _near(read_back, rule.expected, tolerance)
+            or _near(read_back, rule.own, tolerance)
+            or _away_from_ours(rule, read_back, reported_after, tolerance)
+        )
     return False
+
+
+def timeout_lapsed(since_write_s: float, timeout_s: float) -> bool:
+    """Whether the device's own timeout has run since the hand-back's last write: before it, by
+    the user's declaration, the device still holds the lowest just written, so no read-back
+    shows a release yet (decision 5 of 0.2.3)."""
+    return since_write_s >= timeout_s
+
+
+def timeout_late(since_write_s: float, timeout_s: float) -> bool:
+    """Whether a timeout hand-back not released by now shows as failed: three minutes after the
+    device's own timeout."""
+    return since_write_s >= timeout_s + TIMEOUT_RELEASE_S
 
 
 def third_value(

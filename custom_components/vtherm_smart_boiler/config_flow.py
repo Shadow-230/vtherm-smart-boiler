@@ -67,6 +67,8 @@ from .control_config import (
     CURVE_DEFAULTS,
     GATEWAY_TOPOLOGIES,
     HAND_BACK_KEYS,
+    HAND_BACK_TIMEOUT_DEFAULT_MIN,
+    HAND_BACK_TIMEOUT_MIN,
     OTGW_PATHS,
     PATH_TOPOLOGIES,
     RELAY_DEFAULTS,
@@ -611,6 +613,7 @@ _HAND_BACK_DEFAULTS = {
     "relay_rest_state": RELAY_DEFAULTS["relay_rest_state"],
 }
 OWN_ROOM_CONTROLLER = "own_room_controller"
+HAND_BACK_TIMEOUT = "hand_back_timeout_min"
 # A demand threshold no zone can feed (P-14): the field, and what the form says.
 _UNFED = {
     "power_threshold_kw": "power_criterion_no_zone",
@@ -703,6 +706,14 @@ def control_entity_schema(options: dict[str, Any]) -> vol.Schema:
             "hand_back_entity_write_type",
             default=control.get("hand_back_entity_write_type", WriteType.UNKNOWN.value),
         ): _select("write_type", [t.value for t in WriteType]),
+        # The timeout method's device timeout (decision 5 of 0.2.3), shown with its cautious
+        # default; the form cannot hide it for the other methods, and the save drops it there.
+        vol.Optional(
+            HAND_BACK_TIMEOUT,
+            description={
+                "suggested_value": control.get(HAND_BACK_TIMEOUT, HAND_BACK_TIMEOUT_DEFAULT_MIN)
+            },
+        ): _number(*HAND_BACK_TIMEOUT_MIN, 1, "min"),
     }
     if _offers_own_room_controller(control):
         # Next to the hand-back fields, at the simple level; off by default (answers F, M).
@@ -1095,9 +1106,12 @@ def _gateway_topology(raw: object) -> bool:
 
 
 def apply_control_details(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    """The writable-entity step's answers; the device's timeout only with the timeout method."""
     control = dict(options.get(CONTROL, {}))
     keys = TARGET_KEYS
     _set_or_drop(control, user_input, tuple(k for k in keys if k in user_input or k in control))
+    if control.get("hand_back") != HandBack.TIMEOUT:
+        control.pop(HAND_BACK_TIMEOUT, None)
     options[CONTROL] = control
 
 

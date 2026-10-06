@@ -202,7 +202,6 @@ from .core.guards import (
 from .core.hand_back import (
     DHW_QUIET_S,
     HELD_UNCONFIRMED_S,
-    TIMEOUT_RELEASE_S,
     UNAVAILABLE_STATES,
     CheckKind,
     CheckSource,
@@ -216,6 +215,8 @@ from .core.hand_back import (
     restart_seen,
     shown,
     third_value,
+    timeout_lapsed,
+    timeout_late,
     watch_foreign,
 )
 from .core.heat_sign import HeatSignSeen, HeatSignState, follow_heat_sign
@@ -724,8 +725,9 @@ class _Target:
     """One target of an owed hand-back, and what its read-back has shown so far."""
 
     check: HandBackCheck
-    sent_at: float  # when its parts were last written: a held target alarms a step later
-    first_at: float  # when this debt first wrote it: a timeout alarms three minutes later
+    # When its parts were last written: a held target alarms a step later; a timeout target,
+    # never written again for the same debt, is judged from the device's timeout after it.
+    sent_at: float
     released: bool = False  # it shows the hand-back (a value target: seen once counts)
     taken: bool = False  # another controller holds it: done, and not written again
     seen: bool = False  # a two-valued target read back in its hand-back state once
@@ -3252,13 +3254,20 @@ class ControlUnit:
     def _skip(self, new: bool, only: set[str] | None) -> set[str]:
         """Targets an attempt leaves alone: one another controller holds; after the session's
         own hand-back also one done, one showing a third value being judged, and the setpoint a
-        timeout releases through — each write would arm its timer again."""
+        timeout releases through — each write would arm its timer again; a gateway whose
+        commands went through gets all but the lowest again."""
         skip = set(self._taken_targets)
         if new:
             return skip
         skip |= {key for key, target in self._targets.items() if target.done or target.third}
         if self.options.hand_back is HandBack.TIMEOUT and self.options.setpoint_entity:
             skip.add(self.options.setpoint_entity)
+        gateway = self.options.confirmed_entity
+        if self.options.write_path in OTGW_PATHS and gateway in self._targets:
+            # Its commands went through once for this debt (a gateway's target is followed only
+            # then): heating on and the release again, never the lowest over the thermostat
+            # (PB-10).
+            skip.add(gateway)
         if only is not None:
             skip |= {key for key in self._targets if key not in only}
         return skip
@@ -3327,7 +3336,8 @@ class ControlUnit:
     async def _async_follow_hand_back(self, now: float) -> None:
         """An owed hand-back, at every step: done once every target shows it or another
         controller holds it. A held target not shown a step after its release, and a timeout
-        not released after three minutes, show as failed — not within the start grace (P-50);
+        not released three minutes after the device's own timeout, show as failed — not within
+        the start grace (P-50);
         a lost command is written again at once; every minute what is still owed is sent again
         (after a retry check of the third values a held target shows), and a target unconfirmed
         by then shows as failed. A timeout hand-back is never written again."""
@@ -3364,7 +3374,9 @@ class ControlUnit:
     def _alarm_if_unconfirmed(self, now: float) -> None:
         """A held target keeps what it was given: not released a step after its release, the
         boiler stays at the lowest water temperature — an alarm at once. A timeout hand-back
-        writes nothing more: not released after three minutes, an alarm."""
+        writes nothing more: not released three minutes after the device's own timeout since
+        its last write, an alarm (decision 5 of 0.2.3)."""
+        timeout_s = self.options.hand_back_timeout_s
         late = [
             key
             for key, target in self._targets.items()
@@ -3373,7 +3385,7 @@ class ControlUnit:
                 (target.check.held and now - target.sent_at >= HELD_UNCONFIRMED_S)
                 or (
                     target.check.kind is CheckKind.BACK_TO_BASELINE
-                    and now - target.first_at >= TIMEOUT_RELEASE_S
+                    and timeout_late(now - target.sent_at, timeout_s)
                 )
             )
         ]
@@ -3438,7 +3450,7 @@ class ControlUnit:
             known = self._targets.get(key)
             if known is not None and key in skip:
                 continue
-            target = _Target(check, now, now if known is None else known.first_at)
+            target = _Target(check, now)
             target.seen = known is not None and known.seen
             target.taken = key in self._taken_targets
             self._targets[key] = target
@@ -3458,7 +3470,11 @@ class ControlUnit:
     def _evaluate(self, now: float) -> None:
         """What each target's read-back shows now. A value target's release seen once counts
         from then on: pyotgw shows the accepted CS=0 only until the boiler's next report. An
-        optimistic target is done once written. A two-valued target is judged at every report."""
+        optimistic target is done once written. A two-valued target is judged at every report.
+        A timeout target only once the device's own timeout has run since its last write: before
+        it the device holds the lowest, whatever its read-back shows (decision 5 of 0.2.3). A
+        gateway's release also shows as the OpenTherm thermostat's own request (PB-10)."""
+        own = self._thermostat_value() if self.options.write_path in OTGW_PATHS else None
         for target in self._targets.values():
             check = target.check
             if target.taken or (target.released and check.kind is not CheckKind.SWITCH):
@@ -3467,10 +3483,13 @@ class ControlUnit:
                 target.released = target.released or check.written
             elif check.kind is CheckKind.SWITCH:
                 self._judge_two_valued(target, now)
-            else:
+            elif check.kind is not CheckKind.BACK_TO_BASELINE or timeout_lapsed(
+                now - target.sent_at, self.options.hand_back_timeout_s
+            ):
                 state = self._hass.states.get(check.entity_id)
                 value = temperature_from_state(state).value
-                if released(check.rule, value, reported_after=state is not check.before):
+                rule = replace(check.rule, own=own)
+                if released(rule, value, reported_after=state is not check.before):
                     target.released = True
         self._hand_back_shown = self._shown_now()
 

@@ -1384,6 +1384,88 @@ async def test_mqtt_path_calls_only_its_publish(mqtt_rig: Rig, mqtt_client_mock:
     assert not unit_of(rig).hand_back_owed
 
 
+@pytest.mark.parametrize("asked", ["lowest", "last_setpoint"])
+async def test_an_mqtt_hand_back_is_confirmed_by_the_thermostats_own_request(
+    mqtt_rig: Rig, mqtt_client_mock: Any, asked: str
+) -> None:
+    """PB-10: the OTGW firmware over MQTT with an OpenTherm thermostat — after ``CS=0`` its
+    ``TSet`` shows the thermostat's own request, never 0. A request at the lowest water
+    temperature, or at the plugin's last setpoint, never leaves them: the release shows as the
+    thermostat's request where its entity is mapped — confirmed, and nothing published again."""
+    rig = mqtt_rig
+    firmware = OtgwFirmware(rig.hass, thermostat=LOWEST if asked == "lowest" else EXPECTED)
+    read_back = await firmware.start()
+    rig.hass.states.async_set(
+        THERMOSTAT_REQUEST, str(firmware.thermostat), {"unit_of_measurement": "°C"}
+    )
+    await start(
+        rig,
+        **MQTT_PATH,
+        gateway_id=None,
+        confirmed_entity=read_back,
+        thermostat_setpoint_entity=THERMOSTAT_REQUEST,
+    )
+    await rig.switch(True)
+    await rig.advance(60)
+    await rig.switch(False)
+    assert published(mqtt_client_mock)[-3:] == mqtt_hand_back(LOWEST)
+    await rig.advance(10)
+    assert not unit_of(rig).hand_back_owed
+    count = len(published(mqtt_client_mock))
+    await rig.advance(300)
+    assert len(published(mqtt_client_mock)) == count  # no further publishes
+    assert alarm(rig) == "off"
+
+
+@pytest.mark.parametrize("mapped", ["not_mapped", "unknown", "standalone"])
+async def test_an_unconfirmed_mqtt_hand_back_never_publishes_the_lowest_again(
+    mqtt_rig: Rig, mqtt_client_mock: Any, mapped: str
+) -> None:
+    """PB-10, negative: the thermostat asks for the lowest, and its request is not mapped, reads
+    unknown, or counts not (a stand-alone topology): the release does not show — owed, and
+    retried every minute; once the hand-back's commands went through, each retry publishes
+    ``CH=1`` and ``CS=0`` only, never ``CS=<lowest>`` over the thermostat again."""
+    rig = mqtt_rig
+    firmware = OtgwFirmware(rig.hass, thermostat=LOWEST)
+    read_back = await firmware.start()
+    extra: dict[str, Any] = {}
+    if mapped != "not_mapped":
+        shown = "unknown" if mapped == "unknown" else str(LOWEST)
+        rig.hass.states.async_set(THERMOSTAT_REQUEST, shown, {"unit_of_measurement": "°C"})
+        extra["thermostat_setpoint_entity"] = THERMOSTAT_REQUEST
+    if mapped == "standalone":
+        extra |= {"topology": "gateway_standalone"}
+    await start(rig, **MQTT_PATH, gateway_id=None, confirmed_entity=read_back, **extra)
+    await rig.switch(True)
+    await rig.advance(60)
+    await rig.switch(False)
+    count = len(published(mqtt_client_mock))
+    await rig.advance(180)
+    retries = published(mqtt_client_mock)[count:]
+    base = f"{OTGW_TOP}/set/{OTGW_NODE}"
+    assert 2 <= len(retries) <= 6  # one retry a minute, two publishes each
+    assert set(retries) == {(f"{base}/chenable", "1"), (f"{base}/ctrlsetpt", "0")}
+    assert unit_of(rig).hand_back_owed
+
+
+async def test_an_unconfirmed_gateway_hand_back_never_sends_the_lowest_again(rig: Rig) -> None:
+    """PB-10 on opentherm_gw: ``CS=0`` taken but the release not shown (the gateway keeps the
+    override): each retry sends ``CH=1`` and ``CS=0``, never ``CS=<lowest>`` again. A first
+    attempt that failed is retried whole."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(20)
+    rig.gateway.ignore_release = True
+    await rig.switch(False)
+    assert rig.gateway.calls[-3:] == HAND_BACK
+    count = len(rig.gateway.calls)
+    await rig.advance(130)
+    retries = rig.gateway.calls[count:]
+    assert retries
+    assert set(retries) == {("ch", True), ("setpoint", 0.0)}
+    assert unit_of(rig).hand_back_owed
+
+
 @pytest.mark.parametrize(
     ("answers", "first_refused"),
     [(True, False), (False, False), (True, True)],
@@ -5977,16 +6059,26 @@ async def test_a_timeout_hand_back_is_confirmed_when_the_read_back_returns_to_th
     assert len(number.writes) == count
 
 
+@pytest.mark.parametrize(
+    ("timeout_min", "shown"),
+    [(None, None), (5, None), (5, "unknown"), (5, "unavailable")],
+    ids=["timeout_not_stored", "lowest_kept", "read_back_unknown", "read_back_unavailable"],
+)
 @pytest.mark.usefixtures("low_setpoint_off")
-async def test_a_timeout_hand_back_not_released_alarms_after_three_minutes(rig: Rig) -> None:
-    """S-20, negative: the read-back stays at the lowest — the device's timer did not release.
-    No rewrite retries; ``hand_back_failed`` rises after three minutes, and the hand-back stays
-    owed and shown until the release."""
+async def test_a_timeout_hand_back_not_released_alarms_three_minutes_after_the_devices_timeout(
+    rig: Rig, timeout_min: int | None, shown: str | None
+) -> None:
+    """S-20 and decision 5, negative: the read-back stays at the lowest — the device's timer did
+    not release — or shows nothing (unknown, unavailable). No rewrite retries; ``hand_back_failed``
+    rises three minutes after the device's own timeout from the form (an entry from before the
+    field: 1 min), and the hand-back stays owed and shown until the release."""
     number = FakeNumber(rig.hass, value=45.0)
     number.register()
+    timeout = {} if timeout_min is None else {"hand_back_timeout_min": timeout_min}
     await start(
         rig,
         **TIMEOUT_PATH,
+        **timeout,
         setpoint_entity=number.entity_id,
         confirmed_entity=number.entity_id,
         topology="virtual",
@@ -5995,7 +6087,10 @@ async def test_a_timeout_hand_back_not_released_alarms_after_three_minutes(rig: 
     await rig.advance(30)
     await rig.switch(False)
     count = len(number.writes)
-    await rig.advance(170)
+    if shown is not None:
+        rig.hass.states.async_set(number.entity_id, shown, {"unit_of_measurement": "°C"})
+    late = 60 * (timeout_min or 1) + 180
+    await rig.advance(late - 10)
     assert alarm(rig) == "off"
     await rig.advance(10)
     assert alarm(rig) == "on"
@@ -6003,6 +6098,48 @@ async def test_a_timeout_hand_back_not_released_alarms_after_three_minutes(rig: 
     await rig.advance(300)
     assert len(number.writes) == count  # never written again
     assert unit_of(rig).hand_back_owed
+
+
+@pytest.mark.parametrize("baseline", [52.0, None], ids=["baseline_known", "baseline_unknown"])
+@pytest.mark.usefixtures("low_setpoint_off")
+async def test_a_timeout_hand_back_is_released_once_the_devices_own_value_moves(
+    rig: Rig, baseline: float | None
+) -> None:
+    """SB-04 (decision 5): a device whose own value moves — an EMS boiler under its own controller
+    or curve — never shows the value from before the session again: the hand-back counts once
+    its read-back has left both the plugin's last value and the lowest. Judged from the device's
+    own timeout given in the form (5 min): not before it — the device holds the lowest until
+    then, whatever its read-back shows — and not failed three minutes after the hand-back (the
+    fixed time before). Never written again."""
+    number = FakeNumber(rig.hass, value=52.0)
+    number.register()
+    if baseline is None:  # the device had reported nothing before the session
+        rig.hass.states.async_set(number.entity_id, "unknown", {"unit_of_measurement": "°C"})
+    await start(
+        rig,
+        **TIMEOUT_PATH,
+        hand_back_timeout_min=5,
+        setpoint_entity=number.entity_id,
+        confirmed_entity=number.entity_id,
+        topology="virtual",
+    )
+    await rig.switch(True)
+    await rig.advance(30)
+    await rig.switch(False)
+    assert number.writes[-1] == LOWEST
+    count = len(number.writes)
+    unit = unit_of(rig)
+    await rig.advance(120)
+    number.publish(47.0)  # away from ours before the device's timeout: not judged yet
+    await rig.advance(60)
+    assert unit.hand_back_owed
+    assert alarm(rig) == "off"
+    assert hand_back_shown(rig) == "waiting"
+    await rig.advance(130)  # the device's own timeout has run, its value still its own
+    assert not unit.hand_back_owed
+    assert alarm(rig) == "off"
+    assert hand_back_shown(rig) == "unverified"  # only the written entity shows it
+    assert len(number.writes) == count
 
 
 @pytest.mark.parametrize(
@@ -8355,42 +8492,94 @@ async def test_frequent_lost_commands_raise_commands_lost_never_a_hold(rig: Rig)
     assert rig.state("binary_sensor", "alarm_commands_lost").state == "off"
 
 
-@pytest.mark.parametrize("path", ["value", "thermostat"])
+THERMOSTAT_REQUEST = "sensor.fake_thermostat_control_setpoint"
+
+
+@pytest.mark.parametrize("case", ["returns", "unknown", "third_value"])
+@pytest.mark.parametrize("path", ["value", "thermostat", "timeout", "switch"])
 @pytest.mark.usefixtures("low_setpoint_off")
-async def test_the_return_by_itself_knows_each_hand_back_state(rig: Rig, path: str) -> None:
-    """The return by itself on other paths: a held setpoint entity given back to its own control
-    with a value — quiet while it shows that value; a gateway with an OpenTherm thermostat —
-    quiet while it shows the thermostat's own request, where the optional field is mapped."""
-    if path == "value":
-        number = FakeNumber(rig.hass)
-        number.register()
-        await start(rig, **held_entity(number), return_after_outside_change=True)
+async def test_the_return_by_itself_comes_only_while_each_paths_hand_back_state_shows(
+    rig: Rig, path: str, case: str
+) -> None:
+    """TB-13, decision 6's return by itself on each path, after the plugin stepped aside from
+    another controller: quiet for an hour while the read-back shows only the hand-back state — a
+    held setpoint entity its hand-back value; a gateway with an OpenTherm thermostat the
+    thermostat's own request, where the optional field is mapped; the timeout hand-back the value
+    from before the session (45 °C); the external-control switch off — then a new session starts
+    and the latch issue goes. Negative: the read-back unknown, or a third value (the switch on),
+    within the hour — no return."""
+    number = FakeNumber(rig.hass, value=45.0)
+    external = FakeSwitch(rig.hass, entity_id="input_boolean.fake_external", on=False)
+    if path == "thermostat":
+        rig.hass.states.async_set(THERMOSTAT_REQUEST, "40.0", {"unit_of_measurement": "°C"})
+        await start(
+            rig, thermostat_setpoint_entity=THERMOSTAT_REQUEST, return_after_outside_change=True
+        )
     else:
-        thermostat = "sensor.fake_thermostat_control_setpoint"
-        rig.hass.states.async_set(thermostat, "40.0", {"unit_of_measurement": "°C"})
-        await start(rig, thermostat_setpoint_entity=thermostat, return_after_outside_change=True)
+        number.register()
+        control = {
+            "value": held_entity(number),
+            "timeout": held_entity(number, **TIMEOUT_PATH),
+            "switch": switch_method(number, external.entity_id, "held"),
+        }[path]
+        if path == "switch":
+            external.register()
+        await start(rig, **control, return_after_outside_change=True)
     await rig.switch(True)
     await rig.advance(30)
-    if path == "value":
-        number.forced = 60.0
-        number.value = 60.0
-        number.publish(60.0)
-    else:
+    if path == "thermostat":
         rig.gateway.forced = 60.0
+    else:
+        number.forced = number.value = 60.0
+        number.publish(60.0)
     for _ in range(30):
         await rig.advance(10)
         if rig.state("sensor", "control_state").state == "handed_back":
             break
     assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
-    if path == "value":
-        number.forced = None  # gone; the device shows the hand-back value
-        number.value = 50.0
-        number.publish(50.0)
+    assert issue(rig, "control_latched") is not None
+    # The other controller is gone; the read-back shows the hand-back state.
+    if path == "thermostat":
+        rig.gateway.forced = None  # the gateway shows the thermostat's request (40)
     else:
-        rig.gateway.forced = None  # gone; the gateway shows the thermostat's request (40)
-    await rig.advance(3660, step=60.0)
-    assert rig.state("sensor", "control_state").attributes["latched_by"] == []
-    assert issue(rig, "control_latched") is None
+        number.forced = None
+        number.value = {"value": 50.0, "timeout": 45.0, "switch": 47.0}[path]
+        number.publish(number.value)
+    if path == "switch":
+        assert not external.on  # handed back at the step aside
+    await rig.advance(1800, step=60.0)
+    if case == "unknown":
+        if path == "thermostat":
+            rig.gateway.read_back_shown = "unknown"
+            rig.gateway.publish()
+        elif path == "switch":
+            rig.hass.states.async_set(external.entity_id, "unknown")
+        else:
+            rig.hass.states.async_set(number.entity_id, "unknown", {"unit_of_measurement": "°C"})
+    elif case == "third_value":
+        if path == "thermostat":
+            rig.gateway.forced = 33.0
+            rig.gateway.publish()
+        elif path == "switch":
+            external.on = True
+            external.publish()
+        else:
+            number.publish(38.0)
+    await rig.advance(60, step=60.0)
+    if case != "returns":  # the hour broken: it starts again once the hand-back state is back
+        if path == "thermostat":
+            rig.gateway.read_back_shown = None
+            rig.gateway.forced = None
+            rig.gateway.publish()
+        elif path == "switch":
+            external.on = False
+            external.publish()
+        else:
+            number.publish(number.value)
+    await rig.advance(1800, step=60.0)
+    returned = rig.state("sensor", "control_state").attributes["latched_by"] == []
+    assert returned is (case == "returns")
+    assert (issue(rig, "control_latched") is None) is (case == "returns")
 
 
 # --- X2: the boiler link and freshness (P-08, P-41; T-03; Open after R6 #8) --------------------

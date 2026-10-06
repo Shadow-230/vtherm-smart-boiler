@@ -585,6 +585,13 @@ class _GatewayWriter(_ServiceWriter):
         """The read-back as it stands before a hand-back's commands go out."""
         return self._hass.states.get(self._reachable_by) if self._reachable_by else None
 
+    def _lowest_sent(self, skip: Collection[str]) -> bool:
+        """The control leaves the gateway's read-back out once the hand-back's commands went
+        through for this debt: a retry sends ``CH=1`` and ``CS=0`` again — neither overrides
+        the thermostat — but never ``CS=<lowest>``, which would override it each minute
+        (PB-10). The plugin's own ``CS`` lapses within a minute without its repeats."""
+        return bool(self._reachable_by) and self._reachable_by in skip
+
     def _release_check(self, before: State | None, release_from: float | None) -> HandBackCheck:
         """What shows the release: the read-back at 0 (``CS=0``), or away from both the plugin's
         last value and the lowest just written — the thermostat's own value."""
@@ -644,30 +651,30 @@ class OpenthermGwWriter(_GatewayWriter):
         """``CS=<lowest>``, ``CH=1``, then ``CS=0``; each tried whatever the others do, and the
         hand-back counts only with the gateway connected, once its read-back shows the release.
         pyotgw writes the value the gateway accepted to its status at once; after a timeout it
-        writes nothing, and the service returns all the same."""
+        writes nothing, and the service returns all the same. Once they went through for this
+        debt, a retry leaves ``CS=<lowest>`` out."""
         before = self._read_back_now()
+
+        def setpoint(value: float) -> Callable[[], Awaitable[None]]:
+            data = {"gateway_id": self._gateway, "temperature": value}
+            return lambda: self._call(
+                self.DOMAIN, "set_control_setpoint", data, timeout_s=write_timeout_s
+            )
+
+        lowest = (
+            ()
+            if self._lowest_sent(skip)
+            else (setpoint(_checked(self._lowest, OTGW_MIN_SETPOINT)),)
+        )
         await _all_of(
-            lambda: self._call(
-                self.DOMAIN,
-                "set_control_setpoint",
-                {
-                    "gateway_id": self._gateway,
-                    "temperature": _checked(self._lowest, OTGW_MIN_SETPOINT),
-                },
-                timeout_s=write_timeout_s,
-            ),
+            *lowest,
             lambda: self._call(
                 self.DOMAIN,
                 "set_central_heating_ovrd",
                 {"gateway_id": self._gateway, "ch_override": True},
                 timeout_s=write_timeout_s,
             ),
-            lambda: self._call(
-                self.DOMAIN,
-                "set_control_setpoint",
-                {"gateway_id": self._gateway, "temperature": 0},
-                timeout_s=write_timeout_s,
-            ),
+            setpoint(0),
         )
         # The gateway's full status comes with every (re)connection, so a read-back without a
         # value means nothing has come from the gateway since the connection was lost.
@@ -715,11 +722,15 @@ class OtgwMqttWriter(_GatewayWriter):
     ) -> tuple[HandBackCheck, ...]:
         """``CS=<lowest>``, ``CH=1``, then ``CS=0``; each tried whatever the others do, and the
         hand-back counts only with the gateway connected, once its read-back shows the release:
-        a publish is done once written to the socket, the firmware offline or not."""
+        a publish is done once written to the socket, the firmware offline or not. Once they
+        went through for this debt, a retry leaves ``CS=<lowest>`` out (PB-10)."""
         before = self._read_back_now()
+        lowest = f"{_checked(self._lowest, OTGW_MIN_SETPOINT):.1f}"
         await _all_of(
-            lambda: self._publish(
-                "ctrlsetpt", f"{_checked(self._lowest, OTGW_MIN_SETPOINT):.1f}", write_timeout_s
+            *(
+                ()
+                if self._lowest_sent(skip)
+                else (lambda: self._publish("ctrlsetpt", lowest, write_timeout_s),)
             ),
             lambda: self._publish("chenable", "1", write_timeout_s),
             lambda: self._publish("ctrlsetpt", "0", write_timeout_s),

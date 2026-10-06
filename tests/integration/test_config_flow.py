@@ -3188,6 +3188,51 @@ async def test_a_timeout_hand_back_needs_expiring_writes(
     assert result["step_id"] == "control_curve"
 
 
+async def test_the_timeout_method_asks_the_devices_own_timeout(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 5 (SB-04): the writable-entity step asks the device's own timeout, in minutes,
+    offered at its cautious default of 1 and refused outside 1 to 60; kept with the timeout
+    method, dropped with any other — and a stored one offered again."""
+    from custom_components.vtherm_smart_boiler.config_flow import (
+        apply_control_details,
+        control_entity_schema,
+    )
+
+    hass.states.async_set("number.boiler_flow", "45", {"unit_of_measurement": "°C"})
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.boiler_flow"},
+    )
+    assert result["step_id"] == "control_entity"
+    assert form_default(result, "hand_back_timeout_min") == 1
+    details = {"setpoint_entity": "number.boiler_flow", "write_type": "expiring"}
+    for minutes in (0, 61):
+        with pytest.raises(InvalidData):
+            await options_step(
+                hass, result, details | {"hand_back": "timeout", "hand_back_timeout_min": minutes}
+            )
+    result = await options_step(
+        hass, result, details | {"hand_back": "timeout", "hand_back_timeout_min": 5}
+    )
+    assert result["step_id"] == "control_curve"
+    options: dict[str, Any] = {"control": {"write_path": "entity"}}
+    apply_control_details(options, details | {"hand_back": "timeout", "hand_back_timeout_min": 5})
+    assert options["control"]["hand_back_timeout_min"] == 5
+    stored = {"result": None, "data_schema": control_entity_schema(options)}
+    assert form_default(stored, "hand_back_timeout_min") == 5
+    apply_control_details(
+        options,
+        details
+        | {"hand_back": "value", "hand_back_value": 30, "hand_back_timeout_min": 5}
+        | {"hand_back_value_effect": "own_control"},
+    )
+    assert "hand_back_timeout_min" not in options["control"]
+
+
 async def test_the_entity_steps_targets_are_checked_on_the_server(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:

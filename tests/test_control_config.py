@@ -291,6 +291,48 @@ def test_a_timeout_hand_back_needs_writes_that_lapse(write_type: str, blocked: b
     assert ("timeout_needs_expiring_writes" in blockers) is blocked
 
 
+@pytest.mark.parametrize(
+    ("stored", "timeout_s", "logged"),
+    [
+        (5, 300.0, False),
+        (60, 3600.0, False),
+        (1, 60.0, False),
+        ("30", 1800.0, False),
+        (None, 60.0, False),  # an entry from before the field: the shortest, 1 min
+        ("", 60.0, False),
+        (0, 60.0, True),  # outside 1 to 60 min (a hand edit): the shortest
+        (61, 60.0, True),
+        (-5, 60.0, True),
+        (float("nan"), 60.0, True),
+        ("soon", 60.0, True),
+        (True, 60.0, True),
+    ],
+)
+def test_the_devices_timeout_is_read_cautiously(
+    stored: object, timeout_s: float, logged: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Decision 5 (SB-04): the timeout hand-back's device timeout, asked in minutes; missing,
+    out of range or not a number, the shortest — "hand-back failed" rather too early than too
+    late. Only a given value outside the bounds is logged."""
+    data = {
+        "write_path": "entity",
+        "setpoint_entity": "number.flow",
+        "write_type": "expiring",
+        "hand_back": "timeout",
+        "confirmed_entity": "sensor.flow_setpoint",
+        "topology": "virtual",
+        "curve": CURVE,
+    }
+    if stored is not None:
+        data["hand_back_timeout_min"] = stored
+    assert parse_control(data, RADIATORS, None).hand_back_timeout_s == timeout_s
+    assert ("outside 1 to 60 min" in caplog.text) is logged
+    caplog.clear()
+    other = parse_control(ENTITY | {"hand_back_timeout_min": 0}, RADIATORS, None)
+    assert other.hand_back_timeout_s == 60.0  # another method: not used, and not logged
+    assert "outside 1 to 60 min" not in caplog.text
+
+
 @pytest.mark.parametrize("path", ["opentherm_gw", "otgw_mqtt"])
 def test_the_otgw_heating_override_is_held(path: str) -> None:
     """The PIC keeps ``CH=`` until ``CH=1`` or a reset, so heating on/off is held — sent on a
@@ -1699,6 +1741,7 @@ def test_the_relay_is_named_among_the_entities_control_uses() -> None:
         "relay_rest_state",
         "boiler_heats_above_w",
         "relay_is_separate_contact",
+        "hand_back_timeout_min",  # dropped with the write path, as every hand-back answer
     } <= set(TARGET_KEYS)
     renamed = rename_in_control(RELAY, "switch.boiler_relay", "switch.new")
     assert renamed["relay_entity"] == "switch.new"

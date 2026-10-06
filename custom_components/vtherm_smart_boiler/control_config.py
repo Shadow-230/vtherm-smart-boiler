@@ -49,6 +49,7 @@ from .core.controller import OUTAGE_LOST_S, ControlConfig
 from .core.curve import HeatingCurve
 from .core.demand import DemandConfig
 from .core.guards import HELD_REFRESH_S, GuardConfig, WriteType
+from .core.hand_back import DEVICE_TIMEOUT_BOUNDS_S, DEVICE_TIMEOUT_DEFAULT_S
 from .core.installation import Boiler, BoilerClass, CircuitControl, EmitterType, Installation
 from .core.learning import LearningConfig
 from .core.limits import FlowLimits, FrostConfig
@@ -256,7 +257,8 @@ RELAY_KEYS = (
 TARGET_KEYS = (
     "setpoint_entity", "write_type", "ch_entity", "ch_write_type", "hand_back",
     "hand_back_value", "hand_back_value_effect", "hand_back_entity", "hand_back_entity_write_type",
-    "gateway_id", "mqtt_top", "mqtt_node", "own_room_controller", *RELAY_KEYS,
+    "hand_back_timeout_min", "gateway_id", "mqtt_top", "mqtt_node", "own_room_controller",
+    *RELAY_KEYS,
 )  # fmt: skip
 # The control section's keys that name an entity (P-19: a rename is followed there, a removal
 # told).
@@ -288,6 +290,10 @@ RELAY_DOMAINS = ("switch", "climate")  # a switch, or a boiler thermostat entity
 # A declared switch-off timer, in minutes: 10 to 120 — the shortest the plugin takes for the
 # relay's own (decided by the user 2026-10-03, K4.2).
 RELAY_TIMER_MIN = (TIMER_MIN_S / MINUTE, TIMER_MAX_S / MINUTE)
+# The device's own timeout of the timeout hand-back, in minutes (decision 5 of 0.2.3): 1 to 60,
+# and the shortest where none is stored (provisional, K4).
+HAND_BACK_TIMEOUT_MIN = (DEVICE_TIMEOUT_BOUNDS_S[0] / MINUTE, DEVICE_TIMEOUT_BOUNDS_S[1] / MINUTE)
+HAND_BACK_TIMEOUT_DEFAULT_MIN = DEVICE_TIMEOUT_DEFAULT_S / MINUTE
 RELAY_HEATS_ABOVE_W = (10.0, 10000.0)  # the power above which the boiler counts as heating
 # Boiler classes the plugin monitors only: nothing it can write controls them.
 _MONITOR_ONLY_CLASSES = frozenset({BoilerClass.CURVE_ONLY, BoilerClass.READ_ONLY})
@@ -389,6 +395,9 @@ class ControlOptions:
     hand_back_entity: str | None = None
     # What the device does with the external-control switch (P-40): never assumed.
     hand_back_entity_write_type: WriteType = WriteType.UNKNOWN
+    # The timeout method: the device's own timeout, after which it lets go of the last value it
+    # was given — the release is judged from it, and the alarm comes three minutes after it.
+    hand_back_timeout_s: float = DEVICE_TIMEOUT_DEFAULT_S
     gateway_id: str | None = None
     mqtt_top: str | None = None
     mqtt_node: str | None = None
@@ -494,6 +503,22 @@ def _within(raw: object, bounds: tuple[float, float]) -> float | None:
     value = _number(raw)
     low, high = bounds
     return value if value is not None and low <= value <= high else None
+
+
+def _hand_back_timeout_s(data: Mapping[str, Any]) -> float:
+    """The device's own timeout of the timeout hand-back, in seconds. None stored — an entry
+    from before the field — or one outside 1 to 60 min (a hand edit): the shortest, 1 min, so
+    "hand-back failed" comes rather too early than too late (decision 5 of 0.2.3; provisional,
+    K4). One outside the bounds is logged."""
+    raw = data.get("hand_back_timeout_min")
+    minutes = _within(raw, HAND_BACK_TIMEOUT_MIN)
+    if minutes is None:
+        if raw not in (None, "") and data.get("hand_back") == HandBack.TIMEOUT:
+            _LOGGER.warning(
+                "The device's timeout of %r min is outside 1 to 60 min: read as 1 min", raw
+            )
+        return DEVICE_TIMEOUT_DEFAULT_S
+    return minutes * MINUTE
 
 
 def parse_relay(data: Mapping[str, Any]) -> RelayOptions:
@@ -670,6 +695,7 @@ def parse_control(
         hand_back_entity_write_type=WriteType(
             data.get("hand_back_entity_write_type") or WriteType.UNKNOWN
         ),
+        hand_back_timeout_s=_hand_back_timeout_s(data),
         gateway_id=data.get("gateway_id") or None,
         mqtt_top=data.get("mqtt_top") or None,
         mqtt_node=data.get("mqtt_node") or None,

@@ -6,6 +6,8 @@ from __future__ import annotations
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.hand_back import (
+    DEVICE_TIMEOUT_BOUNDS_S,
+    DEVICE_TIMEOUT_DEFAULT_S,
     DHW_QUIET_S,
     FOREIGN_CHECKS,
     FOREIGN_CHECKS_DHW_UNKNOWN,
@@ -22,6 +24,8 @@ from custom_components.vtherm_smart_boiler.core.hand_back import (
     released,
     shown,
     third_value,
+    timeout_lapsed,
+    timeout_late,
     watch_foreign,
 )
 
@@ -75,24 +79,101 @@ def test_a_gateway_release_is_its_zero_or_the_thermostats_value() -> None:
 
 
 @pytest.mark.parametrize(
+    ("own", "read_back", "shown_released"),
+    [
+        (25.0, 25.0, True),  # the thermostat asks for the lowest
+        (25.0, 25.4, True),
+        (45.0, 45.0, True),  # the thermostat asks for the plugin's last value
+        (30.0, 45.3, False),  # it asks for something else: still the plugin's
+        (None, 25.0, False),  # its request not mapped, unknown or unavailable: the old rule
+        (None, 45.0, False),
+        (30.0, 25.0, False),  # it asks for something else: still the lowest written first
+    ],
+)
+def test_a_gateway_release_is_also_the_thermostats_own_request(
+    own: float | None, read_back: float, shown_released: bool
+) -> None:
+    """PB-10: the OTGW firmware over MQTT passes the thermostat's own request on after ``CS=0``
+    and never shows 0; a request within half a kelvin of the lowest or the plugin's last value
+    never left them. Its request, where its entity is mapped, shows the release."""
+    rule = ReleaseRule(
+        CheckKind.LEAVES_VALUE, expected=0.0, release_from=45.0, lowest=25.0, own=own
+    )
+    assert released(rule, read_back, reported_after=False) is shown_released
+
+
+def test_only_a_gateway_check_counts_the_thermostats_request() -> None:
+    """Negative: a held target, a timeout target and a switch never count it."""
+    for rule in (
+        ReleaseRule(CheckKind.VALUE, expected=50.0, release_from=45.0, lowest=25.0, own=25.0),
+        ReleaseRule(
+            CheckKind.BACK_TO_BASELINE, release_from=45.0, lowest=25.0, baseline=52.0, own=25.0
+        ),
+        ReleaseRule(CheckKind.SWITCH, own=25.0),
+    ):
+        assert not released(rule, 25.0, reported_after=True)
+
+
+@pytest.mark.parametrize(
     ("baseline", "read_back", "shown_released"),
     [
         (45.0, 45.0, True),
         (45.0, 45.5, True),
-        (45.0, 38.0, False),  # a third value: not the baseline
-        (45.0, 25.0, False),
+        (45.0, 38.0, True),  # SB-04: the device's own value moved — away from ours and the lowest
+        (45.0, 59.6, False),  # still the plugin's last value
+        (45.0, 25.0, False),  # still the lowest written first
         (None, 38.0, True),  # the baseline unknown: away from ours and the lowest
         (None, 60.2, False),
         (None, 25.4, False),
     ],
 )
-def test_a_timeout_hand_back_is_released_back_at_the_baseline(
+def test_a_timeout_hand_back_is_released_at_the_baseline_or_away_from_ours(
     baseline: float | None, read_back: float, shown_released: bool
 ) -> None:
+    """Decision 5 (SB-04): back within half a kelvin of the value from before the session, or
+    more than half a kelvin from both the plugin's last value and the lowest — a device whose own
+    value moves (an EMS boiler under its own controller or curve) never shows the baseline."""
     rule = ReleaseRule(
         CheckKind.BACK_TO_BASELINE, release_from=60.0, lowest=25.0, baseline=baseline
     )
     assert released(rule, read_back, reported_after=True) is shown_released
+
+
+def test_a_timeout_with_the_baseline_known_and_its_last_value_not_needs_a_report() -> None:
+    """The plugin's last value unknown: a value away from the lowest counts only once it was
+    reported after the command — the baseline itself counts as it is."""
+    rule = ReleaseRule(CheckKind.BACK_TO_BASELINE, lowest=25.0, baseline=45.0)
+    assert not released(rule, 38.0, reported_after=False)
+    assert released(rule, 38.0, reported_after=True)
+    assert released(rule, 45.0, reported_after=False)
+
+
+@pytest.mark.parametrize(
+    ("since_write_s", "timeout_s", "lapsed", "late"),
+    [
+        (0.0, 60.0, False, False),
+        (59.0, 60.0, False, False),
+        (60.0, 60.0, True, False),  # the device's own timeout has run: its release can show
+        (239.0, 60.0, True, False),
+        (240.0, 60.0, True, True),  # three minutes after it: "hand-back failed"
+        (1799.0, 1800.0, False, False),
+        (1980.0, 1800.0, True, True),
+    ],
+)
+def test_a_timeout_hand_back_is_judged_from_the_devices_timeout(
+    since_write_s: float, timeout_s: float, lapsed: bool, late: bool
+) -> None:
+    """Decision 5: before the device's own timeout has run since the last write, the device
+    holds the lowest by the user's declaration — no release is judged; the alarm comes three
+    minutes after that timeout."""
+    assert timeout_lapsed(since_write_s, timeout_s) is lapsed
+    assert timeout_late(since_write_s, timeout_s) is late
+
+
+def test_the_devices_timeout_default_lies_within_its_bounds() -> None:
+    low, high = DEVICE_TIMEOUT_BOUNDS_S
+    assert low <= DEVICE_TIMEOUT_DEFAULT_S <= high
+    assert DEVICE_TIMEOUT_DEFAULT_S == low  # the shortest: an alarm rather too early than late
 
 
 @pytest.mark.parametrize("rule", [HELD, EXPIRING, GATEWAY, TIMEOUT])
