@@ -17,5 +17,5 @@
   "iot_class": "calculated",
   "requirements": ["vtherm_api>=0.5.0"],
   "single_config_entry": true,
-  "version": "0.2.2b1"
+  "version": "0.2.3b1"
 }

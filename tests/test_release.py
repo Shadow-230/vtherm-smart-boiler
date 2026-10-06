@@ -26,7 +26,7 @@ from homeassistant.helpers import config_validation as cv
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "custom_components/vtherm_smart_boiler"
 TRANSLATIONS = sorted((COMPONENT / "translations").glob("*.json"))
-RELEASE = "0.2.2b1"  # decision 16's provisional first version (Z2); K5, K7 move it
+RELEASE = "0.2.3b1"  # decision 16's provisional first version (Z2); K5, K7 move it
 MIN_HOME_ASSISTANT = "2026.9.0"  # the version tested (the user, 2026-09-25)
 
 
@@ -92,9 +92,9 @@ def test_manifest_version_is_this_release() -> None:
 
 
 def test_a_pre_release_version_is_one_home_assistant_accepts() -> None:
-    """T12: the planned pre-release, 0.2.2b1, and the release after it, 0.2.2, are PEP 440,
+    """T12: the planned pre-release, 0.2.3b1, and the release after it, 0.2.3, are PEP 440,
     not SemVer (decision 16, provisional)."""
-    for version in ("0.2.2b1", "0.2.2"):
+    for version in ("0.2.3b1", "0.2.3"):
         AwesomeVersion(version, ensure_strategy=VERSION_STRATEGIES)
 
 
