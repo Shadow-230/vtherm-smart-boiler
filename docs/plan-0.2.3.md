@@ -140,7 +140,7 @@ and VT's not-started zones read as the user's "off".
 
 | Step | Work |
 |---|---|
-| 4.1 | The high-priority missing tests not written in parts 1 and 2: TB-07, TB-09, TB-10, TB-11. |
+| 4.1 ✅ | The high-priority missing tests not written in parts 1 and 2: TB-07, TB-09, TB-10, TB-11. |
 | 4.2 | The medium-priority missing tests: TB-12, TB-14, TB-15, TB-16, TB-17, TB-18, TB-19, TB-20, TB-21, TB-22, TB-23, TB-24, TB-26, TB-27, TB-28, TB-29, TB-30, TB-31, TB-32, TB-33, TB-34, TB-35, TB-36, TB-37, TB-38. |
 | 4.3 | The manifest and `tests/test_release.py` set to 0.2.3b1 (provisional, decision 16 of `docs/plan-0.2.2.md`). |
 | 4.4 | An independent read-only check of 0.2.3 by a fresh subagent against every problem of the review and decisions 1–15; a finding fixed with a test and checked again by another fresh subagent, until a check finds no critical or high problem. A multi-agent review only with the user's go-ahead. |
