@@ -109,10 +109,10 @@ metrics. The test HA (`devenv/`, test LXC) is built with 0.2 (`docs/plan-0.2.md`
 | Step | Work |
 |---|---|
 | D1 ✅ | `manifest.json`: `vtherm-api>=0.4.0`, config flow, local; newer VT features detected at runtime (raised to `vtherm-api>=0.5.0` in 0.2.1, R1: the feature-manager contract was checked on 0.5.0) |
-| D2 ✅ | config flow, simple and advanced: boiler class and power, optional gas consumption at minimum and maximum power, entity fields per signal (required: flame, flow temperature), circuits, VT zones per circuit with emitter type and size, foreign-heat switches or sensors per zone, building (coarse answers or heat loss), weather entity, reference-room strategy; options flow; every option with a cautious default and a description of what it does and what it risks |
+| D2 ✅ | config flow, simple and advanced: boiler class and power, optional gas consumption at minimum and maximum power, entity fields per signal (required: flame, flow temperature — optional since 0.2.2, `docs/plan-0.2.2.md` X8), circuits, VT zones per circuit with emitter type and size, foreign-heat switches or sensors per zone, building (coarse answers or heat loss), weather entity, reference-room strategy; options flow; every option with a cautious default and a description of what it does and what it risks |
 | D3 ✅ | transport from mapped entities: freshness per signal, capabilities from filled fields |
 | D4 ✅ | `vtherm_link.py`: VT zones, `central_mode`, device power; capability detection |
-| D5 ✅ | coordinator: state events plus a 30 s tick; bounded rolling history in HA storage. Done differently: the rolling history (8 days) is rebuilt from the recorder at start, which keeps these states anyway, and seeded from current states; HA storage keeps only the monitoring start, held emitter factors and measured parameters. Without the recorder the history starts empty after a restart. The analysis (`core/analysis.py`) runs every 5 min on a copy, off the event loop (0.2: the store also keeps the control state; 0.2.2 V1: in its own store, written at once) |
+| D5 ✅ | coordinator: state events plus a 30 s tick; bounded rolling history in HA storage. Done differently: the rolling history (8 days) is rebuilt from the recorder at start, which keeps these states anyway, and seeded from current states; HA storage keeps only the monitoring start, held emitter factors and measured parameters. Without the recorder the history starts empty after a restart. The analysis (`core/analysis.py`) runs every 5 min on a copy, off the event loop (0.2: the store also keeps the control state; 0.2.2 V1: in its own store, written at once; a store of its own also marks the plugin alive every 10 min, and forecasts keep theirs, D7) |
 | D6 ✅ | entities: boiler metrics, connection, signal check, per-zone hot water available and emitter power factor, critical zone, reference room, verdict, alarms; advanced entities hidden by default. Entities for a feature exist only when its signals are mapped |
 | D7 ✅ | FC0: `weather.get_forecasts` (hourly and daily) every 30 min, 90-day retention. Stored in weekly partitions, one storage file each |
 | D8 ✅ | diagnostics download, redacted |
@@ -123,8 +123,8 @@ Config-flow signal fields — entity pickers filtered by domain and device class
 
 | Signal | Required | Entity |
 |---|---|---|
-| flame | yes | `binary_sensor` |
-| flow temperature | yes | `sensor`, temperature |
+| flame | yes (optional since 0.2.2, X8) | `binary_sensor` |
+| flow temperature | yes (optional since 0.2.2, X8) | `sensor`, temperature |
 | return temperature | no | `sensor`, temperature |
 | modulation | no | `sensor`, % |
 | CH setpoint | no | `sensor` or `number`, temperature |

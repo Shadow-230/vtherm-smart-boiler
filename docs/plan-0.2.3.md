@@ -19,7 +19,7 @@ next part starts** (the user's wish of 2026-10-05, to control the tokens spent).
 document step comes first; its diff waits for the user's consent, and the part's code steps may
 start meanwhile.
 
-Status on 2026-10-06: part 1 done (its documents consented by the user at the stop 1.6); part 2
+Status on 2026-10-06: parts 1–3 done (their documents consented by the user at the stops); part 4
 under way.
 
 ## How to read this plan
@@ -118,7 +118,7 @@ and VT's not-started zones read as the user's "off".
 
 | Step | Work |
 |---|---|
-| 2.1 | `SCOPE.md` and the plans take decisions 5, 7–11, 13 and 14 (SB-04, SB-07, SB-08, SB-11, SB-18, SB-29, SB-36; PB-08's latch rule); `devenv/README.md` takes Z3's J4 proposal (`research/2026-10-02-z3-readme-proposal.md`) with J4's starts criterion as decision 8 states it. |
+| 2.1 ✅ | `SCOPE.md` and the plans take decisions 5, 7–11, 13 and 14 (SB-04, SB-07, SB-08, SB-11, SB-18, SB-29, SB-36; PB-08's latch rule); `devenv/README.md` takes Z3's J4 proposal (`research/2026-10-02-z3-readme-proposal.md`) with J4's starts criterion as decision 8 states it. |
 | 2.2 ✅ | Hand-backs confirmed correctly, and what judges them frozen while one is owed (decision 5): PB-09, PB-10, PB-11, PB-22, PB-26, PB-27, SB-04, TB-04, TB-13. |
 | 2.3 ✅ | Setup and stored options safe, and K4 given the full list (decision 9): PB-06, PB-07, PB-08, PB-24, SB-09, TB-03, TB-08, TB-25. Wrong shapes and non-finite or out-of-range numbers refused with a reason and an owed hand-back reported; platforms unloaded after a late setup failure without wiping the registry; the restart latch's untick gap; SB-09's additions to "Open after 0.2.2" committed at once, and K4's rows pointing to every item marked K4. |
 | 2.4 ✅ | The comfort correction meets principle 13's rules 3 and 5 (decision 11): SB-11. Rule 3: it moves only while the starts per hour do not rise against the same hours before it began, and steps back when they do; rule 5: it freezes in extreme weather — an outdoor temperature beyond the design outdoor temperature, or a change faster than a set rate per hour (provisional, K4) — with its tests and the simulator's starts measured with it on. |
@@ -130,11 +130,11 @@ and VT's not-started zones read as the user's "off".
 
 | Step | Work |
 |---|---|
-| 3.1 | The remaining specification problems, settled in `SCOPE.md`, `PLAN.md` and the plans: SB-12, SB-13, SB-14, SB-15, SB-16, SB-17, SB-19, SB-20, SB-21, SB-22, SB-23, SB-24, SB-25, SB-26, SB-27, SB-28, SB-30, SB-31, SB-32, SB-33, SB-34, SB-35, SB-37, SB-38, SB-39. |
+| 3.1 ✅ | The remaining specification problems, settled in `SCOPE.md`, `PLAN.md` and the plans: SB-12, SB-13, SB-14, SB-15, SB-16, SB-17, SB-19, SB-20, SB-21, SB-22, SB-23, SB-24, SB-25, SB-26, SB-27, SB-28, SB-30, SB-31, SB-32, SB-33, SB-34, SB-35, SB-37, SB-38, SB-39. |
 | 3.2 ✅ | Control, guards, relay, transport, units, lifecycle, stores, repairs, forecasts, the monitor, the VT link and the feature manager: PB-15, PB-21, PB-28, PB-29, PB-30, PB-31, PB-32, PB-33, PB-34, PB-35, PB-36, PB-37, PB-38, PB-40, PB-41, PB-42, PB-43, PB-53, PB-70, PB-72, PB-73, PB-84, PB-17, PB-18, PB-47, PB-51, PB-52, PB-55, PB-56, PB-57, PB-58, PB-59, PB-60, PB-62, PB-19, PB-20, PB-63, PB-64, PB-65, PB-66, PB-67, PB-46, PB-48, PB-49, PB-50. |
 | 3.3 ✅ | The config and options flows, entities, texts, icons, the manifest, CI, scripts, tools, the simulator, the test HA files, and wrong or weak tests: PB-45, PB-54, PB-68, PB-69, PB-71, PB-83, PB-39, PB-61, PB-74, PB-75, PB-76, PB-77, PB-78, PB-79, PB-80, PB-81, PB-82, PB-85, PB-86, PB-87, PB-88, PB-89, PB-91, PB-92, PB-93, PB-25, PB-90, PB-94, PB-95, PB-96, PB-97, PB-98, PB-99, PB-100, PB-101. |
 | 3.4 ✅ | The check of part 3. |
-| 3.5 🔒 | Stop: the report to the user, with the tokens part 3 used; the user decides whether part 4 starts. |
+| 3.5 🔒 ✅ | Stop: the report to the user, with the tokens part 3 used; the user decides whether part 4 starts. |
 
 ## Part 4 — missing tests, version, the final check
 

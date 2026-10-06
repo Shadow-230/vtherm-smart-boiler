@@ -10,7 +10,8 @@ OTGW "off" masks an on/off thermostat after a crash; and the water's lower bound
 minimum power. The user's decisions of 2026-09-26/27 settle decisions 1–15 below and bring control of
 boilers switched on and off by a relay (class 3) into this release. The steps of `docs/plan-0.2.md`
 still open (J2, J4, K1–K7) follow on 0.2.2: it becomes the first version to reach the test HA and to
-be published (pre-release 0.2.2b1, then 0.2.2 — the user confirms at K5, decision 16 below).
+be published (pre-release 0.2.2b1, then 0.2.2 — the user confirms at K5, decision 16 below; since
+`docs/plan-0.2.3.md` the version is decided at K4 and K5, provisionally 0.2.3b1).
 Scope: `SCOPE.md`; overview: `PLAN.md`; the previous corrections: `docs/plan-0.2.1.md`. Written on
 2026-09-26 from the review and the comparison; the user's decisions recorded on 2026-09-27.
 
@@ -63,7 +64,8 @@ problem); the questions for K4 in `research/2026-09-27-k4-questions.md`. Next: J
 
 The terms of `docs/plan-0.2.1.md` hold (hand-back, write path, write type, read-back, outside change,
 latch, blocker, topology, demand, comfort correction, bounded learning, frost protection, freshness,
-`CS` / `CH`). New here:
+`CS` / `CH`); where one of them and `SCOPE.md` differ (frost protection only for zones that can take
+heat, decision 4; freshness and the lost boiler link, §7), `SCOPE.md` holds. New here:
 
 - **Control state** — what the plugin must remember across restarts to hand back safely: the
   "controlling" marker, an owed hand-back and the options it was taken with, the latches, the
@@ -105,8 +107,9 @@ provisional option this plan first proposed, the answer holds.
 - **Missing data.** Most installations give only some of the parameters. Every feature works with
   what is available; a feature whose input is missing is shown as inactive and names what it lacks;
   missing data never by itself switches heating off or blocks the boiler. The one exception is the
-  link with the boiler: control that loses the boiler's confirmations while it controls hands the
-  boiler back (for a relay, see "On/off control" below). An installation that gives no confirmation
+  link with the boiler: control that loses the boiler's confirmations while it controls writes
+  nothing from that step and hands the boiler back after 5 min (for a relay, see "On/off control"
+  below; `SCOPE.md` principle 12, exception 7). An installation that gives no confirmation
   at all gets only the monitor — except a relay that reports no state of its own, which the user
   accepted under control with blind repeats (see "On/off control" below), shown as "controlled
   without confirmation". When VT gives no answer at all, nothing asks for heat: the plugin hands the
@@ -617,7 +620,7 @@ Left on purpose for a later release:
     is off by default (K4.1); with it off the starts equal the boiler's own at a constant outdoor
     temperature, and a room set above the curve's room temperature stays up to about 2 K short in
     cold weather; a rule that rises only while starts do not rise may come in 0.3 if data show a
-    need.
+    need — built in 0.2.3 instead (decision 11 of `docs/plan-0.2.3.md`).
 25. The simulator starts every TPI zone's cycle together (staggered cycles not modelled), and
     the wall thermostat's own overrides are not modelled (Z3) — later.
 26. A "heating stops" hand-back leaves the heating switch on where the plugin was heating, so the
@@ -708,7 +711,8 @@ The open steps of `docs/plan-0.2.md` follow: J2 🔒 (with Q2's firewall check),
 scenarios, in the test HA with the simulator only), K1 🔒, K2 (its validation once the repository
 exists), K4 🔒 (the review of the control laws, with decision 16, the values marked provisional, the
 answers steps gave to review questions 3, 5, 6, 8–12, 19 and 20, and whether to lift the block on
-"off" as a low setpoint (decision 11); the 0.2.1 change log read together with
+"off" as a low setpoint (decision 11); every item marked K4 in "Open after 0.2.2" and "Open after
+0.2.3"; the 0.2.1 change log read together with
 `docs/review-2026-09-26-vs-0.2.md`), K5 🔒 (public repository, pre-release 0.2.2b1), K6 🔒 (with the
 Shelly timer check on the user's own relay, Q3), K7 🔒 (the release version, decision 16).
 

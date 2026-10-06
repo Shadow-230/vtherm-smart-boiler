@@ -37,13 +37,31 @@ Claude connects to this instance only after you say to start, only at the addres
 
   Make both rules persistent (for example with `iptables-persistent`), since Docker rebuilds its
   chains at start but keeps `DOCKER-USER`'s rules only while they are loaded.
-- The check (T-25): from inside the container, every TCP attempt to the production Home
-  Assistant, its broker and the gateway, over IPv4 and IPv6, must time out or be refused, e.g.
-  `docker exec ha-test python3 -c "import socket; socket.create_connection(('<ip>', <port>), 5)"`
-  for each address and port. You run it at J2; Claude repeats it over SSH only after you have
-  said to start J4.
+- The check (T-25): from inside the container, every TCP attempt to each service port of the
+  production Home Assistant, its broker and the gateway, over IPv4 and IPv6, must time out. A
+  refusal is a failure: with the DROP rules above it means the packet reached the target. For
+  each address and port:
+
+  ```
+  docker exec ha-test python3 -c "
+  import socket, sys
+  try:
+      socket.create_connection((sys.argv[1], int(sys.argv[2])), 5); print('REACHABLE')
+  except TimeoutError:
+      print('blocked')
+  except OSError as e:
+      print('REACHABLE or rejected:', e)" '<ip>' <port>
+  ```
+
+  Only "blocked" passes. First run it once against an address and port the container must reach
+  (e.g. a public web server on 443): it must print REACHABLE, which shows the check itself works.
+  Run the whole check again after a reboot of the LXC, to see the rules persist. You run it at
+  J2; Claude repeats it over SSH only after you have said to start J4.
 
 - Internet access for pulling the image and VT's Python requirements (`vtherm_api` from PyPI).
+  Home Assistant installs the newest `vtherm_api` at its first start, not the 0.5.0 the tests
+  pin; J4's report records the version installed (CI's job with the latest `vtherm_api` runs the
+  same combination).
 
 ## 2. Access for Claude (you — J2)
 
@@ -52,6 +70,10 @@ Claude connects to this instance only after you say to start, only at the addres
    the deploy user's `~/.ssh/authorized_keys` on the LXC.
 2. Copy `devenv/local.env.example` to `devenv/local.env` and fill in the host, the SSH user, the
    directory on the LXC and the URL.
+   That directory is not created by the deploy: create it on the LXC yourself, and in it the
+   empty marker file `.vtherm-smart-boiler-test-ha` (`touch .vtherm-smart-boiler-test-ha`), which
+   tells the deploy that this host is the test LXC — without it nothing is copied and Home
+   Assistant is not restarted (PB-87).
 3. After the first start and onboarding (section 3): create a long-lived access token (profile →
    Security → Long-lived access tokens) and put it in `TEST_HA_TOKEN`.
 
@@ -87,24 +109,49 @@ Set up in the user interface — or by Claude through the API at J4, once you sa
      `binary_sensor.boiler_sim_pump_running`.
    - Weather: `weather.boiler_sim_weather`.
    - Boiler: class "Flow setpoint", DHW "combi"; one unmixed circuit; the three VT zones.
-4. **Control** (options → Control):
-   - Write path "OpenTherm Gateway", gateway ID `sim`, topology "Gateway with a thermostat".
-   - Read-back `sensor.boiler_sim_ch_setpoint`; design flow temperature 55 °C.
+4. **The simulated gateway**: Settings → Devices & services → Add integration → "OpenTherm Gateway
+   (simulator stub, test only)" → Submit. Its entry has the gateway ID `sim`. It is a test-only
+   stand-in on the simulator for Home Assistant's own OpenTherm Gateway integration, which it
+   overrides in this instance only (`scripts/deploy_test.sh` deploys it nowhere else).
+5. **Control** (options → Control):
+   - Write path "OpenTherm Gateway", topology "Gateway with a thermostat", thermostat terminals
+     "OpenTherm thermostat"; read-back `sensor.otgw_sim_boiler_control_setpoint`, heating read-back
+     `binary_sensor.otgw_sim_boiler_master_ch_enabled`; gateway ID `sim`; design flow 55 °C.
+   - At the advanced level, the signal "Wired thermostat setpoint"
+     `sensor.otgw_sim_thermostat_room_setpoint` (the wall thermostat's own setting, 21 °C 06:00–22:00
+     and 17 °C otherwise, UTC).
 
 The plugin enforces the monitoring period (7 days at least) here as anywhere. The test instance
 can simply monitor for 7 days first; or, with your consent at J4, its stored monitoring start can
 be moved back while Home Assistant is stopped — on the test instance only.
 
-Other write paths: set `write_type: persistent` (or `held`) in `configuration.yaml` and use the
-entity path with `number.boiler_sim_flow_setpoint`; the switch hand-back uses
-`switch.boiler_sim_external_control`. The firmware MQTT path needs a broker in the LXC and
-`mqtt_topic` in `configuration.yaml`.
+Other write paths: set `write_type: held` (or `persistent`) and `ch_write_type` in
+`configuration.yaml` and use the entity path with `number.boiler_sim_flow_setpoint` and
+`switch.boiler_sim_ch_enable`; the switch hand-back uses `switch.boiler_sim_external_control`. The
+relay (an on/off boiler): uncomment the relay block in `configuration.yaml` (and drop
+`wall_thermostat`), redeploy, set the boiler class to "On/off" and use the relay path with
+`switch.boiler_sim_relay`, declaring its settings as the block gives them and ticking "this is a
+separate relay contact". The firmware MQTT path needs a broker in the LXC and `mqtt_topic` in
+`configuration.yaml` — only if the stub route fails.
 
 ## 5. What runs at J4
 
 The acceptance scenarios of `docs/plan-0.2.md` (J4) run first in-process
 (`tests/integration/test_acceptance.py`), then here through the API. Scenarios drive the
-simulator's services (`boiler_sim.set_outdoor`, `fail_signal`, `force_setpoint`,
-`ignore_writes`, `start_dhw`, `set_topology`), the control switch and the options. Their results
-come from entity states and the simulator's command counters (attributes of
-`sensor.boiler_sim_persistent_writes`). The only address contacted is `TEST_HA_URL`.
+simulator's services — `boiler_sim.set_outdoor`, `fail_signal` (a boiler signal; `gateway`: the
+gateway out of reach, its commands dropped — the lost link; `relay`: the relay's state unknown;
+`thermostat_setpoint`; a fault signal), `force_setpoint` (another controller), `ignore_writes`,
+`refuse_id1` (confirmed, then dropped), `clip_setpoint`, `drop_override` (a single fall-back),
+`start_dhw`, `set_topology`, `set_zone_mode` (a zone VT switched off closes its valve),
+`reset_gateway` and `restart_device` (a lost command with a trace), `relay_restart` (seen, or with
+`reported: false` unseen), `relay_wifi_loss`, `relay_switch` (an automation or its button),
+`set_wall_setpoint`, `set_fault` — and the stub's own `opentherm_gw.reset_gateway`, the control
+switch and the options. Their results come from entity states and the simulator's command
+counters (attributes of `sensor.boiler_sim_persistent_writes`: commands per path, `ch_writes`,
+`relay_commands`, `dhw_enable_writes`; its state counts only writes of type persistent). The
+starts criterion (decision 8 of `docs/plan-0.2.3.md`; `SCOPE.md`, fixed values) reads the
+monitor's starts per hour over 24 h at +8 °C and at −5 °C, each with a ±3 K daily outdoor swing,
+against the boiler's own regulation's, with the rooms as warm as under it (comfort parity); the
+acceptable ratio is decided at K4 (1.10 until then), and in-process the test carrying the swing
+is a strict xfail until K4. Z3 measured the criterion holding only with the comfort correction
+off (`research/2026-10-02-z3-starts-ratio.md`). The only address contacted is `TEST_HA_URL`.
