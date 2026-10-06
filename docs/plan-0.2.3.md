@@ -143,7 +143,7 @@ and VT's not-started zones read as the user's "off".
 | 4.1 ✅ | The high-priority missing tests not written in parts 1 and 2: TB-07, TB-09, TB-10, TB-11. |
 | 4.2 ✅ | The medium-priority missing tests: TB-12, TB-14, TB-15, TB-16, TB-17, TB-18, TB-19, TB-20, TB-21, TB-22, TB-23, TB-24, TB-26, TB-27, TB-28, TB-29, TB-30, TB-31, TB-32, TB-33, TB-34, TB-35, TB-36, TB-37, TB-38. |
 | 4.3 ✅ | The manifest and `tests/test_release.py` set to 0.2.3b1 (provisional, decision 16 of `docs/plan-0.2.2.md`). |
-| 4.4 | An independent read-only check of 0.2.3 by a fresh subagent against every problem of the review and decisions 1–15; a finding fixed with a test and checked again by another fresh subagent, until a check finds no critical or high problem. A multi-agent review only with the user's go-ahead. |
+| 4.4 ✅ | An independent read-only check of 0.2.3 by a fresh subagent against every problem of the review and decisions 1–15; a finding fixed with a test and checked again by another fresh subagent, until a check finds no critical or high problem. A multi-agent review only with the user's go-ahead. |
 | 4.5 🔒 | Stop: the report to the user, with the tokens part 4 used. |
 
 ## Open after 0.2.3
@@ -333,6 +333,17 @@ Left on purpose for a later release; what a step leaves open is added here by na
     an outage, so an external-control switch that never shows "on" is switched on again at each
     keep-alive (a lost command each time) rather than stepped aside from, until the clock passes
     the restart time — K4.
+71. Step 4.4 (PB-24's remainder): a zone stored without an emitter type (only by editing the
+    options outside the form) is read as a radiator, so an underfloor zone would lose its flow
+    cap; refusing it with a reason — K4.
+72. Step 4.4 (TB-14): a third untraced fall-back more than 60 min after the previous one is a lost
+    command sent again (answer E), where the review's test expected a step aside — confirm answer
+    E — K4.
+73. Step 4.4: a relay that switches itself back within seconds ("inching") restarts the count of a
+    relay that stops taking commands, as before 0.2.3 — K4.
+74. Step 4.4: on a gateway with an OpenTherm thermostat, a hand-back counts as released while the
+    read-back still shows the plugin's last value if the thermostat asks for the same value within
+    0.5 K (harmless: the boiler then gets that value) — K4.
 
 ## After 0.2.3
 
