@@ -42,6 +42,9 @@ from .tpi import TpiConfig, TpiZone
 
 GATEWAY_MIN_EXPIRING = 8.0  # an OTGW control setpoint below this (and above 0) never lapses
 GATEWAY_RESET_S = 10.0  # a gateway restarting is out of reach this long (test-only)
+# After a reset the gateway shows the water pressure as 0.0 until its own poll reads it again
+# (L3: a PIC reset zeroes its stored values). The poll's interval is assumed (test-only).
+GATEWAY_PRESSURE_POLL_S = 60.0
 MAX_STEP_S = 10.0
 # A clock that jumps further than this (a test's frozen clock released at its end, a host waking
 # up) is not stepped through in full: only its last ``MAX_CATCH_UP_S`` is simulated.
@@ -182,6 +185,8 @@ class Simulation:
         self.faults: set[str] = set()
         self.gateway_ack: float | None = None  # the gateway's acknowledgement, until the exchange
         self.gateway_away_until: float | None = None  # a gateway reset in progress
+        self.gateway_pressure_from: float | None = None  # 0.0 bar shown before this, after a reset
+        self.gateway_fault_flags: set[str] = set()  # the fault flags the gateway last read
         relay = config.relay
         self.relay = (
             None
@@ -313,6 +318,23 @@ class Simulation:
         device)."""
         return self.last.demand if self.gateway_reachable() else None
 
+    def gateway_pressure(self) -> float | None:
+        """The boiler's water pressure as ``opentherm_gw`` shows it (ID 18): 0.0 from a gateway
+        reset until the gateway's own poll reads it again; ``None`` while out of reach."""
+        if not self.gateway_reachable():
+            return None
+        if self.gateway_pressure_from is not None and self.t < self.gateway_pressure_from:
+            return 0.0
+        return self.last.pressure
+
+    def gateway_fault(self, fault: str | None = None) -> bool | None:
+        """The boiler's fault indication (ID 0, in every status report) — or, with ``fault``,
+        that fault's own flag (ID 5, read once per new fault and kept after it clears) — as
+        ``opentherm_gw`` shows it; ``None`` while out of reach."""
+        if not self.gateway_reachable():
+            return None
+        return bool(self.faults) if fault is None else fault in self.gateway_fault_flags
+
     def wall_setpoint(self) -> float | None:
         """The wall thermostat's room setpoint, as an OpenTherm thermostat sends it (ID 16)."""
         if self.wall is None or self.wall.kind is not WallKind.OPENTHERM:
@@ -406,6 +428,7 @@ class Simulation:
         self.plant.reset_gateway()
         self.gateway_ack = None
         self.gateway_away_until = now + GATEWAY_RESET_S
+        self.gateway_pressure_from = now + GATEWAY_RESET_S + GATEWAY_PRESSURE_POLL_S
 
     def _clipped(self, value: float) -> float:
         """The setpoint the boiler takes: its own limit, where a scenario set one."""
@@ -497,6 +520,9 @@ class Simulation:
             raise ValueError(f"unknown fault {fault}")
         if on:
             self.faults.add(fault)
+            # The gateway reads a fault's flags once per new fault and keeps them after it clears
+            # (Q3.9): its flags show the last fault's, not the boiler's state now.
+            self.gateway_fault_flags = set(self.faults)
         else:
             self.faults.discard(fault)
 

@@ -11,8 +11,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.vtherm_smart_boiler.const import DOMAIN
@@ -602,7 +604,7 @@ async def test_every_attribute_has_a_translated_name(
 ) -> None:
     """TB-36 (PB-76, PB-77): on the water and relay installations with a foreign-heat source,
     once every entity has been written, every attribute outside Home Assistant's own has a
-    translated name, in English and Polish."""
+    translated name, and every state shown a text, in English and Polish."""
     hass.states.async_set("switch.fake_stove", "off")
 
     def stove(options: dict[str, Any]) -> None:
@@ -610,6 +612,11 @@ async def test_every_attribute_has_a_translated_name(
 
     entry = await _setup(hass, zones, base, stove)
     registry = er.async_get(hass)
+    # A zone is shown by its own name, which needs no text (the critical zone, the reference).
+    coordinator = entry.runtime_data
+    names: set[object] = {
+        coordinator.link.zone_name(zone.zone_id) for zone in coordinator.config.installation.zones
+    }
     missing: set[str] = set()
     for registered in er.async_entries_for_config_entry(registry, entry.entry_id):
         if registered.disabled_by is not None:
@@ -623,4 +630,48 @@ async def test_every_attribute_has_a_translated_name(
                 named = entity.get("state_attributes", {}).get(attribute, {}).get("name")
                 if not named:
                     missing.add(f"{language} {registered.domain}.{key}.{attribute}")
+        for language in TEXTS:
+            if not _state_has_text(registered, state.state, language, names):
+                missing.add(f"{language} {registered.domain}.{key} state {state.state}")
     assert not missing, "\n".join(sorted(missing))
+
+
+def _state_has_text(
+    registered: er.RegistryEntry, shown: str, language: str, names: set[object]
+) -> bool:
+    """TB-36: a state shown has a text — Home Assistant's own for a number, a time, unknown and
+    unavailable, and for on/off of a device class whose words fit (a problem, a connection); the
+    entity's own for a coded state and for on/off of a heat sensor, whose "Hot"/"Normal" would
+    mislead (PB-76)."""
+    if shown in ("unknown", "unavailable") or shown in names:
+        return True
+    states = TEXTS[language]["entity"][registered.domain].get(registered.translation_key, {})
+    own = states.get("state", {})
+    if registered.domain == "binary_sensor":
+        if registered.original_device_class == BinarySensorDeviceClass.HEAT:
+            return {"on", "off"} <= set(own)
+        return shown in ("on", "off")
+    if registered.domain == "switch":
+        return shown in ("on", "off")
+    try:
+        float(shown)
+    except ValueError:
+        pass
+    else:
+        return True
+    if dt_util.parse_datetime(shown) is not None:
+        return True
+    return shown in own
+
+
+@pytest.mark.parametrize("with_return", [True, False])
+async def test_the_flue_gas_trend_needs_the_return(
+    hass: HomeAssistant, zones: FakeZones, forecasts: FakeForecasts, with_return: bool
+) -> None:
+    """TB-21 (P-85): a condensing boiler with its flue gas mapped has the flue gas alarm; the
+    rising-flue-gas early warning, computed over the return, only with the return mapped."""
+    change = (lambda options: None) if with_return else without(Signal.RETURN)
+    entry = await _setup(hass, zones, "water", change)
+    keys = created(hass, entry)
+    assert "alarm_flue_gas_high" in keys
+    assert ("alarm_flue_gas_rising" in keys) is with_return

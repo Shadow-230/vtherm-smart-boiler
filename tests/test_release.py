@@ -179,6 +179,44 @@ def test_imported_integrations_are_declared() -> None:
     assert sorted(item for item in found if item[1] not in allowed) == []
 
 
+def _release_problems(root: Path) -> list[str]:
+    """What a release from ``root`` would wrongly carry: anything in ``custom_components/`` but
+    the plugin, and a manifest of the test-only gateway stub or simulator under it."""
+    components = root / "custom_components"
+    problems = [
+        f"{path.name} in custom_components"
+        for path in sorted(components.iterdir())
+        if path.name != "vtherm_smart_boiler" and path.name != "__pycache__"
+    ]
+    for manifest in sorted(components.rglob("manifest.json")):
+        domain = _load(manifest).get("domain")
+        if domain in ("opentherm_gw", "boiler_sim"):
+            problems.append(f"{manifest.relative_to(root)}: {domain}")
+    return problems
+
+
+def test_the_release_holds_only_the_plugin() -> None:
+    """TB-37: HACS installs what ``custom_components/`` holds — the plugin alone; the test-only
+    ``opentherm_gw`` stub and ``boiler_sim`` stay in ``sim/`` (P-37). An ``opentherm_gw`` shipped
+    there would override Home Assistant's own on the user's system."""
+    assert _release_problems(ROOT) == []
+
+
+def test_the_release_check_finds_a_stub(tmp_path: Path) -> None:
+    """Negative: a stub copied in, or a gateway manifest under the plugin, is found."""
+    plugin = tmp_path / "custom_components/vtherm_smart_boiler"
+    plugin.mkdir(parents=True)
+    (plugin / "manifest.json").write_text(json.dumps({"domain": "vtherm_smart_boiler"}))
+    assert _release_problems(tmp_path) == []
+    (plugin / "sub").mkdir()
+    (plugin / "sub/manifest.json").write_text(json.dumps({"domain": "opentherm_gw"}))
+    (tmp_path / "custom_components/boiler_sim").mkdir()
+    assert _release_problems(tmp_path) == [
+        "boiler_sim in custom_components",
+        "custom_components/vtherm_smart_boiler/sub/manifest.json: opentherm_gw",
+    ]
+
+
 # --- HACS ---------------------------------------------------------------------------------
 
 

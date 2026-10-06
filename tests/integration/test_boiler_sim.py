@@ -422,3 +422,80 @@ async def test_a_boiler_side_limit_or_refusal_is_not_shown_by_the_gateway(
     assert not hub.sim.ignore_writes
     await gateway(hass, "set_control_setpoint", temperature=50.0)
     assert float(value(hass, READ_BACK)) == 50.0
+
+
+def _fields(path: Path, service: str) -> dict[str, tuple[bool, object, object]]:
+    """A service's fields in a ``services.yaml``: each one's required flag and number range."""
+    import yaml
+
+    found = yaml.safe_load(path.read_text(encoding="utf-8"))[service]["fields"]
+    result: dict[str, tuple[bool, object, object]] = {}
+    for name, field in found.items():
+        number = (field.get("selector") or {}).get("number") or {}
+        result[name] = (bool(field.get("required")), number.get("min"), number.get("max"))
+    return result
+
+
+def test_the_stub_services_match_home_assistants_for_every_call_the_plugin_makes() -> None:
+    """TB-38: for every gateway service the plugin calls, the stub's ``services.yaml`` has Home
+    Assistant's fields (2026.9.3, in ``.venv``), with the same required flags and ranges — a
+    plugin that passes against the stub calls the real one with what it takes."""
+    from homeassistant import components
+
+    from custom_components.vtherm_smart_boiler.transport.writers import OTGW_SERVICES
+
+    real = Path(components.__file__).parent / "opentherm_gw/services.yaml"
+    stub = COMPONENTS / "opentherm_gw/services.yaml"
+    for _domain, service in sorted(OTGW_SERVICES):
+        assert _fields(stub, service) == _fields(real, service), service
+
+
+async def test_the_gateway_rules_run_against_the_stub(hass: HomeAssistant, freezer) -> None:
+    """TB-38: the stub's entities are the gateway's to the plugin — registered by
+    ``opentherm_gw``, its 0 bar after a gateway reset unknown until read again — and its fault
+    flags are gated, the boiler's "Fault indication" being the gate itself; a fault set in the
+    simulator counts through that gate, and no longer once it clears, though the stub keeps its
+    flag on as the real gateway does (Q3.9)."""
+    from custom_components.vtherm_smart_boiler.core.alarms import fault_counts
+    from custom_components.vtherm_smart_boiler.core.signals import Signal
+    from custom_components.vtherm_smart_boiler.transport.entities import (
+        EntityTransport,
+        gateway_signals,
+    )
+
+    await setup_sim(hass, freezer)
+    mapping = {
+        Signal.PRESSURE: "sensor.otgw_sim_boiler_ch_water_pressure",
+        Signal.FAULT_INDICATION: "binary_sensor.otgw_sim_boiler_slave_fault_indication",
+        Signal.LOW_PRESSURE_FAULT: "binary_sensor.otgw_sim_boiler_slave_low_water_pressure",
+    }
+    carried = gateway_signals(hass, mapping)
+    assert carried == {Signal.PRESSURE, Signal.LOW_PRESSURE_FAULT}
+    transport = EntityTransport(hass, mapping, carried)
+
+    def counts() -> bool:
+        flag = transport.reading(Signal.LOW_PRESSURE_FAULT).value
+        gate = transport.reading(Signal.FAULT_INDICATION).value
+        return fault_counts(
+            flag if isinstance(flag, bool) else None,
+            gated=Signal.LOW_PRESSURE_FAULT in carried,
+            gate=gate if isinstance(gate, bool) else None,
+        )
+
+    pressure = transport.reading(Signal.PRESSURE).value
+    assert isinstance(pressure, float)
+    assert pressure > 0.5
+    assert not counts()
+    await gateway(hass, "reset_gateway")
+    await advance(hass, freezer, 30)
+    assert float(value(hass, mapping[Signal.PRESSURE])) == 0.0  # the stub shows the reset's 0
+    assert transport.reading(Signal.PRESSURE).value is None  # the plugin reads it as unknown
+    await advance(hass, freezer, 60)
+    assert transport.reading(Signal.PRESSURE).value == pytest.approx(pressure, abs=0.2)
+    await scenario(hass, "set_fault", fault="low_pressure_fault")
+    assert value(hass, mapping[Signal.FAULT_INDICATION]) == "on"
+    assert counts()
+    await scenario(hass, "set_fault", fault="low_pressure_fault", on=False)
+    assert value(hass, mapping[Signal.LOW_PRESSURE_FAULT]) == "on"  # the stale flag
+    assert value(hass, mapping[Signal.FAULT_INDICATION]) == "off"
+    assert not counts()

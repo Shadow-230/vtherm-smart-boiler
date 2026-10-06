@@ -353,3 +353,42 @@ async def test_a_forecast_call_in_flight_at_the_unload_stores_nothing(
     assert recorder.store.count() == 0
     assert await recorder.async_take(NOW + 60) == 0
     assert asked == ["hourly"]  # nothing asked after the stop
+
+
+async def test_a_forecast_in_imperial_units_is_stored_in_core_units(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    """TB-34: a weather entity in °F, mph and inches: 41 °F, 10 mph and 0.1 in are stored as
+    5 °C, 4.4704 m/s and 2.54 mm."""
+
+    async def handle(call: ServiceCall) -> dict[str, Any]:
+        item = {
+            "datetime": "2026-01-21T12:00:00+00:00",
+            "temperature": 41.0,
+            "templow": 32.0,
+            "wind_speed": 10.0,
+            "precipitation": 0.1,
+        }
+        return {WEATHER_ENTITY: {"forecast": [item]}}
+
+    hass.services.async_register(
+        "weather", "get_forecasts", handle, supports_response=SupportsResponse.ONLY
+    )
+    hass.states.async_set(
+        WEATHER_ENTITY,
+        "cloudy",
+        {
+            "supported_features": 1,
+            "temperature_unit": "°F",
+            "wind_speed_unit": "mph",
+            "precipitation_unit": "in",
+        },
+    )
+    recorder = ForecastRecorder(hass, "entry", WEATHER_ENTITY)
+    assert await recorder.async_take(NOW) == 1
+    (snapshot,) = recorder.store.snapshots()
+    (point,) = snapshot.points
+    assert point.temperature == pytest.approx(5.0)
+    assert point.temperature_low == pytest.approx(0.0)
+    assert point.wind_speed == pytest.approx(4.4704)
+    assert point.precipitation == pytest.approx(2.54)

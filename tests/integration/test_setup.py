@@ -2756,3 +2756,32 @@ async def test_without_the_texts_the_codes_stand_for_themselves(
     assert await _async_options_error_text(hass, "invalid_boiler") == "invalid_boiler"
     monkeypatch.undo()
     assert await _async_options_error_text(hass, "no_such_code") == "no_such_code"
+
+
+async def test_the_analysis_runs_every_5_min_and_the_forecast_every_30(
+    hass: HomeAssistant, freezer, forecasts: FakeForecasts, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TB-18: once set up, the clock alone runs the analysis every ``SUMMARY_SECONDS`` and takes
+    a forecast snapshot every ``FORECAST_SECONDS`` — over an hour, twelve and two."""
+    boiler = FakeBoiler(hass, MAIN)
+    entry = entry_for(boiler, weather=WEATHER_ENTITY)
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    runs: list[bool] = []
+    takes: list[float] = []
+
+    async def run_analysis(*_args: Any, **_kwargs: Any) -> None:
+        runs.append(True)
+
+    async def take(now: float) -> int:
+        takes.append(now)
+        return 1
+
+    monkeypatch.setattr(coordinator, "async_run_analysis", run_analysis)
+    monkeypatch.setattr(coordinator.forecasts, "async_take", take)
+    for _ in range(60):
+        freezer.tick(timedelta(minutes=1))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    assert len(runs) == 12
+    assert len(takes) == 2

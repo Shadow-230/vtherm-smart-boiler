@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -82,3 +83,37 @@ def forecasts(hass):
     fake = FakeForecasts(hass)
     fake.register()
     return fake
+
+
+@pytest.fixture
+def blocking_calls(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
+    """TB-22: Home Assistant's blocking-call detection, enabled as in production — with the
+    calls it skips in tests (``open``, ``listdir``, ``scandir``, ``import_module``, ...) — and
+    every blocking call it catches in the event loop collected, whether it would raise or only
+    log: the plugin may catch the error, so the test reads the list."""
+    import traceback
+
+    from homeassistant import block_async_io
+    from homeassistant.util import loop
+
+    found: list[str] = []
+    original = loop.raise_for_blocking_call
+
+    def collect(func: Any, check_allowed: Any = None, **kwargs: Any) -> None:
+        if check_allowed is None or not check_allowed(kwargs):
+            found.append(
+                f"{func.__name__}{kwargs.get('args')}\n{''.join(traceback.format_stack())}"
+            )
+        original(func, check_allowed, **kwargs)
+
+    monkeypatch.setattr(block_async_io, "_IN_TESTS", False)
+    monkeypatch.setattr(loop, "_PREVIOUSLY_REPORTED", set())
+    monkeypatch.setattr(loop, "raise_for_blocking_call", collect)
+    assert not block_async_io._BLOCKED_CALLS.calls
+    block_async_io.enable()
+    try:
+        yield found
+    finally:
+        for call in block_async_io._BLOCKED_CALLS.calls:
+            setattr(call.object, call.function, call.original_func)
+        block_async_io._BLOCKED_CALLS.calls.clear()
