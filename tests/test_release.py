@@ -312,6 +312,22 @@ def test_hacs_checks_the_brand() -> None:
     assert "ignore:" not in workflow
 
 
+def _png_size(path: Path) -> tuple[int, int]:
+    data = path.read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", path
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def test_the_brand_images_meet_home_assistants_sizes() -> None:
+    """K1: the icon square at 256 and 512 pixels; the logo's shortest side 128-256 pixels, its
+    @2x 256-512 (Home Assistant's brand rules)."""
+    brand = ROOT / "custom_components/vtherm_smart_boiler/brand"
+    assert _png_size(brand / "icon.png") == (256, 256)
+    assert _png_size(brand / "icon@2x.png") == (512, 512)
+    assert 128 <= min(_png_size(brand / "logo.png")) <= 256
+    assert 256 <= min(_png_size(brand / "logo@2x.png")) <= 512
+
+
 # --- translations -------------------------------------------------------------------------
 
 # Keys hassfest checks as translation keys: lower case letters and digits, joined by single
