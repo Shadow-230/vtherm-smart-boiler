@@ -4,6 +4,7 @@ name: Validate
 
 on:
   push:
+    branches: [dev, qas, main]
   pull_request:
   workflow_dispatch:
   schedule:
@@ -14,6 +15,7 @@ permissions:
 
 jobs:
   hassfest:
+    name: Home Assistant integration check (hassfest)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -21,6 +23,7 @@ jobs:
       - uses: home-assistant/actions/hassfest@06749dd8c0b54f350bc69c8752456cee498808a3 # master, 2026-10-06
 
   hacs:
+    name: HACS repository check
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

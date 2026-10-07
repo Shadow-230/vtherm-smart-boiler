@@ -47,11 +47,11 @@
         "strict_required_status_checks_policy": true,
         "required_status_checks": [
           {
-            "context": "Tests (ha)",
+            "context": "Tests – supported Home Assistant version",
             "integration_id": 15368
           },
           {
-            "context": "Tests (ha-minimum)",
+            "context": "Tests – oldest supported Home Assistant version",
             "integration_id": 15368
           }
         ],
