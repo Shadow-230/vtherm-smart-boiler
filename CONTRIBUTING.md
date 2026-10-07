@@ -7,12 +7,16 @@ every minute. Changes are therefore small, tested and reviewed before they reach
 
 | Branch | Holds | How changes arrive |
 |---|---|---|
-| `dev` (default) | ongoing work | pull requests (the maintainer's automation pushes here directly) |
-| `qas` | the state under test on a test Home Assistant | pull requests from `dev` only, after the checks pass |
+| your own branch (`feature/…`, `fix/…`; the maintainer's automation uses `claude/…`) | one change | your commits |
+| `dev` (default) | integrated work | pull requests from working branches, merged once the checks pass |
+| `qas` | the state under test on a test Home Assistant | pull requests from `dev` only, approved and merged by the repository owner |
 | `main` | releases only | pull requests from `qas` only, approved and merged by the repository owner |
 
+- Nobody pushes to `dev`, `qas` or `main` directly: every change starts on its own branch and
+  moves `branch → dev → qas → main` through pull requests.
 - Open every pull request against `dev`. Pull requests against `qas` or `main` from other branches
-  are closed.
+  are closed. A contributor's pull request into `dev` is reviewed and merged by the repository
+  owner; the maintainer's automation merges only its own.
 - Releases (tags `v*` and GitHub releases) are made by the repository owner only, from `main`.
 - History is never rewritten on `dev`, `qas` or `main` (no force pushes, no deletions).
 

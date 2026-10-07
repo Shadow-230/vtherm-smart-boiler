@@ -72,19 +72,15 @@ Each topic lives only in its file; do not copy it here.
   global git config.
 - Git: commit after every completed step with a descriptive message. The repository is public on
   GitHub, `Shadow-230/vtherm-smart-boiler` (since 2026-10-07); Claude works there as the
-  collaborator account `Shadow-230-bot` and pushes to `dev` only (`git push origin dev`). Never a
-  push to `qas` or `main`, never a force push, a deleted branch, a tag or a GitHub release; `qas`
-  takes pull requests from `dev` once the checks pass; a pull request from `qas` to `main` is
-  opened only when the user says so, and only the user approves and merges it and makes releases
-  (`CONTRIBUTING.md`; `.github/CODEOWNERS`; the rulesets in `.github/rulesets/`). A pull request,
-  an issue or a comment on GitHub is published: each one only with the user's consent. Code, test and
-  tool-configuration files may be changed without asking — history keeps every change.
-  Documents (`*.md`) and the user's files still need a shown diff and consent — except a ✅ on a
-  finished step and an addition to a plan's "Open after" list, which are committed at once, with
-  the diff shown in the step's report (the user, 2026-09-27). A `*.md` change waiting for consent
-  stays uncommitted in the working tree; code and tests are committed by path
-  (`git commit -- <paths>`), so a pending document never enters a code commit. Anything not
-  tracked by git is shown and confirmed before it is deleted or overwritten.
+  collaborator account `Shadow-230-bot`. Flow: a working branch → `dev` → `qas` → `main` (release).
+  Claude pushes only to its own working branches (`claude/<topic>`, from `dev`), opens a pull
+  request from it to `dev` and merges it itself once the checks pass; it never pushes to `dev`,
+  `qas` or `main` directly (the one exception: their first creation on 2026-10-07, before the
+  rulesets), never force-pushes or deletes them, never makes a tag or a GitHub release, and never
+  merges anyone else's pull request. A pull request from `dev` to `qas`, or from `qas` to `main`, is
+  opened only when the user says so; the user approves and merges both and makes releases
+  (`CONTRIBUTING.md`; `.github/CODEOWNERS`; the rulesets in `.github/rulesets/`). An issue or a
+  comment on GitHub is published only with the user's consent.
 - Autonomous work: phases run in order without waiting; work stops at every 🔒 step; the user
   reviews before anything reaches a real boiler (`docs/plan-0.2.md`, K4); each finished step
   is marked ✅ in its plan and committed, so the next session knows where to continue; a step
