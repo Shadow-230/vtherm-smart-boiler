@@ -1,16 +1,102 @@
+[![Status][status-shield]](#status)
+[![Release][release-shield]][releases]
+[![Commit activity on dev][commits-shield]][commits]
+[![License][license-shield]][license]
+[![HACS][hacs-shield]](#installation)
+
 # VTherm Smart Boiler
 
-A Home Assistant integration that drives a central heating boiler from the rooms of
-[Versatile Thermostat](https://github.com/jmcollin78/versatile_thermostat): it replaces VT's
-central boiler with weather-compensated water temperature, protection against short cycling and
-a safe hand-back to the boiler's own control.
+> **Not released yet — do not install it on a heating system you rely on.**
+> The integration is being built and has not run on a real boiler. There is no release and no
+> HACS entry; the first pre-release follows the tests on a test Home Assistant and a review.
+> Where it stands: [Status](#status) · what comes next: [Roadmap](#roadmap).
 
-> **Status: in development — not released, not tested on a real boiler yet.**
-> Do not install it on a heating system you rely on. There is no release and no HACS entry yet;
-> the first pre-release follows the tests on a test Home Assistant and a review.
+**VTherm Smart Boiler** is a plugin for [Versatile Thermostat][vt] (VT) that runs a gas boiler
+from what the rooms actually need: fewer and longer burns, more condensing, less gas per
+degree-day — with the same room comfort, and without disturbing the zone algorithms' own room
+models. It replaces VT's on/off central boiler with control of the boiler's water temperature,
+and always knows how to hand the boiler back to its own control.
 
-- Scope: [`SCOPE.md`](SCOPE.md)
-- Development plan: [`PLAN.md`](PLAN.md) and the plans in [`docs/`](docs/)
-- Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+It is **not** a room controller (rooms stay with VT and its algorithms), it does not drive
+valves or heat pumps, and it sends no data outside your Home Assistant.
 
-Licensed under the [Apache License 2.0](LICENSE).
+# What it does
+
+- **Monitor first.** Before any control it watches the boiler for a monitoring period (7 days by
+  default): burns and their length, condensing, hot-water draws, gas per degree-day, signal
+  problems, and a verdict on whether control is worth it.
+- **Weather-compensated water temperature** on a curve you enter, bounded by the lowest and
+  highest water temperature, a weather ceiling and each circuit's maximum.
+- **Heating on and off follow VT's zones** — by zones calling, total power or valve opening, as
+  VT's central boiler does — and VT's central modes act through the zones.
+- **Writes through what you have:** an entity you pick, the OpenTherm Gateway (Home Assistant's
+  `opentherm_gw` or its firmware over MQTT), or a relay for an on/off boiler.
+- **Safety first:** frost protection, protection against short cycling, read-back of every
+  write, never fighting another controller, nothing written to the boiler's permanent memory,
+  and a safe hand-back to the boiler's own control on every exit — retried until confirmed.
+- Every option has a cautious default and a text that says what it does and what it risks.
+
+# Status
+
+| Stage | State |
+|---|---|
+| 0.1 Monitor (read-only) | built, published together with 0.2 |
+| 0.2 Control base | built; corrected after three full reviews (0.2.1, 0.2.2, 0.2.3) |
+| Tests on a test Home Assistant | next |
+| Review before a real boiler | after those tests |
+| First pre-release (provisionally 0.2.3b1) | after the review |
+
+# Roadmap
+
+| Release | Content |
+|---|---|
+| 0.2 Control base | the monitor plus control of the water temperature, the safe hand-back, frost protection |
+| 0.3 Anti-cycling and room values | duty cycling and summer/winter from the forecast, a modulation cap, room-value mode, underfloor behind a mixing valve |
+| 0.4 Learning and tuning | water-side learning, suggestions, seasonal tune-up |
+| 0.5 Forecast | anticipation for slow emitters from recorded forecasts |
+| Later | hot-water charging, the HACS default list, more devices |
+
+Targets are aims, not commitments; each release collects data for the next. Details:
+[`PLAN.md`][plan].
+
+# Documentation
+
+| Document | What it holds |
+|---|---|
+| [`SCOPE.md`][scope] | the specification: what the plugin does, its principles and every decision |
+| [`PLAN.md`][plan] | the development plan, releases and the test environment |
+| [`docs/`][docs] | the plan of each release and the reviews of the code |
+| [`CONTRIBUTING.md`][contributing] | how to contribute: branches, tests, rules |
+| [`LICENSE`][license] | Apache License 2.0 |
+
+`main` holds these documents; the code under development lives on the [`dev`][dev] branch and
+reaches `main` with the first release.
+
+# Installation
+
+Not yet: there is no release. Once there is, it will install through HACS as a custom repository.
+
+# Contributing
+
+Contributions are welcome — open pull requests against `dev`. Read
+[`CONTRIBUTING.md`][contributing] first: this integration controls a home's heating, so every
+change is small, tested and reviewed.
+
+# License
+
+[Apache License 2.0][license].
+
+[vt]: https://github.com/jmcollin78/versatile_thermostat
+[dev]: https://github.com/Shadow-230/vtherm-smart-boiler/tree/dev
+[scope]: SCOPE.md
+[plan]: PLAN.md
+[docs]: docs/
+[contributing]: CONTRIBUTING.md
+[license]: LICENSE
+[releases]: https://github.com/Shadow-230/vtherm-smart-boiler/releases
+[commits]: https://github.com/Shadow-230/vtherm-smart-boiler/commits/dev
+[status-shield]: https://img.shields.io/badge/status-in%20development-orange.svg?style=for-the-badge
+[release-shield]: https://img.shields.io/badge/release-none%20yet-lightgrey.svg?style=for-the-badge
+[commits-shield]: https://img.shields.io/github/commit-activity/m/Shadow-230/vtherm-smart-boiler/dev.svg?style=for-the-badge
+[license-shield]: https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=for-the-badge
+[hacs-shield]: https://img.shields.io/badge/HACS-not%20yet-lightgrey.svg?style=for-the-badge
