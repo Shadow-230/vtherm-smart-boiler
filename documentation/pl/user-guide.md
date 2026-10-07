@@ -8,7 +8,8 @@
 
 Versatile Thermostat Smart Boiler to wtyczka do Versatile Thermostat (VT), integracji Home
 Assistant, która steruje pomieszczeniami w domu. VT decyduje, ile ciepła potrzebuje każde
-pomieszczenie. Ta wtyczka obserwuje kocioł gazowy, a gdy włączysz sterowanie, decyduje, kiedy
+pomieszczenie. Ta wtyczka obserwuje kocioł centralnego ogrzewania (gazowy, olejowy,
+elektryczny lub na inne paliwo; nie pompę ciepła), a gdy włączysz sterowanie, decyduje, kiedy
 kocioł grzeje i jak ciepła jest jego woda. Nie steruje pomieszczeniami ani zaworami.
 
 Ten przewodnik jest streszczeniem. Specyfikacja, ze wszystkimi zasadami i decyzjami, to
