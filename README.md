@@ -6,6 +6,10 @@
 
 # Versatile Thermostat Smart Boiler
 
+<p align="center"><b>
+Runs a gas boiler from what Versatile Thermostat's rooms need, and always hands it back safely.
+</b></p>
+
 > **Not released yet — do not install it on a heating system you rely on.**
 > The integration is being built and has not run on a real boiler. There is no release and no
 > entry in the Home Assistant Community Store (HACS); the first pre-release follows the tests on a
@@ -37,6 +41,18 @@ valves or heat pumps, and it sends no data outside your Home Assistant.
   and a safe hand-back to the boiler's own control on every exit — retried until confirmed.
 - Every option has a cautious default and a text that says what it does and what it risks.
 
+# Integration with Versatile Thermostat
+
+1. Set up VT's thermostats for the rooms the boiler heats. If VT's central boiler is configured,
+   untick it in VT's central configuration and restart Home Assistant: the plugin takes its place.
+2. Add one **Versatile Thermostat Smart Boiler** entry and pick the VT zones this boiler heats.
+3. Pick the entity that provides each boiler signal — at least flame and flow temperature for
+   control.
+4. Let it monitor for the monitoring period (7 days by default) and read its verdict.
+5. Then, if you choose, set up control in the options and switch **Control (experimental)** on.
+
+Step by step: the [user guide][guide].
+
 # Status
 
 | Stage | State |
@@ -67,6 +83,8 @@ Targets are aims, not commitments; each release collects data for the next. Deta
 | [`SCOPE.md`][scope] | the specification: what the plugin does, its principles and every decision |
 | [`PLAN.md`][plan] | the development plan, releases and the test environment |
 | [`docs/`][docs] | the plan of each release and the reviews of the code |
+| 🇬🇧 [User guide][guide] | prerequisites, installation, quick start, how it works, boiler connections, safety, alarms |
+| 🇬🇧 [Technical documentation][technical] | the integration's parts, one control step, lifecycle, stored state, tests |
 | [`CONTRIBUTING.md`][contributing] | how to contribute: branches, tests, rules |
 | [`LICENSE`][license] | Apache License 2.0 |
 
@@ -84,6 +102,10 @@ Contributions are welcome — open pull requests against `dev`. Read
 change is small, tested and reviewed. Which automatic checks run, and when, is in its section
 [Checks](CONTRIBUTING.md#checks).
 
+# Authors
+
+[@Shadow-230](https://github.com/Shadow-230)
+
 # License
 
 [Apache License 2.0][license].
@@ -93,6 +115,8 @@ change is small, tested and reviewed. Which automatic checks run, and when, is i
 [scope]: SCOPE.md
 [plan]: PLAN.md
 [docs]: docs/
+[guide]: documentation/en/user-guide.md
+[technical]: documentation/en/technical.md
 [contributing]: CONTRIBUTING.md
 [license]: LICENSE
 [releases]: https://github.com/Shadow-230/vtherm-smart-boiler/releases
