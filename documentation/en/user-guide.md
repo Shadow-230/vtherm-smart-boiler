@@ -1,3 +1,5 @@
+[Polska wersja](../pl/user-guide.md)
+
 # Versatile Thermostat Smart Boiler — user guide
 
 > **In development, not released.** The integration has not yet run on a real boiler. There is
