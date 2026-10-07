@@ -8,6 +8,10 @@
 
 # Versatile Thermostat Smart Boiler
 
+<p align="center">
+  <img src="documentation/images/logo.png" alt="Versatile Thermostat Smart Boiler logo" width="280" />
+</p>
+
 <p align="center"><b>
 Runs a central heating boiler from what Versatile Thermostat's rooms need, and always hands it
 back safely.
