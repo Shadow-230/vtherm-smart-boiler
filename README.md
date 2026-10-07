@@ -1,3 +1,5 @@
+[Polska wersja](README.pl.md)
+
 [![Status][status-shield]](#status)
 [![Release][release-shield]][releases]
 [![Commit activity on dev][commits-shield]][commits]
@@ -83,8 +85,8 @@ Targets are aims, not commitments; each release collects data for the next. Deta
 | [`SCOPE.md`][scope] | the specification: what the plugin does, its principles and every decision |
 | [`PLAN.md`][plan] | the development plan, releases and the test environment |
 | [`docs/`][docs] | the plan of each release and the reviews of the code |
-| 🇬🇧 [User guide][guide] | prerequisites, installation, quick start, how it works, boiler connections, safety, alarms |
-| 🇬🇧 [Technical documentation][technical] | the integration's parts, one control step, lifecycle, stored state, tests |
+| 🇬🇧 [User guide][guide] · 🇵🇱 [Przewodnik użytkownika][guide-pl] | prerequisites, installation, quick start, how it works, boiler connections, safety, alarms |
+| 🇬🇧 [Technical documentation][technical] · 🇵🇱 [Dokumentacja techniczna][technical-pl] | the integration's parts, one control step, lifecycle, stored state, tests |
 | [`CONTRIBUTING.md`][contributing] | how to contribute: branches, tests, rules |
 | [`LICENSE`][license] | Apache License 2.0 |
 
@@ -116,7 +118,9 @@ change is small, tested and reviewed. Which automatic checks run, and when, is i
 [plan]: PLAN.md
 [docs]: docs/
 [guide]: documentation/en/user-guide.md
+[guide-pl]: documentation/pl/user-guide.md
 [technical]: documentation/en/technical.md
+[technical-pl]: documentation/pl/technical.md
 [contributing]: CONTRIBUTING.md
 [license]: LICENSE
 [releases]: https://github.com/Shadow-230/vtherm-smart-boiler/releases
