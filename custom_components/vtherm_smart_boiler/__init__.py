@@ -1,4 +1,4 @@
-"""VTherm Smart Boiler — a Versatile Thermostat plugin that optimises how a gas boiler runs.
+"""Versatile Thermostat Smart Boiler — a Versatile Thermostat plugin that runs a gas boiler.
 
 Home Assistant is imported inside functions only, so the pure logic in ``core`` can be
 imported and tested on its own.

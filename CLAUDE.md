@@ -1,4 +1,4 @@
-# VTherm Smart Boiler
+# Versatile Thermostat Smart Boiler
 
 Working rules, code conventions and verified facts for Claude. **Where to continue:** the first
 step without ✅ (optional ones aside) in [`docs/plan-0.1.md`](docs/plan-0.1.md), then in
