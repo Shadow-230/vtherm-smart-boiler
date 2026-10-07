@@ -1,6 +1,6 @@
 {
   "domain": "vtherm_smart_boiler",
-  "name": "VTherm Smart Boiler",
+  "name": "Versatile Thermostat Smart Boiler",
   "after_dependencies": [
     "mqtt",
     "opentherm_gw",
