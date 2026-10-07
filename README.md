@@ -9,7 +9,8 @@
 # Versatile Thermostat Smart Boiler
 
 <p align="center"><b>
-Runs a gas boiler from what Versatile Thermostat's rooms need, and always hands it back safely.
+Runs a central heating boiler from what Versatile Thermostat's rooms need, and always hands it
+back safely.
 </b></p>
 
 > **Not released yet — do not install it on a heating system you rely on.**
@@ -19,9 +20,10 @@ Runs a gas boiler from what Versatile Thermostat's rooms need, and always hands 
 > Where it stands: [Status](#status) · what comes next: [Roadmap](#roadmap).
 
 **Versatile Thermostat Smart Boiler** is a plugin for [Versatile Thermostat][vt] (VT) that runs
-a gas boiler from what the rooms actually need: fewer and longer burns, more condensing, less gas
-per degree-day — with the same room comfort, and without disturbing the zone algorithms' own room
-models. It replaces VT's on/off central boiler with control of the boiler's water temperature,
+a central heating boiler — gas, oil, electric or another fuel, any boiler Home Assistant can talk
+to, not a heat pump — from what the rooms actually need: fewer and longer burns, more condensing
+where the boiler condenses, less fuel per degree-day — with the same room comfort, and without
+disturbing the zone algorithms' own room models. It replaces VT's on/off central boiler with control of the boiler's water temperature,
 and always knows how to hand the boiler back to its own control.
 
 It is **not** a room controller (rooms stay with VT and its algorithms), it does not drive

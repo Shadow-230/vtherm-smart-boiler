@@ -9,8 +9,8 @@
 # Versatile Thermostat Smart Boiler
 
 <p align="center"><b>
-Prowadzi kocioł gazowy według potrzeb pomieszczeń z Versatile Thermostat i zawsze bezpiecznie go
-oddaje.
+Prowadzi kocioł centralnego ogrzewania według potrzeb pomieszczeń z Versatile Thermostat i zawsze
+bezpiecznie go oddaje.
 </b></p>
 
 > **Jeszcze bez wydania — nie instaluj w ogrzewaniu, na którym polegasz.**
@@ -20,9 +20,10 @@ oddaje.
 > Gdzie jesteśmy: [Stan](#stan) · co dalej: [Plan rozwoju](#plan-rozwoju).
 
 **Versatile Thermostat Smart Boiler** to wtyczka do [Versatile Thermostat][vt] (VT), która
-prowadzi kocioł gazowy według tego, czego pomieszczenia naprawdę potrzebują: mniej i dłuższych
-cykli pracy palnika, więcej kondensacji, mniej gazu na stopniodzień — przy tym samym komforcie w
-pomieszczeniach i bez zaburzania własnych modeli pomieszczeń w algorytmach stref. Zastępuje
+prowadzi kocioł centralnego ogrzewania — gazowy, olejowy, elektryczny lub na inne paliwo, każdy,
+z którym Home Assistant się komunikuje, ale nie pompę ciepła — według tego, czego pomieszczenia
+naprawdę potrzebują: mniej i dłuższych cykli pracy palnika, więcej kondensacji tam, gdzie kocioł
+kondensuje, mniej paliwa na stopniodzień — przy tym samym komforcie w pomieszczeniach i bez zaburzania własnych modeli pomieszczeń w algorytmach stref. Zastępuje
 kocioł centralny VT działający w trybie wł./wył. sterowaniem temperaturą wody w kotle i zawsze
 wie, jak oddać kocioł jego własnemu sterowaniu.
 
