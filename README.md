@@ -81,7 +81,8 @@ Not yet: there is no release. Once there is, it will install through HACS as a c
 
 Contributions are welcome — open pull requests against `dev`. Read
 [`CONTRIBUTING.md`][contributing] first: this integration controls a home's heating, so every
-change is small, tested and reviewed.
+change is small, tested and reviewed. Which automatic checks run, and when, is in its section
+[Checks](CONTRIBUTING.md#checks).
 
 # License
 
