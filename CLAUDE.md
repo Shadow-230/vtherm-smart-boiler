@@ -81,6 +81,10 @@ Each topic lives only in its file; do not copy it here.
   opened only when the user says so; the user approves and merges both and makes releases
   (`CONTRIBUTING.md`; `.github/CODEOWNERS`; the rulesets in `.github/rulesets/`). An issue or a
   comment on GitHub is published only with the user's consent.
+  The bot's token has no `workflow` scope: a push that changes `.github/workflows/` waits until
+  the user grants it for that one push (`gh auth refresh -h github.com -s workflow`) and takes it
+  back at once (`gh auth refresh -h github.com --remove-scopes workflow`); Claude checks
+  `gh auth status` after, and never keeps or asks for the scope otherwise.
 - Autonomous work: phases run in order without waiting; work stops at every 🔒 step; the user
   reviews before anything reaches a real boiler (`docs/plan-0.2.md`, K4); each finished step
   is marked ✅ in its plan and committed, so the next session knows where to continue; a step
