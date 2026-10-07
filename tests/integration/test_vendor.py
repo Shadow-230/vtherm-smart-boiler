@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,7 +30,10 @@ pytestmark = [requires_vendor, pytest.mark.usefixtures("enable_custom_integratio
 )
 async def test_vendored_integration_loads(hass: HomeAssistant, domain: str, version: str) -> None:
     integration = await async_get_integration(hass, domain)
-    assert str(integration.version) == version
+    # CI's early warning runs the newest releases instead of the pinned ones (VENDOR_VERSIONS_PINNED
+    # "0"): there only the loading is checked.
+    if os.environ.get("VENDOR_VERSIONS_PINNED", "1") != "0":
+        assert str(integration.version) == version
     assert await integration.async_get_component() is not None
 
 
