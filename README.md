@@ -67,6 +67,7 @@ Targets are aims, not commitments; each release collects data for the next. Deta
 | [`SCOPE.md`][scope] | the specification: what the plugin does, its principles and every decision |
 | [`PLAN.md`][plan] | the development plan, releases and the test environment |
 | [`docs/`][docs] | the plan of each release and the reviews of the code |
+| [`documentation/en/`][userdocs] | how the integration works, how it connects to the boiler, safety, alarms |
 | [`CONTRIBUTING.md`][contributing] | how to contribute: branches, tests, rules |
 | [`LICENSE`][license] | Apache License 2.0 |
 
@@ -93,6 +94,7 @@ change is small, tested and reviewed. Which automatic checks run, and when, is i
 [scope]: SCOPE.md
 [plan]: PLAN.md
 [docs]: docs/
+[userdocs]: documentation/en/
 [contributing]: CONTRIBUTING.md
 [license]: LICENSE
 [releases]: https://github.com/Shadow-230/vtherm-smart-boiler/releases
