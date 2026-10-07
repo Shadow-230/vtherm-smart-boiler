@@ -1,3 +1,5 @@
+[Polska wersja](README.pl.md)
+
 [![Status][status-shield]](#status)
 [![Release][release-shield]][releases]
 [![Commit activity on dev][commits-shield]][commits]
@@ -7,7 +9,8 @@
 # Versatile Thermostat Smart Boiler
 
 <p align="center"><b>
-Runs a gas boiler from what Versatile Thermostat's rooms need, and always hands it back safely.
+Runs a central heating boiler from what Versatile Thermostat's rooms need, and always hands it
+back safely.
 </b></p>
 
 > **Not released yet — do not install it on a heating system you rely on.**
@@ -17,9 +20,10 @@ Runs a gas boiler from what Versatile Thermostat's rooms need, and always hands 
 > Where it stands: [Status](#status) · what comes next: [Roadmap](#roadmap).
 
 **Versatile Thermostat Smart Boiler** is a plugin for [Versatile Thermostat][vt] (VT) that runs
-a gas boiler from what the rooms actually need: fewer and longer burns, more condensing, less gas
-per degree-day — with the same room comfort, and without disturbing the zone algorithms' own room
-models. It replaces VT's on/off central boiler with control of the boiler's water temperature,
+a central heating boiler — gas, oil, electric or another fuel, any boiler Home Assistant can talk
+to, not a heat pump — from what the rooms actually need: fewer and longer burns, more condensing
+where the boiler condenses, less fuel per degree-day — with the same room comfort, and without
+disturbing the zone algorithms' own room models. It replaces VT's on/off central boiler with control of the boiler's water temperature,
 and always knows how to hand the boiler back to its own control.
 
 It is **not** a room controller (rooms stay with VT and its algorithms), it does not drive
@@ -83,8 +87,8 @@ Targets are aims, not commitments; each release collects data for the next. Deta
 | [`SCOPE.md`][scope] | the specification: what the plugin does, its principles and every decision |
 | [`PLAN.md`][plan] | the development plan, releases and the test environment |
 | [`docs/`][docs] | the plan of each release and the reviews of the code |
-| 🇬🇧 [User guide][guide] | prerequisites, installation, quick start, how it works, boiler connections, safety, alarms |
-| 🇬🇧 [Technical documentation][technical] | the integration's parts, one control step, lifecycle, stored state, tests |
+| 🇬🇧 [User guide][guide] · 🇵🇱 [Przewodnik użytkownika][guide-pl] | prerequisites, installation, quick start, how it works, boiler connections, safety, alarms |
+| 🇬🇧 [Technical documentation][technical] · 🇵🇱 [Dokumentacja techniczna][technical-pl] | the integration's parts, one control step, lifecycle, stored state, tests |
 | [`CONTRIBUTING.md`][contributing] | how to contribute: branches, tests, rules |
 | [`LICENSE`][license] | Apache License 2.0 |
 
@@ -116,7 +120,9 @@ change is small, tested and reviewed. Which automatic checks run, and when, is i
 [plan]: PLAN.md
 [docs]: docs/
 [guide]: documentation/en/user-guide.md
+[guide-pl]: documentation/pl/user-guide.md
 [technical]: documentation/en/technical.md
+[technical-pl]: documentation/pl/technical.md
 [contributing]: CONTRIBUTING.md
 [license]: LICENSE
 [releases]: https://github.com/Shadow-230/vtherm-smart-boiler/releases

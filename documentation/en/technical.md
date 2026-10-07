@@ -1,3 +1,5 @@
+[Polska wersja](../pl/technical.md)
+
 # Versatile Thermostat Smart Boiler — technical documentation
 
 > **In development, not released.** The integration has not yet run on a real boiler.
