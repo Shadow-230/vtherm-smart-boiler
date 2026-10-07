@@ -115,7 +115,6 @@ def test_requires_the_vtherm_api_its_contract_was_checked_on() -> None:
     assert MANIFEST["requirements"] == ["vtherm_api>=0.5.0"]
 
 
-@pytest.mark.xfail(strict=True, reason="K5: the repository does not exist yet (the user)")
 def test_manifest_links_to_the_repository() -> None:
     """hassfest needs ``documentation``, HACS ``issue_tracker`` and ``codeowners`` too."""
     assert MANIFEST["documentation"].startswith("https://")

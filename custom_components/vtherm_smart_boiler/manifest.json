@@ -10,12 +10,18 @@
     "vtherm_smartpi",
     "weather"
   ],
-  "codeowners": [],
+  "codeowners": [
+    "@Shadow-230"
+  ],
   "config_flow": true,
   "dependencies": [],
+  "documentation": "https://github.com/Shadow-230/vtherm-smart-boiler",
   "integration_type": "service",
   "iot_class": "calculated",
-  "requirements": ["vtherm_api>=0.5.0"],
+  "issue_tracker": "https://github.com/Shadow-230/vtherm-smart-boiler/issues",
+  "requirements": [
+    "vtherm_api>=0.5.0"
+  ],
   "single_config_entry": true,
   "version": "0.2.3b1"
 }

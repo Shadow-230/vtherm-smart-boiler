@@ -70,8 +70,14 @@ Each topic lives only in its file; do not copy it here.
   `.tmp/`, git-ignored); every command runs as `scripts/env.sh <command>`, which sets the
   variables and runs the command. No `sudo`; no changes to the home directory, shell profile or
   global git config.
-- Git is local only (since 2026-09-24): commit after every completed step with a descriptive
-  message; never add a remote or push without the user's consent. Code, test and
+- Git: commit after every completed step with a descriptive message. The repository is public on
+  GitHub, `Shadow-230/vtherm-smart-boiler` (since 2026-10-07); Claude works there as the
+  collaborator account `Shadow-230-bot` and pushes to `dev` only (`git push origin dev`). Never a
+  push to `qas` or `main`, never a force push, a deleted branch, a tag or a GitHub release; `qas`
+  takes pull requests from `dev` once the checks pass; a pull request from `qas` to `main` is
+  opened only when the user says so, and only the user approves and merges it and makes releases
+  (`CONTRIBUTING.md`; `.github/CODEOWNERS`; the rulesets in `.github/rulesets/`). A pull request,
+  an issue or a comment on GitHub is published: each one only with the user's consent. Code, test and
   tool-configuration files may be changed without asking — history keeps every change.
   Documents (`*.md`) and the user's files still need a shown diff and consent — except a ✅ on a
   finished step and an addition to a plan's "Open after" list, which are committed at once, with
