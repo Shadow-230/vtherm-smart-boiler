@@ -14,11 +14,35 @@ every minute. Changes are therefore small, tested and reviewed before they reach
 
 - Nobody pushes to `dev`, `qas` or `main` directly: every change starts on its own branch and
   moves `branch → dev → qas → main` through pull requests.
-- Open every pull request against `dev` (not the default branch `main`). Pull requests against `qas` or `main` from other branches
-  are closed. A contributor's pull request into `dev` is reviewed and merged by the repository
-  owner; the maintainer's automation merges only its own.
+- Open every pull request against `dev` (not the default branch `main`). Pull requests against
+  `qas` or `main` from other branches are closed. A contributor's pull request into `dev` is
+  reviewed and merged by the repository owner; the maintainer's automation merges only its own.
 - Releases (tags `v*` and GitHub releases) are made by the repository owner only, from `main`.
 - History is never rewritten on `dev`, `qas` or `main` (no force pushes, no deletions).
+
+## Checks
+
+Every pull request runs these checks on GitHub Actions:
+
+| Check | Runs on | Blocks a merge |
+|---|---|---|
+| Tests – supported Home Assistant version | every pull request; pushes to `dev`, `qas`, `main` | yes |
+| Tests – oldest supported Home Assistant version | same | yes |
+| Home Assistant integration check (hassfest) | same, and weekly | no |
+| HACS repository check | same, and weekly | no |
+| Early warning – newest vtherm_api | weekly, on demand, pull requests into `qas` and `main` | no |
+| Early warning – newest Versatile Thermostat and SmartPI | same | no |
+
+- The two test checks run lint (`ruff`), formatting, types (`mypy`), the core tests without
+  Home Assistant, the other tests, and the coverage floor: every module at least 95 % with
+  branches, the config and options flows 100 %. The Home Assistant version tested is in each
+  run's summary.
+- An early warning tests this integration against the newest releases of the projects it works
+  with. Its failure is not a fault of the pull request: it says that something upstream changed
+  and needs a look.
+- Merging into `dev` needs both test checks green and the branch up to date with `dev`; merging
+  into `qas` or `main` needs the same, plus the repository owner's approval, and only the owner
+  merges.
 
 ## Before a pull request
 
