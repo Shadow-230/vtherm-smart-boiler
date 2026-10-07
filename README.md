@@ -4,16 +4,17 @@
 [![License][license-shield]][license]
 [![HACS][hacs-shield]](#installation)
 
-# VTherm Smart Boiler
+# Versatile Thermostat Smart Boiler
 
 > **Not released yet — do not install it on a heating system you rely on.**
 > The integration is being built and has not run on a real boiler. There is no release and no
-> HACS entry; the first pre-release follows the tests on a test Home Assistant and a review.
+> entry in the Home Assistant Community Store (HACS); the first pre-release follows the tests on a
+> test Home Assistant and a review.
 > Where it stands: [Status](#status) · what comes next: [Roadmap](#roadmap).
 
-**VTherm Smart Boiler** is a plugin for [Versatile Thermostat][vt] (VT) that runs a gas boiler
-from what the rooms actually need: fewer and longer burns, more condensing, less gas per
-degree-day — with the same room comfort, and without disturbing the zone algorithms' own room
+**Versatile Thermostat Smart Boiler** is a plugin for [Versatile Thermostat][vt] (VT) that runs
+a gas boiler from what the rooms actually need: fewer and longer burns, more condensing, less gas
+per degree-day — with the same room comfort, and without disturbing the zone algorithms' own room
 models. It replaces VT's on/off central boiler with control of the boiler's water temperature,
 and always knows how to hand the boiler back to its own control.
 
