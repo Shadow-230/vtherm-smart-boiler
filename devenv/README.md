@@ -14,9 +14,9 @@ A new LXC for the tests alone; Claude's SSH reaches this container and nothing e
 sits on the Proxmox host, outside the container, where nothing inside it — Docker, the deploy
 user, Claude — can change it (the user's decision, 2026-10-08).
 
-- A new, unprivileged Debian 12 container with `nesting=1` and `keyctl=1`, used for nothing else:
+- A new, unprivileged Debian 13 container with `nesting=1` and `keyctl=1`, used for nothing else:
   2 cores, 2 GB of memory (4 GB is more comfortable), 32 GB of disk.
-- Network: a static IPv4 address (the container's firewall below lets no DHCP through), no IPv6
+- Network: a static IPv4 address (the container's firewall below has DHCP off), no IPv6
   address (IPv6 "Static" with the field left empty), and a public DNS server in the container's
   DNS settings (for example `1.1.1.1`), so it needs nothing on the home network. Where the home
   network lets no DNS out to the internet, allow the router's instead with
@@ -24,17 +24,25 @@ user, Claude — can change it (the user's decision, 2026-10-08).
   `OUT DROP` rules.
 - Docker Engine with the compose plugin, from Docker's Debian repository.
 - A deploy user that logs in with an SSH key and is in the `docker` group.
-- The firewall, on the Proxmox host. Keep an SSH session to the host open while you enable it:
-  enabling it blocks traffic to the host apart from the web interface, SSH and other important
-  services from the local network.
-  1. Datacenter → Firewall → Options → Firewall: Yes.
+- The firewall, on the Proxmox host, filtering this container alone:
+  1. Look first at what is already there, in the host's shell (the node → Shell):
+     `ls /etc/pve/firewall/`. A guest's file there with `enable: 1` starts filtering that guest
+     once the datacenter firewall is on; a guest with no file keeps its traffic as it is.
+     `cluster.fw` and the node's `host.fw` should hold no rules you do not know.
   2. The container → Network → `net0` → Firewall ticked.
-  3. The container → Firewall: the rules below; then its Options → Firewall: Yes, Input policy
-     DROP, Output policy ACCEPT. The same as the file `/etc/pve/firewall/<CT ID>.fw`:
+  3. The container's rules: write the file below as `/etc/pve/firewall/<CT ID>.fw` in the host's
+     shell, or enter the same in the container → Firewall. Check there that every rule shows
+     "On", and that its Options read Firewall: Yes, DHCP: No (Proxmox may show Yes by default),
+     Input policy DROP, Output policy ACCEPT.
+  4. Datacenter → Firewall → Options: first Input Policy ACCEPT, so the host and the other guests
+     stay reachable as before (Proxmox's default drops everything to the host but its web
+     interface and SSH from the local network); then Firewall: Yes. Setting Firewall back to No,
+     or `pve-firewall stop` in the host's shell, undoes it at once.
 
   ```
   [OPTIONS]
   enable: 1
+  dhcp: 0
   policy_in: DROP
   policy_out: ACCEPT
 
