@@ -40,10 +40,34 @@ jobs:
             label: "Tests – oldest supported Home Assistant version"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # A pull request that changes documentation only (Markdown, documentation/, docs/, LICENSE —
+      # not CLAUDE.md, nothing under .github/) passes without the tests: no test reads those
+      # files. Anything else, and every push, schedule and manual run, runs everything.
+      - name: Documentation only?
+        id: docs
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          only=false
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            files="$(git diff --name-only "$BASE" HEAD)"
+            echo "$files"
+            if [ -n "$files" ] && ! printf '%s\n' "$files" \
+                | grep -v -E '^(documentation/.*|docs/.*|LICENSE|[^/]*\.md|[^.][^/]*/.*\.md)$' \
+                | grep -q . && ! printf '%s\n' "$files" | grep -q -E '^(CLAUDE\.md|\.github/)'; then
+              only=true
+              echo "Documentation only: tests skipped." | tee -a "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          echo "only=$only" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: steps.docs.outputs.only != 'true'
         with:
           python-version: "3.14"
       - name: Install the pinned test environment under Home Assistant's constraints
+        if: steps.docs.outputs.only != 'true'
         env:
           GROUP: ${{ matrix.group }}
         run: |
@@ -52,7 +76,7 @@ jobs:
           constraints="$(python -c 'import homeassistant, pathlib; print(pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt")')"
           python -m pip install --group test --group "$GROUP" -c "$constraints"
       - name: The minimum is the version hacs.json declares
-        if: matrix.group == 'ha-minimum'
+        if: steps.docs.outputs.only != 'true' && matrix.group == 'ha-minimum'
         run: |
           python - <<'PY'
           import json
@@ -64,6 +88,7 @@ jobs:
       # docs/plan-0.1.md A5 checked them, fetched by their full hash (PB-86); an archive that
       # cannot be reached fails the job rather than skipping tests.
       - name: VT 10.4.0 and SmartPI 0.4.0 by their release commits
+        if: steps.docs.outputs.only != 'true'
         run: |
           set -euo pipefail
           fetch() {  # repository, the full commit, the folder under vendor/
@@ -83,25 +108,32 @@ jobs:
           test -f vendor/custom_components/versatile_thermostat/manifest.json
           test -f vendor/custom_components/vtherm_smartpi/manifest.json
       - name: The Home Assistant version tested
+        if: steps.docs.outputs.only != 'true'
         run: python -c 'from homeassistant.const import __version__; print(f"Home Assistant {__version__}")' | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Ruff
+        if: steps.docs.outputs.only != 'true'
         run: ruff check .
       - name: Formatting
+        if: steps.docs.outputs.only != 'true'
         run: ruff format --check .
       - name: Types
+        if: steps.docs.outputs.only != 'true'
         run: mypy
       # Two runs (P-120): the core tests on their own, without Home Assistant's pytest plugin
       # (layer 1 of PLAN.md's "Test environment"; sockets stay closed, as that plugin keeps them),
       # then every other test with it; coverage adds up over both, and its floor is checked once,
       # at the end of the second run.
       - name: Core tests, without Home Assistant
+        if: steps.docs.outputs.only != 'true'
         run: |
           mkdir -p .tmp
           python -m pytest -q -n auto -p no:homeassistant --disable-socket --allow-unix-socket --cov --cov-branch --cov-report= --cov-fail-under=0 tests/core
       - name: The other tests, with coverage of both runs
+        if: steps.docs.outputs.only != 'true'
         run: python -m pytest -q -n auto --cov --cov-branch --cov-append --cov-report=term --ignore=tests/core
       # P-35: every module at least 95 % with branches, the config and options flows 100 %.
       - name: Coverage of each module
+        if: steps.docs.outputs.only != 'true'
         run: |
           python -m coverage json -o .tmp/coverage-report.json
           python - <<'PY'
