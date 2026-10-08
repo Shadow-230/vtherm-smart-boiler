@@ -185,6 +185,9 @@ class Run:
         for fault in ("low_pressure_fault", "boiler_lockout"):
             await self.sim("set_fault", fault=fault, on=False)
         await self.sim("set_outdoor", temperature=3.0)
+        # A room a scenario left cold (E5) or warm warms or cools for hours: back to its target.
+        for zone, target in ZONES:
+            await self.sim("set_room_temperature", zone=zone, temperature=target)
         await ha.call(
             "select",
             "select_option",

@@ -142,7 +142,10 @@ Set up in the user interface — or by Claude through the API at J4, once you sa
 2. **One VT thermostat per simulated zone** (`zone_living`, `zone_bedroom`, `zone_bath`):
    type "over switch"; underlying switch `switch.boiler_sim_<zone>_valve`; room temperature
    `sensor.boiler_sim_<zone>_temperature`; outdoor temperature `sensor.boiler_sim_outdoor`. Use
-   SmartPI in one zone, to test the learning pauses.
+   SmartPI in one zone, to test the learning pauses. In each zone's advanced settings, its own
+   safety delay of 1440 min: VT takes a sensor whose state has not been written for its delay
+   (60 min by default) for dead and switches the zone to its safety mode, and the simulator's
+   steady rooms, or a steady outdoor temperature, keep one value longer than that.
 3. **Smart Boiler for Versatile Thermostat**:
    - Signals: `binary_sensor.boiler_sim_flame`, `sensor.boiler_sim_flow`,
      `sensor.boiler_sim_return`, `sensor.boiler_sim_modulation`,
