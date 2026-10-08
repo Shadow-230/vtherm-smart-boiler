@@ -10,60 +10,103 @@ Claude connects to this instance only after you say to start, only at the addres
 
 ## 1. The LXC (you — J2)
 
-- A Debian 12 container with `nesting=1`, plus `keyctl=1` if it is unprivileged.
+A new LXC for the tests alone; Claude's SSH reaches this container and nothing else; the firewall
+sits on the Proxmox host, outside the container, where nothing inside it — Docker, the deploy
+user, Claude — can change it (the user's decision, 2026-10-08).
+
+- A new, unprivileged Debian 13 container with `nesting=1` and `keyctl=1`, used for nothing else:
+  2 cores, 2 GB of memory (4 GB is more comfortable), 32 GB of disk.
+- Network: a static IPv4 address (the container's firewall below has DHCP off), no IPv6
+  address (IPv6 "Static" with the field left empty), and a public DNS server in the container's
+  DNS settings (for example `1.1.1.1`), so it needs nothing on the home network. Where the home
+  network lets no DNS out to the internet, allow the router's instead with
+  `OUT ACCEPT -dest <router-ip> -p udp -dport 53` and the same with `-p tcp`, above the
+  `OUT DROP` rules.
 - Docker Engine with the compose plugin, from Docker's Debian repository.
 - A deploy user that logs in with an SSH key and is in the `docker` group.
-- A firewall that keeps the container away from your production Home Assistant, its MQTT broker
-  and the OpenTherm Gateway. For example with nftables on the LXC (replace the placeholders):
+- The firewall, on the Proxmox host, filtering this container alone:
+  1. Look first at what is already there, in the host's shell (the node → Shell):
+     `ls /etc/pve/firewall/`. A guest's file there with `enable: 1` starts filtering that guest
+     once the datacenter firewall is on; a guest with no file keeps its traffic as it is.
+     `cluster.fw` and the node's `host.fw` should hold no rules you do not know.
+  2. The container → Network → `net0` → Firewall ticked.
+  3. The container's rules: write the file below as `/etc/pve/firewall/<CT ID>.fw` in the host's
+     shell, or enter the same in the container → Firewall. Check there that every rule shows
+     "On", and that its Options read Firewall: Yes, DHCP: No (Proxmox may show Yes by default),
+     Input policy DROP, Output policy ACCEPT.
+  4. Datacenter → Firewall → Options: first Input Policy ACCEPT, so the host and the other guests
+     stay reachable as before (Proxmox's default drops everything to the host but its web
+     interface and SSH from the local network); then Firewall: Yes. Setting Firewall back to No,
+     or `pve-firewall stop` in the host's shell, undoes it at once.
 
   ```
-  table inet test_isolation {
-    chain output {
-      type filter hook output priority 0; policy accept;
-      ip daddr { <production-ha-ip>, <broker-ip>, <gateway-ip> } drop
-      ip6 daddr { <production-ha-ipv6>, <broker-ipv6>, <gateway-ipv6> } drop
-    }
-  }
+  [OPTIONS]
+  enable: 1
+  dhcp: 0
+  policy_in: DROP
+  policy_out: ACCEPT
+
+  [RULES]
+  IN ACCEPT -p tcp -dport 22
+  IN ACCEPT -p tcp -dport 8123
+  OUT DROP -dest 10.0.0.0/8
+  OUT DROP -dest 172.16.0.0/12
+  OUT DROP -dest 192.168.0.0/16
+  OUT DROP -dest 100.64.0.0/10
+  OUT DROP -dest 169.254.0.0/16
+  OUT DROP -dest fc00::/7
+  OUT DROP -dest 2000::/3
   ```
 
-  The container's traffic is forwarded (port 8123 is published), so it does not pass the LXC's
-  output chain: block it on the forwarding path too, in Docker's `DOCKER-USER` chain, for IPv4
-  and IPv6 (the IPv6 chain exists where Docker manages ip6tables; to check at J2):
+  In: SSH and Home Assistant's page only; the replies to them pass. Out: the internet (the image,
+  Docker's repository, PyPI, DNS), but no new connection to anything on the home network,
+  whatever its address — the production Home Assistant, its broker and the gateway, and every
+  other device (relays, ESPHome, the boiler's Wi-Fi module); with IPv6 off, no IPv6 at all.
+  Home Assistant's container leaves the LXC through `net0` too, so the rules cover it; traffic
+  between containers inside the LXC (a test broker, for example) never leaves it.
+- The check (T-25), with the firewall on: every TCP attempt to each service port of the
+  production Home Assistant, its broker and the gateway, and to one more device at home (the
+  router's web page, for example), must time out — from a container and from the LXC itself. A
+  refusal is a failure: it means the packet reached the target. Over IPv6 (where the home network
+  has it), "no route" passes too: IPv6 is off. From a container of the image Home Assistant runs
+  (it pulls the image), for each address and port:
 
   ```
-  iptables  -I DOCKER-USER -d <production-ha-ip>,<broker-ip>,<gateway-ip> -j DROP
-  ip6tables -I DOCKER-USER -d <production-ha-ipv6>,<broker-ipv6>,<gateway-ipv6> -j DROP
-  ```
-
-  Make both rules persistent (for example with `iptables-persistent`), since Docker rebuilds its
-  chains at start but keeps `DOCKER-USER`'s rules only while they are loaded.
-- The check (T-25): from inside the container, every TCP attempt to each service port of the
-  production Home Assistant, its broker and the gateway, over IPv4 and IPv6, must time out. A
-  refusal is a failure: with the DROP rules above it means the packet reached the target. For
-  each address and port:
-
-  ```
-  docker exec ha-test python3 -c "
-  import socket, sys
+  docker run --rm --entrypoint python3 ghcr.io/home-assistant/home-assistant:2026.9.3 -c "
+  import errno, socket, sys
+  host = sys.argv[1]
   try:
-      socket.create_connection((sys.argv[1], int(sys.argv[2])), 5); print('REACHABLE')
+      socket.create_connection((host, int(sys.argv[2])), 5); print('REACHABLE')
   except TimeoutError:
       print('blocked')
   except OSError as e:
-      print('REACHABLE or rejected:', e)" '<ip>' <port>
+      if e.errno == errno.ENETUNREACH and ':' in host:
+          print('blocked (no IPv6 route)')
+      else:
+          print('REACHABLE or rejected:', e)" '<ip>' <port>
   ```
 
-  Only "blocked" passes. First run it once against an address and port the container must reach
-  (e.g. a public web server on 443): it must print REACHABLE, which shows the check itself works.
-  Run the whole check again after a reboot of the LXC, to see the rules persist. You run it at
-  J2; Claude repeats it over SSH only after you have said to start J4.
+  From the LXC itself, as the deploy user — exit status 124 is "blocked", and for an IPv6 address
+  "Network is unreachable" is too:
 
+  ```
+  timeout 6 bash -c 'exec 3<>/dev/tcp/<ip>/<port>'; echo $?
+  ```
+
+  Only "blocked" passes. First run both once against an address and port they must reach (e.g. a
+  public web server on 443): they must print REACHABLE and 0, which shows the check itself works.
+  Run the whole check again after a reboot of the LXC. You run it at J2; Claude repeats it over
+  SSH only after you have said to start J4, then also as `docker exec ha-test python3 -c "…"` in
+  the running Home Assistant.
 - Internet access for pulling the image and VT's Python requirements (`vtherm_api` from PyPI).
   Home Assistant installs the newest `vtherm_api` at its first start, not the 0.5.0 the tests
   pin; J4's report records the version installed (CI's job with the latest `vtherm_api` runs the
   same combination).
 
 ## 2. Access for Claude (you — J2)
+
+Claude gets SSH to this container only, as the deploy user: no account, key or token for the
+Proxmox host, so the firewall there is out of its reach.
 
 1. Generate a key pair for this project only, inside the project (git-ignored):
    `ssh-keygen -t ed25519 -N "" -f devenv/ssh/id_ed25519`. Add `devenv/ssh/id_ed25519.pub` to

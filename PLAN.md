@@ -37,8 +37,9 @@ Three layers:
    version, set up by the user (`devenv/`). The plugin, VT and SmartPI come from this project;
    boiler, rooms and weather come from our own physics simulator, a test-only component
    (`sim/custom_components/boiler_sim`), with real VT thermostats driving its zone valves. The
-   test LXC has no access to the production HA, its MQTT broker or the real gateway. Claude
-   connects only to this instance (`CLAUDE.md`).
+   test LXC reaches no device on the home network — the production HA, its MQTT broker and the
+   real gateway among them: a firewall on the Proxmox host, out of reach from inside the LXC,
+   blocks it (2026-10-08). Claude connects only to this instance (`CLAUDE.md`).
 
 Control is tested only against the simulator: acceptance scenarios run first in-process, then in
 the test HA. Details: `docs/plan-0.2.md`, phase J. CI fetches VT 10.4.0 and SmartPI 0.4.0 from
