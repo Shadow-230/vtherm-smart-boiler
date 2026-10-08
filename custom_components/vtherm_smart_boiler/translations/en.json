@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Versatile Thermostat Smart Boiler",
+        "title": "Smart Boiler for Versatile Thermostat",
         "description": "Monitors your boiler; it writes nothing to the boiler until you enable control in the options. Pick a name and the level of detail.",
         "data": {
           "name": "Name",
@@ -251,7 +251,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "Versatile Thermostat Smart Boiler options",
+        "title": "Smart Boiler for Versatile Thermostat options",
         "description": "Change one section; every other setting stays as it is. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "menu_options": {
           "signals": "Boiler signals",
@@ -2766,7 +2766,7 @@
       "description": "Writing the file in which the plugin remembers whether it holds the boiler failed — a full disk, or a storage that turned read-only (Home Assistant's log has the error). A restart could then forget that the boiler holds a value the plugin wrote, so control does not take the boiler meanwhile: it handed it back, and a hand-back already owed is still made. Where a thermostat or the boiler's own control takes over, it heats now; where a hand-back stops heating, the boiler does not heat until control resumes. The plugin saves again every minute, and control resumes on its own once saving has worked for {minutes} minutes without a failure. Check Home Assistant's storage: its free space, and whether its disk or SD card is failing."
     },
     "hand_back_owed_after_removal": {
-      "title": "The boiler may still hold a value from Versatile Thermostat Smart Boiler",
+      "title": "The boiler may still hold a value from Smart Boiler for Versatile Thermostat",
       "description": "The integration was removed before its hand-back reached the boiler. Return the boiler to its own control by hand — reset the setpoint entity, or clear the gateway's overrides — and then ignore this issue."
     },
     "learning_left_off_after_removal": {

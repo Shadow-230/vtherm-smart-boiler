@@ -1,7 +1,7 @@
 # Test Home Assistant: only what the tests need. No default_config, so no network discovery
 # looks around the local network.
 homeassistant:
-  name: Versatile Thermostat Smart Boiler test
+  name: Smart Boiler for Versatile Thermostat test
 
 frontend:
 config:
