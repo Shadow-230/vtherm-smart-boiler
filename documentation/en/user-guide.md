@@ -6,11 +6,11 @@
 > no release and no entry in the Home Assistant Community Store (HACS). Do not install it on a
 > heating system you rely on.
 
-Smart Boiler for Versatile Thermostat is an independent plugin (not part of VT and not made by its
-authors) for Versatile Thermostat (VT), a Home Assistant integration that runs the rooms of a house.
-VT decides how much heat each room needs. This plugin watches a central heating boiler (gas, oil,
-electric or another fuel; not a heat pump) and, once you switch control on, decides when the boiler
-heats and how warm its water is. It does not control rooms or valves.
+Smart Boiler for Versatile Thermostat is a plugin (not part of VT and not made by its authors) for
+Versatile Thermostat (VT), a Home Assistant integration that runs the rooms of a house. VT decides
+how much heat each room needs. This plugin watches a central heating boiler (gas, oil, electric or
+another fuel; not a heat pump) and, once you switch control on, decides when the boiler heats and
+how warm its water is. It does not control rooms or valves.
 
 This guide is a summary. The specification, with every rule and decision, is
 [`SCOPE.md`](../../SCOPE.md). Where the two differ, `SCOPE.md` and the texts in the
