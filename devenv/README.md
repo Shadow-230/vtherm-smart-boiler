@@ -173,9 +173,14 @@ of disk.
    /opt/ha-test-2/.vtherm-smart-boiler-test-ha && chown -R deploy:deploy /opt/ha-test-2`
    (`-3` to `-5` alike).
 3. In `devenv/local.env`: `TEST_HA_DIR_N` and `TEST_HA_URL_N` with its port.
-4. `scripts/deploy_test.sh --instance N` (first a dry run with `--dry-run --instance N`); then
-   open the URL, create the owner account, and put a long-lived access token in
-   `TEST_HA_TOKEN_N`.
+4. `scripts/deploy_test.sh --instance N` (first a dry run with `--dry-run --instance N`).
+   Then either open the URL, create the owner account and put a long-lived access token in
+   `TEST_HA_TOKEN_N`; or — simpler, and what the test LXC does — give it the first instance's
+   login: stop it (`docker compose stop homeassistant` in its directory), copy the four files
+   with `docker cp ha-test:/config/.storage/<file> - | docker cp - ha-test-N:/config/.storage/`
+   for `auth`, `auth_provider.homeassistant`, `onboarding` and `core.config`, and start it
+   again. It then needs no owner account of its own, `TEST_HA_TOKEN` works there, and
+   `TEST_HA_TOKEN_N` stays empty.
 5. Set up the test installation there as in section 4. Claude repeats T-25 in it too
    (`docker exec ha-test-N …`).
 
