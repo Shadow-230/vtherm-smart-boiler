@@ -278,6 +278,10 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
         sim.set_zone_mode(call.data["zone"], ZoneMode(call.data["mode"]))
         hub.refresh()
 
+    async def set_room_temperature(call: ServiceCall) -> None:
+        sim.set_room(call.data["zone"], float(call.data["temperature"]))
+        hub.refresh()
+
     async def reset_gateway(call: ServiceCall) -> None:
         sim.reset_gateway(hub.now())
         hub.refresh()
@@ -352,6 +356,13 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
             {
                 vol.Required("zone"): vol.In(zone_ids),
                 vol.Required("mode"): vol.In([m.value for m in ZoneMode]),
+            },
+        ),
+        "set_room_temperature": (
+            set_room_temperature,
+            {
+                vol.Required("zone"): vol.In(zone_ids),
+                vol.Required("temperature"): vol.All(vol.Coerce(float), vol.Range(min=-30, max=40)),
             },
         ),
         "reset_gateway": (reset_gateway, {}),

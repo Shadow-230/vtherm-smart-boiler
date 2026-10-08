@@ -515,6 +515,11 @@ class Simulation:
     def set_zone_mode(self, zone_id: str, mode: ZoneMode) -> None:
         self.modes[zone_id] = mode
 
+    def set_room(self, zone_id: str, temperature: float) -> None:
+        """A room's temperature set at once — a window left open in frost, say — from which the
+        plant goes on as before (J4's frost scenarios in the test Home Assistant)."""
+        self.plant.room[self._index[zone_id]] = temperature
+
     def set_fault(self, fault: str, on: bool) -> None:
         if fault not in FAULTS:
             raise ValueError(f"unknown fault {fault}")

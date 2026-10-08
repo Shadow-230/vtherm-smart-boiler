@@ -49,6 +49,7 @@ def test_the_dry_run_lists_files_and_connects_nowhere(tmp_path: Path) -> None:
         "custom_components/boiler_sim/plant.py",
         "custom_components/opentherm_gw/manifest.json",
         "custom_components/opentherm_gw/translations/en.json",
+        "custom_components/j4_faults/manifest.json",
     ):
         assert expected in names, expected
     assert not [line for line in entries if line.startswith("l")], "links in the archive"
@@ -77,7 +78,7 @@ def test_the_dry_run_reads_no_private_file(tmp_path: Path) -> None:
         ROOT / "custom_components/vtherm_smart_boiler"
     )
     (root / "sim/custom_components").mkdir(parents=True)
-    for name in ("boiler_sim", "opentherm_gw"):
+    for name in ("boiler_sim", "opentherm_gw", "j4_faults"):
         (root / "sim/custom_components" / name).symlink_to(ROOT / "sim/custom_components" / name)
     for name in ("versatile_thermostat", "vtherm_smartpi"):
         stub = root / "vendor/custom_components" / name
@@ -151,8 +152,9 @@ def test_the_stub_goes_only_where_compose_mounts_it() -> None:
     compose = (ROOT / "devenv/compose.yaml").read_text(encoding="utf-8")
     assert "./custom_components/opentherm_gw:/config/custom_components/opentherm_gw:ro" in compose
     script = SCRIPT.read_text(encoding="utf-8")
-    assert "boiler_sim opentherm_gw)" in script
+    assert "boiler_sim opentherm_gw j4_faults)" in script
     assert "custom_components/boiler_sim custom_components/opentherm_gw" in script
+    assert "./custom_components/j4_faults:/config/custom_components/j4_faults:ro" in compose
 
 
 def _copy_root(tmp_path: Path, test_ha_dir: str, extra: str = "") -> Path:
@@ -360,3 +362,16 @@ def test_the_starts_configuration_is_the_in_process_comparisons_house() -> None:
     ):
         assert expected in text, expected
     assert "wall_thermostat" not in text.split("boiler_sim:")[1].split("input_number:")[0]
+
+
+def test_the_fault_injector_is_never_part_of_the_release() -> None:
+    """J4's fault injector reaches into the plugin: it lives with the simulator, outside the
+    plugin's folder — the only one a release ships — and the test configuration names it."""
+    assert (ROOT / "sim/custom_components/j4_faults/manifest.json").is_file()
+    assert not (ROOT / "custom_components/j4_faults").exists()
+    plugin = (ROOT / "custom_components/vtherm_smart_boiler").rglob("*.py")
+    assert not [p for p in plugin if "j4_faults" in p.read_text(encoding="utf-8")]
+    assert "\nj4_faults:\n" in (ROOT / "devenv/config/configuration.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "j4_faults" not in (ROOT / "devenv/config/starts.yaml").read_text(encoding="utf-8")

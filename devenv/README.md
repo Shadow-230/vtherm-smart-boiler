@@ -142,10 +142,16 @@ gateway out of reach, its commands dropped — the lost link; `relay`: the relay
 `thermostat_setpoint`; a fault signal), `force_setpoint` (another controller), `ignore_writes`,
 `refuse_id1` (confirmed, then dropped), `clip_setpoint`, `drop_override` (a single fall-back),
 `start_dhw`, `set_topology`, `set_zone_mode` (a zone VT switched off closes its valve),
+`set_room_temperature` (one room set at once, as to 4 °C for frost),
 `reset_gateway` and `restart_device` (a lost command with a trace), `relay_restart` (seen, or with
 `reported: false` unseen), `relay_wifi_loss`, `relay_switch` (an automation or its button),
-`set_wall_setpoint`, `set_fault` — and the stub's own `opentherm_gw.reset_gateway`, the control
-switch and the options. Their results come from entity states and the simulator's command
+`set_wall_setpoint`, `set_fault` — the stub's own `opentherm_gw.reset_gateway`, the control
+switch and the options, and the test-only fault injector `j4_faults` (on instance 1, by
+`configuration.yaml`): `monitor` (the plugin's own monitor fails, or works again),
+`restart_with_stores` (the entry stopped, its stores replaced or removed as a crash, a lost file
+or another version leaves them, and started again) and `remove_options` (answers taken from its
+options, as an entry made before 0.2.2 lacks them). It is sent to the test Home Assistant only
+and is never part of the plugin's release. Their results come from entity states and the simulator's command
 counters (attributes of `sensor.boiler_sim_persistent_writes`: commands per path, `ch_writes`,
 `relay_commands`, `dhw_enable_writes`; its state counts only writes of type persistent). The
 starts criterion (decision 8 of `docs/plan-0.2.3.md`; `SCOPE.md`, fixed values) reads the

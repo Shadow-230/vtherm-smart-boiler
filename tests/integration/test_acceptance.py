@@ -2551,3 +2551,88 @@ async def test_after_another_controller_control_returns_by_itself_once_quiet(rig
     state = rig.state("sensor", "control_state")
     assert state.state in ("heating", "idle")
     assert state.attributes["latched_by"] == []
+
+
+# --- J4 in the test Home Assistant: the test-only fault injector (sim/custom_components/j4_faults)
+
+
+async def _faults(rig: Rig, service: str, **data: Any) -> None:
+    await rig.hass.services.async_call("j4_faults", service, data, blocking=True)
+    await rig.hass.async_block_till_done()
+
+
+async def test_the_fault_injector_fails_the_monitor_as_the_patch_does(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """J4 in the test Home Assistant: j4_faults' "monitor" makes the plugin's own monitor fail as
+    ``break_monitor`` does in-process — after five minutes the full safe hand-back, a blocker —
+    and work again: control takes the boiler back by itself (answer I)."""
+    from custom_components.vtherm_smart_boiler.coordinator import SmartBoilerCoordinator
+
+    # Restored at the end whatever happens: the injector patches the class itself.
+    monkeypatch.setattr(SmartBoilerCoordinator, "_compute", SmartBoilerCoordinator._compute)
+    assert await async_setup_component(rig.hass, "j4_faults", {})
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(60)
+    await _faults(rig, "monitor", failing=True)
+    count = len(rig.gateway())
+    await rig.advance(240)
+    assert ("setpoint", 0.0) not in sent_since(rig, count)
+    await rig.advance(90)
+    assert sent_since(rig, count)[-3:] == SAFE_HAND_BACK
+    assert "monitor_failed" in rig.state("switch", "control").attributes["blockers"]
+    await _faults(rig, "monitor", failing=False)
+    await rig.advance(180)
+    assert rig.sim.plant.override_active(rig.now())  # resumed by itself
+    assert rig.state("switch", "control").state == "on"
+
+
+async def test_the_fault_injector_starts_the_plugin_on_a_crashed_runs_store(rig: Rig) -> None:
+    """J4 in the test Home Assistant: j4_faults' "restart_with_stores" stops the entry, leaves
+    the stores a crash leaves — the boiler held and never given back — and starts it again: the
+    first step gives the boiler back in full, and control stays off (V1)."""
+    assert await async_setup_component(rig.hass, "j4_faults", {})
+    await start(rig)
+    count = len(rig.gateway())
+    await _faults(
+        rig,
+        "restart_with_stores",
+        main={"monitoring_since": 0.0, "control": {}, "control_store": 1},
+        control={"controlling": True, "last_command": LAST_COMMAND},
+    )
+    await rig.advance(30)
+    assert sent_since(rig, count)[:3] == SAFE_HAND_BACK
+    assert rig.state("switch", "control").state == "off"
+
+
+async def test_the_fault_injector_starts_the_plugin_on_another_versions_store(rig: Rig) -> None:
+    """The same with an entry store of a version this one cannot read, and no control store: the
+    boiler given back in full first, as after a crash (V1). (With a readable control store that
+    says nothing was held, there is nothing to give back.)"""
+    assert await async_setup_component(rig.hass, "j4_faults", {})
+    await start(rig)
+    count = len(rig.gateway())
+    await _faults(
+        rig,
+        "restart_with_stores",
+        main={"control": {"controlling": False}},
+        main_version=99,
+        control_removed=True,
+    )
+    await rig.advance(30)
+    assert sent_since(rig, count)[:3] == SAFE_HAND_BACK
+    assert rig.state("switch", "control").state == "off"
+
+
+async def test_the_fault_injector_removes_an_answer_from_the_options(rig: Rig) -> None:
+    """J4 in the test Home Assistant: j4_faults' "remove_options" leaves the gateway entry
+    without the answer on its thermostat terminals, as one made before 0.2.2: control stays
+    stopped, nothing is written, and the repair issue asks for the answer (answer K)."""
+    assert await async_setup_component(rig.hass, "j4_faults", {})
+    await start(rig)
+    await _faults(rig, "remove_options", section="control", keys=["thermostat_kind"])
+    await rig.advance(60)
+    assert "thermostat_kind_unknown" in rig.state("switch", "control").attributes["blockers"]
+    assert repair(rig, "thermostat_kind_missing") is not None
+    assert rig.gateway() == []
