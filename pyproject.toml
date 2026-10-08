@@ -54,6 +54,10 @@ ignore = ["SIM300"]
 # Formulas in docstrings use the typographic minus and en dash on purpose.
 allowed-confusables = ["−", "–"]
 
+[tool.ruff.lint.per-file-ignores]
+# J4's scenario runner (a test tool): its checks carry their evidence in long messages.
+"devenv/j4/*" = ["E501"]
+
 [tool.ruff.lint.isort]
 required-imports = ["from __future__ import annotations"]
 known-first-party = ["custom_components.vtherm_smart_boiler", "sim", "tools", "tests"]
