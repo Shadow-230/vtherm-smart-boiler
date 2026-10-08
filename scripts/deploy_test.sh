@@ -76,17 +76,18 @@ for needed in "$ROOT/vendor/custom_components/versatile_thermostat" \
 done
 
 # The directory on the host mirrors the stream: compose.yaml, config/configuration.yaml (the
-# rest of config/ belongs to the running instance) and the five integrations, which compose.yaml
+# rest of config/ belongs to the running instance) and the six integrations, which compose.yaml
 # mounts read-only — among them the test-only stub "opentherm_gw" on the simulator, which
 # overrides Home Assistant's own OpenTherm Gateway integration there, and only there (P-37).
-COMPONENTS=(vtherm_smart_boiler versatile_thermostat vtherm_smartpi boiler_sim opentherm_gw)
+COMPONENTS=(vtherm_smart_boiler versatile_thermostat vtherm_smartpi boiler_sim opentherm_gw j4_faults)
 pack() {
     tar -c -f - --dereference --exclude __pycache__ --exclude '*.pyc' \
         --transform "s,^config/$CONFIG\\.yaml\$,config/configuration.yaml," \
         -C "$ROOT/devenv" compose.yaml "config/$CONFIG.yaml" \
         -C "$ROOT" custom_components/vtherm_smart_boiler \
         -C "$ROOT/vendor" custom_components/versatile_thermostat custom_components/vtherm_smartpi \
-        -C "$ROOT/sim" custom_components/boiler_sim custom_components/opentherm_gw
+        -C "$ROOT/sim" custom_components/boiler_sim custom_components/opentherm_gw \
+        custom_components/j4_faults
 }
 
 # The dry run reads nothing private (P-107): devenv/local.env is not even sourced.

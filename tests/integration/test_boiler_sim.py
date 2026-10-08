@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+import voluptuous as vol
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -27,13 +28,13 @@ ROOM_TEMPERATURE = "sensor.otgw_sim_thermostat_room_temperature"
 RELAY = "switch.boiler_sim_relay"
 
 
-@pytest.mark.parametrize("component", ["boiler_sim", "opentherm_gw"])
+@pytest.mark.parametrize("component", ["boiler_sim", "opentherm_gw", "j4_faults"])
 def test_the_component_imports_only_what_home_assistant_can(component: str) -> None:
     """P55: Home Assistant keeps ``/config`` on the import path only while it imports
     ``custom_components``, so the simulator carries its physics: it imports itself, the
     plugin's core, Home Assistant, voluptuous and the standard library — nothing from ``sim/``.
     The stub imports nothing of the simulator either: it reaches its hub through Home
-    Assistant's data."""
+    Assistant's data. The test-only fault injector reaches the plugin by its name, at run time."""
     allowed = {"homeassistant", "voluptuous", *sys.stdlib_module_names}
     imported: list[tuple[str, str]] = []
     for path in (COMPONENTS / component).rglob("*.py"):
@@ -285,6 +286,10 @@ async def test_scenario_services(hass: HomeAssistant, freezer) -> None:
     await scenario(hass, "set_zone_mode", zone="zone_living", mode="off")
     await advance(hass, freezer, 10)
     assert value(hass, "sensor.boiler_sim_zone_living_opening") == "0"  # S-05
+    await scenario(hass, "set_room_temperature", zone="zone_bedroom", temperature=4)
+    assert float(value(hass, "sensor.boiler_sim_zone_bedroom_temperature")) == 4.0
+    with pytest.raises(vol.Invalid):
+        await scenario(hass, "set_room_temperature", zone="zone_garage", temperature=4)
     await scenario(hass, "set_fault", fault="low_pressure_fault")
     assert value(hass, "binary_sensor.boiler_sim_low_pressure_fault") == "on"
     assert value(hass, "binary_sensor.boiler_sim_fault_indication") == "on"

@@ -458,3 +458,17 @@ def test_a_lost_gateway_link_takes_the_boiler_signals_it_carries() -> None:
     assert not s.gateway_reachable()
     assert all(s.signal_failed(key) for key in ("flame", "flow", "return", "modulation"))
     assert not s.signal_failed("weather")
+
+
+def test_a_room_set_cold_cools_and_warms_from_there() -> None:
+    """J4's frost scenarios in the test Home Assistant: one room set to 4 °C at once — the
+    others as they were — and the plant goes on from there: heated, it warms."""
+    s = sim(valves=Valves.THERMOSTATIC, outdoor=-5.0)
+    others = list(s.plant.room[1:])
+    s.set_room("zone_living", 4.0)
+    assert s.plant.room[0] == 4.0
+    assert s.plant.room[1:] == others
+    s.advance(START + 1800.0)
+    assert s.plant.room[0] > 4.0
+    with pytest.raises(KeyError):
+        s.set_room("zone_garage", 4.0)

@@ -19,6 +19,12 @@ logger:
     custom_components.boiler_sim: info
     custom_components.opentherm_gw: info
 
+# J4's test-only fault injector (sim/custom_components/j4_faults): makes the plugin's own monitor
+# fail, starts the plugin on the stores a crash or another version leaves, or removes answers
+# from its options — what the in-process acceptance tests do with patches. Test only: the plugin's
+# release never contains it.
+j4_faults:
+
 # The simulated installation (sim/custom_components/boiler_sim): boiler, house, three radiator
 # zones whose valves VT's thermostats drive, weather, a writable flow setpoint with a heating
 # switch, and an OpenTherm wall thermostat on the gateway's terminals (21 °C 06:00–22:00, 17 °C

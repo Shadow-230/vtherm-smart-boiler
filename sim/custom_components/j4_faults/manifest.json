@@ -1,0 +1,10 @@
+{
+  "domain": "j4_faults",
+  "name": "J4 fault injector (test only)",
+  "after_dependencies": ["vtherm_smart_boiler"],
+  "codeowners": [],
+  "documentation": "https://github.com/Shadow-230/vtherm-smart-boiler/blob/main/devenv/README.md",
+  "iot_class": "calculated",
+  "requirements": [],
+  "version": "0.0.1"
+}

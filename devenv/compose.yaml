@@ -23,3 +23,6 @@ services:
       - ./custom_components/vtherm_smartpi:/config/custom_components/vtherm_smartpi:ro
       - ./custom_components/boiler_sim:/config/custom_components/boiler_sim:ro
       - ./custom_components/opentherm_gw:/config/custom_components/opentherm_gw:ro
+      # J4's test-only fault injector (sim/custom_components/j4_faults): loaded only where the
+      # configuration names it, and never part of the plugin's release.
+      - ./custom_components/j4_faults:/config/custom_components/j4_faults:ro
