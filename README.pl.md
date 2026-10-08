@@ -6,10 +6,10 @@
 [![License][license-shield]][license]
 [![HACS][hacs-shield]](#instalacja)
 
-# Versatile Thermostat Smart Boiler
+# Smart Boiler for Versatile Thermostat
 
 <p align="center">
-  <img src="documentation/images/logo.png" alt="Versatile Thermostat Smart Boiler logo" width="280" />
+  <img src="documentation/images/logo.png" alt="Smart Boiler for Versatile Thermostat logo" width="280" />
 </p>
 
 <p align="center"><b>
@@ -23,13 +23,14 @@ bezpiecznie go oddaje.
 > na testowym Home Assistant i po przeglądzie.
 > Gdzie jesteśmy: [Stan](#stan) · co dalej: [Plan rozwoju](#plan-rozwoju).
 
-**Versatile Thermostat Smart Boiler** to wtyczka do [Versatile Thermostat][vt] (VT), która
-prowadzi kocioł centralnego ogrzewania — gazowy, olejowy, elektryczny lub na inne paliwo, każdy,
-z którym Home Assistant się komunikuje, ale nie pompę ciepła — według tego, czego pomieszczenia
-naprawdę potrzebują: mniej i dłuższych cykli pracy palnika, więcej kondensacji tam, gdzie kocioł
-kondensuje, mniej paliwa na stopniodzień — przy tym samym komforcie w pomieszczeniach i bez zaburzania własnych modeli pomieszczeń w algorytmach stref. Zastępuje
-kocioł centralny VT działający w trybie wł./wył. sterowaniem temperaturą wody w kotle i zawsze
-wie, jak oddać kocioł jego własnemu sterowaniu.
+**Smart Boiler for Versatile Thermostat** to niezależna wtyczka do [Versatile Thermostat][vt] (VT) —
+nie jest częścią VT ani dziełem jego autorów — która prowadzi kocioł centralnego ogrzewania —
+gazowy, olejowy, elektryczny lub na inne paliwo, każdy, z którym Home Assistant się komunikuje, ale
+nie pompę ciepła — według tego, czego pomieszczenia naprawdę potrzebują: mniej i dłuższych cykli
+pracy palnika, więcej kondensacji tam, gdzie kocioł kondensuje, mniej paliwa na stopniodzień — przy
+tym samym komforcie w pomieszczeniach i bez zaburzania własnych modeli pomieszczeń w algorytmach
+stref. Zastępuje kocioł centralny VT działający w trybie wł./wył. sterowaniem temperaturą wody w
+kotle i zawsze wie, jak oddać kocioł jego własnemu sterowaniu.
 
 To **nie** jest regulator pomieszczeń (pomieszczenia zostają przy VT i jego algorytmach), nie
 steruje zaworami ani pompami ciepła i nie wysyła żadnych danych poza twój Home Assistant.
@@ -58,7 +59,7 @@ steruje zaworami ani pompami ciepła i nie wysyła żadnych danych poza twój Ho
 1. Ustaw termostaty VT dla pomieszczeń ogrzewanych przez kocioł. Jeśli w VT jest skonfigurowany
    kocioł centralny, odznacz go w centralnej konfiguracji VT i uruchom ponownie Home Assistant:
    jego miejsce zajmuje wtyczka.
-2. Dodaj jeden wpis **Versatile Thermostat Smart Boiler** i wybierz strefy VT, które ogrzewa ten
+2. Dodaj jeden wpis **Smart Boiler for Versatile Thermostat** i wybierz strefy VT, które ogrzewa ten
    kocioł.
 3. Wybierz encję, która dostarcza każdy sygnał kotła — do sterowania co najmniej płomień i
    temperaturę zasilania.
