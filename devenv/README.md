@@ -154,3 +154,33 @@ against the boiler's own regulation's, with the rooms as warm as under it (comfo
 acceptable ratio is decided at K4 (1.10 until then), and in-process the test carrying the swing
 is a strict xfail until K4. Z3 measured the criterion holding only with the comfort correction
 off (`research/2026-10-02-z3-starts-ratio.md`). The only address contacted is `TEST_HA_URL`.
+
+## 6. More instances (optional)
+
+Up to five Home Assistants can run in the same LXC, so long scenarios run side by side — the
+starts criterion's four runs of 24 h (under control and under the boiler's own regulation, at
++8 °C and at −5 °C) in one day instead of four, with a fifth instance for the short scenarios
+meanwhile, or the gateway path on one and the relay path on another. Instance N = 2 to 5 shares
+the image, has its own directory, configuration, marker and container (`ha-test-N`), and listens
+on port 8122 + N (8124 to 8127). Each costs about 0.5–0.8 GB of memory and 1 GB of disk, plus
+its recorder's growth over a day's run: two fit in 4 GB; five want 8 GB, 4 cores and some 24 GB
+of disk.
+
+1. On the Proxmox host, allow its port into the container: add `IN ACCEPT -p tcp -dport 8124`
+   (8125 to 8127) to the container's rules (`/etc/pve/firewall/<CT ID>.fw`, or the container →
+   Firewall). Out stays as it is.
+2. In the LXC, as root: `mkdir -p /opt/ha-test-2 && touch
+   /opt/ha-test-2/.vtherm-smart-boiler-test-ha && chown -R deploy:deploy /opt/ha-test-2`
+   (`-3` to `-5` alike).
+3. In `devenv/local.env`: `TEST_HA_DIR_N` and `TEST_HA_URL_N` with its port.
+4. `scripts/deploy_test.sh --instance N` (first a dry run with `--dry-run --instance N`).
+   Then either open the URL, create the owner account and put a long-lived access token in
+   `TEST_HA_TOKEN_N`; or — simpler, and what the test LXC does — give it the first instance's
+   login: stop it (`docker compose stop homeassistant` in its directory), copy the four files
+   with `docker cp ha-test:/config/.storage/<file> - | docker cp - ha-test-N:/config/.storage/`
+   for `auth`, `auth_provider.homeassistant`, `onboarding` and `core.config`, and start it
+   again. It then needs no owner account of its own, `TEST_HA_TOKEN` works there, and
+   `TEST_HA_TOKEN_N` stays empty.
+5. Set up the test installation there as in section 4. Claude repeats T-25 in it too
+   (`docker exec ha-test-N …`).
+
