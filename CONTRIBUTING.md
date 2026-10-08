@@ -26,10 +26,10 @@ Every pull request runs these checks on GitHub Actions:
 
 | Check | Runs on | Blocks a merge |
 |---|---|---|
-| Tests – supported Home Assistant version | every pull request; pushes to `dev`, `qas`, `main` | yes |
+| Tests – supported Home Assistant version | every pull request; pushes to `qas` and `main`; weekly | yes |
 | Tests – oldest supported Home Assistant version | same | yes |
-| Home Assistant integration check (hassfest) | same, and weekly | no |
-| HACS repository check | same, and weekly | no |
+| Home Assistant integration check (hassfest) | same | no |
+| HACS repository check | same | no |
 | Early warning – newest vtherm_api | weekly, on demand, pull requests into `qas` and `main` | no |
 | Early warning – newest Versatile Thermostat and SmartPI | same | no |
 
@@ -51,7 +51,8 @@ Every pull request runs these checks on GitHub Actions:
   unknown, missing or `None` input.
 - Run, as CI does: `ruff check .`, `ruff format --check .`, `mypy`, the core tests
   (`python -m pytest -q -p no:homeassistant --disable-socket --allow-unix-socket tests/core`)
-  and the others (`python -m pytest -q --ignore=tests/core`).
+  and the others (`python -m pytest -q --ignore=tests/core`); add `-n auto` to run them on every
+  CPU (pytest-xdist), as CI does.
 - Every user-visible text goes through `translations/en.json`, with the same keys in every other
   language.
 - No installation-specific data (entity IDs, device names, one house's values) in code, defaults,
