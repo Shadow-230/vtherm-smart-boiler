@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Versatile Thermostat Smart Boiler",
+        "title": "Smart Boiler for Versatile Thermostat",
         "description": "Monitoruje kocioł; nie zapisuje niczego do kotła, dopóki nie włączysz sterowania w opcjach. Wybierz nazwę i poziom szczegółowości.",
         "data": {
           "name": "Nazwa",
@@ -251,7 +251,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "Opcje Versatile Thermostat Smart Boiler",
+        "title": "Opcje Smart Boiler for Versatile Thermostat",
         "description": "Zmień jedną sekcję; wszystkie inne ustawienia zostają bez zmian. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "menu_options": {
           "signals": "Sygnały kotła",
@@ -2766,7 +2766,7 @@
       "description": "Zapis pliku, w którym wtyczka pamięta, czy steruje kotłem, nie powiódł się — pełny dysk albo pamięć, która przeszła w tryb tylko do odczytu (błąd jest w logu Home Assistant). Po restarcie wtyczka mogłaby wtedy zapomnieć, że kocioł trzyma wartość przez nią zapisaną, więc sterowanie na razie nie przejmuje kotła: oddało go, a oddanie, które wtyczka już jest winna, i tak zostaje wysłane. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono teraz grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci. Wtyczka zapisuje ponownie co minutę, a sterowanie wraca samo, gdy zapis działa bez błędu przez {minutes} min. Sprawdź pamięć Home Assistant: wolne miejsce i czy jej dysk lub karta SD nie zawodzi."
     },
     "hand_back_owed_after_removal": {
-      "title": "Kocioł może nadal trzymać wartość z Versatile Thermostat Smart Boiler",
+      "title": "Kocioł może nadal trzymać wartość z Smart Boiler for Versatile Thermostat",
       "description": "Integrację usunięto, zanim oddanie sterowania dotarło do kotła. Przywróć kotłu własne sterowanie ręcznie — ustaw na nowo encję nastawy albo wyczyść nadpisania bramki — a potem zignoruj to zgłoszenie."
     },
     "learning_left_off_after_removal": {

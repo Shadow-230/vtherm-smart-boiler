@@ -1,4 +1,4 @@
-"""Versatile Thermostat Smart Boiler — a Versatile Thermostat plugin that runs a heating boiler.
+"""Smart Boiler for Versatile Thermostat — an independent plugin that runs a heating boiler.
 
 Home Assistant is imported inside functions only, so the pure logic in ``core`` can be
 imported and tested on its own.

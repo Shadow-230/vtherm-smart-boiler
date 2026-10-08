@@ -6,10 +6,10 @@
 [![License][license-shield]][license]
 [![HACS][hacs-shield]](#installation)
 
-# Versatile Thermostat Smart Boiler
+# Smart Boiler for Versatile Thermostat
 
 <p align="center">
-  <img src="documentation/images/logo.png" alt="Versatile Thermostat Smart Boiler logo" width="280" />
+  <img src="documentation/images/logo.png" alt="Smart Boiler for Versatile Thermostat logo" width="280" />
 </p>
 
 <p align="center"><b>
@@ -23,12 +23,13 @@ back safely.
 > test Home Assistant and a review.
 > Where it stands: [Status](#status) · what comes next: [Roadmap](#roadmap).
 
-**Versatile Thermostat Smart Boiler** is a plugin for [Versatile Thermostat][vt] (VT) that runs
-a central heating boiler — gas, oil, electric or another fuel, any boiler Home Assistant can talk
-to, not a heat pump — from what the rooms actually need: fewer and longer burns, more condensing
-where the boiler condenses, less fuel per degree-day — with the same room comfort, and without
-disturbing the zone algorithms' own room models. It replaces VT's on/off central boiler with control of the boiler's water temperature,
-and always knows how to hand the boiler back to its own control.
+**Smart Boiler for Versatile Thermostat** is an independent plugin for [Versatile Thermostat][vt]
+(VT) — not part of VT and not made by its authors — that runs a central heating boiler — gas, oil,
+electric or another fuel, any boiler Home Assistant can talk to, not a heat pump — from what the
+rooms actually need: fewer and longer burns, more condensing where the boiler condenses, less fuel
+per degree-day — with the same room comfort, and without disturbing the zone algorithms' own room
+models. It replaces VT's on/off central boiler with control of the boiler's water temperature, and
+always knows how to hand the boiler back to its own control.
 
 It is **not** a room controller (rooms stay with VT and its algorithms), it does not drive
 valves or heat pumps, and it sends no data outside your Home Assistant.
@@ -53,7 +54,7 @@ valves or heat pumps, and it sends no data outside your Home Assistant.
 
 1. Set up VT's thermostats for the rooms the boiler heats. If VT's central boiler is configured,
    untick it in VT's central configuration and restart Home Assistant: the plugin takes its place.
-2. Add one **Versatile Thermostat Smart Boiler** entry and pick the VT zones this boiler heats.
+2. Add one **Smart Boiler for Versatile Thermostat** entry and pick the VT zones this boiler heats.
 3. Pick the entity that provides each boiler signal — at least flame and flow temperature for
    control.
 4. Let it monitor for the monitoring period (7 days by default) and read its verdict.

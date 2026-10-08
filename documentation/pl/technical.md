@@ -1,6 +1,6 @@
 [English version](../en/technical.md)
 
-# Versatile Thermostat Smart Boiler — dokumentacja techniczna
+# Smart Boiler for Versatile Thermostat — dokumentacja techniczna
 
 > **W trakcie budowy, bez wydania.** Integracja nie pracowała jeszcze z prawdziwym kotłem.
 

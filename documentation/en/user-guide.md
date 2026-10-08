@@ -1,16 +1,16 @@
 [Polska wersja](../pl/user-guide.md)
 
-# Versatile Thermostat Smart Boiler — user guide
+# Smart Boiler for Versatile Thermostat — user guide
 
 > **In development, not released.** The integration has not yet run on a real boiler. There is
 > no release and no entry in the Home Assistant Community Store (HACS). Do not install it on a
 > heating system you rely on.
 
-Versatile Thermostat Smart Boiler is a plugin for Versatile Thermostat (VT), a Home Assistant
-integration that runs the rooms of a house. VT decides how much heat each room needs. This plugin
-watches a central heating boiler (gas, oil, electric or another fuel; not a heat pump) and, once
-you switch control on, decides when the boiler heats and how warm its water is. It does not
-control rooms or valves.
+Smart Boiler for Versatile Thermostat is an independent plugin (not part of VT and not made by its
+authors) for Versatile Thermostat (VT), a Home Assistant integration that runs the rooms of a house.
+VT decides how much heat each room needs. This plugin watches a central heating boiler (gas, oil,
+electric or another fuel; not a heat pump) and, once you switch control on, decides when the boiler
+heats and how warm its water is. It does not control rooms or valves.
 
 This guide is a summary. The specification, with every rule and decision, is
 [`SCOPE.md`](../../SCOPE.md). Where the two differ, `SCOPE.md` and the texts in the
@@ -58,7 +58,7 @@ Once there is a release, it will install through HACS as a custom repository:
 
 1. In HACS, open the menu → **Custom repositories**, add
    `https://github.com/Shadow-230/vtherm-smart-boiler` with the type **Integration**.
-2. Find **Versatile Thermostat Smart Boiler** in HACS and download it.
+2. Find **Smart Boiler for Versatile Thermostat** in HACS and download it.
 3. Restart Home Assistant.
 
 **Manual installation** (once there is a release): copy the folder
@@ -73,7 +73,7 @@ Only one entry of the integration can exist: it runs one boiler.
    untick it in VT's central configuration and restart Home Assistant, so that two controllers
    never drive the same boiler. Monitoring works without this; control waits for it.
 2. **Create the entry.** Settings → Devices & services → Add integration →
-   **Versatile Thermostat Smart Boiler**. In the first step pick a name and the level of detail
+   **Smart Boiler for Versatile Thermostat**. In the first step pick a name and the level of detail
    (the level changes only what you see, never how the plugin behaves).
 3. **Pick the signals.** In **Boiler signals** pick the entity for each signal you have — at
    least flame and flow temperature if you plan to control the boiler. The plugin only reads
@@ -680,7 +680,7 @@ When "Signals" is off, its attributes name the signal with the problem.
 | The plugin did not start: the house may not be heated | see the log; check the boiler |
 | The plugin's memory of the boiler could not be read | it handed back to be safe |
 | The plugin cannot save its memory of the boiler | full disk or read-only storage |
-| The boiler may still hold a value from Versatile Thermostat Smart Boiler | hand back by hand |
+| The boiler may still hold a value from Smart Boiler for Versatile Thermostat | hand back by hand |
 | SmartPI's learning may still be off in some zones | switch SmartPI learning on |
 
 The last two appear after the integration was removed before it could finish its cleanup.

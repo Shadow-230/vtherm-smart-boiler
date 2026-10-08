@@ -1,16 +1,17 @@
 [English version](../en/user-guide.md)
 
-# Versatile Thermostat Smart Boiler — przewodnik użytkownika
+# Smart Boiler for Versatile Thermostat — przewodnik użytkownika
 
 > **W trakcie budowy, bez wydania.** Integracja nie pracowała jeszcze z prawdziwym kotłem. Nie ma
 > wydania ani wpisu w Home Assistant Community Store (HACS). Nie instaluj jej w ogrzewaniu, na
 > którym polegasz.
 
-Versatile Thermostat Smart Boiler to wtyczka do Versatile Thermostat (VT), integracji Home
-Assistant, która steruje pomieszczeniami w domu. VT decyduje, ile ciepła potrzebuje każde
-pomieszczenie. Ta wtyczka obserwuje kocioł centralnego ogrzewania (gazowy, olejowy,
-elektryczny lub na inne paliwo; nie pompę ciepła), a gdy włączysz sterowanie, decyduje, kiedy
-kocioł grzeje i jak ciepła jest jego woda. Nie steruje pomieszczeniami ani zaworami.
+Smart Boiler for Versatile Thermostat to niezależna wtyczka (nie jest częścią VT ani dziełem jego
+autorów) do Versatile Thermostat (VT), integracji Home Assistant, która steruje pomieszczeniami w
+domu. VT decyduje, ile ciepła potrzebuje każde pomieszczenie. Ta wtyczka obserwuje kocioł
+centralnego ogrzewania (gazowy, olejowy, elektryczny lub na inne paliwo; nie pompę ciepła), a gdy
+włączysz sterowanie, decyduje, kiedy kocioł grzeje i jak ciepła jest jego woda. Nie steruje
+pomieszczeniami ani zaworami.
 
 Ten przewodnik jest streszczeniem. Specyfikacja, ze wszystkimi zasadami i decyzjami, to
 [`SCOPE.md`](../../SCOPE.md) (po angielsku). Gdy oba teksty się różnią, rozstrzygają `SCOPE.md`
@@ -61,7 +62,7 @@ Gdy wydanie się pojawi, będzie się instalować przez HACS jako niestandardowe
 
 1. W HACS otwórz menu → **Niestandardowe repozytoria**, dodaj
    `https://github.com/Shadow-230/vtherm-smart-boiler` z typem **Integracja**.
-2. Znajdź **Versatile Thermostat Smart Boiler** w HACS i pobierz.
+2. Znajdź **Smart Boiler for Versatile Thermostat** w HACS i pobierz.
 3. Uruchom ponownie Home Assistant.
 
 **Instalacja ręczna** (gdy pojawi się wydanie): skopiuj folder
@@ -77,8 +78,8 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    tym samym kotłem nigdy nie sterowały dwa sterowniki. Monitorowanie działa i bez tego;
    sterowanie na to czeka.
 2. **Utwórz wpis.** Ustawienia → Urządzenia oraz usługi → Dodaj integrację →
-   **Versatile Thermostat Smart Boiler**. W pierwszym kroku wybierz nazwę i poziom szczegółowości
-   (poziom zmienia tylko to, co widzisz, nigdy działanie wtyczki).
+   **Smart Boiler for Versatile Thermostat**. W pierwszym kroku wybierz nazwę i poziom
+   szczegółowości (poziom zmienia tylko to, co widzisz, nigdy działanie wtyczki).
 3. **Wybierz sygnały.** W kroku **Sygnały kotła** wybierz encję dla każdego sygnału, który masz —
    co najmniej płomień i temperaturę zasilania, jeśli chcesz sterować kotłem. Wtyczka tylko
    czyta te encje.
@@ -710,7 +711,7 @@ Gdy „Sygnały” są wyłączone, ich atrybuty wskazują sygnał, z którym je
 | Wtyczka nie wystartowała: dom może nie być ogrzewany | zobacz dziennik; sprawdź kocioł |
 | Nie udało się odczytać pamięci wtyczki o kotle | dla bezpieczeństwa oddała kocioł |
 | Wtyczka nie może zapisać swojej pamięci o kotle | pełny dysk albo pamięć tylko do odczytu |
-| Kocioł może nadal trzymać wartość z Versatile Thermostat Smart Boiler | oddaj kocioł ręcznie |
+| Kocioł może nadal trzymać wartość z Smart Boiler for Versatile Thermostat | oddaj kocioł ręcznie |
 | Nauka SmartPI może być nadal wyłączona w części stref | włącz naukę SmartPI |
 
 Dwa ostatnie pojawiają się, gdy integracja została usunięta, zanim zdążyła po sobie posprzątać.

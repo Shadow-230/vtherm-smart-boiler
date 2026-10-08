@@ -1,4 +1,4 @@
-# Tooling for the Versatile Thermostat Smart Boiler plugin. The plugin itself ships as
+# Tooling for the Smart Boiler for Versatile Thermostat plugin. The plugin itself ships as
 # custom_components/vtherm_smart_boiler (HACS); this file is not a package build.
 
 [dependency-groups]
