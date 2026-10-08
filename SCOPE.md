@@ -8,9 +8,13 @@ confirms or changes at the review before anything reaches a real boiler (`docs/p
 
 ## 1. What it is
 
-A **native Versatile Thermostat (VT) plugin that optimises how a gas boiler runs**: fewer and
-longer burns, more condensing, less gas per degree-day — while room comfort stays the same and
-the zone algorithms' room models are not damaged.
+A **native Versatile Thermostat (VT) plugin that optimises how a central heating boiler runs**
+— gas, oil, electric or another fuel, any boiler Home Assistant can talk to (§5 "Boilers"; heat
+pumps excluded): fewer and longer burns, more condensing where the boiler condenses, less fuel per
+degree-day — while room comfort stays the same and the zone algorithms' room models are not
+damaged. What the plugin can do depends on what the boiler's link can write (§5): the water
+temperature, or only on and off; the condensing and gas figures need a condensing gas boiler
+and the signals for them.
 
 Its edge over the boiler alone: it knows from VT what the rooms actually need.
 
