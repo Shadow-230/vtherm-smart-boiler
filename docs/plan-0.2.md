@@ -14,8 +14,8 @@ the review and the release. S3 can happen at any time.
 
 Status on 2026-10-08: built through 0.2.3 (`docs/plan-0.2.3.md`, done). The repository is public
 on GitHub since 2026-10-07 (K5's first half, below), with its checks green; next J2 (the user),
-J4, the rest of K1, K4, then K5's pre-release (provisionally 0.2.3b1, `docs/plan-0.2.2.md`
-decision 16), K6 and K7. S3 stays optional.
+J4, I6 (the user's decisions of 2026-10-08), the rest of K1, K4, then K5's pre-release
+(provisionally 0.2.3b1, `docs/plan-0.2.2.md` decision 16), K6 and K7. S3 stays optional.
 
 ## Rules that shape this release
 
@@ -136,6 +136,7 @@ reaches a real boiler.
 | I3 ✅ | control-state entities: current setpoint and its reason, last write and read-back, hand-back state, anti-cycling state (0.2.1: no anti-cycling state in 0.2) |
 | I4 ✅ | translations EN and PL; key-parity test |
 | I5 ✅ | alarm thresholds as advanced options (open from 0.1) |
+| I6 | the first panel of the setup asks how the boiler is connected (the user's decisions of 2026-10-08): the OpenTherm Gateway through Home Assistant's integration; the OTGW firmware over MQTT; ESPHome OpenTherm; EMS-ESP; a relay (an on/off boiler); the boiler's own Wi-Fi module or the manufacturer's integration; another writable entity (advanced); monitoring only. The choice sets the write path, the write types, the hand-back and whether a heating switch is required, suggests the signal entities, and says what happens to the boiler when Home Assistant stops — the OTGW: its override lapses within a minute and the thermostat takes over (stand-alone, heating stops); EMS-ESP: its setpoint lapses within about a minute, so the plugin repeats it; ESPHome: it holds the last setpoint and CH enable until it restarts (its API `reboot_timeout`, 15 min by default), then its configured initial values — control needs the user's tick that a safe initial value and a short `reboot_timeout` are set on the ESP, as the relay needs its separate-contact tick, with a sample ESPHome configuration in the user guide; the boiler's Wi-Fi module or the manufacturer's integration: writes usually go to the boiler's memory or through a cloud, so monitoring, and control only where the write type is known and not persistent. Control stays off by default: the choice switches nothing on. The config and options flows, translations (EN, PL), tests, the user guides and `SCOPE.md` §4 |
 
 Done when: integration tests cover enabling and disabling control, every hand-back path, the
 "no write without fresh data" rule and the list of allowed service calls.
@@ -174,6 +175,8 @@ installation has monitored for 7 days and then run control without errors; the u
 
 - J2 🔒 (the user): the test HA per `devenv/README.md`; then J4 in the test HA once the user says
   to start. No monitoring period holds control back there either (the user's decision, 2026-10-08).
+- I6: the first panel — how the boiler is connected — after J4's scenarios on instance 1 and
+  before K4; the J4 scenarios the changed flows touch run again in the test HA.
 - K1 🔒: `CHANGELOG.md` and the full `README.md` (the license text is in, 2026-10-07).
 - K4: the user's decision of 2026-10-08 — no monitoring period holds control back; control may be
   switched on from the first day, and the option is the verdict's days of data (`SCOPE.md` §10) —
