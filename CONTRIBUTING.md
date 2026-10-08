@@ -18,6 +18,8 @@ every minute. Changes are therefore small, tested and reviewed before they reach
   `qas` or `main` from other branches are closed. A contributor's pull request into `dev` is
   reviewed and merged by the repository owner; the maintainer's automation merges only its own.
 - Releases (tags `v*` and GitHub releases) are made by the repository owner only, from `main`.
+  Each release carries the report of the tests its version passed, `docs/test-reports/<version>.md`
+  (`docs/test-reports/README.md`).
 - History is never rewritten on `dev`, `qas` or `main` (no force pushes, no deletions).
 
 ## Checks
