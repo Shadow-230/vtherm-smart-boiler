@@ -100,7 +100,7 @@ Set up in the user interface — or by Claude through the API at J4, once you sa
    type "over switch"; underlying switch `switch.boiler_sim_<zone>_valve`; room temperature
    `sensor.boiler_sim_<zone>_temperature`; outdoor temperature `sensor.boiler_sim_outdoor`. Use
    SmartPI in one zone, to test the learning pauses.
-3. **Versatile Thermostat Smart Boiler**:
+3. **Smart Boiler for Versatile Thermostat**:
    - Signals: `binary_sensor.boiler_sim_flame`, `sensor.boiler_sim_flow`,
      `sensor.boiler_sim_return`, `sensor.boiler_sim_modulation`,
      `binary_sensor.boiler_sim_dhw_active`, `sensor.boiler_sim_pressure` and

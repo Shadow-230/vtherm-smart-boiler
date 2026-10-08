@@ -1,4 +1,4 @@
-# Versatile Thermostat Smart Boiler — Scope
+# Smart Boiler for Versatile Thermostat — Scope
 
 General scope of the plugin, valid for any installation. Working rules and verified facts:
 `CLAUDE.md`. Development plan: `PLAN.md`. "Decision n" and "answer X" refer to the user's

@@ -140,7 +140,7 @@ class SmartBoilerEntity(CoordinatorEntity[SmartBoilerCoordinator]):
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
-            manufacturer="Versatile Thermostat Smart Boiler",
+            manufacturer="Smart Boiler for Versatile Thermostat",
             model="Boiler monitor",
             entry_type=DeviceEntryType.SERVICE,
         )
