@@ -6,14 +6,16 @@
 # 14; PB-86; nothing is downloaded on the developer's machine). Coverage counts branches, and
 # every module keeps its own floor (P-35). The canaries (newest vtherm_api; newest VT and
 # SmartPI releases) are early warnings of a change upstream, not of ours: they run weekly, on
-# demand and on pull requests into qas and main, not on every pull request (PB-85). Pushes run
-# the checks only on dev, qas and main; a working branch is checked by its pull request, so no
-# check runs twice. Actions are pinned to full commits (PB-86); the comment names the version.
+# demand and on pull requests into qas and main, not on every pull request (PB-85). A pull
+# request is checked once, up to date with its base (the rulesets require it), so the merge into
+# dev is not checked again; pushes to qas and main are, as the last word before tests on a real
+# Home Assistant and before a release; the weekly run checks dev. The tests run on every CPU
+# (pytest-xdist). Actions are pinned to full commits (PB-86); the comment names the version.
 name: Tests
 
 on:
   push:
-    branches: [dev, qas, main]
+    branches: [qas, main]
   pull_request:
   schedule:
     - cron: "0 4 * * 1"
@@ -95,9 +97,9 @@ jobs:
       - name: Core tests, without Home Assistant
         run: |
           mkdir -p .tmp
-          python -m pytest -q -p no:homeassistant --disable-socket --allow-unix-socket --cov --cov-branch --cov-report= --cov-fail-under=0 tests/core
+          python -m pytest -q -n auto -p no:homeassistant --disable-socket --allow-unix-socket --cov --cov-branch --cov-report= --cov-fail-under=0 tests/core
       - name: The other tests, with coverage of both runs
-        run: python -m pytest -q --cov --cov-branch --cov-append --cov-report=term --ignore=tests/core
+        run: python -m pytest -q -n auto --cov --cov-branch --cov-append --cov-report=term --ignore=tests/core
       # P-35: every module at least 95 % with branches, the config and options flows 100 %.
       - name: Coverage of each module
         run: |
@@ -161,8 +163,8 @@ jobs:
       - name: All tests
         run: |
           mkdir -p .tmp
-          python -m pytest -q -p no:homeassistant --disable-socket --allow-unix-socket tests/core
-          python -m pytest -q --ignore=tests/core
+          python -m pytest -q -n auto -p no:homeassistant --disable-socket --allow-unix-socket tests/core
+          python -m pytest -q -n auto --ignore=tests/core
 
   # PB-85: the newest VT and SmartPI releases (and the newest vtherm_api VT runs with) — a
   # failure here is a finding: VT or SmartPI changed under the plugin, not a broken change of
@@ -229,5 +231,5 @@ jobs:
           VENDOR_VERSIONS_PINNED: "0"
         run: |
           mkdir -p .tmp
-          python -m pytest -q -p no:homeassistant --disable-socket --allow-unix-socket tests/core
-          python -m pytest -q --ignore=tests/core
+          python -m pytest -q -n auto -p no:homeassistant --disable-socket --allow-unix-socket tests/core
+          python -m pytest -q -n auto --ignore=tests/core
