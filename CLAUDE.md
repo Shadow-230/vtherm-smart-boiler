@@ -74,7 +74,9 @@ Each topic lives only in its file; do not copy it here.
   GitHub, `Shadow-230/vtherm-smart-boiler` (since 2026-10-07); Claude works there as the
   collaborator account `Shadow-230-bot`. Flow: a working branch → `dev` → `qas` → `main` (release).
   Claude pushes only to its own working branches (`claude/<topic>`, from `dev`), opens a pull
-  request from it to `dev` and merges it itself once the checks pass; it never pushes to `dev`,
+  request from it to `dev` and merges it itself once the checks pass, deleting the working branch
+  on GitHub and locally as it merges (`gh pr merge --delete-branch`; the user's rule,
+  2026-10-08); it never pushes to `dev`,
   `qas` or `main` directly (the one exception: their first creation on 2026-10-07, before the
   rulesets), never force-pushes or deletes them, never makes a tag or a GitHub release, and never
   merges anyone else's pull request. A pull request from `dev` to `qas`, or from `qas` to `main`, is
