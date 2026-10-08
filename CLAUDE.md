@@ -91,6 +91,12 @@ Each topic lives only in its file; do not copy it here.
   found unnecessary is marked ✅ with the reason.
   Subagents may be used and are bound by these rules; a multi-agent workflow only when the user
   asks for one.
+- Tokens (the user's rule, 2026-10-05/06): work is cut into small pieces — a subagent gets a few
+  problems at a time, told to read only what it needs and to keep its report short — and every
+  stop reports the tokens the subagents used.
+- Consent (the user's rule, 2026-10-07): a message that asks a question or reports a state is not
+  consent to change anything. Before acting, say what will change; act only on the user's
+  explicit go-ahead.
 - **Never touch the production Home Assistant instance** (location in Claude's memory): no
   deploys, no writes. The plugin reaches it only as a HACS release.
 - **Neither Claude nor subagents connect to any Home Assistant instance** — by any means (REST,
