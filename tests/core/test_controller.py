@@ -910,7 +910,7 @@ def test_a_clock_set_back_does_not_stretch_the_link_window() -> None:
     "blocked",
     [
         {"enabled": False},
-        {"blockers": ("monitoring_period",)},
+        {"blockers": ("vt_central_boiler_active",)},
         {"hand_back_alarms": ("pressure_low",)},
     ],
     ids=["switched_off", "blocker", "latch"],
@@ -1394,7 +1394,7 @@ def test_home_assistant_starting_keeps_a_restored_command_but_decides_nothing_ne
     assert decisions[-1].command == BoilerCommand(True, pytest.approx(CURVE.flow(5.0)))
     _state, decisions = run(during(0.0, 60.0, lambda t: (started("a", t),), blockers=starting))
     assert all(d.mode is ControlMode.NOT_ALLOWED and d.command is None for d in decisions)
-    other = (HA_STARTING, "monitoring_period")
+    other = (HA_STARTING, "vt_central_boiler_active")
     _state, decisions = run(
         during(0.0, 60.0, lambda t: (started("a", t),), blockers=other, restored_command=KEPT)
     )

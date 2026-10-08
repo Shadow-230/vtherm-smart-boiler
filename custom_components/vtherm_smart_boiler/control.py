@@ -300,7 +300,6 @@ if TYPE_CHECKING:
     from .coordinator import SmartBoilerCoordinator
 
 _LOGGER = logging.getLogger(__name__)
-DAY = 86400.0
 MINUTE_S = 60.0
 LEARNING_TIMEOUT_S = 5.0
 # An owed hand-back is sent again this long after an attempt; a gateway's not released by then
@@ -448,7 +447,6 @@ SMARTPI_SERVICE = "set_smartpi_learning"
 # Blockers found while running, besides those of the configuration (translation keys).
 RUNTIME_BLOCKERS = (
     "ha_starting",
-    "monitoring_period",
     "vt_central_boiler_active",
     "vt_central_boiler_unknown",
     "setpoint_outside_entity_range",
@@ -1624,7 +1622,9 @@ class ControlUnit:
 
     def _vt_blockers(self, now: float) -> list[str]:
         """What VT and Home Assistant say now: zones that are not VT's or sit on the boiler's
-        thermostat, Home Assistant starting, the monitoring period, VT's central boiler."""
+        thermostat, Home Assistant starting, VT's central boiler. The monitoring period holds
+        nothing back: control may be switched on from the first day (the user's decision of
+        2026-10-08); the monitor's verdict is advice shown beside it."""
         config = self._coordinator.config
         found: list[str] = []
         link = self._coordinator.link
@@ -1638,10 +1638,6 @@ class ControlUnit:
             # VT starts its thermostats only once Home Assistant has started; `is_running` is
             # already true while it starts.
             found.append("ha_starting")
-        # A start later than now — the wall clock set back (C9) — counts from now.
-        since = clock_start(self._coordinator.monitoring_since, now)
-        if now - since < config.monitor.monitoring_days * DAY:
-            found.append("monitoring_period")
         vt_boiler = self._coordinator.link.vt_central_boiler_configured()
         if vt_boiler is None:
             if not self._vt_boiler_in_grace(now):

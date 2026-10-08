@@ -81,11 +81,13 @@ Only one entry of the integration can exist: it runs one boiler.
 4. **Describe the installation.** The steps **Boiler**, **Heating circuit**, **VT zones** (with
    one **Zone** step for each zone you pick), **Building** and **Reference room** ask what you
    know. Leave unknown values empty: the plugin then says what it cannot judge.
-5. **The monitoring period.** At the advanced level the step **Monitor** holds the
-   **Monitoring period** (7 days by default, 7 to 60). It can also be changed later in the
-   options under **Monitor thresholds**. During it the plugin writes nothing to the boiler.
-6. **Read the verdict.** At the end of the period the sensor **Control verdict** says whether
-   control is worth enabling (see [Monitoring first](#41-monitoring-first)). You decide.
+5. **Days of data for the verdict.** At the advanced level the step **Monitor** holds
+   **Days of data for the verdict** (7 days by default, 7 to 60). It can also be changed later in
+   the options under **Monitor thresholds**. It holds nothing back: you may set up and switch on
+   control at any time. Until you do, the plugin writes nothing to the boiler.
+6. **Read the verdict.** Once it has these days of data, the sensor **Control verdict** says
+   whether control is worth enabling (see
+   [Monitoring and the verdict](#41-monitoring-and-the-verdict)). You decide.
 7. **Set up control.** In the integration's options open **Control (experimental)**: choose the
    write path, then fill in the steps that follow (for example **Heating curve and limits** and
    **Control behaviour**). "No control" keeps monitoring only.
@@ -96,11 +98,13 @@ Only one entry of the integration can exist: it runs one boiler.
 
 The details of every rule are in the specification:
 [`SCOPE.md`, §7](../../SCOPE.md#7-features-by-stage) and
-[§10](../../SCOPE.md#10-assess-before-control).
+[§10](../../SCOPE.md#10-assess-alongside-control).
 
-### 4.1 Monitoring first
+### 4.1 Monitoring and the verdict
 
-After you add the integration, it only watches the boiler. It writes nothing. It records, for
+After you add the integration, it only watches the boiler. It writes nothing, and the boiler runs
+as it did before — under Versatile Thermostat's central boiler, a wall thermostat or its own
+regulation — until you switch control on, which you may do from the first day. It records, for
 example:
 
 - burns and how long they last, and how often the boiler starts;
@@ -108,10 +112,10 @@ example:
 - hot-water draws, and gas per degree-day (measured with a gas meter you map, else estimated);
 - problems with the signals it reads.
 
-The **monitoring period** is 7 days by default. You may make it longer (up to 60 days), but not
-shorter. It counts calendar days from the day you created the entry.
+The verdict needs **7 days of data** by default. You may ask for more (up to 60 days), but not
+fewer. They count calendar days from the day you created the entry.
 
-At the end, the sensor **Control verdict** shows one of:
+Then the sensor **Control verdict** shows one of:
 
 | Verdict | Meaning |
 |---|---|
@@ -119,13 +123,13 @@ At the end, the sensor **Control verdict** shows one of:
 | Not worth enabling | enough was measured, and control would change little |
 | Not enough data yet | too little was measured to judge |
 
-The verdict is advice. You decide. Outside the heating season the period may end without enough
-data; the control switch then says that control starts without a verdict.
+The verdict is advice. You decide. Before it comes, and outside the heating season when the days
+pass without enough data, the control switch says that control starts without a verdict.
 
 ### 4.2 Control is opt-in
 
 Control is **off by default**. It is the switch **Control (experimental)**. You can switch it on
-only after the monitoring period, and only when every required setting is filled in, for example:
+from the first day, once every required setting is filled in, for example:
 
 - a way to write to the boiler and a way to hand it back (see
   [Connecting the boiler](#5-connecting-the-boiler));
@@ -524,7 +528,7 @@ control off.
 | The boiler's own fault | by itself, when the fault clears |
 | No zone answers | by itself, when a zone answers |
 | The plugin's own monitor failing | by itself, when it works again |
-| A blocker: a missing setting, the monitoring period, Home Assistant starting | by itself, once it is gone |
+| A blocker: a missing setting, Home Assistant starting | by itself, once it is gone |
 
 VT's central boiler still configured is a blocker too: control waits until you untick it in VT
 and restart Home Assistant.
@@ -728,9 +732,9 @@ stateDiagram-v2
 
 Notes on the diagram:
 
-- **Waiting** covers every blocker (a missing setting, the monitoring period, VT's central boiler
-  still configured, Home Assistant starting) and the recognition period after a start. A command
-  the plugin held before a restart is kept or restored at once, without waiting.
+- **Waiting** covers every blocker (a missing setting, VT's central boiler still configured,
+  Home Assistant starting) and the recognition period after a start. A command the plugin held
+  before a restart is kept or restored at once, without waiting.
 - **No zone answers** hands the boiler back only where a working thermostat or room controller
   takes over; without one, the plugin keeps heating off instead (see
   [After a restart](#47-after-a-restart)).

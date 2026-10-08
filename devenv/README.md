@@ -121,9 +121,8 @@ Set up in the user interface — or by Claude through the API at J4, once you sa
      `sensor.otgw_sim_thermostat_room_setpoint` (the wall thermostat's own setting, 21 °C 06:00–22:00
      and 17 °C otherwise, UTC).
 
-The plugin enforces the monitoring period (7 days at least) here as anywhere. The test instance
-can simply monitor for 7 days first; or, with your consent at J4, its stored monitoring start can
-be moved back while Home Assistant is stopped — on the test instance only.
+No monitoring period holds control back (the user's decision, 2026-10-08): control may be switched
+on as soon as the installation is set up; the verdict comes after 7 days of data.
 
 Other write paths: set `write_type: held` (or `persistent`) and `ch_write_type` in
 `configuration.yaml` and use the entity path with `number.boiler_sim_flow_setpoint` and

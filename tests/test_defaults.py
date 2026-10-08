@@ -113,12 +113,13 @@ CONFIG = EntryConfig.from_options(MINIMAL_OPTIONS)
 
 # (the SCOPE §7 row, what the plugin holds, the table's value)
 ROWS: list[tuple[str, Callable[[], Any], Any]] = [
-    # Control | off; available after 7 days of monitoring. The control switch's own start, off,
-    # is Home Assistant's to show: tests/integration/test_control.py pins it
-    # (test_control_is_off_by_default, test_control_is_refused_during_monitoring).
+    # Control | off; may be switched on from the first day; the verdict after 7 days of data. The
+    # control switch's own start, off, is Home Assistant's to show: tests/integration/
+    # test_control.py pins it (test_control_is_off_by_default,
+    # test_control_is_not_held_back_on_the_first_day).
     ("control: not configured, nothing to switch on", lambda: ControlOptions().configured, False),
-    ("control: 7 days of monitoring (form)", lambda: MONITOR_FORM["monitoring_days"], 7.0),
-    ("control: 7 days of monitoring (parser)", lambda: CONFIG.monitor.monitoring_days, 7.0),
+    ("verdict: 7 days of data (form)", lambda: MONITOR_FORM["monitoring_days"], 7.0),
+    ("verdict: 7 days of data (parser)", lambda: CONFIG.monitor.monitoring_days, 7.0),
     # Heating curve | none — the design flow is entered
     ("heating curve: no design flow offered", lambda: CURVE_FORM["design_flow"], vol.UNDEFINED),
     ("heating curve: none stored, none entered", lambda: BARE.curve_entered, False),

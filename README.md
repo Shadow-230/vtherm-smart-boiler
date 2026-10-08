@@ -36,9 +36,10 @@ valves or heat pumps, and it sends no data outside your Home Assistant.
 
 # What it does
 
-- **Monitor first.** Before any control it watches the boiler for a monitoring period (7 days by
-  default): burns and their length, condensing, hot-water draws, gas per degree-day, signal
-  problems, and a verdict on whether control is worth it.
+- **Monitor, and control when you choose.** It watches the boiler — burns and their length,
+  condensing, hot-water draws, gas per degree-day, signal problems — and after 7 days of data
+  gives a verdict on whether control is worth it. Until you switch control on, the boiler runs as
+  before; you may switch it on from the first day.
 - **Weather-compensated water temperature** on a curve you enter, bounded by the lowest and
   highest water temperature, a weather ceiling and each circuit's maximum.
 - **Heating on and off follow VT's zones** — by zones calling, total power or valve opening, as
@@ -57,8 +58,9 @@ valves or heat pumps, and it sends no data outside your Home Assistant.
 2. Add one **Smart Boiler for Versatile Thermostat** entry and pick the VT zones this boiler heats.
 3. Pick the entity that provides each boiler signal — at least flame and flow temperature for
    control.
-4. Let it monitor for the monitoring period (7 days by default) and read its verdict.
-5. Then, if you choose, set up control in the options and switch **Control (experimental)** on.
+4. Let it monitor; its verdict comes after 7 days of data (by default).
+5. Whenever you choose — from the first day, or after reading the verdict — set up control in the
+   options and switch **Control (experimental)** on.
 
 Step by step: the [user guide][guide].
 

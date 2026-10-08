@@ -185,7 +185,7 @@
         "data": {
           "condensing_return": "Condensing return threshold",
           "short_burn_min": "Short burn",
-          "monitoring_days": "Monitoring period",
+          "monitoring_days": "Days of data for the verdict",
           "near_room_k": "Near room temperature",
           "foreign_heat_hold_min": "Foreign heat hold",
           "add_water_below": "Add water below",
@@ -200,7 +200,7 @@
         "data_description": {
           "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C. Too high overstates the condensing share.",
           "short_burn_min": "Burns shorter than this count as short, in minutes. Default 10. Longer makes more burns short, and the verdict harsher.",
-          "monitoring_days": "Days from when this integration was added before control can be switched on; the verdict needs this many days of data. Once they have passed, control may start even without a verdict — out of the heating season there may be too little data for one. Default 7; shorter is not allowed.",
+          "monitoring_days": "How many days of data the monitor's verdict needs, counted from when this integration was added. It holds nothing back: control can be switched on at any time, even without a verdict, and until there is one the control switch shows \"not enough data\". Out of the heating season there may be too little data even after these days. Default 7; shorter is not allowed.",
           "near_room_k": "Water within this of the room counts as no heat reaching the zone, in K. Default 3. Larger says 'no heat reaches the zone' sooner.",
           "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60. Longer keeps learning paused longer after a fire.",
           "add_water_below": "Optional: below this pressure you are told to add water, in bar — take it from your boiler's manual (its minimum operating pressure). Empty by default: no notification. It only informs; heating stops only while the boiler itself reports a fault that stops it. Too low tells you late; too high tells you while the pressure is fine.",
@@ -497,7 +497,7 @@
         "data": {
           "condensing_return": "Condensing return threshold",
           "short_burn_min": "Short burn",
-          "monitoring_days": "Monitoring period",
+          "monitoring_days": "Days of data for the verdict",
           "near_room_k": "Near room temperature",
           "foreign_heat_hold_min": "Foreign heat hold",
           "add_water_below": "Add water below",
@@ -512,7 +512,7 @@
         "data_description": {
           "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C. Too high overstates the condensing share.",
           "short_burn_min": "Burns shorter than this count as short, in minutes. Default 10. Longer makes more burns short, and the verdict harsher.",
-          "monitoring_days": "Days from when this integration was added before control can be switched on; the verdict needs this many days of data. Once they have passed, control may start even without a verdict — out of the heating season there may be too little data for one. Default 7; shorter is not allowed.",
+          "monitoring_days": "How many days of data the monitor's verdict needs, counted from when this integration was added. It holds nothing back: control can be switched on at any time, even without a verdict, and until there is one the control switch shows \"not enough data\". Out of the heating season there may be too little data even after these days. Default 7; shorter is not allowed.",
           "near_room_k": "Water within this of the room counts as no heat reaching the zone, in K. Default 3. Larger says 'no heat reaches the zone' sooner.",
           "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60. Longer keeps learning paused longer after a fire.",
           "add_water_below": "Optional: below this pressure you are told to add water, in bar — take it from your boiler's manual (its minimum operating pressure). Empty by default: no notification. It only informs; heating stops only while the boiler itself reports a fault that stops it. Too low tells you late; too high tells you while the pressure is fine.",
@@ -527,7 +527,7 @@
       },
       "control": {
         "title": "Control (experimental)",
-        "description": "How the plugin controls the boiler: the flow setpoint it writes, or on and off through a relay. Control stays off until you switch it on, and only after the monitoring period, counted in days from when this integration was added. Control may then start even without a verdict — out of the heating season the monitor may have too little data for one; the control switch shows the verdict. Choose \"No control\" to keep monitoring only. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "How the plugin controls the boiler: the flow setpoint it writes, or on and off through a relay. Until you switch control on, nothing changes: the boiler runs as it does today — under Versatile Thermostat's central boiler, a wall thermostat or its own regulation — and the plugin only watches and reports. Switched on, it takes the place of VT's central boiler (remove that first and restart Home Assistant): heating goes on and off with VT's zones at once, and where the plugin writes the water temperature it follows your curve, never below your lowest or above your highest water temperature; the comfort correction, if you enable it, adds at most 3 K above the curve. You may switch control on from the first day, even without a verdict: the monitor's verdict comes once it has enough days of data, and the control switch shows it. Choose \"No control\" to keep monitoring only. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "write_path": "Write path",
           "topology": "Gateway connection",
@@ -1474,7 +1474,6 @@
               "relay_in_another_role": "The relay also serves another role",
               "relay_contact_not_confirmed": "Not confirmed that the relay is a separate contact",
               "ha_starting": "Home Assistant is starting",
-              "monitoring_period": "The monitoring period has not passed yet",
               "vt_central_boiler_active": "Versatile Thermostat's own central boiler is configured or may have been since Home Assistant started",
               "vt_central_boiler_unknown": "Versatile Thermostat's central boiler cannot be ruled out yet",
               "setpoint_outside_entity_range": "The setpoint entity does not take every value control may write",
@@ -2477,7 +2476,6 @@
               "relay_in_another_role": "The relay also serves another role",
               "relay_contact_not_confirmed": "Not confirmed that the relay is a separate contact",
               "ha_starting": "Home Assistant is starting",
-              "monitoring_period": "The monitoring period has not passed yet",
               "vt_central_boiler_active": "Versatile Thermostat's own central boiler is configured or may have been since Home Assistant started",
               "vt_central_boiler_unknown": "Versatile Thermostat's central boiler cannot be ruled out yet",
               "setpoint_outside_entity_range": "The setpoint entity does not take every value control may write",
@@ -2583,9 +2581,6 @@
     },
     "blocked_ha_starting": {
       "message": "Home Assistant is still starting. Other reasons: {count} (all are listed on the control state)."
-    },
-    "blocked_monitoring_period": {
-      "message": "Control becomes available once the monitoring period has passed. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_vt_central_boiler_active": {
       "message": "Versatile Thermostat's own central boiler is configured. Remove it first, so that only one controller drives the boiler, then restart Home Assistant: VT stops sending its central boiler's commands only then. Control keeps waiting until Home Assistant has restarted, even once you have unticked it. It waits so too when VT's central configuration changed after Home Assistant started, before this integration began to watch VT, as it cannot tell what VT ran meanwhile. Other reasons: {count} (all are listed on the control state)."

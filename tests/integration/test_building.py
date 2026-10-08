@@ -397,22 +397,22 @@ async def test_installation_warnings_raise_an_issue(
 
 
 async def test_the_switch_says_control_starts_without_a_verdict(rig: Rig) -> None:
-    """S-43 (answer K): the monitoring period counts calendar days from the entry's creation.
-    Once they have passed, control may start without a verdict — off-season there may be too
-    little data for one — and the switch shows the verdict, "not enough data", whose text says
-    so. Before they have passed, switching on is refused."""
+    """S-43, as changed by the user's decision of 2026-10-08: no monitoring period holds control
+    back. The entry is created now, its verdict needing 7 days of data; control may be switched
+    on at once, without a verdict, and the switch shows the verdict, "not enough data", whose
+    text says so."""
 
     hass = rig.hass
     monitored = options(rig.zones) | {"monitor": {"monitoring_days": 7}}
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=monitored)
-    entry.created_at = START - timedelta(days=8)  # the period has passed
+    entry.created_at = START  # the first day
     ran_before(rig, entry)
     await setup(hass, entry)
     await hass.async_block_till_done(wait_background_tasks=True)
     rig.entry = entry
     switch = rig.state("switch", "control")
     assert switch.attributes["verdict"] == "not_enough_data"
-    assert "monitoring_period" not in switch.attributes["blockers"]
+    assert switch.attributes["blockers"] == []
     await rig.switch(True)
     await rig.advance(30)
     assert rig.state("switch", "control").state == "on"
@@ -429,27 +429,11 @@ async def test_the_switch_says_control_starts_without_a_verdict(rig: Rig) -> Non
         )
     )
     control_step = SOURCE_EN["options"]["step"]["control"]["description"]
-    assert "counted in days from when this integration was added" in control_step
-    assert "even without a verdict" in control_step
-
-
-async def test_switching_on_is_refused_before_the_monitoring_days_have_passed(rig: Rig) -> None:
-    """S-43, the negative: the entry created three days ago is still in its monitoring period;
-    switching on is refused with the reason. One entry per test of this single-entry integration
-    (P-125, T11)."""
-    from homeassistant.exceptions import ServiceValidationError
-
-    hass = rig.hass
-    monitored = options(rig.zones) | {"monitor": {"monitoring_days": 7}}
-    young = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=monitored)
-    young.created_at = START - timedelta(days=3)
-    ran_before(rig, young)
-    await setup(hass, young)
-    rig.entry = young
-    with pytest.raises(ServiceValidationError) as err:
-        await rig.switch(True)
-    assert err.value.translation_key == "blocked_monitoring_period"
-    assert rig.state("switch", "control").state == "off"
+    assert "Until you switch control on, nothing changes" in control_step
+    assert "from the first day, even without a verdict" in control_step
+    for flow in ("config", "options"):
+        monitor = SOURCE_EN[flow]["step"]["monitor"]["data_description"]["monitoring_days"]
+        assert "It holds nothing back" in monitor
 
 
 async def test_without_a_flame_signal_the_verdict_names_it(rig: Rig) -> None:

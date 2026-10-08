@@ -3,7 +3,8 @@
 Goal: the first release with control — the 0.1 monitor (`docs/plan-0.1.md`) plus minimal, safe
 control in flow-setpoint mode: the plugin decides the water temperature. Room-value mode (the
 boiler's own curve decides it) moves to 0.3. Control is opt-in, marked experimental, and
-available after the monitoring period (default 7 days, `SCOPE.md` §10). On/off-only boilers
+available from the first day; the monitor's verdict comes after 7 days of data (`SCOPE.md` §10;
+the user's decision of 2026-10-08 replaced the monitoring period that held control back). On/off-only boilers
 (relay) come later (0.2.2: on/off boilers through a relay, `docs/plan-0.2.2.md` X8). GitHub and
 every publication come at the end of 0.2 (the user's decision, 2026-09-24).
 Scope: `SCOPE.md`; overview: `PLAN.md`.
@@ -172,9 +173,11 @@ installation has monitored for 7 days and then run control without errors; the u
 ## Open for 0.2
 
 - J2 🔒 (the user): the test HA per `devenv/README.md`; then J4 in the test HA once the user says
-  to start. The monitoring period there: wait 7 days, or — with the user's consent — move the
-  test instance's stored monitoring start back.
+  to start. No monitoring period holds control back there either (the user's decision, 2026-10-08).
 - K1 🔒: `CHANGELOG.md` and the full `README.md` (the license text is in, 2026-10-07).
+- K4: the user's decision of 2026-10-08 — no monitoring period holds control back; control may be
+  switched on from the first day, and the option is the verdict's days of data (`SCOPE.md` §10) —
+  reviewed with the other provisional decisions.
 - For the review (K4), besides the provisional decisions in `SCOPE.md` §11 — what the
   independent reviews of the control code (2026-09-24) leave for the user to decide (the
   decisions of 2026-09-25 settle several: a lost link raises an alarm, nothing persistent is
