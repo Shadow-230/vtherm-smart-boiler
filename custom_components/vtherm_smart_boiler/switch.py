@@ -55,11 +55,11 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
     After a restart the switch comes back as the user left it (the wish is stored at once);
     control then waits for its blockers (Home Assistant starting, missing data) to clear. A
     switch disabled in Home Assistant means control off. Switching on by hand is refused while
-    a blocker that needs the user remains. The monitoring period counts calendar days from the
-    entry's creation (answer K): once it has passed, control may start without a verdict —
-    off-season the monitor may have too little data for one — and the switch shows the verdict
-    so that this is said (S-43). Its blockers, and the alarm that keeps it from writing, come
-    with their text (P-39).
+    a blocker that needs the user remains. No monitoring period holds it back (the user's
+    decision of 2026-10-08): control may start from the first day, before the monitor has a
+    verdict, and the switch shows the verdict — "not enough data" until it has one — so that
+    this is said (S-43). Its blockers, and the alarm that keeps it from writing, come with their
+    text (P-39).
     """
 
     _unrecorded_attributes = frozenset({"blockers_text", "blocked_by_text"})

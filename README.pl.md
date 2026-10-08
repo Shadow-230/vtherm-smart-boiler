@@ -37,10 +37,10 @@ steruje zaworami ani pompami ciepła i nie wysyła żadnych danych poza twój Ho
 
 # Co robi
 
-- **Najpierw monitorowanie.** Zanim zacznie sterować, obserwuje kocioł przez okres
-  monitorowania (domyślnie 7 dni): cykle pracy palnika i ich długość, kondensację, pobory
-  ciepłej wody, gaz na stopniodzień, problemy z sygnałami oraz werdykt, czy sterowanie się
-  opłaca.
+- **Monitorowanie, a sterowanie, kiedy zechcesz.** Obserwuje kocioł — cykle pracy palnika i ich
+  długość, kondensację, pobory ciepłej wody, gaz na stopniodzień, problemy z sygnałami — a po
+  7 dniach danych daje werdykt, czy sterowanie się opłaca. Dopóki nie włączysz sterowania, kocioł
+  pracuje jak dotąd; włączyć je możesz od pierwszego dnia.
 - **Temperatura wody zależna od pogody** według krzywej, którą wpisujesz, ograniczona najniższą
   i najwyższą temperaturą wody, pułapem pogodowym i maksimum każdego obiegu.
 - **Włączanie i wyłączanie grzania idzie za strefami VT** — według liczby stref potrzebujących
@@ -63,8 +63,9 @@ steruje zaworami ani pompami ciepła i nie wysyła żadnych danych poza twój Ho
    kocioł.
 3. Wybierz encję, która dostarcza każdy sygnał kotła — do sterowania co najmniej płomień i
    temperaturę zasilania.
-4. Pozwól jej monitorować przez okres monitorowania (domyślnie 7 dni) i przeczytaj werdykt.
-5. Potem, jeśli chcesz, ustaw sterowanie w opcjach i włącz **Sterowanie (eksperymentalne)**.
+4. Pozwól jej monitorować; werdykt pojawi się po 7 dniach danych (domyślnie).
+5. Kiedy zechcesz — od pierwszego dnia albo po przeczytaniu werdyktu — ustaw sterowanie w opcjach
+   i włącz **Sterowanie (eksperymentalne)**.
 
 Krok po kroku: [przewodnik użytkownika][guide-pl].
 

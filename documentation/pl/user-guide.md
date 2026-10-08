@@ -86,12 +86,13 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
 4. **Opisz instalację.** Kroki **Kocioł**, **Obieg grzewczy**, **Strefy VT** (z jednym krokiem
    **Strefa** dla każdej wybranej strefy), **Budynek** i **Pokój odniesienia** pytają o to, co
    wiesz. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić.
-5. **Okres monitorowania.** Na poziomie zaawansowanym krok **Monitor** zawiera **Okres
-   monitorowania** (domyślnie 7 dni, od 7 do 60). Można go też zmienić później w opcjach, w
-   **Progi monitora**. W tym czasie wtyczka nic nie zapisuje do kotła.
-6. **Przeczytaj werdykt.** Na koniec okresu czujnik **Werdykt sterowania** mówi, czy warto
-   włączyć sterowanie (zobacz [Najpierw monitorowanie](#41-najpierw-monitorowanie)). Decyzja
-   należy do ciebie.
+5. **Dni danych do werdyktu.** Na poziomie zaawansowanym krok **Monitor** zawiera **Dni danych
+   do werdyktu** (domyślnie 7, od 7 do 60). Można je też zmienić później w opcjach, w **Progi
+   monitora**. Niczego nie wstrzymują: sterowanie możesz ustawić i włączyć w każdej chwili. Dopóki
+   tego nie zrobisz, wtyczka nic nie zapisuje do kotła.
+6. **Przeczytaj werdykt.** Gdy zbierze tyle dni danych, czujnik **Werdykt sterowania** mówi, czy
+   warto włączyć sterowanie (zobacz [Monitorowanie i werdykt](#41-monitorowanie-i-werdykt)).
+   Decyzja należy do ciebie.
 7. **Ustaw sterowanie.** W opcjach integracji otwórz **Sterowanie (eksperymentalne)**: wybierz
    ścieżkę zapisu, potem wypełnij kolejne kroki (na przykład **Krzywa grzewcza i limity** oraz
    **Zachowanie sterowania**). „Bez sterowania” zostawia samo monitorowanie.
@@ -102,12 +103,13 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
 
 Szczegóły każdej zasady są w specyfikacji:
 [`SCOPE.md`, §7](../../SCOPE.md#7-features-by-stage) i
-[§10](../../SCOPE.md#10-assess-before-control).
+[§10](../../SCOPE.md#10-assess-alongside-control).
 
-### 4.1 Najpierw monitorowanie
+### 4.1 Monitorowanie i werdykt
 
-Po dodaniu integracji wtyczka tylko obserwuje kocioł. Niczego nie zapisuje. Rejestruje na
-przykład:
+Po dodaniu integracji wtyczka tylko obserwuje kocioł. Niczego nie zapisuje, a kocioł pracuje jak
+dotąd — pod kotłem centralnym Versatile Thermostat, termostatem ściennym albo własną automatyką —
+dopóki nie włączysz sterowania, co możesz zrobić od pierwszego dnia. Rejestruje na przykład:
 
 - cykle pracy palnika i ich długość oraz to, jak często kocioł startuje;
 - przez jaką część czasu kocioł kondensuje (jeśli wskażesz potrzebne do tego sygnały);
@@ -115,10 +117,10 @@ przykład:
   w przeciwnym razie szacowane);
 - problemy z sygnałami, które czyta.
 
-**Okres monitorowania** trwa domyślnie 7 dni. Możesz go wydłużyć (do 60 dni), ale nie skrócić.
-Liczy dni kalendarzowe od dnia utworzenia wpisu.
+Werdykt potrzebuje domyślnie **7 dni danych**. Możesz zażądać więcej (do 60 dni), ale nie mniej.
+Liczą się dni kalendarzowe od dnia utworzenia wpisu.
 
-Na koniec czujnik **Werdykt sterowania** pokazuje jedną z wartości:
+Potem czujnik **Werdykt sterowania** pokazuje jedną z wartości:
 
 | Werdykt | Znaczenie |
 |---|---|
@@ -126,14 +128,15 @@ Na koniec czujnik **Werdykt sterowania** pokazuje jedną z wartości:
 | Nie warto włączać | zmierzono dość, a sterowanie niewiele by zmieniło |
 | Jeszcze za mało danych | zmierzono za mało, żeby ocenić |
 
-Werdykt jest radą. Decyzja należy do ciebie. Poza sezonem grzewczym okres może się skończyć bez
-wystarczających danych; przełącznik sterowania mówi wtedy, że sterowanie ruszy bez werdyktu.
+Werdykt jest radą. Decyzja należy do ciebie. Zanim się pojawi, a poza sezonem grzewczym także
+wtedy, gdy dni miną bez wystarczających danych, przełącznik sterowania mówi, że sterowanie ruszy
+bez werdyktu.
 
 ### 4.2 Sterowanie włączasz sam
 
 Sterowanie jest **domyślnie wyłączone**. To przełącznik **Sterowanie (eksperymentalne)**.
-Możesz go włączyć dopiero po okresie monitorowania i tylko wtedy, gdy wypełnione są wszystkie
-wymagane ustawienia, na przykład:
+Możesz go włączyć od pierwszego dnia, gdy wypełnione są wszystkie wymagane ustawienia, na
+przykład:
 
 - sposób zapisu do kotła i sposób jego oddania (zobacz
   [Podłączenie kotła](#5-podłączenie-kotła));
@@ -551,7 +554,7 @@ Oba znikają przy pierwszej oznace ciepła albo gdy wyłączysz sterowanie.
 | Usterka samego kotła | samo, gdy usterka zniknie |
 | Żadna strefa nie odpowiada | samo, gdy strefa odpowie |
 | Własny monitor wtyczki zawodzi | samo, gdy znów działa |
-| Blokada: brakujące ustawienie, okres monitorowania, start Home Assistant | samo, gdy zniknie |
+| Blokada: brakujące ustawienie, start Home Assistant | samo, gdy zniknie |
 
 Wciąż skonfigurowany kocioł centralny VT też jest blokadą: sterowanie czeka, aż odznaczysz go w
 VT i uruchomisz ponownie Home Assistant.
@@ -760,8 +763,8 @@ stateDiagram-v2
 
 Uwagi do diagramu:
 
-- **Czeka** obejmuje każdą blokadę (brakujące ustawienie, okres monitorowania, wciąż
-  skonfigurowany kocioł centralny VT, start Home Assistant) i okres rozpoznania po starcie.
+- **Czeka** obejmuje każdą blokadę (brakujące ustawienie, wciąż skonfigurowany kocioł
+  centralny VT, start Home Assistant) i okres rozpoznania po starcie.
   Polecenie, które wtyczka trzymała przed ponownym uruchomieniem, jest zachowywane albo od razu
   przywracane, bez czekania.
 - **Żadna strefa nie odpowiada** oddaje kocioł tylko tam, gdzie przejmuje działający termostat

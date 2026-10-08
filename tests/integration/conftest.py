@@ -43,9 +43,10 @@ def _one_entry_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _monitoring_period_skippable(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The integration tests start control at once with ``monitoring_days: 0``, which the form
-    never stores and the parser refuses (PB-24): the bound is lowered in its one place for them,
-    as ``low_setpoint_off`` lifts decision 11's block; ``tests/test_config.py`` keeps it."""
+    """Many integration tests store ``monitoring_days: 0`` — from when it held control back; now
+    it is only the days of data the verdict needs (2026-10-08) — which the form never stores and
+    the parser refuses (PB-24): the bound is lowered in its one place for them, as
+    ``low_setpoint_off`` lifts decision 11's block; ``tests/test_config.py`` keeps it."""
     from custom_components.vtherm_smart_boiler import config
 
     monkeypatch.setattr(config, "MONITORING_DAYS_BOUNDS", (0.0, config.MONITORING_DAYS_BOUNDS[1]))

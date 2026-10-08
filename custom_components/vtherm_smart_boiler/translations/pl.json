@@ -185,7 +185,7 @@
         "data": {
           "condensing_return": "Próg powrotu dla kondensacji",
           "short_burn_min": "Krótkie palenie",
-          "monitoring_days": "Okres monitorowania",
+          "monitoring_days": "Dni danych do werdyktu",
           "near_room_k": "Blisko temperatury pokoju",
           "foreign_heat_hold_min": "Podtrzymanie obcego ciepła",
           "add_water_below": "Uzupełnij wodę poniżej",
@@ -200,7 +200,7 @@
         "data_description": {
           "condensing_return": "Powrót poniżej tej wartości liczy się jako kondensacja, w °C. Domyślnie 55 °C. Za wysoka zawyża udział kondensacji.",
           "short_burn_min": "Palenia krótsze niż ta wartość liczą się jako krótkie, w minutach. Domyślnie 10. Dłuższa czyni więcej paleń krótkimi, a werdykt surowszym.",
-          "monitoring_days": "Dni od dodania tej integracji, zanim można włączyć sterowanie; werdykt potrzebuje tylu dni danych. Gdy miną, sterowanie może ruszyć nawet bez werdyktu — poza sezonem grzewczym danych może być na niego za mało. Domyślnie 7; krócej nie można.",
+          "monitoring_days": "Ile dni danych potrzebuje werdykt monitora, licząc od dodania tej integracji. Niczego nie wstrzymuje: sterowanie można włączyć w każdej chwili, nawet bez werdyktu, a dopóki go nie ma, przełącznik sterowania pokazuje „za mało danych”. Poza sezonem grzewczym danych może być za mało nawet po tych dniach. Domyślnie 7; krócej nie można.",
           "near_room_k": "Woda cieplejsza od pokoju najwyżej o tyle liczy się jako brak ciepła w strefie, w K. Domyślnie 3. Większa wartość szybciej pokazuje „Ciepło nie dociera do strefy”.",
           "foreign_heat_hold_min": "Jak długo pokój liczy się jako ogrzany po wyłączeniu źródła, w minutach. Domyślnie 60. Dłużej trzyma naukę wstrzymaną dłużej po kominku.",
           "add_water_below": "Opcjonalnie: poniżej tego ciśnienia dostaniesz powiadomienie, by dolać wody, w barach — weź wartość z instrukcji kotła (jego minimalne ciśnienie robocze). Domyślnie puste: bez powiadomienia. Tylko informuje; grzanie wyłącza się wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Za nisko — dowiesz się za późno; za wysoko — powiadomienie przyjdzie, choć ciśnienie jest w porządku.",
@@ -497,7 +497,7 @@
         "data": {
           "condensing_return": "Próg powrotu dla kondensacji",
           "short_burn_min": "Krótkie palenie",
-          "monitoring_days": "Okres monitorowania",
+          "monitoring_days": "Dni danych do werdyktu",
           "near_room_k": "Blisko temperatury pokoju",
           "foreign_heat_hold_min": "Podtrzymanie obcego ciepła",
           "add_water_below": "Uzupełnij wodę poniżej",
@@ -512,7 +512,7 @@
         "data_description": {
           "condensing_return": "Powrót poniżej tej wartości liczy się jako kondensacja, w °C. Domyślnie 55 °C. Za wysoka zawyża udział kondensacji.",
           "short_burn_min": "Palenia krótsze niż ta wartość liczą się jako krótkie, w minutach. Domyślnie 10. Dłuższa czyni więcej paleń krótkimi, a werdykt surowszym.",
-          "monitoring_days": "Dni od dodania tej integracji, zanim można włączyć sterowanie; werdykt potrzebuje tylu dni danych. Gdy miną, sterowanie może ruszyć nawet bez werdyktu — poza sezonem grzewczym danych może być na niego za mało. Domyślnie 7; krócej nie można.",
+          "monitoring_days": "Ile dni danych potrzebuje werdykt monitora, licząc od dodania tej integracji. Niczego nie wstrzymuje: sterowanie można włączyć w każdej chwili, nawet bez werdyktu, a dopóki go nie ma, przełącznik sterowania pokazuje „za mało danych”. Poza sezonem grzewczym danych może być za mało nawet po tych dniach. Domyślnie 7; krócej nie można.",
           "near_room_k": "Woda cieplejsza od pokoju najwyżej o tyle liczy się jako brak ciepła w strefie, w K. Domyślnie 3. Większa wartość szybciej pokazuje „Ciepło nie dociera do strefy”.",
           "foreign_heat_hold_min": "Jak długo pokój liczy się jako ogrzany po wyłączeniu źródła, w minutach. Domyślnie 60. Dłużej trzyma naukę wstrzymaną dłużej po kominku.",
           "add_water_below": "Opcjonalnie: poniżej tego ciśnienia dostaniesz powiadomienie, by dolać wody, w barach — weź wartość z instrukcji kotła (jego minimalne ciśnienie robocze). Domyślnie puste: bez powiadomienia. Tylko informuje; grzanie wyłącza się wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Za nisko — dowiesz się za późno; za wysoko — powiadomienie przyjdzie, choć ciśnienie jest w porządku.",
@@ -527,7 +527,7 @@
       },
       "control": {
         "title": "Sterowanie (eksperymentalne)",
-        "description": "Jak wtyczka steruje kotłem: zapisując nastawę zasilania albo włączając i wyłączając go przekaźnikiem. Sterowanie pozostaje wyłączone, dopóki go nie włączysz, i działa dopiero po okresie monitorowania, liczonym w dniach od dodania tej integracji. Potem sterowanie może ruszyć nawet bez werdyktu — poza sezonem grzewczym monitor może mieć na niego za mało danych; przełącznik sterowania pokazuje werdykt. Wybierz „Bez sterowania”, żeby tylko monitorować. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Jak wtyczka steruje kotłem: zapisując nastawę zasilania albo włączając i wyłączając go przekaźnikiem. Dopóki nie włączysz sterowania, nic się nie zmienia: kocioł pracuje jak dotąd — pod kotłem centralnym Versatile Thermostat, termostatem ściennym albo własną automatyką — a wtyczka tylko obserwuje i raportuje. Po włączeniu zajmuje miejsce kotła centralnego VT (najpierw go usuń i uruchom ponownie Home Assistant): grzanie włącza się i wyłącza od razu razem ze strefami VT, a tam, gdzie wtyczka zapisuje temperaturę wody, idzie ona za Twoją krzywą, nigdy poniżej najniższej ani powyżej najwyższej temperatury wody; korekta komfortu, jeśli ją włączysz, dodaje najwyżej 3 K ponad krzywą. Sterowanie możesz włączyć od pierwszego dnia, nawet bez werdyktu: werdykt monitora pojawi się, gdy zbierze dość dni danych, a przełącznik sterowania go pokaże. Wybierz „Bez sterowania”, żeby tylko monitorować. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "write_path": "Ścieżka zapisu",
           "topology": "Podłączenie bramki",
@@ -1474,7 +1474,6 @@
               "relay_in_another_role": "Przekaźnik pełni też inną rolę",
               "relay_contact_not_confirmed": "Brak potwierdzenia osobnego styku przekaźnika",
               "ha_starting": "Home Assistant się uruchamia",
-              "monitoring_period": "Okres monitorowania jeszcze nie minął",
               "vt_central_boiler_active": "Skonfigurowano własny kocioł centralny Versatile Thermostat lub mógł być skonfigurowany od uruchomienia Home Assistant",
               "vt_central_boiler_unknown": "Nie da się jeszcze wykluczyć kotła centralnego Versatile Thermostat",
               "setpoint_outside_entity_range": "Encja nastawy nie przyjmuje każdej wartości możliwej do zapisania przez sterowanie",
@@ -2477,7 +2476,6 @@
               "relay_in_another_role": "Przekaźnik pełni też inną rolę",
               "relay_contact_not_confirmed": "Brak potwierdzenia osobnego styku przekaźnika",
               "ha_starting": "Home Assistant się uruchamia",
-              "monitoring_period": "Okres monitorowania jeszcze nie minął",
               "vt_central_boiler_active": "Skonfigurowano własny kocioł centralny Versatile Thermostat lub mógł być skonfigurowany od uruchomienia Home Assistant",
               "vt_central_boiler_unknown": "Nie da się jeszcze wykluczyć kotła centralnego Versatile Thermostat",
               "setpoint_outside_entity_range": "Encja nastawy nie przyjmuje każdej wartości możliwej do zapisania przez sterowanie",
@@ -2583,9 +2581,6 @@
     },
     "blocked_ha_starting": {
       "message": "Home Assistant jeszcze się uruchamia. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
-    },
-    "blocked_monitoring_period": {
-      "message": "Sterowanie będzie dostępne po okresie monitorowania. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_vt_central_boiler_active": {
       "message": "Skonfigurowany jest kocioł centralny Versatile Thermostat. Najpierw go usuń, żeby kotłem sterował tylko jeden sterownik, a potem uruchom ponownie Home Assistant: dopiero wtedy VT przestaje wysyłać polecenia kotła centralnego. Sterowanie czeka do ponownego uruchomienia Home Assistant, nawet po odznaczeniu. Czeka tak samo, gdy konfiguracja centralna VT zmieniła się po uruchomieniu Home Assistant, zanim ta integracja zaczęła obserwować VT, bo nie wie, co VT w tym czasie uruchomił. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."

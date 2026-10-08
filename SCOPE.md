@@ -65,8 +65,8 @@ a heat pump controller (excluded), or anything that sends data outside.
     from defaults.
 11. **The user decides, informed** — control choices belong to the user: write path, hand-back
     method, control mode (flow setpoint or room values), limits, curve, demand thresholds,
-    learning pauses, monitoring period. Each has a cautious default and a description of what it
-    does and what it risks — in the config flow and in the documentation. Fixed safeguards, not
+    learning pauses, the days of data the verdict needs. Each has a cautious default and a
+    description of what it does and what it risks — in the config flow and in the documentation. Fixed safeguards, not
     options, for every write (flow setpoint, CH on/off, modulation cap, room values to the
     boiler, a relay): no write without fresh input data — water-temperature control needs flame
     and flow known, and a relay's link is the relay itself; values within hard limits, except
@@ -947,7 +947,7 @@ How control resumes after it stopped:
 | Every zone unknown | on its own, when a zone answers again |
 | The plugin's own monitor failing | on its own, once it works again, with an information note (answer I) |
 | An alarm with a hand-back reaction already active when control is switched on | blocks control at once; the switch's text says so |
-| A blocker — a missing setting, the monitoring period, VT's central boiler configured, Home Assistant starting | on its own, once the blocker is gone; "VT central boiler active" only after the Home Assistant restart its text asks for |
+| A blocker — a missing setting, VT's central boiler configured, Home Assistant starting | on its own, once the blocker is gone; "VT central boiler active" only after the Home Assistant restart its text asks for |
 
 In room-value mode the boiler runs its own control: the curve, ramp, anti-cycling and flow limit
 options do not apply; the fixed safeguards do.
@@ -1033,7 +1033,7 @@ Defaults of the safety options and why (the user reviews them at K4):
 
 | Option | Default | Why |
 |---|---|---|
-| Control | off; available after 7 days of monitoring | the user sees the verdict first; control is experimental |
+| Control | off; may be switched on from the first day; the verdict after 7 days of data | control is experimental and opt-in; it moves nothing beyond firm bounds, so a wait protects nothing — until it is on, the boiler runs as before (the user's decision, 2026-10-08) |
 | Heating curve | none — the design flow is entered | a wrong curve under-heats or wastes gas; no silent default |
 | Emitter type | none — the user chooses | underfloor needs its own maximum flow; a wrong type hides that |
 | Lowest / highest water temperature | 20 °C (provisional, K4) / 70 °C | the lowest bounds the curve from below — too low, the boiler stops by itself again and again in mild weather and a non-condensing boiler condenses in its flue (take the value from its manual); too high, warmer water than the rooms need (decision 2); 70 °C covers the usual radiator design points and stays under boilers' maximum |
@@ -1245,16 +1245,22 @@ VT's central boiler (0.3).
 
 **Excluded:** heat pumps, room regulation, valve control, sending data outside.
 
-## 10. Assess before control
+## 10. Assess alongside control
 
-The Monitor stage lets any user assess their installation before enabling control:
+The Monitor stage lets any user assess their installation, before control or alongside it:
 cycling at low load, burn times, condensing share and the building load versus the boiler's
 minimum power. Regular users get a verdict with the reason; power users get the underlying
-metrics. Control becomes available after a minimum monitoring period (default 7 days); the
-verdict stays visible and the user decides. The period counts calendar days from the entry's
-creation, so a lost store does not restart it (answer K); the user may lengthen it, up to 60
-days, but not shorten it. Off-season, when the period ends without enough data, the control
-switch says that control starts without a verdict (S-43).
+metrics. Control may be switched on from the first day (the user's decision, 2026-10-08): until
+the user switches it on, the boiler runs as before — under VT's central boiler, a wall thermostat
+or its own regulation — and the plugin only watches; once on, nothing moves on its own beyond
+firm bounds — the water follows the user's own curve within the lowest and highest water
+temperature, and the only learning under control, the comfort correction, is off by default and
+adds at most 3 K (principles 8 and 13; the tuning band comes later) — so a week's wait protects
+nothing. The verdict needs a number of days of data: default 7, at least 7, up to 60, counted in
+calendar days from the entry's creation, so a lost store does not restart them (answer K). Until
+then, and off-season when the days pass without enough data, the control switch shows "not
+enough data" and says that control starts without a verdict (S-43). The verdict is advice; the
+user decides.
 
 The verdict rests on what was measured and on what the released control changes:
 - "Worth enabling" comes only from problems that 0.2.2's control changes; the others are shown
@@ -1392,8 +1398,8 @@ Starts per hour count the hours with heating.
   from the start blocks control and hands back.
 - Provisional control decisions (K4): control only for one circuit fed by the boiler flow and a
   boiler of the class "flow setpoint" or "on/off" (a relay); the curve's design flow is entered,
-  never defaulted; control refused while VT's own central boiler is configured and during the
-  monitoring period; the first setpoint of a session is the curve's value, not ramped from the
+  never defaulted; control refused while VT's own central boiler is configured (no monitoring
+  period holds it: 2026-10-08); the first setpoint of a session is the curve's value, not ramped from the
   current flow; alarm reactions as decision 7; frost protection
   during the recognition period for zones already known; control resuming by itself after an
   every-zone-unknown hand-back.
@@ -1419,7 +1425,7 @@ Starts per hour count the hours with heating.
   for 5 min hands back, and control resumes by itself once it works again (answer I).
 - Answers to the review's questions (provisional, K4): 3 — "heat flows" is the flame when known,
   else the command; 5 — a corrupt or lost store is unreadable: a full hand-back first, and the
-  monitoring period counts from the entry's creation; 6 — the switch comes back as the user left
+  verdict's days count from the entry's creation; 6 — the switch comes back as the user left
   it, the wish saved at once; 8 — "pressure 0 = unknown" only for the gateway's sources; 9 — an
   alarm with an unknown input holds its state 60 min, then shows unknown; 10 — every options save
   but the level reloads the entry, which hands back, and control then restores the boiler; the

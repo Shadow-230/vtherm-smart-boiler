@@ -65,18 +65,18 @@ async def steps(rig: Rig, seconds: float, step: float = 10.0) -> None:
         await rig.hass.async_block_till_done(wait_background_tasks=True)
 
 
-async def test_a_clock_set_back_does_not_block_control_by_the_monitoring_period(
+async def test_a_clock_set_back_soon_after_the_start_does_not_block_control(
     rig: Rig,
 ) -> None:
-    """PB-28: no monitoring period configured, the clock set back an hour soon after the start:
-    the start "later than now" counts from now — control is not blocked for the hour."""
+    """PB-28: the clock set back an hour soon after the start: nothing counted from a start
+    "later than now" holds control for the hour."""
     await start(rig)
     await rig.switch(True)
     await rig.advance(20)
     await set_back(rig)
     await steps(rig, 30.0)
     shown = rig.state("sensor", "control_state")
-    assert "monitoring_period" not in shown.attributes["blockers"]
+    assert shown.attributes["blockers"] == []
     assert shown.state == "heating"
 
 

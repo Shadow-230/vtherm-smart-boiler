@@ -562,16 +562,20 @@ async def test_control_is_off_by_default(rig: Rig) -> None:
     assert rig.gateway.calls == []
 
 
-async def test_control_is_refused_during_monitoring(rig: Rig) -> None:
-    """One entry per test of this single-entry integration (P-125, T11): the monitoring period
-    is its own entry's, not a second one set up beside another."""
+async def test_control_is_not_held_back_on_the_first_day(rig: Rig) -> None:
+    """The user's decision of 2026-10-08: no monitoring period holds control back. The entry is
+    created now with 7 days of data for the verdict; switching on works at once, control heats
+    and writes, and the switch shows that there is no verdict yet. One entry per test of this
+    single-entry integration (P-125, T11)."""
     await set_up(rig, add_entry(rig, options(rig.zones) | {"monitor": {"monitoring_days": 7}}))
-    with pytest.raises(ServiceValidationError) as err:
-        await rig.switch(True)
-    assert err.value.translation_key == "blocked_monitoring_period"
-    assert rig.state("switch", "control").state == "off"
-    await rig.advance(60)
-    assert rig.gateway.calls == []
+    await rig.switch(True)
+    await rig.advance(30)
+    switch = rig.state("switch", "control")
+    assert switch.state == "on"
+    assert switch.attributes["blockers"] == []
+    assert switch.attributes["verdict"] == "not_enough_data"
+    assert rig.state("sensor", "control_state").state == "heating"
+    assert rig.gateway.calls
 
 
 async def test_switching_on_writes_keeps_alive_and_switching_off_hands_back(rig: Rig) -> None:
@@ -4563,7 +4567,7 @@ async def test_setup_failing_before_the_store_is_read_leaves_it_intact(
 async def start_created(
     rig: Rig, hass_storage: dict[str, Any], created_at: Any, **main: Any
 ) -> MockConfigEntry:
-    """An entry created at ``created_at`` that ran before, with a monitoring period of 7 days;
+    """An entry created at ``created_at`` that ran before, its verdict needing 7 days of data;
     ``main``: the entry store's fields."""
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -4582,19 +4586,14 @@ async def start_created(
     return entry
 
 
-def monitoring_blocked(rig: Rig) -> bool:
-    assert rig.entry is not None
-    return "monitoring_period" in rig.entry.runtime_data.control.blockers(START.timestamp())
-
-
 async def test_a_lost_monitoring_start_falls_back_to_the_entry_creation(
     rig: Rig, hass_storage: dict[str, Any]
 ) -> None:
-    """T-35 (P-01): the stored start is gone, the entry was created 10 days ago: the 7-day
-    monitoring period is over — a lost store does not start it again."""
+    """T-35 (P-01): the stored start is gone, the entry was created 10 days ago: monitoring
+    counts from then — a lost store does not start it again."""
     created = START - timedelta(days=10)
-    await start_created(rig, hass_storage, created)
-    assert not monitoring_blocked(rig)
+    entry = await start_created(rig, hass_storage, created)
+    assert entry.runtime_data.monitoring_since == created.timestamp()
     verdict = rig.state("sensor", "verdict")
     assert verdict.attributes["monitoring_since"] == created.isoformat()  # P-78: ISO 8601
 
@@ -4603,12 +4602,11 @@ async def test_monitoring_counts_from_the_entry_creation_even_after_a_restarted_
     rig: Rig, hass_storage: dict[str, Any]
 ) -> None:
     """A stored start of yesterday — 0.2.1 started it again after losing its store — does not
-    hold control back: the entry was created 10 days ago."""
+    move monitoring's start: the entry was created 10 days ago."""
     created = START - timedelta(days=10)
     entry = await start_created(
         rig, hass_storage, created, monitoring_since=(START - timedelta(days=1)).timestamp()
     )
-    assert not monitoring_blocked(rig)
     assert entry.runtime_data.monitoring_since == created.timestamp()
 
 
@@ -4629,7 +4627,6 @@ async def test_an_entry_without_a_creation_time_uses_the_stored_start(
     main = {} if stored is None else {"monitoring_since": stored}
     entry = await start_created(rig, hass_storage, datetime.fromtimestamp(0, UTC), **main)
     assert entry.runtime_data.monitoring_since == expected
-    assert monitoring_blocked(rig)
 
 
 @pytest.mark.parametrize("section", [True, False], ids=["control", "monitor_only"])
@@ -9540,29 +9537,19 @@ async def test_a_lost_link_after_a_restart_raises_boiler_link_lost(
     assert rig.gateway.calls == ([] if lost == "gateway" else HAND_BACK)  # nothing more
 
 
-@pytest.mark.parametrize("held_by", ["monitoring_period", "latch"])
-async def test_boiler_link_lost_rises_while_a_blocker_holds(
-    rig: Rig, hass_storage: dict[str, Any], held_by: str
+async def test_boiler_link_lost_rises_while_a_latch_holds(
+    rig: Rig, hass_storage: dict[str, Any]
 ) -> None:
-    """P-08: the switch on while the monitoring period blocks control — or a latch holds it; the
-    link down for six minutes raises the alarm all the same, with nothing written, and the alarm
-    goes once the link has been back for a minute."""
-    stored: dict[str, Any] = {"enabled": True}
-    entry_options = options(rig.zones)
-    if held_by == "latch":
-        stored |= {"latched": True, "latched_by": ["pressure_low"]}
-    else:
-        entry_options["monitor"] = {"monitoring_days": 7}  # the entry is created now
-    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=entry_options)
+    """P-08: the switch on while a latch holds control; the link down for six minutes raises
+    the alarm all the same, with nothing written, and the alarm goes once the link has been back
+    for a minute. (The monitoring period no longer holds control: 2026-10-08.)"""
+    stored: dict[str, Any] = {"enabled": True, "latched": True, "latched_by": ["pressure_low"]}
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
     entry.add_to_hass(rig.hass)
     seed_stores(hass_storage, entry, stored, "0.2.2")
     await set_up(rig, entry)
     assert rig.state("switch", "control").state == "on"
-    control_state = rig.state("sensor", "control_state")
-    if held_by == "latch":
-        assert control_state.state == "handed_back"
-    else:
-        assert control_state.attributes["blockers"] == ["monitoring_period"]
+    assert rig.state("sensor", "control_state").state == "handed_back"
     rig.flow = None
     await rig.advance(290)
     assert link_alarm(rig) == "off"
