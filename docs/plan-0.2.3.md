@@ -19,8 +19,8 @@ next part starts** (the user's wish of 2026-10-05, to control the tokens spent).
 document step comes first; its diff waits for the user's consent, and the part's code steps may
 start meanwhile.
 
-Status on 2026-10-06: parts 1–3 done (their documents consented by the user at the stops); part 4
-under way.
+Status on 2026-10-08: done — all four parts, each stop passed with the user; the final check (4.4)
+found no critical, high or medium problem. What is left for later is in "Open after 0.2.3".
 
 ## How to read this plan
 
@@ -144,7 +144,7 @@ and VT's not-started zones read as the user's "off".
 | 4.2 ✅ | The medium-priority missing tests: TB-12, TB-14, TB-15, TB-16, TB-17, TB-18, TB-19, TB-20, TB-21, TB-22, TB-23, TB-24, TB-26, TB-27, TB-28, TB-29, TB-30, TB-31, TB-32, TB-33, TB-34, TB-35, TB-36, TB-37, TB-38. |
 | 4.3 ✅ | The manifest and `tests/test_release.py` set to 0.2.3b1 (provisional, decision 16 of `docs/plan-0.2.2.md`). |
 | 4.4 ✅ | An independent read-only check of 0.2.3 by a fresh subagent against every problem of the review and decisions 1–15; a finding fixed with a test and checked again by another fresh subagent, until a check finds no critical or high problem. A multi-agent review only with the user's go-ahead. |
-| 4.5 🔒 | Stop: the report to the user, with the tokens part 4 used. |
+| 4.5 🔒 ✅ | Stop: the report to the user, with the tokens part 4 used. |
 
 ## Open after 0.2.3
 

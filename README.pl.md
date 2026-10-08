@@ -23,14 +23,14 @@ bezpiecznie go oddaje.
 > na testowym Home Assistant i po przeglądzie.
 > Gdzie jesteśmy: [Stan](#stan) · co dalej: [Plan rozwoju](#plan-rozwoju).
 
-**Smart Boiler for Versatile Thermostat** to niezależna wtyczka do [Versatile Thermostat][vt] (VT) —
-nie jest częścią VT ani dziełem jego autorów — która prowadzi kocioł centralnego ogrzewania —
-gazowy, olejowy, elektryczny lub na inne paliwo, każdy, z którym Home Assistant się komunikuje, ale
-nie pompę ciepła — według tego, czego pomieszczenia naprawdę potrzebują: mniej i dłuższych cykli
-pracy palnika, więcej kondensacji tam, gdzie kocioł kondensuje, mniej paliwa na stopniodzień — przy
-tym samym komforcie w pomieszczeniach i bez zaburzania własnych modeli pomieszczeń w algorytmach
-stref. Zastępuje kocioł centralny VT działający w trybie wł./wył. sterowaniem temperaturą wody w
-kotle i zawsze wie, jak oddać kocioł jego własnemu sterowaniu.
+**Smart Boiler for Versatile Thermostat** to wtyczka do [Versatile Thermostat][vt] (VT) — nie jest
+częścią VT ani dziełem jego autorów — która prowadzi kocioł centralnego ogrzewania — gazowy,
+olejowy, elektryczny lub na inne paliwo, każdy, z którym Home Assistant się komunikuje, ale nie
+pompę ciepła — według tego, czego pomieszczenia naprawdę potrzebują: mniej i dłuższych cykli pracy
+palnika, więcej kondensacji tam, gdzie kocioł kondensuje, mniej paliwa na stopniodzień — przy tym
+samym komforcie w pomieszczeniach i bez zaburzania własnych modeli pomieszczeń w algorytmach stref.
+Zastępuje kocioł centralny VT działający w trybie wł./wył. sterowaniem temperaturą wody w kotle i
+zawsze wie, jak oddać kocioł jego własnemu sterowaniu.
 
 To **nie** jest regulator pomieszczeń (pomieszczenia zostają przy VT i jego algorytmach), nie
 steruje zaworami ani pompami ciepła i nie wysyła żadnych danych poza twój Home Assistant.
