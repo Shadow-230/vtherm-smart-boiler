@@ -14,8 +14,8 @@ the review and the release. S3 can happen at any time.
 
 Status on 2026-10-08: built through 0.2.3 (`docs/plan-0.2.3.md`, done). The repository is public
 on GitHub since 2026-10-07 (K5's first half, below), with its checks green; next J2 (the user),
-J4, I6 (the user's decisions of 2026-10-08), the rest of K1, K4, then K5's pre-release (provisionally 0.2.3b1, `docs/plan-0.2.2.md`
-decision 16), K6 and K7. S3 stays optional.
+J4, I6 (the user's decisions of 2026-10-08), the rest of K1, K4, then K5's pre-release
+(provisionally 0.2.3b1, `docs/plan-0.2.2.md` decision 16), K6 and K7. S3 stays optional.
 
 ## Rules that shape this release
 
