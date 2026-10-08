@@ -155,10 +155,10 @@ def test_the_stub_goes_only_where_compose_mounts_it() -> None:
     assert "custom_components/boiler_sim custom_components/opentherm_gw" in script
 
 
-def _copy_root(tmp_path: Path, test_ha_dir: str) -> Path:
+def _copy_root(tmp_path: Path, test_ha_dir: str, extra: str = "") -> Path:
     """A copy of the script's root with stub vendor/ folders, a local.env naming an unreachable
-    host and the given directory, and no SSH key — so a run that got past the directory check
-    would still stop at the missing key before any connection."""
+    host and the given directory (``extra``: more lines of it), and no SSH key — so a run that
+    got past the directory check would still stop at the missing key before any connection."""
     root = tmp_path / "root"
     (root / "scripts").mkdir(parents=True)
     script = root / "scripts/deploy_test.sh"
@@ -167,7 +167,8 @@ def _copy_root(tmp_path: Path, test_ha_dir: str) -> Path:
         (root / "vendor/custom_components" / name).mkdir(parents=True)
     (root / "devenv").mkdir()
     (root / "devenv/local.env").write_text(
-        f"TEST_HA_HOST=host.invalid\nTEST_HA_SSH_USER=nobody\nTEST_HA_DIR='{test_ha_dir}'\n",
+        f"TEST_HA_HOST=host.invalid\nTEST_HA_SSH_USER=nobody\nTEST_HA_DIR='{test_ha_dir}'\n"
+        + extra,
         encoding="utf-8",
     )
     return script
@@ -206,6 +207,81 @@ def test_the_host_must_show_the_test_marker_before_anything_changes() -> None:
     remote = script[script.index('pack | "${SSH[@]}"') :]
     marker = remote.index("if [ ! -f '$MARKER' ]")
     assert "MARKER=.vtherm-smart-boiler-test-ha" in script
-    for change in ("rm -rf", "tar -x", "mv ", "docker compose"):
+    for change in ("rm -rf", "tar -x", "mv ", "> .env", "docker compose"):
         assert remote.index(change) > marker, change
     assert "mkdir -p '$TEST_HA_DIR'" not in script
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [["--instance", "6"], ["--instance", "0"], ["--instance"], ["--instance", "2x"]],
+)
+def test_an_unknown_instance_is_refused(tmp_path: Path, arguments: list[str]) -> None:
+    """Test instances 1 to 5 exist: anything else is refused before anything is read."""
+    script = _copy_root(tmp_path, "/srv/test-ha")
+    result = subprocess.run(
+        ["bash", str(script), *arguments], capture_output=True, text=True, timeout=30, check=False
+    )
+    assert result.returncode == 2
+    assert "usage" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("instance", "extra", "message"),
+    [
+        ("2", "", "TEST_HA_DIR_2 is empty"),
+        ("4", "TEST_HA_DIR_2=/srv/test-ha-2\n", "TEST_HA_DIR_4 is empty"),
+        ("2", "TEST_HA_DIR_2=/srv/test-ha\n", "TEST_HA_DIR_2 must not be TEST_HA_DIR"),
+        ("2", "TEST_HA_DIR_2=/srv/test-ha/\n", "TEST_HA_DIR_2 must not be TEST_HA_DIR"),
+        (
+            "3",
+            "TEST_HA_DIR_2=/srv/test-ha-2\nTEST_HA_DIR_3=/srv/test-ha-2\n",
+            "TEST_HA_DIR_3 must not be TEST_HA_DIR_2",
+        ),
+        ("1", "TEST_HA_DIR_4=/srv/test-ha\n", "TEST_HA_DIR must not be TEST_HA_DIR_4"),
+        ("5", "TEST_HA_DIR_5=/srv/test-ha/\n", "TEST_HA_DIR_5 must not be TEST_HA_DIR"),
+        ("2", "TEST_HA_DIR_2=/srv/..\n", "TEST_HA_DIR must be"),
+        ("3", "TEST_HA_DIR_3=/srv/test-ha-3\n", "id_ed25519 is missing"),
+    ],
+    ids=[
+        "missing",
+        "missing_4",
+        "same_as_first",
+        "same_with_slash",
+        "same_as_second",
+        "first_same_as_fourth",
+        "fifth_same_as_first",
+        "looks_deeper",
+        "plain",
+    ],
+)
+def test_each_instance_has_a_directory_of_its_own(
+    tmp_path: Path, instance: str, extra: str, message: str
+) -> None:
+    """No instance deploys into another one's directory, and each directory passes the same
+    check; a plain one goes on and stops at the missing key, so nothing connects."""
+    script = _copy_root(tmp_path, "/srv/test-ha", extra)
+    result = subprocess.run(
+        ["bash", str(script), "--instance", instance],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert message in result.stderr
+
+
+def test_each_instance_gets_its_own_container_and_port() -> None:
+    """The first instance stays ha-test on 8123; instance N = 2-5 is ha-test-N on 8122 + N. The
+    script writes them into the .env beside compose.yaml, which compose reads for the name and
+    the published port."""
+    compose = (ROOT / "devenv/compose.yaml").read_text(encoding="utf-8")
+    assert "container_name: ${HA_CONTAINER:-ha-test}" in compose
+    assert '"${HA_PORT:-8123}:8123"' in compose
+    script = SCRIPT.read_text(encoding="utf-8")
+    assert "    CONTAINER=ha-test\n    DIR_VAR=TEST_HA_DIR\n" in script
+    assert '    CONTAINER="ha-test-$INSTANCE"\n    DIR_VAR="TEST_HA_DIR_$INSTANCE"\n' in script
+    assert "PORT=$((8122 + INSTANCE))" in script
+    assert "HA_CONTAINER=%s" in script
+    assert "HA_PORT=%s" in script
