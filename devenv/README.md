@@ -155,6 +155,32 @@ acceptable ratio is decided at K4 (1.10 until then), and in-process the test car
 is a strict xfail until K4. Z3 measured the criterion holding only with the comfort correction
 off (`research/2026-10-02-z3-starts-ratio.md`). The only address contacted is `TEST_HA_URL`.
 
+### The starts criterion on four instances
+
+The criterion's four runs go side by side on instances 2 to 5, each deployed with
+`scripts/deploy_test.sh --instance N --config starts`: `devenv/config/starts.yaml` is the house of
+`tests/sim/test_control_loop.py`'s comparison — the large condensing boiler, three radiator zones,
+no wall thermostat, so that without the plugin the boiler runs its own regulation (its own curve,
+heating whenever a zone valve is open) — with a ±3 K daily swing around the mean in
+`input_number.j4_outdoor_mean`. Instance 1 keeps `configuration.yaml` for the other scenarios.
+
+| Instance | Port | Run |
+|---|---|---|
+| 1 | 8123 | the other scenarios, one after another |
+| 2 | 8124 | under control, +8 °C ±3 K |
+| 3 | 8125 | the boiler's own regulation (control off), +8 °C ±3 K |
+| 4 | 8126 | under control, −5 °C ±3 K |
+| 5 | 8127 | the boiler's own regulation (control off), −5 °C ±3 K |
+
+On each: the three VT zones on TPI, heating at 20.5, 19.5 and 22 °C (the simulator's targets);
+the plugin's curve the boiler's own (design flow 55 °C at −15 °C, exponent 1, offset 5 K, lowest
+25 °C, highest 70 °C), every other option at its default — the comfort correction off; the mean
+set on `input_number.j4_outdoor_mean`; control switched on on 2 and 4 only. After a day to settle,
+the next 24 h are compared: burner starts per hour (`binary_sensor.boiler_sim_flame` off → on),
+heating switchings, and each room's mean temperature (comfort parity: at most 0.3 K below the
+boiler's own regulation's); the criterion is at most 1.10 times its starts per hour
+(provisional, K4).
+
 ## 6. More instances (optional)
 
 Up to five Home Assistants can run in the same LXC, so long scenarios run side by side — the

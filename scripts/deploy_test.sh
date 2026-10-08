@@ -2,7 +2,7 @@
 # Deploy the plugin, vendored VT and SmartPI and the simulator to the test Home Assistant in the
 # dedicated test LXC, then (re)start it (docs/plan-0.2.md, J1).
 #
-# Usage: scripts/deploy_test.sh [--dry-run] [--instance 1|2|3|4|5]
+# Usage: scripts/deploy_test.sh [--dry-run] [--instance 1|2|3|4|5] [--config NAME]
 #
 # Everything is packed here into one tar stream — links followed, so the host receives files,
 # never links into vendor/ — and unpacked there over SSH: only tar and ssh are needed on either
@@ -13,6 +13,9 @@
 # parallel. --instance N picks one: 1, the default, is TEST_HA_DIR, container ha-test, port
 # 8123; N = 2 to 5 is TEST_HA_DIR_N, container ha-test-N, port 8122 + N. Each has its own
 # directory, marker, configuration and Home Assistant; the stream is the same.
+#
+# --config NAME sends devenv/config/NAME.yaml as the instance's configuration.yaml instead of
+# devenv/config/configuration.yaml — for example starts.yaml, J4's starts criterion.
 #
 # It connects only to TEST_HA_HOST from devenv/local.env, with the key and known hosts kept in
 # devenv/ssh/ (both git-ignored), so nothing in the home directory changes. It never touches
@@ -25,8 +28,9 @@ SSH_DIR="$ROOT/devenv/ssh"
 
 DRY_RUN=false
 INSTANCE=1
+CONFIG=configuration
 usage() {
-    echo "usage: scripts/deploy_test.sh [--dry-run] [--instance 1|2|3|4|5]" >&2
+    echo "usage: scripts/deploy_test.sh [--dry-run] [--instance 1|2|3|4|5] [--config NAME]" >&2
     exit 2
 }
 while [ "$#" -gt 0 ]; do
@@ -39,10 +43,21 @@ while [ "$#" -gt 0 ]; do
             esac
             shift
             ;;
+        --config)
+            case "${2:-}" in
+                "" | *[!a-z0-9_-]*) usage ;;
+                *) CONFIG="$2" ;;
+            esac
+            shift
+            ;;
         *) usage ;;
     esac
     shift
 done
+if [ ! -f "$ROOT/devenv/config/$CONFIG.yaml" ]; then
+    echo "devenv/config/$CONFIG.yaml does not exist." >&2
+    exit 1
+fi
 if [ "$INSTANCE" = 1 ]; then
     CONTAINER=ha-test
     DIR_VAR=TEST_HA_DIR
@@ -67,7 +82,8 @@ done
 COMPONENTS=(vtherm_smart_boiler versatile_thermostat vtherm_smartpi boiler_sim opentherm_gw)
 pack() {
     tar -c -f - --dereference --exclude __pycache__ --exclude '*.pyc' \
-        -C "$ROOT/devenv" compose.yaml config/configuration.yaml \
+        --transform "s,^config/$CONFIG\\.yaml\$,config/configuration.yaml," \
+        -C "$ROOT/devenv" compose.yaml "config/$CONFIG.yaml" \
         -C "$ROOT" custom_components/vtherm_smart_boiler \
         -C "$ROOT/vendor" custom_components/versatile_thermostat custom_components/vtherm_smartpi \
         -C "$ROOT/sim" custom_components/boiler_sim custom_components/opentherm_gw

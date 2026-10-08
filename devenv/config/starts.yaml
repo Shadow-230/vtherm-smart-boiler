@@ -1,0 +1,68 @@
+# Test Home Assistant for J4's starts criterion (docs/plan-0.2.md, J4; decision 8 of
+# docs/plan-0.2.3.md): the same house as tests/sim/test_control_loop.py's comparison — the large
+# condensing boiler, three radiator zones whose valves VT's thermostats drive, and no wall
+# thermostat, so that without the plugin the boiler runs its own regulation: its own curve,
+# heating whenever a zone valve is open. Deployed with `scripts/deploy_test.sh --instance N
+# --config starts`; one instance per run: under control or under the boiler's own regulation,
+# at +8 °C or at −5 °C (devenv/README.md, section 5). No default_config, so no network discovery
+# looks around the local network.
+homeassistant:
+  name: Smart Boiler for Versatile Thermostat test (starts)
+
+frontend:
+config:
+api:
+history:
+logbook:
+system_log:
+recorder:
+  purge_keep_days: 14
+
+logger:
+  default: info
+  logs:
+    custom_components.vtherm_smart_boiler: debug
+    custom_components.boiler_sim: info
+    custom_components.opentherm_gw: info
+
+boiler_sim:
+  boiler: condensing_large
+  house: average
+  zones: radiators
+  valves: switch
+  topology: with_thermostat
+  write_type: expiring
+  ch_write_type: held
+  outdoor: 8.0
+  gateway_id: sim
+
+# The run's mean outdoor temperature (+8 °C or −5 °C), set through the API when the run starts;
+# the automation below adds the daily swing of ±3 K, warmest at 15:00, every five minutes — as
+# sim/simulator.py's daily_cycle does in-process.
+input_number:
+  j4_outdoor_mean:
+    name: J4 outdoor mean
+    min: -20
+    max: 20
+    step: 0.5
+    initial: 8
+    unit_of_measurement: "°C"
+
+automation:
+  - id: j4_daily_outdoor_swing
+    alias: J4 daily outdoor swing
+    mode: single
+    triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+      - trigger: homeassistant
+        event: start
+      - trigger: state
+        entity_id: input_number.j4_outdoor_mean
+    actions:
+      - action: boiler_sim.set_outdoor
+        data:
+          temperature: >-
+            {% set hour = now().hour + now().minute / 60 %}
+            {{ (states('input_number.j4_outdoor_mean') | float(8)
+                + 3 * cos(2 * pi * (hour - 15) / 24)) | round(2) }}

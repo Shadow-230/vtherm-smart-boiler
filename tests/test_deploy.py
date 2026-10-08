@@ -165,7 +165,8 @@ def _copy_root(tmp_path: Path, test_ha_dir: str, extra: str = "") -> Path:
     script.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
     for name in ("versatile_thermostat", "vtherm_smartpi"):
         (root / "vendor/custom_components" / name).mkdir(parents=True)
-    (root / "devenv").mkdir()
+    (root / "devenv/config").mkdir(parents=True)
+    (root / "devenv/config/configuration.yaml").write_text("{}\n", encoding="utf-8")
     (root / "devenv/local.env").write_text(
         f"TEST_HA_HOST=host.invalid\nTEST_HA_SSH_USER=nobody\nTEST_HA_DIR='{test_ha_dir}'\n"
         + extra,
@@ -285,3 +286,77 @@ def test_each_instance_gets_its_own_container_and_port() -> None:
     assert "PORT=$((8122 + INSTANCE))" in script
     assert "HA_CONTAINER=%s" in script
     assert "HA_PORT=%s" in script
+
+
+@pytest.mark.skipif(
+    not (ROOT / "vendor/custom_components/versatile_thermostat").is_dir(),
+    reason="vendor/ is not set up (docs/plan-0.1.md, A5)",
+)
+def test_a_chosen_configuration_goes_as_configuration_yaml(tmp_path: Path) -> None:
+    """``--config starts`` sends devenv/config/starts.yaml as the instance's configuration.yaml
+    — the size listed is that file's — and nothing else under config/; the dry run connects
+    nowhere."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    marker = tmp_path / "connected"
+    for tool in ("ssh", "scp", "rsync", "sftp"):
+        fake = bin_dir / tool
+        fake.write_text(f'#!/bin/sh\ntouch "{marker}"\nexit 97\n')
+        fake.chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--dry-run", "--instance", "2", "--config", "starts"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists()
+    configs = [line.split() for line in result.stdout.splitlines()[1:] if " config/" in line]
+    assert [fields[-1] for fields in configs] == ["config/configuration.yaml"]
+    assert int(configs[0][2]) == (ROOT / "devenv/config/starts.yaml").stat().st_size
+
+
+@pytest.mark.parametrize(
+    ("name", "code", "message"),
+    [
+        ("../configuration", 2, "usage"),
+        ("Starts", 2, "usage"),
+        ("", 2, "usage"),
+        ("missing", 1, "devenv/config/missing.yaml does not exist"),
+    ],
+)
+def test_an_unknown_configuration_is_refused(
+    tmp_path: Path, name: str, code: int, message: str
+) -> None:
+    """Only a plain name of a file in devenv/config/ is taken."""
+    script = _copy_root(tmp_path, "/srv/test-ha")
+    result = subprocess.run(
+        ["bash", str(script), "--dry-run", "--config", name],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == code
+    assert message in result.stderr
+
+
+def test_the_starts_configuration_is_the_in_process_comparisons_house() -> None:
+    """J4's starts criterion in the test HA runs the house of tests/sim/test_control_loop.py's
+    comparison: the large condensing boiler on its own regulation without a wall thermostat,
+    three radiator zones on switch valves, and a ±3 K daily swing around a mean set per run."""
+    text = (ROOT / "devenv/config/starts.yaml").read_text(encoding="utf-8")
+    for expected in (
+        "boiler: condensing_large",
+        "zones: radiators",
+        "valves: switch",
+        "topology: with_thermostat",
+        "action: boiler_sim.set_outdoor",
+        "input_number.j4_outdoor_mean",
+        "+ 3 * cos(2 * pi * (hour - 15) / 24)",
+    ):
+        assert expected in text, expected
+    assert "wall_thermostat" not in text.split("boiler_sim:")[1].split("input_number:")[0]
