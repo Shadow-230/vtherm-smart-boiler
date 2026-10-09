@@ -200,6 +200,11 @@ Each topic lives only in its file; do not copy it here.
   process ends (Q3.3, `research/2026-09-27-q3-3-hand-back-vs-ha-stop.md`). MQTT
   entities write their state only when a value changes (unless `force_update`), so a steady MQTT
   source keeps an old `last_reported`; `opentherm_gw` rewrites every entity on each report.
+  ESPHome entities likewise drop an unchanged state, except a sensor with ESPHome's
+  `force_update` (none found for binary sensors); the OTGW firmware 1.7.5 publishes on change
+  with a 60 s heartbeat its discovery does not force; EMS-ESP publishes its boiler data every
+  10 s by default (0: on change), under the base topic `ems-esp` by default
+  (`research/2026-10-08-i6-reporting-behaviour.md`, `research/2026-10-09-i6-7-ems-esp-facts.md`).
 - **Related plugins (no overlap)**: `vtherm_heating_failure_detection` (rooms),
   `vtherm_heating_optimizer` (chooses pellet/AC/electric source), `vtherm_adaptive_tpi`.
   `vtherm_pellet_stove` (MIT) drives a central heat source — a reference. No license, ideas
@@ -238,7 +243,12 @@ Each topic lives only in its file; do not copy it here.
   and its docs require the switch to turn heating off; the ESP resends its values itself (held)
   and by default reboots after 15 min without a Home Assistant API client, coming back with
   `t_set` at its initial value. DIYLess stock firmware idles at 10 °C with CH enabled; users
-  report the pump running. EMS-ESP `selflowtemp` and `selburnpow` expire within about a minute
+  report the pump running. EMS-ESP's documented "Force Heating Off": `selflowtemp` 0 repeated
+  every minute keeps heating off (`forceheatingoff` repeats it itself), and the boiler takes a bus
+  setpoint only below its own panel setting (`research/2026-10-09-i6-7-ems-esp-facts.md`).
+  ESPHome's API `reboot_timeout` defaults to 15 min, `0s` disables it; its OpenTherm number takes
+  `initial_value` and `restore_value` (`research/2026-10-08-i6-esphome-docs-check.md`).
+  EMS-ESP `selflowtemp` and `selburnpow` expire within about a minute
   and EMS-ESP never resends them; it holds `heatingoff` itself; `heatingactivated`, `heatingtemp`
   and the other parameter telegrams stay in the boiler — whether in EEPROM is not documented. No
   report found of a boiler showing CH off with the flame on, or of flame flicker.
