@@ -367,7 +367,8 @@ async def relay_offs(r: Run, since: float) -> int:
 async def relay_on_under_control(r: Run) -> None:
     await rooms_call(r, True)
     await r.switch(True)
-    on = await r.ha.until(lambda: relay_is(r, True), 120, 1)
+    # VT opens the valves at its next cycle — up to its cycle length, 5 min — after the call.
+    on = await r.ha.until(lambda: relay_is(r, True), 400, 1)
     if on is None:
         raise RuntimeError("the relay did not come on under control")
 

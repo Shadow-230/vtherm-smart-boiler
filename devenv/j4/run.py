@@ -576,7 +576,12 @@ async def D8(r: Run):
 
 async def F1(r: Run, fault="low_pressure_fault"):
     """the boiler's own fault: "off" after 5 min, no hand-back, no latch, repair issue; back when it clears"""
+    # The rooms call, so heating is on when the fault comes (the reset leaves them at target).
+    for zone, target in ZONES:
+        await r.sim("set_room_temperature", zone=zone, temperature=target - 3.0)
+    t0 = time.time()
     await r.switch(True)
+    await r.ha.until(lambda: _heating_on(r, t0), 400, 2)
     await r.ha.wait(TRACE)
     t = time.time()
     await r.sim("set_fault", fault=fault)
@@ -600,6 +605,11 @@ async def F1(r: Run, fault="low_pressure_fault"):
         ("ch", True) in r.cmds(t) or await r.s("control_state") in ("heating", "idle"),
         f"back: {r.cmds(t)}, {await r.s('control_state')}",
     )
+
+
+async def _heating_on(r: Run, since: float) -> bool:
+    ch = r.cmds(since, "ch")
+    return bool(ch) and ch[-1][1] is True
 
 
 async def F2(r: Run):
