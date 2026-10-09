@@ -410,6 +410,37 @@ def test_the_test_ha_configuration_is_valid() -> None:
     assert conf["restart_lockout_s"] == 1200
 
 
+@pytest.mark.parametrize(
+    ("name", "relay", "topology", "write_type"),
+    [
+        ("starts", False, "with_thermostat", "expiring"),
+        ("relay", True, "with_thermostat", "expiring"),
+        ("entity", False, "with_thermostat", "held"),
+        ("standalone", False, "standalone", "expiring"),
+    ],
+)
+def test_every_test_ha_configuration_is_valid(
+    name: str, relay: bool, topology: str, write_type: str
+) -> None:
+    """Each simulator configuration a test instance may be deployed with (``--config``) passes
+    the simulator's own schema, has no default_config (nothing scans the local network) and no
+    wall thermostat, and is the installation its J4 group needs."""
+    import yaml
+    from custom_components.boiler_sim import CONFIG_SCHEMA, sim_config
+
+    root = Path(__file__).resolve().parents[2]
+    configuration = yaml.safe_load(
+        (root / f"devenv/config/{name}.yaml").read_text(encoding="utf-8")
+    )
+    assert "default_config" not in configuration
+    conf = CONFIG_SCHEMA({"boiler_sim": configuration["boiler_sim"]})["boiler_sim"]
+    sim = sim_config(conf)
+    assert (sim.relay is not None) is relay
+    assert sim.wall_thermostat is None
+    assert sim.topology.value == topology
+    assert sim.write_type.value == write_type
+
+
 async def test_a_boiler_side_limit_or_refusal_is_not_shown_by_the_gateway(
     hass: HomeAssistant, freezer
 ) -> None:

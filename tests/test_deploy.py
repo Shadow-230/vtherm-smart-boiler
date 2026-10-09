@@ -217,10 +217,10 @@ def test_the_host_must_show_the_test_marker_before_anything_changes() -> None:
 
 @pytest.mark.parametrize(
     "arguments",
-    [["--instance", "6"], ["--instance", "0"], ["--instance"], ["--instance", "2x"]],
+    [["--instance", "9"], ["--instance", "0"], ["--instance"], ["--instance", "2x"]],
 )
 def test_an_unknown_instance_is_refused(tmp_path: Path, arguments: list[str]) -> None:
-    """Test instances 1 to 5 exist: anything else is refused before anything is read."""
+    """Test instances 1 to 8 exist: anything else is refused before anything is read."""
     script = _copy_root(tmp_path, "/srv/test-ha")
     result = subprocess.run(
         ["bash", str(script), *arguments], capture_output=True, text=True, timeout=30, check=False
@@ -243,6 +243,11 @@ def test_an_unknown_instance_is_refused(tmp_path: Path, arguments: list[str]) ->
         ),
         ("1", "TEST_HA_DIR_4=/srv/test-ha\n", "TEST_HA_DIR must not be TEST_HA_DIR_4"),
         ("5", "TEST_HA_DIR_5=/srv/test-ha/\n", "TEST_HA_DIR_5 must not be TEST_HA_DIR"),
+        (
+            "8",
+            "TEST_HA_DIR_8=/srv/test-ha-8\nTEST_HA_DIR_6=/srv/test-ha-8\n",
+            "TEST_HA_DIR_8 must not be TEST_HA_DIR_6",
+        ),
         ("2", "TEST_HA_DIR_2=/srv/..\n", "TEST_HA_DIR must be"),
         ("3", "TEST_HA_DIR_3=/srv/test-ha-3\n", "id_ed25519 is missing"),
     ],
@@ -254,6 +259,7 @@ def test_an_unknown_instance_is_refused(tmp_path: Path, arguments: list[str]) ->
         "same_as_second",
         "first_same_as_fourth",
         "fifth_same_as_first",
+        "eighth_same_as_sixth",
         "looks_deeper",
         "plain",
     ],
@@ -276,7 +282,7 @@ def test_each_instance_has_a_directory_of_its_own(
 
 
 def test_each_instance_gets_its_own_container_and_port() -> None:
-    """The first instance stays ha-test on 8123; instance N = 2-5 is ha-test-N on 8122 + N. The
+    """The first instance stays ha-test on 8123; instance N = 2-8 is ha-test-N on 8122 + N. The
     script writes them into the .env beside compose.yaml, which compose reads for the name and
     the published port."""
     compose = (ROOT / "devenv/compose.yaml").read_text(encoding="utf-8")
@@ -375,3 +381,6 @@ def test_the_fault_injector_is_never_part_of_the_release() -> None:
         encoding="utf-8"
     )
     assert "j4_faults" not in (ROOT / "devenv/config/starts.yaml").read_text(encoding="utf-8")
+    for name in ("relay", "entity", "standalone"):
+        text = (ROOT / f"devenv/config/{name}.yaml").read_text(encoding="utf-8")
+        assert "\nj4_faults:\n" in text, name

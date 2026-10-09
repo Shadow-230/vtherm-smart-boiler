@@ -2,7 +2,7 @@
 # scripts/deploy_test.sh copies this file, config/configuration.yaml and the integrations next to
 # it on the LXC and starts it; nothing here is ever pointed at another Home Assistant. The
 # container's name and port come from the .env the script writes beside it: ha-test on 8123 for
-# the first test instance, ha-test-N on 8122 + N for instance N = 2-5 (--instance N).
+# the first test instance, ha-test-N on 8122 + N for instance N = 2-8 (--instance N).
 services:
   homeassistant:
     image: ghcr.io/home-assistant/home-assistant:2026.9.3  # the version the plugin is built on
