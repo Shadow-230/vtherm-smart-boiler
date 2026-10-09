@@ -1474,7 +1474,7 @@
               "relay_in_another_role": "Przekaźnik pełni też inną rolę",
               "relay_contact_not_confirmed": "Brak potwierdzenia osobnego styku przekaźnika",
               "ha_starting": "Home Assistant się uruchamia",
-              "vt_central_boiler_active": "Skonfigurowano własny kocioł centralny Versatile Thermostat lub mógł być skonfigurowany od uruchomienia Home Assistant",
+              "vt_central_boiler_active": "Własny kocioł centralny Versatile Thermostat jest skonfigurowany albo mógł działać od uruchomienia Home Assistant: wtedy wystarczy jedno ponowne uruchomienie Home Assistant",
               "vt_central_boiler_unknown": "Nie da się jeszcze wykluczyć kotła centralnego Versatile Thermostat",
               "setpoint_outside_entity_range": "Encja nastawy nie przyjmuje każdej wartości możliwej do zapisania przez sterowanie",
               "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury",
@@ -2476,7 +2476,7 @@
               "relay_in_another_role": "Przekaźnik pełni też inną rolę",
               "relay_contact_not_confirmed": "Brak potwierdzenia osobnego styku przekaźnika",
               "ha_starting": "Home Assistant się uruchamia",
-              "vt_central_boiler_active": "Skonfigurowano własny kocioł centralny Versatile Thermostat lub mógł być skonfigurowany od uruchomienia Home Assistant",
+              "vt_central_boiler_active": "Własny kocioł centralny Versatile Thermostat jest skonfigurowany albo mógł działać od uruchomienia Home Assistant: wtedy wystarczy jedno ponowne uruchomienie Home Assistant",
               "vt_central_boiler_unknown": "Nie da się jeszcze wykluczyć kotła centralnego Versatile Thermostat",
               "setpoint_outside_entity_range": "Encja nastawy nie przyjmuje każdej wartości możliwej do zapisania przez sterowanie",
               "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury",
@@ -2583,7 +2583,7 @@
       "message": "Home Assistant jeszcze się uruchamia. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_vt_central_boiler_active": {
-      "message": "Skonfigurowany jest kocioł centralny Versatile Thermostat. Najpierw go usuń, żeby kotłem sterował tylko jeden sterownik, a potem uruchom ponownie Home Assistant: dopiero wtedy VT przestaje wysyłać polecenia kotła centralnego. Sterowanie czeka do ponownego uruchomienia Home Assistant, nawet po odznaczeniu. Czeka tak samo, gdy konfiguracja centralna VT zmieniła się po uruchomieniu Home Assistant, zanim ta integracja zaczęła obserwować VT, bo nie wie, co VT w tym czasie uruchomił. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Własny kocioł centralny Versatile Thermostat jest skonfigurowany albo mógł działać od uruchomienia Home Assistant. Jeśli jest skonfigurowany, najpierw go odznacz, żeby kotłem sterował tylko jeden sterownik, a potem uruchom ponownie Home Assistant: dopiero wtedy VT przestaje wysyłać polecenia kotła centralnego. Sterowanie czeka do ponownego uruchomienia Home Assistant, nawet po odznaczeniu. Czeka też na jedno ponowne uruchomienie, gdy centralną konfigurację VT utworzono lub zmieniono po uruchomieniu Home Assistant, zanim ta integracja zaczęła obserwować VT — także bez kotła centralnego — bo nie wie, co VT w tym czasie uruchomił. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_vt_central_boiler_unknown": {
       "message": "Nie da się jeszcze wykluczyć centralnego kotła Versatile Thermostat: nie udało się załadować centralnej konfiguracji VT (zobacz Ustawienia → Urządzenia i usługi) albo jej ustawienia nie mówią, czy kocioł centralny jest włączony. Sterowanie czeka. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."

@@ -77,6 +77,9 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    centralny, odznacz go w centralnej konfiguracji VT i uruchom ponownie Home Assistant, żeby
    tym samym kotłem nigdy nie sterowały dwa sterowniki. Monitorowanie działa i bez tego;
    sterowanie na to czeka.
+   Jeśli centralną konfigurację VT tworzysz (albo zmieniasz) po uruchomieniu Home Assistant —
+   nawet bez kotła centralnego — przed włączeniem sterowania uruchom Home Assistant ponownie
+   jeden raz: do tego czasu sterowanie czeka, bo wtyczka nie wie, co VT w tym czasie uruchomił.
 2. **Utwórz wpis.** Ustawienia → Urządzenia oraz usługi → Dodaj integrację →
    **Smart Boiler for Versatile Thermostat**. W pierwszym kroku wybierz nazwę i poziom
    szczegółowości (poziom zmienia tylko to, co widzisz, nigdy działanie wtyczki).
@@ -144,7 +147,9 @@ przykład:
 - dokładnie jeden obieg grzewczy zasilany wprost z kotła (albo przez stały termostatyczny zawór
   mieszający);
 - własny kocioł centralny VT wyłączony w VT, a po tym ponowne uruchomienie Home Assistant, żeby
-  tym samym kotłem nigdy nie sterowały dwa sterowniki.
+  tym samym kotłem nigdy nie sterowały dwa sterowniki. Centralna konfiguracja VT utworzona lub
+  zmieniona po uruchomieniu Home Assistant, nawet bez kotła centralnego, też wymaga tego jednego
+  ponownego uruchomienia.
 
 Gdy czegoś brakuje, przełącznik sterowania mówi czego. Monitor dalej działa, a kocioł zostaje
 przy własnym sterowaniu albo przy swoim termostacie.
@@ -557,7 +562,9 @@ Oba znikają przy pierwszej oznace ciepła albo gdy wyłączysz sterowanie.
 | Blokada: brakujące ustawienie, start Home Assistant | samo, gdy zniknie |
 
 Wciąż skonfigurowany kocioł centralny VT też jest blokadą: sterowanie czeka, aż odznaczysz go w
-VT i uruchomisz ponownie Home Assistant.
+VT i uruchomisz ponownie Home Assistant. Tak samo centralna konfiguracja VT utworzona lub zmieniona
+po uruchomieniu Home Assistant (np. VT ustawiony już po starcie), nawet bez kotła centralnego:
+wystarczy jedno ponowne uruchomienie Home Assistant.
 
 Zatrzask przetrwa ponowne uruchomienie i jest wymieniony w jednym zgłoszeniu w Naprawach. Alarm
 z reakcją „oddaj kocioł”, który jest już aktywny, gdy włączasz sterowanie, od razu blokuje

@@ -363,6 +363,12 @@ def test_x7_texts_are_translated() -> None:
     assert f"VT {VT_TESTED}" in unsupported
     active = SOURCE["exceptions"]["blocked_vt_central_boiler_active"]["message"]
     assert "until Home Assistant has restarted, even once you have unticked it" in active
+    # F5 of the test report: VT's central configuration made after Home Assistant started, with
+    # no central boiler, waits for one restart too — the text says so, not only "configured".
+    assert "created or changed after Home Assistant started" in active
+    assert "even without a central boiler" in active
+    state = SOURCE["entity"]["sensor"]["control_state"]["state_attributes"]["blockers"]["state"]
+    assert "one restart of Home Assistant" in state["vt_central_boiler_active"]
     assert SOURCE["entity"]["binary_sensor"]["hot_water"]["name"] == "{zone} heat available"
     flat = flatten(SOURCE)
     assert not [key for key, text in flat.items() if "hot-water and emitter" in text]
