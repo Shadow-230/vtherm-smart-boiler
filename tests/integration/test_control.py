@@ -1642,6 +1642,69 @@ async def test_a_held_setpoint_is_written_on_change_only(rig: Rig) -> None:
     assert "writes" not in rig.entry.runtime_data.control.stored()  # no daily cap to keep
 
 
+async def test_ems_esp_switches_heating_off_with_setpoint_zero(rig: Rig) -> None:
+    """I6 (decision 4): on EMS-ESP, with no heating switch, control is not blocked — "off" is
+    the setpoint 0, EMS-ESP's own "Force Heating Off", repeated as the expiring setpoint is; a
+    zone calling again gets the curve's water. Switching off hands back through EMS-ESP's
+    timeout: the lowest water temperature once, then nothing more is written. Without the
+    connection (an entry from before the panels) decision 11 still blocks it."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    ems_esp = {
+        "write_path": "entity",
+        "setpoint_entity": number.entity_id,
+        "write_type": "expiring",
+        "hand_back": "timeout",
+        "confirmed_entity": number.entity_id,
+        "topology": "virtual",
+    }
+    entry_options = options(rig.zones, **ems_esp)
+    entry_options["boiler"] |= {"connection": "ems_esp", "control_mode": "full"}
+    await set_up(rig, add_entry(rig, entry_options))
+    await rig.switch(True)
+    assert number.writes[-1] == EXPECTED
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await rig.advance(60)
+    assert number.writes[-1] == 0.0  # off
+    count = len(number.writes)
+    await rig.advance(60)
+    assert len(number.writes) > count  # repeated: it lapses within about a minute
+    assert set(number.writes[count:]) == {0.0}
+    rig.zones.set("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+    await rig.advance(60)
+    assert number.writes[-1] == EXPECTED
+    await rig.switch(False)
+    handed_back = len(number.writes)
+    await rig.advance(120)
+    assert len(number.writes) == handed_back  # the timeout lets EMS-ESP drop it
+
+
+@pytest.mark.parametrize("connection", [None, "esphome"])
+async def test_without_ems_esp_a_setpoint_alone_stays_blocked(
+    rig: Rig, connection: str | None
+) -> None:
+    """Decision 11 holds wherever the connection is not EMS-ESP: no heating switch, no control."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    entry_options = options(
+        rig.zones,
+        write_path="entity",
+        setpoint_entity=number.entity_id,
+        write_type="expiring",
+        hand_back="timeout",
+        confirmed_entity=number.entity_id,
+        topology="virtual",
+        esphome_safe_start=True,
+    )
+    if connection is not None:
+        entry_options["boiler"] |= {"connection": connection, "control_mode": "full"}
+    await set_up(rig, add_entry(rig, entry_options))
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)
+    assert err.value.translation_key == "blocked_no_heating_switch"
+    assert number.writes == []
+
+
 async def test_mqtt_path_calls_only_its_publish(mqtt_rig: Rig, mqtt_client_mock: Any) -> None:
     """P-122: through Home Assistant's own MQTT integration, its client mocked — not a service
     registered in its place: the setpoint and heating on go out on the firmware's command topics

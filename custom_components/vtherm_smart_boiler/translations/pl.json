@@ -43,7 +43,7 @@
       },
       "signals": {
         "title": "Sygnały kotła",
-        "description": "Wskaż encję, która podaje każdy sygnał. Żaden nie jest wymagany: płomień i temperatura zasilania włączają metryki palnika, łącze z kotłem i sterowanie temperaturą wody, które wymaga obu; każdy kolejny sygnał rozszerza monitor. Dom z samym przekaźnikiem też jest monitorowany. Wtyczka tylko czyta te encje. Jedna encja zasila tylko jeden sygnał.",
+        "description": "Wskaż encję, która podaje każdy sygnał. Żaden nie jest wymagany: płomień i temperatura zasilania włączają metryki palnika, łącze z kotłem i sterowanie temperaturą wody, które wymaga obu; każdy kolejny sygnał rozszerza monitor. Dom z samym przekaźnikiem też jest monitorowany. Wtyczka tylko czyta te encje. Jedna encja zasila tylko jeden sygnał.\n\n{hint}",
         "data": {
           "flame": "Płomień",
           "flow": "Temperatura zasilania",
@@ -333,7 +333,7 @@
       },
       "signals": {
         "title": "Sygnały kotła",
-        "description": "Wskaż encję, która podaje każdy sygnał. Żaden nie jest wymagany: płomień i temperatura zasilania włączają metryki palnika, łącze z kotłem i sterowanie temperaturą wody, które wymaga obu; każdy kolejny sygnał rozszerza monitor. Dom z samym przekaźnikiem też jest monitorowany. Wtyczka tylko czyta te encje. Jedna encja zasila tylko jeden sygnał. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Wskaż encję, która podaje każdy sygnał. Żaden nie jest wymagany: płomień i temperatura zasilania włączają metryki palnika, łącze z kotłem i sterowanie temperaturą wody, które wymaga obu; każdy kolejny sygnał rozszerza monitor. Dom z samym przekaźnikiem też jest monitorowany. Wtyczka tylko czyta te encje. Jedna encja zasila tylko jeden sygnał.\n\n{hint}\n\nZapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "flame": "Płomień",
           "flow": "Temperatura zasilania",
@@ -585,9 +585,9 @@
         },
         "data_description": {
           "write_path": "Bez sterowania (domyślnie); wybrana przez ciebie encja do zapisu, np. liczba EMS-ESP albo ESPHome OpenTherm; bramka OpenTherm Gateway przez integrację OpenTherm Gateway w Home Assistant; albo polecenia MQTT firmware OTGW. Wybierz ścieżkę, którą naprawdę oferuje twój interfejs kotła: zła oznacza zapisy, które się nie udają albo trafiają donikąd. Przekaźnik, dla kotła wł./wył.: przełącznik na zaciskach termostatu pokojowego kotła albo encja termostatu kotła ustawiana na grzanie lub wyłączenie. Oferowane są tylko ścieżki pasujące do połączenia kotła i trybu sterowania.",
-          "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Tryb monitora: bramka tylko słucha i sterowanie jest niemożliwe. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki. Utrata danych kotła podnosi alarm i oddaje sterowanie w każdej topologii — bez termostatu grzanie ustaje, dopóki dane nie wrócą. Z termostatem: gdy steruje wtyczka, nastawa ogrzewania termostatu ściennego i jego wyłącznik nic nie robią — ustawienia ciepłej wody nadal działają; po oddaniu sterowania albo gdy Home Assistant nie działa, termostat grzeje według własnej nastawy i programu, więc ustaw je tak, jak ma być w domu. Nieużywane przy przekaźniku: to, co robi oddanie sterowania, określa jego stan po oddaniu sterowania. W każdej topologii po oddaniu sterowania albo gdy Home Assistant nie działa, woda idzie za własnym maksimum kotła albo termostatu ściennego, a nie wtyczki: ustaw tam też maksimum podłogówki bez mieszacza.",
+          "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Tryb monitora: bramka tylko słucha i sterowanie jest niemożliwe. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki. Utrata danych kotła podnosi alarm i oddaje sterowanie w każdej topologii — bez termostatu grzanie ustaje, dopóki dane nie wrócą. Z termostatem: gdy steruje wtyczka, nastawa ogrzewania termostatu ściennego i jego wyłącznik nic nie robią — ustawienia ciepłej wody nadal działają; po oddaniu sterowania albo gdy Home Assistant nie działa, termostat grzeje według własnej nastawy i programu, więc ustaw je tak, jak ma być w domu. Nieużywane przy przekaźniku: to, co robi oddanie sterowania, określa jego stan po oddaniu sterowania. W każdej topologii po oddaniu sterowania albo gdy Home Assistant nie działa, woda idzie za własnym maksimum kotła albo termostatu ściennego, a nie wtyczki: ustaw tam też maksimum podłogówki bez mieszacza. ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: wirtualna.",
           "thermostat_kind": "Tylko dla bramki, z termostatem albo samodzielnej. Termostat OpenTherm: rozmawia z kotłem i może pokazywać temperaturę wody. Styk wł./wył.: prosty termostat lub włącznik na dwóch przewodach — bramka zamienia go w żądanie grzania, a „wyłączone ogrzewanie” wtyczki blokowałoby go po awarii Home Assistant, więc sterowanie nie jest dostępne. Nic: brak termostatu. Nie wiem: sterowanie nie jest dostępne, dopóki tego nie sprawdzisz. Z termostatem wybierz OpenTherm; bez termostatu wybierz Nic.",
-          "confirmed_entity": "Encja, która pokazuje nastawę odebraną przez kocioł, np. „Control setpoint 1” urządzenia kotła w bramce — pokazuje ona, co bramka wysyła, więc nastawa jest pokazywana jako potwierdzona przez bramkę, nie przez kocioł. Wymagana: każdy zapis jest z nią porównywany, a zapis zignorowany przez kocioł albo nadpisany przez inny sterownik zostaje zgłoszony. Encja nastawy wtyczki pokazuje tylko potwierdzoną wartość, w przeciwnym razie stan nieznany. Wybranie encji, do której się pisze, niczego nie potwierdza: nastawa jest wtedy pokazywana jako niezweryfikowana. Nieużywane przy przekaźniku: potwierdza go jego własny stan.",
+          "confirmed_entity": "Encja, która pokazuje nastawę odebraną przez kocioł, np. „Control setpoint 1” urządzenia kotła w bramce — pokazuje ona, co bramka wysyła, więc nastawa jest pokazywana jako potwierdzona przez bramkę, nie przez kocioł. Wymagana: każdy zapis jest z nią porównywany, a zapis zignorowany przez kocioł albo nadpisany przez inny sterownik zostaje zgłoszony. Encja nastawy wtyczki pokazuje tylko potwierdzoną wartość, w przeciwnym razie stan nieznany. Wybranie encji, do której się pisze, niczego nie potwierdza: nastawa jest wtedy pokazywana jako niezweryfikowana. Nieużywane przy przekaźniku: potwierdza go jego własny stan. Przy EMS-ESP wybierz jego wybraną temperaturę zasilania (selflowtemp), czyli encję, do której się pisze: EMS-ESP wypełnia ją na podstawie raportu samego kotła, ale wtyczka nie może tego sprawdzić, więc nastawa jest pokazywana jako niezweryfikowana.",
           "ch_confirmed_entity": "Opcjonalnie: encja, która pokazuje, czy kocioł dostaje włączone grzanie — np. „Central heating 1” na urządzeniu kotła w bramce, ta ze stanem On/Off (Wł./Wył.): to, co wysyła bramka. Nie ta ze stanem Running/Not running (Działa/Nie działa): to własny stan kotła, który gaśnie podczas grzania wody użytkowej i wyglądałby jak inny sterownik. Z nią włączenie i wyłączenie grzania jest sprawdzane jak nastawa: zignorowane przez kocioł jest zgłaszane, a zmienione przez inny sterownik jest raz zapisane ponownie, po czym wszystkie zapisy ustają. Bez niej włączenie grzania jest pokazywane jako niepotwierdzone, a przełączenie go przez inny sterownik przejdzie niezauważone. Wybranie encji, do której zapisujesz, albo żądania termostatu zamiast tego, co dostaje kocioł, niczego nie potwierdza albo zatrzymuje sterowanie. Wybierz encję, która zgłasza zmianę mniej więcej w ciągu minuty: wolniejsza opóźnia zauważenie zmiany, a wolniejsza niż 5 min może sprawić, że wtyczka niesłusznie się wycofa.",
           "thermostat_setpoint_entity": "Opcjonalnie, dla bramki z termostatem OpenTherm: temperatura wody, o którą prosi sam termostat (w opentherm_gw „Control setpoint 1” urządzenia termostatu), nie odczyt zwrotny kotła. Gdy kocioł wróci do niej po przerwie, wtyczka wyśle swoje polecenie ponownie, zamiast uznać to za inny sterownik. Pokazuje też oddanie jako wykonane, gdy bramka przekazuje prośbę termostatu — oprogramowanie OTGW przez MQTT nigdy wtedy nie pokazuje 0, więc bez tego pola oddanie do termostatu proszącego o najniższą temperaturę wody albo o ostatnią wartość wtyczki nigdy nie zostanie potwierdzone. Puste (domyślnie): liczy się tylko wartość sprzed wtyczki.",
           "restart_entity": "Opcjonalnie: czujnik bramki lub interfejsu kotła, który pokazuje jego restarty — czas pracy liczony od nowa, licznik restartów, który rośnie, albo czas uruchomienia (na przykład licznik restartów firmware OTGW albo czujnik czasu pracy EMS-ESP lub ESPHome). Pokazany przez niego restart liczy się przez 5 minut jako ślad przerwy: jeśli kocioł wróci wtedy do własnej wartości, wtyczka uzna to za utracone polecenie i po prostu wyśle je ponownie. Puste (domyślnie): restart widać tylko wtedy, gdy encje urządzenia stają się niedostępne, a szybki restart, który niczego nie pokazuje, jest oceniany jak powrót bez śladu przerwy — pierwszy w ciągu godziny wtyczka wyśle ponownie, ale drugi może zostać uznany za inny sterownik i wtyczka ustąpi."
@@ -607,7 +607,8 @@
           "hand_back_entity": "Przełącznik sterowania zewnętrznego",
           "hand_back_entity_write_type": "Typ zapisu przełącznika sterowania zewnętrznego",
           "hand_back_timeout_min": "Limit czasu urządzenia",
-          "own_room_controller": "Kocioł ma własny regulator pokojowy"
+          "own_room_controller": "Kocioł ma własny regulator pokojowy",
+          "esphome_safe_start": "W ESP: bezpieczne wartości startowe i krótki reboot_timeout API"
         },
         "data_description": {
           "setpoint_entity": "Liczba (number albo input_number), która ustawia temperaturę zasilania kotła. Wybierz tę, która naprawdę ją ustawia: inna wartość — maksimum kotła, nastawa ciepłej wody — byłaby nadpisywana co 30 s albo co 5 minut, a woda nie szłaby za krzywą.",
@@ -620,7 +621,8 @@
           "hand_back_entity": "Dla sposobu „przełącznik”: przełącznik, który włącza sterowanie zewnętrzne. Jest włączany na początku sterowania i wyłączany przy oddaniu — więc nigdy ustawienie, które urządzenie zapisuje w pamięci; poniżej trzeba podać jego typ zapisu.",
           "hand_back_entity_write_type": "Potrzebny przy metodzie przełącznika: co urządzenie robi ze stanem przełącznika. Wygasający: znika, jeśli nie jest powtarzany — włączany ponownie co 30 s, dopóki sterowanie trzyma kocioł. Trzymany: urządzenie go zachowuje — włączany za każdym razem, gdy sterowanie przejmuje kocioł, oraz ponownie co 5 minut i po powrocie urządzenia. Trwały albo nieznany (domyślnie): może być zapisywany w pamięci kotła, którą każde przełączenie zużywa, więc sterowanie z nim jest niedostępne.",
           "hand_back_timeout_min": "Dla metody limitu czasu: jak długo, w minutach, urządzenie trzyma ostatnią podaną wartość, zanim wróci do własnego sterowania — z dokumentacji urządzenia (od 1 do 60; domyślnie 1, nastawa przepływu EMS-ESP wygasa po około minucie). Każde oddanie najpierw zapisuje najniższą temperaturę wody, więc kocioł zostaje na niej przez ten czas. Oddanie jest oceniane dopiero po nim — powrót do wartości sprzed sterowania albo własna wartość urządzenia — a „oddanie nieudane” pojawia się 3 minuty po nim. Za krótki: fałszywy alarm, gdy urządzenie wciąż trzyma najniższą; za długi: urządzenie, które nigdy nie puszcza, zostanie zgłoszone późno. Nieużywany przy innych metodach.",
-          "own_room_controller": "Zaznacz tylko wtedy, gdy kocioł ma własny regulator pokojowy, który sam prosi o ciepło, gdy wtyczka odda sterowanie — na przykład panel pokojowy na magistrali kotła (EMS). Jeśli Versatile Thermostat w ogóle nie odpowiada, wtyczka odda mu wtedy kocioł; bez zaznaczenia kocioł nie grzeje, a alarm i zgłoszenie do naprawy powiedzą dlaczego. Każde inne oddanie sterowania też trafia do tego regulatora. Przy przekaźniku liczy się to tylko wtedy, gdy stan przekaźnika po oddaniu sterowania to „włączony”; przy „wyłączony” kocioł nie grzeje, gdy Versatile Thermostat nie odpowiada. Domyślnie wyłączone. Ryzyko: bez takiego regulatora kocioł zostałby na własnym pokrętle i grzałby bez kontroli temperatury w pokojach."
+          "own_room_controller": "Zaznacz tylko wtedy, gdy kocioł ma własny regulator pokojowy, który sam prosi o ciepło, gdy wtyczka odda sterowanie — na przykład panel pokojowy na magistrali kotła (EMS). Jeśli Versatile Thermostat w ogóle nie odpowiada, wtyczka odda mu wtedy kocioł; bez zaznaczenia kocioł nie grzeje, a alarm i zgłoszenie do naprawy powiedzą dlaczego. Każde inne oddanie sterowania też trafia do tego regulatora. Przy przekaźniku liczy się to tylko wtedy, gdy stan przekaźnika po oddaniu sterowania to „włączony”; przy „wyłączony” kocioł nie grzeje, gdy Versatile Thermostat nie odpowiada. Domyślnie wyłączone. Ryzyko: bez takiego regulatora kocioł zostałby na własnym pokrętle i grzałby bez kontroli temperatury w pokojach.",
+          "esphome_safe_start": "Wymagane do sterowania przez ESPHome; nigdy nie zaznaczane za Ciebie. ESP trzyma ostatnią nastawę i włączone grzanie aż do restartu — domyślnie po 15 minutach bez Home Assistant (reboot_timeout jego API) — potem przyjmuje skonfigurowane wartości startowe. Zaznacz dopiero, gdy konfiguracja ESP uruchamia nastawę i przełącznik grzania z wartościami bezpiecznymi bez żadnego sterowania (grzanie wyłączone albo umiarkowana temperatura wody), z wyłączonym restore_value, a jego reboot_timeout wynosi kilka minut (przykład jest w instrukcji użytkownika). Bez zaznaczenia sterowanie nie wystartuje."
         }
       },
       "control_gateway": {
@@ -695,7 +697,7 @@
         "data_description": {
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
           "decision_interval_min": "Jak często temperatura wody jest wyznaczana na nowo, w minutach; domyślnie 5, domyślny cykl VT. Włączanie i wyłączanie ogrzewania nadąża za strefami co 10 s niezależnie od tej wartości; wtyczka nie odczytuje własnych cykli stref. Krócej: woda szybciej podąża za pogodą i pokojami, ale algorytmy stref częściej widzą jej zmiany; dłużej: spokojniejsza woda, która wolniej nadąża.",
-          "off_setpoint": "Nastawa zapisywana jako „wyłącz”, gdy nie ma przełącznika grzania, w °C. Domyślnie 10: dużo poniżej każdej wartości grzania i poniżej najniższej temperatury wody. Ryzyko: niska nastawa nie wyłącza grzania w kotle — mastery ESPHome i DIYLess zostawiają CH włączone, a kotły według zgłoszeń dalej pracują pompą CH; przełącznik grzania albo CH=0 bramki OpenTherm naprawdę wyłącza grzanie. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc ta nastawa nie jest jeszcze zapisywana.",
+          "off_setpoint": "Nastawa zapisywana jako „wyłącz”, gdy nie ma przełącznika grzania, w °C. Domyślnie 10: dużo poniżej każdej wartości grzania i poniżej najniższej temperatury wody. Ryzyko: niska nastawa nie wyłącza grzania w kotle — mastery ESPHome i DIYLess zostawiają CH włączone, a kotły według zgłoszeń dalej pracują pompą CH; przełącznik grzania albo CH=0 bramki OpenTherm naprawdę wyłącza grzanie. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc ta nastawa nie jest jeszcze zapisywana. Przy EMS-ESP bez przełącznika grzania „wyłączone” to jego własna nastawa 0 (funkcja EMS-ESP „wymuś wyłączenie grzania”), powtarzana co 30 s, a tego pola nie ma; co przy 0 robi pompa, zależy od kotła.",
           "count_threshold": "Ogrzewanie jest potrzebne, gdy co najmniej tyle stref zgłasza zapotrzebowanie. Domyślnie 1; najwyżej liczba stref. 0 wyłącza liczenie, zostawiając sam próg mocy albo otwarcia, jak w Versatile Thermostat — wtedy każda strefa musi podawać to, czego ten próg potrzebuje, inaczej jej pokój nigdy nie poprosi o ciepło: formularz odrzuca strefę, która tego nie podaje, a strefa potrzebująca ciepła bez tych danych włącza alarm „kryterium zapotrzebowania bez danych”. Wyższa zostawia pojedynczy pokój potrzebujący ciepła bez ogrzewania.",
           "power_threshold_kw": "Opcjonalnie: grzanie jest potrzebne, gdy średnia moc stref w cyklu, liczona jak w Versatile Thermostat, osiągnie tę wartość, w kW — liczona tylko wtedy, gdy choć jedna z nich ma otwarty zawór albo włączone urządzenie. Strefa bez mocy urządzenia ustawionej w VT nie daje temu progowi danych; przy liczbie stref 0 taka strefa nigdy nie poprosi o ciepło. Za wysoki próg zostawia małe pokoje bez ciepła.",
           "opening_threshold": "Opcjonalnie: ogrzewanie jest potrzebne, gdy największe otwarcie zaworu wśród stref potrzebujących ciepła osiąga tę wartość, w %. Strefa bez otwarcia zaworu ani wypełnienia (over_climate w VT) nie daje temu progowi danych; przy liczbie stref 0 taka strefa nigdy nie poprosi o ciepło. Za wysoka zostawia bez ciepła pokój, który otwiera zawór tylko trochę.",
@@ -906,7 +908,9 @@
       "path_not_for_boiler_class": "Ścieżka zapisu nie pasuje do kotła: przekaźnik dla kotła wł./wył., ścieżka nastawy dla kotła, który przyjmuje temperaturę wody. Sprawdź, jak kocioł jest podłączony, w „Kocioł, połączenie i tryb sterowania”.",
       "vt_commands_not_supported": "Polecenia kotła w Versatile Thermostat nie wskazują przełącznika włączanego i wyłączanego ani termostatu kotła ustawianego na grzanie i wyłączenie: wybierz przekaźnik.",
       "invalid_connection": "Ta wersja nie potrafi odczytać jednej z odpowiedzi o połączeniu kotła, źródle ciepła, rodzaju kotła albo trybie sterowania: wybierz ją ponownie.",
-      "path_not_for_control_mode": "Wybrano tylko monitorowanie albo tylko temperaturę pokoju (od wersji 0.3): pasuje tylko „Bez sterowania”. Najpierw zmień tryb sterowania w „Kocioł, połączenie i tryb sterowania”."
+      "path_not_for_control_mode": "Wybrano tylko monitorowanie albo tylko temperaturę pokoju (od wersji 0.3): pasuje tylko „Bez sterowania”. Najpierw zmień tryb sterowania w „Kocioł, połączenie i tryb sterowania”.",
+      "path_not_for_connection": "Ścieżka zapisu nie pasuje do sposobu podłączenia kotła. Najpierw zmień połączenie w „Kocioł, połączenie i tryb sterowania”.",
+      "topology_not_for_connection": "ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: wybierz topologię wirtualną."
     }
   },
   "selector": {
@@ -1073,6 +1077,18 @@
         "single_tank": "Jednofunkcyjny z zasobnikiem ciepłej wody",
         "combi": "Dwufunkcyjny (ciepła woda przepływowa)",
         "combi_tank": "Dwufunkcyjny z wbudowanym zasobnikiem"
+      }
+    },
+    "signal_hint": {
+      "options": {
+        "opentherm_gw": "OpenTherm Gateway: gdy skonfigurowana jest jedna bramka, poniżej są już wpisane encje jej urządzenia kotła — sprawdź je. Urządzenie termostatu bramki ma encje o tych samych nazwach, pokazujące to, co widzi termostat: nie te.",
+        "otgw_mqtt": "Firmware OTGW przez MQTT: wybierz encje kotła utworzone przez jego wykrywanie MQTT — płomień, temperaturę wody kotła (zasilanie), temperaturę powrotu, modulację względną, ciśnienie wody CO, aktywną ciepłą wodę i sygnalizację błędu.",
+        "esphome": "ESPHome OpenTherm: wybierz własne czujniki ESP tak, jak nazywa je jego konfiguracja — flame_on (płomień), t_boiler (zasilanie), t_ret (powrót), rel_mod_level (modulacja), ch_pressure, dhw_active, fault_indication i low_water_pressure.",
+        "ems_esp": "EMS-ESP: wybierz jego encje kotła — burngas (płomień), curflowtemp (zasilanie), rettemp (powrót), curburnpow (modulacja), syspress (ciśnienie) oraz encję aktywnej ciepłej wody.",
+        "relay": "Przekaźnik: żaden sygnał nie jest wymagany. Płomień albo temperaturę zasilania przypisz tylko wtedy, gdy pokazuje je jakiś czujnik.",
+        "boiler_module": "Moduł kotła albo integracja producenta: wybierz to, co pokazuje dla płomienia, zasilania i temperatury powrotu; resztę zostaw pustą.",
+        "other_entity": "Wybierz to, co urządzenie pokazuje dla płomienia, zasilania i temperatury powrotu; resztę zostaw pustą.",
+        "read_only": "Wybierz to, co integracja pokazuje dla płomienia, zasilania i temperatury powrotu; resztę zostaw pustą."
       }
     }
   },
@@ -1563,7 +1579,10 @@
               "relay_of_boiler_interface": "Przekaźnik należy do integracji kotła lub VT",
               "relay_climate_modes": "Encji termostatu nie da się ustawić na grzanie i na wyłączenie",
               "control_mode_monitor": "Wybrano tylko monitorowanie",
-              "control_mode_room_values": "Tylko temperatura pokoju: od wersji 0.3"
+              "control_mode_room_values": "Tylko temperatura pokoju: od wersji 0.3",
+              "connection_not_for_path": "Ustawione sterowanie nie pasuje do połączenia kotła",
+              "topology_not_for_connection": "Topologia nie pasuje do połączenia kotła",
+              "esphome_start_not_confirmed": "Nie potwierdzono bezpiecznego startu ESP"
             }
           },
           "blockers_text": {
@@ -2567,7 +2586,10 @@
               "relay_of_boiler_interface": "Przekaźnik należy do integracji kotła lub VT",
               "relay_climate_modes": "Encji termostatu nie da się ustawić na grzanie i na wyłączenie",
               "control_mode_monitor": "Wybrano tylko monitorowanie",
-              "control_mode_room_values": "Tylko temperatura pokoju: od wersji 0.3"
+              "control_mode_room_values": "Tylko temperatura pokoju: od wersji 0.3",
+              "connection_not_for_path": "Ustawione sterowanie nie pasuje do połączenia kotła",
+              "topology_not_for_connection": "Topologia nie pasuje do połączenia kotła",
+              "esphome_start_not_confirmed": "Nie potwierdzono bezpiecznego startu ESP"
             }
           },
           "blockers_text": {
@@ -2716,7 +2738,7 @@
       "message": "Podłączenie bramki nie pasuje do ścieżki zapisu: wybierz inne w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_heating_switch": {
-      "message": "Sterowanie wymaga przełącznika ogrzewania, którego kocioł nie zapisuje w pamięci. Bez niego „wyłączone” byłoby niską nastawą, a nie wiadomo jeszcze, czy to zatrzymuje kocioł i jego pompę. Monitor działa dalej. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Sterowanie wymaga przełącznika ogrzewania, którego kocioł nie zapisuje w pamięci. Bez niego „wyłączone” byłoby niską nastawą, a nie wiadomo jeszcze, czy to zatrzymuje kocioł i jego pompę — poza EMS-ESP, którego własna nastawa 0 wyłącza grzanie. Monitor działa dalej. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_gateway_not_set_up": {
       "message": "Integracja OpenTherm Gateway wybranej bramki jest usunięta albo wyłączona: polecenia nie trafiłyby nigdzie. Skonfiguruj ją lub włącz albo wybierz w opcjach inną bramkę. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
@@ -2798,6 +2820,15 @@
     },
     "blocked_control_mode_room_values": {
       "message": "Tryb „tylko temperatura pokoju” pojawi się w wersji 0.3: do tego czasu wtyczka tylko monitoruje i niczego nie zapisuje. Aby już teraz sterować temperaturą wody, wybierz pełne sterowanie w „Kocioł, połączenie i tryb sterowania”. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
+    "blocked_connection_not_for_path": {
+      "message": "Ustawione sterowanie pisze inną ścieżką, niż teraz wynika z połączenia kotła: odpowiedz ponownie na kroki sterowania dla połączenia wybranego w „Kocioł, połączenie i tryb sterowania”. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
+    "blocked_topology_not_for_connection": {
+      "message": "ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: topologia w kroku sterowania musi być wirtualna. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
+    "blocked_esphome_start_not_confirmed": {
+      "message": "Nie potwierdzono, że ESP startuje z bezpiecznymi wartościami i krótkim reboot_timeout API: gdyby Home Assistant przestał działać, ESP trzymałby ostatnią nastawę i włączone grzanie aż do upływu reboot_timeout (domyślnie 15 minut). Zaznacz to w kroku sterowania, gdy ESP będzie tak skonfigurowany. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     }
   },
   "issues": {

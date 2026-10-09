@@ -4128,3 +4128,276 @@ def test_a_stored_answer_this_version_cannot_read_offers_everything_and_blocks_n
     unknown = {"boiler": {"heat_source": "peat", "type": "triple"}}
     shown = {str(marker) for marker in mode_schema(unknown).schema}
     assert shown == {"control_mode", "condensing", "dhw_priority"}
+
+
+# --- I6.2: what the connection sets in the control steps (decisions 2, 3, 4) -------------------
+
+
+def gateway_entity(hass: HomeAssistant, gateway: str, domain: str, key: str, **kw: Any) -> str:
+    """An entity registered by the OpenTherm Gateway integration under its own unique ID."""
+    from homeassistant.helpers import entity_registry as er
+
+    return (
+        er.async_get(hass)
+        .async_get_or_create(domain, "opentherm_gw", f"{gateway}-boiler-{key}", **kw)
+        .entity_id
+    )
+
+
+async def answer_panels(
+    hass: HomeAssistant, entry_id: str, connection: str, mode: str = "full"
+) -> None:
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "connection"})
+    answers = {"connection": connection, "heat_source": "gas", "type": "single"}
+    result = await options_step(hass, result, answers)
+    result = await options_step(hass, result, {"control_mode": mode})
+    assert result["type"] is FlowResultType.CREATE_ENTRY, result
+    await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize(
+    ("connection", "offered"),
+    [
+        ("opentherm_gw", ["none", "opentherm_gw"]),
+        ("otgw_mqtt", ["none", "otgw_mqtt"]),
+        ("esphome", ["none", "entity"]),
+        ("ems_esp", ["none", "entity"]),
+        ("boiler_module", ["none", "entity"]),
+        ("other_entity", ["none", "entity"]),
+    ],
+)
+async def test_the_control_step_offers_the_connections_path(
+    hass: HomeAssistant, entities: dict[str, str], connection: str, offered: list[str]
+) -> None:
+    """Decision 2: where the connection is answered, the control step offers its path and "no
+    control" — not every path the class could take."""
+    entry_id = await create_entry(hass, entities, "simple", ("living",), panels=True)
+    await answer_panels(hass, entry_id, connection)
+    result = await open_control(hass, entry_id)
+    assert path_options(result) == offered
+
+
+async def test_a_path_the_connection_does_not_take_is_refused() -> None:
+    """Decision 2 (P-79): checked again on submit, with the reason."""
+    from custom_components.vtherm_smart_boiler.config_flow import control_error, paths_for_class
+
+    esphome = {"boiler": {"class": "flow_setpoint", "connection": "esphome"}}
+    assert control_error({"write_path": "opentherm_gw"}, esphome) == {
+        "write_path": "path_not_for_connection"
+    }
+    read_only = {"boiler": {"class": "read_only", "connection": "read_only"}}
+    assert paths_for_class(read_only) == ["none"]
+
+
+@pytest.mark.parametrize("connection", ["esphome", "ems_esp"])
+async def test_esphome_and_ems_esp_take_the_virtual_topology(
+    hass: HomeAssistant, entities: dict[str, str], connection: str
+) -> None:
+    """Decision 2: the virtual topology is suggested for a controller on Home Assistant's side,
+    and a gateway topology refused with the reason."""
+    hass.states.async_set("sensor.read_back", "40", {"unit_of_measurement": "°C"})
+    entry_id = await create_entry(hass, entities, "simple", ("living",), panels=True)
+    await answer_panels(hass, entry_id, connection)
+    result = await open_control(hass, entry_id)
+    assert suggested(result, "topology") == "virtual"
+    answer = {"write_path": "entity", "confirmed_entity": "sensor.read_back"}
+    refused = await options_step(
+        hass,
+        result,
+        answer | {"topology": "gateway_with_thermostat", "thermostat_kind": "opentherm"},
+    )
+    assert refused["errors"] == {"topology": "topology_not_for_connection"}
+    result = await options_step(hass, refused, answer | {"topology": "virtual"})
+    assert result["step_id"] == "control_entity"
+
+
+def suggested(result: dict[str, Any], key: str) -> Any:
+    for marker in result["data_schema"].schema:
+        if str(marker) == key:
+            return (marker.description or {}).get("suggested_value")
+    raise AssertionError(f"no {key} in the form")
+
+
+@pytest.mark.parametrize(
+    ("connection", "defaults", "tick"),
+    [
+        # ESPHome holds both, and has no own control to return to: a hand-back value.
+        ("esphome", ("held", "held", "value"), True),
+        # EMS-ESP's setpoint lapses within about a minute: the device's timeout.
+        ("ems_esp", ("expiring", "unknown", "timeout"), False),
+        # Another device: nothing assumed.
+        ("other_entity", ("unknown", "unknown", None), False),
+    ],
+)
+async def test_the_writable_entity_step_offers_what_the_connection_does(
+    hass: HomeAssistant,
+    entities: dict[str, str],
+    connection: str,
+    defaults: tuple[str, str, str | None],
+    tick: bool,
+) -> None:
+    """Decisions 2, 3: the write types and the hand-back the connection is known for, offered
+    for the user to confirm; ESPHome's safe-start tick, never ticked for the user."""
+    hass.states.async_set("sensor.read_back", "40", {"unit_of_measurement": "°C"})
+    entry_id = await create_entry(hass, entities, "simple", ("living",), panels=True)
+    await answer_panels(hass, entry_id, connection)
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": "sensor.read_back"},
+    )
+    assert result["step_id"] == "control_entity"
+    shown = tuple(form_default(result, key) for key in ("write_type", "ch_write_type", "hand_back"))
+    assert shown == defaults
+    fields = {str(marker) for marker in result["data_schema"].schema}
+    assert ("esphome_safe_start" in fields) is tick
+    if tick:
+        assert form_default(result, "esphome_safe_start") is False
+
+
+async def test_ems_esp_without_a_heating_switch_does_not_ask_for_off(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 4: on EMS-ESP without a heating switch, "off" is its own setpoint 0 — the
+    behaviour step does not ask it, nor checks it against the lowest water temperature; with a
+    heating switch it is asked as anywhere else."""
+    from custom_components.vtherm_smart_boiler.config_flow import (
+        control_behaviour_schema,
+        fixed_off,
+        off_too_close_in,
+    )
+
+    control = {"write_path": "entity", "hard_min": 10.0, "off_setpoint": 10.0}
+    ems = {"boiler": {"connection": "ems_esp"}, "control": control}
+    assert fixed_off(ems)
+    assert "off_setpoint" not in {str(m) for m in control_behaviour_schema(ems).schema}
+    assert not off_too_close_in(ems)  # 10 next to 10 would be refused elsewhere
+    other = {"boiler": {"connection": "other_entity"}, "control": control}
+    assert not fixed_off(other)
+    assert off_too_close_in(other)
+    switched = {
+        "boiler": {"connection": "ems_esp"},
+        "control": control | {"ch_entity": "switch.heat", "ch_write_type": "held"},
+    }
+    assert not fixed_off(switched)
+    assert "off_setpoint" in {str(m) for m in control_behaviour_schema(switched).schema}
+    assert not fixed_off({"boiler": {"connection": "ems_esp"}})  # no control set up
+
+
+async def test_the_behaviour_step_does_not_check_a_fixed_off(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 4: with "off" EMS-ESP's own 0, the advanced behaviour step saves without it,
+    whatever the lowest water temperature."""
+    hass.states.async_set("sensor.read_back", "40", {"unit_of_measurement": "°C"})
+    hass.states.async_set(
+        "number.ems_selflowtemp", "40", {"unit_of_measurement": "°C", "min": 0, "max": 90}
+    )
+    entry_id = await create_entry(hass, entities, "advanced", ("living",), panels=True)
+    await answer_panels(hass, entry_id, "ems_esp")
+    result = await open_control(hass, entry_id)
+    for answer in (
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": "sensor.read_back"},
+        {
+            "setpoint_entity": "number.ems_selflowtemp",
+            "write_type": "expiring",
+            "ch_write_type": "unknown",
+            "hand_back": "timeout",
+            "hand_back_entity_write_type": "unknown",
+        },
+        {"design_outdoor": -15, "design_flow": 55, "hard_min": 10, "hard_max": 70,
+         "activation_delay_s": 0, "room": 20, "offset": 0, "ceiling_band": 10,
+         "frost_limit": 5, "frost_release": 7},
+    ):  # fmt: skip
+        result = await options_step(hass, result, answer)
+    assert result["step_id"] == "control_behaviour", result.get("errors")
+    assert "off_setpoint" not in {str(m) for m in result["data_schema"].schema}
+    result = await options_step(
+        hass,
+        result,
+        {
+            "ramp_k_per_min": 1.0,
+            "decision_interval_min": 5,
+            "count_threshold": 1,
+            "learning_pauses": True,
+            "comfort_correction": False,
+        },
+    )
+    assert not result.get("errors"), result.get("errors")
+
+
+async def test_the_gateways_own_entities_are_suggested(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 2: on the OpenTherm Gateway integration, with one gateway set up, its boiler
+    device's entities are offered on the signals step — where nothing is mapped yet — and its
+    read-backs on the control step, by the integration's own unique IDs; a disabled one is not.
+    The hint for the connection is in the step's text."""
+    loaded_gateway(hass, "gw")
+    flame = gateway_entity(hass, "gw", "binary_sensor", "slave_flame_on")
+    flow = gateway_entity(hass, "gw", "sensor", "ch_water_temp")
+    gateway_entity(hass, "gw", "sensor", "return_water_temp", disabled_by=er_disabled_by_user())
+    read_back = gateway_entity(hass, "gw", "sensor", "control_setpoint")
+    echo = gateway_entity(hass, "gw", "binary_sensor", "master_ch_enabled")
+    result = await start_setup(hass, "opentherm_gw", "full")
+    result = await step(hass, result, {"name": "Boiler", "level": "simple"})
+    assert result["step_id"] == "signals"
+    assert suggested(result, "flame") == flame
+    assert suggested(result, "flow") == flow
+    assert suggested(result, "return") is None  # disabled: not offered
+    hint = result["description_placeholders"]["hint"]
+    assert hint.startswith("OpenTherm Gateway:")
+    for data in (
+        {"flame": flame, "flow": flow},
+        {},
+        {"control": "unmixed_shared"},
+        {"zones": [entities["living"]]},
+        {"emitter": "radiator"},
+        {},
+        {"strategy": "average"},
+    ):
+        result = await step(hass, result, data)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    entry_id = result["result"].entry_id
+    result = await open_control(hass, entry_id)
+    assert suggested(result, "confirmed_entity") == read_back
+    assert suggested(result, "ch_confirmed_entity") == echo
+    # The signals already mapped: nothing offered again.
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "signals"})
+    assert suggested(result, "return") is None
+
+
+def er_disabled_by_user() -> Any:
+    from homeassistant.helpers import entity_registry as er
+
+    return er.RegistryEntryDisabler.USER
+
+
+async def test_nothing_is_suggested_without_exactly_one_gateway(hass: HomeAssistant) -> None:
+    """Decision 2, negatives: no gateway, or two, suggest nothing; an entry from before the
+    panels has no hint."""
+    from custom_components.vtherm_smart_boiler.config_flow import (
+        GATEWAY_SIGNALS,
+        gateway_entities,
+    )
+
+    assert gateway_entities(hass, GATEWAY_SIGNALS) == {}
+    loaded_gateway(hass, "a")
+    gateway_entity(hass, "a", "binary_sensor", "slave_flame_on")
+    assert set(gateway_entities(hass, GATEWAY_SIGNALS)) == {"flame"}
+    loaded_gateway(hass, "b")
+    assert gateway_entities(hass, GATEWAY_SIGNALS) == {}
+
+
+async def test_an_entry_from_before_the_panels_has_no_signal_hint(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 12: no connection, no hint — the step's text as before."""
+    entry_id = await create_entry(hass, entities, "simple")
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "signals"})
+    assert result["description_placeholders"] == {"hint": ""}

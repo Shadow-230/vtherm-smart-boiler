@@ -13,8 +13,10 @@ it did not take leaves the plugin unable to switch heating off: at the next step
 latched and handed back (``HEATING_OFF_IGNORED``, the user's answer O), whatever alarm reaction is
 stored — and so with "on" among what it did not take (``HEATING_ON_IGNORED``, decision 4 of
 0.2.3): the plugin cannot make the boiler heat, and a switch never written again would leave VT's
-later "off" unwritten too. Once a guard has found another controller, every write stops — the
-setpoint and heating on/off alike: the plugin never fights it. That lasts one step: an outside
+later "off" unwritten too. Where "off" is the low setpoint itself (EMS-ESP's 0, I6), the setpoint
+ignored from the start with "off" among what it did not take latches the same way. Once a guard
+has found another controller, every write stops — the setpoint and heating on/off alike: the
+plugin never fights it. That lasts one step: an outside
 change always hands back (S-11), so the next step latches and steps aside. A hand-back is passed
 on as it is — the guards never hold it back, and it names no target to leave out: the control
 unit makes the whole safe hand-back, over the other controller's value too (the user's answer
@@ -226,6 +228,12 @@ def loop_step(
         # The plugin can no longer switch heating off (answer O), or cannot make the boiler heat
         # (decision 4 of 0.2.3): latched and handed back, whatever alarm reaction is stored.
         inputs = _ignored_latch(inputs, state.switch.off_ignored, state.switch.on_ignored)
+    else:
+        # "Off" is the setpoint itself (EMS-ESP's 0, I6): ignored from the start, the plugin
+        # can no longer switch heating off either — answer O. Only heat ignored stays the
+        # ignored write it was.
+        off_value = _gridded(config.off_setpoint, grid, config, True)
+        inputs = _ignored_latch(inputs, _off_among_ignored(state.setpoint, off_value), False)
     if state.setpoint.clip is not None and not inputs.clipped:
         inputs = replace(inputs, clipped=True)
     warned = losses_warning(state.losses, now, state.losses_warned)
@@ -339,6 +347,16 @@ def loop_step(
         unconfirmed=unconfirmed,
         not_shown=not_shown,
         commands_lost=warned,
+    )
+
+
+def _off_among_ignored(setpoint: GuardState, off_value: float | None) -> bool:
+    """Whether the setpoint guard found its target ignoring writes from the start with "off" —
+    sent as a low setpoint — among the values it did not take."""
+    return (
+        setpoint.ignored
+        and off_value is not None
+        and any(math.isclose(value, off_value, abs_tol=0.01) for value in setpoint.ignored_values)
     )
 
 

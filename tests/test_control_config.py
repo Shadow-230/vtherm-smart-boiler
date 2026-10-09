@@ -6,6 +6,7 @@ import pytest
 
 from custom_components.vtherm_smart_boiler.control_config import (
     CONNECTION_MODES,
+    CONNECTION_PATH,
     AlarmReaction,
     Connection,
     ControlMode,
@@ -256,6 +257,14 @@ def test_every_blocker_is_listed() -> None:
     # I6.1 (decision 6): monitoring only, or room values until 0.3.
     for mode in (ControlMode.MONITOR, ControlMode.ROOM_VALUES):
         control = parse_control(OTGW, RADIATORS, None, control_mode=mode)
+        found |= set(config_blockers(control, RADIATORS))
+    # I6.2 (decisions 2, 3): what the connection asks of the control section.
+    for data, connection in (
+        (OTGW, Connection.ESPHOME),
+        (ENTITY | {"topology": "gateway_with_thermostat"}, Connection.EMS_ESP),
+        (ENTITY, Connection.ESPHOME),
+    ):
+        control = parse_control(data, RADIATORS, None, connection=connection)
         found |= set(config_blockers(control, RADIATORS))
     assert found == set(CONFIG_BLOCKERS)
 
@@ -2415,3 +2424,132 @@ def test_a_stored_write_path_suggests_its_connection(path: object, expected: obj
     """I6.1 (decision 12): an entry made before the panel is offered the connection its stored
     write path names; nothing where it does not."""
     assert connection_suggested_by(path) is expected
+
+
+# --- I6.2: what the connection sets (decisions 2, 3, 4) -------------------------------------
+
+
+def test_each_connection_writes_through_its_path() -> None:
+    """Decision 2: the write path follows the connection — the gateways their own, the relay
+    its relay, every device with writable entities the entity path, a read-only integration
+    none."""
+    assert dict(CONNECTION_PATH) == {
+        Connection.OPENTHERM_GW: WritePath.OPENTHERM_GW,
+        Connection.OTGW_MQTT: WritePath.OTGW_MQTT,
+        Connection.ESPHOME: WritePath.ENTITY,
+        Connection.EMS_ESP: WritePath.ENTITY,
+        Connection.RELAY: WritePath.RELAY,
+        Connection.BOILER_MODULE: WritePath.ENTITY,
+        Connection.OTHER_ENTITY: WritePath.ENTITY,
+        Connection.READ_ONLY: None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("data", "connection", "found"),
+    [
+        # A control section left from another connection: not run until set up again.
+        (OTGW, Connection.ESPHOME, True),
+        (OTGW, Connection.OTGW_MQTT, True),
+        (RELAY, Connection.OTHER_ENTITY, True),
+        (OTGW, Connection.OPENTHERM_GW, False),
+        (ENTITY, Connection.EMS_ESP, False),
+        (RELAY, Connection.RELAY, False),
+        (OTGW, None, False),  # an entry from before the panel: as before
+    ],
+)
+def test_a_control_section_the_connection_does_not_write_through_is_blocked(
+    data: dict, connection: Connection | None, found: bool
+) -> None:
+    """Decision 2: the connection changed under a stored control section — control stays off
+    with the reason, until the control steps are answered again."""
+    installation = ON_OFF if data is RELAY else RADIATORS
+    control = parse_control(data, installation, None, connection=connection)
+    blockers = config_blockers(control, installation)
+    assert ("connection_not_for_path" in blockers) is found
+
+
+@pytest.mark.parametrize(
+    ("topology", "connection", "found"),
+    [
+        ("virtual", Connection.ESPHOME, False),
+        ("gateway_with_thermostat", Connection.ESPHOME, True),
+        ("gateway_standalone", Connection.EMS_ESP, True),
+        ("gateway_with_thermostat", Connection.OTHER_ENTITY, False),  # its own declaration
+        ("gateway_with_thermostat", None, False),
+    ],
+)
+def test_esphome_and_ems_esp_are_controllers_on_home_assistants_side(
+    topology: str, connection: Connection | None, found: bool
+) -> None:
+    """Decision 2: an ESPHome OpenTherm master and EMS-ESP are controllers on the Home
+    Assistant side — the virtual topology; a gateway topology does not fit them."""
+    data = ENTITY | {"topology": topology}
+    if topology != "virtual":
+        data |= {"thermostat_kind": "opentherm"}
+    control = parse_control(data, RADIATORS, None, connection=connection)
+    assert ("topology_not_for_connection" in config_blockers(control, RADIATORS)) is found
+
+
+@pytest.mark.parametrize(
+    ("changes", "connection", "found"),
+    [
+        ({}, Connection.ESPHOME, True),
+        ({"esphome_safe_start": False}, Connection.ESPHOME, True),
+        ({"esphome_safe_start": "yes"}, Connection.ESPHOME, True),  # only a real tick counts
+        ({"esphome_safe_start": True}, Connection.ESPHOME, False),
+        ({}, Connection.OTHER_ENTITY, False),
+        ({}, None, False),
+    ],
+)
+def test_esphome_control_needs_the_safe_start_tick(
+    changes: dict, connection: Connection | None, found: bool
+) -> None:
+    """Decision 3: the ESP keeps the last setpoint until it restarts, then takes its own start
+    values — control needs the user's tick that those are safe and the API reboot_timeout is
+    short, as the relay needs its separate-contact tick."""
+    control = parse_control(ENTITY | changes, RADIATORS, None, connection=connection)
+    assert control.esphome_safe_start is (changes.get("esphome_safe_start") is True)
+    blockers = config_blockers(control, RADIATORS)
+    assert ("esphome_start_not_confirmed" in blockers) is found
+
+
+EMS_ESP = ENTITY | {"write_type": "expiring", "hand_back": "timeout"}
+
+
+@pytest.mark.parametrize(
+    ("changes", "connection", "lifted"),
+    [
+        # EMS-ESP's "Force Heating Off": setpoint 0, expiring — no heating switch needed.
+        ({}, Connection.EMS_ESP, True),
+        # Only with the setpoint lapsing: a held 0 would stay when Home Assistant stops.
+        ({"write_type": "held", "hand_back": "value"}, Connection.EMS_ESP, False),
+        # Decision 11 holds everywhere else.
+        ({}, Connection.ESPHOME, False),
+        ({}, Connection.OTHER_ENTITY, False),
+        ({}, None, False),
+    ],
+)
+def test_ems_esp_switches_heating_off_with_setpoint_zero(
+    changes: dict, connection: Connection | None, lifted: bool
+) -> None:
+    """Decision 4 (the user, 2026-10-08): on EMS-ESP "off" is the setpoint 0, written as an
+    expiring value like every setpoint on that path, with no heating switch — decision 11 lifted
+    for EMS-ESP only and only with the setpoint declared expiring; elsewhere control without a
+    heating switch stays blocked, and "off" keeps its own value."""
+    control = parse_control(EMS_ESP | changes, RADIATORS, None, connection=connection)
+    assert not control.loop.ch_writes
+    assert (control.loop.off_setpoint == 0.0) is (connection is Connection.EMS_ESP)
+    blockers = config_blockers(control, RADIATORS, signals=(Signal.FLAME, Signal.FLOW))
+    assert ("no_heating_switch" not in blockers) is lifted
+    if lifted:
+        assert blockers == []
+
+
+def test_ems_esp_with_a_heating_switch_uses_it() -> None:
+    """Decision 4, its negative: a heating switch the boiler does not store, picked on EMS-ESP,
+    switches heating as anywhere else; "off" is then no setpoint."""
+    data = EMS_ESP | {"ch_entity": "switch.heat", "ch_write_type": "held"}
+    control = parse_control(data, RADIATORS, None, connection=Connection.EMS_ESP)
+    assert control.loop.ch_writes
+    assert control.loop.off_setpoint == 10.0  # the default, unused with a switch

@@ -688,8 +688,11 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
             relay = control["write_path"] == "relay"
             boiler = {
                 "class": "on_off" if relay else "flow_setpoint",
-                # I6.1: the panels — every mode a connection offers, and every field shown.
-                "connection": "relay" if relay else "opentherm_gw",
+                # I6.1: the panels — every mode a connection offers, and every field shown;
+                # I6.2: the connection whose path the control section takes.
+                "connection": {"entity": "other_entity"}.get(
+                    control["write_path"], control["write_path"]
+                ),
                 "heat_source": "gas",
                 "type": "combi",
             }
@@ -731,6 +734,13 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                         offered = config["options"]
                         values = {o["value"] if isinstance(o, dict) else o for o in offered}
                         selectors.setdefault(key, set()).update(values)
+    # I6.2: ESPHome's safe-start tick, asked on the writable-entity step for ESPHome only.
+    esphome = {"boiler": {"connection": "esphome"}, "control": {"write_path": "entity"}}
+    fields["control_entity"] |= {str(m) for m in flow.control_entity_schema(esphome).schema}
+    # I6.2: the signals step reads its hint for the connection into its description.
+    from custom_components.vtherm_smart_boiler.control_config import Connection
+
+    selectors.setdefault(flow.SIGNAL_HINT, set()).update(c.value for c in Connection)
     return fields, selectors
 
 

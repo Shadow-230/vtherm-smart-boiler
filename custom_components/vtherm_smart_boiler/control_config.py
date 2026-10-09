@@ -220,6 +220,26 @@ class Topology(StrEnum):
     VIRTUAL = "virtual"  # a controller on the HA side (e.g. an ESPHome OpenTherm master)
 
 
+# The write path each connection writes through (I6, decision 2).
+CONNECTION_PATH: Mapping[Connection, WritePath | None] = MappingProxyType(
+    {
+        Connection.OPENTHERM_GW: WritePath.OPENTHERM_GW,
+        Connection.OTGW_MQTT: WritePath.OTGW_MQTT,
+        Connection.ESPHOME: WritePath.ENTITY,
+        Connection.EMS_ESP: WritePath.ENTITY,
+        Connection.RELAY: WritePath.RELAY,
+        Connection.BOILER_MODULE: WritePath.ENTITY,
+        Connection.OTHER_ENTITY: WritePath.ENTITY,
+        Connection.READ_ONLY: None,
+    }
+)
+# Controllers on the Home Assistant side: the virtual topology only (decision 2).
+VIRTUAL_CONNECTIONS = frozenset({Connection.ESPHOME, Connection.EMS_ESP})
+# EMS-ESP's "off" (decision 4): the setpoint 0, its own documented "Force Heating Off".
+EMS_ESP_OFF_SETPOINT = 0.0
+ESPHOME_SAFE_START = "esphome_safe_start"
+
+
 class ThermostatKind(StrEnum):
     """What is wired to a gateway's thermostat terminals (decision 1)."""
 
@@ -267,6 +287,10 @@ CONFIG_BLOCKERS = (
     "control_mode_monitor",
     "control_mode_room_values",
     "no_write_path",
+    # I6 (decisions 2, 3): the control section suits the connection; ESPHome's safe start.
+    "connection_not_for_path",
+    "topology_not_for_connection",
+    "esphome_start_not_confirmed",
     # X8: the write path suits the boiler class — a setpoint path a flow-setpoint boiler, the
     # relay an on/off boiler; the other classes are monitored only.
     "boiler_class_no_control",
@@ -360,7 +384,7 @@ TARGET_KEYS = (
     "setpoint_entity", "write_type", "ch_entity", "ch_write_type", "hand_back",
     "hand_back_value", "hand_back_value_effect", "hand_back_entity", "hand_back_entity_write_type",
     "hand_back_timeout_min", "gateway_id", "mqtt_top", "mqtt_node", "own_room_controller",
-    *RELAY_KEYS,
+    ESPHOME_SAFE_START, *RELAY_KEYS,
 )  # fmt: skip
 # The control section's keys that name an entity (P-19: a rename is followed there, a removal
 # told).
@@ -552,6 +576,9 @@ class ControlOptions:
     # up; ``None``: an entry made before the question.
     connection: Connection | None = None
     control_mode: ControlMode | None = None
+    # Decision 3: the user's tick that the ESP's start values are safe and its API
+    # reboot_timeout short; control on ESPHome does not start without it.
+    esphome_safe_start: bool = False
 
     @property
     def configured(self) -> bool:
@@ -833,7 +860,7 @@ def parse_control(
         and (
             path in OTGW_PATHS or (bool(data.get("ch_entity")) and ch_write_type in WRITABLE_TYPES)
         ),
-        off_setpoint=_required(value, "off_setpoint"),
+        off_setpoint=_off_setpoint(value, connection, data, path, ch_write_type),
         relay=relay.config if on_off else None,
     )
     reactions = {
@@ -883,9 +910,34 @@ def parse_control(
         relay=relay,
         connection=connection,
         control_mode=control_mode,
+        esphome_safe_start=data.get(ESPHOME_SAFE_START) is True,
     )
     working = replace(loop.control, working_thermostat=working_thermostat(options))
     return replace(options, loop=replace(loop, control=working))
+
+
+def _off_setpoint(
+    value: Mapping[str, Any],
+    connection: Connection | None,
+    data: Mapping[str, Any],
+    path: WritePath,
+    ch_write_type: WriteType,
+) -> float:
+    """What "off" writes where it is a setpoint: on EMS-ESP without a heating switch its own
+    "Force Heating Off" value, 0 (decision 4); elsewhere the option."""
+    switch = path in OTGW_PATHS or (bool(data.get("ch_entity")) and ch_write_type in WRITABLE_TYPES)
+    if connection is Connection.EMS_ESP and path is WritePath.ENTITY and not switch:
+        return EMS_ESP_OFF_SETPOINT
+    return _required(value, "off_setpoint")
+
+
+def off_as_low_setpoint_allowed(control: ControlOptions) -> bool:
+    """Decision 11 of 0.2.2, and its one exception (decision 4 of I6): "off" as a low setpoint
+    is blocked, except on EMS-ESP with the setpoint declared expiring — a stopped Home Assistant
+    then leaves the boiler on its own control within about a minute."""
+    return OFF_AS_LOW_SETPOINT_ALLOWED or (
+        control.connection is Connection.EMS_ESP and control.write_type is WriteType.EXPIRING
+    )
 
 
 def own_room_controller_offered(path: WritePath | None, topology: Topology | None) -> bool:
@@ -1379,7 +1431,10 @@ def config_blockers(
         return [f"control_mode_{control.control_mode.value}"]
     if not control.configured:
         return ["no_write_path"]
-    found = _class_blockers(control, installation, shared_signals)
+    found = [
+        *_connection_blockers(control),
+        *_class_blockers(control, installation, shared_signals),
+    ]
     if control.write_path is WritePath.RELAY:
         # The relay sets no water temperature: the setpoint, topology, read-back, curve and
         # circuit rules do not apply; the demand thresholds do (R1).
@@ -1398,6 +1453,28 @@ def config_blockers(
         *_zone_blockers(control, installation),
         *_off_blockers(control),
     ]
+
+
+def _connection_blockers(control: ControlOptions) -> list[str]:
+    """What the connection asks of the control section (I6): its write path — a section left
+    from another connection is not run until set up again; the virtual topology for the
+    controllers on Home Assistant's side; ESPHome's safe-start tick (decision 3). An entry made
+    before the question has none of them."""
+    connection = control.connection
+    if connection is None:
+        return []
+    if CONNECTION_PATH[connection] is not control.write_path:
+        return ["connection_not_for_path"]
+    found: list[str] = []
+    if (
+        connection in VIRTUAL_CONNECTIONS
+        and control.topology is not None
+        and control.topology is not Topology.VIRTUAL
+    ):
+        found.append("topology_not_for_connection")
+    if connection is Connection.ESPHOME and not control.esphome_safe_start:
+        found.append("esphome_start_not_confirmed")
+    return found
 
 
 def _class_blockers(
@@ -1477,7 +1554,7 @@ def _entity_path_blockers(control: ControlOptions) -> list[str]:
         found.append("no_setpoint_entity")
     if control.write_type not in WRITABLE_TYPES:
         found.append("write_type_not_supported")
-    if not control.loop.ch_writes and not OFF_AS_LOW_SETPOINT_ALLOWED:
+    if not control.loop.ch_writes and not off_as_low_setpoint_allowed(control):
         found.append("no_heating_switch")  # decision 11: the monitor only, until K4
     if (
         control.hand_back is None
