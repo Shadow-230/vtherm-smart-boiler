@@ -1,9 +1,37 @@
 {
   "config": {
     "step": {
-      "user": {
+      "connection": {
+        "title": "How is the boiler connected?",
+        "description": "These first choices shape everything after them; they switch nothing on. Choose how Home Assistant reaches your boiler:\n\n- **OpenTherm Gateway (integration)** — Home Assistant's OpenTherm Gateway integration. If Home Assistant stops, the gateway drops the plugin's setpoint within a minute: with a thermostat on the gateway, the thermostat takes over; without one, heating stops.\n- **OTGW firmware over MQTT** — the same gateway through its firmware's MQTT messages; the same when Home Assistant stops.\n- **ESPHome OpenTherm** — an ESP running ESPHome's OpenTherm component. It keeps the last setpoint and heating on until it restarts (by default after 15 minutes without Home Assistant), then takes the start values of its own configuration.\n- **EMS-ESP** — its flow setpoint lapses within about a minute and EMS-ESP does not repeat it, so the plugin does; if Home Assistant stops, the boiler returns to its own setting.\n- **Relay (on/off boiler)** — a relay on the boiler's room-thermostat terminals; it stays as it was if Home Assistant stops.\n- **The boiler's Wi-Fi module or the manufacturer's integration** — writes usually go to the boiler's memory or through a cloud: monitoring by default.\n- **Another writable entity (advanced)** — any other device; what it does when Home Assistant stops is its own.\n- **Another integration, read only** — the plugin only reads the boiler.",
+        "data": {
+          "connection": "Connection",
+          "heat_source": "Heat source",
+          "type": "Boiler type"
+        },
+        "data_description": {
+          "connection": "How Home Assistant reaches the boiler; required. It decides which write paths control may use and what the boiler does if Home Assistant stops. The wrong answer offers a write path the boiler cannot take.",
+          "heat_source": "Gas (natural gas or LPG), oil, electric or other; required. It decides which fields and alarms apply: an electric boiler has no flame, flue gas or condensing.",
+          "type": "Single-function (heating only), with or without a hot-water tank, or combi (hot water heated as you draw it), with or without a built-in tank; required. Used to tell hot-water runs from heating: the wrong type counts hot water as heating or the reverse."
+        }
+      },
+      "mode": {
+        "title": "Control",
+        "description": "What the plugin should do with the boiler. Choosing a mode switches nothing on: control has its own switch, off until you turn it on.\n\n- **Full control** — the plugin sets the water temperature from its curve and switches heating on and off with VT's zones.\n- **On/off (relay)** — the plugin switches heating on and off with VT's zones; the boiler keeps its own water temperature.\n- **Room temperature only — from version 0.3** — the boiler's own curve would set the water from the room's temperature; until 0.3 the plugin only monitors.\n- **Monitoring only** — the plugin reads and reports, and writes nothing.\n\nOnly the modes your connection can do are offered.",
+        "data": {
+          "control_mode": "Control mode",
+          "condensing": "Condensing boiler",
+          "dhw_priority": "Hot water has priority"
+        },
+        "data_description": {
+          "control_mode": "Chosen on purpose, with no default. Monitoring only and room temperature only keep control off, and the control switch gives that reason.",
+          "condensing": "Condensing boilers get flue gas limits for condensing appliances and are judged on how often they condense; for other boilers the absolute flue gas alarm is off and condensing plays no part in the verdict. The wrong choice warns too late or for nothing, and misjudges the verdict.",
+          "dhw_priority": "On (default): while the boiler heats hot water, the rooms get no heat — usual for a combi and for a tank charged through a three-way valve. Off: hot water and heating run together (a buffer, a tank charged in parallel, a priority limited in time). Used to judge when the rooms get heat: the wrong choice pauses the zones' learning for nothing, or lets them learn while the rooms get no heat."
+        }
+      },
+      "name": {
         "title": "Smart Boiler for Versatile Thermostat",
-        "description": "Monitors your boiler; it writes nothing to the boiler until you enable control in the options. Pick a name and the level of detail.",
+        "description": "Pick a name and the level of detail. The plugin monitors your boiler; it writes nothing to the boiler until you switch control on.",
         "data": {
           "name": "Name",
           "level": "Level of detail"
@@ -63,9 +91,6 @@
         "title": "Boiler",
         "description": "What you know about your boiler. Leave unknown values empty: the plugin then says what it cannot judge.",
         "data": {
-          "class": "What the boiler's integration can do",
-          "dhw": "Domestic hot water",
-          "condensing": "Condensing boiler",
           "boiler_min_power": "Minimum power",
           "boiler_max_power": "Maximum power",
           "max_ch_setpoint": "Maximum heating setpoint",
@@ -75,9 +100,6 @@
           "bypass": "Bypass or low-loss header"
         },
         "data_description": {
-          "class": "Flow setpoint, curve parameters only, on/off or read-only. Control (experimental): a flow setpoint (water temperature) or on/off (relay); the other classes are monitored only.",
-          "dhw": "None, a storage tank or a combi boiler; required. Used to interpret burns: with \"none\" every burn counts as heating — declared on a boiler that heats hot water, its draws would count as heating starts; the wrong type counts hot water as heating or the reverse.",
-          "condensing": "Condensing boilers get flue gas limits for condensing appliances and are judged on how often they condense; for other boilers the absolute flue gas alarm is off and condensing plays no part in the verdict. The wrong choice warns too late or for nothing, and misjudges the verdict.",
           "boiler_min_power": "Lowest heating power from the manual, in kW. Compared with the building load: a load often below it means the boiler must cycle. A wrong value skews that judgement in the verdict.",
           "boiler_max_power": "Highest heating power in kW. With the minimum and the modulation it estimates heat output; a wrong value skews heat and gas estimates.",
           "max_ch_setpoint": "Highest flow temperature in heating, in °C. Flow above it points to a DHW run; set too low, heating counts as hot water. Control never writes a setpoint above it either: set too low, rooms stay cold in hard frost.",
@@ -245,7 +267,8 @@
       "invalid_freshness": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_signals": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_parameters": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
-      "unreadable_options": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again."
+      "unreadable_options": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
+      "invalid_connection": "This version cannot read an answer about the boiler's connection, heat source, type or control mode: choose it again."
     }
   },
   "options": {
@@ -254,6 +277,7 @@
         "title": "Smart Boiler for Versatile Thermostat options",
         "description": "Change one section; every other setting stays as it is. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "menu_options": {
+          "connection": "Boiler, connection and control mode",
           "signals": "Boiler signals",
           "freshness": "Freshness limits",
           "boiler": "Boiler",
@@ -265,6 +289,34 @@
           "level": "Level of detail",
           "level_hidden": "Level of detail (some hidden advanced settings are active)",
           "control": "Control (experimental)"
+        }
+      },
+      "connection": {
+        "title": "How is the boiler connected?",
+        "description": "These first choices shape everything after them; they switch nothing on. Choose how Home Assistant reaches your boiler:\n\n- **OpenTherm Gateway (integration)** — Home Assistant's OpenTherm Gateway integration. If Home Assistant stops, the gateway drops the plugin's setpoint within a minute: with a thermostat on the gateway, the thermostat takes over; without one, heating stops.\n- **OTGW firmware over MQTT** — the same gateway through its firmware's MQTT messages; the same when Home Assistant stops.\n- **ESPHome OpenTherm** — an ESP running ESPHome's OpenTherm component. It keeps the last setpoint and heating on until it restarts (by default after 15 minutes without Home Assistant), then takes the start values of its own configuration.\n- **EMS-ESP** — its flow setpoint lapses within about a minute and EMS-ESP does not repeat it, so the plugin does; if Home Assistant stops, the boiler returns to its own setting.\n- **Relay (on/off boiler)** — a relay on the boiler's room-thermostat terminals; it stays as it was if Home Assistant stops.\n- **The boiler's Wi-Fi module or the manufacturer's integration** — writes usually go to the boiler's memory or through a cloud: monitoring by default.\n- **Another writable entity (advanced)** — any other device; what it does when Home Assistant stops is its own.\n- **Another integration, read only** — the plugin only reads the boiler.\n\nSaving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "data": {
+          "connection": "Connection",
+          "heat_source": "Heat source",
+          "type": "Boiler type"
+        },
+        "data_description": {
+          "connection": "How Home Assistant reaches the boiler; required. It decides which write paths control may use and what the boiler does if Home Assistant stops. The wrong answer offers a write path the boiler cannot take.",
+          "heat_source": "Gas (natural gas or LPG), oil, electric or other; required. It decides which fields and alarms apply: an electric boiler has no flame, flue gas or condensing.",
+          "type": "Single-function (heating only), with or without a hot-water tank, or combi (hot water heated as you draw it), with or without a built-in tank; required. Used to tell hot-water runs from heating: the wrong type counts hot water as heating or the reverse."
+        }
+      },
+      "mode": {
+        "title": "Control",
+        "description": "What the plugin should do with the boiler. Choosing a mode switches nothing on: control has its own switch, off until you turn it on.\n\n- **Full control** — the plugin sets the water temperature from its curve and switches heating on and off with VT's zones.\n- **On/off (relay)** — the plugin switches heating on and off with VT's zones; the boiler keeps its own water temperature.\n- **Room temperature only — from version 0.3** — the boiler's own curve would set the water from the room's temperature; until 0.3 the plugin only monitors.\n- **Monitoring only** — the plugin reads and reports, and writes nothing.\n\nOnly the modes your connection can do are offered.\n\nSaving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "data": {
+          "control_mode": "Control mode",
+          "condensing": "Condensing boiler",
+          "dhw_priority": "Hot water has priority"
+        },
+        "data_description": {
+          "control_mode": "Chosen on purpose, with no default. Monitoring only and room temperature only keep control off, and the control switch gives that reason.",
+          "condensing": "Condensing boilers get flue gas limits for condensing appliances and are judged on how often they condense; for other boilers the absolute flue gas alarm is off and condensing plays no part in the verdict. The wrong choice warns too late or for nothing, and misjudges the verdict.",
+          "dhw_priority": "On (default): while the boiler heats hot water, the rooms get no heat — usual for a combi and for a tank charged through a three-way valve. Off: hot water and heating run together (a buffer, a tank charged in parallel, a priority limited in time). Used to judge when the rooms get heat: the wrong choice pauses the zones' learning for nothing, or lets them learn while the rooms get no heat."
         }
       },
       "level": {
@@ -375,9 +427,6 @@
         "title": "Boiler",
         "description": "What you know about your boiler. Leave unknown values empty: the plugin then says what it cannot judge. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
-          "class": "What the boiler's integration can do",
-          "dhw": "Domestic hot water",
-          "condensing": "Condensing boiler",
           "boiler_min_power": "Minimum power",
           "boiler_max_power": "Maximum power",
           "max_ch_setpoint": "Maximum heating setpoint",
@@ -387,9 +436,6 @@
           "bypass": "Bypass or low-loss header"
         },
         "data_description": {
-          "class": "Flow setpoint, curve parameters only, on/off or read-only. Control (experimental): a flow setpoint (water temperature) or on/off (relay); the other classes are monitored only.",
-          "dhw": "None, a storage tank or a combi boiler; required. Used to interpret burns: with \"none\" every burn counts as heating — declared on a boiler that heats hot water, its draws would count as heating starts; the wrong type counts hot water as heating or the reverse.",
-          "condensing": "Condensing boilers get flue gas limits for condensing appliances and are judged on how often they condense; for other boilers the absolute flue gas alarm is off and condensing plays no part in the verdict. The wrong choice warns too late or for nothing, and misjudges the verdict.",
           "boiler_min_power": "Lowest heating power from the manual, in kW. Compared with the building load: a load often below it means the boiler must cycle. A wrong value skews that judgement in the verdict.",
           "boiler_max_power": "Highest heating power in kW. With the minimum and the modulation it estimates heat output; a wrong value skews heat and gas estimates.",
           "max_ch_setpoint": "Highest flow temperature in heating, in °C. Flow above it points to a DHW run; set too low, heating counts as hot water. Control never writes a setpoint above it either: set too low, rooms stay cold in hard frost.",
@@ -538,7 +584,7 @@
           "restart_entity": "Restart indicator"
         },
         "data_description": {
-          "write_path": "No control (default); a writable entity you pick, e.g. an EMS-ESP or ESPHome OpenTherm number; the OpenTherm Gateway through Home Assistant's OpenTherm Gateway integration; or the OTGW firmware's MQTT commands. Pick the path your boiler interface really offers: a wrong one means writes that fail or go nowhere. A relay, for an on/off boiler: a switch on the boiler's room-thermostat terminals, or a boiler thermostat entity set to heat or off. Only the paths that suit the boiler class are offered.",
+          "write_path": "No control (default); a writable entity you pick, e.g. an EMS-ESP or ESPHome OpenTherm number; the OpenTherm Gateway through Home Assistant's OpenTherm Gateway integration; or the OTGW firmware's MQTT commands. Pick the path your boiler interface really offers: a wrong one means writes that fail or go nowhere. A relay, for an on/off boiler: a switch on the boiler's room-thermostat terminals, or a boiler thermostat entity set to heat or off. Only the paths that suit the boiler's connection and control mode are offered.",
           "topology": "How the gateway sits between thermostat and boiler. With a thermostat: on hand-back the thermostat takes over. Stand-alone, without a thermostat: on hand-back, and whenever Home Assistant stops for more than about a minute, the boiler stops heating. Monitor mode: the gateway only listens and control is not possible. Virtual: a controller on the Home Assistant side, e.g. ESPHome, drives the boiler. Required; declare it as it is — the plugin never changes the gateway's mode. A lost link to the boiler's data raises an alarm and hands back in every topology — stand-alone, heating stops until the data returns. With a thermostat: while the plugin controls, the wall thermostat's heating setting and its off switch do nothing — its hot-water settings still work; after a hand-back, or while Home Assistant is down, it heats by its own setting and program, so keep them at what the house should get. Not used with a relay: its state after hand-back is what a hand-back does. In every topology, after a hand-back or while Home Assistant is down, the water follows the boiler's or the wall thermostat's own maximum, not the plugin's: set an unmixed underfloor loop's maximum there too.",
           "thermostat_kind": "Only for a gateway, with a thermostat or stand-alone. OpenTherm thermostat: it talks to the boiler and may show the water temperature. On/off contact: a simple thermostat or switch on two wires — the gateway turns it into a heating request, and the plugin's \"heating off\" would block it after a Home Assistant crash, so control is not offered. Nothing: no thermostat at all. I don't know: control is not offered until you check. With a thermostat pick OpenTherm; stand-alone pick Nothing.",
           "confirmed_entity": "The entity that reports the setpoint the boiler received, e.g. the gateway's \"Control setpoint 1\" on its boiler device — it shows what the gateway sends, so the setpoint is shown as confirmed by the gateway, not by the boiler. Required: every write is checked against it, and a write the boiler ignores or another controller overwrites is reported. The plugin's setpoint entity shows only a confirmed value, otherwise unknown. Picking the entity you write confirms nothing: the setpoint is then shown as unverified. Not used with a relay: its own state confirms it.",
@@ -857,8 +903,10 @@
       "relay_off_timer_min_missing": "Enter the timer's length in minutes.",
       "relay_off_timer_min_short": "A switch-off timer shorter than 10 min is not accepted: each time it runs out, the boiler would start again. Set the relay's own timer to at least 30 min, or switch it off and choose \"None\".",
       "relay_contact_confirm_again": "The relay has changed: the tick that it is not a setting stored in the boiler's memory was given for the previous entity. Check the new relay or thermostat entity and submit again with the tick, or untick it if you do not know.",
-      "path_not_for_boiler_class": "The write path does not suit the boiler class: a relay for an on/off boiler, a setpoint path for a flow-setpoint boiler.",
-      "vt_commands_not_supported": "Versatile Thermostat's boiler commands name no switch turned on and off and no boiler thermostat set to heat and off: pick the relay."
+      "path_not_for_boiler_class": "The write path does not suit the boiler: a relay for an on/off boiler, a setpoint path for one that takes a water temperature. Check how the boiler is connected under \"Boiler, connection and control mode\".",
+      "vt_commands_not_supported": "Versatile Thermostat's boiler commands name no switch turned on and off and no boiler thermostat set to heat and off: pick the relay.",
+      "invalid_connection": "This version cannot read an answer about the boiler's connection, heat source, type or control mode: choose it again.",
+      "path_not_for_control_mode": "Monitoring only, or room temperature only (from version 0.3), is chosen: only \"No control\" fits. Change the control mode under \"Boiler, connection and control mode\" first."
     }
   },
   "selector": {
@@ -866,21 +914,6 @@
       "options": {
         "simple": "Simple",
         "advanced": "Advanced"
-      }
-    },
-    "boiler_class": {
-      "options": {
-        "flow_setpoint": "Flow setpoint (OpenTherm, EMS and similar)",
-        "curve_only": "Curve parameters only",
-        "on_off": "On/off (relay)",
-        "read_only": "Read-only"
-      }
-    },
-    "dhw_type": {
-      "options": {
-        "none": "None",
-        "storage": "Storage tank",
-        "combi": "Combi boiler"
       }
     },
     "modulation_scale": {
@@ -1004,6 +1037,42 @@
       "options": {
         "off": "Off",
         "on": "On"
+      }
+    },
+    "connection": {
+      "options": {
+        "opentherm_gw": "OpenTherm Gateway (Home Assistant integration)",
+        "otgw_mqtt": "OTGW firmware over MQTT",
+        "esphome": "ESPHome OpenTherm",
+        "ems_esp": "EMS-ESP",
+        "relay": "Relay (on/off boiler)",
+        "boiler_module": "The boiler's Wi-Fi module or the manufacturer's integration",
+        "other_entity": "Another writable entity (advanced)",
+        "read_only": "Another integration, read only"
+      }
+    },
+    "control_mode": {
+      "options": {
+        "full": "Full control (the curve sets the water temperature)",
+        "on_off": "On/off (relay)",
+        "room_values": "Room temperature only — from version 0.3",
+        "monitor": "Monitoring only"
+      }
+    },
+    "heat_source": {
+      "options": {
+        "gas": "Gas (natural gas or LPG)",
+        "oil": "Oil",
+        "electric": "Electric",
+        "other": "Other"
+      }
+    },
+    "boiler_type": {
+      "options": {
+        "single": "Single-function, no hot water",
+        "single_tank": "Single-function with a hot-water tank",
+        "combi": "Combi (instantaneous hot water)",
+        "combi_tank": "Combi with a built-in tank"
       }
     }
   },
@@ -1432,8 +1501,8 @@
             "name": "Blockers",
             "state": {
               "no_write_path": "Control is not set up",
-              "boiler_class_no_control": "This boiler class cannot be controlled",
-              "path_not_for_boiler_class": "The write path does not suit the boiler class",
+              "boiler_class_no_control": "The boiler's connection cannot be controlled",
+              "path_not_for_boiler_class": "The write path does not suit the boiler's connection",
               "no_setpoint_entity": "No setpoint entity picked",
               "write_type_not_supported": "The setpoint entity's write type cannot be used",
               "no_hand_back": "No hand-back chosen",
@@ -1492,7 +1561,9 @@
               "relay_used_by_zone": "A zone already switches the relay",
               "entity_used_by_zone": "A zone already drives the setpoint entity or a switch",
               "relay_of_boiler_interface": "The relay belongs to the boiler's or VT's own integration",
-              "relay_climate_modes": "The thermostat entity cannot be set to both heat and off"
+              "relay_climate_modes": "The thermostat entity cannot be set to both heat and off",
+              "control_mode_monitor": "Monitoring only chosen",
+              "control_mode_room_values": "Room temperature only: from version 0.3"
             }
           },
           "blockers_text": {
@@ -2434,8 +2505,8 @@
             "name": "Blockers",
             "state": {
               "no_write_path": "Control is not set up",
-              "boiler_class_no_control": "This boiler class cannot be controlled",
-              "path_not_for_boiler_class": "The write path does not suit the boiler class",
+              "boiler_class_no_control": "The boiler's connection cannot be controlled",
+              "path_not_for_boiler_class": "The write path does not suit the boiler's connection",
               "no_setpoint_entity": "No setpoint entity picked",
               "write_type_not_supported": "The setpoint entity's write type cannot be used",
               "no_hand_back": "No hand-back chosen",
@@ -2494,7 +2565,9 @@
               "relay_used_by_zone": "A zone already switches the relay",
               "entity_used_by_zone": "A zone already drives the setpoint entity or a switch",
               "relay_of_boiler_interface": "The relay belongs to the boiler's or VT's own integration",
-              "relay_climate_modes": "The thermostat entity cannot be set to both heat and off"
+              "relay_climate_modes": "The thermostat entity cannot be set to both heat and off",
+              "control_mode_monitor": "Monitoring only chosen",
+              "control_mode_room_values": "Room temperature only: from version 0.3"
             }
           },
           "blockers_text": {
@@ -2685,10 +2758,10 @@
       "message": "This answer does not fit the gateway connection: an OpenTherm thermostat means \"Gateway with a thermostat\", nothing means stand-alone. Pick the other connection. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_boiler_class_no_control": {
-      "message": "Control needs a boiler of the class \"Flow setpoint\" or \"On/off (relay)\". Other reasons: {count} (all are listed on the control state)."
+      "message": "The plugin cannot write to this boiler: it is read through an integration that only reads, or the boiler's own module with monitoring chosen. Check \"Boiler, connection and control mode\". Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_path_not_for_boiler_class": {
-      "message": "The write path does not suit the boiler class: a relay for an on/off boiler, a setpoint path for a flow-setpoint boiler. Other reasons: {count} (all are listed on the control state)."
+      "message": "The write path does not suit the boiler: a relay for an on/off boiler, a setpoint path for one that takes a water temperature. Check how the boiler is connected under \"Boiler, connection and control mode\". Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_relay_entity": {
       "message": "Pick the relay in the control options. Other reasons: {count} (all are listed on the control state)."
@@ -2719,6 +2792,12 @@
     },
     "blocked_no_flow_signal": {
       "message": "Water-temperature control needs the flow temperature mapped in the signals. Other reasons: {count} (all are listed on the control state)."
+    },
+    "blocked_control_mode_monitor": {
+      "message": "Monitoring only is chosen under \"Boiler, connection and control mode\": the plugin writes nothing to the boiler. Choose a control mode there to set up control. Other reasons: {count} (all are listed on the control state)."
+    },
+    "blocked_control_mode_room_values": {
+      "message": "Room temperature only comes in version 0.3: until then the plugin only monitors and writes nothing. To control the water temperature now, choose full control under \"Boiler, connection and control mode\". Other reasons: {count} (all are listed on the control state)."
     }
   },
   "issues": {

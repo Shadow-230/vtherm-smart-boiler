@@ -12,8 +12,15 @@ section's step, never as an exception (P-70). An options edit that would add a b
 control asks for confirmation first (Open after R6 #3); every save but the level's reloads the
 integration, which hands the boiler back while control holds it (P-67, provisional, K4).
 
+The setup opens with how the boiler is connected (I6): the connection, the heat source and the
+boiler type, then the control mode — chosen on purpose, no default — with condensing and the
+hot-water priority where they apply, then the name and the level. The boiler class follows from
+the connection; an entry made before the panels keeps its stored class and is offered the panels
+in the options, pre-filled where its stored write path names the connection.
+
 The write path suits the boiler class: a flow-setpoint boiler gets the setpoint paths, an on/off
-boiler the relay (X8), the other classes only "no control". The relay path asks for the relay and
+boiler the relay (X8), the other classes only "no control"; monitoring only, or room values until
+0.3, offers "no control" alone. The relay path asks for the relay and
 its own settings — pre-filled from Versatile Thermostat's central boiler where it can be moved
 over, shown for confirmation and never saved without the user — then its behaviour step, which
 shows VT's activation delay at every level; no signal is required for the entry.
@@ -75,6 +82,7 @@ from .const import (
     ZONES,
 )
 from .control_config import (
+    CONNECTION_MODES,
     CONTROL_BOUNDS,
     CONTROL_DEFAULTS,
     CURVE_BOUNDS,
@@ -88,13 +96,17 @@ from .control_config import (
     RELAY_KEYS,
     TARGET_KEYS,
     AlarmReaction,
+    Connection,
+    ControlMode,
     ControlOptions,
     HandBack,
     ThermostatKind,
     Topology,
     ValueEffect,
     WritePath,
+    boiler_class_for,
     config_blockers,
+    connection_suggested_by,
     curve_problems,
     fixed_keys,
     hand_back_value_problems,
@@ -119,7 +131,7 @@ from .core.building import InsulationClass, ThermalMass
 from .core.demand import feeds_opening, feeds_power
 from .core.foreign_heat import SourceKind
 from .core.guards import WriteType
-from .core.installation import BoilerClass, CircuitControl, DhwType, EmitterType
+from .core.installation import BoilerClass, BoilerType, CircuitControl, EmitterType, HeatSource
 from .core.metrics import ModulationScale
 from .core.reference_room import Strategy
 from .core.relay import TIMER_MIN_S, RelayPowerOn, RelayReports, RelayRest, RelayTimer
@@ -307,6 +319,142 @@ def level_schema(options: dict[str, Any]) -> vol.Schema:
     )
 
 
+# --- the first panels: how the boiler is connected, and the control mode (I6) ----------------
+
+CONNECTION = "connection"
+CONTROL_MODE = "control_mode"
+HEAT_SOURCE = "heat_source"
+BOILER_TYPE = "type"
+DHW_PRIORITY = "dhw_priority"
+CONNECTION_STEP_KEYS = (CONNECTION, HEAT_SOURCE, BOILER_TYPE)
+# The boiler's keys the panels write: a stored value of them this version cannot read is fixed
+# there (P-70).
+PANEL_BOILER_KEYS = ("class", "dhw", "condensing")
+
+
+def _stored_boiler(options: Mapping[str, Any]) -> Mapping[str, Any]:
+    boiler = options.get(BOILER)
+    return boiler if isinstance(boiler, Mapping) else {}
+
+
+def _known[E: StrEnum](kind: type[E], raw: object) -> E | None:
+    try:
+        return kind(str(raw)) if raw is not None else None
+    except ValueError:
+        return None
+
+
+def _suggested_connection(options: Mapping[str, Any]) -> Any:
+    """The stored connection; for an entry made before the question, the one its stored write
+    path names (decision 12); else none — chosen on purpose."""
+    boiler = _stored_boiler(options)
+    if CONNECTION in boiler:
+        return _choice(boiler[CONNECTION], Connection, vol.UNDEFINED)
+    control = options.get(CONTROL)
+    suggested = connection_suggested_by(
+        control.get("write_path") if isinstance(control, Mapping) else None
+    )
+    return vol.UNDEFINED if suggested is None else suggested.value
+
+
+def connection_schema(options: dict[str, Any]) -> vol.Schema:
+    """The setup's first panel (decisions 1, 7, 8): how the boiler is connected, what it burns
+    or uses, and its type by the standard names — each chosen on purpose, with no default; an
+    entry made before the panel is offered its type from its stored hot-water kind."""
+    boiler = _stored_boiler(options)
+    if BOILER_TYPE in boiler:
+        kind = _choice(boiler[BOILER_TYPE], BoilerType, vol.UNDEFINED)
+    else:
+        suggested = BoilerType.suggested_for(boiler.get("dhw"))
+        kind = vol.UNDEFINED if suggested is None else suggested.value
+    return vol.Schema(
+        {
+            vol.Required(CONNECTION, default=_suggested_connection(options)): _select(
+                CONNECTION, [c.value for c in Connection]
+            ),
+            vol.Required(
+                HEAT_SOURCE, default=_choice(boiler.get(HEAT_SOURCE), HeatSource, vol.UNDEFINED)
+            ): _select(HEAT_SOURCE, [s.value for s in HeatSource]),
+            vol.Required(BOILER_TYPE, default=kind): _select(
+                "boiler_type", [k.value for k in BoilerType]
+            ),
+        }
+    )
+
+
+def modes_offered(options: Mapping[str, Any]) -> list[str]:
+    """The control modes the stored connection can do (decision 6)."""
+    connection = _known(Connection, _stored_boiler(options).get(CONNECTION))
+    modes = CONNECTION_MODES[connection] if connection is not None else tuple(ControlMode)
+    return [mode.value for mode in modes]
+
+
+def _suggested_mode(options: Mapping[str, Any], modes: list[str]) -> Any:
+    """The stored mode where the connection can do it; for an entry made before the question,
+    the one its stored control section shows — a relay switches on and off, any other path
+    sets the water; else none — chosen on purpose (decision 6)."""
+    boiler = _stored_boiler(options)
+    if CONTROL_MODE in boiler:
+        stored = boiler[CONTROL_MODE]
+        return stored if stored in modes else vol.UNDEFINED
+    control = options.get(CONTROL)
+    path = control.get("write_path") if isinstance(control, Mapping) else None
+    if not path:
+        return vol.UNDEFINED
+    suggested = ControlMode.ON_OFF if path == WritePath.RELAY else ControlMode.FULL
+    return suggested.value if suggested.value in modes else vol.UNDEFINED
+
+
+def mode_schema(options: dict[str, Any]) -> vol.Schema:
+    """The second panel (decisions 6, 7, 8): the control mode the connection can do, with no
+    default; condensing for a boiler that burns fuel; the hot-water priority for one that heats
+    hot water — on by default, as the plugin took it before."""
+    boiler = _stored_boiler(options)
+    modes = modes_offered(options)
+    fields: dict[Any, Any] = {
+        vol.Required(CONTROL_MODE, default=_suggested_mode(options, modes)): _select(
+            CONTROL_MODE, modes
+        )
+    }
+    source = _known(HeatSource, boiler.get(HEAT_SOURCE))
+    if source is None or source.burns_fuel:
+        fields[vol.Required("condensing", default=boiler.get("condensing", True))] = (
+            selector.BooleanSelector()
+        )
+    kind = _known(BoilerType, boiler.get(BOILER_TYPE))
+    if kind is None or kind.heats_hot_water:
+        fields[vol.Required(DHW_PRIORITY, default=boiler.get(DHW_PRIORITY, True))] = (
+            selector.BooleanSelector()
+        )
+    return vol.Schema(fields)
+
+
+def apply_connection(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    """The first panel's answers; the hot-water kind follows the boiler type, so a version
+    without the type reads the entry the same."""
+    boiler = dict(_stored_boiler(options))
+    for key in CONNECTION_STEP_KEYS:
+        boiler[key] = user_input[key]
+    boiler["dhw"] = BoilerType(user_input[BOILER_TYPE]).dhw.value
+    options[BOILER] = boiler
+
+
+def apply_mode(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    """The second panel's answers; the class follows the connection and the mode (decision 2).
+    An electric boiler does not condense; one without hot water keeps no priority."""
+    boiler = dict(_stored_boiler(options))
+    boiler[CONTROL_MODE] = user_input[CONTROL_MODE]
+    boiler["condensing"] = user_input.get("condensing", False)  # not shown: it burns nothing
+    if DHW_PRIORITY in user_input:
+        boiler[DHW_PRIORITY] = user_input[DHW_PRIORITY]
+    else:
+        boiler.pop(DHW_PRIORITY, None)  # not shown: no hot water
+    boiler["class"] = boiler_class_for(
+        Connection(boiler[CONNECTION]), ControlMode(user_input[CONTROL_MODE])
+    ).value
+    options[BOILER] = boiler
+
+
 def _stored_signals(options: Mapping[str, Any]) -> dict[str, Any]:
     """The stored signals; a section of another shape entirely reads as none, so the signals
     step can show and replace it (P-70)."""
@@ -360,17 +508,8 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
     boiler = options.get(BOILER, {})
     params = options.get(PARAMETERS, {})
     current = {**boiler, **params}
+    # The class, the hot water and condensing are the first panels' (I6).
     fields: dict[Any, Any] = {
-        vol.Required(
-            "class", default=_choice(boiler.get("class"), BoilerClass, BoilerClass.READ_ONLY.value)
-        ): _select("boiler_class", [c.value for c in BoilerClass]),
-        # No default: "none" makes every burn heating, a wrong guess on a combi boiler.
-        vol.Required("dhw", default=_choice(boiler.get("dhw"), DhwType, vol.UNDEFINED)): _select(
-            "dhw_type", [d.value for d in DhwType]
-        ),
-        vol.Required(
-            "condensing", default=boiler.get("condensing", True)
-        ): selector.BooleanSelector(),
         _optional("boiler_min_power", current): _number(0.3, 200, 0.1, "kW"),
         _optional("boiler_max_power", current): _number(1, 500, 0.1, "kW"),
     }
@@ -703,11 +842,18 @@ _PATHS_BY_CLASS: Mapping[str, tuple[str, ...]] = {
 }
 
 
+def control_mode_off(options: Mapping[str, Any]) -> bool:
+    """Monitoring only, or room values until 0.3, chosen on the second panel (decision 6)."""
+    mode = _known(ControlMode, _stored_boiler(options).get(CONTROL_MODE))
+    return mode in (ControlMode.MONITOR, ControlMode.ROOM_VALUES)
+
+
 def paths_for_class(options: Mapping[str, Any]) -> list[str]:
     """The write paths the form offers for the boiler class: "no control" and those that suit
-    it."""
-    boiler = options.get(BOILER)
-    boiler_class = boiler.get("class") if isinstance(boiler, Mapping) else None
+    it; "no control" alone where the control mode keeps control off."""
+    if control_mode_off(options):
+        return [NO_CONTROL]
+    boiler_class = _stored_boiler(options).get("class")
     return [NO_CONTROL, *_PATHS_BY_CLASS.get(str(boiler_class), ())]
 
 
@@ -1286,6 +1432,8 @@ def control_error(
     path = user_input.get("write_path")
     if path in (None, NO_CONTROL):
         return {}
+    if options is not None and control_mode_off(options):
+        return {"write_path": "path_not_for_control_mode"}  # I6, decision 6
     if options is not None and path not in paths_for_class(options):
         return {"write_path": "path_not_for_boiler_class"}
     if path == WritePath.RELAY:
@@ -1745,6 +1893,8 @@ _PROBLEM_STEPS = {
     "invalid_parameters": "building",
     "unreadable_options": "signals",
     "invalid_control": "control",
+    # I6 (decision 12): an answer of the first panels this version cannot read.
+    "invalid_connection": "connection",
     # Found at the save (P-12): control took the boiler, or began to owe it a hand-back, after
     # the control steps were answered; what the hand-back goes through is picked there.
     "hand_back_pending": "control",
@@ -1775,6 +1925,8 @@ def problem_step(code: str, subject: str | None) -> str:
     """The step where the user can fix a problem the last check found."""
     if code == "implausible_parameter":
         return "boiler" if subject in BOILER_PARAMETER_KEYS else "building"
+    if code == "invalid_boiler" and subject in PANEL_BOILER_KEYS:
+        return "connection"  # I6: the class, the hot water and condensing are the panels'
     return _PROBLEM_STEPS.get(code, "signals")
 
 
@@ -1821,6 +1973,23 @@ class _Steps:
     async def _goto(self, step: str) -> ConfigFlowResult:
         result: ConfigFlowResult = await getattr(self, f"async_step_{step}")()
         return result
+
+    async def async_step_connection(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The first panel (I6): how the boiler is connected, the heat source, the boiler type."""
+        if user_input is not None:
+            apply_connection(self.options, user_input)
+            return await self.async_step_mode()
+        return self._form(step_id="connection", data_schema=connection_schema(self.options))
+
+    async def async_step_mode(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """The second panel (I6): the control mode the connection can do, condensing and the
+        hot-water priority where they apply."""
+        if user_input is not None:
+            apply_mode(self.options, user_input)
+            return await self._goto(self._next_after("mode"))
+        return self._form(step_id="mode", data_schema=mode_schema(self.options))
 
     async def async_step_signals(
         self, user_input: dict[str, Any] | None = None
@@ -2055,7 +2224,10 @@ class SmartBoilerConfigFlow(_Steps, ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         return SmartBoilerOptionsFlow()
 
-    ORDER = ("signals", "boiler", "circuit", "zones", "building", "reference", "monitor", "finish")
+    ORDER = (
+        "connection", "mode", "name", "signals", "boiler", "circuit", "zones", "building",
+        "reference", "monitor", "finish",
+    )  # fmt: skip
 
     def _next_after(self, step: str) -> str:
         following = self.ORDER[self.ORDER.index(step) + 1]
@@ -2064,15 +2236,19 @@ class SmartBoilerConfigFlow(_Steps, ConfigFlow, domain=DOMAIN):
         return following
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """The setup opens with how the boiler is connected (I6)."""
+        return await self.async_step_connection()
+
+    async def async_step_name(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
             self._title = user_input["name"]
             self.options[LEVEL] = user_input[LEVEL]
-            return await self.async_step_signals()
+            return await self._goto(self._next_after("name"))
         texts = await async_get_translations(
             self.hass, self.hass.config.language, "device", [DOMAIN]
         )
         name = texts.get(f"component.{DOMAIN}.device.{DEFAULT_NAME_KEY}.name") or DEFAULT_NAME
-        return self.async_show_form(step_id="user", data_schema=user_schema({}, name))
+        return self.async_show_form(step_id="name", data_schema=user_schema({}, name))
 
     async def async_step_finish(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         problem = validate_problem(self.options)
@@ -2124,7 +2300,7 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
         return current if isinstance(current, Mapping) else {}
 
     def _next_after(self, step: str) -> str:
-        return "save"
+        return "mode" if step == "connection" else "save"
 
     async def _async_hand_back_blocker(self) -> str | None:
         """Why what the hand-back goes through must not change now: it has not reached the
@@ -2203,8 +2379,8 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         menu = [
-            "signals", "freshness", "boiler", "circuit", "zones", "building", "reference",
-            "control",
+            "connection", "signals", "freshness", "boiler", "circuit", "zones", "building",
+            "reference", "control",
         ]  # fmt: skip
         if _advanced(self.options):
             menu.append("monitor")

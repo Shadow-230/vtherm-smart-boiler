@@ -81,8 +81,16 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    nawet bez kotła centralnego — przed włączeniem sterowania uruchom Home Assistant ponownie
    jeden raz: do tego czasu sterowanie czeka, bo wtyczka nie wie, co VT w tym czasie uruchomił.
 2. **Utwórz wpis.** Ustawienia → Urządzenia oraz usługi → Dodaj integrację →
-   **Smart Boiler for Versatile Thermostat**. W pierwszym kroku wybierz nazwę i poziom
-   szczegółowości (poziom zmienia tylko to, co widzisz, nigdy działanie wtyczki).
+   **Smart Boiler for Versatile Thermostat**. Pierwszy ekran pyta, **jak kocioł jest podłączony**
+   (integracja OpenTherm Gateway, firmware OTGW przez MQTT, ESPHome OpenTherm, EMS-ESP, przekaźnik,
+   moduł Wi-Fi kotła lub integracja producenta, inna encja do zapisu albo inna integracja, która
+   tylko czyta), o **źródło ciepła** i **rodzaj kotła** (jednofunkcyjny albo dwufunkcyjny, z
+   zasobnikiem ciepłej wody albo bez). Drugi pyta o **tryb sterowania** — pełne sterowanie,
+   wł./wył., tylko temperatura pokoju (od wersji 0.3; do tego czasu monitorowanie) albo tylko
+   monitorowanie — oraz, gdzie to ma sens, o kondensację i priorytet ciepłej wody. Żadna z tych
+   odpowiedzi nie jest wybrana za Ciebie i żadna niczego nie włącza. Potem wybierz nazwę i poziom
+   szczegółowości (poziom zmienia tylko to, co widzisz, nigdy działanie wtyczki). Te same ekrany
+   otwierają opcje integracji, w pozycji **Kocioł, połączenie i tryb sterowania**.
 3. **Wybierz sygnały.** W kroku **Sygnały kotła** wybierz encję dla każdego sygnału, który masz —
    co najmniej płomień i temperaturę zasilania, jeśli chcesz sterować kotłem. Wtyczka tylko
    czyta te encje.

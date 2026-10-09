@@ -5,11 +5,16 @@ from __future__ import annotations
 import pytest
 
 from custom_components.vtherm_smart_boiler.control_config import (
+    CONNECTION_MODES,
     AlarmReaction,
+    Connection,
+    ControlMode,
     HandBack,
     Topology,
     WritePath,
+    boiler_class_for,
     config_blockers,
+    connection_suggested_by,
     fixed_keys,
     parse_control,
 )
@@ -248,6 +253,10 @@ def test_every_blocker_is_listed() -> None:
         (RELAY, Installation(Boiler(BoilerClass.READ_ONLY), (Circuit("main"),))),
     ):
         found |= set(config_blockers(parse_control(data, installation, None), installation))
+    # I6.1 (decision 6): monitoring only, or room values until 0.3.
+    for mode in (ControlMode.MONITOR, ControlMode.ROOM_VALUES):
+        control = parse_control(OTGW, RADIATORS, None, control_mode=mode)
+        found |= set(config_blockers(control, RADIATORS))
     assert found == set(CONFIG_BLOCKERS)
 
 
@@ -2301,3 +2310,108 @@ def test_what_the_form_refuses_blocks_options_that_bypass_it(
         clean |= {"mqtt_top": "OTGW", "mqtt_node": "otgw"}
     control = parse_control(clean, installation, None)
     assert not set(config_blockers(control, installation, others=())) & expected
+
+
+# --- I6.1: the connection and the control mode (decisions 1, 6) -----------------------------
+
+
+@pytest.mark.parametrize(
+    ("mode", "section", "expected"),
+    [
+        # Chosen on purpose: monitoring only, or room values (0.3) — the one reason, whatever
+        # else the control section lacks or has.
+        (ControlMode.MONITOR, {}, ["control_mode_monitor"]),
+        (ControlMode.MONITOR, OTGW, ["control_mode_monitor"]),
+        (ControlMode.ROOM_VALUES, {}, ["control_mode_room_values"]),
+        (ControlMode.ROOM_VALUES, OTGW, ["control_mode_room_values"]),
+        # Full control: judged as before.
+        (ControlMode.FULL, {}, ["no_write_path"]),
+        (ControlMode.FULL, OTGW, []),
+        # An entry from before the panel (no mode): as before.
+        (None, {}, ["no_write_path"]),
+        (None, OTGW, []),
+    ],
+)
+def test_a_control_mode_without_control_is_its_own_reason(
+    mode: ControlMode | None, section: dict, expected: list[str]
+) -> None:
+    """I6.1 (decision 6): monitoring only, or room-temperature mode until 0.3, keeps control
+    off with that reason alone — a control section stored beside it is not run, and its lacks
+    are not listed; with full control, or no answer yet, the blockers are as before."""
+    control = parse_control(section, RADIATORS, None, control_mode=mode)
+    assert control.control_mode is mode
+    signals = (Signal.FLAME, Signal.FLOW)
+    assert config_blockers(control, RADIATORS, signals=signals) == expected
+
+
+def test_the_connection_is_carried_without_a_control_section() -> None:
+    """I6.1: the panel's answers reach the control options even where control is not set up,
+    so the reason it is off can name them."""
+    control = parse_control(
+        {}, RADIATORS, None, connection=Connection.ESPHOME, control_mode=ControlMode.MONITOR
+    )
+    assert not control.configured
+    assert control.connection is Connection.ESPHOME
+
+
+def test_each_connection_offers_the_modes_it_can_do() -> None:
+    """I6.1 (decisions 1, 6): a relay switches on and off; a read-only integration only
+    monitors; every connection that can set a water temperature offers full control, room
+    values (0.3) and monitoring. Monitoring is always offered."""
+    water = (ControlMode.FULL, ControlMode.ROOM_VALUES, ControlMode.MONITOR)
+    assert dict(CONNECTION_MODES) == {
+        Connection.OPENTHERM_GW: water,
+        Connection.OTGW_MQTT: water,
+        Connection.ESPHOME: water,
+        Connection.EMS_ESP: water,
+        Connection.RELAY: (ControlMode.ON_OFF, ControlMode.MONITOR),
+        Connection.BOILER_MODULE: water,
+        Connection.OTHER_ENTITY: water,
+        Connection.READ_ONLY: (ControlMode.MONITOR,),
+    }
+
+
+@pytest.mark.parametrize(
+    ("connection", "mode", "expected"),
+    [
+        # What the connection can do, whatever the user wants now: the verdict can still say
+        # "worth enabling" for a gateway that only monitors.
+        (Connection.OPENTHERM_GW, ControlMode.FULL, BoilerClass.FLOW_SETPOINT),
+        (Connection.OPENTHERM_GW, ControlMode.MONITOR, BoilerClass.FLOW_SETPOINT),
+        (Connection.OTGW_MQTT, ControlMode.ROOM_VALUES, BoilerClass.FLOW_SETPOINT),
+        (Connection.ESPHOME, ControlMode.FULL, BoilerClass.FLOW_SETPOINT),
+        (Connection.EMS_ESP, ControlMode.MONITOR, BoilerClass.FLOW_SETPOINT),
+        (Connection.OTHER_ENTITY, ControlMode.FULL, BoilerClass.FLOW_SETPOINT),
+        (Connection.RELAY, ControlMode.ON_OFF, BoilerClass.ON_OFF),
+        (Connection.RELAY, ControlMode.MONITOR, BoilerClass.ON_OFF),
+        (Connection.READ_ONLY, ControlMode.MONITOR, BoilerClass.READ_ONLY),
+        # Decision 5: the boiler's own module monitors by default; control only on purpose.
+        (Connection.BOILER_MODULE, ControlMode.FULL, BoilerClass.FLOW_SETPOINT),
+        (Connection.BOILER_MODULE, ControlMode.MONITOR, BoilerClass.READ_ONLY),
+        (Connection.BOILER_MODULE, ControlMode.ROOM_VALUES, BoilerClass.READ_ONLY),
+    ],
+)
+def test_the_boiler_class_follows_the_connection(
+    connection: Connection, mode: ControlMode, expected: BoilerClass
+) -> None:
+    """I6.1 (decision 2): the class is no longer asked; it is what the connection can do."""
+    assert boiler_class_for(connection, mode) is expected
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("opentherm_gw", Connection.OPENTHERM_GW),
+        ("otgw_mqtt", Connection.OTGW_MQTT),
+        ("relay", Connection.RELAY),
+        # An entity may be ESPHome, EMS-ESP or another device: not guessed (decision 12).
+        ("entity", None),
+        (None, None),
+        ("carrier_pigeon", None),
+        (3, None),
+    ],
+)
+def test_a_stored_write_path_suggests_its_connection(path: object, expected: object) -> None:
+    """I6.1 (decision 12): an entry made before the panel is offered the connection its stored
+    write path names; nothing where it does not."""
+    assert connection_suggested_by(path) is expected

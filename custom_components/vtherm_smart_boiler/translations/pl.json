@@ -1,9 +1,37 @@
 {
   "config": {
     "step": {
-      "user": {
+      "connection": {
+        "title": "Jak kocioł jest podłączony?",
+        "description": "Te pierwsze wybory decydują o wszystkim, co dalej; same niczego nie włączają. Wybierz, jak Home Assistant łączy się z kotłem:\n\n- **OpenTherm Gateway (integracja)** — integracja OpenTherm Gateway w Home Assistant. Gdy Home Assistant przestanie działać, bramka najpóźniej po minucie porzuca nastawę wtyczki: z termostatem na bramce sterowanie przejmuje termostat, bez termostatu grzanie staje.\n- **Firmware OTGW przez MQTT** — ta sama bramka przez wiadomości MQTT jej firmware'u; po zatrzymaniu Home Assistant tak samo.\n- **ESPHome OpenTherm** — ESP z komponentem OpenTherm ESPHome. Trzyma ostatnią nastawę i włączone grzanie aż do restartu (domyślnie po 15 minutach bez Home Assistant), potem przyjmuje wartości startowe z własnej konfiguracji.\n- **EMS-ESP** — jego nastawa zasilania wygasa po około minucie, a EMS-ESP jej nie ponawia, więc ponawia ją wtyczka; gdy Home Assistant przestanie działać, kocioł wraca do własnego ustawienia.\n- **Przekaźnik (kocioł wł./wył.)** — przekaźnik na zaciskach termostatu pokojowego kotła; po zatrzymaniu Home Assistant zostaje w ostatnim stanie.\n- **Moduł Wi-Fi kotła lub integracja producenta** — zapisy trafiają zwykle do pamięci kotła albo przez chmurę: domyślnie tylko monitorowanie.\n- **Inna encja do zapisu (zaawansowane)** — dowolne inne urządzenie; to, co robi po zatrzymaniu Home Assistant, zależy od niego.\n- **Inna integracja, tylko odczyt** — wtyczka tylko odczytuje kocioł.",
+        "data": {
+          "connection": "Połączenie",
+          "heat_source": "Źródło ciepła",
+          "type": "Rodzaj kotła"
+        },
+        "data_description": {
+          "connection": "Jak Home Assistant łączy się z kotłem; wymagane. Decyduje, jakich ścieżek zapisu może używać sterowanie i co robi kocioł, gdy Home Assistant przestanie działać. Zła odpowiedź oferuje ścieżkę zapisu, której kocioł nie przyjmie.",
+          "heat_source": "Gaz (ziemny lub LPG), olej, prąd albo inne; wymagane. Decyduje, które pola i alarmy mają sens: kocioł elektryczny nie ma płomienia, spalin ani kondensacji.",
+          "type": "Jednofunkcyjny (tylko ogrzewanie), z zasobnikiem ciepłej wody albo bez, lub dwufunkcyjny (ciepła woda grzana w trakcie poboru), z wbudowanym zasobnikiem albo bez; wymagane. Służy do odróżniania grzania ciepłej wody od ogrzewania: zły rodzaj liczy ciepłą wodę jako ogrzewanie albo odwrotnie."
+        }
+      },
+      "mode": {
+        "title": "Sterowanie",
+        "description": "Co wtyczka ma robić z kotłem. Wybór trybu niczego nie włącza: sterowanie ma własny przełącznik, wyłączony, dopóki go nie włączysz.\n\n- **Pełne sterowanie** — wtyczka ustawia temperaturę wody według swojej krzywej i włącza oraz wyłącza grzanie razem ze strefami VT.\n- **Wł./wył. (przekaźnik)** — wtyczka włącza i wyłącza grzanie razem ze strefami VT; temperaturę wody kocioł ustawia sam.\n- **Tylko temperatura pokoju — od wersji 0.3** — temperaturę wody ustawiałaby własna krzywa kotła na podstawie temperatury pokoju; do wersji 0.3 wtyczka tylko monitoruje.\n- **Tylko monitorowanie** — wtyczka odczytuje i raportuje, niczego nie zapisuje.\n\nPokazane są tylko tryby, na które pozwala Twoje połączenie.",
+        "data": {
+          "control_mode": "Tryb sterowania",
+          "condensing": "Kocioł kondensacyjny",
+          "dhw_priority": "Ciepła woda ma priorytet"
+        },
+        "data_description": {
+          "control_mode": "Wybierany świadomie, bez wartości domyślnej. Tylko monitorowanie i tylko temperatura pokoju zostawiają sterowanie wyłączone, a przełącznik sterowania podaje ten powód.",
+          "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych i są oceniane po tym, jak często kondensują; dla innych kotłów bezwzględny alarm spalin jest wyłączony, a kondensacja nie wpływa na werdykt. Zły wybór ostrzega za późno albo bez powodu i myli werdykt.",
+          "dhw_priority": "Włączone (domyślnie): gdy kocioł grzeje ciepłą wodę, pomieszczenia nie dostają ciepła — tak jest zwykle w kotle dwufunkcyjnym i przy zasobniku ładowanym przez zawór trójdrożny. Wyłączone: ciepła woda i ogrzewanie działają równocześnie (bufor, zasobnik ładowany równolegle, priorytet ograniczony w czasie). Służy do oceny, kiedy pomieszczenia dostają ciepło: zły wybór wstrzymuje naukę stref bez potrzeby albo pozwala im się uczyć, gdy pomieszczenia nie dostają ciepła."
+        }
+      },
+      "name": {
         "title": "Smart Boiler for Versatile Thermostat",
-        "description": "Monitoruje kocioł; nie zapisuje niczego do kotła, dopóki nie włączysz sterowania w opcjach. Wybierz nazwę i poziom szczegółowości.",
+        "description": "Wybierz nazwę i poziom szczegółowości. Wtyczka monitoruje kocioł; niczego do niego nie zapisuje, dopóki nie włączysz sterowania.",
         "data": {
           "name": "Nazwa",
           "level": "Poziom szczegółowości"
@@ -63,9 +91,6 @@
         "title": "Kocioł",
         "description": "Co wiesz o swoim kotle. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić.",
         "data": {
-          "class": "Co potrafi integracja kotła",
-          "dhw": "Ciepła woda użytkowa",
-          "condensing": "Kocioł kondensacyjny",
           "boiler_min_power": "Moc minimalna",
           "boiler_max_power": "Moc maksymalna",
           "max_ch_setpoint": "Maksymalna nastawa c.o.",
@@ -75,9 +100,6 @@
           "bypass": "Bypass lub sprzęgło hydrauliczne"
         },
         "data_description": {
-          "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Sterowanie (eksperymentalne): nastawa zasilania (temperatura wody) albo wł./wył. (przekaźnik); pozostałe klasy są tylko monitorowane.",
-          "dhw": "Brak, zasobnik albo kocioł dwufunkcyjny; wymagane. Służy do interpretacji paleń: przy „brak” każde palenie liczy się jako c.o. — zadeklarowane w kotle, który grzeje ciepłą wodę, jej pobory liczyłyby się jako starty c.o.; zły typ liczy ciepłą wodę jako c.o. albo odwrotnie.",
-          "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych i są oceniane po tym, jak często kondensują; dla innych kotłów bezwzględny alarm spalin jest wyłączony, a kondensacja nie wpływa na werdykt. Zły wybór ostrzega za późno albo bez powodu i myli werdykt.",
           "boiler_min_power": "Najmniejsza moc grzania z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować. Zła wartość wypacza tę ocenę w werdykcie.",
           "boiler_max_power": "Największa moc grzania w kW. Z minimum i modulacją szacuje moc cieplną; zła wartość wypacza szacunki ciepła i gazu.",
           "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie c.w.u.; za niska sprawia, że c.o. liczy się jako ciepła woda. Sterowanie też nigdy nie zapisze nastawy powyżej niej: za niska zostawia pokoje zimne w silny mróz.",
@@ -245,7 +267,8 @@
       "invalid_freshness": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_signals": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_parameters": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
-      "unreadable_options": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie."
+      "unreadable_options": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
+      "invalid_connection": "Ta wersja nie potrafi odczytać jednej z odpowiedzi o połączeniu kotła, źródle ciepła, rodzaju kotła albo trybie sterowania: wybierz ją ponownie."
     }
   },
   "options": {
@@ -254,6 +277,7 @@
         "title": "Opcje Smart Boiler for Versatile Thermostat",
         "description": "Zmień jedną sekcję; wszystkie inne ustawienia zostają bez zmian. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "menu_options": {
+          "connection": "Kocioł, połączenie i tryb sterowania",
           "signals": "Sygnały kotła",
           "freshness": "Limity świeżości",
           "boiler": "Kocioł",
@@ -265,6 +289,34 @@
           "level": "Poziom szczegółowości",
           "level_hidden": "Poziom szczegółowości (aktywne są ukryte ustawienia zaawansowane)",
           "control": "Sterowanie (eksperymentalne)"
+        }
+      },
+      "connection": {
+        "title": "Jak kocioł jest podłączony?",
+        "description": "Te pierwsze wybory decydują o wszystkim, co dalej; same niczego nie włączają. Wybierz, jak Home Assistant łączy się z kotłem:\n\n- **OpenTherm Gateway (integracja)** — integracja OpenTherm Gateway w Home Assistant. Gdy Home Assistant przestanie działać, bramka najpóźniej po minucie porzuca nastawę wtyczki: z termostatem na bramce sterowanie przejmuje termostat, bez termostatu grzanie staje.\n- **Firmware OTGW przez MQTT** — ta sama bramka przez wiadomości MQTT jej firmware'u; po zatrzymaniu Home Assistant tak samo.\n- **ESPHome OpenTherm** — ESP z komponentem OpenTherm ESPHome. Trzyma ostatnią nastawę i włączone grzanie aż do restartu (domyślnie po 15 minutach bez Home Assistant), potem przyjmuje wartości startowe z własnej konfiguracji.\n- **EMS-ESP** — jego nastawa zasilania wygasa po około minucie, a EMS-ESP jej nie ponawia, więc ponawia ją wtyczka; gdy Home Assistant przestanie działać, kocioł wraca do własnego ustawienia.\n- **Przekaźnik (kocioł wł./wył.)** — przekaźnik na zaciskach termostatu pokojowego kotła; po zatrzymaniu Home Assistant zostaje w ostatnim stanie.\n- **Moduł Wi-Fi kotła lub integracja producenta** — zapisy trafiają zwykle do pamięci kotła albo przez chmurę: domyślnie tylko monitorowanie.\n- **Inna encja do zapisu (zaawansowane)** — dowolne inne urządzenie; to, co robi po zatrzymaniu Home Assistant, zależy od niego.\n- **Inna integracja, tylko odczyt** — wtyczka tylko odczytuje kocioł.\n\nZapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "data": {
+          "connection": "Połączenie",
+          "heat_source": "Źródło ciepła",
+          "type": "Rodzaj kotła"
+        },
+        "data_description": {
+          "connection": "Jak Home Assistant łączy się z kotłem; wymagane. Decyduje, jakich ścieżek zapisu może używać sterowanie i co robi kocioł, gdy Home Assistant przestanie działać. Zła odpowiedź oferuje ścieżkę zapisu, której kocioł nie przyjmie.",
+          "heat_source": "Gaz (ziemny lub LPG), olej, prąd albo inne; wymagane. Decyduje, które pola i alarmy mają sens: kocioł elektryczny nie ma płomienia, spalin ani kondensacji.",
+          "type": "Jednofunkcyjny (tylko ogrzewanie), z zasobnikiem ciepłej wody albo bez, lub dwufunkcyjny (ciepła woda grzana w trakcie poboru), z wbudowanym zasobnikiem albo bez; wymagane. Służy do odróżniania grzania ciepłej wody od ogrzewania: zły rodzaj liczy ciepłą wodę jako ogrzewanie albo odwrotnie."
+        }
+      },
+      "mode": {
+        "title": "Sterowanie",
+        "description": "Co wtyczka ma robić z kotłem. Wybór trybu niczego nie włącza: sterowanie ma własny przełącznik, wyłączony, dopóki go nie włączysz.\n\n- **Pełne sterowanie** — wtyczka ustawia temperaturę wody według swojej krzywej i włącza oraz wyłącza grzanie razem ze strefami VT.\n- **Wł./wył. (przekaźnik)** — wtyczka włącza i wyłącza grzanie razem ze strefami VT; temperaturę wody kocioł ustawia sam.\n- **Tylko temperatura pokoju — od wersji 0.3** — temperaturę wody ustawiałaby własna krzywa kotła na podstawie temperatury pokoju; do wersji 0.3 wtyczka tylko monitoruje.\n- **Tylko monitorowanie** — wtyczka odczytuje i raportuje, niczego nie zapisuje.\n\nPokazane są tylko tryby, na które pozwala Twoje połączenie.\n\nZapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "data": {
+          "control_mode": "Tryb sterowania",
+          "condensing": "Kocioł kondensacyjny",
+          "dhw_priority": "Ciepła woda ma priorytet"
+        },
+        "data_description": {
+          "control_mode": "Wybierany świadomie, bez wartości domyślnej. Tylko monitorowanie i tylko temperatura pokoju zostawiają sterowanie wyłączone, a przełącznik sterowania podaje ten powód.",
+          "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych i są oceniane po tym, jak często kondensują; dla innych kotłów bezwzględny alarm spalin jest wyłączony, a kondensacja nie wpływa na werdykt. Zły wybór ostrzega za późno albo bez powodu i myli werdykt.",
+          "dhw_priority": "Włączone (domyślnie): gdy kocioł grzeje ciepłą wodę, pomieszczenia nie dostają ciepła — tak jest zwykle w kotle dwufunkcyjnym i przy zasobniku ładowanym przez zawór trójdrożny. Wyłączone: ciepła woda i ogrzewanie działają równocześnie (bufor, zasobnik ładowany równolegle, priorytet ograniczony w czasie). Służy do oceny, kiedy pomieszczenia dostają ciepło: zły wybór wstrzymuje naukę stref bez potrzeby albo pozwala im się uczyć, gdy pomieszczenia nie dostają ciepła."
         }
       },
       "level": {
@@ -375,9 +427,6 @@
         "title": "Kocioł",
         "description": "Co wiesz o swoim kotle. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
-          "class": "Co potrafi integracja kotła",
-          "dhw": "Ciepła woda użytkowa",
-          "condensing": "Kocioł kondensacyjny",
           "boiler_min_power": "Moc minimalna",
           "boiler_max_power": "Moc maksymalna",
           "max_ch_setpoint": "Maksymalna nastawa c.o.",
@@ -387,9 +436,6 @@
           "bypass": "Bypass lub sprzęgło hydrauliczne"
         },
         "data_description": {
-          "class": "Nastawa zasilania, tylko parametry krzywej, wł./wył. albo tylko odczyt. Sterowanie (eksperymentalne): nastawa zasilania (temperatura wody) albo wł./wył. (przekaźnik); pozostałe klasy są tylko monitorowane.",
-          "dhw": "Brak, zasobnik albo kocioł dwufunkcyjny; wymagane. Służy do interpretacji paleń: przy „brak” każde palenie liczy się jako c.o. — zadeklarowane w kotle, który grzeje ciepłą wodę, jej pobory liczyłyby się jako starty c.o.; zły typ liczy ciepłą wodę jako c.o. albo odwrotnie.",
-          "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych i są oceniane po tym, jak często kondensują; dla innych kotłów bezwzględny alarm spalin jest wyłączony, a kondensacja nie wpływa na werdykt. Zły wybór ostrzega za późno albo bez powodu i myli werdykt.",
           "boiler_min_power": "Najmniejsza moc grzania z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować. Zła wartość wypacza tę ocenę w werdykcie.",
           "boiler_max_power": "Największa moc grzania w kW. Z minimum i modulacją szacuje moc cieplną; zła wartość wypacza szacunki ciepła i gazu.",
           "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie c.w.u.; za niska sprawia, że c.o. liczy się jako ciepła woda. Sterowanie też nigdy nie zapisze nastawy powyżej niej: za niska zostawia pokoje zimne w silny mróz.",
@@ -538,7 +584,7 @@
           "restart_entity": "Wskaźnik restartu"
         },
         "data_description": {
-          "write_path": "Bez sterowania (domyślnie); wybrana przez ciebie encja do zapisu, np. liczba EMS-ESP albo ESPHome OpenTherm; bramka OpenTherm Gateway przez integrację OpenTherm Gateway w Home Assistant; albo polecenia MQTT firmware OTGW. Wybierz ścieżkę, którą naprawdę oferuje twój interfejs kotła: zła oznacza zapisy, które się nie udają albo trafiają donikąd. Przekaźnik, dla kotła wł./wył.: przełącznik na zaciskach termostatu pokojowego kotła albo encja termostatu kotła ustawiana na grzanie lub wyłączenie. Oferowane są tylko ścieżki pasujące do klasy kotła.",
+          "write_path": "Bez sterowania (domyślnie); wybrana przez ciebie encja do zapisu, np. liczba EMS-ESP albo ESPHome OpenTherm; bramka OpenTherm Gateway przez integrację OpenTherm Gateway w Home Assistant; albo polecenia MQTT firmware OTGW. Wybierz ścieżkę, którą naprawdę oferuje twój interfejs kotła: zła oznacza zapisy, które się nie udają albo trafiają donikąd. Przekaźnik, dla kotła wł./wył.: przełącznik na zaciskach termostatu pokojowego kotła albo encja termostatu kotła ustawiana na grzanie lub wyłączenie. Oferowane są tylko ścieżki pasujące do połączenia kotła i trybu sterowania.",
           "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Tryb monitora: bramka tylko słucha i sterowanie jest niemożliwe. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki. Utrata danych kotła podnosi alarm i oddaje sterowanie w każdej topologii — bez termostatu grzanie ustaje, dopóki dane nie wrócą. Z termostatem: gdy steruje wtyczka, nastawa ogrzewania termostatu ściennego i jego wyłącznik nic nie robią — ustawienia ciepłej wody nadal działają; po oddaniu sterowania albo gdy Home Assistant nie działa, termostat grzeje według własnej nastawy i programu, więc ustaw je tak, jak ma być w domu. Nieużywane przy przekaźniku: to, co robi oddanie sterowania, określa jego stan po oddaniu sterowania. W każdej topologii po oddaniu sterowania albo gdy Home Assistant nie działa, woda idzie za własnym maksimum kotła albo termostatu ściennego, a nie wtyczki: ustaw tam też maksimum podłogówki bez mieszacza.",
           "thermostat_kind": "Tylko dla bramki, z termostatem albo samodzielnej. Termostat OpenTherm: rozmawia z kotłem i może pokazywać temperaturę wody. Styk wł./wył.: prosty termostat lub włącznik na dwóch przewodach — bramka zamienia go w żądanie grzania, a „wyłączone ogrzewanie” wtyczki blokowałoby go po awarii Home Assistant, więc sterowanie nie jest dostępne. Nic: brak termostatu. Nie wiem: sterowanie nie jest dostępne, dopóki tego nie sprawdzisz. Z termostatem wybierz OpenTherm; bez termostatu wybierz Nic.",
           "confirmed_entity": "Encja, która pokazuje nastawę odebraną przez kocioł, np. „Control setpoint 1” urządzenia kotła w bramce — pokazuje ona, co bramka wysyła, więc nastawa jest pokazywana jako potwierdzona przez bramkę, nie przez kocioł. Wymagana: każdy zapis jest z nią porównywany, a zapis zignorowany przez kocioł albo nadpisany przez inny sterownik zostaje zgłoszony. Encja nastawy wtyczki pokazuje tylko potwierdzoną wartość, w przeciwnym razie stan nieznany. Wybranie encji, do której się pisze, niczego nie potwierdza: nastawa jest wtedy pokazywana jako niezweryfikowana. Nieużywane przy przekaźniku: potwierdza go jego własny stan.",
@@ -857,8 +903,10 @@
       "relay_off_timer_min_missing": "Podaj długość wyłącznika czasowego w minutach.",
       "relay_off_timer_min_short": "Wyłącznik czasowy krótszy niż 10 min nie jest przyjmowany: po każdym jego zadziałaniu kocioł startowałby od nowa. Ustaw wyłącznik w samym przekaźniku na co najmniej 30 min albo go wyłącz i wybierz „Brak”.",
       "relay_contact_confirm_again": "Przekaźnik się zmienił: zaznaczenie, że nie jest on ustawieniem zapisywanym w pamięci kotła, dotyczyło poprzedniej encji. Sprawdź nowy przekaźnik lub encję termostatu i zatwierdź ponownie z zaznaczeniem albo je odznacz, jeśli nie wiesz.",
-      "path_not_for_boiler_class": "Ścieżka zapisu nie pasuje do klasy kotła: przekaźnik dla kotła wł./wył., ścieżka nastawy dla kotła z nastawą zasilania.",
-      "vt_commands_not_supported": "Polecenia kotła w Versatile Thermostat nie wskazują przełącznika włączanego i wyłączanego ani termostatu kotła ustawianego na grzanie i wyłączenie: wybierz przekaźnik."
+      "path_not_for_boiler_class": "Ścieżka zapisu nie pasuje do kotła: przekaźnik dla kotła wł./wył., ścieżka nastawy dla kotła, który przyjmuje temperaturę wody. Sprawdź, jak kocioł jest podłączony, w „Kocioł, połączenie i tryb sterowania”.",
+      "vt_commands_not_supported": "Polecenia kotła w Versatile Thermostat nie wskazują przełącznika włączanego i wyłączanego ani termostatu kotła ustawianego na grzanie i wyłączenie: wybierz przekaźnik.",
+      "invalid_connection": "Ta wersja nie potrafi odczytać jednej z odpowiedzi o połączeniu kotła, źródle ciepła, rodzaju kotła albo trybie sterowania: wybierz ją ponownie.",
+      "path_not_for_control_mode": "Wybrano tylko monitorowanie albo tylko temperaturę pokoju (od wersji 0.3): pasuje tylko „Bez sterowania”. Najpierw zmień tryb sterowania w „Kocioł, połączenie i tryb sterowania”."
     }
   },
   "selector": {
@@ -866,21 +914,6 @@
       "options": {
         "simple": "Prosty",
         "advanced": "Zaawansowany"
-      }
-    },
-    "boiler_class": {
-      "options": {
-        "flow_setpoint": "Nastawa zasilania (OpenTherm, EMS i podobne)",
-        "curve_only": "Tylko parametry krzywej",
-        "on_off": "Wł./wył. (przekaźnik)",
-        "read_only": "Tylko odczyt"
-      }
-    },
-    "dhw_type": {
-      "options": {
-        "none": "Brak",
-        "storage": "Zasobnik",
-        "combi": "Kocioł dwufunkcyjny"
       }
     },
     "modulation_scale": {
@@ -1004,6 +1037,42 @@
       "options": {
         "off": "Wyłączony",
         "on": "Włączony"
+      }
+    },
+    "connection": {
+      "options": {
+        "opentherm_gw": "OpenTherm Gateway (integracja Home Assistant)",
+        "otgw_mqtt": "Firmware OTGW przez MQTT",
+        "esphome": "ESPHome OpenTherm",
+        "ems_esp": "EMS-ESP",
+        "relay": "Przekaźnik (kocioł wł./wył.)",
+        "boiler_module": "Moduł Wi-Fi kotła lub integracja producenta",
+        "other_entity": "Inna encja do zapisu (zaawansowane)",
+        "read_only": "Inna integracja, tylko odczyt"
+      }
+    },
+    "control_mode": {
+      "options": {
+        "full": "Pełne sterowanie (krzywa ustawia temperaturę wody)",
+        "on_off": "Wł./wył. (przekaźnik)",
+        "room_values": "Tylko temperatura pokoju — od wersji 0.3",
+        "monitor": "Tylko monitorowanie"
+      }
+    },
+    "heat_source": {
+      "options": {
+        "gas": "Gaz (ziemny lub LPG)",
+        "oil": "Olej",
+        "electric": "Prąd",
+        "other": "Inne"
+      }
+    },
+    "boiler_type": {
+      "options": {
+        "single": "Jednofunkcyjny, bez ciepłej wody",
+        "single_tank": "Jednofunkcyjny z zasobnikiem ciepłej wody",
+        "combi": "Dwufunkcyjny (ciepła woda przepływowa)",
+        "combi_tank": "Dwufunkcyjny z wbudowanym zasobnikiem"
       }
     }
   },
@@ -1432,8 +1501,8 @@
             "name": "Blokady",
             "state": {
               "no_write_path": "Sterowanie nie jest skonfigurowane",
-              "boiler_class_no_control": "Kotłem tej klasy nie da się sterować",
-              "path_not_for_boiler_class": "Ścieżka zapisu nie pasuje do klasy kotła",
+              "boiler_class_no_control": "Tym połączeniem kotła nie da się sterować",
+              "path_not_for_boiler_class": "Ścieżka zapisu nie pasuje do połączenia kotła",
               "no_setpoint_entity": "Nie wybrano encji nastawy",
               "write_type_not_supported": "Typu zapisu encji nastawy nie można użyć",
               "no_hand_back": "Nie wybrano sposobu oddania",
@@ -1492,7 +1561,9 @@
               "relay_used_by_zone": "Strefa już przełącza ten przekaźnik",
               "entity_used_by_zone": "Strefa już steruje encją nastawy lub przełącznikiem",
               "relay_of_boiler_interface": "Przekaźnik należy do integracji kotła lub VT",
-              "relay_climate_modes": "Encji termostatu nie da się ustawić na grzanie i na wyłączenie"
+              "relay_climate_modes": "Encji termostatu nie da się ustawić na grzanie i na wyłączenie",
+              "control_mode_monitor": "Wybrano tylko monitorowanie",
+              "control_mode_room_values": "Tylko temperatura pokoju: od wersji 0.3"
             }
           },
           "blockers_text": {
@@ -2434,8 +2505,8 @@
             "name": "Blokady",
             "state": {
               "no_write_path": "Sterowanie nie jest skonfigurowane",
-              "boiler_class_no_control": "Kotłem tej klasy nie da się sterować",
-              "path_not_for_boiler_class": "Ścieżka zapisu nie pasuje do klasy kotła",
+              "boiler_class_no_control": "Tym połączeniem kotła nie da się sterować",
+              "path_not_for_boiler_class": "Ścieżka zapisu nie pasuje do połączenia kotła",
               "no_setpoint_entity": "Nie wybrano encji nastawy",
               "write_type_not_supported": "Typu zapisu encji nastawy nie można użyć",
               "no_hand_back": "Nie wybrano sposobu oddania",
@@ -2494,7 +2565,9 @@
               "relay_used_by_zone": "Strefa już przełącza ten przekaźnik",
               "entity_used_by_zone": "Strefa już steruje encją nastawy lub przełącznikiem",
               "relay_of_boiler_interface": "Przekaźnik należy do integracji kotła lub VT",
-              "relay_climate_modes": "Encji termostatu nie da się ustawić na grzanie i na wyłączenie"
+              "relay_climate_modes": "Encji termostatu nie da się ustawić na grzanie i na wyłączenie",
+              "control_mode_monitor": "Wybrano tylko monitorowanie",
+              "control_mode_room_values": "Tylko temperatura pokoju: od wersji 0.3"
             }
           },
           "blockers_text": {
@@ -2685,10 +2758,10 @@
       "message": "Ta odpowiedź nie pasuje do podłączenia bramki: termostat OpenTherm oznacza „Bramka z termostatem”, brak termostatu oznacza pracę samodzielną. Wybierz drugie podłączenie. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_boiler_class_no_control": {
-      "message": "Sterowanie wymaga kotła klasy „Nastawa zasilania” albo „Wł./wył. (przekaźnik)”. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Wtyczka nie może zapisywać do tego kotła: jest odczytywany przez integrację, która tylko czyta, albo przez własny moduł kotła z wybranym tylko monitorowaniem. Sprawdź „Kocioł, połączenie i tryb sterowania”. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_path_not_for_boiler_class": {
-      "message": "Ścieżka zapisu nie pasuje do klasy kotła: przekaźnik dla kotła wł./wył., ścieżka nastawy dla kotła z nastawą zasilania. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Ścieżka zapisu nie pasuje do kotła: przekaźnik dla kotła wł./wył., ścieżka nastawy dla kotła, który przyjmuje temperaturę wody. Sprawdź, jak kocioł jest podłączony, w „Kocioł, połączenie i tryb sterowania”. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_relay_entity": {
       "message": "Wybierz przekaźnik w opcjach sterowania. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
@@ -2719,6 +2792,12 @@
     },
     "blocked_no_flow_signal": {
       "message": "Sterowanie temperaturą wody wymaga przypisania temperatury zasilania w sygnałach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
+    "blocked_control_mode_monitor": {
+      "message": "W „Kocioł, połączenie i tryb sterowania” wybrano tylko monitorowanie: wtyczka niczego nie zapisuje do kotła. Aby ustawić sterowanie, wybierz tam tryb sterowania. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
+    "blocked_control_mode_room_values": {
+      "message": "Tryb „tylko temperatura pokoju” pojawi się w wersji 0.3: do tego czasu wtyczka tylko monitoruje i niczego nie zapisuje. Aby już teraz sterować temperaturą wody, wybierz pełne sterowanie w „Kocioł, połączenie i tryb sterowania”. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     }
   },
   "issues": {

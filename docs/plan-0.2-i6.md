@@ -7,7 +7,7 @@ decisions of 2026-10-08 and 2026-10-09 below. Control stays off by default: no a
 anything on.
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`.
 
-Status on 2026-10-09: approved by the user (I6.0); next I6.1. The corrections from the test report
+Status on 2026-10-09: approved by the user (I6.0); I6.1 done; next I6.2. The corrections from the test report
 that the user put first (F1, F2, F5) are done as pull requests #32, #34 and #35.
 
 ## How to read this plan
@@ -154,7 +154,7 @@ that the user put first (F1, F2, F5) are done as pull requests #32, #34 and #35.
 | Step | Work | J4 impact |
 |---|---|---|
 | I6.0 ✅ | the user approves this plan, and answers decisions 9 and 10 (2026-10-09) | — |
-| I6.1 | the first panels: the connection (decision 1), the control mode (6), the heat source (7), the boiler type with condensing and hot-water priority (8), then the name and level; the answers stored as their own keys; the boiler class from the connection, no longer asked; "room temperature only" gives the monitor with its reason; the options menu opens with the same panels; an entry without the answers as today (12); translations EN and PL; tests | the setup and the options' first steps: G1–G3 |
+| I6.1 ✅ | the first panels: the connection (decision 1), the control mode (6), the heat source (7), the boiler type with condensing and hot-water priority (8), then the name and level; the answers stored as their own keys; the boiler class from the connection, no longer asked; "room temperature only" gives the monitor with its reason; the options menu opens with the same panels; an entry without the answers as today (12); translations EN and PL; tests | the setup and the options' first steps: G1–G3 |
 | I6.2 | what the connection sets (decision 2) in the control steps: the paths offered, the write types, the hand-back, the topology; the ESPHome tick and its blocker (3); EMS-ESP's "off" at 0 and its answer-O latch (4, `core/` first); the blockers "connection does not fit the write path" and "topology does not fit the connection"; the entities suggested; translations, tests | every control scenario on the OTGW integration still passes unchanged; G1–G3 again |
 | I6.3 | the heat source (decision 7): fields, signals and alarms shown or hidden; the electric boiler's "heating on"; the defaults for condensing by source | the monitor's scenarios with the sim's gas boiler: none expected; F1, F2 |
 | I6.4 | the hot-water priority (decision 8): the learning pause and heat availability follow it (`core/` first); the optional hint | D8 (the SmartPI pause on a draw) |

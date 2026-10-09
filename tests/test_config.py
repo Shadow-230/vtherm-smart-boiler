@@ -929,3 +929,100 @@ def test_the_migration_keeps_the_high_pressure_limits_an_entry_ran_with(
     stored limit stays as stored. Without the pressure, or a section of another shape (refused
     by the reader with its reason), nothing is written."""
     assert migrated_pressure_high(options) == expected
+
+
+# --- I6.1: the setup's first answers (decisions 1, 6, 7, 8, 12) ------------------------------
+
+OTGW_CONTROL = {
+    "write_path": "opentherm_gw",
+    "gateway_id": "gw",
+    "confirmed_entity": "sensor.setpoint",
+    "topology": "gateway_with_thermostat",
+    "thermostat_kind": "opentherm",
+    "curve": {"design_outdoor": -15, "design_flow": 55},
+}
+ANSWERED = {
+    "connection": "boiler_module",
+    "control_mode": "monitor",
+    "heat_source": "gas",
+    "type": "combi_tank",
+    "dhw_priority": False,
+}
+
+
+def test_an_entry_from_before_the_panel_reads_as_before() -> None:
+    """Decision 12: no answer stored — nothing changes: the stored class and hot-water kind,
+    the priority taken as before (hot water takes the heat), and no mode reason for control."""
+    from custom_components.vtherm_smart_boiler.config import BoilerPanel
+
+    options = MINIMAL | {"boiler": {"class": "flow_setpoint", "dhw": "combi"}}
+    config = EntryConfig.from_options(options)
+    assert config.panel == BoilerPanel()
+    assert config.panel.dhw_priority is True
+    assert config.installation.boiler.boiler_class is BoilerClass.FLOW_SETPOINT
+    assert config.installation.boiler.dhw.value == "combi"
+    assert config.control.connection is None
+    assert config.control.control_mode is None
+
+
+def test_the_panels_answers_are_read_and_decide_the_class_and_hot_water() -> None:
+    """Decisions 2, 5 and 8: where the panel is answered, the class follows the connection and
+    the mode, and the hot-water kind the boiler type — whatever a hand edit stored beside them."""
+    from custom_components.vtherm_smart_boiler.control_config import Connection, ControlMode
+    from custom_components.vtherm_smart_boiler.core.installation import BoilerType, HeatSource
+
+    boiler = ANSWERED | {"class": "flow_setpoint", "dhw": "none"}
+    config = EntryConfig.from_options(MINIMAL | {"boiler": boiler})
+    panel = config.panel
+    assert panel.connection is Connection.BOILER_MODULE
+    assert panel.control_mode is ControlMode.MONITOR
+    assert panel.heat_source is HeatSource.GAS
+    assert panel.boiler_type is BoilerType.COMBI_TANK
+    assert panel.dhw_priority is False
+    assert config.installation.boiler.boiler_class is BoilerClass.READ_ONLY
+    assert config.installation.boiler.dhw.value == "storage"
+    assert config.monitor.monitor.has_dhw
+    assert config.control.connection is Connection.BOILER_MODULE
+    assert config.control.control_mode is ControlMode.MONITOR
+
+
+@pytest.mark.parametrize(
+    ("changes", "subject"),
+    [
+        ({"connection": "carrier_pigeon"}, "connection"),
+        ({"control_mode": "telepathy"}, "control_mode"),
+        ({"heat_source": "peat"}, "heat_source"),
+        ({"type": "triple"}, "type"),
+        ({"dhw_priority": "yes"}, "dhw_priority"),
+        # A mode the connection cannot do (a hand edit): a relay cannot set the water.
+        ({"connection": "relay", "control_mode": "full"}, "control_mode"),
+    ],
+)
+def test_an_answer_this_version_cannot_read(changes: dict, subject: str) -> None:
+    """Decision 12 (P-70): an answer this version does not know is refused naming the panel;
+    at setup it leaves control out, the monitor running — and with no control section there is
+    nothing to leave out."""
+    boiler = {"boiler": ANSWERED | changes}
+    with pytest.raises(ConfigError) as err:
+        EntryConfig.from_options(MINIMAL | boiler)
+    assert (err.value.code, err.value.subject) == ("invalid_connection", subject)
+    config = EntryConfig.from_options(
+        MINIMAL | boiler | {"control": OTGW_CONTROL}, strict_control=False
+    )
+    assert not config.control.configured
+    assert config.control_problem == f"invalid_connection: {subject}"
+    config = EntryConfig.from_options(MINIMAL | boiler, strict_control=False)
+    assert config.control_problem is None
+    assert config.signals  # the monitor runs
+
+
+def test_monitoring_only_keeps_a_stored_control_section_from_running() -> None:
+    """Decision 6: with monitoring only chosen, a control section left from before is parsed,
+    and its one blocker is the mode."""
+    from custom_components.vtherm_smart_boiler.control_config import config_blockers
+
+    boiler = {"connection": "opentherm_gw", "control_mode": "monitor"}
+    config = EntryConfig.from_options(MINIMAL | {"boiler": boiler, "control": OTGW_CONTROL})
+    assert config.control.configured
+    blockers = config_blockers(config.control, config.installation)
+    assert blockers == ["control_mode_monitor"]

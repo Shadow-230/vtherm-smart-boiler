@@ -68,6 +68,41 @@ async def step(hass: HomeAssistant, result: dict[str, Any], data: dict[str, Any]
     return await hass.config_entries.flow.async_configure(result["flow_id"], data)
 
 
+# The setup's first panels (I6.1) answered for an installation as the tests before them had it.
+PANEL_FOR_CLASS = {
+    "flow_setpoint": ("other_entity", "full"),
+    "on_off": ("relay", "on_off"),
+    "read_only": ("read_only", "monitor"),
+    # Never derived by the panels: an entry made before them may still have it.
+    "curve_only": ("read_only", "monitor"),
+}
+PANEL_KEYS = ("connection", "control_mode", "heat_source", "type", "dhw_priority")
+
+
+async def start_setup(
+    hass: HomeAssistant,
+    connection: str = "read_only",
+    mode: str = "monitor",
+    *,
+    source: str = "gas",
+    kind: str = "single",
+    condensing: bool = True,
+) -> dict[str, Any]:
+    """A setup started, its first panels answered (I6.1): the name and level come next."""
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    assert result["step_id"] == "connection"
+    result = await step(
+        hass, result, {"connection": connection, "heat_source": source, "type": kind}
+    )
+    assert result["step_id"] == "mode"
+    answers: dict[str, Any] = {"control_mode": mode}
+    if "condensing" in result["data_schema"].schema:
+        answers["condensing"] = condensing
+    result = await step(hass, result, answers)
+    assert result["step_id"] == "name"
+    return result
+
+
 @pytest.mark.parametrize(
     ("language", "name"), [("en", "Boiler"), ("pl", "Kocioł"), ("xx", "Boiler")]
 )
@@ -78,14 +113,13 @@ async def test_the_default_name_is_in_home_assistants_language(
     IDs do not start with the English "Boiler". Negative: a language without a translation
     falls back to English."""
     hass.config.language = language
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await start_setup(hass)
     assert form_default(result, "name") == name
 
 
 async def test_simple_flow_creates_an_entry(hass: HomeAssistant, entities: dict[str, str]) -> None:
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await start_setup(hass, kind="single_tank")
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "user"
     result = await step(hass, result, {"name": "My boiler", "level": "simple"})
     assert result["step_id"] == "signals"
     assert "flue_gas" not in result["data_schema"].schema  # advanced only
@@ -103,13 +137,7 @@ async def test_simple_flow_creates_an_entry(hass: HomeAssistant, entities: dict[
     result = await step(
         hass,
         result,
-        {
-            "class": "read_only",
-            "dhw": "storage",
-            "condensing": True,
-            "boiler_min_power": 4.0,
-            "boiler_max_power": 24.0,
-        },
+        {"boiler_min_power": 4.0, "boiler_max_power": 24.0},
     )
     assert result["step_id"] == "circuit"
     result = await step(hass, result, {"control": "unmixed_shared"})
@@ -143,13 +171,24 @@ async def test_simple_flow_creates_an_entry(hass: HomeAssistant, entities: dict[
     ]
     assert options["building"] == {"floor_area": 120, "insulation": "average"}
     assert "monitor" not in options
+    # I6.1: the panels' answers, the class and the hot-water kind following from them.
+    assert options["boiler"] == {
+        "connection": "read_only",
+        "heat_source": "gas",
+        "type": "single_tank",
+        "dhw": "storage",
+        "control_mode": "monitor",
+        "condensing": True,
+        "dhw_priority": True,
+        "class": "read_only",
+    }
     await hass.async_block_till_done()
 
 
 async def test_advanced_flow_with_two_circuits(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await start_setup(hass, "other_entity", "full", kind="combi")
     result = await step(hass, result, {"name": "Boiler", "level": "advanced"})
     assert "flue_gas" in result["data_schema"].schema
     result = await step(
@@ -160,25 +199,13 @@ async def test_advanced_flow_with_two_circuits(
     result = await step(
         hass,
         result,
-        {
-            "class": "flow_setpoint",
-            "dhw": "combi",
-            "condensing": True,
-            "modulation_scale": "capacity",
-            "boiler_min_power": 30.0,
-            "boiler_max_power": 20.0,
-        },
+        {"modulation_scale": "capacity", "boiler_min_power": 30.0, "boiler_max_power": 20.0},
     )
     assert result["errors"] == {"base": "min_power_not_below_max"}
     result = await step(
         hass,
         result,
-        {
-            "class": "flow_setpoint",
-            "dhw": "combi",
-            "condensing": True,
-            "modulation_scale": "capacity",
-        },
+        {"modulation_scale": "capacity"},
     )
     assert result["step_id"] == "circuit"
     result = await step(hass, result, {"control": "passive_fixed", "add_another": False})
@@ -253,15 +280,19 @@ async def create_entry(
     level: str,
     zones: tuple[str, ...] = (),
     boiler_class: str = "flow_setpoint",
+    *,
+    panels: bool = False,
 ) -> str:
     """An entry made through the config flow; its boiler class decides which control paths the
-    options offer (X8): the setpoint paths for a flow-setpoint boiler, the relay for on/off."""
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    options offer (X8): the setpoint paths for a flow-setpoint boiler, the relay for on/off.
+    ``panels``: keep the first panels' answers (I6.1); without, they are taken out afterwards,
+    so the entry is one made before them — its control step offering the paths by class."""
+    connection, mode = PANEL_FOR_CLASS[boiler_class]
+    result = await start_setup(hass, connection, mode)
     for data in (
         {"name": "Boiler", "level": level},
         {"flame": entities["flame"], "flow": entities["flow"]},
-        {"class": boiler_class, "dhw": "none", "condensing": True}
-        | ({"modulation_scale": "capacity"} if level == "advanced" else {}),
+        {"modulation_scale": "capacity"} if level == "advanced" else {},
         {"control": "unmixed_shared"} | ({"add_another": False} if level == "advanced" else {}),
         {"zones": [entities[zone] for zone in zones]},
         *({"emitter": "radiator"} for _zone in zones),
@@ -283,7 +314,13 @@ async def create_entry(
         )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
-    return result["result"].entry_id
+    entry = result["result"]
+    if not panels:
+        boiler = {k: v for k, v in entry.options["boiler"].items() if k not in PANEL_KEYS}
+        boiler["class"] = boiler_class
+        hass.config_entries.async_update_entry(entry, options={**entry.options, "boiler": boiler})
+        await hass.async_block_till_done()
+    return entry.entry_id
 
 
 async def test_options_flow_edits_one_section(
@@ -1051,12 +1088,11 @@ async def test_a_problem_found_at_the_end_is_shown_on_its_step(
 ) -> None:
     """P37: a problem the last check finds keeps the wizard's answers: its step is shown again
     with the error, instead of an abort (or an unhandled error for an implausible building)."""
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await start_setup(hass)
     for data in (
         {"name": "Boiler", "level": "advanced"},
         {"flame": entities["flame"], "flow": entities["flow"]},
-        {"class": "read_only", "dhw": "none", "condensing": True,
-         "modulation_scale": "range"},
+        {"modulation_scale": "range"},
         {"control": "unmixed_shared", "add_another": False},
         {"zones": []},
         {"design_load_kw": 200.0, "design_outdoor": -15.0},  # 5.7 kW/K: implausible
@@ -1270,7 +1306,7 @@ def test_signal_fields_follow_the_d2_table() -> None:
 async def test_modulation_must_be_in_percent(hass: HomeAssistant, entities: dict[str, str]) -> None:
     hass.states.async_set("sensor.boiler_power", "12", {"unit_of_measurement": "kW"})
     hass.states.async_set("sensor.boiler_modulation", "40", {"unit_of_measurement": "%"})
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await start_setup(hass)
     result = await step(hass, result, {"name": "Boiler", "level": "simple"})
     signals = {"flame": entities["flame"], "flow": entities["flow"]}
     result = await step(hass, result, signals | {"modulation": "sensor.boiler_power"})
@@ -1790,7 +1826,7 @@ async def test_one_entity_for_two_signals_is_refused(
     """T-32 (P-16): one entity for two signals is refused on the later field in the form's
     order; at the simple level, a clash with a stored advanced signal shows on the field that
     is shown. Negative: the optional fields left empty are accepted."""
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await start_setup(hass)
     result = await step(hass, result, {"name": "Boiler", "level": "advanced"})
     signals = {"flame": entities["flame"], "flow": entities["flow"]}
     result = await step(hass, result, signals | {"ch_active": entities["flame"]})
@@ -1972,8 +2008,9 @@ async def test_an_unknown_stored_value_is_a_form_error(
     hass: HomeAssistant, entities: dict[str, str], section: str
 ) -> None:
     """P-70: options holding a boiler class this version does not know; saving any section
-    shows the boiler form with ``invalid_boiler`` — no exception — where the class is chosen
-    again (not passed off as a known one); then the options save."""
+    shows the first panel with ``invalid_boiler`` — no exception — where the connection is
+    chosen again, which decides the class (I6.1; not passed off as a known one); then the options
+    save."""
     options = {
         "level": "simple",
         "signals": {"flame": entities["flame"], "flow": entities["flow"]},
@@ -1990,12 +2027,14 @@ async def test_an_unknown_stored_value_is_a_form_error(
     menu = await hass.config_entries.options.async_init(entry.entry_id)
     result = await options_step(hass, menu, {"next_step_id": section})
     result = await options_step(hass, result, answers[section])
-    assert result["step_id"] == "boiler"
+    assert result["step_id"] == "connection"
     assert result["errors"] == {"base": "invalid_boiler"}
-    assert form_default(result, "class") is None
+    assert form_default(result, "connection") is None
     result = await options_step(
-        hass, result, {"class": "read_only", "dhw": "none", "condensing": True}
+        hass, result, {"connection": "read_only", "heat_source": "gas", "type": "single"}
     )
+    assert result["step_id"] == "mode"
+    result = await options_step(hass, result, {"control_mode": "monitor", "condensing": True})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["boiler"]["class"] == "read_only"
 
@@ -2085,7 +2124,7 @@ async def test_entities_are_checked_on_the_server(
         "climate", "generic_thermostat", "hall", suggested_object_id="hall"
     ).entity_id
     hass.states.async_set(other, "heat")
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await start_setup(hass)
     result = await step(hass, result, {"name": "Boiler", "level": "simple"})
     result = await step(hass, result, {"flame": entities["flow"], "flow": entities["flow"]})
     assert result["errors"] == {"flame": "entity_not_suitable"}
@@ -2095,7 +2134,7 @@ async def test_entities_are_checked_on_the_server(
         hass, result, {"flame": entities["flame"], "flow": "sensor.not_reported_yet"}
     )
     assert result["step_id"] == "boiler"  # no state yet: its domain suffices
-    result = await step(hass, result, {"class": "read_only", "dhw": "none", "condensing": True})
+    result = await step(hass, result, {})
     result = await step(hass, result, {"control": "unmixed_shared"})
     assert result["step_id"] == "zones"
     result = await step(hass, result, {"zones": [entities["living"], other]})
@@ -2213,9 +2252,10 @@ def controlled_options(entities: dict[str, str]) -> dict[str, Any]:
 async def test_an_edit_that_would_block_control_is_confirmed_first(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    """Open after R6 #3: control configured and allowed; the boiler class changed to read-only
-    asks first, with the blocker's text. Not confirmed: back to the menu, nothing saved;
-    confirmed: saved. Negative: an edit that adds no blocker saves at once."""
+    """Open after R6 #3: control configured and allowed; the first panels answered "another
+    integration, read only" (I6.1: the class and the mode follow) asks first, with the blocker's
+    text. Not confirmed: back to the menu, nothing saved; confirmed: saved. Negative: an edit
+    that adds no blocker saves at once."""
     from custom_components.vtherm_smart_boiler.config_flow import options_blockers
 
     entry = MockConfigEntry(
@@ -2223,27 +2263,34 @@ async def test_an_edit_that_would_block_control_is_confirmed_first(
     )
     entry.add_to_hass(hass)
     assert options_blockers(entry.options) == []
-    read_only = {"class": "read_only", "dhw": "none", "condensing": True}
+    read_only = {"connection": "read_only", "heat_source": "gas", "type": "single"}
     menu = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await options_step(hass, menu, {"next_step_id": "boiler"})
+    result = await options_step(hass, menu, {"next_step_id": "connection"})
+    assert form_default(result, "connection") == "opentherm_gw"  # its write path names it
     result = await options_step(hass, result, read_only)
+    assert result["step_id"] == "mode"
+    result = await options_step(hass, result, {"control_mode": "monitor"})
     assert result["step_id"] == "confirm_blocking"
     shown = result["description_placeholders"]
     assert shown["first"] == (
-        'Control needs a boiler of the class "Flow setpoint" or "On/off (relay)".'
+        'Monitoring only is chosen under "Boiler, connection and control mode": the plugin '
+        "writes nothing to the boiler. Choose a control mode there to set up control."
     )
     assert shown["more"] == "0"
     assert form_default(result, "save_anyway") is False
     result = await options_step(hass, result, {"save_anyway": False})
     assert result["type"] is FlowResultType.MENU
     assert entry.options["boiler"]["class"] == "flow_setpoint"  # nothing saved
-    result = await options_step(hass, result, {"next_step_id": "boiler"})
-    assert form_default(result, "class") == "flow_setpoint"  # the edit went with it
+    assert "connection" not in entry.options["boiler"]
+    result = await options_step(hass, result, {"next_step_id": "connection"})
+    assert form_default(result, "connection") == "opentherm_gw"  # the edit went with it
     result = await options_step(hass, result, read_only)
+    result = await options_step(hass, result, {"control_mode": "monitor"})
     result = await options_step(hass, result, {"save_anyway": True})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["boiler"]["class"] == "read_only"
-    # Negative: control already blocked by the class; a building edit adds nothing.
+    assert entry.options["boiler"]["control_mode"] == "monitor"
+    # Negative: control already blocked by the mode; a building edit adds nothing.
     menu = await hass.config_entries.options.async_init(entry.entry_id)
     result = await options_step(hass, menu, {"next_step_id": "building"})
     result = await options_step(hass, result, {"floor_area": 100})
@@ -2367,11 +2414,11 @@ async def test_a_zone_built_on_the_boilers_thermostat_is_refused(
         registry.async_update_entity(zone, config_entry_id=vt.entry_id)
 
     built_on(entities["living"], "switch.living_valve", gateway)
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await start_setup(hass)
     for data in (
         {"name": "Boiler", "level": "simple"},
         {"flame": flame, "flow": entities["flow"]},
-        {"class": "read_only", "dhw": "none", "condensing": True},
+        {},
         {"control": "unmixed_shared"},
     ):
         result = await step(hass, result, data)
@@ -3140,7 +3187,7 @@ async def test_the_signals_step_accepts_no_signals(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
     """R4: nothing is required on the signals step — a home with only a relay."""
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await start_setup(hass)
     result = await step(hass, result, {"name": "Relay only", "level": "simple"})
     assert result["step_id"] == "signals"
     assert all(type(marker).__name__ == "Optional" for marker in result["data_schema"].schema)
@@ -3837,3 +3884,247 @@ async def test_the_behaviour_step_follows_the_allow_list_to_the_save(
     await hass.async_block_till_done()
     control = hass.config_entries.async_get_entry(entry_id).options["control"]
     assert (control["topology"], control["off_setpoint"]) == ("gateway_standalone", 10)
+
+
+# --- I6.1: the setup opens with how the boiler is connected -----------------------------------
+
+
+def select_options(result: dict[str, Any], key: str) -> list[str]:
+    for marker, validator in result["data_schema"].schema.items():
+        if str(marker) == key:
+            return list(validator.config["options"])
+    raise AssertionError(f"no {key} in the form")
+
+
+async def test_the_setup_opens_with_the_connection_and_asks_it_on_purpose(
+    hass: HomeAssistant,
+) -> None:
+    """Decisions 1, 7, 8: the first panel asks how the boiler is connected, the heat source and
+    the boiler type — every answer offered, none chosen for the user."""
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    assert result["step_id"] == "connection"
+    assert select_options(result, "connection") == [
+        "opentherm_gw", "otgw_mqtt", "esphome", "ems_esp", "relay", "boiler_module",
+        "other_entity", "read_only",
+    ]  # fmt: skip
+    assert select_options(result, "heat_source") == ["gas", "oil", "electric", "other"]
+    assert select_options(result, "type") == ["single", "single_tank", "combi", "combi_tank"]
+    for key in ("connection", "heat_source", "type"):
+        assert form_default(result, key) is None, key
+
+
+@pytest.mark.parametrize(
+    ("connection", "modes"),
+    [
+        ("relay", ["on_off", "monitor"]),
+        ("read_only", ["monitor"]),
+        ("esphome", ["full", "room_values", "monitor"]),
+        ("opentherm_gw", ["full", "room_values", "monitor"]),
+    ],
+)
+async def test_the_second_panel_offers_the_modes_the_connection_can_do(
+    hass: HomeAssistant, connection: str, modes: list[str]
+) -> None:
+    """Decision 6: only the modes the connection can do, none chosen for the user."""
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await step(
+        hass, result, {"connection": connection, "heat_source": "gas", "type": "single"}
+    )
+    assert result["step_id"] == "mode"
+    assert select_options(result, "control_mode") == modes
+    assert form_default(result, "control_mode") is None
+    with pytest.raises(InvalidData):  # a mode the connection cannot do is not taken
+        await step(hass, result, {"control_mode": "telepathy"})
+
+
+@pytest.mark.parametrize(
+    ("source", "kind", "shown", "stored"),
+    [
+        # A boiler that burns fuel is asked whether it condenses (ticked by default); one that
+        # heats hot water whether hot water has priority (on by default).
+        (
+            "gas",
+            "combi",
+            {"condensing", "dhw_priority"},
+            {"condensing": True, "dhw_priority": True},
+        ),
+        ("oil", "single", {"condensing"}, {"condensing": True}),
+        # Electric: it burns nothing — not condensing, not asked.
+        ("electric", "single_tank", {"dhw_priority"}, {"condensing": False, "dhw_priority": True}),
+        ("electric", "single", set(), {"condensing": False}),
+    ],
+)
+async def test_condensing_and_the_hot_water_priority_are_asked_where_they_apply(
+    hass: HomeAssistant, source: str, kind: str, shown: set[str], stored: dict[str, Any]
+) -> None:
+    """Decisions 7, 8: the second panel asks condensing for a boiler that burns fuel and the
+    hot-water priority for one that heats hot water, each with its default; what is not asked
+    is stored as it must be — an electric boiler does not condense, one without hot water keeps
+    no priority."""
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    answers = {"connection": "other_entity", "heat_source": source, "type": kind}
+    result = await step(hass, result, answers)
+    asked = {str(marker) for marker in result["data_schema"].schema} - {"control_mode"}
+    assert asked == shown
+    result = await step(hass, result, {"control_mode": "full"})
+    for data in (
+        {"name": "Boiler", "level": "simple"},
+        {},
+        {},
+        {"control": "unmixed_shared"},
+        {"zones": []},
+        {},
+        {"strategy": "average"},
+    ):
+        result = await step(hass, result, data)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    boiler = result["options"]["boiler"]
+    assert {key: boiler[key] for key in stored} == stored
+    if "dhw_priority" not in stored:
+        assert "dhw_priority" not in boiler
+    await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize(
+    ("connection", "mode", "expected"),
+    [
+        ("boiler_module", "full", "flow_setpoint"),
+        ("boiler_module", "monitor", "read_only"),  # decision 5: monitoring by default
+        ("relay", "on_off", "on_off"),
+        ("opentherm_gw", "monitor", "flow_setpoint"),  # what it can do, not what is wanted
+    ],
+)
+async def test_the_class_follows_the_connection(
+    hass: HomeAssistant, entities: dict[str, str], connection: str, mode: str, expected: str
+) -> None:
+    """Decision 2: the boiler class is no longer asked; the options' panels set it."""
+    entry_id = await create_entry(hass, entities, "simple", panels=True)
+    menu = await hass.config_entries.options.async_init(entry_id)
+    assert menu["menu_options"][0] == "connection"
+    result = await options_step(hass, menu, {"next_step_id": "connection"})
+    answers = {"connection": connection, "heat_source": "gas", "type": "single"}
+    result = await options_step(hass, result, answers)
+    result = await options_step(hass, result, {"control_mode": mode})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    assert entry.options["boiler"]["class"] == expected
+    assert "class" not in {str(m) for m in boiler_form(hass, entry)}
+    await hass.async_block_till_done()
+
+
+def boiler_form(hass: HomeAssistant, entry: Any) -> Any:
+    from custom_components.vtherm_smart_boiler.config_flow import boiler_schema
+
+    return boiler_schema(dict(entry.options)).schema
+
+
+async def test_an_entry_from_before_the_panels_is_offered_its_answers(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 12: an entry made before the panels keeps working as it was; its panels offer
+    what its stored options say — the relay its write path names, a combi from its hot water,
+    on/off from its relay — and nothing they do not (the heat source)."""
+    options = {
+        "level": "simple",
+        "signals": {"flame": entities["flame"], "flow": entities["flow"]},
+        "boiler": {"class": "on_off", "dhw": "combi", "condensing": True},
+        "control": {"write_path": "relay", "relay_entity": "switch.boiler_relay"},
+    }
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
+    entry.add_to_hass(hass)
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "connection"})
+    assert form_default(result, "connection") == "relay"
+    assert form_default(result, "type") == "combi"
+    assert form_default(result, "heat_source") is None
+    result = await options_step(
+        hass, result, {"connection": "relay", "heat_source": "gas", "type": "combi"}
+    )
+    assert form_default(result, "control_mode") == "on_off"
+    # An entity path names no connection; a stored storage tank suggests the commoner type.
+    options["boiler"] = {"class": "flow_setpoint", "dhw": "storage"}
+    options["control"] = {"write_path": "entity"}
+    other = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
+    other.add_to_hass(hass)
+    menu = await hass.config_entries.options.async_init(other.entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "connection"})
+    assert form_default(result, "connection") is None
+    assert form_default(result, "type") == "single_tank"
+    result = await options_step(
+        hass, result, {"connection": "other_entity", "heat_source": "gas", "type": "single"}
+    )
+    assert form_default(result, "control_mode") == "full"
+
+
+async def test_monitoring_only_offers_no_control(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 6: with monitoring only, or room values until 0.3, the control step offers
+    "no control" alone; a path given anyway is refused with the reason."""
+    from custom_components.vtherm_smart_boiler.config_flow import control_error
+
+    entry_id = await create_entry(hass, entities, "simple", ("living",), panels=True)
+    for mode in ("monitor", "room_values"):
+        menu = await hass.config_entries.options.async_init(entry_id)
+        result = await options_step(hass, menu, {"next_step_id": "connection"})
+        answers = {"connection": "opentherm_gw", "heat_source": "gas", "type": "single"}
+        result = await options_step(hass, result, answers)
+        result = await options_step(hass, result, {"control_mode": mode})
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+        result = await open_control(hass, entry_id)
+        assert path_options(result) == ["none"]
+        entry = hass.config_entries.async_get_entry(entry_id)
+        assert entry is not None
+        assert control_error({"write_path": "opentherm_gw"}, dict(entry.options)) == {
+            "write_path": "path_not_for_control_mode"
+        }
+        await hass.config_entries.options.async_configure(result["flow_id"], {"write_path": "none"})
+        await hass.async_block_till_done()
+
+
+async def test_an_answer_this_version_cannot_read_is_shown_on_the_first_panel(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 12 (P-70): a stored answer this version does not know — from a later version,
+    say — is shown on the first panel at the next save, never as an exception; answered, the
+    options save."""
+    options = {
+        "level": "simple",
+        "signals": {"flame": entities["flame"], "flow": entities["flow"]},
+        "boiler": {"class": "read_only", "dhw": "none", "connection": "carrier_pigeon"},
+    }
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
+    entry.add_to_hass(hass)
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "building"})
+    result = await options_step(hass, result, {})
+    assert result["step_id"] == "connection"
+    assert result["errors"] == {"base": "invalid_connection"}
+    assert form_default(result, "connection") is None  # not passed off as a known one
+    result = await options_step(
+        hass, result, {"connection": "read_only", "heat_source": "other", "type": "single"}
+    )
+    result = await options_step(hass, result, {"control_mode": "monitor", "condensing": False})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["boiler"]["connection"] == "read_only"
+
+
+def test_a_stored_answer_this_version_cannot_read_offers_everything_and_blocks_nothing() -> None:
+    """Decision 12, negative: an unknown connection offers every mode (the panel asks it again
+    first); an unknown mode does not keep the control step to "no control" — the save names the
+    problem on the first panel instead; unknown heat source and type ask both questions."""
+    from custom_components.vtherm_smart_boiler.config_flow import (
+        control_mode_off,
+        mode_schema,
+        modes_offered,
+    )
+
+    assert modes_offered({"boiler": {"connection": "carrier_pigeon"}}) == [
+        "full", "on_off", "room_values", "monitor",
+    ]  # fmt: skip
+    assert not control_mode_off({"boiler": {"control_mode": "telepathy"}})
+    unknown = {"boiler": {"heat_source": "peat", "type": "triple"}}
+    shown = {str(marker) for marker in mode_schema(unknown).schema}
+    assert shown == {"control_mode", "condensing", "dhw_priority"}

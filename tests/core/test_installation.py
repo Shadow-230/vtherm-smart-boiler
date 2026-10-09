@@ -5,9 +5,12 @@ from __future__ import annotations
 from custom_components.vtherm_smart_boiler.core.installation import (
     Boiler,
     BoilerClass,
+    BoilerType,
     Circuit,
     CircuitControl,
+    DhwType,
     EmitterType,
+    HeatSource,
     Installation,
     Issue,
     IssueCode,
@@ -101,3 +104,41 @@ def test_a_zone_may_close_when_vt_switches_it_off() -> None:
     """Decision 4's per-zone option: off by default."""
     assert not Zone("a", "main").closes_when_off
     assert Zone("a", "main", closes_when_off=True).closes_when_off
+
+
+def test_each_boiler_type_names_its_hot_water() -> None:
+    """I6 (decision 8): the boiler type by its standard name keeps the hot-water kind the analysis
+    reads — a combi with a built-in tank behaves as a tank (it reheats now and then), so an
+    entry stored with it reads the same in a version that has only none, storage and combi."""
+    assert {kind: kind.dhw for kind in BoilerType} == {
+        BoilerType.SINGLE: DhwType.NONE,
+        BoilerType.SINGLE_TANK: DhwType.STORAGE,
+        BoilerType.COMBI: DhwType.COMBI,
+        BoilerType.COMBI_TANK: DhwType.STORAGE,
+    }
+    assert [kind for kind in BoilerType if kind.heats_hot_water] == [
+        BoilerType.SINGLE_TANK,
+        BoilerType.COMBI,
+        BoilerType.COMBI_TANK,
+    ]
+
+
+def test_a_stored_hot_water_kind_suggests_a_boiler_type() -> None:
+    """I6 (decision 12): an entry made before the boiler type has its hot-water kind only; the
+    form suggests the type it most likely is — a tank on a single-function boiler, the commoner
+    one — and nothing for a value it cannot read."""
+    assert BoilerType.suggested_for("none") is BoilerType.SINGLE
+    assert BoilerType.suggested_for("storage") is BoilerType.SINGLE_TANK
+    assert BoilerType.suggested_for("combi") is BoilerType.COMBI
+    for raw in (None, "", "boiling", 3):
+        assert BoilerType.suggested_for(raw) is None
+
+
+def test_heat_sources_burn_fuel_except_electric() -> None:
+    """I6 (decision 7): only a burner has a flame, flue gas and maybe condensing; an electric
+    boiler has none of them. "Other" keeps every field, as an entry without an answer does."""
+    assert [source for source in HeatSource if source.burns_fuel] == [
+        HeatSource.GAS,
+        HeatSource.OIL,
+        HeatSource.OTHER,
+    ]
