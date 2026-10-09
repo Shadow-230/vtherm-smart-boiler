@@ -337,6 +337,24 @@ set_write_type:
             - expiring
             - persistent
             - held
+set_boiler:
+  name: Fit another boiler
+  description: >-
+    Another boiler profile in place of the configured one, the house and the zones as they are
+    (a restart lockout set by "Set the boiler's restart lockout" is replaced by the profile's).
+  fields:
+    profile:
+      name: Boiler
+      description: The boiler profile.
+      required: true
+      example: short_cycling
+      selector:
+        select:
+          options:
+            - condensing_small
+            - condensing_large
+            - non_condensing
+            - short_cycling
 set_lockout:
   name: Set the boiler's restart lockout
   description: The shortest time between the burner's stop and its next start.

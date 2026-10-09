@@ -32,6 +32,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
 
+from .profiles import BOILERS
 from .relay import RelayModel, StartUp
 from .simulation import (
     FAULTS,
@@ -348,6 +349,11 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
         sim.config = replace(sim.config, **changes)
         hub.refresh()
 
+    async def set_boiler(call: ServiceCall) -> None:
+        """Another boiler fitted in place (J4: the short-cycling boiler on a running instance)."""
+        sim.plant.boiler = BOILERS[call.data["profile"]]
+        hub.refresh()
+
     async def set_lockout(call: ServiceCall) -> None:
         sim.plant.boiler = replace(sim.plant.boiler, anti_cycle_s=float(call.data["seconds"]))
         hub.refresh()
@@ -434,6 +440,7 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
                 vol.Optional("ch_write_type"): vol.In([w.value for w in WriteType]),
             },
         ),
+        "set_boiler": (set_boiler, {vol.Required("profile"): vol.In(list(BOILERS))}),
         "set_lockout": (
             set_lockout,
             {vol.Required("seconds"): vol.All(vol.Coerce(float), vol.Range(min=0, max=3600))},
