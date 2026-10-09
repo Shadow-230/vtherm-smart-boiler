@@ -1168,7 +1168,45 @@ async def E5(r: Run):
     r.check(any("frost_zone_closed" in i for i in issues), f"repair issue: {issues}")
 
 
-SCENARIOS.update({f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5)})
+async def E6(r: Run):
+    """an oversized boiler in mild weather starting often on its own: heating follows VT's
+    zones and is never switched off while a zone calls"""
+    valves = [f"switch.boiler_sim_{zone}_valve" for zone, _t in ZONES]
+    try:
+        await r.sim("set_boiler", profile="short_cycling")
+        await r.sim("set_outdoor", temperature=10.0)
+        await r.switch(True)
+        t = time.time()
+        seen: list[tuple[float, bool]] = []  # when, and whether a zone called
+        starts, flame = 0, await r.s("binary_sensor.boiler_sim_flame") == "on"
+        while time.time() - t < 3600:
+            st = await r.ha.states()
+            seen.append((time.time(), any(st.get(v, {}).get("state") == "on" for v in valves)))
+            now_flame = st.get("binary_sensor.boiler_sim_flame", {}).get("state") == "on"
+            starts += now_flame and not flame
+            flame = now_flame
+            await r.ha.wait(5)
+        ch = [(at, v) for at, k, v in r.ha.since(t, "ch")]
+        wrong = [
+            round(at - t)
+            for at, on in ch
+            if on is False
+            and (before := [calling for when, calling in seen if when < at - 2])
+            and before[-1]
+        ]
+        r.check(starts >= 6, f"the boiler cycled: {starts} starts in the hour")
+        r.check(any(calling for _w, calling in seen), "a zone called")
+        r.check(
+            not wrong,
+            f"heating off only with no zone calling: {len(ch)} switchings, wrong at {wrong} s",
+        )
+        r.note(f"heating switchings {[(round(at - t), v) for at, v in ch][:20]}")
+    finally:
+        await r.sim("set_boiler", profile="condensing_small")
+        await r.sim("set_outdoor", temperature=3.0)
+
+
+SCENARIOS.update({f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6)})
 
 
 if __name__ == "__main__":
