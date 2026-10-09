@@ -455,6 +455,43 @@ def test_the_stub_services_match_home_assistants_for_every_call_the_plugin_makes
         assert _fields(stub, service) == _fields(real, service), service
 
 
+async def test_every_simulator_service_is_described(hass: HomeAssistant, freezer) -> None:
+    """F1 of the test report: the simulator's ``services.yaml`` describes exactly the services it
+    registers — each with a name and a description, every field of its schema with the same
+    required flag, and each choice field with the same choices — so Home Assistant loads the
+    actions' descriptions without the error it logged at start. Negative: no described service
+    or field is one the simulator does not take."""
+    import yaml
+    from homeassistant.helpers.service import async_get_all_descriptions
+
+    await setup_sim(hass, freezer, gateway=False)
+    path = COMPONENTS / "boiler_sim/services.yaml"
+    described = yaml.safe_load(path.read_text(encoding="utf-8"))
+    registered = hass.services.async_services_for_domain("boiler_sim")
+    assert set(described) == set(registered)
+    for name, service in registered.items():
+        entry = described[name]
+        assert entry["name"], name
+        assert entry["description"], name
+        schema = service.schema
+        assert isinstance(schema, vol.Schema), name
+        fields = entry.get("fields") or {}
+        assert set(fields) == {str(marker) for marker in schema.schema}, name
+        for marker, validator in schema.schema.items():
+            field = fields[str(marker)]
+            assert field["name"], (name, marker)
+            assert field["description"], (name, marker)
+            assert bool(field.get("required")) == isinstance(marker, vol.Required), (name, marker)
+            if str(marker) == "zone":
+                assert "text" in field["selector"], name  # the IDs follow the configured layout
+            elif isinstance(validator, vol.In):
+                offered = field["selector"]["select"]["options"]
+                assert offered == list(validator.container), (name, marker)
+    descriptions = await async_get_all_descriptions(hass)
+    for name in registered:
+        assert descriptions["boiler_sim"][name]["description"], name
+
+
 async def test_the_gateway_rules_run_against_the_stub(hass: HomeAssistant, freezer) -> None:
     """TB-38: the stub's entities are the gateway's to the plugin — registered by
     ``opentherm_gw``, its 0 bar after a gateway reset unknown until read again — and its fault
