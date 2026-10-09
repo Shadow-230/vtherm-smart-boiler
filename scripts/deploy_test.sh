@@ -2,16 +2,16 @@
 # Deploy the plugin, vendored VT and SmartPI and the simulator to the test Home Assistant in the
 # dedicated test LXC, then (re)start it (docs/plan-0.2.md, J1).
 #
-# Usage: scripts/deploy_test.sh [--dry-run] [--instance 1|2|3|4|5] [--config NAME]
+# Usage: scripts/deploy_test.sh [--dry-run] [--instance 1-8] [--config NAME]
 #
 # Everything is packed here into one tar stream — links followed, so the host receives files,
 # never links into vendor/ — and unpacked there over SSH: only tar and ssh are needed on either
 # side. --dry-run packs the same stream and lists it; it reads no key, no devenv/local.env, and
 # connects nowhere.
 #
-# Up to five test instances can run side by side in the same LXC, so long scenarios run in
+# Up to eight test instances can run side by side in the same LXC, so long scenarios run in
 # parallel. --instance N picks one: 1, the default, is TEST_HA_DIR, container ha-test, port
-# 8123; N = 2 to 5 is TEST_HA_DIR_N, container ha-test-N, port 8122 + N. Each has its own
+# 8123; N = 2 to 8 is TEST_HA_DIR_N, container ha-test-N, port 8122 + N. Each has its own
 # directory, marker, configuration and Home Assistant; the stream is the same.
 #
 # --config NAME sends devenv/config/NAME.yaml as the instance's configuration.yaml instead of
@@ -30,7 +30,7 @@ DRY_RUN=false
 INSTANCE=1
 CONFIG=configuration
 usage() {
-    echo "usage: scripts/deploy_test.sh [--dry-run] [--instance 1|2|3|4|5] [--config NAME]" >&2
+    echo "usage: scripts/deploy_test.sh [--dry-run] [--instance 1-8] [--config NAME]" >&2
     exit 2
 }
 while [ "$#" -gt 0 ]; do
@@ -38,7 +38,7 @@ while [ "$#" -gt 0 ]; do
         --dry-run) DRY_RUN=true ;;
         --instance)
             case "${2:-}" in
-                1 | 2 | 3 | 4 | 5) INSTANCE="$2" ;;
+                [1-8]) INSTANCE="$2" ;;
                 *) usage ;;
             esac
             shift
@@ -105,6 +105,8 @@ fi
 unset TEST_HA_HOST TEST_HA_SSH_USER TEST_HA_DIR TEST_HA_URL TEST_HA_TOKEN TZ
 unset TEST_HA_DIR_2 TEST_HA_URL_2 TEST_HA_TOKEN_2 TEST_HA_DIR_3 TEST_HA_URL_3 TEST_HA_TOKEN_3
 unset TEST_HA_DIR_4 TEST_HA_URL_4 TEST_HA_TOKEN_4 TEST_HA_DIR_5 TEST_HA_URL_5 TEST_HA_TOKEN_5
+unset TEST_HA_DIR_6 TEST_HA_URL_6 TEST_HA_TOKEN_6 TEST_HA_DIR_7 TEST_HA_URL_7 TEST_HA_TOKEN_7
+unset TEST_HA_DIR_8 TEST_HA_URL_8 TEST_HA_TOKEN_8
 if [ -f "$ENV_FILE" ]; then
     # shellcheck disable=SC1090
     source "$ENV_FILE"
@@ -123,7 +125,8 @@ if [ -z "$CHOSEN" ]; then
     exit 1
 fi
 # Each instance has a directory of its own: never another's, which the deploy would overwrite.
-for other in TEST_HA_DIR TEST_HA_DIR_2 TEST_HA_DIR_3 TEST_HA_DIR_4 TEST_HA_DIR_5; do
+for other in TEST_HA_DIR TEST_HA_DIR_2 TEST_HA_DIR_3 TEST_HA_DIR_4 TEST_HA_DIR_5 TEST_HA_DIR_6 \
+    TEST_HA_DIR_7 TEST_HA_DIR_8; do
     if [ "$other" != "$DIR_VAR" ] && [ -n "${!other:-}" ] && [ "${!other%/}" = "${CHOSEN%/}" ]; then
         echo "$DIR_VAR must not be $other: each instance has its own directory." >&2
         exit 1

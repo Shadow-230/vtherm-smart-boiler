@@ -90,13 +90,18 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    monitorowanie — oraz, gdzie to ma sens, o kondensację i priorytet ciepłej wody. Żadna z tych
    odpowiedzi nie jest wybrana za Ciebie i żadna niczego nie włącza. Potem wybierz nazwę i poziom
    szczegółowości (poziom zmienia tylko to, co widzisz, nigdy działanie wtyczki). Te same ekrany
-   otwierają opcje integracji, w pozycji **Kocioł, połączenie i tryb sterowania**.
+   otwierają opcje integracji, w pozycji **Kocioł, połączenie i tryb sterowania**. Co oznacza
+   każde połączenie, opisuje [Podłączenie kotła](#5-podłączenie-kotła).
 3. **Wybierz sygnały.** W kroku **Sygnały kotła** wybierz encję dla każdego sygnału, który masz —
    co najmniej płomień i temperaturę zasilania, jeśli chcesz sterować kotłem. Wtyczka tylko
-   czyta te encje.
+   czyta te encje. Przy integracji OpenTherm Gateway i dokładnie jednej bramce jej encje kotła
+   są wpisane za Ciebie do sprawdzenia. Przy firmware OTGW przez MQTT i przy EMS-ESP osobny krok
+   pyta o tematy MQTT urządzenia (zobacz [Świeżość danych](#68-świeżość-danych)).
 4. **Opisz instalację.** Kroki **Kocioł**, **Obieg grzewczy**, **Strefy VT** (z jednym krokiem
    **Strefa** dla każdej wybranej strefy), **Budynek** i **Pokój odniesienia** pytają o to, co
-   wiesz. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić.
+   wiesz. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Krok
+   **Kocioł** pyta też o limity ciśnienia wody z instrukcji kotła i z zaworu bezpieczeństwa;
+   krok **Budynek** o projektową temperaturę zewnętrzną, wspólną z krzywą grzewczą.
 5. **Dni danych do werdyktu.** Na poziomie zaawansowanym krok **Monitor** zawiera **Dni danych
    do werdyktu** (domyślnie 7, od 7 do 60). Można je też zmienić później w opcjach, w **Progi
    monitora**. Niczego nie wstrzymują: sterowanie możesz ustawić i włączyć w każdej chwili. Dopóki
@@ -104,9 +109,10 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
 6. **Przeczytaj werdykt.** Gdy zbierze tyle dni danych, czujnik **Werdykt sterowania** mówi, czy
    warto włączyć sterowanie (zobacz [Monitorowanie i werdykt](#41-monitorowanie-i-werdykt)).
    Decyzja należy do ciebie.
-7. **Ustaw sterowanie.** W opcjach integracji otwórz **Sterowanie (eksperymentalne)**: wybierz
-   ścieżkę zapisu, potem wypełnij kolejne kroki (na przykład **Krzywa grzewcza i limity** oraz
-   **Zachowanie sterowania**). „Bez sterowania” zostawia samo monitorowanie.
+7. **Ustaw sterowanie.** Przy pełnym sterowaniu albo wł./wył. kreator sam przechodzi do kroków
+   sterowania: ścieżka zapisu, potem kolejne kroki (na przykład **Krzywa grzewcza i limity** oraz
+   **Zachowanie sterowania**). Żeby ustawić je później albo zmienić, otwórz w opcjach integracji
+   **Sterowanie (eksperymentalne)**. „Bez sterowania” zostawia samo monitorowanie.
 8. **Włącz sterowanie** przełącznikiem **Sterowanie (eksperymentalne)** na urządzeniu
    integracji. Jeśli czegoś brakuje, przełącznik mówi czego, a monitor dalej działa.
 
@@ -149,8 +155,10 @@ Sterowanie jest **domyślnie wyłączone**. To przełącznik **Sterowanie (ekspe
 Możesz go włączyć od pierwszego dnia, gdy wypełnione są wszystkie wymagane ustawienia, na
 przykład:
 
+- tryb sterowania „pełne sterowanie” albo „wł./wył.” (tylko monitorowanie i tylko temperatura
+  pokoju zostawiają sterowanie wyłączone, a przełącznik mówi dlaczego);
 - sposób zapisu do kotła i sposób jego oddania (zobacz
-  [Podłączenie kotła](#5-podłączenie-kotła));
+  [Podłączenie kotła](#5-podłączenie-kotła)), pasujące do połączenia kotła;
 - projektowa temperatura zasilania krzywej grzewczej (nie ma wartości domyślnej);
 - dokładnie jeden obieg grzewczy zasilany wprost z kotła (albo przez stały termostatyczny zawór
   mieszający);
@@ -284,6 +292,24 @@ zgłoszenie w Naprawach. Sterowanie wraca samo, gdy strefa znów odpowie.
 VT może pokazywać taki termostat jako „wyłączony”, dopóki go nie uruchomi. Wtyczka nie czyta tego
 „wyłączony” jako „brak zapotrzebowania”.
 
+### 4.8 Ciepła woda
+
+Rodzaj kotła mówi, czy kocioł grzeje ciepłą wodę: jednofunkcyjny bez ciepłej wody,
+jednofunkcyjny z zasobnikiem, dwufunkcyjny (ciepła woda przepływowa) albo dwufunkcyjny
+z wbudowanym zasobnikiem. Dla każdego kotła, który grzeje ciepłą wodę, ekrany pytają, czy
+**ciepła woda ma priorytet**:
+
+- **Z priorytetem** (domyślnie) — gdy kocioł grzeje ciepłą wodę, pomieszczenia nie dostają
+  ciepła. Tak jest zwykle w kotle dwufunkcyjnym i przy zasobniku ładowanym przez zawór
+  trójdrogowy. Wtyczka wstrzymuje wtedy na czas poboru naukę SmartPI w strefach i liczy, że
+  ciepło kotła nie trafia do pomieszczeń.
+- **Bez priorytetu** — ciepła woda i ogrzewanie działają razem (zasobnik ładowany równolegle,
+  bufor, kocioł dwufunkcyjny, który dzieli ciepło). Ciepła woda nie wstrzymuje wtedy nauki i nie
+  liczy się jako ciepło, którego brakuje pomieszczeniom.
+
+Zła odpowiedź albo niepotrzebnie wstrzymuje naukę, albo pozwala jej uczyć się z poborów, które
+zabrały pomieszczeniom ciepło. Rozróżnianie, czy kocioł grzał dom, czy wodę, od niej nie zależy.
+
 ## 5. Podłączenie kotła
 
 Wtyczka czyta kocioł przez encje, które wybierasz w jej formularzach. Do sterowania potrzebuje
@@ -293,10 +319,30 @@ sterowaniu — **oddania sterowania**.
 Szczegóły: [`SCOPE.md`, §5](../../SCOPE.md#5-hardware-circuits-and-zone-algorithms) i
 [Gateway topology](../../SCOPE.md#gateway-topology).
 
+Pierwszy ekran pyta, **jak kocioł jest podłączony**. Odpowiedź decyduje, co wtyczka może
+zapisywać, jak oddaje kocioł i co proponują kroki sterowania:
+
+| Połączenie | Co zapisuje wtyczka | „Wyłącz grzanie” | Oddanie sterowania | Gdy Home Assistant stanie |
+|---|---|---|---|---|
+| OpenTherm Gateway (integracja) | nastawę sterującą, powtarzaną co 30 s | wyłączone zezwolenie na grzanie w bramce | bezpieczne oddanie sterowania | bramka porzuca nastawę w ciągu minuty: termostat na bramce przejmuje kocioł; bez termostatu grzanie staje |
+| Firmware OTGW przez MQTT | to samo, jako polecenia MQTT firmware'u | jak wyżej | jak wyżej | jak wyżej |
+| ESPHome OpenTherm | liczbę nastawy i przełącznik grzania, oba trzymane przez ESP | wyłączony przełącznik grzania | wartość, którą podajesz (proponowane) | ESP trzyma ostatnią nastawę i grzanie do restartu, potem bierze swoje wartości startowe ([5.7](#57-esphome-opentherm)) |
+| EMS-ESP | swoją nastawę zasilania, która wygasa, powtarzaną co 30 s | nastawa 0 ([5.8](#58-ems-esp)) | limit czasu urządzenia, 1 minuta (proponowane) | nastawa wygasa w ciągu około minuty: kocioł wraca do własnego ustawienia |
+| Przekaźnik (kocioł wł./wył.) | przekaźnik | przekaźnik wyłączony | jego stan spoczynkowy | przekaźnik zostaje, jak był |
+| Moduł Wi-Fi kotła lub integracja producenta | domyślnie nic: monitorowanie | — | — | — |
+| Inna encja do zapisu (zaawansowane) | to, co wybierasz, z podanym typem zapisu | przełącznik grzania | twój wybór | zależy od urządzenia |
+| Inna integracja, tylko odczyt | nic | — | — | — |
+
+Wartości w tej tabeli są tymczasowe do przeglądu przed wydaniem (K4). Sterowanie ustawione dla
+innego połączenia jest zablokowane („Ustawione sterowanie nie pasuje do połączenia kotła”).
+ESPHome i EMS-ESP to sterowniki po stronie Home Assistant: ich topologia to „wirtualna”. Moduły
+Wi-Fi i integracje producentów zwykle zapisują do pamięci kotła albo przez chmurę, więc
+sterowanie jest proponowane tylko z typem zapisu, który jest znany i nie jest trwały.
+
 ### 5.1 Ścieżki zapisu
 
-Wybierasz jedną w opcjach sterowania („Ścieżka zapisu”). Domyślnie jest „Bez sterowania”:
-wtyczka tylko monitoruje.
+Wybierasz jedną w kroku sterowania („Ścieżka zapisu”), spośród pasujących do połączenia kotła.
+Domyślnie jest „Bez sterowania”: wtyczka tylko monitoruje.
 
 - **Encja do zapisu** — interfejs kotła, który udostępnia encje z możliwością zapisu, na
   przykład EMS-ESP albo sterownik OpenTherm na ESPHome. Wtyczka zapisuje nastawę zasilania, a
@@ -309,7 +355,8 @@ wtyczka tylko monitoruje.
   Tylko włączanie i wyłączanie grzania.
 
 Przełącznik włączania i wyłączania grzania jest w tej wersji **wymagany** do sterowania
-temperaturą wody. Bez niego sterowanie pozostaje zablokowane, a monitor działa.
+temperaturą wody, poza EMS-ESP, gdzie grzanie wyłącza jego własna nastawa 0
+([5.8](#58-ems-esp)). Bez niego sterowanie pozostaje zablokowane, a monitor działa.
 
 #### Encja do zapisu
 
@@ -440,6 +487,102 @@ Wtyczka zapisuje tylko wartości, które wygasają albo które urządzenie trzym
 roboczej. Cel oznaczony jako trwały albo o nieznanym typie nigdy nie jest zapisywany: sterowanie
 pozostaje wyłączone i mówi dlaczego. Parametry krzywej zapisane w kotle nigdy nie są
 zapisywane. Wtyczka zostawia też zezwolenie na ciepłą wodę w kotle tak, jak było.
+
+### 5.7 ESPHome OpenTherm
+
+ESP z komponentem OpenTherm ESPHome jest dla kotła sterownikiem nadrzędnym: cały czas wysyła
+ostatnią nastawę i ostatnie „grzej / nie grzej”, które dostał. Gdy Home Assistant stanie, ESP
+trzyma je do swojego restartu — domyślnie 15 minut po ostatnim połączeniu z Home Assistant (jego
+`reboot_timeout` API) — a potem bierze wartości startowe z własnej konfiguracji. Dlatego
+sterowanie przez ESPHome wymaga zaznaczenia **„W ESP: bezpieczne wartości startowe i krótki
+reboot_timeout API”**; wtyczka nigdy nie zaznacza tego za Ciebie. Bez tego sterowanie nie rusza
+(„Nie potwierdzono bezpiecznego startu ESP”).
+
+Szkic części, które mają znaczenie — sprawdź nazwy w
+[dokumentacji OpenTherm ESPHome](https://esphome.io/components/opentherm/) dla swojej wersji
+i wpisz własne piny i nazwy:
+
+```yaml
+api:
+  reboot_timeout: 5min        # restart i wartości startowe niżej wkrótce po zniknięciu
+                              # Home Assistant
+
+opentherm:
+  in_pin: GPIO_IN             # piny Twojej płytki
+  out_pin: GPIO_OUT
+
+number:
+  - platform: opentherm
+    t_set:
+      name: "Boiler setpoint"
+      min_value: 0
+      max_value: 80
+      initial_value: 0        # bez nastawy na starcie: kocioł nie dostaje prośby o grzanie
+      restore_value: false    # nigdy ostatnia wartość sprzed restartu
+
+switch:
+  - platform: opentherm
+    ch_enable:
+      name: "Boiler heating"
+      restore_mode: ALWAYS_OFF  # grzanie wyłączone na starcie
+
+sensor:
+  - platform: opentherm
+    t_boiler:
+      name: "Boiler flow temperature"
+      force_update: true      # zgłaszaj też niezmienione wartości
+    t_ret:
+      name: "Boiler return temperature"
+      force_update: true
+    rel_mod_level:
+      name: "Boiler modulation"
+      force_update: true
+
+binary_sensor:
+  - platform: opentherm
+    flame_on:
+      name: "Boiler flame"
+```
+
+We wtyczce: liczba nastawy to encja nastawy, przełącznik grzania to przełącznik grzania; krok
+sterowania proponuje dla obu „Trzymany przez urządzenie”, a oddanie sterowania „Zapis wartości”,
+której wartość i skutek podajesz.
+
+Przy takich wartościach startowych dom, w którym Home Assistant nie wraca po restarcie ESP, **nie
+jest ogrzewany**, dopóki Home Assistant nie wróci. Alternatywą jest umiarkowany start:
+przełącznik grzania włączony na starcie i `initial_value` o umiarkowanej temperaturze wody, na
+przykład 45 °C. Kocioł grzeje wtedy bez żadnej regulacji pokojowej — pomieszczenia mogą się
+przegrzać, a ogrzewanie podłogowe potrzebuje własnego ogranicznika — dopóki Home Assistant nie
+wróci. Wybierz to, co jest bezpieczniejsze w Twoim domu.
+
+`force_update: true` ma znaczenie dla świeżości danych: Home Assistant zapisuje wartość czujnika
+ESPHome tylko wtedy, gdy się zmienia, chyba że ESP wysyła ją z `force_update`. Bez tego wtyczka nie
+odróżni wartości stałej od zamrożonej. Jeśli czujnik liczbowy przez pierwsze sześć godzin nie
+powtórzył niezmienionej wartości, zgłoszenie „Czujniki ESPHome nie powtarzają niezmienionych
+wartości” wymienia go z nazwy. Czujniki binarne (płomień) nie mogą powtarzać wartości; liczy się
+dla nich dostępność.
+
+### 5.8 EMS-ESP
+
+Nastawa zasilania EMS-ESP (`selflowtemp`) wygasa w ciągu około minuty, a EMS-ESP jej nie powtarza,
+więc wtyczka zapisuje ją co 30 sekund. Wybierz ją jako encję nastawy i jako jej odczyt zwrotny.
+Krok sterowania proponuje dla niej „Wygasający”, a oddanie sterowania „Limit czasu urządzenia”
+równy 1 minucie: wtyczka przestaje zapisywać, a kocioł w ciągu około minuty wraca do własnego
+ustawienia.
+
+- **„Wyłącz grzanie” to nastawa 0** — sposób, który opisuje sama dokumentacja EMS-ESP („Force
+  Heating Off”) — zapisywana co 30 sekund jak każda nastawa, i tylko przy nastawie pozostawionej
+  jako „Wygasający”: wtedy zatrzymany Home Assistant zostawia kocioł jego własnemu sterowaniu
+  w ciągu około minuty. Przełącznik grzania nie jest przy tym połączeniu potrzebny; nigdy nie
+  używaj do tego „heating activated” z EMS-ESP — kocioł zapisuje je w swojej pamięci. Co robi
+  pompa kotła przy nastawie 0, nie wiadomo: obserwuj to na swoim kotle.
+- Jeśli kocioł od początku ignoruje 0, sterowanie staje i oddaje kocioł; przełącznik sterowania
+  podaje wtedy: Kocioł nie przyjął „wyłącz grzanie”: wyłącz i włącz sterowanie.
+- Kocioł przyjmuje nastawę z magistrali tylko poniżej ustawienia na własnym panelu (dokumentacja
+  EMS-ESP). Ustaw własną temperaturę grzania kotła co najmniej na najwyższą temperaturę wody we
+  wtyczce; inaczej wyższe nastawy nie są przyjmowane, a wtyczka to zgłasza.
+- Dla świeżości danych wtyczka słucha powtórzeń EMS-ESP w jego temacie bazowym MQTT (zobacz
+  [Świeżość danych](#68-świeżość-danych)).
 
 ## 6. Bezpieczeństwo i oddanie sterowania
 
@@ -581,6 +724,33 @@ Zatrzask przetrwa ponowne uruchomienie i jest wymieniony w jednym zgłoszeniu w 
 z reakcją „oddaj kocioł”, który jest już aktywny, gdy włączasz sterowanie, od razu blokuje
 sterowanie.
 
+### 6.8 Świeżość danych
+
+Sygnał jest świeży, gdy jego encja jest dostępna i — jeśli ma limit wieku — gdy jego ostatnie
+zgłoszenie mieści się w tym limicie. Bez świeżego płomienia i temperatury zasilania sterowanie nic
+nie zapisuje i po pięciu minutach oddaje kocioł
+([Utrata łączności z kotłem](#63-utrata-łączności-z-kotłem)). Limity ustawia się w opcjach,
+w **Limity świeżości**, w minutach, osobno dla każdego sygnału i dla encji pogody:
+
+- **Puste (domyślnie): automatycznie.** Bez limitu, dopóki źródło nie powtórzy niezmienionej
+  wartości co najmniej dwa razy w tym uruchomieniu; potem pięciokrotność jego własnego rytmu,
+  od 10 do 30 minut dla sygnałów kotła i od 3 do 12 godzin dla encji pogody. Źródło, które
+  zgłasza tylko zmiany, nigdy go nie dostaje: stała wartość nie jest nieświeża, a limit
+  zatrzymałby sterowanie przy stałej pogodzie.
+- **0: bez limitu** — liczy się tylko, czy encja jest dostępna.
+- **Liczba: ten limit.** Krótszy niż odstęp, w jakim źródło zgłasza wartości, robi ze stałej
+  wartości nieświeżą.
+
+Home Assistant zapisuje wartość encji MQTT i ESPHome tylko wtedy, gdy się zmienia, więc jej własny
+czas zgłoszenia nic nie mówi o stałej wartości. Interfejsy same powtarzają swoje wartości —
+firmware OTGW co najmniej co 60 sekund, EMS-ESP domyślnie co 10 sekund — i przy tych dwóch
+wtyczka słucha wiadomości MQTT urządzenia (tylko czyta) i bierze je za zgłoszenia sygnałów.
+O tematy pyta krok połączenia: główny temat i węzeł firmware'u OTGW albo temat bazowy EMS-ESP.
+Gdy czas publikacji danych kotła w EMS-ESP wynosi 0 (tylko zmiany), nic się nie powtarza.
+Przy ESPHome powtórzenia daje `force_update: true` na jego czujnikach
+([5.7](#57-esphome-opentherm)). Integracja OpenTherm Gateway sama przepisuje swoje encje przy
+każdym raporcie.
+
 ## 7. Alarmy i zgłoszenia w Naprawach
 
 Wtyczka informuje o problemach na dwa sposoby:
@@ -666,6 +836,10 @@ Zgłoszenia w Naprawach dotyczące sterowania:
 | Opcji sterowania nie da się użyć | otwórz opcje i ustaw sterowanie ponownie |
 | Reakcje na alarmy nie są już dostępne | te alarmy teraz tylko informują |
 
+Przełącznik sterowania podaje też odpowiedzi z kreatora, które zostawiają sterowanie wyłączone:
+tylko monitorowanie, tylko temperatura pokoju (od wersji 0.3), sterowanie albo topologia
+niepasujące do połączenia kotła, a przy ESPHome niepotwierdzony bezpieczny start.
+
 ### 7.3 Strefy
 
 | Alarm | Znaczenie |
@@ -721,6 +895,7 @@ Gdy „Sygnały” są wyłączone, ich atrybuty wskazują sygnał, z którym je
 | Termostat ścienny nie podaje nastawy | sprawdź jego ustawienie i sygnał |
 | Encja używana przez wtyczkę zniknęła | wybierz inną w opcjach |
 | Centralna konfiguracja Versatile Thermostat nie działa | napraw centralną konfigurację VT |
+| Czujniki ESPHome nie powtarzają niezmienionych wartości | dodaj im `force_update: true` w ESP |
 
 ### 7.5 Monitor i sama wtyczka
 

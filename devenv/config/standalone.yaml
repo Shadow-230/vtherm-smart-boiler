@@ -1,0 +1,37 @@
+# Test Home Assistant for J4's stand-alone gateway (docs/plan-0.2.md, J4): an OpenTherm Gateway
+# with no thermostat on its terminals, so without the plugin's override the boiler does not heat —
+# a hand-back stops heating, as the control switch says. Deployed with
+# `scripts/deploy_test.sh --instance N --config standalone`. No default_config, so no network
+# discovery looks around the local network.
+homeassistant:
+  name: Smart Boiler for Versatile Thermostat test (stand-alone gateway)
+
+frontend:
+config:
+api:
+history:
+logbook:
+system_log:
+recorder:
+  purge_keep_days: 14
+
+logger:
+  default: info
+  logs:
+    custom_components.vtherm_smart_boiler: debug
+    custom_components.boiler_sim: info
+    custom_components.opentherm_gw: info
+
+# J4's test-only fault injector (sim/custom_components/j4_faults), as in configuration.yaml.
+j4_faults:
+
+boiler_sim:
+  boiler: condensing_small
+  house: average
+  zones: radiators
+  valves: switch
+  topology: standalone
+  write_type: expiring
+  ch_write_type: held
+  outdoor: 3.0
+  gateway_id: sim

@@ -1,0 +1,38 @@
+# Test Home Assistant for J4's entity write path (docs/plan-0.2.md, J4): the boiler written through
+# entities, as an ESPHome OpenTherm master or EMS-ESP would offer them — a flow setpoint
+# (`number.boiler_sim_flow_setpoint`) and a heating switch (`switch.boiler_sim_ch_enable`) the
+# device holds, and an external-control switch for a switch hand-back — with no wall thermostat.
+# Deployed with `scripts/deploy_test.sh --instance N --config entity`. No default_config, so no
+# network discovery looks around the local network.
+homeassistant:
+  name: Smart Boiler for Versatile Thermostat test (entity path)
+
+frontend:
+config:
+api:
+history:
+logbook:
+system_log:
+recorder:
+  purge_keep_days: 14
+
+logger:
+  default: info
+  logs:
+    custom_components.vtherm_smart_boiler: debug
+    custom_components.boiler_sim: info
+    custom_components.opentherm_gw: info
+
+# J4's test-only fault injector (sim/custom_components/j4_faults), as in configuration.yaml.
+j4_faults:
+
+boiler_sim:
+  boiler: condensing_small
+  house: average
+  zones: radiators
+  valves: switch
+  topology: with_thermostat
+  write_type: held
+  ch_write_type: held
+  outdoor: 3.0
+  gateway_id: sim

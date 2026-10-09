@@ -85,13 +85,18 @@ Only one entry of the integration can exist: it runs one boiler.
    or monitoring only — with condensing and the hot-water priority where they apply. None of these
    is chosen for you, and none switches anything on. Then pick a name and the level of detail (the
    level changes only what you see, never how the plugin behaves). The same panels open the
-   integration's options, under **Boiler, connection and control mode**.
+   integration's options, under **Boiler, connection and control mode**. What each connection
+   means is in [Connecting the boiler](#5-connecting-the-boiler).
 3. **Pick the signals.** In **Boiler signals** pick the entity for each signal you have — at
    least flame and flow temperature if you plan to control the boiler. The plugin only reads
-   these entities.
+   these entities. With the OpenTherm Gateway integration and exactly one gateway, its boiler
+   entities are filled in for you to check. On the OTGW firmware over MQTT and on EMS-ESP a step
+   asks the device's MQTT topics (see [Fresh data](#68-fresh-data)).
 4. **Describe the installation.** The steps **Boiler**, **Heating circuit**, **VT zones** (with
    one **Zone** step for each zone you pick), **Building** and **Reference room** ask what you
-   know. Leave unknown values empty: the plugin then says what it cannot judge.
+   know. Leave unknown values empty: the plugin then says what it cannot judge. **Boiler** also
+   takes the water-pressure limits from the boiler's manual and its safety valve; **Building**
+   takes the design outdoor temperature, which the heating curve shares.
 5. **Days of data for the verdict.** At the advanced level the step **Monitor** holds
    **Days of data for the verdict** (7 days by default, 7 to 60). It can also be changed later in
    the options under **Monitor thresholds**. It holds nothing back: you may set up and switch on
@@ -99,9 +104,10 @@ Only one entry of the integration can exist: it runs one boiler.
 6. **Read the verdict.** Once it has these days of data, the sensor **Control verdict** says
    whether control is worth enabling (see
    [Monitoring and the verdict](#41-monitoring-and-the-verdict)). You decide.
-7. **Set up control.** In the integration's options open **Control (experimental)**: choose the
-   write path, then fill in the steps that follow (for example **Heating curve and limits** and
-   **Control behaviour**). "No control" keeps monitoring only.
+7. **Set up control.** With full control or on/off chosen, the setup itself goes on into the
+   control steps: the write path, then the steps that follow (for example **Heating curve and
+   limits** and **Control behaviour**). To set it up later, or change it, open
+   **Control (experimental)** in the integration's options. "No control" keeps monitoring only.
 8. **Switch control on** with the switch **Control (experimental)** of the integration's device.
    If something is missing, the switch says what, and the monitor keeps running.
 
@@ -142,8 +148,10 @@ pass without enough data, the control switch says that control starts without a 
 Control is **off by default**. It is the switch **Control (experimental)**. You can switch it on
 from the first day, once every required setting is filled in, for example:
 
+- the control mode "full control" or "on/off" (monitoring only and room temperature only keep
+  control off, and the switch says so);
 - a way to write to the boiler and a way to hand it back (see
-  [Connecting the boiler](#5-connecting-the-boiler));
+  [Connecting the boiler](#5-connecting-the-boiler)), fitting the boiler's connection;
 - the heating curve's design flow temperature (it has no default);
 - exactly one heating circuit fed straight from the boiler (or through a fixed thermostatic
   mixing valve);
@@ -269,6 +277,23 @@ A **working thermostat** is one of:
 show such a thermostat as "off" until it starts. The plugin does not read that "off" as "no
 demand".
 
+### 4.8 Hot water
+
+The boiler type says whether the boiler heats hot water: single-function without hot water,
+single-function with a tank, combi (instantaneous hot water) or combi with a built-in tank. For
+every boiler that heats hot water the panels ask whether **hot water has priority**:
+
+- **With priority** (default) — while the boiler heats hot water, the rooms get no heat. This is
+  usual for a combi and for a tank charged through a three-way valve. The plugin then pauses
+  SmartPI's learning in the zones during the draw, and counts the boiler's heat as not reaching
+  the rooms.
+- **Without priority** — hot water and heating run together (a tank charged in parallel, a
+  buffer, a combi that shares its heat). Hot water then neither pauses learning nor counts as
+  heat the rooms miss.
+
+The wrong answer either pauses learning for nothing or lets it learn from draws that took the
+rooms' heat. How burns are told apart as heating or hot water does not depend on it.
+
 ## 5. Connecting the boiler
 
 The plugin reads the boiler through entities you pick in its forms. To control the boiler it
@@ -278,10 +303,31 @@ own control — the **hand-back**.
 Details: [`SCOPE.md`, §5](../../SCOPE.md#5-hardware-circuits-and-zone-algorithms) and
 [Gateway topology](../../SCOPE.md#gateway-topology).
 
+The first panel asks **how the boiler is connected**. The answer decides what the plugin can
+write, how it hands the boiler back, and what the control steps offer:
+
+| Connection | What the plugin writes | "Heating off" | Hand-back | If Home Assistant stops |
+|---|---|---|---|---|
+| OpenTherm Gateway (integration) | the control setpoint, repeated every 30 s | the gateway's heating enable off | the safe hand-back | the gateway drops the setpoint within a minute: a thermostat on it takes over; without one, heating stops |
+| OTGW firmware over MQTT | the same, as the firmware's MQTT commands | as above | as above | as above |
+| ESPHome OpenTherm | the setpoint number and the heating switch, both held by the ESP | the heating switch off | a value you declare (offered) | the ESP keeps the last setpoint and heating until it restarts, then takes its start values ([5.7](#57-esphome-opentherm)) |
+| EMS-ESP | its flow setpoint, which lapses, repeated every 30 s | setpoint 0 ([5.8](#58-ems-esp)) | the device's timeout, 1 minute (offered) | the setpoint lapses within about a minute: the boiler returns to its own setting |
+| Relay (on/off boiler) | the relay | relay off | its rest state | the relay stays as it was |
+| The boiler's Wi-Fi module or the manufacturer's integration | nothing by default: monitoring | — | — | — |
+| Another writable entity (advanced) | what you pick, with the write type you declare | a heating switch | your choice | up to the device |
+| Another integration, read only | nothing | — | — | — |
+
+The values in this table are provisional until the user review before release (K4). A control
+set up for another connection is blocked ("The control set up does not fit the boiler's
+connection"). ESPHome and EMS-ESP are controllers on Home Assistant's side: their topology is
+"virtual". The Wi-Fi module and manufacturer integrations usually write to the boiler's memory
+or through a cloud, so control is offered only with a write type that is known and not
+persistent.
+
 ### 5.1 The write paths
 
-You choose one in the control options ("Write path"). The default is "No control": the plugin
-only monitors.
+You choose one in the control step ("Write path"), among those that fit the boiler's connection.
+The default is "No control": the plugin only monitors.
 
 - **Writable entity** — a boiler interface that offers writable entities, for example EMS-ESP
   or an ESPHome OpenTherm controller. The plugin writes the flow setpoint, and heating on and off
@@ -293,8 +339,9 @@ only monitors.
 - **Relay (on/off boiler)** — for a boiler with only room-thermostat terminals. Heating on and
   off only.
 
-A heating on/off switch is **required** for water-temperature control in this version. Without
-it, control stays blocked and the monitor runs.
+A heating on/off switch is **required** for water-temperature control in this version, except on
+EMS-ESP, whose own setpoint 0 keeps heating off ([5.8](#58-ems-esp)). Without it, control stays
+blocked and the monitor runs.
 
 #### A writable entity
 
@@ -421,6 +468,100 @@ The plugin writes only values that expire or that the device holds in working me
 declared persistent, or of unknown type, is never written: control stays off and says why. Curve
 parameters stored in the boiler are never written. The plugin also leaves the boiler's hot-water
 enable as it was.
+
+### 5.7 ESPHome OpenTherm
+
+An ESP running ESPHome's OpenTherm component is the boiler's master: it keeps sending the last
+setpoint and heating on/off it was given. If Home Assistant stops, the ESP goes on with them until
+it restarts — by default 15 minutes after its last Home Assistant connection (its API
+`reboot_timeout`) — and then takes the start values of its own configuration. So control on
+ESPHome needs the tick **"On the ESP: safe start values and a short API reboot_timeout"**, never
+ticked for you. Without it, control does not start ("The ESP's safe start not confirmed").
+
+A sketch of the parts that matter — check the names against ESPHome's
+[OpenTherm documentation](https://esphome.io/components/opentherm/) for your version, and fill in
+your own pins and names:
+
+```yaml
+api:
+  reboot_timeout: 5min        # restart, and take the start values below, soon after
+                              # Home Assistant is gone
+
+opentherm:
+  in_pin: GPIO_IN             # your board's pins
+  out_pin: GPIO_OUT
+
+number:
+  - platform: opentherm
+    t_set:
+      name: "Boiler setpoint"
+      min_value: 0
+      max_value: 80
+      initial_value: 0        # no setpoint at start: no heating request
+      restore_value: false    # never the last value from before the restart
+
+switch:
+  - platform: opentherm
+    ch_enable:
+      name: "Boiler heating"
+      restore_mode: ALWAYS_OFF  # heating off at start
+
+sensor:
+  - platform: opentherm
+    t_boiler:
+      name: "Boiler flow temperature"
+      force_update: true      # report unchanged values too
+    t_ret:
+      name: "Boiler return temperature"
+      force_update: true
+    rel_mod_level:
+      name: "Boiler modulation"
+      force_update: true
+
+binary_sensor:
+  - platform: opentherm
+    flame_on:
+      name: "Boiler flame"
+```
+
+In the plugin: the setpoint number is the setpoint entity, the heating switch the heating switch;
+the control step offers both as "Held by the device", with the hand-back "Write a value", whose
+value and effect you declare.
+
+With these start values, a house whose Home Assistant stays down after the ESP restarts is **not
+heated** until Home Assistant returns. The alternative is a moderate start: the heating switch
+starting on and `initial_value` a moderate water temperature, for example 45 °C. The boiler then
+heats without any room control — rooms may overheat, and underfloor heating needs its own
+limit — until Home Assistant is back. Choose what is safer in your house.
+
+`force_update: true` matters for the data's freshness: Home Assistant writes an ESPHome sensor's
+value only when it changes, unless the ESP sends it with `force_update`. Without it the plugin
+cannot tell a steady value from a frozen one. If a numeric sensor has not repeated an unchanged
+value in the first six hours, the repair issue "ESPHome sensors do not repeat unchanged values"
+names it. Binary sensors (the flame) cannot repeat; they are judged by availability.
+
+### 5.8 EMS-ESP
+
+EMS-ESP's flow setpoint (`selflowtemp`) lapses within about a minute, and EMS-ESP does not repeat
+it, so the plugin writes it every 30 seconds. Pick it as the setpoint entity and as its
+read-back. The control step offers it as "Expiring", with the hand-back "Device timeout" of 1
+minute: the plugin stops writing and the boiler returns to its own setting within about a
+minute.
+
+- **"Heating off" is setpoint 0**, EMS-ESP's own documented way to keep heating off ("Force
+  Heating Off"), written every 30 seconds like any setpoint — only with the setpoint kept
+  "Expiring", so that a stopped Home Assistant leaves the boiler on its own control within about
+  a minute. No heating switch is needed on this connection; never use EMS-ESP's "heating
+  activated" for it — the boiler stores it in its memory. What the boiler's pump does at
+  setpoint 0 is not known: watch it on your boiler.
+- If the boiler ignores the 0 from the start, control stops and hands back ("The boiler did not
+  take "heating off": switch control off and on").
+- The boiler takes a setpoint from the bus only below its own panel setting (EMS-ESP's
+  documentation). Set the boiler's own heating temperature at least as high as the plugin's
+  highest water temperature; otherwise higher setpoints are not taken, and the plugin reports
+  it.
+- For fresh data the plugin listens to EMS-ESP's own repeats on its MQTT base topic (see
+  [Fresh data](#68-fresh-data)).
 
 ## 6. Safety and hand-back
 
@@ -554,6 +695,30 @@ Home Assistant clears it.
 A latch survives a restart and is named in one repair issue. An alarm with a hand-back reaction
 that is already active when you switch control on blocks control at once.
 
+### 6.8 Fresh data
+
+A signal is fresh while its entity is available and, where it has an age limit, while its last
+report is within that limit. Without a fresh flame and flow, control writes nothing and hands
+back after five minutes ([A lost boiler link](#63-a-lost-boiler-link)). The limits are set in the
+options under **Freshness limits**, in minutes, one per signal and one for the weather entity:
+
+- **Empty (default): automatic.** No limit until the source is seen repeating an unchanged value
+  at least twice in the run; then five times its own rhythm, 10 to 30 minutes for the boiler's
+  signals and 3 to 12 hours for the weather entity. A source that reports only changes never gets
+  one: a steady value is not a stale one, and a limit would stop control in steady weather.
+- **0: no limit** — only whether the entity is available counts.
+- **A number: that limit.** Shorter than the source's reporting interval, it makes a steady value
+  stale.
+
+Home Assistant writes an MQTT or ESPHome entity's value only when it changes, so its own report
+time says nothing about a steady value. The interfaces repeat their values themselves — the OTGW
+firmware at least every 60 seconds, EMS-ESP every 10 seconds by default — and on these two the
+plugin listens to the device's MQTT messages (reading only) and takes them as the signals'
+reports. The topics are asked with the connection: the OTGW firmware's top topic and node, or
+EMS-ESP's base topic. With EMS-ESP's boiler publish time at 0 (changes only), nothing repeats.
+On ESPHome the repeats come from `force_update: true` on its sensors ([5.7](#57-esphome-opentherm)).
+The OpenTherm Gateway integration rewrites its entities on every report by itself.
+
 ## 7. Alarms and repair issues
 
 The plugin tells you about problems in two ways:
@@ -636,6 +801,10 @@ Repair issues about control:
 | The control options cannot be used | open the options and set control up again |
 | Alarm reactions no longer offered | those alarms now only inform |
 
+The control switch also names the setup answers that keep control off: monitoring only, room
+temperature only (from version 0.3), a control or a topology that does not fit the boiler's
+connection, and on ESPHome the safe start not confirmed.
+
 ### 7.3 Zones
 
 | Alarm | Meaning |
@@ -691,6 +860,7 @@ When "Signals" is off, its attributes name the signal with the problem.
 | The wall thermostat reports no setpoint | check its setting and the signal |
 | An entity the plugin uses is gone | pick another one in the options |
 | Versatile Thermostat's central configuration is not running | fix VT's central configuration |
+| ESPHome sensors do not repeat unchanged values | add `force_update: true` to them on the ESP |
 
 ### 7.5 Monitor and the plugin itself
 

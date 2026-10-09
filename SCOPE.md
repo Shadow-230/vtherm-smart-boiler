@@ -145,7 +145,7 @@ a heat pump controller (excluded), or anything that sends data outside.
 
 | Area | Regular user | Power user |
 |---|---|---|
-| Wizard | boiler class and profile suggestion, gateway topology and what is wired to the gateway's thermostat terminals (decision 1), control mode, circuits and zones, a few coarse choices (insulation, thermal mass, emitter type); on the entity and relay paths the tick "the boiler has its own room controller" (answers F, M); on the relay path the relay's own settings and the tick "this is a separate relay contact, not a setting stored in the boiler's memory" (answer G) | every profile field, measured values, building load from own calculation |
+| Wizard | first, how the boiler is connected (the boiler class follows from it), the control mode (no default), the heat source and the boiler type with condensing and the hot-water priority (I6, `docs/plan-0.2-i6.md`); with full or on/off control the control steps in the setup too, the control switch still off (decision 11 of I6); gateway topology and what is wired to the gateway's thermostat terminals (decision 1), circuits and zones, the design outdoor temperature (one value for the building and the curve) and the water-pressure limits from the boiler's manual, a few coarse choices (insulation, thermal mass, emitter type); on the entity and relay paths the tick "the boiler has its own room controller" (answers F, M); on the relay path the relay's own settings and the tick "this is a separate relay contact, not a setting stored in the boiler's memory" (answer G); on ESPHome the tick "safe start values and a short API `reboot_timeout`" (decision 3 of I6) | every profile field, measured values, building load from own calculation |
 | Assessment | a verdict: control is worth enabling or not, and why | all metrics, per outdoor-temperature range, raw cycle data |
 | Control | off by default; once enabled, control runs automatically in the chosen mode; curve changes: suggestions (default) or automatic within a preset band (Low / Medium / High) | Custom band, per-parameter overrides, manual edits of learned values, reset to profile |
 | Alarms | sensible default reactions | thresholds per alarm; a reaction only where decision 7 allows one (§7) |
@@ -184,6 +184,45 @@ What the plugin can do depends on what the integration can write:
   including entities the user made; (2) built-in support for devices without such an entity —
   first OTGW, through `opentherm_gw` or its firmware over MQTT; (3) from 0.2.2, a relay for an
   on/off boiler (class 3); (4) otherwise monitor only, with the reason shown.
+- **The connection** (I6, `docs/plan-0.2-i6.md` decisions 1–5; provisional, K4): the setup's
+  first panel asks how the boiler is connected, and the answer sets the boiler class (what the
+  connection can do), the write paths offered, the write types and the hand-back offered, whether
+  a heating switch is required, and the entities suggested; a control section that does not fit
+  the connection, or a topology other than "virtual" on ESPHome or EMS-ESP, is blocked.
+
+  | Connection | Write path | Write types | Hand-back | Heating switch | Class |
+  |---|---|---|---|---|---|
+  | OpenTherm Gateway (integration) | `opentherm_gw` | fixed (`CS` expiring, `CH=` held) | the safe hand-back | built in | flow setpoint |
+  | OTGW firmware over MQTT | `otgw_mqtt` | as above | as above | built in | flow setpoint |
+  | ESPHome OpenTherm | entity, virtual | held, held (offered) | a value (offered) | required | flow setpoint |
+  | EMS-ESP | entity, virtual | setpoint expiring (offered) | the device's timeout, 1 min (offered) | not needed: "off" is its setpoint 0 | flow setpoint |
+  | Relay | relay | — | its rest state | — | on/off |
+  | The boiler's Wi-Fi module or the manufacturer's integration | entity | unknown, not written | — | required | read only (offered) |
+  | Another writable entity | entity | declared by the user | chosen by the user | required | flow setpoint |
+  | Another integration, read only | none | — | — | — | read only |
+
+  - ESPHome: the ESP keeps the last setpoint and CH enable until it restarts (its API
+    `reboot_timeout`, 15 min by default), then its configured start values; control needs the
+    user's tick that those are safe and the timeout short (a blocker without it). The user guide
+    gives a sample configuration, with `force_update: true` on the sensors; a numeric sensor that
+    never repeats an unchanged value in a run's first six hours is named in a repair issue.
+  - EMS-ESP: "off" is setpoint 0, its own documented "Force Heating Off", written every 30 s as an
+    expiring value — decision 11 of `docs/plan-0.2.2.md` lifted for EMS-ESP alone (the user,
+    2026-10-08), and only with the setpoint declared expiring, so that a stopped Home Assistant
+    leaves the boiler on its own control within about a minute. A 0 the boiler ignores from the
+    start blocks control and hands back, as answer O does for a heating switch. What the pump
+    does at 0 is not known; the texts say so.
+  - An entry made before I6 has none of these answers and works as before: no new blocker; the
+    options offer the panels, pre-filled from the stored write path where it names the
+    connection.
+- **The heat source and the boiler type** (I6, decisions 7 and 8): gas (natural or LPG), oil,
+  electric or other — pellet and biomass later — decide which fields, signals and alarms apply
+  (an electric boiler has no flame, flue gas, condensing or gas: its flame signal reads "heating
+  on"; oil has no gas meter). The boiler type has the standard names — single-function with or
+  without a hot-water tank, combi, combi with a built-in tank — then condensing (gas and oil
+  only) and, for every boiler that heats hot water, whether hot water has priority (default) or
+  not; without priority hot water neither pauses learning nor marks heat unavailable to the
+  zones.
 - Control is enabled only with a known way to hand control back, chosen by the user: for built-in
   OTGW the safe hand-back below; for a picked entity a value, declared with its effect (the
   device's own control resumes, or heating stops) and done only once read back, the device's own
@@ -421,13 +460,15 @@ takes the emitter types of its zones (S-33); the burner is shared.
   advice costs.
 - Per zone the plugin publishes two values, as entities and feature-manager properties
   (feature manager from 0.2): **heat available** (`heat_available`; named "hot water available"
-  before 0.2.2, P-61) (heat is reaching the zone — no while DHW is active or while the flow has
+  before 0.2.2, P-61) (heat is reaching the zone — no while DHW is active on a boiler where hot
+  water has priority, or while the flow has
   fallen near room temperature; unknown while the flow signal is unknown or stale)
   and **emitter power factor** (emitter output now versus reference, from emitter type and size,
   valve opening, water and room temperature). The factor is computed only for zones that are
   heating; otherwise the last value is held; it is unavailable, with a reason, when data is
   missing. Zone algorithms do not read these values today (§9).
-- DHW charging pauses learning only in zones calling for heat (valve open); zones with a closed
+- DHW charging pauses learning only where hot water has priority (I6, decision 8), and only in
+  zones calling for heat (valve open); zones with a closed
   valve keep learning how the room cools. Every hot-water draw pauses it, however short, on a
   combi boiler too and also within 10 min of a resume, as the calling zones get no heat meanwhile
   (S-41); so does the "off" control sends for a boiler fault (§7). Learning resumes when the flow
@@ -461,7 +502,7 @@ takes the emitter types of its zones (S-33); the burner is shared.
 
 | Group | Examples |
 |---|---|
-| Boiler specification | type, min/max power, modulation range, max CH setpoint, condensing, DHW type (storage / combi), gas consumption min/max |
+| Boiler specification | connection, heat source, type (single-function with or without a hot-water tank, combi, combi with a tank), hot-water priority, min/max power, modulation range, max CH setpoint, condensing, water-pressure limits, gas consumption min/max |
 | Boiler settings (installer menu; later, §9 — S-60) | CH hysteresis, anti-cycle time, pump overrun, summer threshold, built-in curve |
 | Installation | circuits, circuit control type, curve per circuit, emitter types, max underfloor flow, mixing valve, bypass |
 | Building (whole house, in kW) | design heat load or loss coefficient, heating threshold, thermal mass, insulation class |
@@ -726,12 +767,18 @@ room values and a relay:
 
 - No write without fresh input data — the data the decision uses: for water-temperature control,
   flame and flow known; for a relay, the relay itself (§5 class 3). One freshness rule serves the
-  monitor and control: a signal is fresh while its entity is available and, if the user set an
-  age limit for it, while its last report is within the limit — each signal by its own limit, the
-  flame's included, and the weather entity by an optional limit of its own. A steady reading is
-  not a stale one — many sources report only on change — so age counts only with a user-set
-  limit; without one, a source that freezes without going unavailable is not caught, and the
-  option's description says so. Gateway connectivity is part of freshness (its entities go
+  monitor and control: a signal is fresh while its entity is available and, where it has an age
+  limit, while its last report is within the limit — each signal by its own limit, the flame's
+  included, and the weather entity by a limit of its own. A steady reading is not a stale one —
+  many sources report only on change — so a limit is never assumed (I6, decision 9; provisional,
+  K4): the user's own (0: none), or, left empty, one a source earns once it has been seen
+  repeating an unchanged value (a report with nothing changed since, by its own change time) at
+  least twice in the run — five times its median heartbeat gap, 10 to 30 min for the boiler's
+  signals, 3 to 12 h for the weather; a change-only source never earns one, so a source that
+  freezes without going unavailable is not caught, and the option's description says so. On the
+  OTGW firmware over MQTT and EMS-ESP the plugin listens to the device's own MQTT repeats
+  (reading only) and takes them as the signals' reports, as Home Assistant writes an MQTT entity
+  only on a change. Gateway connectivity is part of freshness (its entities go
   unavailable); a silent drop of the OTGW firmware's MQTT is seen through its availability topic
   within about 90 s, while a broken link between its ESP and its PIC is not seen through Home
   Assistant at all — the option's text says so (Q3.6). A 0 from a value outside the gateway's
@@ -746,8 +793,8 @@ room values and a relay:
   outdoor sensor is not a lost link: it leads to the fallback setpoint, never to zero heat.
 - Every value within hard limits — the lowest and the highest water temperature — with two
   exceptions that have checks of their own: "off" — where a path may write it as a low setpoint
-  (blocked by decision 11 of `docs/plan-0.2.2.md` unless K4 lifts the block; elsewhere "off" is
-  the heating switch or the relay) — a low setpoint at least 1 K below the lowest
+  (blocked by decision 11 of `docs/plan-0.2.2.md` unless K4 lifts the block, EMS-ESP's own
+  setpoint 0 excepted, I6; elsewhere "off" is the heating switch or the relay) — a low setpoint at least 1 K below the lowest
   water temperature (P-43) and within the target's range; on OTGW `CS` is never written below
   8 °C as a setpoint, as lower values do not lapse (`CS=0` at hand-back cancels the override and
   is not a setpoint, S-59) — and the hand-back value (§5, the safe hand-back). "Off" is refused
@@ -1007,9 +1054,10 @@ in K):
   another controller switching it goes unnoticed). With "gateway with thermostat", the optional
   field "the OpenTherm thermostat's requested control setpoint" tells a lost command from another
   controller; it is refused as the setpoint read-back.
-- An age limit per signal (freshness), the weather entity's included: none by default (risk:
-  without one a frozen source is not caught; with one shorter than the source's reporting
-  interval, control stops in steady weather).
+- An age limit per signal (freshness), the weather entity's included: empty by default —
+  automatic, earned by a source seen repeating an unchanged value; 0 none (risk: without a limit
+  a frozen source is not caught; with one shorter than the source's reporting interval, control
+  stops in steady weather).
 - Frost protection: its limit and release temperature, and whether it watches every zone
   (default) or one zone.
 - Comfort correction off (default) or on; its bounds are fixed (principle 13).
@@ -1067,7 +1115,7 @@ Defaults of the safety options and why (the user reviews them at K4):
 | Relay "separate contact" tick | not ticked — control does not start without it | a setting stored in the boiler's memory would be worn by every switching (answer G) |
 | Return by itself after another controller | off | the other controller may still be there; the user checks first |
 | Return by itself after an external-control switch's hand-back | off — its own option | the switch reads "off" also when a person turned external control off on purpose (decision 10 of `docs/plan-0.2.3.md`) |
-| Freshness age limit | none — availability only | many sources report only on change; a limit on such a source would stop control in steady weather |
+| Freshness age limit | automatic: none until the source repeats an unchanged value twice, then 5 × its rhythm, 10–30 min (weather 3–12 h) (provisional, K4) | many sources report only on change; an assumed limit on such a source would stop control in steady weather |
 | A short burn (monitor, 1–60 min) | under 10 min (provisional, K4) | the monitor's short-burn count and its suggestions use it; too short hides short-cycling, too long counts normal burns as short |
 
 Fixed values (S-37) — not options. Each row is either decided (its decision or date named) or
@@ -1292,7 +1340,15 @@ Starts per hour count the hours with heating.
 - Lifting the block on control without a heating switch ("off" as a low setpoint) and on
   decision 1's low `CS` with `CH` left alone: only the user, at K4, on the research of whether a
   low setpoint stops both the boiler and its pump — even if that research is favourable
-  (decision 11, answer K; L4 of `docs/plan-0.2.1.md` is closed by decision 11).
+  (decision 11, answer K; L4 of `docs/plan-0.2.1.md` is closed by decision 11). Lifted already
+  for EMS-ESP alone, whose own setpoint 0 keeps heating off (the user, 2026-10-08; I6,
+  decision 4).
+- From I6 (`docs/plan-0.2-i6.md`, "Open after I6"): the connection table's values (K4); merging
+  the three highest-water-temperature fields — the boiler's, the circuit's, control's — which
+  the curve step names meanwhile (K4); pellet and biomass as heat sources; controlling two
+  circuits at once (0.3; the stored answers leave room for a second control configuration); the
+  room-temperature mode itself (0.3); a hint that a boiler often reporting heating and hot water
+  together may have no hot-water priority.
 - The first published version and the repository's content (decision 16): the version after
   the independent check of 0.2.2 and at K4 — provisionally pre-release 0.2.2b1, then 0.2.2; the
   content at K5.
@@ -1405,7 +1461,7 @@ Starts per hour count the hours with heating.
   every-zone-unknown hand-back.
 - Provisional write decisions (K4): boiler data is there while flame and flow are known — a
   steady reading is not a stale one, as many sources report only on change; its age counts only
-  with a user-set freshness limit; without the data nothing is written, and after 5 min an alarm
+  with a limit the user set or the source earned (I6, decision 9); without the data nothing is written, and after 5 min an alarm
   is raised and control hands back (stand-alone, the gateway stops heating within a minute of the
   last keep-alive); a relay's link is the relay. A failed write is sent again at the next step;
   the setpoint goes before heating on/off, which is repeated with an expiring setpoint. Changes
