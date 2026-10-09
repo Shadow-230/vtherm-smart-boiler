@@ -12,6 +12,7 @@ from custom_components.vtherm_smart_boiler.core.signal_check import (
     ADD_WATER_THRESHOLD,
     CONTROL,
     ENTITY_FOR_TWO_SIGNALS,
+    FUEL_BURNER,
     PRESSURE_HIGH_THRESHOLD,
     ControlKind,
     Feature,
@@ -519,6 +520,23 @@ def test_the_suggestion_takes_the_read_back_for_the_ch_setpoint() -> None:
 def test_gas_feature(mapped: set[Signal], rates: bool, status: FeatureStatus) -> None:
     result = features(frozenset({Signal.FLAME, Signal.FLOW, *mapped}), False, rates)
     assert result[Feature.GAS].status is status
+
+
+def test_an_electric_boiler_has_no_ignition_to_judge() -> None:
+    """I6.3 (decision 7): an electric boiler's "flame" is its heating elements switching — short
+    runs are no unstable ignition. The feature is inactive and names why; a boiler that burns
+    fuel, or one never said otherwise, keeps it."""
+    mapped = frozenset({Signal.FLAME, Signal.FLOW})
+    electric = features(mapped, False, False, burner=False)[Feature.UNSTABLE_IGNITION]
+    assert electric.status is FeatureStatus.INACTIVE
+    assert electric.missing == (FUEL_BURNER,)
+    burner = features(mapped, False, False)[Feature.UNSTABLE_IGNITION]
+    assert burner.status is not FeatureStatus.INACTIVE
+    # Everything else the flame drives still runs on the elements' switching.
+    for feature in (Feature.CYCLES, Feature.VERDICT):
+        assert features(mapped, False, False, burner=False)[feature].status is (
+            FeatureStatus.AVAILABLE
+        )
 
 
 def test_degree_days_from_weather_only_is_degraded() -> None:

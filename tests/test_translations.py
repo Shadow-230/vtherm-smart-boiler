@@ -741,6 +741,8 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     from custom_components.vtherm_smart_boiler.control_config import Connection
 
     selectors.setdefault(flow.SIGNAL_HINT, set()).update(c.value for c in Connection)
+    # I6.3: and the heat source's, where it changes what to pick.
+    selectors.setdefault(flow.SOURCE_HINT, set()).update(("electric", "oil"))
     return fields, selectors
 
 

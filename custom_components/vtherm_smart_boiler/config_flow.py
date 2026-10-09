@@ -478,6 +478,7 @@ GATEWAY_READ_BACKS: Mapping[str, tuple[str, str]] = {
 }
 # The texts the signals step reads into its description, one per connection (I6, decision 2).
 SIGNAL_HINT = "signal_hint"
+SOURCE_HINT = "source_hint"  # and one per heat source that changes what to pick (I6)
 
 
 def gateway_entities(hass: HomeAssistant, wanted: Mapping[str, tuple[str, str]]) -> dict[str, str]:
@@ -521,7 +522,7 @@ def signals_schema(
     current = {**(suggested or {}), **_stored_signals(options), WEATHER: options.get(WEATHER)}
     fields: dict[Any, Any] = {}
     for key, (filter_, simple) in SIGNAL_FIELDS.items():
-        if not simple and not _advanced(options):
+        if not signal_shown(options, key, simple):
             continue
         fields[_optional(key, current)] = _entity(filter_)
     fields[_optional(WEATHER, current)] = _entity({"domain": "weather"})
@@ -567,11 +568,12 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
         _optional("boiler_max_power", current): _number(1, 500, 0.1, "kW"),
     }
     if _advanced(options):
+        fields[_optional("max_ch_setpoint", current)] = _number(20, 95, 1, "°C")
+        if gas_rates_shown(options):  # I6, decision 7: a gas boiler's, or one not said
+            fields[_optional("gas_at_min_power", current)] = _number(0, 200, 0.01)
+            fields[_optional("gas_at_max_power", current)] = _number(0, 500, 0.01)
         fields.update(
             {
-                _optional("max_ch_setpoint", current): _number(20, 95, 1, "°C"),
-                _optional("gas_at_min_power", current): _number(0, 200, 0.01),
-                _optional("gas_at_max_power", current): _number(0, 500, 0.01),
                 vol.Required(
                     "modulation_scale",
                     default=_choice(
@@ -775,19 +777,24 @@ def monitor_schema(options: dict[str, Any]) -> vol.Schema:
             _optional("pressure_high_alarm", monitor): _number(
                 *MONITOR_BOUNDS["pressure_high_alarm"], 0.1, "bar"
             ),
-            **_limit(
-                monitor,
-                "flue_gas_warning",
-                FLUE_GAS_CONDENSING_BAND.warning,
-                *MONITOR_BOUNDS["flue_gas_warning"],
-                "°C",
-            ),
-            **_limit(
-                monitor,
-                "flue_gas_alarm",
-                FLUE_GAS_CONDENSING_BAND.alarm,
-                *MONITOR_BOUNDS["flue_gas_alarm"],
-                "°C",
+            # I6 (decision 7): a condensing boiler's only — the alarm is off for any other.
+            **(
+                _limit(
+                    monitor,
+                    "flue_gas_warning",
+                    FLUE_GAS_CONDENSING_BAND.warning,
+                    *MONITOR_BOUNDS["flue_gas_warning"],
+                    "°C",
+                )
+                | _limit(
+                    monitor,
+                    "flue_gas_alarm",
+                    FLUE_GAS_CONDENSING_BAND.alarm,
+                    *MONITOR_BOUNDS["flue_gas_alarm"],
+                    "°C",
+                )
+                if flue_gas_limits_shown(options)
+                else {}
             ),
             vol.Required(
                 "starts_per_hour_limit",
@@ -912,6 +919,38 @@ def paths_for_class(options: Mapping[str, Any]) -> list[str]:
         return [NO_CONTROL] if path is None else [NO_CONTROL, path.value]
     boiler_class = _stored_boiler(options).get("class")
     return [NO_CONTROL, *_PATHS_BY_CLASS.get(str(boiler_class), ())]
+
+
+def stored_heat_source(options: Mapping[str, Any]) -> HeatSource | None:
+    """The heat source the first panel stored; ``None`` for an entry made before it — every field
+    shown, as before (I6, decision 7)."""
+    return _known(HeatSource, _stored_boiler(options).get(HEAT_SOURCE))
+
+
+# What one heat source lacks (I6, decision 7): an electric boiler has no flue gas; an oil boiler
+# no gas meter.
+_SIGNALS_NOT_FOR = {HeatSource.ELECTRIC: ("flue_gas",), HeatSource.OIL: ("gas_meter",)}
+# Gas per hour at minimum and maximum power: a gas boiler's, or one whose fuel is not said.
+_GAS_RATES = ("gas_at_min_power", "gas_at_max_power")
+# The flue-gas limits: they judge a condensing boiler only (the alarm is off for any other).
+FLUE_GAS_LIMITS = ("flue_gas_warning", "flue_gas_alarm")
+
+
+def signal_shown(options: Mapping[str, Any], key: str, simple: bool) -> bool:
+    """Whether the signals step shows a signal: by the level, and by the heat source."""
+    source = stored_heat_source(options)
+    if source is not None and key in _SIGNALS_NOT_FOR.get(source, ()):
+        return False
+    return simple or options.get(LEVEL) == LEVEL_ADVANCED
+
+
+def gas_rates_shown(options: Mapping[str, Any]) -> bool:
+    return stored_heat_source(options) not in (HeatSource.ELECTRIC, HeatSource.OIL)
+
+
+def flue_gas_limits_shown(options: Mapping[str, Any]) -> bool:
+    """A condensing boiler's, or one never declared otherwise (as before)."""
+    return _stored_boiler(options).get("condensing") is not False
 
 
 def stored_connection(options: Mapping[str, Any]) -> Connection | None:
@@ -1713,7 +1752,7 @@ BUILDING_PARAMETER_KEYS = ("loss_coefficient", "heating_threshold", "design_outd
 def apply_signals(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     signals = _stored_signals(options)
     for key, (_filter, simple) in SIGNAL_FIELDS.items():
-        if simple or _advanced(options):
+        if signal_shown(options, key, simple):  # one not shown keeps what is stored
             if user_input.get(key):
                 signals[key] = user_input[key]
             else:
@@ -1727,7 +1766,7 @@ def signal_fields(options: dict[str, Any]) -> dict[str, EntityFilter]:
     fields: dict[str, EntityFilter] = {
         key: filter_
         for key, (filter_, simple) in SIGNAL_FIELDS.items()
-        if simple or _advanced(options)
+        if signal_shown(options, key, simple)
     }
     fields[WEATHER] = {"domain": "weather"}  # no signal: it may be any weather entity
     return fields
@@ -1867,7 +1906,14 @@ def source_kind(hass_state_domain: str, device_class: str | None) -> SourceKind 
 
 
 def apply_monitor(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    options[MONITOR] = dict(user_input)
+    """The monitor step's answers; the flue-gas limits it does not show are kept (I6)."""
+    stored = options.get(MONITOR)
+    kept = {
+        key: stored[key]
+        for key in FLUE_GAS_LIMITS
+        if isinstance(stored, Mapping) and key in stored and key not in user_input
+    }
+    options[MONITOR] = {**kept, **user_input}
 
 
 # The monitor's periods: how long the plugin has been watching, and over what the verdict is
@@ -2126,18 +2172,28 @@ class _Steps:
             step_id="signals",
             data_schema=signals_schema(self.options, suggested),
             errors=errors,
-            description_placeholders={"hint": await self._async_signal_hint(connection)},
+            description_placeholders={"hint": await self._async_signal_hint()},
         )
 
-    async def _async_signal_hint(self, connection: Connection | None) -> str:
-        """What to pick for the connection, in Home Assistant's language; nothing for an entry
-        made before the question."""
-        if connection is None:
+    async def _async_signal_hint(self) -> str:
+        """What to pick for the connection, then for the heat source, in Home Assistant's
+        language; nothing for an entry made before the questions."""
+        connection = stored_connection(self.options)
+        source = stored_heat_source(self.options)
+        if connection is None and source is None:
             return ""
         hass: HomeAssistant = self.hass  # type: ignore[attr-defined]
         texts = await async_get_translations(hass, hass.config.language, "selector", [DOMAIN])
-        key = f"component.{DOMAIN}.selector.{SIGNAL_HINT}.options.{connection.value}"
-        return texts.get(key, "")
+        prefix = f"component.{DOMAIN}.selector"
+        found = [
+            texts.get(f"{prefix}.{SIGNAL_HINT}.options.{connection.value}", "")
+            if connection is not None
+            else "",
+            texts.get(f"{prefix}.{SOURCE_HINT}.options.{source.value}", "")
+            if source is not None
+            else "",
+        ]
+        return " ".join(text for text in found if text)
 
     async def async_step_boiler(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
