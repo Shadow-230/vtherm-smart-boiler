@@ -607,6 +607,8 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
         if gas_rates_shown(options):  # I6, decision 7: a gas boiler's, or one not said
             fields[_optional("gas_at_min_power", current)] = _number(0, 200, 0.01)
             fields[_optional("gas_at_max_power", current)] = _number(0, 500, 0.01)
+    fields |= pressure_fields(options)
+    if _advanced(options):
         fields.update(
             {
                 vol.Required(
@@ -623,6 +625,36 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
             }
         )
     return vol.Schema(fields)
+
+
+# The water pressure's limits, from the boiler's manual and the safety valve's rating: facts about
+# the boiler, asked in its step at both levels and kept by "restore defaults" (I6); stored in the
+# monitor section, whose alarms they set.
+PRESSURE_KEYS = ("add_water_below", "pressure_high_warning", "pressure_high_alarm")
+
+
+def pressure_fields(options: dict[str, Any]) -> dict[Any, Any]:
+    monitor = options.get(MONITOR, {})
+    return {
+        # Y1: one optional "add water" threshold from the boiler's manual — none by default.
+        _optional("add_water_below", monitor): _number(*ADD_WATER_RANGE_BAR, 0.1, "bar"),
+        # Decision 13 (SB-18): the high-pressure limits, from the safety valve's rating — none by
+        # default, each optional.
+        _optional("pressure_high_warning", monitor): _number(
+            *MONITOR_BOUNDS["pressure_high_warning"], 0.1, "bar"
+        ),
+        _optional("pressure_high_alarm", monitor): _number(
+            *MONITOR_BOUNDS["pressure_high_alarm"], 0.1, "bar"
+        ),
+    }
+
+
+def pressure_error(user_input: dict[str, Any]) -> dict[str, str]:
+    """The high-pressure alarm above its warning, where both are set."""
+    warning, alarm = user_input.get("pressure_high_warning"), user_input.get("pressure_high_alarm")
+    if warning is None or alarm is None or alarm > warning:
+        return {}
+    return {"pressure_high_alarm": "alarm_limits_out_of_order"}
 
 
 def circuit_schema(
@@ -746,6 +778,11 @@ def building_schema(options: dict[str, Any]) -> vol.Schema:
         _optional("thermal_mass", building): _select(
             "thermal_mass", [m.value for m in ThermalMass]
         ),
+        # I6: one value with the heating curve's, at both levels; never empty, so the curve
+        # never falls back to a default unseen.
+        vol.Required("design_outdoor", default=design_outdoor_of(options)): _number(
+            *CURVE_BOUNDS["design_outdoor"], 0.5, "°C"
+        ),
     }
     if _advanced(options):
         fields.update(
@@ -753,10 +790,34 @@ def building_schema(options: dict[str, Any]) -> vol.Schema:
                 _optional("design_load_kw", building): _number(0.5, 200, 0.1, "kW"),
                 _optional("loss_coefficient", params): _number(0.01, 5, 0.001, "kW/K"),
                 _optional("heating_threshold", params): _number(5, 22, 0.5, "°C"),
-                _optional("design_outdoor", params): _number(-45, 10, 1, "°C"),
             }
         )
     return vol.Schema(fields)
+
+
+def design_outdoor_too_warm(options: Mapping[str, Any], design_outdoor: float) -> bool:
+    """The building's design outdoor temperature too warm for the curve entered (X5.8, P-68): the
+    curve step's check, made where the same value is entered too (I6)."""
+    control = options.get(CONTROL)
+    curve = control.get("curve") if isinstance(control, Mapping) else None
+    if not isinstance(curve, Mapping) or curve.get("design_flow") in (None, ""):
+        return False
+    room = float(curve.get("room", CURVE_DEFAULTS["room"]))
+    problems = curve_problems(float(curve["design_flow"]), design_outdoor, room, 0.0, 100.0)
+    return ("design_outdoor", "design_outdoor_too_warm") in problems
+
+
+def design_outdoor_of(options: Mapping[str, Any]) -> float:
+    """The design outdoor temperature, one value for the building and the curve (I6), as control
+    reads it: the curve's own where its section still holds one (a hand edit), else the
+    building's, else the default."""
+    control = options.get(CONTROL)
+    curve = control.get("curve") if isinstance(control, Mapping) else None
+    params = options.get(PARAMETERS)
+    for source in (curve, params):
+        if isinstance(source, Mapping) and source.get("design_outdoor") not in (None, ""):
+            return float(source["design_outdoor"])
+    return CURVE_DEFAULTS["design_outdoor"]
 
 
 def reference_schema(options: dict[str, Any]) -> vol.Schema:
@@ -802,16 +863,6 @@ def monitor_schema(options: dict[str, Any]) -> vol.Schema:
             vol.Required(
                 "foreign_heat_hold_min", default=monitor.get("foreign_heat_hold_min", 60.0)
             ): _number(*MONITOR_BOUNDS["foreign_heat_hold_min"], 5, "min"),
-            # Y1: one optional "add water" threshold from the boiler's manual — none by default.
-            _optional("add_water_below", monitor): _number(*ADD_WATER_RANGE_BAR, 0.1, "bar"),
-            # Decision 13 (SB-18): the high-pressure limits, from the safety valve's rating —
-            # none by default, each optional.
-            _optional("pressure_high_warning", monitor): _number(
-                *MONITOR_BOUNDS["pressure_high_warning"], 0.1, "bar"
-            ),
-            _optional("pressure_high_alarm", monitor): _number(
-                *MONITOR_BOUNDS["pressure_high_alarm"], 0.1, "bar"
-            ),
             # I6 (decision 7): a condensing boiler's only — the alarm is off for any other.
             **(
                 _limit(
@@ -888,7 +939,7 @@ CONTROL_ADVANCED_KEYS = (
     "return_after_outside_change",
     "return_after_switch_hand_back",
 )
-CURVE_KEYS = ("design_outdoor", "design_flow", "room", "exponent", "offset")
+CURVE_KEYS = ("design_flow", "room", "exponent", "offset")  # the design outdoor: the building's
 OWN_ROOM_CONTROLLER = "own_room_controller"
 HAND_BACK_TIMEOUT = "hand_back_timeout_min"
 # What an absent hand-back answer means: the form fills in this default (an entry saved before
@@ -1164,16 +1215,12 @@ def activation_delay_field(
 def control_curve_schema(options: dict[str, Any], vt_delay: float | None = None) -> vol.Schema:
     control = options.get(CONTROL, {})
     curve = control.get("curve", {})
-    design_outdoor = curve.get(
-        "design_outdoor",
-        options.get(PARAMETERS, {}).get("design_outdoor", CURVE_DEFAULTS["design_outdoor"]),
-    )
 
     def default(key: str) -> Any:
         return control.get(key, CONTROL_DEFAULTS[key])
 
     fields: dict[Any, Any] = {
-        vol.Required("design_outdoor", default=design_outdoor): _number(
+        vol.Required("design_outdoor", default=design_outdoor_of(options)): _number(
             *CURVE_BOUNDS["design_outdoor"], 0.5, "°C"
         ),
         # The curve is the user's to enter: no silent default for the design flow.
@@ -1531,10 +1578,36 @@ def apply_control_details(options: dict[str, Any], user_input: dict[str, Any]) -
     options[CONTROL] = control
 
 
+def water_limits(options: Mapping[str, Any]) -> dict[str, str]:
+    """The curve step's (decision 10 of I6): the boiler's and the first circuit's maxima, which
+    cap the water with the step's own highest temperature — the lowest of them applies; "—"
+    where one is not entered."""
+    params = options.get(PARAMETERS)
+    circuits = options.get(CIRCUITS)
+    boiler = params.get("max_ch_setpoint") if isinstance(params, Mapping) else None
+    first = circuits[0] if isinstance(circuits, list) and circuits else None
+    circuit = first.get("max_flow") if isinstance(first, Mapping) else None
+    return {"boiler_max": _degrees(boiler), "circuit_max": _degrees(circuit)}
+
+
+def _degrees(value: object) -> str:
+    """A stored temperature as the form shows it; anything but a number (none stored, a hand
+    edit) as "—"."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return "—"
+    return f"{value:g} °C"
+
+
 def apply_control_curve(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     control = dict(options.get(CONTROL, {}))
     curve = dict(control.get("curve", {}))
-    shown = CURVE_KEYS if _advanced(options) else ("design_outdoor", "design_flow")
+    # I6: the design outdoor temperature is the building's, one value with the curve's.
+    curve.pop("design_outdoor", None)
+    options[PARAMETERS] = {
+        **options.get(PARAMETERS, {}),
+        "design_outdoor": user_input["design_outdoor"],
+    }
+    shown = CURVE_KEYS if _advanced(options) else ("design_flow",)
     for key in shown:
         value = user_input.get(key)
         if value in (None, ""):
@@ -1793,6 +1866,9 @@ BOILER_PARAMETER_KEYS = (
 )
 BUILDING_KEYS = ("floor_area", "insulation", "thermal_mass", "design_load_kw")
 BUILDING_PARAMETER_KEYS = ("loss_coefficient", "heating_threshold", "design_outdoor")
+ADVANCED_BUILDING_PARAMETERS = ("loss_coefficient", "heating_threshold")
+# Parameters shown at both levels: emptied in the form, they go.
+SIMPLE_PARAMETERS = ("boiler_min_power", "boiler_max_power", "design_outdoor")
 
 
 def apply_signals(options: dict[str, Any], user_input: dict[str, Any]) -> None:
@@ -1843,6 +1919,12 @@ def apply_boiler(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     boiler.update({k: user_input[k] for k in BOILER_KEYS if k in user_input})
     options[BOILER] = boiler
     _apply_parameters(options, user_input, BOILER_PARAMETER_KEYS)
+    monitor = dict(options.get(MONITOR, {}))
+    _set_or_drop(monitor, user_input, PRESSURE_KEYS)
+    if monitor:
+        options[MONITOR] = monitor
+    else:
+        options.pop(MONITOR, None)  # no section where nothing is set: the defaults apply
 
 
 def apply_building(options: dict[str, Any], user_input: dict[str, Any]) -> None:
@@ -1864,7 +1946,7 @@ def _apply_parameters(
     for key in keys:
         if key in user_input and user_input[key] not in (None, ""):
             params[key] = user_input[key]
-        elif key in ("boiler_min_power", "boiler_max_power") or shown_advanced:
+        elif key in SIMPLE_PARAMETERS or shown_advanced:
             params.pop(key, None)
     options[PARAMETERS] = params
 
@@ -1952,19 +2034,21 @@ def source_kind(hass_state_domain: str, device_class: str | None) -> SourceKind 
 
 
 def apply_monitor(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    """The monitor step's answers; the flue-gas limits it does not show are kept (I6)."""
+    """The monitor step's answers; the flue-gas limits it does not show, and the pressure limits
+    the boiler step asks, are kept (I6)."""
     stored = options.get(MONITOR)
     kept = {
         key: stored[key]
-        for key in FLUE_GAS_LIMITS
+        for key in (*FLUE_GAS_LIMITS, *PRESSURE_KEYS)
         if isinstance(stored, Mapping) and key in stored and key not in user_input
     }
     options[MONITOR] = {**kept, **user_input}
 
 
 # The monitor's periods: how long the plugin has been watching, and over what the verdict is
-# judged — "restore defaults" keeps them, as it keeps the facts (P-65).
-MONITOR_KEPT = ("monitoring_days", "verdict_window_days")
+# judged — "restore defaults" keeps them, as it keeps the facts (P-65); and the pressure limits,
+# facts about the boiler (I6).
+MONITOR_KEPT = ("monitoring_days", "verdict_window_days", *PRESSURE_KEYS)
 
 
 def restore_advanced_defaults(options: dict[str, Any]) -> None:
@@ -2033,7 +2117,7 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
                 "max_ch_setpoint",
                 "gas_at_min_power",
                 "gas_at_max_power",
-                *BUILDING_PARAMETER_KEYS,
+                *ADVANCED_BUILDING_PARAMETERS,
             )
         )
         or "design_load_kw" in options.get(BUILDING, {})
@@ -2047,7 +2131,11 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
             _schema_defaults(reference_schema(advanced)),
             ("switch_margin",),
         )
-        or _differ(monitor, _schema_defaults(monitor_schema({})), monitor)
+        or _differ(
+            monitor,
+            _schema_defaults(monitor_schema({})),
+            [key for key in monitor if key not in PRESSURE_KEYS],  # the boiler step's (I6)
+        )
         or _differ(
             control, control_defaults, [k for k in CONTROL_ADVANCED_KEYS if k != "alarm_reactions"]
         )
@@ -2129,6 +2217,11 @@ def problem_step(code: str, subject: str | None) -> str:
         return "boiler" if subject in BOILER_PARAMETER_KEYS else "building"
     if code == "invalid_boiler" and subject in PANEL_BOILER_KEYS:
         return "connection"  # I6: the class, the hot water and condensing are the panels'
+    if code in ("invalid_monitor", "alarm_limits_out_of_order") and subject in (
+        *PRESSURE_KEYS,
+        "pressure_high",
+    ):
+        return "boiler"  # I6: the pressure limits are the boiler step's
     return _PROBLEM_STEPS.get(code, "signals")
 
 
@@ -2270,6 +2363,8 @@ class _Steps:
             low, high = user_input.get("boiler_min_power"), user_input.get("boiler_max_power")
             if low is not None and high is not None and low >= high:
                 errors["base"] = "min_power_not_below_max"
+            elif found := pressure_error(user_input):
+                errors = found
             else:
                 apply_boiler(self.options, user_input)
                 return await self._goto(self._next_after("boiler"))
@@ -2417,10 +2512,16 @@ class _Steps:
     async def async_step_building(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            apply_building(self.options, user_input)
-            return await self._goto(self._next_after("building"))
-        return self._form(step_id="building", data_schema=building_schema(self.options))
+            if design_outdoor_too_warm(self.options, user_input["design_outdoor"]):
+                errors["design_outdoor"] = "design_outdoor_too_warm"
+            else:
+                apply_building(self.options, user_input)
+                return await self._goto(self._next_after("building"))
+        return self._form(
+            step_id="building", data_schema=building_schema(self.options), errors=errors
+        )
 
     async def async_step_reference(
         self, user_input: dict[str, Any] | None = None
@@ -2831,6 +2932,7 @@ class _ControlSteps(_Steps):
             step_id="control_curve",
             data_schema=control_curve_schema(self.options, vt_delay),
             errors=errors,
+            description_placeholders=water_limits(self.options),
         )
 
     async def async_step_control_behaviour(
@@ -2999,8 +3101,9 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # 2: the options 0.2.1 removed are gone; 3: a control section without the lowest water
     # temperature keeps 25 °C; 4: the "add water" threshold replaces the low-pressure limits, and
     # alarm reactions no longer offered go; 5: the high-pressure limits have no default, and an
-    # entry from before keeps those it ran with (see async_migrate_entry).
-    MINOR_VERSION = 5
+    # entry from before keeps those it ran with; 6: the design outdoor temperature is one value,
+    # the building's, the curve's moved there (see async_migrate_entry).
+    MINOR_VERSION = 6
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}

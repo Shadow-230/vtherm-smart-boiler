@@ -111,7 +111,10 @@
           "gas_at_min_power": "Gaz przy mocy minimalnej",
           "gas_at_max_power": "Gaz przy mocy maksymalnej",
           "modulation_scale": "Znaczenie modulacji",
-          "bypass": "Bypass lub sprzęgło hydrauliczne"
+          "bypass": "Bypass lub sprzęgło hydrauliczne",
+          "add_water_below": "Uzupełnij wodę poniżej",
+          "pressure_high_warning": "Ostrzeżenie: wysokie ciśnienie",
+          "pressure_high_alarm": "Alarm: wysokie ciśnienie"
         },
         "data_description": {
           "boiler_min_power": "Najmniejsza moc grzania z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować. Zła wartość wypacza tę ocenę w werdykcie.",
@@ -120,7 +123,10 @@
           "gas_at_min_power": "Zużycie gazu na godzinę przy mocy minimalnej, w jednostce licznika gazu. Z modulacją szacuje zużycie gazu, gdy nie ma licznika; zła wartość wypacza gaz na stopniodzień.",
           "gas_at_max_power": "Zużycie gazu na godzinę przy mocy maksymalnej, w tej samej jednostce; zła wartość wypacza szacunki gazu.",
           "modulation_scale": "Czy 0 % to moc minimalna (definicja OpenTherm), czy wartość to procent mocy maksymalnej. Zły wybór zniekształca szacunki ciepła i gazu.",
-          "bypass": "Zaznacz, gdy woda grzewcza ma zawsze drogę przepływu — automatyczny zawór obejściowy albo sprzęgło hydrauliczne: ostrzeżenie o małym przepływie jest wtedy wyłączone, bo zamknięte zawory nie zatrzymają przepływu. Niezaznaczone przy takim układzie daje fałszywe ostrzeżenia; zaznaczone bez niego pomija prawdziwe zamknięcie obiegu."
+          "bypass": "Zaznacz, gdy woda grzewcza ma zawsze drogę przepływu — automatyczny zawór obejściowy albo sprzęgło hydrauliczne: ostrzeżenie o małym przepływie jest wtedy wyłączone, bo zamknięte zawory nie zatrzymają przepływu. Niezaznaczone przy takim układzie daje fałszywe ostrzeżenia; zaznaczone bez niego pomija prawdziwe zamknięcie obiegu.",
+          "add_water_below": "Opcjonalnie: poniżej tego ciśnienia dostaniesz powiadomienie, by dolać wody, w barach — weź wartość z instrukcji kotła (jego minimalne ciśnienie robocze). Domyślnie puste: bez powiadomienia. Tylko informuje; grzanie wyłącza się wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Za nisko — dowiesz się za późno; za wysoko — powiadomienie przyjdzie, choć ciśnienie jest w porządku.",
+          "pressure_high_warning": "Opcjonalnie: ciśnienie powyżej tej wartości daje ostrzeżenie, w barach. Domyślnie puste: bez ostrzeżenia. Ustaw poniżej ciśnienia otwarcia zaworu bezpieczeństwa, odczytanego na samym zaworze (w Europie często 3 bar, w Ameryce Północnej około 2,1 bar / 30 psi), i poniżej alarmu. Tylko informuje. Za wysoko — ostrzeże za późno; za nisko — ostrzeże, choć ciśnienie jest w porządku.",
+          "pressure_high_alarm": "Opcjonalnie: ciśnienie powyżej tej wartości wywołuje alarm, w barach, a po 5 minutach powiadomienie. Domyślnie puste: bez alarmu. Ustaw poniżej ciśnienia otwarcia zaworu bezpieczeństwa, odczytanego na samym zaworze (w Europie często 3 bar, w Ameryce Północnej około 2,1 bar / 30 psi); jeśli ustawisz też ostrzeżenie — powyżej niego. Tylko informuje; grzanie wyłącza się wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Za wysoko — dowiesz się dopiero, gdy zawór wypuści wodę."
         }
       },
       "circuit": {
@@ -198,7 +204,7 @@
           "design_load_kw": "Twoje własne obliczenie strat ciepła, w kW przy projektowej temperaturze zewnętrznej. Zawsze wygrywa: zapisane dni nigdy go nie zastępują, pokazują tylko rozbieżność. Wartość, jakiej nie ma żaden dom, jest odrzucana.",
           "loss_coefficient": "Strata ciepła na kelwin, w kW/K, jeśli ją znasz. Zawsze wygrywa, także ze zmierzoną: zapisane dni nigdy jej nie zastępują, pokazują tylko rozbieżność — zła wartość zostaje zła.",
           "heating_threshold": "Temperatura zewnętrzna, powyżej której dom nie potrzebuje ogrzewania, w °C; także podstawa stopniodni. Domyślnie 15 °C, dopóki nie zmierzą go zapisane dni z dość szerokiego zakresu temperatur zewnętrznych. Wpisany zawsze wygrywa; zmierzony jest pokazywany obok, z ewentualną rozbieżnością. Zły wypacza stopniodnie i gaz na stopniodzień.",
-          "design_outdoor": "Najzimniejsza temperatura zewnętrzna, do której odnosi się Twoje obciążenie projektowe, w °C. Domyślnie −15 °C. Zła wypacza szacunek z obciążenia projektowego."
+          "design_outdoor": "Najzimniejsza temperatura zewnętrzna, na którą zaprojektowano ogrzewanie, w °C. Domyślnie −15 °C. To ta sama wartość co projektowa temperatura zewnętrzna krzywej grzewczej: zmiana tutaj zmienia też krzywą. Zbyt zimna wartość daje za mało wody w mrozy; zła wypacza szacunek z obciążenia projektowego."
         }
       },
       "reference": {
@@ -224,9 +230,6 @@
           "monitoring_days": "Dni danych do werdyktu",
           "near_room_k": "Blisko temperatury pokoju",
           "foreign_heat_hold_min": "Podtrzymanie obcego ciepła",
-          "add_water_below": "Uzupełnij wodę poniżej",
-          "pressure_high_warning": "Ostrzeżenie: wysokie ciśnienie",
-          "pressure_high_alarm": "Alarm: wysokie ciśnienie",
           "flue_gas_warning": "Ostrzeżenie: spaliny",
           "flue_gas_alarm": "Alarm: spaliny",
           "starts_per_hour_limit": "Częste starty",
@@ -239,9 +242,6 @@
           "monitoring_days": "Ile dni danych potrzebuje werdykt monitora, licząc od dodania tej integracji. Niczego nie wstrzymuje: sterowanie można włączyć w każdej chwili, nawet bez werdyktu, a dopóki go nie ma, przełącznik sterowania pokazuje „za mało danych”. Poza sezonem grzewczym danych może być za mało nawet po tych dniach. Domyślnie 7; krócej nie można.",
           "near_room_k": "Woda cieplejsza od pokoju najwyżej o tyle liczy się jako brak ciepła w strefie, w K. Domyślnie 3. Większa wartość szybciej pokazuje „Ciepło nie dociera do strefy”.",
           "foreign_heat_hold_min": "Jak długo pokój liczy się jako ogrzany po wyłączeniu źródła, w minutach. Domyślnie 60. Dłużej trzyma naukę wstrzymaną dłużej po kominku.",
-          "add_water_below": "Opcjonalnie: poniżej tego ciśnienia dostaniesz powiadomienie, by dolać wody, w barach — weź wartość z instrukcji kotła (jego minimalne ciśnienie robocze). Domyślnie puste: bez powiadomienia. Tylko informuje; grzanie wyłącza się wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Za nisko — dowiesz się za późno; za wysoko — powiadomienie przyjdzie, choć ciśnienie jest w porządku.",
-          "pressure_high_warning": "Opcjonalnie: ciśnienie powyżej tej wartości daje ostrzeżenie, w barach. Domyślnie puste: bez ostrzeżenia. Ustaw poniżej ciśnienia otwarcia zaworu bezpieczeństwa, odczytanego na samym zaworze (w Europie często 3 bar, w Ameryce Północnej około 2,1 bar / 30 psi), i poniżej alarmu. Tylko informuje. Za wysoko — ostrzeże za późno; za nisko — ostrzeże, choć ciśnienie jest w porządku.",
-          "pressure_high_alarm": "Opcjonalnie: ciśnienie powyżej tej wartości wywołuje alarm, w barach, a po 5 minutach powiadomienie. Domyślnie puste: bez alarmu. Ustaw poniżej ciśnienia otwarcia zaworu bezpieczeństwa, odczytanego na samym zaworze (w Europie często 3 bar, w Ameryce Północnej około 2,1 bar / 30 psi); jeśli ustawisz też ostrzeżenie — powyżej niego. Tylko informuje; grzanie wyłącza się wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Za wysoko — dowiesz się dopiero, gdy zawór wypuści wodę.",
           "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
           "starts_per_hour_limit": "Więcej startów palnika w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12. Za wysoka ukrywa taktowanie.",
@@ -407,7 +407,7 @@
       },
       "control_curve": {
         "title": "Krzywa grzewcza i limity",
-        "description": "Temperatura zasilania potrzebna domowi przy każdej temperaturze zewnętrznej, limity, których żadna nastawa nie przekroczy, i jak długo grzanie czeka na wolne zawory.",
+        "description": "Temperatura zasilania potrzebna domowi przy każdej temperaturze zewnętrznej, limity, których żadna nastawa nie przekroczy, i jak długo grzanie czeka na wolne zawory. Wodę ograniczają też maksymalna nastawa c.o. kotła ({boiler_max}, krok kotła) i maksymalna temperatura zasilania pierwszego obiegu ({circuit_max}, krok obiegu): obowiązuje najniższa z trzech wartości: tych dwóch i najwyższej temperatury wody poniżej.",
         "data": {
           "design_outdoor": "Projektowa temperatura zewnętrzna",
           "design_flow": "Projektowa temperatura zasilania",
@@ -424,7 +424,7 @@
           "frost_zone": "Strefa przeciwmrozowa"
         },
         "data_description": {
-          "design_outdoor": "Najzimniejsza temperatura zewnętrzna, na którą zaprojektowano ogrzewanie, w °C. Domyślnie: projektowa temperatura zewnętrzna budynku albo −15 °C. Zbyt zimna wartość daje za mało wody w mrozy.",
+          "design_outdoor": "Najzimniejsza temperatura zewnętrzna, na którą zaprojektowano ogrzewanie, w °C. Domyślnie −15 °C. To ta sama wartość co projektowa temperatura zewnętrzna budynku: zmiana tutaj zmienia ją też tam. Zbyt zimna wartość daje za mało wody w mrozy.",
           "design_flow": "Temperatura zasilania potrzebna przy projektowej temperaturze zewnętrznej, w °C, np. wartość z krzywej ustawionej w kotle. Wymagana; nie ma wartości domyślnej. Za wysoka marnuje gaz i powoduje taktowanie palnika; za niska zostawia chłodne pokoje w silny mróz. SmartPI (0.4.0) uczy się w każdej strefie własnego członu zewnętrznego, którego nie da się wyłączyć, więc pogoda liczy się dwa razy — w krzywej i w strefie: ustaw krzywą na tyle, ile dom potrzebuje, nie wyżej.",
           "hard_min": "Najniższa temperatura wody, jaką ustawia wtyczka, w °C — ustawiana jak punkt krzywej. Domyślnie 20 °C. Za niska: przy łagodnej pogodzie kocioł raz po raz sam się wyłącza, a kocioł niekondensacyjny skrapla spaliny w przewodzie kominowym — weź wartość z jego instrukcji. Za wysoka: woda cieplejsza, niż potrzebują pokoje, i więcej gazu. Gdy kocioł wciąż się wyłącza przy tej temperaturze, wtyczka pokazuje dowody i proponowaną wartość; sama nigdy nie zmienia tego ustawienia.",
           "hard_max": "Żadna nastawa powyżej tej wartości, cokolwiek wyliczy krzywa lub korekta, w °C. Domyślnie 70 °C. Ogrzewanie podłogowe wymaga też maksymalnego zasilania swojego obiegu. Za wysoka: grzejniki albo podłoga bez własnego maksimum dostają tak gorącą wodę; za niska: pokoje zostają chłodne w silny mróz, bo krzywa jest ucięta. Obowiązuje tylko, gdy steruje wtyczka: po oddaniu sterowania albo gdy Home Assistant nie działa, obowiązuje własne maksimum kotła albo termostatu ściennego.",
@@ -757,7 +757,10 @@
           "gas_at_min_power": "Gaz przy mocy minimalnej",
           "gas_at_max_power": "Gaz przy mocy maksymalnej",
           "modulation_scale": "Znaczenie modulacji",
-          "bypass": "Bypass lub sprzęgło hydrauliczne"
+          "bypass": "Bypass lub sprzęgło hydrauliczne",
+          "add_water_below": "Uzupełnij wodę poniżej",
+          "pressure_high_warning": "Ostrzeżenie: wysokie ciśnienie",
+          "pressure_high_alarm": "Alarm: wysokie ciśnienie"
         },
         "data_description": {
           "boiler_min_power": "Najmniejsza moc grzania z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować. Zła wartość wypacza tę ocenę w werdykcie.",
@@ -766,7 +769,10 @@
           "gas_at_min_power": "Zużycie gazu na godzinę przy mocy minimalnej, w jednostce licznika gazu. Z modulacją szacuje zużycie gazu, gdy nie ma licznika; zła wartość wypacza gaz na stopniodzień.",
           "gas_at_max_power": "Zużycie gazu na godzinę przy mocy maksymalnej, w tej samej jednostce; zła wartość wypacza szacunki gazu.",
           "modulation_scale": "Czy 0 % to moc minimalna (definicja OpenTherm), czy wartość to procent mocy maksymalnej. Zły wybór zniekształca szacunki ciepła i gazu.",
-          "bypass": "Zaznacz, gdy woda grzewcza ma zawsze drogę przepływu — automatyczny zawór obejściowy albo sprzęgło hydrauliczne: ostrzeżenie o małym przepływie jest wtedy wyłączone, bo zamknięte zawory nie zatrzymają przepływu. Niezaznaczone przy takim układzie daje fałszywe ostrzeżenia; zaznaczone bez niego pomija prawdziwe zamknięcie obiegu."
+          "bypass": "Zaznacz, gdy woda grzewcza ma zawsze drogę przepływu — automatyczny zawór obejściowy albo sprzęgło hydrauliczne: ostrzeżenie o małym przepływie jest wtedy wyłączone, bo zamknięte zawory nie zatrzymają przepływu. Niezaznaczone przy takim układzie daje fałszywe ostrzeżenia; zaznaczone bez niego pomija prawdziwe zamknięcie obiegu.",
+          "add_water_below": "Opcjonalnie: poniżej tego ciśnienia dostaniesz powiadomienie, by dolać wody, w barach — weź wartość z instrukcji kotła (jego minimalne ciśnienie robocze). Domyślnie puste: bez powiadomienia. Tylko informuje; grzanie wyłącza się wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Za nisko — dowiesz się za późno; za wysoko — powiadomienie przyjdzie, choć ciśnienie jest w porządku.",
+          "pressure_high_warning": "Opcjonalnie: ciśnienie powyżej tej wartości daje ostrzeżenie, w barach. Domyślnie puste: bez ostrzeżenia. Ustaw poniżej ciśnienia otwarcia zaworu bezpieczeństwa, odczytanego na samym zaworze (w Europie często 3 bar, w Ameryce Północnej około 2,1 bar / 30 psi), i poniżej alarmu. Tylko informuje. Za wysoko — ostrzeże za późno; za nisko — ostrzeże, choć ciśnienie jest w porządku.",
+          "pressure_high_alarm": "Opcjonalnie: ciśnienie powyżej tej wartości wywołuje alarm, w barach, a po 5 minutach powiadomienie. Domyślnie puste: bez alarmu. Ustaw poniżej ciśnienia otwarcia zaworu bezpieczeństwa, odczytanego na samym zaworze (w Europie często 3 bar, w Ameryce Północnej około 2,1 bar / 30 psi); jeśli ustawisz też ostrzeżenie — powyżej niego. Tylko informuje; grzanie wyłącza się wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Za wysoko — dowiesz się dopiero, gdy zawór wypuści wodę."
         }
       },
       "circuit": {
@@ -844,7 +850,7 @@
           "design_load_kw": "Twoje własne obliczenie strat ciepła, w kW przy projektowej temperaturze zewnętrznej. Zawsze wygrywa: zapisane dni nigdy go nie zastępują, pokazują tylko rozbieżność. Wartość, jakiej nie ma żaden dom, jest odrzucana.",
           "loss_coefficient": "Strata ciepła na kelwin, w kW/K, jeśli ją znasz. Zawsze wygrywa, także ze zmierzoną: zapisane dni nigdy jej nie zastępują, pokazują tylko rozbieżność — zła wartość zostaje zła.",
           "heating_threshold": "Temperatura zewnętrzna, powyżej której dom nie potrzebuje ogrzewania, w °C; także podstawa stopniodni. Domyślnie 15 °C, dopóki nie zmierzą go zapisane dni z dość szerokiego zakresu temperatur zewnętrznych. Wpisany zawsze wygrywa; zmierzony jest pokazywany obok, z ewentualną rozbieżnością. Zły wypacza stopniodnie i gaz na stopniodzień.",
-          "design_outdoor": "Najzimniejsza temperatura zewnętrzna, do której odnosi się Twoje obciążenie projektowe, w °C. Domyślnie −15 °C. Zła wypacza szacunek z obciążenia projektowego."
+          "design_outdoor": "Najzimniejsza temperatura zewnętrzna, na którą zaprojektowano ogrzewanie, w °C. Domyślnie −15 °C. To ta sama wartość co projektowa temperatura zewnętrzna krzywej grzewczej: zmiana tutaj zmienia też krzywą. Zbyt zimna wartość daje za mało wody w mrozy; zła wypacza szacunek z obciążenia projektowego."
         }
       },
       "reference": {
@@ -870,9 +876,6 @@
           "monitoring_days": "Dni danych do werdyktu",
           "near_room_k": "Blisko temperatury pokoju",
           "foreign_heat_hold_min": "Podtrzymanie obcego ciepła",
-          "add_water_below": "Uzupełnij wodę poniżej",
-          "pressure_high_warning": "Ostrzeżenie: wysokie ciśnienie",
-          "pressure_high_alarm": "Alarm: wysokie ciśnienie",
           "flue_gas_warning": "Ostrzeżenie: spaliny",
           "flue_gas_alarm": "Alarm: spaliny",
           "starts_per_hour_limit": "Częste starty",
@@ -885,9 +888,6 @@
           "monitoring_days": "Ile dni danych potrzebuje werdykt monitora, licząc od dodania tej integracji. Niczego nie wstrzymuje: sterowanie można włączyć w każdej chwili, nawet bez werdyktu, a dopóki go nie ma, przełącznik sterowania pokazuje „za mało danych”. Poza sezonem grzewczym danych może być za mało nawet po tych dniach. Domyślnie 7; krócej nie można.",
           "near_room_k": "Woda cieplejsza od pokoju najwyżej o tyle liczy się jako brak ciepła w strefie, w K. Domyślnie 3. Większa wartość szybciej pokazuje „Ciepło nie dociera do strefy”.",
           "foreign_heat_hold_min": "Jak długo pokój liczy się jako ogrzany po wyłączeniu źródła, w minutach. Domyślnie 60. Dłużej trzyma naukę wstrzymaną dłużej po kominku.",
-          "add_water_below": "Opcjonalnie: poniżej tego ciśnienia dostaniesz powiadomienie, by dolać wody, w barach — weź wartość z instrukcji kotła (jego minimalne ciśnienie robocze). Domyślnie puste: bez powiadomienia. Tylko informuje; grzanie wyłącza się wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Za nisko — dowiesz się za późno; za wysoko — powiadomienie przyjdzie, choć ciśnienie jest w porządku.",
-          "pressure_high_warning": "Opcjonalnie: ciśnienie powyżej tej wartości daje ostrzeżenie, w barach. Domyślnie puste: bez ostrzeżenia. Ustaw poniżej ciśnienia otwarcia zaworu bezpieczeństwa, odczytanego na samym zaworze (w Europie często 3 bar, w Ameryce Północnej około 2,1 bar / 30 psi), i poniżej alarmu. Tylko informuje. Za wysoko — ostrzeże za późno; za nisko — ostrzeże, choć ciśnienie jest w porządku.",
-          "pressure_high_alarm": "Opcjonalnie: ciśnienie powyżej tej wartości wywołuje alarm, w barach, a po 5 minutach powiadomienie. Domyślnie puste: bez alarmu. Ustaw poniżej ciśnienia otwarcia zaworu bezpieczeństwa, odczytanego na samym zaworze (w Europie często 3 bar, w Ameryce Północnej około 2,1 bar / 30 psi); jeśli ustawisz też ostrzeżenie — powyżej niego. Tylko informuje; grzanie wyłącza się wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Za wysoko — dowiesz się dopiero, gdy zawór wypuści wodę.",
           "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
           "starts_per_hour_limit": "Więcej startów palnika w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12. Za wysoka ukrywa taktowanie.",
@@ -973,7 +973,7 @@
       },
       "control_curve": {
         "title": "Krzywa grzewcza i limity",
-        "description": "Temperatura zasilania potrzebna domowi przy każdej temperaturze zewnętrznej, limity, których żadna nastawa nie przekroczy, i jak długo grzanie czeka na wolne zawory. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Temperatura zasilania potrzebna domowi przy każdej temperaturze zewnętrznej, limity, których żadna nastawa nie przekroczy, i jak długo grzanie czeka na wolne zawory. Wodę ograniczają też maksymalna nastawa c.o. kotła ({boiler_max}, krok kotła) i maksymalna temperatura zasilania pierwszego obiegu ({circuit_max}, krok obiegu): obowiązuje najniższa z trzech wartości: tych dwóch i najwyższej temperatury wody poniżej. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "design_outdoor": "Projektowa temperatura zewnętrzna",
           "design_flow": "Projektowa temperatura zasilania",
@@ -990,7 +990,7 @@
           "frost_zone": "Strefa przeciwmrozowa"
         },
         "data_description": {
-          "design_outdoor": "Najzimniejsza temperatura zewnętrzna, na którą zaprojektowano ogrzewanie, w °C. Domyślnie: projektowa temperatura zewnętrzna budynku albo −15 °C. Zbyt zimna wartość daje za mało wody w mrozy.",
+          "design_outdoor": "Najzimniejsza temperatura zewnętrzna, na którą zaprojektowano ogrzewanie, w °C. Domyślnie −15 °C. To ta sama wartość co projektowa temperatura zewnętrzna budynku: zmiana tutaj zmienia ją też tam. Zbyt zimna wartość daje za mało wody w mrozy.",
           "design_flow": "Temperatura zasilania potrzebna przy projektowej temperaturze zewnętrznej, w °C, np. wartość z krzywej ustawionej w kotle. Wymagana; nie ma wartości domyślnej. Za wysoka marnuje gaz i powoduje taktowanie palnika; za niska zostawia chłodne pokoje w silny mróz. SmartPI (0.4.0) uczy się w każdej strefie własnego członu zewnętrznego, którego nie da się wyłączyć, więc pogoda liczy się dwa razy — w krzywej i w strefie: ustaw krzywą na tyle, ile dom potrzebuje, nie wyżej.",
           "hard_min": "Najniższa temperatura wody, jaką ustawia wtyczka, w °C — ustawiana jak punkt krzywej. Domyślnie 20 °C. Za niska: przy łagodnej pogodzie kocioł raz po raz sam się wyłącza, a kocioł niekondensacyjny skrapla spaliny w przewodzie kominowym — weź wartość z jego instrukcji. Za wysoka: woda cieplejsza, niż potrzebują pokoje, i więcej gazu. Gdy kocioł wciąż się wyłącza przy tej temperaturze, wtyczka pokazuje dowody i proponowaną wartość; sama nigdy nie zmienia tego ustawienia.",
           "hard_max": "Żadna nastawa powyżej tej wartości, cokolwiek wyliczy krzywa lub korekta, w °C. Domyślnie 70 °C. Ogrzewanie podłogowe wymaga też maksymalnego zasilania swojego obiegu. Za wysoka: grzejniki albo podłoga bez własnego maksimum dostają tak gorącą wodę; za niska: pokoje zostają chłodne w silny mróz, bo krzywa jest ucięta. Obowiązuje tylko, gdy steruje wtyczka: po oddaniu sterowania albo gdy Home Assistant nie działa, obowiązuje własne maksimum kotła albo termostatu ściennego.",

@@ -9951,7 +9951,10 @@ async def test_a_renamed_entity_carries_what_control_stored_for_it(
     for key in ("paused", "pause_causes", "resuming", "resume_since"):
         assert living not in kept[key], key
     assert "climate.lounge" in kept["paused"] or "climate.lounge" in kept["resuming"]
-    assert kept["taken_with"] == control
+    # The curve as control runs it: with the building's design outdoor temperature (I6).
+    design_outdoor = rig.entry.options["parameters"]["design_outdoor"]
+    curve = control["curve"] | {"design_outdoor": design_outdoor}
+    assert kept["taken_with"] == control | {"curve": curve}
     assert {"entity_id": living, "learning_enabled": True} not in learning
     assert {"entity_id": "climate.lounge", "learning_enabled": True} in learning
 
@@ -10065,6 +10068,7 @@ OWED = "hand_back_owed"
         "latch",
         "internal_error",
         "options_differ",
+        "design_outdoor_differs",
         "blocker",
         "thermostat_kind_missing",
         "store_lost",
@@ -10091,6 +10095,10 @@ async def test_a_restore_whose_conditions_fail_hands_back_first(
         "latch": {"latched": True, "latched_by": ["pressure_low"]},
         "internal_error": {"failed": True},
         "options_differ": {"taken_with": options(rig.zones, topology="gateway_standalone")},
+        # I6: the design outdoor temperature, now the building's, still counts as the curve's.
+        "design_outdoor_differs": {
+            "taken_with": taken_with(rig, curve={"design_outdoor": -20, "design_flow": 55})
+        },
         # Taken with these very options, stored before the question existed.
         "thermostat_kind_missing": {"taken_with": taken_with(rig, thermostat_kind=None)},
     }.get(case, {})
