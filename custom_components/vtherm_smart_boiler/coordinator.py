@@ -77,7 +77,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from . import feature_manager
-from .config import EntryConfig
+from .config import FRESHNESS_OFF, EntryConfig
 from .const import (
     ALIVE_STORE_VERSION,
     CONTROL_STORE_MARKER,
@@ -99,7 +99,7 @@ from .const import (
     owes_hand_back,
     stored_flag,
 )
-from .control_config import Topology, WritePath, wall_thermostat_applies
+from .control_config import Connection, Topology, WritePath, wall_thermostat_applies
 from .core.alarms import (
     CIRCUIT_NOT_MEASURED,
     HELD,
@@ -136,6 +136,7 @@ from .core.daily import (
 )
 from .core.emitters import FactorResult, FactorStatus, update_factor
 from .core.foreign_heat import ForeignHeatState, update_foreign_heat
+from .core.freshness import Rhythm, automatic_limit, observe
 from .core.history import History, ZoneSeries, with_downtime
 from .core.hot_water import HotWater, hot_water_available
 from .core.installation import CircuitControl, IssueCode, Severity
@@ -184,6 +185,7 @@ from .transport.entities import (
     reading_from_state,
     weather_from_state,
 )
+from .transport.mqtt_reports import MqttReports, ems_esp_topics, mqtt_signals, otgw_topics
 from .vtherm_attributes import CentralMode
 from .vtherm_link import VtCapabilities, VThermLink, ZoneAlgorithm
 
@@ -202,6 +204,22 @@ NO_CRITERION_ISSUE = "no_criterion_judged"  # its text where the zones are known
 # it reports no setpoint); the lowest water temperature's suggestion (``_boiler``: worded for the
 # device that sets the water). Warnings, not fixable.
 WALL_ISSUE = "wall_thermostat_fallback"
+# I6 (decision 9): an ESPHome sensor never seen repeating an unchanged value in the run's first
+# six hours — its force_update is likely off, so a steady value cannot be told from a frozen one.
+ESPHOME_REPEATS_ISSUE = "esphome_no_repeats"
+ESPHOME_REPEATS_AFTER_S = 6 * 3600.0
+# The signals an ESP's sensors can repeat with force_update (its binary sensors cannot).
+REPEATABLE_SIGNALS = frozenset(
+    {
+        Signal.FLOW,
+        Signal.RETURN,
+        Signal.MODULATION,
+        Signal.PRESSURE,
+        Signal.OUTDOOR,
+        Signal.FLUE_GAS,
+        Signal.CH_SETPOINT,
+    }
+)
 LOWEST_WATER_ISSUE = "lowest_water_suggestion"
 ZONE_MAX_AGE_S: float | None = None  # one freshness rule: a steady room is not a stale one
 # Y1's notifications: repair issues the plugin raises itself — warnings, not fixable
@@ -228,6 +246,7 @@ _NOTICE_DEFAULTS: dict[str, dict[str, str]] = {
     FLUE_GAS_HIGH_ISSUE: {"value": "-", "limit": "-"},
     PRESSURE_FALLING_ISSUE: {"change": "-"},
     BOILER_FAULT_ISSUE: {"entity": "-"},
+    ESPHOME_REPEATS_ISSUE: {"entity": "-"},
 }
 SAVE_DELAY_S = 120
 # P-94: the installation's warnings, each a warning repair issue ``installation_<code>_<entry>``
@@ -269,6 +288,12 @@ def _degrees(value: float | None) -> str:
 # the store is not rewritten every two minutes all winter. So is the entry store's copy of the
 # control state while the boiler's hold and an owed hand-back stay as they are (PB-60).
 FACTOR_SAVE_DELAY_S = 15 * 60
+# The automatic freshness limits (I6, decision 9): five times a source's own rhythm, within these
+# bounds — 10 to 30 min for the boiler's signals (a hiccup is not a frozen source), 3 to 12 h for
+# a weather entity that updates hourly or so (provisional, K4).
+FRESHNESS_FLOOR_S, FRESHNESS_CAP_S = 10 * 60.0, 30 * 60.0
+WEATHER_FLOOR_S, WEATHER_CAP_S = 3 * 3600.0, 12 * 3600.0
+WEATHER_RHYTHM = "weather"
 MONITOR_REFRESH = "The monitor refresh"  # the quick path, as its failure and recovery are logged
 
 
@@ -341,6 +366,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             control.confirmed_entity,
         )
         self.transport = EntityTransport(hass, config.signals, gateway)
+        self.reports = MqttReports()  # the interface's own MQTT messages (I6, decision 9)
+        self.transport.heard = self.reports.heard
         self.link = VThermLink(hass, config.zone_entities)
         self.history = self._empty_history()
         self.parameters = config.parameters
@@ -373,6 +400,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._unsubs: list[CALLBACK_TYPE] = []
         self._factors: dict[str, FactorResult] = {}
         self._hot_water: dict[str, bool | None] = {}
+        # What each source has shown of its rhythm in this run, by signal and "weather" (I6).
+        self._rhythms: dict[str, Rhythm] = {}
         self._foreign: dict[str, ForeignHeatState] = {}
         self._reference: ReferenceRoom | None = None
         self._critical: dict[str, CriticalZone] = {}
@@ -405,6 +434,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # states tell the days under control.
         self._control_entity: str | None = None
         self._stopped = False
+        self._started_at: float | None = None  # when this run began following the entities
         # The entities the platforms create now (disabled ones too): the rest are stale.
         self.expected_unique_ids: set[str] = set()
         # The platforms that set themselves up for this run: only they say what is stale (PB-07).
@@ -460,6 +490,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         """Find VT, rebuild the history and start following the entities (after
         ``async_load``)."""
         now = dt_util.utcnow().timestamp()
+        self._started_at = now
+        if await self.reports.async_start(self.hass, self._report_topics()):
+            self._unsubs.append(self.reports.stop)
         self.link.watch_vt_central()  # first: a change to VT made unwatched latches (decision 9)
         await self.link.async_detect()
         self._restore_notices()
@@ -544,6 +577,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             NO_ZONE_KNOWN_ISSUE,
             WALL_ISSUE,
             LOWEST_WATER_ISSUE,
+            ESPHOME_REPEATS_ISSUE,
         ):
             ir.async_delete_issue(self.hass, DOMAIN, f"{key}_{self.config_entry.entry_id}")
         self._no_zone_issue = None
@@ -1063,12 +1097,66 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         return state is not None and state.state not in ("unavailable", "unknown")
 
     def _max_age(self, signal: Signal) -> float | None:
-        return self.config.freshness.get(signal)  # one rule: only a limit the user set
+        return self.max_age(signal)
+
+    def max_age(self, signal: Signal) -> float | None:
+        """The age limit a signal is judged by, for the monitor and control alike (one freshness
+        rule, X2): the one the user set — 0, none — else the automatic one its source has earned
+        by repeating an unchanged value (I6, decision 9), else none: availability only."""
+        set_by_user = self.config.freshness.get(signal)
+        if set_by_user is not None:
+            return None if set_by_user == FRESHNESS_OFF else set_by_user
+        rhythm = self._rhythms.get(signal.value, Rhythm())
+        return automatic_limit(rhythm, FRESHNESS_FLOOR_S, FRESHNESS_CAP_S)
+
+    def weather_max_age(self) -> float | None:
+        """The weather entity's own age limit, as ``max_age`` — never the outdoor sensor's."""
+        set_by_user = self.config.weather_max_age_s
+        if set_by_user is not None:
+            return None if set_by_user == FRESHNESS_OFF else set_by_user
+        rhythm = self._rhythms.get(WEATHER_RHYTHM, Rhythm())
+        return automatic_limit(rhythm, WEATHER_FLOOR_S, WEATHER_CAP_S)
+
+    def _report_topics(self) -> dict[str, frozenset[Signal]]:
+        """The boiler interface's own MQTT topics to listen to, for its MQTT entities (I6): the
+        OTGW firmware's per signal, EMS-ESP's boiler data for all; none on any other
+        connection, or without the topics."""
+        panel = self.config.panel
+        signals = mqtt_signals(self.hass, self.config.signals)
+        if panel.connection is Connection.OTGW_MQTT and panel.mqtt_top and panel.mqtt_node:
+            return otgw_topics(panel.mqtt_top, panel.mqtt_node, signals)
+        if panel.connection is Connection.EMS_ESP and panel.ems_esp_base:
+            return ems_esp_topics(panel.ems_esp_base, signals)
+        return {}
+
+    def freshness_limits(self) -> dict[Signal, float | None]:
+        """Each mapped signal's age limit now."""
+        return {signal: self.max_age(signal) for signal in self.config.signals}
+
+    def _observe_rhythms(self, snapshot: BoilerSnapshot) -> None:
+        """One look at every source's rhythm (I6): the mapped signals, and the weather entity."""
+        for signal, reading in snapshot.readings.items():
+            key = signal.value
+            self._rhythms[key] = observe(
+                self._rhythms.get(key, Rhythm()),
+                reading.reported_at,
+                reading.value,
+                reading.changed_at,
+            )
+        if self.config.weather:
+            weather = weather_from_state(self.hass.states.get(self.config.weather))
+            self._rhythms[WEATHER_RHYTHM] = observe(
+                self._rhythms.get(WEATHER_RHYTHM, Rhythm()),
+                weather.reported_at,
+                weather.value,
+                weather.changed_at,
+            )
 
     def _compute(self, now: float) -> MonitorData:
         config = self.config
         snapshot = self.transport.snapshot(now)
-        health = check_signals(snapshot, config.freshness)
+        self._observe_rhythms(snapshot)
+        health = check_signals(snapshot, self.freshness_limits())
         mapped = frozenset(config.signals)
         has_rates = self._has_rates()
         flow = snapshot.number(Signal.FLOW)
@@ -1712,7 +1800,31 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
 
     async def _async_analysis_tick(self, _now: datetime) -> None:
         self.check_learning()
+        self._check_repeats(dt_util.utcnow().timestamp())
         await self.async_run_analysis()
+
+    def _check_repeats(self, now: float) -> None:
+        """I6 (decision 9): on ESPHome, a numeric sensor that has reported in this run but never
+        repeated an unchanged value within its first six hours is named in a warning — without
+        ``force_update`` on the ESP, Home Assistant writes only changes, and the plugin judges it
+        by availability alone."""
+        if self.config.panel.connection is not Connection.ESPHOME or self._started_at is None:
+            return
+        if now - self._started_at < ESPHOME_REPEATS_AFTER_S:
+            return
+        registry = er.async_get(self.hass)
+        silent: list[str] = []
+        for signal, entity_id in self.config.signals.items():
+            registered = registry.async_get(entity_id)
+            if signal not in REPEATABLE_SIGNALS or registered is None:
+                continue
+            rhythm = self._rhythms.get(signal.value, Rhythm())
+            if registered.platform == "esphome" and rhythm.reported_at and not rhythm.heartbeats:
+                silent.append(entity_id)
+        names = ", ".join(self._entity_name(entity) for entity in silent)
+        self._show_notice(
+            ESPHOME_REPEATS_ISSUE, bool(silent), {"entity": names} if silent else None
+        )
 
     async def _async_quick_tick(self, _now: datetime) -> None:
         """The monitor's quick path every ``TICK_SECONDS`` whatever listens, so its alarms and

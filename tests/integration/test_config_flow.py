@@ -4151,6 +4151,9 @@ async def answer_panels(
     result = await options_step(hass, menu, {"next_step_id": "connection"})
     answers = {"connection": connection, "heat_source": "gas", "type": "single"}
     result = await options_step(hass, result, answers)
+    if result["step_id"] == "mqtt_topics":  # I6.5: the MQTT connections' topics
+        topics = {"ems_esp_base": "ems-esp"} if connection == "ems_esp" else {"mqtt_node": "n1"}
+        result = await options_step(hass, result, topics)
     result = await options_step(hass, result, {"control_mode": mode})
     assert result["type"] is FlowResultType.CREATE_ENTRY, result
     await hass.async_block_till_done()
@@ -4516,3 +4519,92 @@ async def test_an_electric_boiler_gets_no_unstable_ignition_alarm(
             assert state.missing == (FUEL_BURNER,)
         assert await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
+
+
+# --- I6.5: the MQTT topics, and freshness 0 (decision 9) ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("connection", "answers", "stored"),
+    [
+        (
+            "otgw_mqtt",
+            {"mqtt_top": " OTGW ", "mqtt_node": "otgw-1"},
+            {"mqtt_top": "OTGW", "mqtt_node": "otgw-1"},
+        ),
+        ("ems_esp", {"ems_esp_base": "ems-esp"}, {"ems_esp_base": "ems-esp"}),
+    ],
+)
+async def test_an_mqtt_connection_asks_its_topics(
+    hass: HomeAssistant, connection: str, answers: dict[str, str], stored: dict[str, str]
+) -> None:
+    """Decision 9: after the OTGW firmware over MQTT or EMS-ESP, the topics it publishes under —
+    EMS-ESP's base "ems-esp" unless given; one with a wildcard is refused; spaces around a
+    level go."""
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    answer = {"connection": connection, "heat_source": "gas", "type": "single"}
+    result = await step(hass, result, answer)
+    assert result["step_id"] == "mqtt_topics"
+    if connection == "ems_esp":
+        assert form_default(result, "ems_esp_base") == "ems-esp"
+    else:
+        assert form_default(result, "mqtt_top") == "OTGW"
+        assert form_default(result, "mqtt_node") is None
+    key = next(iter(answers))
+    refused = await step(hass, result, answers | {key: "OTGW/#"})
+    assert refused["errors"] == {key: "mqtt_topic_invalid"}
+    result = await step(hass, refused, answers)
+    assert result["step_id"] == "mode"
+    result = await step(hass, result, {"control_mode": "monitor", "condensing": True})
+    for data in (
+        {"name": "Boiler", "level": "simple"},
+        {},
+        {},
+        {"control": "unmixed_shared"},
+        {"zones": []},
+        {},
+        {"strategy": "average"},
+    ):
+        result = await step(hass, result, data)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    boiler = result["options"]["boiler"]
+    assert {k: boiler[k] for k in stored} == stored
+    await hass.async_block_till_done()
+
+
+def test_the_topics_of_a_connection_no_longer_chosen_go() -> None:
+    """A connection changed away from MQTT keeps no topics of it; the control step's own topics
+    are offered from the panel's where it has none."""
+    from custom_components.vtherm_smart_boiler.config_flow import (
+        apply_connection,
+        control_mqtt_schema,
+        mqtt_topics_schema,
+    )
+
+    options: dict[str, Any] = {
+        "boiler": {"connection": "otgw_mqtt", "mqtt_top": "GW", "mqtt_node": "n1"},
+        "control": {"mqtt_node": "from-control"},
+    }
+    defaults = {str(m): m.default() for m in control_mqtt_schema(options).schema}
+    assert defaults == {"mqtt_top": "GW", "mqtt_node": "from-control"}
+    shown = {str(m): m.default() for m in mqtt_topics_schema(options).schema}
+    assert shown == {"mqtt_top": "GW", "mqtt_node": "n1"}
+    apply_connection(options, {"connection": "esphome", "heat_source": "gas", "type": "single"})
+    assert "mqtt_top" not in options["boiler"]
+    assert "mqtt_node" not in options["boiler"]
+
+
+async def test_a_freshness_limit_of_zero_is_saved_as_none(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 9: 0 is the user's "no limit" (availability only), kept as 0; an empty field is
+    the automatic limit, not stored."""
+    entry_id = await create_entry(hass, entities, "simple")
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "freshness"})
+    result = await options_step(hass, result, {"flame": 0})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    assert entry.options["freshness"] == {"flame": 0.0}
+    await hass.async_block_till_done()

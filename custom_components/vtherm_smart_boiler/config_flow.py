@@ -434,12 +434,46 @@ def mode_schema(options: dict[str, Any]) -> vol.Schema:
 
 def apply_connection(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     """The first panel's answers; the hot-water kind follows the boiler type, so a version
-    without the type reads the entry the same."""
+    without the type reads the entry the same. Topics of a connection no longer chosen go."""
     boiler = dict(_stored_boiler(options))
     for key in CONNECTION_STEP_KEYS:
         boiler[key] = user_input[key]
     boiler["dhw"] = BoilerType(user_input[BOILER_TYPE]).dhw.value
+    kept = TOPIC_KEYS.get(Connection(user_input[CONNECTION]), ())
+    for keys in TOPIC_KEYS.values():
+        for key in keys:
+            if key not in kept:
+                boiler.pop(key, None)
     options[BOILER] = boiler
+
+
+# The MQTT topics each MQTT connection publishes under (I6, decision 9): asked with the
+# connection, so the plugin can hear its repeats whether or not control is set up.
+EMS_ESP_BASE = "ems_esp_base"
+TOPIC_KEYS: Mapping[Connection, tuple[str, ...]] = {
+    Connection.OTGW_MQTT: ("mqtt_top", "mqtt_node"),
+    Connection.EMS_ESP: (EMS_ESP_BASE,),
+}
+
+
+def mqtt_topics_schema(options: dict[str, Any]) -> vol.Schema:
+    """The OTGW firmware's top level and node — taken from the control options where they are
+    there — or EMS-ESP's base topic, ``ems-esp`` unless stored."""
+    boiler = _stored_boiler(options)
+    control = options.get(CONTROL)
+    control = control if isinstance(control, Mapping) else {}
+    if stored_connection(options) is Connection.EMS_ESP:
+        return vol.Schema(
+            {vol.Required(EMS_ESP_BASE, default=boiler.get(EMS_ESP_BASE, "ems-esp")): str}
+        )
+    top = boiler.get("mqtt_top") or control.get("mqtt_top") or "OTGW"
+    node = boiler.get("mqtt_node") or control.get("mqtt_node") or vol.UNDEFINED
+    return vol.Schema(
+        {
+            vol.Required("mqtt_top", default=top): str,
+            vol.Required("mqtt_node", default=node): str,
+        }
+    )
 
 
 def apply_mode(options: dict[str, Any], user_input: dict[str, Any]) -> None:
@@ -539,11 +573,12 @@ def _freshness_keys(options: dict[str, Any]) -> list[str]:
 
 
 def freshness_schema(options: dict[str, Any]) -> vol.Schema:
-    """An optional age limit, in minutes, for each mapped signal and the weather entity."""
+    """An optional age limit, in minutes, for each mapped signal and the weather entity: empty,
+    the automatic one its source earns (I6, decision 9); 0, none."""
     limits = {k: v / 60.0 for k, v in options.get(FRESHNESS, {}).items() if v is not None}
     return vol.Schema(
         {
-            _optional(key, limits): _number(*FRESHNESS_BOUNDS_MIN, 1, "min")
+            _optional(key, limits): _number(0, FRESHNESS_BOUNDS_MIN[1], 1, "min")
             for key in _freshness_keys(options)
         }
     )
@@ -1086,11 +1121,15 @@ def control_gateway_schema(options: dict[str, Any], gateways: list[str]) -> vol.
 
 
 def control_mqtt_schema(options: dict[str, Any]) -> vol.Schema:
+    """The firmware's topics; where the control options have none, the first panel's (I6)."""
     control = options.get(CONTROL, {})
+    boiler = _stored_boiler(options)
+    top = control.get("mqtt_top", boiler.get("mqtt_top", "OTGW"))
+    node = control.get("mqtt_node", boiler.get("mqtt_node", vol.UNDEFINED))
     return vol.Schema(
         {
-            vol.Required("mqtt_top", default=control.get("mqtt_top", "OTGW")): str,
-            vol.Required("mqtt_node", default=control.get("mqtt_node", vol.UNDEFINED)): str,
+            vol.Required("mqtt_top", default=top): str,
+            vol.Required("mqtt_node", default=node): str,
         }
     )
 
@@ -2133,11 +2172,34 @@ class _Steps:
     async def async_step_connection(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """The first panel (I6): how the boiler is connected, the heat source, the boiler type."""
+        """The first panel (I6): how the boiler is connected, the heat source, the boiler type;
+        then the MQTT topics for a connection over MQTT."""
         if user_input is not None:
             apply_connection(self.options, user_input)
+            if Connection(user_input[CONNECTION]) in TOPIC_KEYS:
+                return await self.async_step_mqtt_topics()
             return await self.async_step_mode()
         return self._form(step_id="connection", data_schema=connection_schema(self.options))
+
+    async def async_step_mqtt_topics(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The topics the interface publishes under (I6, decision 9)."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            errors = {
+                key: "mqtt_topic_invalid"
+                for key, value in user_input.items()
+                if not mqtt_topic_valid(value)
+            }
+            if not errors:
+                boiler = dict(_stored_boiler(self.options))
+                boiler.update({key: str(value).strip() for key, value in user_input.items()})
+                self.options[BOILER] = boiler
+                return await self.async_step_mode()
+        return self._form(
+            step_id="mqtt_topics", data_schema=mqtt_topics_schema(self.options), errors=errors
+        )
 
     async def async_step_mode(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """The second panel (I6): the control mode the connection can do, condensing and the

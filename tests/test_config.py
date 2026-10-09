@@ -557,7 +557,10 @@ def _zone(**values: object) -> dict:
             )
         ),
         (MINIMAL | {"freshness": {"flow": "nan"}}, "invalid_freshness", "flow"),
-        (MINIMAL | {"freshness": {"weather": 0}}, "invalid_freshness", "weather"),
+        # Below a minute and not 0 (I6: 0 switches the limit off).
+        (MINIMAL | {"freshness": {"weather": 30}}, "invalid_freshness", "weather"),
+        (MINIMAL | {"freshness": {"flow": -60}}, "invalid_freshness", "flow"),
+        (MINIMAL | {"freshness": {"flow": False}}, "invalid_freshness", "flow"),
         (MINIMAL | {"boiler": {"condensing": "false"}}, "invalid_boiler", "condensing"),
         (MINIMAL | {"boiler": {"bypass": 1}}, "invalid_boiler", "bypass"),
     ],
@@ -1026,3 +1029,16 @@ def test_monitoring_only_keeps_a_stored_control_section_from_running() -> None:
     assert config.control.configured
     blockers = config_blockers(config.control, config.installation)
     assert blockers == ["control_mode_monitor"]
+
+
+def test_a_stored_zero_switches_a_freshness_limit_off() -> None:
+    """I6.5 (decision 9): nothing stored is the automatic limit; a stored 0 is the user's "no
+    limit" — availability only — for a signal and for the weather alike."""
+    from custom_components.vtherm_smart_boiler.config import FRESHNESS_OFF
+
+    config = EntryConfig.from_options(
+        MINIMAL | {"weather": "weather.home", "freshness": {"flow": 0, "weather": 0}}
+    )
+    assert config.freshness == {Signal.FLOW: FRESHNESS_OFF}
+    assert config.weather_max_age_s == FRESHNESS_OFF
+    assert EntryConfig.from_options(MINIMAL).weather_max_age_s is None

@@ -31,6 +31,12 @@ def reported_at(state: State) -> float:
     return moment.timestamp()
 
 
+def changed_at(state: State) -> float:
+    """When the state or anything reported with it last changed (``last_updated``): a report
+    after it with nothing new is a repeat (I6)."""
+    return state.last_updated.timestamp()
+
+
 def reading_from_state(
     signal: Signal, state: State | None, *, from_gateway: bool = False
 ) -> Reading:
@@ -41,7 +47,7 @@ def reading_from_state(
         return Reading(None, None)
     unit = state.attributes.get("unit_of_measurement")
     value = signal_value(signal, state.state, unit, zero_is_unknown=from_gateway)
-    return Reading(value, reported_at(state))
+    return Reading(value, reported_at(state), changed_at(state))
 
 
 def gateway_signals(
@@ -103,12 +109,21 @@ class EntityTransport:
         self.gateway = frozenset(gateway)
         # The live outdoor readings' memory for the gateway's zero rule (PB-21, M1).
         self.outdoor = GatewayOutdoor()
+        # When the boiler interface last sent each signal on its own MQTT topic, changed or not
+        # (I6, decision 9; ``mqtt_reports``): a later report than Home Assistant's own.
+        self.heard: Mapping[Signal, float] = {}
 
     def signal_of(self, entity_id: str) -> Signal | None:
         return self._by_entity.get(entity_id)
 
     def reading(self, signal: Signal) -> Reading:
-        return self.reading_of(signal, self._hass.states.get(self._mapping[signal]))
+        """The live reading; its report time the later of Home Assistant's and the last message
+        the interface sent for it, where one was heard."""
+        found = self.reading_of(signal, self._hass.states.get(self._mapping[signal]))
+        heard = self.heard.get(signal)
+        if heard is None or found.reported_at is None or heard <= found.reported_at:
+            return found
+        return Reading(found.value, heard, found.changed_at)
 
     def reading_of(
         self, signal: Signal, state: State | None, outdoor: GatewayOutdoor | None = None
@@ -120,7 +135,7 @@ class EntityTransport:
         if signal is Signal.OUTDOOR and signal in self.gateway:
             memory = self.outdoor if outdoor is None else outdoor
             reading = reading_from_state(signal, state)
-            return Reading(memory.read(reading.value), reading.reported_at)
+            return Reading(memory.read(reading.value), reading.reported_at, reading.changed_at)
         return reading_from_state(signal, state, from_gateway=signal in self.gateway)
 
     def snapshot(self, now: float) -> BoilerSnapshot:
@@ -147,7 +162,7 @@ def temperature_from_state(state: State | None) -> Reading:
     )
     if value is not None and not FLOW_LOW <= value <= FLOW_HIGH:
         value = None
-    return Reading(value, reported_at(state))
+    return Reading(value, reported_at(state), changed_at(state))
 
 
 def relay_hvac_modes(state: State | None) -> set[str] | None:
@@ -212,7 +227,7 @@ def weather_from_state(state: State | None) -> Reading:
     )
     if value is not None and not -60.0 <= value <= 60.0:
         value = None
-    return Reading(value, reported_at(state))
+    return Reading(value, reported_at(state), changed_at(state))
 
 
 def read_bounds(hass: HomeAssistant, entity_id: str) -> tuple[float | None, float | None]:
