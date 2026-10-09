@@ -4461,6 +4461,7 @@ async def test_a_missing_control_store_of_an_entry_that_ran_hands_back_first(
     or both stores are. Control is configured, so the entry ran: a full hand-back first."""
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
     entry.add_to_hass(rig.hass)
+    entry.created_at = dt_util.utcnow() - timedelta(hours=1)  # it ran: no first start (I6)
     if main_left:
         seed_main(hass_storage, entry, control={"controlling": False})
     await set_up(rig, entry)
@@ -4469,6 +4470,46 @@ async def test_a_missing_control_store_of_an_entry_that_ran_hands_back_first(
     assert issue(rig, "control_state_unreadable") is None  # SB-39: the hand-back confirmed
     stored = stored_control(hass_storage, rig)  # written afresh, the hand-back confirmed
     assert (stored["controlling"], stored["hand_back_pending"]) == (False, False)
+
+
+async def test_a_new_entry_with_control_set_up_hands_nothing_back(
+    rig: Rig, hass_storage: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    """I6.6 (decision 11): control set up in the wizard — an entry made now, with neither store
+    yet — has never held the boiler: its first start writes nothing and owes nothing, with no
+    error and no repair issue; the switch starts off. Its stores are written as any first
+    start's. The negative, an entry that ran and lost both stores, hands back first (above)."""
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.add_to_hass(rig.hass)
+    await set_up(rig, entry)
+    await rig.advance(60)
+    assert rig.gateway.calls == []
+    assert issue(rig, "control_state_unreadable") is None
+    assert "cannot be read (missing or damaged)" not in caplog.text
+    assert rig.state("switch", "control").state == "off"
+    stored = stored_control(hass_storage, rig)
+    assert (stored["controlling"], stored["hand_back_pending"]) == (False, False)
+
+
+@pytest.mark.parametrize("sign", ["store_of_another_version", "entities_registered"])
+async def test_a_young_entry_that_shows_it_ran_hands_back_first(
+    rig: Rig, hass_storage: dict[str, Any], sign: str
+) -> None:
+    """Within its first half hour too, an entry that shows it ran may have held the boiler: a
+    store there but unreadable (another version's), or its entities already registered (its
+    stores damaged and renamed, which reads as no store at all). A full hand-back first."""
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    entry.add_to_hass(rig.hass)
+    if sign == "store_of_another_version":
+        key = main_key(entry)
+        hass_storage[key] = {"version": 99, "key": key, "data": {"control_store": 1}}
+    else:
+        er.async_get(rig.hass).async_get_or_create(
+            "sensor", DOMAIN, f"{entry.entry_id}_earlier", config_entry=entry
+        )
+    await set_up(rig, entry)
+    await rig.advance(30)
+    assert rig.gateway.calls == HAND_BACK
 
 
 async def test_a_lost_control_store_without_control_hands_back_what_the_copy_owes(

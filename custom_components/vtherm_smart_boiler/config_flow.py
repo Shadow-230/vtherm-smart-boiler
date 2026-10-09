@@ -937,6 +937,13 @@ _PATHS_BY_CLASS: Mapping[str, tuple[str, ...]] = {
 }
 
 
+def wants_control(options: Mapping[str, Any]) -> bool:
+    """Full control or on/off chosen on the second panel: the setup goes through the control
+    steps (I6, decision 11). The control switch starts off all the same."""
+    mode = _known(ControlMode, _stored_boiler(options).get(CONTROL_MODE))
+    return mode in (ControlMode.FULL, ControlMode.ON_OFF)
+
+
 def control_mode_off(options: Mapping[str, Any]) -> bool:
     """Monitoring only, or room values until 0.3, chosen on the second panel (decision 6)."""
     mode = _known(ControlMode, _stored_boiler(options).get(CONTROL_MODE))
@@ -2450,132 +2457,25 @@ class _Steps:
         return self._form(step_id="monitor", data_schema=monitor_schema(self.options))
 
 
-class SmartBoilerConfigFlow(_Steps, ConfigFlow, domain=DOMAIN):
-    VERSION = 1
-    # 2: the options 0.2.1 removed are gone; 3: a control section without the lowest water
-    # temperature keeps 25 °C; 4: the "add water" threshold replaces the low-pressure limits, and
-    # alarm reactions no longer offered go; 5: the high-pressure limits have no default, and an
-    # entry from before keeps those it ran with (see async_migrate_entry).
-    MINOR_VERSION = 5
+class _ControlSteps(_Steps):
+    """The control steps, shared by the setup — where control is set up in the wizard (I6,
+    decision 11) — and the options. The setup has no stored control and nothing to hand back:
+    its hooks say so."""
 
-    def __init__(self) -> None:
-        self.options: dict[str, Any] = {}
-        self._title = DEFAULT_NAME
-        self._zone_queue = []
-        self._zones_done = []
-        self._circuits_done = []
-
-    @staticmethod
-    @callback
-    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
-        return SmartBoilerOptionsFlow()
-
-    ORDER = (
-        "connection", "mode", "name", "signals", "boiler", "circuit", "zones", "building",
-        "reference", "monitor", "finish",
-    )  # fmt: skip
-
-    def _next_after(self, step: str) -> str:
-        following = self.ORDER[self.ORDER.index(step) + 1]
-        if following == "monitor" and not _advanced(self.options):
-            return "finish"
-        return following
-
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """The setup opens with how the boiler is connected (I6)."""
-        return await self.async_step_connection()
-
-    async def async_step_name(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        if user_input is not None:
-            self._title = user_input["name"]
-            self.options[LEVEL] = user_input[LEVEL]
-            return await self._goto(self._next_after("name"))
-        texts = await async_get_translations(
-            self.hass, self.hass.config.language, "device", [DOMAIN]
-        )
-        name = texts.get(f"component.{DOMAIN}.device.{DEFAULT_NAME_KEY}.name") or DEFAULT_NAME
-        return self.async_show_form(step_id="name", data_schema=user_schema({}, name))
-
-    async def async_step_finish(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        problem = validate_problem(self.options)
-        if problem is not None:
-            return await self._back_to_problem(*problem)
-        return self.async_create_entry(title=self._title, data={}, options=self.options)
-
-
-class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
-    """A menu of sections; each saves the options when done."""
-
-    def __init__(self) -> None:
-        self._zone_queue = []
-        self._zones_done = []
-        self._circuits_done = []
-        self._options: dict[str, Any] | None = None
-        self._alarms_answer: dict[str, Any] | None = None  # awaiting the return's confirmation
-        # Blockers the edit would add to control, awaiting confirmation; confirmed: saved anyway.
-        self._blocking: list[str] = []
-        self._blocking_confirmed = False
-        # Stored sections of another shape, each shown first at the save (PB-06).
-        self._unreadable: list[str] = []
-        # The new relay whose separate-contact tick was asked again (PB-45).
-        self._contact_asked_for: str | None = None
-
-    @property
-    def options(self) -> dict[str, Any]:  # type: ignore[override]
-        if self._options is None:
-            options = copy.deepcopy(dict(self.config_entry.options))
-            # PB-06: a section of another shape (a hand edit, an import) is edited from empty, so
-            # its step and the menu can show; the save first sends the user to that step, with
-            # its reason — nothing of it is dropped unseen.
-            self._unreadable = [
-                key for key in SECTION_CODES if not section_fits(key, options.get(key))
-            ]
-            for key in self._unreadable:
-                options[key] = [] if key in (CIRCUITS, ZONES) else {}
-            self._options = options
-        return self._options
-
-    def _next_unreadable(self) -> str | None:
-        """The next stored section of another shape not shown yet (PB-06)."""
-        _ = self.options  # made at first use, finding them
-        return self._unreadable.pop(0) if self._unreadable else None
+    hass: HomeAssistant  # the flow's, from Home Assistant's flow classes
+    _contact_asked_for: str | None = None  # the new relay whose tick was asked again (PB-45)
+    _alarms_answer: dict[str, Any] | None = None  # awaiting the return's confirmation
 
     def _stored_control(self) -> Mapping[str, Any]:
-        """The stored control section; one of another shape reads as none (PB-06)."""
-        current = self.config_entry.options.get(CONTROL)
-        return current if isinstance(current, Mapping) else {}
-
-    def _next_after(self, step: str) -> str:
-        return "mode" if step == "connection" else "save"
+        """The control section as stored before this flow; the setup has none."""
+        return {}
 
     async def _async_hand_back_blocker(self) -> str | None:
-        """Why what the hand-back goes through must not change now: it has not reached the
-        boiler yet, or control holds the boiler — its hand-back must go through the device
-        that has it, which the user gets by switching control off first. With the entry not
-        running — its setup failed, say — its store tells: the next start makes what the last
-        run left owed through what the options say then."""
-        coordinator = getattr(self.config_entry, "runtime_data", None)
-        if coordinator is None:
-            return HAND_BACK_PENDING if await self._async_owed_in_store() else None
-        found = (getattr(coordinator, name, None) for name in ("control", "hand_back_unit"))
-        units = [unit for unit in found if unit is not None]
-        if any(unit.hand_back_owed for unit in units):
-            return HAND_BACK_PENDING
-        if any(unit.holding for unit in units):
-            return "control_holds_boiler"
+        """Why what the hand-back goes through must not change now; the setup has none."""
         return None
 
-    async def _async_owed_in_store(self) -> bool:
-        """What the entry's stored control state says, read as at setup: one that cannot be
-        read owes a hand-back wherever control is configured."""
-        from homeassistant.helpers.importlib import async_import_module
-
-        await async_import_module(self.hass, f"{__package__}.coordinator")
-        from .coordinator import async_read_control_state
-
-        entry = self.config_entry
-        read = await async_read_control_state(self.hass, entry.entry_id, entry.options)
-        return read.owed
+    async def async_step_save(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        raise NotImplementedError
 
     def _changed_read_back(self, user_input: dict[str, Any], blocker: str) -> str | None:
         """The read-back the answer re-picks on the path kept, where it judges a hand-back's
@@ -2609,145 +2509,6 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             for key in fixed_keys(current.get("write_path"), owed=blocker == HAND_BACK_PENDING)
             if key in shown
         )
-
-    def _saves_another_hand_back(self, *, owed: bool) -> bool:
-        """Whether the options to be saved change what a hand-back goes through or what judges
-        it: the path, what it writes to, the gateway or its topics, the read-backs, the write
-        types, the device's timeout, and with a hand-back owed the lowest water temperature
-        (P-12, PB-09). Taking control out changes nothing: the options that took the boiler
-        still hand it back, through a unit that only does that."""
-        new = self.options.get(CONTROL)
-        if not isinstance(new, Mapping):
-            return False
-        current = self._stored_control()
-        keys = ["write_path", *fixed_keys(new.get("write_path"), owed=owed)]
-        return any(_hand_back_answer(new, key) != _hand_back_answer(current, key) for key in keys)
-
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        menu = [
-            "connection", "signals", "freshness", "boiler", "circuit", "zones", "building",
-            "reference", "control",
-        ]  # fmt: skip
-        if _advanced(self.options):
-            menu.append("monitor")
-        # At the simple level, say when hidden advanced settings are still active.
-        menu.append("level_hidden" if has_hidden_advanced(self.options) else "level")
-        return self.async_show_menu(step_id="init", menu_options=menu)
-
-    async def async_step_level_hidden(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        return await self.async_step_level(user_input)
-
-    async def async_step_level(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            candidate = copy.deepcopy(self.options)
-            restoring = user_input[LEVEL] == LEVEL_SIMPLE and user_input.get("restore_defaults")
-            if restoring:
-                restore_advanced_defaults(candidate)
-            if restoring and off_too_close_in(candidate):
-                # P-25: the default "off" next to the lowest water temperature kept.
-                errors = {"base": "off_setpoint_not_below_hard_min"}
-            else:
-                self._options = candidate
-                self.options[LEVEL] = user_input[LEVEL]
-                return await self.async_step_save()
-        return self.async_show_form(
-            step_id="level", data_schema=level_schema(self.options), errors=errors
-        )
-
-    async def async_step_freshness(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        if user_input is not None:
-            apply_freshness(self.options, user_input)
-            return await self.async_step_save()
-        return self._form(step_id="freshness", data_schema=freshness_schema(self.options))
-
-    async def async_step_save(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        # A confirmation holds for the save right after it only: any way back to a step asks
-        # again at the next save.
-        confirmed, self._blocking_confirmed = self._blocking_confirmed, False
-        if (key := self._next_unreadable()) is not None:
-            # PB-06: a section stored in another shape is shown once, from empty, with its reason.
-            return await self._back_to_problem(SECTION_CODES[key], key)
-        problem = validate_problem(self.options)
-        if problem is not None:
-            return await self._back_to_problem(*problem)
-        control = control_of(self.options)
-        if control is not None and (problems := hand_back_value_problems(control)):
-            # A maximum lowered under the hand-back value, or "off" moved next to it, since the
-            # step that checks it (S-21, S-49): back to that step.
-            return await self._back_to_problem(problems[0], None)
-        if self._saves_another_hand_back(owed=True):
-            # Checked again here, not only at the control steps: control may have taken the
-            # boiler, or begun to owe it a hand-back, since they were answered (P-12). Nothing
-            # is saved; the control step says why.
-            blocker = await self._async_hand_back_blocker()
-            if blocker is not None and self._saves_another_hand_back(
-                owed=blocker == HAND_BACK_PENDING
-            ):
-                return await self._back_to_problem(blocker, None)
-        if not confirmed and (blocking := self._new_blockers()):
-            # Open after R6 #3: an edit that would keep control from running is confirmed first.
-            self._blocking = blocking
-            return await self.async_step_confirm_blocking()
-        entry = self.config_entry
-        if entry.state in (ConfigEntryState.SETUP_ERROR, ConfigEntryState.SETUP_RETRY):
-            # The failed setup left no update listener to reload it (H9): the new options are
-            # put in place first, then the entry is set up again with them.
-            self.hass.config_entries.async_update_entry(entry, options=self.options)
-            self.hass.config_entries.async_schedule_reload(entry.entry_id)
-        return self.async_create_entry(data=self.options)
-
-    def _new_blockers(self) -> list[str]:
-        """The configuration blockers the options to be saved give control that the stored ones
-        do not — only where both hold a control section (adding control stops nothing; taking it
-        out is its own choice). Run-time blockers are not compared."""
-        new = options_blockers(self.options)
-        old = options_blockers(self.config_entry.options)
-        if new is None or old is None:
-            return []
-        return [blocker for blocker in new if blocker not in old]
-
-    async def async_step_confirm_blocking(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Open after R6 #3: the first new blocker's text and how many more; saved only when the
-        user ticks "save anyway", else nothing is saved and the menu shows again."""
-        if user_input is not None:
-            if user_input.get("save_anyway") is True and self._blocking:
-                self._blocking_confirmed = True
-                return await self.async_step_save()
-            self._options = None  # the answers of this edit go: nothing saved
-            self._blocking = []
-            return await self.async_step_init()
-        first, *others = self._blocking
-        return self.async_show_form(
-            step_id="confirm_blocking",
-            data_schema=confirm_blocking_schema(),
-            description_placeholders={
-                "first": await self._async_blocker_text(first),
-                "more": str(len(others)),
-            },
-        )
-
-    async def _async_blocker_text(self, blocker: str) -> str:
-        """A blocker's text as the control switch gives it, in Home Assistant's language,
-        without its sentence naming the other reasons — the form counts them; its key where
-        there is none."""
-        texts = await async_get_translations(
-            self.hass, self.hass.config.language, "exceptions", [DOMAIN]
-        )
-        text = texts.get(f"component.{DOMAIN}.exceptions.blocked_{blocker}.message")
-        if not text:
-            return blocker
-        at = text.find("{count}")  # the sentence counting the others (P-74)
-        if at < 0:
-            return text
-        start = text.rfind(". ", 0, at)
-        return text[: start + 1] if start >= 0 else text.replace("{count}", "-")
 
     # --- control: path and topology → path details → curve and limits → (advanced) behaviour
     # → alarm reactions → save
@@ -3231,3 +2992,276 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             data_schema=control_return_confirm_schema(),
             errors=errors,
         )
+
+
+class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
+    VERSION = 1
+    # 2: the options 0.2.1 removed are gone; 3: a control section without the lowest water
+    # temperature keeps 25 °C; 4: the "add water" threshold replaces the low-pressure limits, and
+    # alarm reactions no longer offered go; 5: the high-pressure limits have no default, and an
+    # entry from before keeps those it ran with (see async_migrate_entry).
+    MINOR_VERSION = 5
+
+    def __init__(self) -> None:
+        self.options: dict[str, Any] = {}
+        self._title = DEFAULT_NAME
+        self._zone_queue = []
+        self._zones_done = []
+        self._circuits_done = []
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        return SmartBoilerOptionsFlow()
+
+    ORDER = (
+        "connection", "mode", "name", "signals", "boiler", "circuit", "zones", "building",
+        "reference", "monitor", "control", "finish",
+    )  # fmt: skip
+
+    def _next_after(self, step: str) -> str:
+        following = self.ORDER[self.ORDER.index(step) + 1]
+        if following == "monitor" and not _advanced(self.options):
+            following = "control"
+        if following == "control" and not wants_control(self.options):
+            following = "finish"
+        return following
+
+    async def async_step_save(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """The control steps' end, in the setup: the entry is made (I6, decision 11)."""
+        return await self.async_step_finish()
+
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """The setup opens with how the boiler is connected (I6)."""
+        return await self.async_step_connection()
+
+    async def async_step_name(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            self._title = user_input["name"]
+            self.options[LEVEL] = user_input[LEVEL]
+            return await self._goto(self._next_after("name"))
+        texts = await async_get_translations(
+            self.hass, self.hass.config.language, "device", [DOMAIN]
+        )
+        name = texts.get(f"component.{DOMAIN}.device.{DEFAULT_NAME_KEY}.name") or DEFAULT_NAME
+        return self.async_show_form(step_id="name", data_schema=user_schema({}, name))
+
+    async def async_step_finish(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        problem = validate_problem(self.options)
+        if problem is not None:
+            return await self._back_to_problem(*problem)
+        return self.async_create_entry(title=self._title, data={}, options=self.options)
+
+
+class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
+    """A menu of sections; each saves the options when done."""
+
+    def __init__(self) -> None:
+        self._zone_queue = []
+        self._zones_done = []
+        self._circuits_done = []
+        self._options: dict[str, Any] | None = None
+        self._alarms_answer: dict[str, Any] | None = None  # awaiting the return's confirmation
+        # Blockers the edit would add to control, awaiting confirmation; confirmed: saved anyway.
+        self._blocking: list[str] = []
+        self._blocking_confirmed = False
+        # Stored sections of another shape, each shown first at the save (PB-06).
+        self._unreadable: list[str] = []
+        # The new relay whose separate-contact tick was asked again (PB-45).
+        self._contact_asked_for: str | None = None
+
+    @property
+    def options(self) -> dict[str, Any]:  # type: ignore[override]
+        if self._options is None:
+            options = copy.deepcopy(dict(self.config_entry.options))
+            # PB-06: a section of another shape (a hand edit, an import) is edited from empty, so
+            # its step and the menu can show; the save first sends the user to that step, with
+            # its reason — nothing of it is dropped unseen.
+            self._unreadable = [
+                key for key in SECTION_CODES if not section_fits(key, options.get(key))
+            ]
+            for key in self._unreadable:
+                options[key] = [] if key in (CIRCUITS, ZONES) else {}
+            self._options = options
+        return self._options
+
+    def _next_unreadable(self) -> str | None:
+        """The next stored section of another shape not shown yet (PB-06)."""
+        _ = self.options  # made at first use, finding them
+        return self._unreadable.pop(0) if self._unreadable else None
+
+    def _stored_control(self) -> Mapping[str, Any]:
+        """The stored control section; one of another shape reads as none (PB-06)."""
+        current = self.config_entry.options.get(CONTROL)
+        return current if isinstance(current, Mapping) else {}
+
+    def _next_after(self, step: str) -> str:
+        return "mode" if step == "connection" else "save"
+
+    async def _async_hand_back_blocker(self) -> str | None:
+        """Why what the hand-back goes through must not change now: it has not reached the
+        boiler yet, or control holds the boiler — its hand-back must go through the device
+        that has it, which the user gets by switching control off first. With the entry not
+        running — its setup failed, say — its store tells: the next start makes what the last
+        run left owed through what the options say then."""
+        coordinator = getattr(self.config_entry, "runtime_data", None)
+        if coordinator is None:
+            return HAND_BACK_PENDING if await self._async_owed_in_store() else None
+        found = (getattr(coordinator, name, None) for name in ("control", "hand_back_unit"))
+        units = [unit for unit in found if unit is not None]
+        if any(unit.hand_back_owed for unit in units):
+            return HAND_BACK_PENDING
+        if any(unit.holding for unit in units):
+            return "control_holds_boiler"
+        return None
+
+    async def _async_owed_in_store(self) -> bool:
+        """What the entry's stored control state says, read as at setup: one that cannot be
+        read owes a hand-back wherever control is configured."""
+        from homeassistant.helpers.importlib import async_import_module
+
+        await async_import_module(self.hass, f"{__package__}.coordinator")
+        from .coordinator import async_read_control_state
+
+        entry = self.config_entry
+        read = await async_read_control_state(self.hass, entry.entry_id, entry.options)
+        return read.owed
+
+    def _saves_another_hand_back(self, *, owed: bool) -> bool:
+        """Whether the options to be saved change what a hand-back goes through or what judges
+        it: the path, what it writes to, the gateway or its topics, the read-backs, the write
+        types, the device's timeout, and with a hand-back owed the lowest water temperature
+        (P-12, PB-09). Taking control out changes nothing: the options that took the boiler
+        still hand it back, through a unit that only does that."""
+        new = self.options.get(CONTROL)
+        if not isinstance(new, Mapping):
+            return False
+        current = self._stored_control()
+        keys = ["write_path", *fixed_keys(new.get("write_path"), owed=owed)]
+        return any(_hand_back_answer(new, key) != _hand_back_answer(current, key) for key in keys)
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        menu = [
+            "connection", "signals", "freshness", "boiler", "circuit", "zones", "building",
+            "reference", "control",
+        ]  # fmt: skip
+        if _advanced(self.options):
+            menu.append("monitor")
+        # At the simple level, say when hidden advanced settings are still active.
+        menu.append("level_hidden" if has_hidden_advanced(self.options) else "level")
+        return self.async_show_menu(step_id="init", menu_options=menu)
+
+    async def async_step_level_hidden(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return await self.async_step_level(user_input)
+
+    async def async_step_level(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            candidate = copy.deepcopy(self.options)
+            restoring = user_input[LEVEL] == LEVEL_SIMPLE and user_input.get("restore_defaults")
+            if restoring:
+                restore_advanced_defaults(candidate)
+            if restoring and off_too_close_in(candidate):
+                # P-25: the default "off" next to the lowest water temperature kept.
+                errors = {"base": "off_setpoint_not_below_hard_min"}
+            else:
+                self._options = candidate
+                self.options[LEVEL] = user_input[LEVEL]
+                return await self.async_step_save()
+        return self.async_show_form(
+            step_id="level", data_schema=level_schema(self.options), errors=errors
+        )
+
+    async def async_step_freshness(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            apply_freshness(self.options, user_input)
+            return await self.async_step_save()
+        return self._form(step_id="freshness", data_schema=freshness_schema(self.options))
+
+    async def async_step_save(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        # A confirmation holds for the save right after it only: any way back to a step asks
+        # again at the next save.
+        confirmed, self._blocking_confirmed = self._blocking_confirmed, False
+        if (key := self._next_unreadable()) is not None:
+            # PB-06: a section stored in another shape is shown once, from empty, with its reason.
+            return await self._back_to_problem(SECTION_CODES[key], key)
+        problem = validate_problem(self.options)
+        if problem is not None:
+            return await self._back_to_problem(*problem)
+        control = control_of(self.options)
+        if control is not None and (problems := hand_back_value_problems(control)):
+            # A maximum lowered under the hand-back value, or "off" moved next to it, since the
+            # step that checks it (S-21, S-49): back to that step.
+            return await self._back_to_problem(problems[0], None)
+        if self._saves_another_hand_back(owed=True):
+            # Checked again here, not only at the control steps: control may have taken the
+            # boiler, or begun to owe it a hand-back, since they were answered (P-12). Nothing
+            # is saved; the control step says why.
+            blocker = await self._async_hand_back_blocker()
+            if blocker is not None and self._saves_another_hand_back(
+                owed=blocker == HAND_BACK_PENDING
+            ):
+                return await self._back_to_problem(blocker, None)
+        if not confirmed and (blocking := self._new_blockers()):
+            # Open after R6 #3: an edit that would keep control from running is confirmed first.
+            self._blocking = blocking
+            return await self.async_step_confirm_blocking()
+        entry = self.config_entry
+        if entry.state in (ConfigEntryState.SETUP_ERROR, ConfigEntryState.SETUP_RETRY):
+            # The failed setup left no update listener to reload it (H9): the new options are
+            # put in place first, then the entry is set up again with them.
+            self.hass.config_entries.async_update_entry(entry, options=self.options)
+            self.hass.config_entries.async_schedule_reload(entry.entry_id)
+        return self.async_create_entry(data=self.options)
+
+    def _new_blockers(self) -> list[str]:
+        """The configuration blockers the options to be saved give control that the stored ones
+        do not — only where both hold a control section (adding control stops nothing; taking it
+        out is its own choice). Run-time blockers are not compared."""
+        new = options_blockers(self.options)
+        old = options_blockers(self.config_entry.options)
+        if new is None or old is None:
+            return []
+        return [blocker for blocker in new if blocker not in old]
+
+    async def async_step_confirm_blocking(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Open after R6 #3: the first new blocker's text and how many more; saved only when the
+        user ticks "save anyway", else nothing is saved and the menu shows again."""
+        if user_input is not None:
+            if user_input.get("save_anyway") is True and self._blocking:
+                self._blocking_confirmed = True
+                return await self.async_step_save()
+            self._options = None  # the answers of this edit go: nothing saved
+            self._blocking = []
+            return await self.async_step_init()
+        first, *others = self._blocking
+        return self.async_show_form(
+            step_id="confirm_blocking",
+            data_schema=confirm_blocking_schema(),
+            description_placeholders={
+                "first": await self._async_blocker_text(first),
+                "more": str(len(others)),
+            },
+        )
+
+    async def _async_blocker_text(self, blocker: str) -> str:
+        """A blocker's text as the control switch gives it, in Home Assistant's language,
+        without its sentence naming the other reasons — the form counts them; its key where
+        there is none."""
+        texts = await async_get_translations(
+            self.hass, self.hass.config.language, "exceptions", [DOMAIN]
+        )
+        text = texts.get(f"component.{DOMAIN}.exceptions.blocked_{blocker}.message")
+        if not text:
+            return blocker
+        at = text.find("{count}")  # the sentence counting the others (P-74)
+        if at < 0:
+            return text
+        start = text.rfind(". ", 0, at)
+        return text[: start + 1] if start >= 0 else text.replace("{count}", "-")

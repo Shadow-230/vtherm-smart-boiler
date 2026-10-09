@@ -261,6 +261,8 @@ async def test_advanced_flow_with_two_circuits(
             "foreign_heat_hold_min": 30,
         },
     )
+    assert result["step_id"] == "control"  # I6.6: full control is set up in the setup
+    result = await step(hass, result, {"write_path": "none"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     options = result["options"]
     assert [c["id"] for c in options["circuits"]] == ["main", "circuit_2"]
@@ -312,6 +314,8 @@ async def create_entry(
                 "foreign_heat_hold_min": 60,
             },
         )
+    if result.get("step_id") == "control":  # I6.6: full control or on/off asks it in the setup
+        result = await step(hass, result, {"write_path": "none"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     entry = result["result"]
@@ -3602,6 +3606,14 @@ def test_the_form_helpers_refuse_what_they_cannot_read() -> None:
         flow._Steps._next_after(flow.SmartBoilerConfigFlow(), "zones")
 
 
+async def test_the_control_steps_leave_saving_to_their_flow() -> None:
+    """The shared control steps end in the flow's own save: the setup's or the options'."""
+    from custom_components.vtherm_smart_boiler import config_flow as flow
+
+    with pytest.raises(NotImplementedError):
+        await flow._ControlSteps.async_step_save(flow.SmartBoilerConfigFlow())
+
+
 async def test_a_timeout_hand_back_needs_expiring_writes(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
@@ -3975,6 +3987,7 @@ async def test_condensing_and_the_hot_water_priority_are_asked_where_they_apply(
         {"zones": []},
         {},
         {"strategy": "average"},
+        {"write_path": "none"},  # I6.6: the control step, set up later
     ):
         result = await step(hass, result, data)
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -4362,6 +4375,11 @@ async def test_the_gateways_own_entities_are_suggested(
         {"strategy": "average"},
     ):
         result = await step(hass, result, data)
+    # I6.6: full control is set up in the setup — with the gateway's read-backs suggested there.
+    assert result["step_id"] == "control"
+    assert suggested(result, "confirmed_entity") == read_back
+    assert suggested(result, "ch_confirmed_entity") == echo
+    result = await step(hass, result, {"write_path": "none"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     entry_id = result["result"].entry_id
@@ -4607,4 +4625,81 @@ async def test_a_freshness_limit_of_zero_is_saved_as_none(
     entry = hass.config_entries.async_get_entry(entry_id)
     assert entry is not None
     assert entry.options["freshness"] == {"flame": 0.0}
+    await hass.async_block_till_done()
+
+
+# --- I6.6a: control set up in the setup (decision 11) -----------------------------------------
+
+
+async def test_full_control_is_set_up_in_the_setup_and_starts_off(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 11: with full control chosen, the setup goes through the control steps after
+    the reference room; the entry is made with its control section, the control switch off, and
+    its first start writes nothing and raises no "state cannot be read" notice."""
+    from homeassistant.helpers import entity_registry as er
+    from homeassistant.helpers import issue_registry as ir
+
+    loaded_gateway(hass, "living_room_gw")
+    hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
+    called: list[str] = []
+    for service in ("set_control_setpoint", "set_central_heating_ovrd"):
+        hass.services.async_register(
+            "opentherm_gw", service, lambda call, name=service: called.append(name)
+        )
+    result = await start_setup(hass, "opentherm_gw", "full")
+    for data in (
+        {"name": "Boiler", "level": "simple"},
+        {"flame": entities["flame"], "flow": entities["flow"]},
+        {},
+        {"control": "unmixed_shared"},
+        {"zones": [entities["living"]]},
+        {"emitter": "radiator"},
+        {},
+        {"strategy": "average"},
+    ):
+        result = await step(hass, result, data)
+    assert result["step_id"] == "control"
+    assert path_options(result) == ["none", "opentherm_gw"]
+    for data in (
+        {
+            "write_path": "opentherm_gw",
+            "topology": "gateway_with_thermostat",
+            "thermostat_kind": "opentherm",
+            "confirmed_entity": "sensor.gw_control_setpoint",
+        },
+        {"gateway_id": "living_room_gw"},
+        {"design_outdoor": -18, "design_flow": 52, "hard_min": 25, "hard_max": 65},
+        {"write_ignored": "info"},
+    ):
+        result = await step(hass, result, data)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    entry = result["result"]
+    assert entry.options["control"]["write_path"] == "opentherm_gw"
+    assert entry.options["control"]["curve"] == {"design_outdoor": -18, "design_flow": 52}
+    switch = er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_control")
+    assert switch is not None
+    assert hass.states.get(switch).state == "off"
+    assert called == []  # nothing held, nothing handed back
+    issue_id = f"control_state_unreadable_{entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_monitoring_only_skips_the_control_steps(hass: HomeAssistant) -> None:
+    """Decision 11's negative: monitoring only (or room values until 0.3) goes from the
+    reference room to the entry, with no control section."""
+    result = await start_setup(hass, "opentherm_gw", "monitor")
+    for data in (
+        {"name": "Boiler", "level": "simple"},
+        {},
+        {},
+        {"control": "unmixed_shared"},
+        {"zones": []},
+        {},
+        {"strategy": "average"},
+    ):
+        result = await step(hass, result, data)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert "control" not in result["options"]
     await hass.async_block_till_done()

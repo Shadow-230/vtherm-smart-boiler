@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from typing import Any
 
@@ -26,6 +26,7 @@ from homeassistant.core import CoreState, Event, HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
+from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
@@ -262,6 +263,8 @@ async def start(
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
     entry.add_to_hass(hass)
     if stored is not None:
+        # An earlier run left it: the entry is older than a first start's half hour (I6).
+        entry.created_at = dt_util.utcnow() - timedelta(hours=1)
         key = f"{DOMAIN}.{entry.entry_id}"
         version = stored.pop("__version__", 1)  # another version: a store this one cannot read
         rig.storage[key] = {"version": version, "key": key, "data": stored}
@@ -2612,6 +2615,8 @@ async def test_the_fault_injector_starts_the_plugin_on_another_versions_store(ri
     says nothing was held, there is nothing to give back.)"""
     assert await async_setup_component(rig.hass, "j4_faults", {})
     await start(rig)
+    assert rig.entry is not None
+    rig.entry.created_at = dt_util.utcnow() - timedelta(hours=1)  # it ran: no first start (I6)
     count = len(rig.gateway())
     await _faults(
         rig,
