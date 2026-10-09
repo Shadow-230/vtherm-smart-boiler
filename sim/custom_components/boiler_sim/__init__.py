@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -322,6 +323,25 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
         relay().switch(hub.now(), bool(call.data["on"]))
         hub.refresh()
 
+    async def relay_setup(call: ServiceCall) -> None:
+        """The relay's own settings changed in place (J4: one instance for every variant)."""
+        model = relay()
+        if "start_up" in call.data:
+            model.start_up = StartUp(call.data["start_up"])
+        if "off_timer_min" in call.data:
+            minutes = float(call.data["off_timer_min"])
+            model.off_timer_s = minutes * 60.0 if minutes > 0 else None
+            model.timer_from = hub.now() if model.on and minutes > 0 else None
+        if "timer_restarts_on_repeat" in call.data:
+            model.timer_restarts_on_repeat = bool(call.data["timer_restarts_on_repeat"])
+        if "assumed_state" in call.data:
+            model.assumed_state = bool(call.data["assumed_state"])
+        hub.refresh()
+
+    async def set_lockout(call: ServiceCall) -> None:
+        sim.plant.boiler = replace(sim.plant.boiler, anti_cycle_s=float(call.data["seconds"]))
+        hub.refresh()
+
     async def set_wall_setpoint(call: ServiceCall) -> None:
         if sim.wall is None:
             raise ServiceValidationError("no wall thermostat in this installation")
@@ -386,6 +406,21 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
             {vol.Required("minutes"): vol.All(vol.Coerce(float), vol.Range(min=0, max=1440))},
         ),
         "relay_switch": (relay_switch, {vol.Required("on"): cv.boolean}),
+        "relay_setup": (
+            relay_setup,
+            {
+                vol.Optional("start_up"): vol.In([s.value for s in StartUp]),
+                vol.Optional("off_timer_min"): vol.All(
+                    vol.Coerce(float), vol.Range(min=0, max=120)
+                ),
+                vol.Optional("timer_restarts_on_repeat"): cv.boolean,
+                vol.Optional("assumed_state"): cv.boolean,
+            },
+        ),
+        "set_lockout": (
+            set_lockout,
+            {vol.Required("seconds"): vol.All(vol.Coerce(float), vol.Range(min=0, max=3600))},
+        ),
         "set_wall_setpoint": (
             set_wall_setpoint,
             {vol.Required("temperature"): vol.All(vol.Coerce(float), vol.Range(min=5, max=30))},

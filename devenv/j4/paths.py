@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
+from datetime import UTC, datetime
+from itertools import pairwise
 from typing import Any
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
@@ -286,6 +288,322 @@ async def R8(r: Run):
     await options_walk(r, {"control_relay": {"relay_is_separate_contact": True}})
 
 
+# --- the relay's own settings (instance 6, the simulator's relay_setup and set_lockout) --------
+
+PROFILE_LOCKOUT_S = 180.0  # condensing_small's restart lockout (sim/…/profiles.py)
+
+
+async def fresh_control(r: Run) -> None:
+    """The plugin's control memory wiped — the day's one rewrite and the untraced restarts it
+    keeps across sessions — so a scenario does not inherit an earlier one's (as for D5)."""
+    if await r.s("control") == "on":
+        await r.switch(False)
+        await r.ha.wait(10)
+    await r.ha.call(
+        "j4_faults",
+        "restart_with_stores",
+        main={"monitoring_since": 0.0, "control": {}, "control_store": 1},
+        control={},
+    )
+    await r.ha.wait(30)
+    r.ent.update(await r.ha.entities())
+
+
+async def relay_setup(r: Run, declared: dict[str, Any], **relay: Any) -> None:
+    """The simulated relay given its own settings, and the plugin's relay options declaring
+    ``declared``; the control memory fresh."""
+    await r.sim("relay_setup", **relay)
+    d = await options_walk(r, {"control_relay": declared})
+    if d.get("errors"):
+        raise RuntimeError(f"relay options not saved: {d['errors']}")
+    await fresh_control(r)
+
+
+async def relay_defaults(r: Run) -> None:
+    """Back to instance 6's relay: no timer, off after a power cut, its state reported."""
+    if await r.s("control") == "on":
+        await r.switch(False)
+        await r.ha.wait(10)
+    await r.sim(
+        "relay_setup",
+        start_up="off",
+        off_timer_min=0,
+        timer_restarts_on_repeat=True,
+        assumed_state=False,
+    )
+    await r.sim("set_lockout", seconds=PROFILE_LOCKOUT_S)
+    await options_walk(
+        r,
+        {
+            "control_relay": {
+                "relay_power_on_state": "off",
+                "relay_off_timer": "none",
+                "relay_repeat_s": None,
+            }
+        },
+    )
+
+
+async def relay_offs(r: Run, since: float) -> int:
+    """How often the relay went from on to off since ``since``, as the recorder kept it."""
+    start = datetime.fromtimestamp(since, UTC).isoformat()
+    _s, h = await r.ha.rest(
+        "GET",
+        f"/api/history/period/{start}?filter_entity_id={RELAY}&minimal_response&no_attributes",
+    )
+    states = [x["state"] for x in (h[0] if h else [])]
+    return sum(1 for a, b in pairwise(states) if a == "on" and b == "off")
+
+
+async def relay_on_under_control(r: Run) -> None:
+    await rooms_call(r, True)
+    await r.switch(True)
+    on = await r.ha.until(lambda: relay_is(r, True), 120, 1)
+    if on is None:
+        raise RuntimeError("the relay did not come on under control")
+
+
+async def _issue(r: Run, key: str) -> dict[str, Any] | None:
+    return next(
+        (i for i in await r.ha.issues() if i["issue_id"].startswith(key)),
+        None,
+    )
+
+
+async def R9(r: Run):
+    """a declared 10-min switch-off timer that an "on" restarts (Tasmota): renewed, never lapses"""
+    try:
+        await relay_setup(
+            r,
+            {"relay_off_timer": "minutes", "relay_off_timer_min": 10},
+            off_timer_min=10,
+            timer_restarts_on_repeat=True,
+        )
+        await relay_on_under_control(r)
+        t = time.time()
+        await r.ha.wait(1800)
+        c = relay_cmds(r, t)
+        offs = await relay_offs(r, t)
+        r.check(c.count(False) == 0 and c.count(True) >= 5, f"renewed, never off: {c}")
+        r.check(offs == 0, f"its timer never lapsed ({offs} switch-offs)")
+        r.check(await r.alarms_on() == [], f"alarms {await r.alarms_on()}")
+        r.check(await r.s("control_state") == "heating", f"state {await r.s('control_state')}")
+        r.check(await _issue(r, "relay_timer_seen") is None, "declared: nothing to ask")
+    finally:
+        await relay_defaults(r)
+
+
+async def R10(r: Run):
+    """a declared 10-min timer that runs from the first "on" (a Shelly's auto-off): each lapse
+    answered at once, never counted"""
+    try:
+        await relay_setup(
+            r,
+            {"relay_off_timer": "minutes", "relay_off_timer_min": 10},
+            off_timer_min=10,
+            timer_restarts_on_repeat=False,
+        )
+        await relay_on_under_control(r)
+        t = time.time()
+        await r.ha.wait(1800)
+        offs = await relay_offs(r, t)
+        r.check(offs >= 2, f"its timer lapsed {offs} times in 30 min")
+        r.check(await relay_is(r, True), "on, each lapse answered")
+        r.check(await r.alarms_on() == [], f"alarms {await r.alarms_on()}")
+        r.check(await r.s("control_state") == "heating", f"state {await r.s('control_state')}")
+        r.note(f"commands {relay_cmds(r, t)}")
+    finally:
+        await relay_defaults(r)
+
+
+async def R11(r: Run):
+    """the timer declared "I don't know", the relay's own 10-min timer restarted by "on": kept on
+    by the repeats; "off" not repeated"""
+    try:
+        await relay_setup(
+            r, {"relay_off_timer": "unknown"}, off_timer_min=10, timer_restarts_on_repeat=True
+        )
+        await relay_on_under_control(r)
+        t = time.time()
+        await r.ha.wait(1800)
+        offs = await relay_offs(r, t)
+        times = [
+            x
+            for x, domain, service, data in r.ha.calls
+            if x >= t and service == "turn_on" and RELAY in _targets(data)
+        ]
+        gaps = [round(b - a) for a, b in pairwise(times)]
+        r.check(offs == 0, f"never lapsed ({offs} switch-offs); repeats {gaps} s apart")
+        r.check(bool(gaps) and max(gaps) <= 310, "repeated at least every 5 min")
+        await rooms_call(r, False)
+        t2 = time.time()
+        await r.ha.wait(1200)
+        c = relay_cmds(r, t2)
+        r.check(c.count(False) == 1 and c[-1:] == [False], f"off once, not repeated: {c}")
+    finally:
+        await relay_defaults(r)
+
+
+async def R12(r: Run):
+    """the relay's state after a power cut (seen 10 s unavailable): the command again where it
+    differs, nothing where it matches"""
+    try:
+        for start_up, commanded, sent in (
+            ("off", True, [True]),
+            ("on", False, [False]),
+            ("last", True, []),
+            ("last", False, []),
+        ):
+            await relay_setup(r, {"relay_power_on_state": "unknown"}, start_up=start_up)
+            await rooms_call(r, commanded)
+            await r.switch(True)
+            await r.ha.until(lambda c=commanded: relay_is(r, c), 400, 1)
+            await r.ha.wait(PAST_CONFIRM_S)
+            t = time.time()
+            await r.sim("relay_restart", reported=True)
+            await r.ha.wait(40)
+            c = relay_cmds(r, t)
+            r.check(
+                c == sent and await relay_is(r, commanded),
+                f"{start_up}, commanded {'on' if commanded else 'off'}: sent {c}, relay {await r.s(RELAY)}",
+            )
+            await r.switch(False)
+            await r.ha.wait(10)
+    finally:
+        await relay_defaults(r)
+
+
+async def R13(r: Run):
+    """an optimistic relay entity (assumed_state): controlled without confirmation, the command
+    repeated blindly, an unseen restart undone within the repeat"""
+    try:
+        await relay_setup(r, {}, assumed_state=True)
+        await relay_on_under_control(r)
+        await r.ha.wait(20)
+        conf = await r.attr("control", "confirmation")
+        check = await r.attr("control_state", "relay_check")
+        r.check(
+            conf == "controlled_without_confirmation" and check == "unverified",
+            f"shown: {conf}, relay check {check}",
+        )
+        t = time.time()
+        await r.sim("relay_restart", reported=False)
+        back = await r.ha.until(lambda: relay_is(r, True), 330, 2)
+        r.check(
+            back is not None,
+            f"the blind repeat put it back ({back and round(back)} s): {relay_cmds(r, t)}",
+        )
+        await rooms_call(r, False)
+        t2 = time.time()
+        await r.ha.wait(660)
+        c = relay_cmds(r, t2)
+        r.check(c[-3:] == [False, False, False], f'"off" repeated too: {c}')
+        r.check(await r.s("alarm_outside_change") == "off", "no outside change")
+    finally:
+        await relay_defaults(r)
+
+
+async def R14(r: Run):
+    """a 20-min restart lockout against the 30-min proof of heat: the burner waits it out, no
+    "boiler not responding" alarm"""
+    try:
+        await r.sim("set_lockout", seconds=1200)
+        await fresh_control(r)
+        await relay_on_under_control(r)
+        fired = await r.ha.until(lambda: _flame(r, True), 600, 5)
+        r.check(fired is not None, f"the burner fires under control ({fired and round(fired)} s)")
+        await rooms_call(r, False)
+        await r.ha.until(lambda: relay_is(r, False), 600, 2)
+        await r.ha.until(lambda: _flame(r, False), 120, 2)
+        await r.ha.wait(60)
+        await rooms_call(r, True)
+        await r.ha.until(lambda: relay_is(r, True), 600, 2)
+        t = time.time()
+        alarm_seen = False
+        fired_after = None
+        while time.time() - t < 1800:
+            if fired_after is None and await _flame(r, True):
+                fired_after = time.time() - t
+            if await r.s("alarm_boiler_not_responding") == "on":
+                alarm_seen = True
+            await r.ha.wait(10)
+        r.check(
+            fired_after is not None,
+            f"fired {fired_after and round(fired_after / 60, 1)} min after the relay",
+        )
+        r.check(not alarm_seen, "no 'boiler not responding' within the 30 min")
+        r.check(
+            await r.attr("control_state", "boiler_heats") == "heats",
+            f"boiler heats: {await r.attr('control_state', 'boiler_heats')}",
+        )
+    finally:
+        await relay_defaults(r)
+
+
+async def _flame(r: Run, on: bool) -> bool:
+    return await r.s("binary_sensor.boiler_sim_flame") == ("on" if on else "off")
+
+
+async def R15(r: Run):
+    """an "inching" relay switching itself off 2 min after each "on", the timer "I don't know":
+    each counted, the fourth steps aside, the latch issue names it"""
+    try:
+        await relay_setup(
+            r,
+            {"relay_off_timer": "unknown", "relay_rest_state": "off"},
+            off_timer_min=2,
+            timer_restarts_on_repeat=False,
+        )
+        await relay_on_under_control(r)
+        aside = await r.ha.until(lambda: _control_state(r, "handed_back"), 1500, 5)
+        r.check(
+            aside is not None, f"stepped aside {aside and round(aside / 60, 1)} min into control"
+        )
+        await r.ha.wait(30)
+        found = await _issue(r, "control_latched")
+        r.check(
+            found is not None
+            and found.get("translation_key") == "control_latched_relay_short_timer_off"
+            and (found.get("translation_placeholders") or {}).get("minutes") == "2",
+            f"the latch issue: {found and (found.get('translation_key'), found.get('translation_placeholders'))}",
+        )
+        t = time.time()
+        await r.ha.wait(600)
+        r.check(relay_cmds(r, t) == [], f"left alone: {relay_cmds(r, t)}")
+    finally:
+        await relay_defaults(r)
+
+
+async def R16(r: Run):
+    """an undeclared 11-min timer that runs from the first "on": recognised at its second lapse,
+    heating goes on, a warning asks to declare it"""
+    try:
+        await relay_setup(
+            r, {"relay_off_timer": "unknown"}, off_timer_min=11, timer_restarts_on_repeat=False
+        )
+        await relay_on_under_control(r)
+        t = time.time()
+        found = None
+        while time.time() - t < 2700 and found is None:
+            await r.ha.wait(60)
+            found = await _issue(r, "relay_timer_seen")
+        offs = await relay_offs(r, t)
+        r.check(
+            found is not None
+            and found.get("severity") == "warning"
+            and (found.get("translation_placeholders") or {}).get("minutes") == "11",
+            f"recognised after {offs} lapses: {found and (found.get('severity'), found.get('translation_placeholders'))}",
+        )
+        await r.ha.wait(900)
+        r.check(
+            await r.s("control_state") == "heating",
+            f"heating goes on: {await r.s('control_state')}",
+        )
+        r.check(await r.s("alarm_outside_change") == "off", "no outside change")
+    finally:
+        await relay_defaults(r)
+
+
 # --- the entity path (instance 7, --config entity) ---------------------------------------------
 
 
@@ -483,7 +801,35 @@ async def S2(r: Run):
 
 
 SCENARIOS.update(
-    {f.__name__: f for f in (R1, R2, R3, R4, R5, R6, R7, R8, N1, N2, N3, N4, N5, N6, S1, S2)}
+    {
+        f.__name__: f
+        for f in (
+            R1,
+            R2,
+            R3,
+            R4,
+            R5,
+            R6,
+            R7,
+            R8,
+            R9,
+            R10,
+            R11,
+            R12,
+            R13,
+            R14,
+            R15,
+            R16,
+            N1,
+            N2,
+            N3,
+            N4,
+            N5,
+            N6,
+            S1,
+            S2,
+        )
+    }
 )
 
 

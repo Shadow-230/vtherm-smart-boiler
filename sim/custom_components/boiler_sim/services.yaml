@@ -273,6 +273,56 @@ relay_switch:
       example: false
       selector:
         boolean:
+relay_setup:
+  name: Change the relay's own settings
+  description: >-
+    The relay's settings changed in place, as if another relay were fitted: its state after a
+    power cut, its switch-off timer, whether an "on" restarts that timer, whether its entity is
+    optimistic. Fields left out keep their value.
+  fields:
+    start_up:
+      name: State after a power cut
+      description: The state it comes back in after a power cut.
+      example: "off"
+      selector:
+        select:
+          options:
+            - "off"
+            - "on"
+            - last
+    off_timer_min:
+      name: Switch-off timer
+      description: Its own switch-off timer in minutes; 0 for none.
+      example: 10
+      selector:
+        number:
+          min: 0
+          max: 120
+    timer_restarts_on_repeat:
+      name: An "on" restarts the timer
+      description: Each "on" starts the timer again (Tasmota's PulseTime); off for a timer that runs from the first "on".
+      example: true
+      selector:
+        boolean:
+    assumed_state:
+      name: Optimistic entity
+      description: Its entity reports Home Assistant's own guess (assumed_state), which confirms nothing.
+      example: false
+      selector:
+        boolean:
+set_lockout:
+  name: Set the boiler's restart lockout
+  description: The shortest time between the burner's stop and its next start.
+  fields:
+    seconds:
+      name: Seconds
+      description: The restart lockout in seconds.
+      required: true
+      example: 1200
+      selector:
+        number:
+          min: 0
+          max: 3600
 set_wall_setpoint:
   name: Set the wall thermostat by hand
   description: The wall thermostat's setting changed by hand, as a person at the thermostat does.
