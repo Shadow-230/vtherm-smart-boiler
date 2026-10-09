@@ -1,0 +1,39 @@
+# Test Home Assistant for J4's relay path (docs/plan-0.2.md, J4): an on/off boiler whose
+# room-thermostat terminals a relay closes, as tests/integration/test_acceptance.py's start_relay
+# sets it up — the relay's contact is the boiler's heat demand, no wall thermostat. Deployed with
+# `scripts/deploy_test.sh --instance N --config relay`. No default_config, so no network discovery
+# looks around the local network.
+homeassistant:
+  name: Smart Boiler for Versatile Thermostat test (relay)
+
+frontend:
+config:
+api:
+history:
+logbook:
+system_log:
+recorder:
+  purge_keep_days: 14
+
+logger:
+  default: info
+  logs:
+    custom_components.vtherm_smart_boiler: debug
+    custom_components.boiler_sim: info
+    custom_components.opentherm_gw: info
+
+# J4's test-only fault injector (sim/custom_components/j4_faults), as in configuration.yaml.
+j4_faults:
+
+boiler_sim:
+  boiler: condensing_small
+  house: average
+  zones: radiators
+  valves: switch
+  topology: with_thermostat
+  write_type: expiring
+  ch_write_type: held
+  outdoor: 3.0
+  gateway_id: sim
+  relay:
+    start_up: "off"
