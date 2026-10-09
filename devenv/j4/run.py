@@ -130,6 +130,12 @@ class Run:
                 return d
         while d.get("type") == "form":
             step = d["step_id"]
+            if step == "control_return_confirm":
+                self.note("options: 'confirm the return by itself' ticked")
+                _s, d = await self.ha.rest(
+                    "POST", f"/api/config/config_entries/options/flow/{fid}", {"understood": True}
+                )
+                continue
             if step == "confirm_blocking":
                 self.note(
                     f"options: 'this change stops control': {d.get('description_placeholders', {}).get('first')}"
