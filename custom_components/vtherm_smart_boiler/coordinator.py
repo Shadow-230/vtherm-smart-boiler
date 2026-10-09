@@ -2142,7 +2142,8 @@ async def async_read_control_state(
     - otherwise it cannot be read (missing, damaged, of another shape — Home Assistant renames a
       damaged file and returns nothing, as it does for a new entry). A hand-back is then owed
       when the options hold a control section or the entry store's copy owes one, and the state
-      is that copy with the boiler held; otherwise nothing is owed.
+      is that copy with the boiler held; otherwise nothing is owed — logged as information
+      where neither store exists (a new entry's first start), as a warning where one does.
     """
     main = main_store(hass, entry_id) if main is None else main
     control = control_store(hass, entry_id) if control is None else control
@@ -2170,8 +2171,12 @@ async def async_read_control_state(
             "boiler: it is handed back first"
         )
         return ControlRead(assumed_owed_state(copy), False, True, raw_main, True)
-    _LOGGER.warning(
-        "No stored control state could be read; control is not configured, so nothing is owed"
+    # F2: a new entry has neither store yet — its first start, the normal case — so that is
+    # information; a store that should be there but is not stays a warning. With control
+    # configured the loss is the error above.
+    _LOGGER.log(
+        logging.INFO if raw_control is None and raw_main is None else logging.WARNING,
+        "No stored control state could be read; control is not configured, so nothing is owed",
     )
     # PB-52: the copy's SmartPI pauses still say which zones' learning to switch back on.
     learning = {key: copy[key] for key in LEARNING_FIELDS if isinstance(copy, dict) and key in copy}

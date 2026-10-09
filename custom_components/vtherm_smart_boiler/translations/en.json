@@ -1474,7 +1474,7 @@
               "relay_in_another_role": "The relay also serves another role",
               "relay_contact_not_confirmed": "Not confirmed that the relay is a separate contact",
               "ha_starting": "Home Assistant is starting",
-              "vt_central_boiler_active": "Versatile Thermostat's own central boiler is configured or may have been since Home Assistant started",
+              "vt_central_boiler_active": "Versatile Thermostat's own central boiler is configured or may have run since Home Assistant started: then one restart of Home Assistant clears this",
               "vt_central_boiler_unknown": "Versatile Thermostat's central boiler cannot be ruled out yet",
               "setpoint_outside_entity_range": "The setpoint entity does not take every value control may write",
               "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit",
@@ -2476,7 +2476,7 @@
               "relay_in_another_role": "The relay also serves another role",
               "relay_contact_not_confirmed": "Not confirmed that the relay is a separate contact",
               "ha_starting": "Home Assistant is starting",
-              "vt_central_boiler_active": "Versatile Thermostat's own central boiler is configured or may have been since Home Assistant started",
+              "vt_central_boiler_active": "Versatile Thermostat's own central boiler is configured or may have run since Home Assistant started: then one restart of Home Assistant clears this",
               "vt_central_boiler_unknown": "Versatile Thermostat's central boiler cannot be ruled out yet",
               "setpoint_outside_entity_range": "The setpoint entity does not take every value control may write",
               "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit",
@@ -2583,7 +2583,7 @@
       "message": "Home Assistant is still starting. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_vt_central_boiler_active": {
-      "message": "Versatile Thermostat's own central boiler is configured. Remove it first, so that only one controller drives the boiler, then restart Home Assistant: VT stops sending its central boiler's commands only then. Control keeps waiting until Home Assistant has restarted, even once you have unticked it. It waits so too when VT's central configuration changed after Home Assistant started, before this integration began to watch VT, as it cannot tell what VT ran meanwhile. Other reasons: {count} (all are listed on the control state)."
+      "message": "Versatile Thermostat's own central boiler is configured, or may have run since Home Assistant started. If it is configured, untick it first, so that only one controller drives the boiler, then restart Home Assistant: VT stops sending its central boiler's commands only then. Control keeps waiting until Home Assistant has restarted, even once you have unticked it. It also waits for one restart when VT's central configuration was created or changed after Home Assistant started, before this integration began to watch VT — even without a central boiler — as it cannot tell what VT ran meanwhile. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_vt_central_boiler_unknown": {
       "message": "Versatile Thermostat's central boiler cannot be ruled out yet: VT's central configuration failed to load (see Settings → Devices & services), or its settings do not say whether its central boiler is on. Control waits for it. Other reasons: {count} (all are listed on the control state)."
