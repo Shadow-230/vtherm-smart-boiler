@@ -1302,7 +1302,63 @@ async def L1(r: Run):
     r.note(f"at the hand-back: {r.cmds(t2)}, state {await r.s('control_state')}")
 
 
-SCENARIOS.update({f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6, L1)})
+async def W1(r: Run):
+    """the OpenTherm wall thermostat's own program after a hand-back, at its 06:00 UTC switch
+    from 17 to 21 °C in real time: shown on the control switch while the plugin holds the
+    boiler; handed back, the thermostat does not call at night with its room at 19 °C, and
+    calls within minutes once its program raises the room"""
+    now = dt.datetime.now(dt.UTC)
+    switch_at = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    if not 300 < (switch_at - now).total_seconds() < 2400:
+        raise RuntimeError("W1 runs between 05:20 and 05:55 UTC")
+    cs = "sensor.otgw_sim_boiler_control_setpoint"
+    await r.sim("set_room_temperature", zone="zone_living", temperature=19.0)
+    await r.switch(True)
+    await r.ha.wait(120)
+    r.check(
+        await r.attr("control", "wall_thermostat_setpoint") == 17.0,
+        f"the switch shows its night setting: {await r.attr('control', 'wall_thermostat_setpoint')}",
+    )
+    t = time.time()
+    await r.switch(False)
+    await r.ha.wait(90)
+    r.note(f"handed back: {r.cmds(t)}")
+    r.check(
+        float(await r.s(cs)) <= 10.0,
+        f"at night, its room at 19 °C, it does not call: the boiler gets {await r.s(cs)} °C",
+    )
+    await r.ha.wait(max(0.0, switch_at.timestamp() - 60 - time.time()))
+    await r.sim("set_room_temperature", zone="zone_living", temperature=19.0)
+    await r.ha.wait(max(0.0, switch_at.timestamp() + 20 - time.time()))
+    r.check(
+        await r.s("sensor.otgw_sim_thermostat_room_setpoint") == "21.0",
+        f"its program at 06:00: {await r.s('sensor.otgw_sim_thermostat_room_setpoint')} °C",
+    )
+    called = await r.ha.until(lambda: _above(r, cs, 10.0), 300, 5)
+    r.check(
+        called is not None,
+        f"it calls {called and round(called)} s after 06:00: {await r.s(cs)} °C to the boiler",
+    )
+    heats = await r.ha.until(lambda: _is_on(r, "binary_sensor.boiler_sim_ch_active"), 300, 5)
+    r.check(heats is not None, f"the boiler heats on its call ({heats and round(heats)} s)")
+    r.check(
+        r.cmds(t + 60) == [],
+        f"the plugin writes nothing after its hand-back: {r.cmds(t + 60)}",
+    )
+
+
+async def _above(r: Run, entity_id: str, value: float) -> bool:
+    try:
+        return float(await r.s(entity_id)) > value
+    except TypeError, ValueError:
+        return False
+
+
+async def _is_on(r: Run, entity_id: str) -> bool:
+    return await r.s(entity_id) == "on"
+
+
+SCENARIOS.update({f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6, L1, W1)})
 
 
 if __name__ == "__main__":
