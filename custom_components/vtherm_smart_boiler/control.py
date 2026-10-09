@@ -4662,7 +4662,8 @@ class ControlUnit:
         plan = plan_learning(
             self._session.learning,
             learning_zones,
-            coordinator.dhw_now(snapshot),
+            # Hot water pauses the zones' learning only where it takes their heat (I6).
+            coordinator.dhw_takes_heat(snapshot),
             # The flow by its own age limit, as everywhere (X2): a stale one is unknown.
             snapshot.number(Signal.FLOW, coordinator.config.freshness.get(Signal.FLOW)),
             heating_setpoint,  # the heating setpoint, not a low "off" value: no false swings

@@ -1074,7 +1074,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         flow = snapshot.number(Signal.FLOW)
         flow_fresh = snapshot.reading(Signal.FLOW).is_fresh(now, self._max_age(Signal.FLOW))
         return_temp = snapshot.number(Signal.RETURN, self._max_age(Signal.RETURN))
-        dhw = self.dhw_now(snapshot)
+        dhw = self.dhw_takes_heat(snapshot)
 
         zone_states = {z.zone_id: self.link.zone(z.zone_id) for z in config.installation.zones}
         views: dict[str, ZoneView] = {}
@@ -1381,6 +1381,14 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         if analysed is None or now - analysed.at > ANALYSIS_BURNS_MAX_AGE_S:
             return None
         return heating_starts(analysed.day.burns, now)
+
+    def dhw_takes_heat(self, snapshot: BoilerSnapshot) -> bool | None:
+        """Hot water taking the heat from the rooms now: hot water running where it has
+        priority (I6, decision 8) — a combi, a tank charged through a three-way valve. Without
+        priority — a buffer, a tank charged in parallel — the rooms keep their heat: never."""
+        if not self.config.panel.dhw_priority:
+            return False
+        return self.dhw_now(snapshot)
 
     def dhw_now(self, snapshot: BoilerSnapshot) -> bool | None:
         """DHW running now: its own signal, else flame on without heating demand from the CH
