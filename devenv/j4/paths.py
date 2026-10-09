@@ -9,6 +9,7 @@ captured from Home Assistant's service calls as run.py captures the gateway's.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 import time
 from datetime import UTC, datetime
@@ -62,9 +63,11 @@ def entity_cmds(r: Run, since: float) -> list[tuple[str, object]]:
     return out
 
 
-async def options_walk(r: Run, answers: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """The plugin's control options saved again, each step with its current values and the
-    given changes; the confirmation steps ticked. Returns the last answer of the flow."""
+async def options_walk(r: Run, answers: dict[str, Any], menu: str = "control") -> dict[str, Any]:
+    """A section of the plugin's options — control by default — saved again, each step with its
+    current values and the given changes (a list for a step met more than once, such as each
+    zone's: one change each, in order); the confirmation steps ticked. Returns the last answer
+    of the flow."""
     ha = r.ha
     entry = await ha.entry("vtherm_smart_boiler")
     _s, d = await ha.rest(
@@ -74,7 +77,8 @@ async def options_walk(r: Run, answers: dict[str, dict[str, Any]]) -> dict[str, 
     )
     fid = d["flow_id"]
     path = f"/api/config/config_entries/options/flow/{fid}"
-    _s, d = await ha.rest("POST", path, {"next_step_id": "control"})
+    _s, d = await ha.rest("POST", path, {"next_step_id": menu})
+    met: dict[str, int] = {}
     while d.get("type") == "form":
         step = d["step_id"]
         if step == "confirm_blocking":
@@ -90,7 +94,12 @@ async def options_walk(r: Run, answers: dict[str, dict[str, Any]]) -> dict[str, 
             value = (field.get("description") or {}).get("suggested_value", field.get("default"))
             if value is not None:
                 body[name] = value
-        body |= answers.get(step, {})
+        change = answers.get(step, {})
+        if isinstance(change, list):
+            n = met.get(step, 0)
+            met[step] = n + 1
+            change = change[n] if n < len(change) else {}
+        body |= change
         body = {k: v for k, v in body.items() if v is not None}
         _s, d = await ha.rest("POST", path, body)
         if d.get("errors"):
@@ -769,6 +778,67 @@ async def N8(r: Run):
         )
 
 
+async def U1(r: Run, outdoor: float = -5.0, emitters: tuple[str, ...] = ("underfloor",) * 3):
+    """underfloor heating on an unmixed loop, the circuit's maximum 40 °C below what the curve
+    asks at −5 °C: every setpoint held at the maximum, said so; the measured flow over it by
+    the boiler's stop hysteresis at most; the too-hot alarm (45 °C, pre-filled) stays off"""
+    try:
+        d = await options_walk(r, {"circuit": {"max_flow": 40}}, menu="circuit")
+        if d.get("errors"):
+            raise RuntimeError(f"circuit not saved: {d['errors']}")
+        d = await options_walk(r, {"zone": [{"emitter": e} for e in emitters]}, menu="zones")
+        if d.get("errors"):
+            raise RuntimeError(f"zones not saved: {d['errors']}")
+        await r.sim("set_outdoor", temperature=outdoor)
+        await rooms_call(r, True)
+        await r.switch(True)
+        t = time.time()
+        flows: list[float] = []
+        capped = False
+        while time.time() - t < 6000:  # 100 min
+            await r.ha.wait(300)
+            flow = await r.s("sensor.boiler_sim_flow")
+            with contextlib.suppress(TypeError, ValueError):
+                flows.append(float(flow))
+            capped = capped or "limit_circuit_max" in (
+                await r.attr("control_state", "reasons") or []
+            )
+        sp = [v for k, v in entity_cmds(r, t) if k == "setpoint"]
+        alarm = await r.st("alarm_circuit_too_hot")
+        r.check(
+            bool(sp) and max(sp) <= 40.0,
+            f"setpoints within the maximum: max {max(sp, default=None)}",
+        )
+        r.check(capped is (outdoor < 0), f"the maximum said so: {capped}")
+        r.check(
+            bool(flows) and max(flows) <= 45.0,
+            f"measured flow at most 45: max {max(flows, default=None)}",
+        )
+        r.check(
+            alarm["state"] == "off"
+            and alarm["attributes"].get("limit") == 45.0
+            and alarm["attributes"].get("reason") is None,
+            f"too-hot alarm off, judged: {alarm['state']}, limit {alarm['attributes'].get('limit')}, reason {alarm['attributes'].get('reason')}",
+        )
+    finally:
+        if await r.s("control") == "on":
+            await r.switch(False)
+            await r.ha.wait(10)
+        await r.sim("set_outdoor", temperature=3.0)
+        await options_walk(r, {"zone": [{"emitter": "radiator"}] * 3}, menu="zones")
+        await options_walk(
+            r,
+            {"circuit": {"max_flow": None, "max_flow_alarm": None, "max_flow_alarm_min": None}},
+            menu="circuit",
+        )
+
+
+async def U2(r: Run):
+    """underfloor sharing the unmixed loop with a radiator at +5 °C: the curve below the
+    maximum, nothing held back; the flow and the alarm as in U1"""
+    await U1(r, outdoor=5.0, emitters=("underfloor", "underfloor", "radiator"))
+
+
 async def N3(r: Run):
     """a setpoint the boiler stores, or might (persistent, unknown): control never writes it"""
     for write_type in ("persistent", "unknown"):
@@ -897,7 +967,7 @@ SCENARIOS.update(
         f.__name__: f
         for f in (
             *(R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12, R13, R14, R15, R16),
-            *(N1, N2, N3, N4, N5, N6, N7, N8),
+            *(N1, N2, N3, N4, N5, N6, N7, N8, U1, U2),
             *(S1, S2),
         )
     }
