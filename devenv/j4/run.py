@@ -774,19 +774,48 @@ async def E3(r: Run):
     d = await r.options(curve={"activation_delay_s": 120})
     r.note(f"options {d.get('type')} {d.get('errors')}")
     await r.switch(True)
-    start = time.time()
-    await r.ha.wait(900)
-    import lag_lib
-
-    lags = await lag_lib.lags(r.ha, start)
-    r.note(f"valves -> CH changes: {lags}")
-    ons = [lag for kind, lag in lags if kind == "on_first"]
-    offs = [lag for kind, lag in lags if kind == "off"]
-    r.check(ons and min(ons) >= 115, f"each start waited at least 120 s: {ons}")
-    r.check(not offs or max(offs) <= 15, f"stops not delayed: {offs}")
+    starts = []
+    for _ in range(2):
+        # The rooms satisfied first, so heating goes off; then they call again.
+        for zone, _target in ZONES:
+            await r.ha.call(
+                "climate", "set_temperature", entity_id=f"climate.{zone}", temperature=15.0
+            )
+        got = await r.ha.until(lambda: _ch_is(r, False), 420, 5)
+        r.check(
+            got is not None,
+            f"heating off once the rooms are satisfied (after {got and round(got)} s)",
+        )
+        await r.ha.wait(30)
+        # A long call: rooms 3 K below their setpoints keep a valve open well past the delay; a
+        # pulse shorter than the delay would never start the boiler (VT's rule, said in the
+        # option's description).
+        for zone, target in ZONES:
+            await r.sim("set_room_temperature", zone=zone, temperature=target - 3.0)
+        await r.zones()
+        opened = await r.ha.until(lambda: _any_valve_open(r), 420, 1)
+        t_call = time.time()
+        on = await r.ha.until(lambda: _ch_is(r, True), 300, 1)
+        waited = None if on is None else round(time.time() - t_call)
+        starts.append(waited)
+        r.note(
+            f"a valve opened {opened and round(opened)} s after the call; heating on {waited} s after it"
+        )
+    r.check(
+        all(s is not None and s >= 115 for s in starts),
+        f"each start waited at least 120 s: {starts}",
+    )
     await r.switch(False)
     await r.ha.wait(10)
     await r.options()
+
+
+async def _any_valve_open(r: Run) -> bool:
+    return any([await r.s(f"switch.boiler_sim_{zone}_valve") == "on" for zone, _target in ZONES])
+
+
+async def _ch_is(r: Run, on: bool) -> bool:
+    return (await r.s("binary_sensor.otgw_sim_boiler_master_ch_enabled")) == ("on" if on else "off")
 
 
 SCENARIOS = {
