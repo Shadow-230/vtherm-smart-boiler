@@ -286,6 +286,42 @@ def test_heating_off_ignored_from_the_start_hands_back_at_the_next_step(only_on:
     assert state.control.latched_by == (cause,)
 
 
+def test_off_as_a_low_setpoint_ignored_from_the_start_hands_back() -> None:
+    """I6 (decision 4, EMS-ESP's "off" at setpoint 0): without a heating switch "off" is the
+    setpoint; the boiler ignoring that "off" from the start leaves the plugin unable to switch
+    heating off — latched with ``heating_off_ignored`` and handed back at the next step, as
+    answer O does for a heating switch. Nothing more is written while the latch holds."""
+    config = replace(CONFIG, ch_writes=False, off_setpoint=0.0)
+    own = 45.0  # the boiler's own setting, shown before the plugin and kept
+    state, out = loop_step(LoopState(), inputs(0.0, opening=0.0), own, config)
+    assert out.setpoint is not None
+    assert out.setpoint.value == 0.0
+    state, outs = run(state, config, 10.0, 360.0, own, opening=0.0)
+    assert outs[-1][1].ignored == ("setpoint",)
+    state, out = loop_step(state, inputs(370.0, opening=0.0), own, config)
+    assert out.hand_back
+    assert state.control.latched_by == (HEATING_OFF_IGNORED,)
+    state, outs = run(state, config, 380.0, 600.0, own)  # VT calls again: the latch holds
+    assert all(out.setpoint is None for _t, out in outs)
+    assert state.control.latched_by == (HEATING_OFF_IGNORED,)
+
+
+def test_a_low_setpoint_path_ignoring_only_heat_does_not_latch() -> None:
+    """The negative: the boiler ignores a heating setpoint from the start — "off" was never
+    among what it did not take — so it is the ignored write it was before, not answer O: no
+    latch, no hand-back."""
+    config = replace(CONFIG, ch_writes=False, off_setpoint=0.0)
+    own = 30.0
+    state, out = loop_step(LoopState(), inputs(0.0), own, config)
+    assert out.setpoint is not None
+    assert out.setpoint.value > own
+    state, outs = run(state, config, 10.0, 360.0, own)
+    assert outs[-1][1].ignored == ("setpoint",)
+    state, out = loop_step(state, inputs(370.0), own, config)
+    assert not out.hand_back
+    assert not state.control.latched
+
+
 @pytest.mark.parametrize("case", ["unknown", "once_taken"])
 def test_heating_on_not_judged_or_lost_later_never_latches(case: str) -> None:
     """Decision 4 of 0.2.3 (SB-03), negatives: the heating read-back unknown or unavailable

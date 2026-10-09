@@ -83,10 +83,12 @@ from .const import (
 )
 from .control_config import (
     CONNECTION_MODES,
+    CONNECTION_PATH,
     CONTROL_BOUNDS,
     CONTROL_DEFAULTS,
     CURVE_BOUNDS,
     CURVE_DEFAULTS,
+    ESPHOME_SAFE_START,
     GATEWAY_TOPOLOGIES,
     HAND_BACK_TIMEOUT_DEFAULT_MIN,
     HAND_BACK_TIMEOUT_MIN,
@@ -95,6 +97,7 @@ from .control_config import (
     RELAY_DOMAINS,
     RELAY_KEYS,
     TARGET_KEYS,
+    VIRTUAL_CONNECTIONS,
     AlarmReaction,
     Connection,
     ControlMode,
@@ -455,6 +458,53 @@ def apply_mode(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     options[BOILER] = boiler
 
 
+# The OpenTherm Gateway integration's own entities, by its unique IDs ``<gateway>-boiler-<key>``
+# (Home Assistant 2026.9.3, ``opentherm_gw/entity.py``; the keys are pyotgw's): its boiler device's,
+# never its thermostat device's, which show what the thermostat sees (I6, decision 2).
+GATEWAY_SIGNALS: Mapping[str, tuple[str, str]] = {
+    "flame": ("binary_sensor", "slave_flame_on"),
+    "flow": ("sensor", "ch_water_temp"),
+    "return": ("sensor", "return_water_temp"),
+    "modulation": ("sensor", "relative_mod_level"),
+    "dhw_active": ("binary_sensor", "slave_dhw_active"),
+    "pressure": ("sensor", "ch_water_pressure"),
+    "low_pressure_fault": ("binary_sensor", "slave_low_water_pressure"),
+    "fault_indication": ("binary_sensor", "slave_fault_indication"),
+    "ch_active": ("binary_sensor", "slave_ch_active"),
+}
+GATEWAY_READ_BACKS: Mapping[str, tuple[str, str]] = {
+    "confirmed_entity": ("sensor", "control_setpoint"),
+    "ch_confirmed_entity": ("binary_sensor", "master_ch_enabled"),
+}
+# The texts the signals step reads into its description, one per connection (I6, decision 2).
+SIGNAL_HINT = "signal_hint"
+
+
+def gateway_entities(hass: HomeAssistant, wanted: Mapping[str, tuple[str, str]]) -> dict[str, str]:
+    """The entities of the one OpenTherm Gateway set up and running, for each field; none where
+    there is no gateway or more than one, and none disabled."""
+    gateways = [
+        entry
+        for entry in hass.config_entries.async_entries(
+            OPENTHERM_GW_DOMAIN, include_ignore=False, include_disabled=False
+        )
+        if entry.state is ConfigEntryState.LOADED and entry.data.get("id")
+    ]
+    if len(gateways) != 1:
+        return {}
+    gateway = str(gateways[0].data["id"])
+    registry = er.async_get(hass)
+    found: dict[str, str] = {}
+    for field_name, (domain, key) in wanted.items():
+        entity_id = registry.async_get_entity_id(
+            domain, OPENTHERM_GW_DOMAIN, f"{gateway}-boiler-{key}"
+        )
+        registered = registry.async_get(entity_id) if entity_id else None
+        if registered is not None and registered.disabled_by is None:
+            found[field_name] = registered.entity_id
+    return found
+
+
 def _stored_signals(options: Mapping[str, Any]) -> dict[str, Any]:
     """The stored signals; a section of another shape entirely reads as none, so the signals
     step can show and replace it (P-70)."""
@@ -462,10 +512,13 @@ def _stored_signals(options: Mapping[str, Any]) -> dict[str, Any]:
     return dict(signals) if isinstance(signals, Mapping) else {}
 
 
-def signals_schema(options: dict[str, Any]) -> vol.Schema:
+def signals_schema(
+    options: dict[str, Any], suggested: Mapping[str, str] | None = None
+) -> vol.Schema:
     """Every signal optional (X8): a home with only a relay is monitored too; water-temperature
-    control gets a blocker without flame and flow."""
-    current = {**_stored_signals(options), WEATHER: options.get(WEATHER)}
+    control gets a blocker without flame and flow. ``suggested``: entities the connection names
+    for signals not mapped yet (I6, decision 2), shown for the user to check."""
+    current = {**(suggested or {}), **_stored_signals(options), WEATHER: options.get(WEATHER)}
     fields: dict[Any, Any] = {}
     for key, (filter_, simple) in SIGNAL_FIELDS.items():
         if not simple and not _advanced(options):
@@ -853,12 +906,28 @@ def paths_for_class(options: Mapping[str, Any]) -> list[str]:
     it; "no control" alone where the control mode keeps control off."""
     if control_mode_off(options):
         return [NO_CONTROL]
+    connection = stored_connection(options)
+    if connection is not None:
+        path = CONNECTION_PATH[connection]  # I6, decision 2
+        return [NO_CONTROL] if path is None else [NO_CONTROL, path.value]
     boiler_class = _stored_boiler(options).get("class")
     return [NO_CONTROL, *_PATHS_BY_CLASS.get(str(boiler_class), ())]
 
 
-def control_schema(options: dict[str, Any]) -> vol.Schema:
+def stored_connection(options: Mapping[str, Any]) -> Connection | None:
+    """How the boiler is connected, as the first panel stored it; ``None`` for an entry made
+    before the question, or an answer this version cannot read (the save names it)."""
+    return _known(Connection, _stored_boiler(options).get(CONNECTION))
+
+
+def control_schema(
+    options: dict[str, Any], suggested: Mapping[str, Any] | None = None
+) -> vol.Schema:
+    """The first control step. ``suggested``: what the connection suggests where nothing is
+    stored (I6, decision 2) — the virtual topology for a controller on Home Assistant's side, the
+    gateway's own read-backs."""
     control = options.get(CONTROL, {})
+    shown = {**(suggested or {}), **{k: v for k, v in control.items() if v not in (None, "")}}
     paths = paths_for_class(options)
     stored = control.get("write_path", NO_CONTROL)
     # A stored path the class no longer suits is not offered: the user chooses again.
@@ -866,14 +935,14 @@ def control_schema(options: dict[str, Any]) -> vol.Schema:
     return vol.Schema(
         {
             vol.Required("write_path", default=default): _select("write_path", paths),
-            _optional("topology", control): _select("topology", [t.value for t in Topology]),
+            _optional("topology", shown): _select("topology", [t.value for t in Topology]),
             # Asked with a gateway topology only; the form cannot hide it for the others, chosen
             # on this same page (its text says so), and the save drops it for them.
             _thermostat_kind_field(control): _select(
                 THERMOSTAT_KIND, [kind.value for kind in ThermostatKind]
             ),
-            _optional("confirmed_entity", control): _entity(_READ_BACK_ENTITY),
-            _optional("ch_confirmed_entity", control): _entity(_ECHO_ENTITY),
+            _optional("confirmed_entity", shown): _entity(_READ_BACK_ENTITY),
+            _optional("ch_confirmed_entity", shown): _entity(_ECHO_ENTITY),
             # With an OpenTherm thermostat on a gateway (its text says so): its own request,
             # which a fall-back after an outage shows. The form cannot show it only for that
             # topology, chosen on this same page; the plugin reads it only with it.
@@ -883,20 +952,33 @@ def control_schema(options: dict[str, Any]) -> vol.Schema:
     )
 
 
+# What a connection with writable entities offers where nothing is stored (I6, decision 2): the
+# setpoint's write type, the heating switch's, and the hand-back — ESPHome holds both and has no
+# own control to return to; EMS-ESP's setpoint lapses within about a minute.
+_ENTITY_DEFAULTS: Mapping[Connection, tuple[str, str, Any]] = {
+    Connection.ESPHOME: (WriteType.HELD.value, WriteType.HELD.value, HandBack.VALUE.value),
+    Connection.EMS_ESP: (WriteType.EXPIRING.value, WriteType.UNKNOWN.value, HandBack.TIMEOUT.value),
+}
+_NO_ENTITY_DEFAULTS = (WriteType.UNKNOWN.value, WriteType.UNKNOWN.value, vol.UNDEFINED)
+
+
 def control_entity_schema(options: dict[str, Any]) -> vol.Schema:
     control = options.get(CONTROL, {})
+    connection = stored_connection(options)
+    defaults = _ENTITY_DEFAULTS.get(connection) if connection is not None else None
+    write_type, ch_write_type, hand_back = defaults or _NO_ENTITY_DEFAULTS
     fields: dict[Any, Any] = {
         vol.Required(
             "setpoint_entity", default=control.get("setpoint_entity", vol.UNDEFINED)
         ): _entity(_SETPOINT_ENTITY),
-        vol.Required(
-            "write_type", default=control.get("write_type", WriteType.UNKNOWN.value)
-        ): _select("write_type", [t.value for t in WriteType]),
+        vol.Required("write_type", default=control.get("write_type", write_type)): _select(
+            "write_type", [t.value for t in WriteType]
+        ),
         _optional("ch_entity", control): _entity(_ON_OFF_ENTITY),
-        vol.Required(
-            "ch_write_type", default=control.get("ch_write_type", WriteType.UNKNOWN.value)
-        ): _select("write_type", [t.value for t in WriteType]),
-        vol.Required("hand_back", default=control.get("hand_back", vol.UNDEFINED)): _select(
+        vol.Required("ch_write_type", default=control.get("ch_write_type", ch_write_type)): (
+            _select("write_type", [t.value for t in WriteType])
+        ),
+        vol.Required("hand_back", default=control.get("hand_back", hand_back)): _select(
             "hand_back", [h.value for h in HandBack]
         ),
         _optional("hand_back_value", control): _number(
@@ -923,6 +1005,11 @@ def control_entity_schema(options: dict[str, Any]) -> vol.Schema:
         # Next to the hand-back fields, at the simple level; off by default (answers F, M).
         fields[
             vol.Required(OWN_ROOM_CONTROLLER, default=control.get(OWN_ROOM_CONTROLLER) is True)
+        ] = selector.BooleanSelector()
+    if connection is Connection.ESPHOME:
+        # Decision 3: never pre-filled, as the relay's separate-contact tick (answer G).
+        fields[
+            vol.Required(ESPHOME_SAFE_START, default=control.get(ESPHOME_SAFE_START) is True)
         ] = selector.BooleanSelector()
     return vol.Schema(fields)
 
@@ -1222,7 +1309,12 @@ def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
             **required(
                 "decision_interval_min", _number(*CONTROL_BOUNDS["decision_interval_min"], 1, "min")
             ),
-            **required("off_setpoint", _number(*CONTROL_BOUNDS["off_setpoint"], 0.5, "°C")),
+            # EMS-ESP's "off" is its own 0 (I6, decision 4): nothing to choose there.
+            **(
+                {}
+                if fixed_off(options)
+                else required("off_setpoint", _number(*CONTROL_BOUNDS["off_setpoint"], 0.5, "°C"))
+            ),
             **required("count_threshold", _number(*CONTROL_BOUNDS["count_threshold"], 1)),
             _optional("power_threshold_kw", control): _number(
                 *CONTROL_BOUNDS["power_threshold_kw"], 0.1, "kW"
@@ -1432,10 +1524,14 @@ def control_error(
     path = user_input.get("write_path")
     if path in (None, NO_CONTROL):
         return {}
+    connection = None if options is None else stored_connection(options)
     if options is not None and control_mode_off(options):
         return {"write_path": "path_not_for_control_mode"}  # I6, decision 6
     if options is not None and path not in paths_for_class(options):
-        return {"write_path": "path_not_for_boiler_class"}
+        # I6, decision 2: the connection decides the path where it is answered.
+        return {
+            "write_path": "path_not_for_connection" if connection else "path_not_for_boiler_class"
+        }
     if path == WritePath.RELAY:
         return {}
     if not user_input.get("confirmed_entity"):
@@ -1447,6 +1543,8 @@ def control_error(
         return {"topology": "topology_no_control"}
     if Topology(topology) not in PATH_TOPOLOGIES[WritePath(path)]:
         return {"topology": "topology_not_for_path"}
+    if connection in VIRTUAL_CONNECTIONS and Topology(topology) is not Topology.VIRTUAL:
+        return {"topology": "topology_not_for_connection"}  # a controller on HA's side
     if Topology(topology) in GATEWAY_TOPOLOGIES:
         kind = parse_thermostat_kind(user_input.get(THERMOSTAT_KIND))
         if kind is None:
@@ -1536,6 +1634,18 @@ def control_of(options: dict[str, Any]) -> ControlOptions | None:
         return None
 
 
+def fixed_off(options: Mapping[str, Any]) -> bool:
+    """EMS-ESP without a heating switch: "off" is its own setpoint 0 (I6, decision 4), not the
+    option — neither asked nor checked."""
+    control = options.get(CONTROL)
+    return (
+        stored_connection(options) is Connection.EMS_ESP
+        and isinstance(control, Mapping)
+        and control.get("write_path") == WritePath.ENTITY
+        and not heating_writes(control)
+    )
+
+
 def off_too_close_in(options: Mapping[str, Any], hard_min: float | None = None) -> bool:
     """P-25: on a path without heating writes, "off" (stored, else its default) must stay at
     least 1 K below the lowest water temperature (``hard_min``: as entered, else stored). With a
@@ -1544,7 +1654,7 @@ def off_too_close_in(options: Mapping[str, Any], hard_min: float | None = None) 
     control = options.get(CONTROL)
     if not isinstance(control, Mapping) or not control.get("write_path"):
         return False
-    if heating_writes(control):
+    if heating_writes(control) or fixed_off(options):
         return False
     try:
         off = float(control.get("off_setpoint", CONTROL_DEFAULTS["off_setpoint"]))
@@ -2007,9 +2117,27 @@ class _Steps:
             if not errors:
                 apply_signals(self.options, user_input)
                 return await self._goto(self._next_after("signals"))
+        connection = stored_connection(self.options)
+        suggested: dict[str, str] = {}
+        if connection is Connection.OPENTHERM_GW and not _stored_signals(self.options):
+            # Only where nothing is mapped yet: a signal the user cleared is not offered again.
+            suggested = gateway_entities(self.hass, GATEWAY_SIGNALS)  # type: ignore[attr-defined]
         return self._form(
-            step_id="signals", data_schema=signals_schema(self.options), errors=errors
+            step_id="signals",
+            data_schema=signals_schema(self.options, suggested),
+            errors=errors,
+            description_placeholders={"hint": await self._async_signal_hint(connection)},
         )
+
+    async def _async_signal_hint(self, connection: Connection | None) -> str:
+        """What to pick for the connection, in Home Assistant's language; nothing for an entry
+        made before the question."""
+        if connection is None:
+            return ""
+        hass: HomeAssistant = self.hass  # type: ignore[attr-defined]
+        texts = await async_get_translations(hass, hass.config.language, "selector", [DOMAIN])
+        key = f"component.{DOMAIN}.selector.{SIGNAL_HINT}.options.{connection.value}"
+        return texts.get(key, "")
 
     async def async_step_boiler(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
@@ -2526,7 +2654,9 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 errors = {key: blocker}
             if errors:
                 return self._form(
-                    step_id="control", data_schema=control_schema(self.options), errors=errors
+                    step_id="control",
+                    data_schema=control_schema(self.options, self._control_suggestions()),
+                    errors=errors,
                 )
             apply_control(self.options, user_input)
             if path == NO_CONTROL:
@@ -2543,7 +2673,19 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
                 WritePath.OTGW_MQTT: "control_mqtt",
             }[WritePath(path)]
             return await self._goto(step)
-        return self._form(step_id="control", data_schema=control_schema(self.options))
+        return self._form(
+            step_id="control", data_schema=control_schema(self.options, self._control_suggestions())
+        )
+
+    def _control_suggestions(self) -> dict[str, str]:
+        """What the connection suggests on the first control step (I6, decision 2): the virtual
+        topology for ESPHome and EMS-ESP; the one gateway's read-backs."""
+        connection = stored_connection(self.options)
+        if connection in VIRTUAL_CONNECTIONS:
+            return {"topology": Topology.VIRTUAL.value}
+        if connection is Connection.OPENTHERM_GW:
+            return gateway_entities(self.hass, GATEWAY_READ_BACKS)
+        return {}
 
     async def async_step_control_entity(
         self, user_input: dict[str, Any] | None = None
@@ -2824,7 +2966,9 @@ class SmartBoilerOptionsFlow(_Steps, OptionsFlow):
             off = float(user_input.get("off_setpoint", CONTROL_DEFAULTS["off_setpoint"]))
             # PB-69: with a heating switch "off" is never written as a setpoint, so neither its
             # range nor its distance to the lowest is checked (as ``off_too_close_in``).
-            as_setpoint = not heating_writes(self.options.get(CONTROL, {}))
+            as_setpoint = not heating_writes(self.options.get(CONTROL, {})) and not fixed_off(
+                self.options
+            )
             if as_setpoint and _outside(user_input.get("off_setpoint"), self._setpoint_bounds()):
                 errors["off_setpoint"] = "off_setpoint_outside_entity_range"
             elif as_setpoint and off_too_close_to_lowest(off, hard_min):
