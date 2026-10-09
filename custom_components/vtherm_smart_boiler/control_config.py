@@ -129,7 +129,8 @@ CONTROL_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
 )
 CURVE_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
     {
-        "design_outdoor": (-40.0, 10.0),
+        # One value with the building's parameter, and its bounds (I6).
+        "design_outdoor": (-45.0, 10.0),
         "design_flow": (25.0, 80.0),
         "room": (15.0, 25.0),
         "exponent": (1.0, 2.0),
@@ -757,9 +758,13 @@ def parse_control(
     *,
     connection: Connection | None = None,
     control_mode: ControlMode | None = None,
+    design_outdoor: float | None = None,
 ) -> ControlOptions:
     """The control options; an empty section means control is not configured. ``connection``,
-    ``control_mode``: the setup's first answers (I6), ``None`` for an entry made before them."""
+    ``control_mode``: the setup's first answers (I6), ``None`` for an entry made before them.
+    ``design_outdoor``: the building's design outdoor temperature as the user entered it — one
+    value with the curve's (I6); a value the curve's own section still holds (a hand edit, or
+    one the entry migration could not move) is taken first, as it was before."""
     data = data or {}
     if not data.get("write_path"):
         return ControlOptions(connection=connection, control_mode=control_mode)
@@ -768,7 +773,8 @@ def parse_control(
     circuit = installation.circuits[0] if installation.circuits else None
     emitters = installation.emitters_in(circuit.circuit_id) if circuit is not None else frozenset()
     default_exponent = min((EXPONENT_BY_EMITTER[e] for e in emitters), default=1.3)
-    curve_value = {**CURVE_DEFAULTS, **curve_data}
+    entered = {} if design_outdoor is None else {"design_outdoor": design_outdoor}
+    curve_value = {**CURVE_DEFAULTS, **entered, **curve_data}
     exponent = _checked(curve_value, "exponent", CURVE_BOUNDS)
     curve = HeatingCurve(
         design_outdoor=_required(curve_value, "design_outdoor", CURVE_BOUNDS),

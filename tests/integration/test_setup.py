@@ -896,7 +896,7 @@ async def test_an_entry_from_before_drops_the_options_that_are_gone(
     )
     await left_control_store(hass, entry)
     await setup(hass, entry)
-    assert entry.minor_version == 5
+    assert entry.minor_version == 6
     # Minor version 3 (X6): the lowest water temperature 0.2.1 used, kept.
     assert entry.options["control"] == {"write_path": "entity", "hard_min": 25.0}
 
@@ -946,7 +946,7 @@ async def test_the_alarm_migration_moves_to_the_add_water_threshold(
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 5
+    assert entry.minor_version == 6
     stored = entry.options["monitor"]
     assert "pressure_low_warning" not in stored
     assert "pressure_low_alarm" not in stored
@@ -986,7 +986,7 @@ async def test_the_alarm_migration_keeps_an_offered_reaction_and_raises_no_issue
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 5
+    assert entry.minor_version == 6
     assert entry.options["control"]["alarm_reactions"] == {"write_ignored": "hand_back"}
     assert ir.async_get(hass).async_get_issue(DOMAIN, f"reactions_removed_{entry.entry_id}") is None
 
@@ -1022,7 +1022,7 @@ async def test_migration_keeps_the_floor_of_a_control_section_without_it(
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 5
+    assert entry.minor_version == 6
     stored = entry.options.get("control")
     if hard_min is None:
         assert stored == control
@@ -1041,29 +1041,44 @@ _GATEWAY = {
 }
 _REACTIONS = {"pressure_low": "hand_back", "write_ignored": "hand_back", "outside_change": "info"}
 _OLD_MONITOR = {"monitoring_days": 7, "pressure_low_warning": 0.8, "pressure_low_alarm": 0.5}
+_CURVE = {"design_outdoor": -18.0, "design_flow": 55.0}
 STORED_BY_MINOR: dict[int, dict[str, Any]] = {
     1: {
         "boiler": {"class": "flow_setpoint", "dhw": "combi", "shared_return": True},
-        "control": _GATEWAY | {"min_burn_min": 5, "daily_cap": 100, "alarm_reactions": _REACTIONS},
+        "control": _GATEWAY
+        | {"min_burn_min": 5, "daily_cap": 100, "alarm_reactions": _REACTIONS, "curve": _CURVE},
         "monitor": _OLD_MONITOR,
     },
     2: {  # 0.2.1's removed options gone (shared_return among them)
         "boiler": {"class": "flow_setpoint", "dhw": "combi"},
-        "control": _GATEWAY | {"alarm_reactions": _REACTIONS},
+        "control": _GATEWAY | {"alarm_reactions": _REACTIONS, "curve": _CURVE},
         "monitor": _OLD_MONITOR,
     },
     3: {  # X6: 0.2.1's lowest water temperature kept
         "boiler": {"class": "flow_setpoint", "dhw": "combi"},
-        "control": _GATEWAY | {"alarm_reactions": _REACTIONS, "hard_min": 25.0},
+        "control": _GATEWAY | {"alarm_reactions": _REACTIONS, "hard_min": 25.0, "curve": _CURVE},
         "monitor": _OLD_MONITOR,
     },
+    4: {  # Y1: the "add water" threshold; the one reaction still offered
+        "boiler": {"class": "flow_setpoint", "dhw": "combi"},
+        "control": _GATEWAY
+        | {"alarm_reactions": {"write_ignored": "hand_back"}, "hard_min": 25.0, "curve": _CURVE},
+        "monitor": {"monitoring_days": 7, "add_water_below": 0.8},
+    },
 }
-CURRENT_OPTIONS = {  # Y1: the "add water" threshold; the one reaction still offered
+STORED_BY_MINOR[5] = STORED_BY_MINOR[4]  # no pressure: 5 writes nothing
+CURRENT_OPTIONS = {  # I6: the curve's design outdoor temperature is the building's
     "boiler": {"class": "flow_setpoint", "dhw": "combi"},
-    "control": _GATEWAY | {"alarm_reactions": {"write_ignored": "hand_back"}, "hard_min": 25.0},
+    "control": _GATEWAY
+    | {
+        "alarm_reactions": {"write_ignored": "hand_back"},
+        "hard_min": 25.0,
+        "curve": {"design_flow": 55.0},
+    },
     "monitor": {"monitoring_days": 7, "add_water_below": 0.8},
+    "parameters": {"boiler_min_power": 4.0, "boiler_max_power": 25.0, "design_outdoor": -18.0},
 }
-STORED_BY_MINOR[4] = STORED_BY_MINOR[5] = CURRENT_OPTIONS  # no pressure: 5 writes nothing
+STORED_BY_MINOR[6] = CURRENT_OPTIONS
 
 
 @pytest.mark.parametrize(
@@ -1096,7 +1111,7 @@ async def test_an_entry_from_before_keeps_the_high_pressure_limits_it_ran_with(
         domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=minor
     )
     await setup(hass, entry)
-    assert entry.minor_version == 5
+    assert entry.minor_version == 6
     assert entry.options["monitor"] == {"monitoring_days": 7, **expected}
     key = f"{entry.entry_id}_alarm_pressure_high"
     found = er.async_get(hass).async_get_entity_id("binary_sensor", DOMAIN, key)
@@ -1105,16 +1120,85 @@ async def test_an_entry_from_before_keeps_the_high_pressure_limits_it_ran_with(
     assert missing == (() if expected else ("pressure_high_threshold",))
 
 
+@pytest.mark.parametrize(
+    ("options", "expected", "replaced"),
+    [
+        (
+            {"control": {"curve": {"design_outdoor": -18.0, "design_flow": 55.0}}},
+            {
+                "control": {"curve": {"design_flow": 55.0}},
+                "parameters": {"design_outdoor": -18.0},
+            },
+            False,
+        ),
+        (
+            {
+                "control": {"curve": {"design_outdoor": -18.0}},
+                "parameters": {"design_outdoor": -20.0, "loss_coefficient": 0.2},
+            },
+            {
+                "control": {"curve": {}},
+                "parameters": {"design_outdoor": -18.0, "loss_coefficient": 0.2},
+            },
+            True,
+        ),
+        (
+            {"control": {"curve": {"design_outdoor": "cold"}}, "parameters": {}},
+            {"control": {"curve": {"design_outdoor": "cold"}}, "parameters": {}},
+            False,
+        ),
+        (
+            {"control": {"curve": {"design_outdoor": -50.0}}},
+            {"control": {"curve": {"design_outdoor": -50.0}}},
+            False,
+        ),
+        (
+            {"control": {"curve": {"design_flow": 55.0}}, "parameters": {"design_outdoor": -20.0}},
+            {"control": {"curve": {"design_flow": 55.0}}, "parameters": {"design_outdoor": -20.0}},
+            False,
+        ),
+        (
+            {"parameters": {"design_outdoor": -20.0}},
+            {"parameters": {"design_outdoor": -20.0}},
+            False,
+        ),
+    ],
+    ids=["moved", "replaces_the_buildings", "not_a_number", "out_of_bounds", "none", "no_control"],
+)
+async def test_the_curves_design_outdoor_temperature_becomes_the_buildings(
+    hass: HomeAssistant,
+    caplog: pytest.LogCaptureFixture,
+    options: dict[str, Any],
+    expected: dict[str, Any],
+    replaced: bool,
+) -> None:
+    """I6 (minor version 6): one design outdoor temperature, the building's. A curve's own value
+    moves there and replaces the building's, logged, so control's curve stays as it ran; a value
+    the building could not take stays in the curve, which control reads first; an entry without
+    one is left as it is."""
+    from custom_components.vtherm_smart_boiler import async_migrate_entry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=5
+    )
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry)
+    assert entry.minor_version == 6
+    assert dict(entry.options) == expected
+    assert ("replaces the building's -20.0 °C" in caplog.text) is replaced
+
+
 @pytest.mark.parametrize("minor", sorted(STORED_BY_MINOR))
 async def test_an_entry_of_any_earlier_minor_version_migrates_to_this_ones_options(
     hass: HomeAssistant, minor: int
 ) -> None:
-    """P-124: from minor version 1 through 2, 3 and 4 to this one (5), each step applied once and in
+    """P-124: from minor version 1 through 2 to 5 to this one (6), each step applied once and in
     order from where the entry stands — ``boiler.shared_return`` and 0.2.1's removed control
     options go (2), the lowest water temperature 0.2.1 used is kept (3, X6), the low-pressure
     limits become the "add water" threshold and the reactions decision 7 no longer offers go,
-    with their warning (4, Y1). Every starting point ends with the same options; an entry
-    already current is left as it is, and warns of nothing."""
+    with their warning (4, Y1), and the curve's design outdoor temperature becomes the
+    building's (6, I6). Every starting point ends with the same options; an entry already
+    current is left as it is, and warns of nothing."""
     from homeassistant.helpers import issue_registry as ir
 
     from custom_components.vtherm_smart_boiler.config_flow import SmartBoilerConfigFlow

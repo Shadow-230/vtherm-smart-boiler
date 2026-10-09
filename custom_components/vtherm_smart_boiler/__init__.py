@@ -89,7 +89,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
         # fail, and the unit that makes it is the one that runs (P-05, C14).
         await coordinator.async_load()
         if config.control.configured:
-            control = ControlUnit(hass, coordinator, config.control, raw=entry.options.get(CONTROL))
+            raw = control_as_run(entry.options)
+            control = ControlUnit(hass, coordinator, config.control, raw=raw)
             control.restore(coordinator.stored_control)
             coordinator.control = control
         else:
@@ -224,7 +225,70 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_alarms(hass, entry)
     if entry.minor_version < 5:
         _migrate_pressure_high(hass, entry)
+    if entry.minor_version < 6:
+        _migrate_design_outdoor(hass, entry)
     return True
+
+
+def control_as_run(options: Mapping[str, Any]) -> Any:
+    """The control section as control runs it, kept with what took the boiler and compared with
+    it at a restart: the building's design outdoor temperature in its curve, where the curve has
+    none of its own (I6) — so the section compares as before the value moved, and a change to it
+    is a change to control's options."""
+    from .const import PARAMETERS
+
+    section = options.get(CONTROL)
+    params = options.get(PARAMETERS)
+    if not isinstance(section, Mapping) or not isinstance(params, Mapping):
+        return section
+    curve = section.get("curve")
+    value = params.get("design_outdoor")
+    if not isinstance(curve, Mapping) or "design_outdoor" in curve or value in (None, ""):
+        return section
+    return {**section, "curve": {**curve, "design_outdoor": value}}
+
+
+def _migrate_design_outdoor(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I6 (minor version 6): the design outdoor temperature is one value, the building's, which
+    the curve uses and edits. A curve's own value moves there and replaces the building's, so
+    control's curve stays as it ran; the heat-loss estimate from the design load then uses it
+    too, and a value it replaces is logged. A value the building could not take (not a number,
+    or outside −45 to 10 °C: a hand edit) stays in the curve, which control reads first."""
+    import logging
+    import math
+
+    from .const import PARAMETERS
+    from .control_config import CURVE_BOUNDS
+
+    low, high = CURVE_BOUNDS["design_outdoor"]
+    options = dict(entry.options)
+    control = options.get(CONTROL)
+    curve = control.get("curve") if isinstance(control, Mapping) else None
+    params = options.get(PARAMETERS, {})
+    value = curve.get("design_outdoor") if isinstance(curve, Mapping) else None
+    if (
+        isinstance(control, Mapping)
+        and isinstance(curve, Mapping)
+        and isinstance(params, Mapping)
+        and isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and low <= value <= high
+    ):
+        replaced = params.get("design_outdoor")
+        if replaced not in (None, "", value):
+            logging.getLogger(__name__).warning(
+                "The design outdoor temperature is now one value: the heating curve's %s °C "
+                "replaces the building's %s °C",
+                value,
+                replaced,
+            )
+        options[PARAMETERS] = {**params, "design_outdoor": value}
+        options[CONTROL] = {
+            **control,
+            "curve": {k: v for k, v in curve.items() if k != "design_outdoor"},
+        }
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=6)
 
 
 def _migrate_pressure_high(hass: HomeAssistant, entry: ConfigEntry) -> None:

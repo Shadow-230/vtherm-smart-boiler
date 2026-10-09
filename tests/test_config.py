@@ -60,6 +60,37 @@ def test_control_section_uses_the_boilers_maximum() -> None:
     assert control.loop.control.curve.design_flow == 50.0
 
 
+@pytest.mark.parametrize(
+    ("curve", "parameters", "expected"),
+    [
+        ({"design_flow": 50}, {"design_outdoor": -22}, -22.0),
+        ({"design_outdoor": -20, "design_flow": 50}, {"design_outdoor": -22}, -20.0),
+        ({"design_flow": 50}, {}, -15.0),
+        ({"design_flow": 50}, {"design_outdoor": -42}, -42.0),
+    ],
+    ids=["the_buildings", "the_curves_own_first", "the_default", "below_minus_40"],
+)
+def test_control_reads_the_buildings_design_outdoor_temperature(
+    curve: dict[str, float], parameters: dict[str, float], expected: float
+) -> None:
+    """I6: one design outdoor temperature, the building's, which the curve uses — within the
+    building's −45 to 10 °C. A value the curve's own section still holds (a hand edit, or one the
+    entry migration could not move) is read first, as before; with neither, the default."""
+    options = MINIMAL | {
+        "boiler": {"class": "flow_setpoint"},
+        "parameters": parameters,
+        "control": {
+            "write_path": "opentherm_gw",
+            "gateway_id": "gw",
+            "confirmed_entity": "sensor.setpoint",
+            "topology": "gateway_with_thermostat",
+            "curve": curve,
+        },
+    }
+    config = EntryConfig.from_options(options)
+    assert config.control.loop.control.curve.design_outdoor == expected
+
+
 def test_full_options() -> None:
     options = {
         "level": "advanced",

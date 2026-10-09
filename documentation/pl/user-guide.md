@@ -191,7 +191,10 @@ Gdy grzanie jest włączone, wtyczka ustawia temperaturę wody w kotle (temperat
 1. **Krzywa grzewcza** — wpisujesz ją sam: projektową temperaturę zewnętrzną (domyślnie
    −15 °C), projektową temperaturę zasilania (wymagana, bez wartości domyślnej), temperaturę
    pokojową krzywej (domyślnie 20 °C) i opcjonalne przesunięcie. Krzywa podaje temperaturę wody
-   dla każdej temperatury zewnętrznej.
+   dla każdej temperatury zewnętrznej. Projektowa temperatura zewnętrzna to ta sama wartość co
+   w danych budynku: zmiana w jednym kroku zmienia obie. Krok krzywej pokazuje też maksymalną
+   nastawę c.o. kotła i maksymalną temperaturę zasilania pierwszego obiegu — obowiązuje najniższa
+   z trzech wartości: tych dwóch i najwyższej temperatury wody.
 2. **Najniższa temperatura wody** — krzywa nigdy nie schodzi poniżej niej. Domyślnie 20 °C
    (wartość tymczasowa). Przy zbyt niskiej kocioł może w łagodną pogodę raz po raz sam się
    wyłączać; w kotle niekondensacyjnym może dojść do kondensacji w przewodzie spalinowym. Weź tę
