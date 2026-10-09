@@ -1677,7 +1677,31 @@ async def test_a_new_entry_without_control_owes_nothing(
     issues = ir.async_get(hass)
     for key in ("control_state_unreadable", "hand_back_owed"):
         assert issues.async_get_issue(DOMAIN, f"{key}_{entry.entry_id}") is None
-    assert "nothing is owed" in caplog.text  # a warning, not an error
+    # F2 of the test report: a new entry's first start is the normal case — information, not a
+    # warning or an error.
+    said = [record for record in caplog.records if "nothing is owed" in record.getMessage()]
+    assert [record.levelname for record in said] == ["INFO"]
+
+
+async def test_a_lost_control_store_without_control_is_a_warning(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """F2's negative: an entry that has run — its store written by this version, with the
+    marker — whose control store is gone. Control is not configured, so nothing is owed, but a
+    store that should be there is missing: a warning, as before. With control configured the
+    same loss is an error and the boiler is taken as held (``test_stored_options``)."""
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    key = f"{DOMAIN}.{entry.entry_id}"
+    hass_storage[key] = {"version": 1, "key": key, "data": {"control_store": 1}}
+    await setup(hass, entry)
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.hand_back_unit is None
+    said = [record for record in caplog.records if "nothing is owed" in record.getMessage()]
+    assert [record.levelname for record in said] == ["WARNING"]
 
 
 async def test_both_stores_are_written_atomically(hass: HomeAssistant) -> None:
