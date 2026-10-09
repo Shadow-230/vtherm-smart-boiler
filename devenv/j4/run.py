@@ -34,7 +34,6 @@ BASE_CONTROL = {
     "thermostat_kind": "opentherm",
     "confirmed_entity": "sensor.otgw_sim_boiler_control_setpoint",
     "ch_confirmed_entity": "binary_sensor.otgw_sim_boiler_master_ch_enabled",
-    "thermostat_setpoint_entity": "sensor.otgw_sim_thermostat_room_setpoint",
 }
 BASE_CURVE = {
     "design_outdoor": -15.0,
