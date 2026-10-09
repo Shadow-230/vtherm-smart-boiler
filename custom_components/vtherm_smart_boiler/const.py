@@ -92,8 +92,8 @@ def owes_hand_back(stored_control: object) -> bool:
 
 def has_control_section(options: object) -> bool:
     """Whether the options hold a control section: a ``control`` mapping naming a write path,
-    whether or not it can be parsed. Control is configured only in the options flow of an entry
-    that has run, so such an entry may have held the boiler."""
+    whether or not it can be parsed. Such an entry may have held the boiler — unless it is on its
+    first start, as one whose control was set up in the wizard (I6; ``coordinator``)."""
     if not isinstance(options, Mapping):
         return False
     control = options.get(CONTROL)

@@ -2239,11 +2239,17 @@ class ControlRead:
 
 
 async def _async_try_load(store: Store[dict[str, Any]]) -> object:
+    return (await _async_load(store))[0]
+
+
+async def _async_load(store: Store[dict[str, Any]]) -> tuple[object, bool]:
+    """What a store holds, and whether it could be read: an unsupported version or a read error
+    gives nothing and ``False``."""
     try:
-        return await store.async_load()
+        return await store.async_load(), True
     except Exception:  # an unsupported version, a read error: it cannot be read
         _LOGGER.exception("Could not read the stored data of %s", store.key)
-        return None
+        return None, False
 
 
 async def async_read_control_state(
@@ -2265,12 +2271,15 @@ async def async_read_control_state(
       damaged file and returns nothing, as it does for a new entry). A hand-back is then owed
       when the options hold a control section or the entry store's copy owes one, and the state
       is that copy with the boiler held; otherwise nothing is owed — logged as information
-      where neither store exists (a new entry's first start), as a warning where one does.
+      where neither store exists (a new entry's first start), as a warning where one does. An
+      entry on its first start — made in the last half hour, with neither store there and
+      nothing registered — owes nothing whatever its options hold (I6: control set up in the
+      wizard has never held the boiler).
     """
     main = main_store(hass, entry_id) if main is None else main
     control = control_store(hass, entry_id) if control is None else control
-    raw_control = await _async_try_load(control)
-    raw_main = await _async_try_load(main)
+    raw_control, control_read = await _async_load(control)
+    raw_main, main_read = await _async_load(main)
     main_data = raw_main if isinstance(raw_main, dict) else None
     copy = main_data.get("control") if main_data is not None else None
     from_0_2_1 = main_data is not None and CONTROL_STORE_MARKER not in main_data
@@ -2287,6 +2296,10 @@ async def async_read_control_state(
         return ControlRead(state, True, owes_hand_back(state), raw_main, True)
     if raw_control is not None:
         _LOGGER.warning("Ignoring stored control data that is not a mapping")
+    elif raw_main is None and control_read and main_read and _first_start(hass, entry_id):
+        # I6 (decision 11): control set up in the wizard has never held the boiler.
+        _LOGGER.info("A new entry: no control state stored yet, nothing held, so nothing is owed")
+        return ControlRead({}, False, False, raw_main, True)
     if control_state_owed(copy, readable=False, has_control_section=has_control_section(options)):
         _LOGGER.error(
             "The stored control state cannot be read (missing or damaged); taken as holding the "
@@ -2399,6 +2412,22 @@ def _last_seen(stored: dict[str, Any], now: float) -> float | None:
                 moments.append(item.get(field_name))
     known = [t for t in map(_timestamp, moments) if t is not None and t <= now]
     return max(known, default=None)
+
+
+# An entry this young with neither store may be on its first start (I6): long enough for a first
+# setup that fails and is retried, short enough that a store lost later is never taken for it.
+NEW_ENTRY_S = 30 * 60.0
+
+
+def _first_start(hass: HomeAssistant, entry_id: str) -> bool:
+    """Whether the entry, its stores not there, is on its first start: made in the last half
+    hour, and none of its entities registered yet — an entry that ran keeps them, whatever
+    became of its stores (a damaged file is renamed and reads as none)."""
+    entry = hass.config_entries.async_get_entry(entry_id)
+    created = None if entry is None else _created_at(entry)
+    if created is None or dt_util.utcnow().timestamp() - created >= NEW_ENTRY_S:
+        return False
+    return not er.async_entries_for_config_entry(er.async_get(hass), entry_id)
 
 
 def _created_at(entry: ConfigEntry) -> float | None:

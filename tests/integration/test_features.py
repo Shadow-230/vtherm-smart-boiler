@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Callable
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -304,6 +305,8 @@ async def _setup(
     entry.add_to_hass(hass)
     if store:
         await left_control_store(hass, entry)
+    else:  # its store lost: an entry that ran, older than a first start's half hour (I6)
+        entry.created_at = dt_util.utcnow() - timedelta(hours=1)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     return entry

@@ -7,7 +7,7 @@ decisions of 2026-10-08 and 2026-10-09 below. Control stays off by default: no a
 anything on.
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`.
 
-Status on 2026-10-09: approved by the user (I6.0); I6.1 to I6.5 done; next I6.6. The corrections from the test report
+Status on 2026-10-09: approved by the user (I6.0); I6.1 to I6.6a done; next I6.6b. The corrections from the test report
 that the user put first (F1, F2, F5) are done as pull requests #32, #34 and #35.
 
 ## How to read this plan
@@ -144,10 +144,12 @@ that the user put first (F1, F2, F5) are done as pull requests #32, #34 and #35.
   boiler; the design outdoor temperature is entered twice (building, curve) and only pre-filled once;
   the "add water" and high-pressure limits are advanced only, and "restore defaults" drops them
   though they come from the boiler's manual.
-- To keep in mind at I6.6: `has_control_section` assumes control is set up only in the options of an
-  entry that has run, so a control section without a stored state is taken as a held boiler. An
-  entry made by the wizard with control set up has never held the boiler: its first start must not
-  hand back a boiler it never took.
+- Kept in mind at I6.6a: `has_control_section` assumed control is set up only in the options of an
+  entry that has run, so a control section without a stored state was taken as a held boiler. An
+  entry made by the wizard with control set up has never held the boiler: an entry created less
+  than 30 minutes ago, with neither store there and none of its entities registered, owes nothing
+  at its first start. A store there but unreadable, or registered entities (an entry that ran,
+  its stores damaged), still hand back first; so does an older entry that lost its stores.
 
 ## Steps
 
@@ -159,7 +161,8 @@ that the user put first (F1, F2, F5) are done as pull requests #32, #34 and #35.
 | I6.3 ✅ | the heat source (decision 7): fields, signals and alarms shown or hidden; the electric boiler's "heating on"; the defaults for condensing by source | the monitor's scenarios with the sim's gas boiler: none expected; F1, F2 |
 | I6.4 ✅ | the hot-water priority (decision 8): the learning pause and heat availability follow it (`core/` first); the optional hint deferred — how boilers report heating and hot water at once is not known, and a wrong hint would mislead (`docs/plan-0.2-i6.md`, Open after I6) | D8 (the SmartPI pause on a draw) |
 | I6.5 ✅ | freshness (decision 9): the plugin listening to the OTGW firmware's and EMS-ESP's MQTT messages for the report times; ESPHome's re-report check and warning; translations, tests. Built more cautiously than planned: a source earns its automatic limit only once seen repeating an unchanged value (a report with nothing changed since, by its own change time) at least twice in the run — five times its median heartbeat gap, 10 to 30 min for the boiler's signals (not 5 min), 3 to 12 h for the weather; a change-only source never gets one. In the form, empty is automatic, 0 none. It applies to every entry, one made before the panels included, as it can only add a limit a source has shown it keeps to | C1–C5 (stale data, link lost) |
-| I6.6 | control in the wizard (decision 11), with a new entry's first start never handing back a boiler it never held; the tidy-up: the design outdoor temperature in one place; the pressure limits in the boiler step at both levels and kept by "restore defaults"; the curve step naming the limit that applies (decision 10) | the setup with control; A1, B1 |
+| I6.6a ✅ | control in the wizard (decision 11): the control steps follow the panels when the mode is full or on/off, with the same checks and blockers as in the options; monitoring only skips them. A new entry's first start never hands back a boiler it never held: an entry created less than 30 minutes ago, with neither store there and none of its entities registered, owes nothing | G1–G3, also on a fresh entry set up with control in the wizard; K1–K4 to confirm |
+| I6.6b | the tidy-up: the design outdoor temperature in one place; the pressure limits in the boiler step at both levels and kept by "restore defaults"; the curve step naming the limit that applies (decision 10) | G1–G3 |
 | I6.7 | the user guides EN and PL (the connection table, the ESPHome sample, EMS-ESP), `SCOPE.md` §4, §5 and §11, `CLAUDE.md`'s verified facts (EMS-ESP's "Force Heating Off"; how ESPHome and MQTT report), and I6 marked ✅ in `docs/plan-0.2.md` | none |
 
 ## Open after I6
