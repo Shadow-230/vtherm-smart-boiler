@@ -364,25 +364,35 @@ async def C4(r: Run):
 
 
 async def C5(r: Run):
-    """a gateway reset: the lost command sent again at once, no hand-back, no alarm"""
+    """a gateway reset: the lost command sent again at once once the gateway is back, no hand-back, no alarm"""
     await r.switch(True)
     await r.ha.wait(TRACE)
     t = time.time()
     await r.sim("reset_gateway")
+    back = await r.ha.until(lambda: _read_back_known(r), 60, 1)
+    t_back = time.time()
     await r.ha.wait(25)
-    sp = r.ha.since(t, "setpoint")
+    sp = r.ha.since(t_back, "setpoint")
+    delay = sp and round(sp[0][0] - t_back, 1)
     r.check(
-        bool(sp) and sp[0][0] - t <= 20,
-        f"sent again {sp and round(sp[0][0] - t)} s after the reset",
+        bool(sp) and sp[0][0] - t_back <= 12,
+        f"the gateway back {back and round(back)} s after the reset; sent again {delay} s after it (one control step: 10 s)",
     )
     r.check(await r.override(), "override held again")
     await r.ha.wait(60)
     r.check(0 not in [v for k, v in r.cmds(t, "setpoint")], "no hand-back")
     r.check(
-        await r.s("control_state") == "heating" or await r.s("control_state") == "idle",
-        f"state {await r.s('control_state')}",
+        await r.s("control_state") in ("heating", "idle"), f"state {await r.s('control_state')}"
     )
     r.check(await r.alarms_on() == [], f"alarms on: {await r.alarms_on()}")
+
+
+async def _read_back_known(r: Run) -> bool:
+    return (await r.s("sensor.otgw_sim_boiler_control_setpoint")) not in (
+        None,
+        "unavailable",
+        "unknown",
+    )
 
 
 async def D1(r: Run):
@@ -932,13 +942,16 @@ async def E4(r: Run):
     r.note(f"options {d.get('type')}")
     r.ent.update(await r.ha.entities())
     await r.ha.call("climate", "set_temperature", entity_id="climate.zone_bath", temperature=26.0)
+    # More load, so the burner keeps running: the correction rises only while heat flows.
+    for zone, target in ZONES:
+        await r.sim("set_room_temperature", zone=zone, temperature=target - 3.0)
     t = time.time()
     await r.switch(True)
     await r.ha.wait(120)
     base = max(v for k, v in r.cmds(t, "setpoint"))
     r.note(f"curve's setpoint at the start {base}")
     seen = []
-    for _ in range(30):
+    for _ in range(36):
         await r.ha.wait(300)
         sp = [v for k, v in r.cmds(t, "setpoint")]
         seen.append(max(sp))
