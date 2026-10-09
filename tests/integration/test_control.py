@@ -1165,6 +1165,51 @@ async def test_learning_is_paused_during_hot_water_and_released_on_switch_off(
     assert learning[-1] == (zone, True)
 
 
+@pytest.mark.parametrize("priority", [True, False])
+async def test_hot_water_without_priority_takes_no_heat_from_the_rooms(
+    rig: Rig, priority: bool
+) -> None:
+    """I6.4 (decision 8): hot water with priority — a combi, a tank through a three-way valve —
+    takes the heat from the rooms: SmartPI's learning pauses and heat is not available to the
+    zone. Without priority — a buffer, a tank charged in parallel — the rooms keep their heat:
+    no pause, heat available."""
+    from homeassistant.helpers import entity_registry as er
+
+    hass = rig.hass
+    learning: list[tuple[str, bool]] = []
+
+    async def set_learning(call: ServiceCall) -> None:
+        learning.append((call.data["entity_id"], call.data["learning_enabled"]))
+
+    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
+    zone = rig.zones.entities["living"]
+    rig.zones.set(
+        "living",
+        hvac_action="heating",
+        valve_open_percent=60,
+        on_percent=0.6,
+        configuration={"proportional_function": "smartpi"},
+        specific_states={"smartpi_learning_enabled": True},
+    )
+    entry_options = options(rig.zones)
+    entry_options["boiler"] |= {
+        "connection": "opentherm_gw",
+        "control_mode": "full",
+        "heat_source": "gas",
+        "type": "combi",
+        "dhw_priority": priority,
+    }
+    await set_up(rig, add_entry(rig, entry_options))
+    await rig.switch(True)
+    rig.dhw = True
+    await rig.advance(30)
+    assert learning == ([(zone, False)] if priority else [])
+    zone_entry = er.async_get(hass).async_get(zone)
+    assert zone_entry is not None
+    available = rig.state("binary_sensor", f"hot_water_{zone_entry.id}")
+    assert available.state == ("off" if priority else "on")
+
+
 async def test_a_cancel_inside_smartpi_does_not_break_the_stop(
     rig: Rig, caplog: pytest.LogCaptureFixture
 ) -> None:
