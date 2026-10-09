@@ -1253,6 +1253,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             gateway=self.transport.gateway,
             has_dhw=config.monitor.monitor.has_dhw,
             condensing=config.installation.boiler.condensing,
+            # I6 (decision 7): an electric boiler has no ignition to judge.
+            burner=config.panel.heat_source is None or config.panel.heat_source.burns_fuel,
             control=kind,
             # The option as the user left it: a relay's correction is off for want of water
             # control, not by the option.

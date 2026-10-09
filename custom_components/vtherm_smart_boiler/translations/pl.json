@@ -1090,6 +1090,12 @@
         "other_entity": "Wybierz to, co urządzenie pokazuje dla płomienia, zasilania i temperatury powrotu; resztę zostaw pustą.",
         "read_only": "Wybierz to, co integracja pokazuje dla płomienia, zasilania i temperatury powrotu; resztę zostaw pustą."
       }
+    },
+    "source_hint": {
+      "options": {
+        "electric": "Kocioł elektryczny: jako płomień przypisz włączenie grzałek (stycznik albo własny stan „grzanie” kotła) — z niego korzystają metryki palnika i łącze z kotłem; licznik gazu nie dotyczy, ale w jego miejsce można przypisać licznik energii. Spaliny nie dotyczą.",
+        "oil": "Kocioł olejowy: nie ma licznika gazu, a wartości gazu nie dotyczą."
+      }
     }
   },
   "device": {
@@ -2036,7 +2042,7 @@
               "fault_indication": "Sygnalizacja usterki kotła",
               "add_water_threshold": "Próg „uzupełnij wodę” z instrukcji kotła",
               "pressure_high_threshold": "Ostrzeżenie lub alarm wysokiego ciśnienia poniżej ciśnienia otwarcia zaworu bezpieczeństwa (odczytanego na zaworze)",
-              "condensing_boiler": "Kocioł kondensacyjny zadeklarowany w opcjach kotła",
+              "condensing_boiler": "Kocioł kondensacyjny zadeklarowany na ekranie połączenia kotła",
               "zone_data": "Strefy Versatile Thermostat z danymi",
               "valve_openings": "Otwarcie zaworu każdej strefy",
               "no_bypass": "Brak obejścia lub sprzęgła hydraulicznego (zadeklarowano je)",
@@ -2048,7 +2054,8 @@
               "circuit_maximum": "Maksymalna temperatura zasilania obiegu",
               "turned_off": "Wyłączona w opcjach",
               "entity_for_two_signals": "ta sama encja zasila już sygnał",
-              "unavailable_now": "chwilowo brak odczytu"
+              "unavailable_now": "chwilowo brak odczytu",
+              "fuel_burner": "Kocioł spalający paliwo (nie elektryczny)"
             }
           }
         }

@@ -1090,6 +1090,12 @@
         "other_entity": "Pick what the device shows for the flame, the flow and the return temperature; leave the rest empty.",
         "read_only": "Pick what the integration shows for the flame, the flow and the return temperature; leave the rest empty."
       }
+    },
+    "source_hint": {
+      "options": {
+        "electric": "Electric boiler: map the heating elements' on/off (a contactor, or the boiler's own \"heating\" state) as the flame — the burner's metrics and the boiler link read it; a gas meter does not apply, but an energy meter may be mapped in its place. Flue gas does not apply.",
+        "oil": "Oil boiler: there is no gas meter, and the gas figures do not apply."
+      }
     }
   },
   "device": {
@@ -2036,7 +2042,7 @@
               "fault_indication": "Boiler fault indication",
               "add_water_threshold": "The \"add water\" threshold from the boiler's manual",
               "pressure_high_threshold": "A high-pressure warning or alarm below the safety valve's rating read on the valve",
-              "condensing_boiler": "A condensing boiler as declared in the boiler's options",
+              "condensing_boiler": "A condensing boiler as declared on the boiler's connection panel",
               "zone_data": "Versatile Thermostat zones with data",
               "valve_openings": "Every zone's valve opening",
               "no_bypass": "No bypass or low-loss header (one is declared)",
@@ -2048,7 +2054,8 @@
               "circuit_maximum": "A circuit's maximum flow temperature",
               "turned_off": "Turned off in the options",
               "entity_for_two_signals": "its entity already feeds",
-              "unavailable_now": "unavailable now"
+              "unavailable_now": "unavailable now",
+              "fuel_burner": "A boiler that burns fuel (not an electric one)"
             }
           }
         }

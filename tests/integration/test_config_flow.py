@@ -4401,3 +4401,118 @@ async def test_an_entry_from_before_the_panels_has_no_signal_hint(
     menu = await hass.config_entries.options.async_init(entry_id)
     result = await options_step(hass, menu, {"next_step_id": "signals"})
     assert result["description_placeholders"] == {"hint": ""}
+
+
+# --- I6.3: the heat source decides which fields apply (decision 7) -----------------------------
+
+
+@pytest.mark.parametrize(
+    ("source", "hidden"),
+    [
+        ("electric", {"flue_gas"}),
+        ("oil", {"gas_meter"}),
+        ("gas", set()),
+        ("other", set()),
+        (None, set()),  # an entry from before the panels: every field, as before
+    ],
+)
+def test_the_signals_step_shows_what_the_heat_source_has(
+    source: str | None, hidden: set[str]
+) -> None:
+    """Decision 7: an electric boiler has no flue gas, an oil boiler no gas meter; every other
+    signal is offered as before, at its level."""
+    from custom_components.vtherm_smart_boiler.config_flow import SIGNAL_FIELDS, signals_schema
+
+    boiler = {} if source is None else {"heat_source": source}
+    shown = {str(m) for m in signals_schema({"level": "advanced", "boiler": boiler}).schema}
+    assert set(SIGNAL_FIELDS) - shown == hidden
+
+
+def test_a_signal_the_heat_source_hides_keeps_what_is_stored() -> None:
+    """Decision 7: a signal not shown is not cleared by the save — as at the simple level."""
+    from custom_components.vtherm_smart_boiler.config_flow import apply_signals
+
+    options = {
+        "level": "advanced",
+        "boiler": {"heat_source": "electric"},
+        "signals": {"flue_gas": "sensor.flue", "flame": "binary_sensor.flame"},
+    }
+    apply_signals(options, {"flame": "binary_sensor.elements"})
+    assert options["signals"] == {"flue_gas": "sensor.flue", "flame": "binary_sensor.elements"}
+
+
+@pytest.mark.parametrize(
+    ("source", "rates"),
+    [("gas", True), ("other", True), (None, True), ("oil", False), ("electric", False)],
+)
+def test_the_gas_rates_are_asked_for_a_gas_boiler_only(source: str | None, rates: bool) -> None:
+    """Decision 7: gas per hour at minimum and maximum power — a gas boiler's, or one whose fuel
+    is not said."""
+    from custom_components.vtherm_smart_boiler.config_flow import boiler_schema
+
+    boiler = {} if source is None else {"heat_source": source}
+    shown = {str(m) for m in boiler_schema({"level": "advanced", "boiler": boiler}).schema}
+    assert ({"gas_at_min_power", "gas_at_max_power"} <= shown) is rates
+    assert "max_ch_setpoint" in shown
+
+
+def test_the_flue_gas_limits_are_asked_for_a_condensing_boiler_only() -> None:
+    """Decision 7: the flue-gas alarm judges a condensing boiler only — its limits are not asked
+    for any other, and a stored one is kept for when it is condensing again."""
+    from custom_components.vtherm_smart_boiler.config_flow import apply_monitor, monitor_schema
+
+    condensing = {str(m) for m in monitor_schema({"boiler": {"condensing": True}}).schema}
+    assert {"flue_gas_warning", "flue_gas_alarm"} <= condensing
+    assert {"flue_gas_warning", "flue_gas_alarm"} <= {str(m) for m in monitor_schema({}).schema}
+    other = {"boiler": {"condensing": False}, "monitor": {"flue_gas_warning": 70}}
+    assert not {"flue_gas_warning", "flue_gas_alarm"} & {
+        str(m) for m in monitor_schema(other).schema
+    }
+    apply_monitor(other, {"short_burn_min": 8})
+    assert other["monitor"] == {"flue_gas_warning": 70, "short_burn_min": 8}
+
+
+async def test_the_signals_hint_adds_the_heat_sources(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 7: an electric boiler's hint says to map its heating elements as the flame,
+    after the connection's own."""
+    result = await start_setup(hass, "other_entity", "full", source="electric")
+    result = await step(hass, result, {"name": "Boiler", "level": "simple"})
+    hint = result["description_placeholders"]["hint"]
+    assert hint.startswith("Pick what the device shows")
+    assert "Electric boiler: map the heating elements" in hint
+
+
+async def test_an_electric_boiler_gets_no_unstable_ignition_alarm(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision 7: an electric boiler's elements have no ignition — its unstable-ignition
+    feature is inactive, naming why, and its alarm is not created; a gas boiler keeps it."""
+    from custom_components.vtherm_smart_boiler.core.signal_check import (
+        FUEL_BURNER,
+        Feature,
+        FeatureStatus,
+    )
+
+    for source, inactive in (("electric", True), ("gas", False)):
+        options = {
+            "signals": {"flame": entities["flame"], "flow": entities["flow"]},
+            "boiler": {
+                "connection": "read_only",
+                "control_mode": "monitor",
+                "heat_source": source,
+                "type": "single",
+                "condensing": source != "electric",
+            },
+        }
+        entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        state = entry.runtime_data.configured_features()[Feature.UNSTABLE_IGNITION]
+        assert (state.status is FeatureStatus.INACTIVE) is inactive, source
+        if inactive:
+            assert state.missing == (FUEL_BURNER,)
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()

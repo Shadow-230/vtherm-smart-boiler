@@ -121,6 +121,7 @@ ADD_WATER_THRESHOLD = "add_water_threshold"  # the "add water" threshold, from t
 # The high-pressure warning or alarm, from the safety valve's rating (decision 13 of 0.2.3).
 PRESSURE_HIGH_THRESHOLD = "pressure_high_threshold"
 CONDENSING_BOILER = "condensing_boiler"  # the boiler declared condensing
+FUEL_BURNER = "fuel_burner"  # a boiler that burns fuel, not an electric one (I6, decision 7)
 ZONE_DATA = "zone_data"  # VT zones configured, and at run time one known
 VALVE_OPENINGS = "valve_openings"  # every zone reports its valve opening
 NO_BYPASS = "no_bypass"  # no bypass or low-loss header declared
@@ -193,6 +194,7 @@ def features(
     read_back: bool = False,
     power_threshold: bool = False,
     shared: Mapping[Signal, Signal] | None = None,
+    burner: bool = True,
 ) -> dict[Feature, FeatureState]:
     """What the inputs enable (the missing-data rule): each feature available, degraded or
     inactive, naming what it lacks. Configured, ``mapped`` holds the mapped signals and each
@@ -213,7 +215,8 @@ def features(
     ``wall_thermostat`` — control through a gateway with an OpenTherm thermostat (X6);
     ``read_back`` — control's read-back stands in for the CH setpoint signal (X6);
     ``power_threshold`` — the relay's proof has a power threshold (X8); ``shared`` — signals
-    dropped because their entity feeds an earlier one, each with the signal that kept it."""
+    dropped because their entity feeds an earlier one, each with the signal that kept it;
+    ``burner`` — the boiler burns fuel (I6): an electric one's elements have no ignition."""
 
     def lacking(*signals: Signal) -> list[str]:
         return [s.value for s in signals if s not in mapped]
@@ -264,7 +267,9 @@ def features(
     result[Feature.HYSTERESIS_DRIFT] = _state(
         lacking(Signal.FLAME, Signal.FLOW) + ([] if zone_data else [ZONE_DATA])
     )
-    if Signal.FLAME not in mapped:
+    if not burner:
+        result[Feature.UNSTABLE_IGNITION] = _state([FUEL_BURNER])
+    elif Signal.FLAME not in mapped:
         result[Feature.UNSTABLE_IGNITION] = _state(lacking(Signal.FLAME))
     else:
         # P-81: without flow and CH setpoint every short burn counts, as before.
