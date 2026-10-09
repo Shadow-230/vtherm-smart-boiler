@@ -310,6 +310,33 @@ relay_setup:
       example: false
       selector:
         boolean:
+set_write_type:
+  name: Change the device's write types
+  description: >-
+    What the device does with a write to the setpoint entity, or to the heating switch: held,
+    expiring (the override lapses a minute after the last write) or persistent (stored). Fields
+    left out keep their value.
+  fields:
+    write_type:
+      name: Setpoint write type
+      description: What the device does with a setpoint write.
+      example: expiring
+      selector:
+        select:
+          options:
+            - expiring
+            - persistent
+            - held
+    ch_write_type:
+      name: Heating switch write type
+      description: What the device does with a heating switch write.
+      example: held
+      selector:
+        select:
+          options:
+            - expiring
+            - persistent
+            - held
 set_lockout:
   name: Set the boiler's restart lockout
   description: The shortest time between the burner's stop and its next start.

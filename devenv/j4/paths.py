@@ -677,6 +677,98 @@ async def N6(r: Run):
     r.check(await r.s("alarm_hand_back_failed") == "off", "alarm cleared")
 
 
+async def N7(r: Run):
+    """a switch that enables external control as the hand-back: on with control, off at the
+    hand-back, on again with control"""
+    try:
+        d = await options_walk(
+            r,
+            {
+                "control_entity": {
+                    "hand_back": "switch",
+                    "hand_back_entity": EXTERNAL,
+                    "hand_back_entity_write_type": "held",
+                }
+            },
+        )
+        if d.get("errors"):
+            raise RuntimeError(f"options not saved: {d['errors']}")
+        await rooms_call(r, True)
+        t = time.time()
+        await r.switch(True)
+        on = await r.ha.until(lambda: _is(r, EXTERNAL, "on"), 90, 1)
+        r.check(on is not None, f"external control on with control ({on and round(on)} s)")
+        await r.ha.wait(30)
+        await r.switch(False)
+        off = await r.ha.until(lambda: _is(r, EXTERNAL, "off"), 60, 1)
+        r.check(off is not None, f"off at the hand-back ({off and round(off)} s)")
+        await r.ha.wait(30)
+        r.check(await r.s("alarm_hand_back_failed") == "off", "the hand-back confirmed")
+        r.note(f"writes {entity_cmds(r, t)}")
+        await r.switch(True)
+        again = await r.ha.until(lambda: _is(r, EXTERNAL, "on"), 60, 1)
+        r.check(again is not None, f"on again with control ({again and round(again)} s)")
+    finally:
+        if await r.s("control") == "on":
+            await r.switch(False)
+            await r.ha.wait(10)
+        await options_walk(r, {"control_entity": {"hand_back": "value", "hand_back_value": 0}})
+        await r.ha.call("switch", "turn_on", entity_id=EXTERNAL)
+
+
+async def _is(r: Run, entity_id: str, state: str) -> bool:
+    return await r.s(entity_id) == state
+
+
+async def N8(r: Run):
+    """a timeout hand-back on an expiring setpoint: the lowest, then nothing — the device's own
+    timeout releases it; a device that keeps the value after all: the alarm"""
+    try:
+        await r.sim("set_write_type", write_type="expiring")
+        d = await options_walk(
+            r,
+            {"control_entity": {"write_type": "expiring", "hand_back": "timeout"}},
+        )
+        if d.get("errors"):
+            raise RuntimeError(f"options not saved: {d['errors']}")
+        await rooms_call(r, True)
+        await r.switch(True)
+        await r.ha.wait(120)
+        t = time.time()
+        await r.ha.wait(60)
+        kept = [v for k, v in entity_cmds(r, t) if k == "setpoint"]
+        r.check(len(kept) >= 1, f"kept alive while controlling: {kept}")
+        t = time.time()
+        await r.switch(False)
+        await r.ha.wait(300)
+        sp = [v for k, v in entity_cmds(r, t) if k == "setpoint"]
+        r.check(sp == [20.0], f"the lowest, then nothing: {sp}")
+        r.check(await r.s("alarm_hand_back_failed") == "off", "released by its timeout: no alarm")
+        r.note(f"control state {await r.s('control_state')}")
+        # The device keeps the value after all (declared expiring, held in fact).
+        await r.sim("set_write_type", write_type="held")
+        await r.switch(True)
+        await r.ha.wait(120)
+        t = time.time()
+        await r.switch(False)
+        alarm = await r.ha.until(lambda: _is(r, "alarm_hand_back_failed", "on"), 420, 5)
+        r.check(
+            alarm is not None and 200 <= alarm <= 330,
+            f"not released: the alarm {alarm and round(alarm)} s after the hand-back (its timeout + 3 min)",
+        )
+        sp = [v for k, v in entity_cmds(r, t) if k == "setpoint"]
+        r.check(sp == [20.0], f"nothing written again: {sp}")
+    finally:
+        if await r.s("control") == "on":
+            await r.switch(False)
+            await r.ha.wait(10)
+        await r.sim("set_write_type", write_type="held")
+        await options_walk(
+            r,
+            {"control_entity": {"write_type": "held", "hand_back": "value", "hand_back_value": 0}},
+        )
+
+
 async def N3(r: Run):
     """a setpoint the boiler stores, or might (persistent, unknown): control never writes it"""
     for write_type in ("persistent", "unknown"):

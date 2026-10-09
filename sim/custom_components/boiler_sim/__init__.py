@@ -338,6 +338,16 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
             model.assumed_state = bool(call.data["assumed_state"])
         hub.refresh()
 
+    async def set_write_type(call: ServiceCall) -> None:
+        """What the device does with a write, changed in place (J4: one instance for each)."""
+        changes = {
+            key: WriteType(call.data[key])
+            for key in ("write_type", "ch_write_type")
+            if key in call.data
+        }
+        sim.config = replace(sim.config, **changes)
+        hub.refresh()
+
     async def set_lockout(call: ServiceCall) -> None:
         sim.plant.boiler = replace(sim.plant.boiler, anti_cycle_s=float(call.data["seconds"]))
         hub.refresh()
@@ -415,6 +425,13 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
                 ),
                 vol.Optional("timer_restarts_on_repeat"): cv.boolean,
                 vol.Optional("assumed_state"): cv.boolean,
+            },
+        ),
+        "set_write_type": (
+            set_write_type,
+            {
+                vol.Optional("write_type"): vol.In([w.value for w in WriteType]),
+                vol.Optional("ch_write_type"): vol.In([w.value for w in WriteType]),
             },
         ),
         "set_lockout": (
