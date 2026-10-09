@@ -7,9 +7,8 @@ decisions of 2026-10-08 and 2026-10-09 below. Control stays off by default: no a
 anything on.
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`.
 
-Status on 2026-10-09: planned. The corrections from the test report that the user put first (F1,
-F2, F5) are done as pull requests #32, #34 and #35. I6.1 starts once the user has approved this
-plan; two of its questions are open (decisions 9 and 10).
+Status on 2026-10-09: approved by the user (I6.0); next I6.1. The corrections from the test report
+that the user put first (F1, F2, F5) are done as pull requests #32, #34 and #35.
 
 ## How to read this plan
 
@@ -95,14 +94,26 @@ plan; two of its questions are open (decisions 9 and 10).
    together with hot water active may have no priority — information only. The stored values
    `none`, `storage`, `combi` keep their meaning; a combi with a built-in tank is a new value.
 9. **Freshness limits get sensible defaults, with forced updates for every connection** (the user,
-   2026-10-09). 🔒 Open: how forced updates are had where Home Assistant writes only changes (see
-   I6.5). The defaults known safe today: 10 min for the boiler signals on the OTGW integration (it
-   rewrites every entity on each report), 3 h for the weather entity.
+   2026-10-09). Where Home Assistant writes only changes, "data flowing" is known in two layers:
+   - the device's availability (its MQTT online/offline, ESPHome's API link), which turns its
+     entities unavailable — already read; it does not see a device that is online while the
+     boiler's data stop (a link inside an OTGW, say);
+   - the device's own repeats: the OTGW firmware publishes every value at least every 60 s, EMS-ESP
+     at its publish interval, and Home Assistant drops the unchanged ones. The plugin listens to
+     the device's MQTT messages itself, reading only, and takes the time of the last message as the
+     signals' report time: on the OTGW firmware from its topics (top and node, asked with the
+     connection, not only with control), on EMS-ESP from its base topic (a field, `ems-esp` by
+     default). The defaults follow the device's rhythm (5 min for the OTGW firmware's 60 s; EMS-ESP's
+     from its interval, to be checked at I6.5).
+   On ESPHome the repeats are forced on the ESP (`force_update: true` on its sensors, in the sample
+   configuration); the plugin checks that a sensor re-reports and warns where it does not. On the
+   OTGW integration, which rewrites every entity on each report: 10 min. The weather entity: 3 h.
+   Another MQTT device whose topics are not known: availability, and a limit the user may set.
 10. **The highest water temperature:** its three fields stay (the boiler's, the circuit's, control's);
     the curve step shows which one applies and where it comes from; merging them waits for K4. An
     installation may have the boiler's control and a separate controller for an underfloor mixer:
-    the stored layout of the new answers allows a second control configuration, per circuit. 🔒 Open:
-    whether controlling two circuits at once stays in 0.3, as `SCOPE.md` §5 has it.
+    the stored layout of the new answers allows a second control configuration, per circuit;
+    controlling two circuits at once stays in 0.3, as `SCOPE.md` §5 has it (the user, 2026-10-09).
 11. **Control in the wizard:** with full control or on/off chosen, the control steps follow in the
     setup; the control switch still starts off.
 12. **Existing entries** keep working as they are, with no automatic migration (an entity path may
@@ -142,12 +153,12 @@ plan; two of its questions are open (decisions 9 and 10).
 
 | Step | Work | J4 impact |
 |---|---|---|
-| I6.0 🔒 | the user approves this plan, and answers decisions 9 and 10 | — |
+| I6.0 ✅ | the user approves this plan, and answers decisions 9 and 10 (2026-10-09) | — |
 | I6.1 | the first panels: the connection (decision 1), the control mode (6), the heat source (7), the boiler type with condensing and hot-water priority (8), then the name and level; the answers stored as their own keys; the boiler class from the connection, no longer asked; "room temperature only" gives the monitor with its reason; the options menu opens with the same panels; an entry without the answers as today (12); translations EN and PL; tests | the setup and the options' first steps: G1–G3 |
 | I6.2 | what the connection sets (decision 2) in the control steps: the paths offered, the write types, the hand-back, the topology; the ESPHome tick and its blocker (3); EMS-ESP's "off" at 0 and its answer-O latch (4, `core/` first); the blockers "connection does not fit the write path" and "topology does not fit the connection"; the entities suggested; translations, tests | every control scenario on the OTGW integration still passes unchanged; G1–G3 again |
 | I6.3 | the heat source (decision 7): fields, signals and alarms shown or hidden; the electric boiler's "heating on"; the defaults for condensing by source | the monitor's scenarios with the sim's gas boiler: none expected; F1, F2 |
 | I6.4 | the hot-water priority (decision 8): the learning pause and heat availability follow it (`core/` first); the optional hint | D8 (the SmartPI pause on a draw) |
-| I6.5 🔒 | freshness: the defaults and forced updates for every connection (decision 9), as the user answers | C1–C5 (stale data, link lost) |
+| I6.5 | freshness (decision 9): the plugin listening to the OTGW firmware's and EMS-ESP's MQTT messages for the report times; the defaults by connection; ESPHome's re-report check and warning; translations, tests | C1–C5 (stale data, link lost) |
 | I6.6 | control in the wizard (decision 11), with a new entry's first start never handing back a boiler it never held; the tidy-up: the design outdoor temperature in one place; the pressure limits in the boiler step at both levels and kept by "restore defaults"; the curve step naming the limit that applies (decision 10) | the setup with control; A1, B1 |
 | I6.7 | the user guides EN and PL (the connection table, the ESPHome sample, EMS-ESP), `SCOPE.md` §4, §5 and §11, `CLAUDE.md`'s verified facts (EMS-ESP's "Force Heating Off"; how ESPHome and MQTT report), and I6 marked ✅ in `docs/plan-0.2.md` | none |
 
@@ -155,6 +166,5 @@ plan; two of its questions are open (decisions 9 and 10).
 
 - Merging the three highest-water-temperature fields into one (K4).
 - Pellet and biomass as heat sources.
-- Controlling two circuits at once (decision 10; 0.3 in `SCOPE.md` §5 unless the user decides
-  otherwise).
+- Controlling two circuits at once (decision 10; 0.3).
 - Room-temperature mode itself (0.3).
