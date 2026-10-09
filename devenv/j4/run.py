@@ -17,6 +17,7 @@ import traceback
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 import contextlib
+from itertools import pairwise
 
 from lib import HA, ROOT, SIGNALS
 
@@ -1216,7 +1217,92 @@ async def E6(r: Run):
         await r.sim("set_outdoor", temperature=3.0)
 
 
-SCENARIOS.update({f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6)})
+GUARD_ALARMS = ("write_failed", "write_ignored", "outside_change", "commands_lost")
+
+
+async def L1(r: Run):
+    """hours of control (J4_HOURS, 12) at a steady outdoor temperature (J4_OUTDOOR, -2 °C),
+    VT's TPI zones pulsing: the setpoint within its limits and kept alive, heating following
+    VT's demand, no guard alarm, nothing latched, hot water never touched, the rooms held"""
+    hours = float(os.environ.get("J4_HOURS", "12"))
+    outdoor = float(os.environ.get("J4_OUTDOOR", "-2"))
+    zones = [f"climate.{zone}" for zone, _t in ZONES]
+    await r.sim("set_outdoor", temperature=outdoor)
+    await r.switch(True)
+    t = time.time()
+    samples: list[tuple[float, bool]] = []  # when, and whether a zone's device heated
+    behind_since: float | None = None
+    behind: list[int] = []  # minutes into the run where heating stayed off VT's demand > 90 s
+    raised: set[str] = set()
+    latched: set[str] = set()
+    states: set[str] = set()
+    while time.time() - t < hours * 3600:
+        st = await r.ha.states()
+        now = time.time()
+        calling = any(
+            st.get(z, {}).get("attributes", {}).get("hvac_action") == "heating" for z in zones
+        )
+        samples.append((now, calling))
+        ch = r.ha.since(t, "ch")
+        if ch and bool(ch[-1][2]) is not calling:
+            behind_since = behind_since or now
+            if now - behind_since > 90 and (
+                not behind or behind[-1] != round((behind_since - t) / 60)
+            ):
+                behind.append(round((behind_since - t) / 60))
+        else:
+            behind_since = None
+        raised |= {
+            a for a in GUARD_ALARMS if st.get(r.ent.get(f"alarm_{a}", ""), {}).get("state") == "on"
+        }
+        cs = st.get(r.ent["control_state"], {})
+        latched |= set(cs.get("attributes", {}).get("latched_by") or [])
+        states.add(cs.get("state"))
+        await r.ha.wait(10)
+    sp = r.ha.since(t, "setpoint")
+    values = [float(v) for _t, _k, v in sp]
+    gaps = [b[0] - a[0] for a, b in pairwise(sp)]
+    ch = r.ha.since(t, "ch")
+    toggles = sum(1 for a, b in pairwise(ch) if bool(a[2]) != bool(b[2]))
+    # A heating write matches VT's demand as read within the 40 s before it (the plugin's step
+    # and the gateway's 30-s repeat).
+    mismatched = [
+        round((at - t) / 60)
+        for at, _k, v in ch
+        if bool(v) not in {c for when, c in samples if at - 40 <= when <= at}
+        and any(at - 40 <= when <= at for when, _c in samples)
+    ]
+    rooms = {}
+    for zone, target in ZONES:
+        with contextlib.suppress(TypeError, ValueError):
+            rooms[zone] = round(
+                float(await r.s(f"sensor.boiler_sim_{zone}_temperature")) - target, 2
+            )
+    r.check(
+        bool(values) and all(20.0 <= v <= 70.0 for v in values),
+        f"setpoints {min(values, default=None)}–{max(values, default=None)} °C",
+    )
+    r.check(
+        bool(gaps) and max(gaps) <= 45.0,
+        f"kept alive: the longest gap {gaps and round(max(gaps))} s",
+    )
+    r.check(toggles >= hours * 3, f"heating follows VT's pulses: {toggles} toggles")
+    r.check(
+        not mismatched, f"every heating write as VT's demand: wrong at minutes {mismatched[:10]}"
+    )
+    r.check(not behind, f"never behind VT's demand over 90 s: at minutes {behind[:10]}")
+    r.check(not raised, f"no guard alarm: {sorted(raised)}")
+    r.check(not latched, f"nothing latched: {sorted(latched)}")
+    r.check(states <= {"heating", "idle"}, f"states seen: {sorted(states)}")
+    r.check(r.ha.since(t, "hot_water") == [], "hot water never touched")
+    r.check(all(abs(d) < 1.5 for d in rooms.values()), f"rooms against their targets (K): {rooms}")
+    t2 = time.time()
+    await r.switch(False)
+    await r.ha.wait(20)
+    r.note(f"at the hand-back: {r.cmds(t2)}, state {await r.s('control_state')}")
+
+
+SCENARIOS.update({f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6, L1)})
 
 
 if __name__ == "__main__":
