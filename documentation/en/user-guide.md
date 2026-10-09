@@ -72,6 +72,9 @@ Only one entry of the integration can exist: it runs one boiler.
 1. **Prepare VT.** Set up VT's thermostats for the rooms. If VT's central boiler is configured,
    untick it in VT's central configuration and restart Home Assistant, so that two controllers
    never drive the same boiler. Monitoring works without this; control waits for it.
+   If you create VT's central configuration (or change it) after Home Assistant has started —
+   even without a central boiler — restart Home Assistant once before you switch control on:
+   until then control waits, as the plugin cannot tell what VT ran meanwhile.
 2. **Create the entry.** Settings → Devices & services → Add integration →
    **Smart Boiler for Versatile Thermostat**. In the first step pick a name and the level of detail
    (the level changes only what you see, never how the plugin behaves).
@@ -137,7 +140,8 @@ from the first day, once every required setting is filled in, for example:
 - exactly one heating circuit fed straight from the boiler (or through a fixed thermostatic
   mixing valve);
 - VT's own central boiler switched off in VT, followed by a Home Assistant restart, so that two
-  controllers never drive the same boiler.
+  controllers never drive the same boiler. A VT central configuration created or changed after
+  Home Assistant started, even without a central boiler, needs that one restart too.
 
 When something is missing, the control switch says what. The monitor keeps running, and the
 boiler stays with its own control or its thermostat.
@@ -531,7 +535,9 @@ control off.
 | A blocker: a missing setting, Home Assistant starting | by itself, once it is gone |
 
 VT's central boiler still configured is a blocker too: control waits until you untick it in VT
-and restart Home Assistant.
+and restart Home Assistant. So does VT's central configuration created or changed after Home
+Assistant started (VT set up after the start, say), even without a central boiler: one restart of
+Home Assistant clears it.
 
 A latch survives a restart and is named in one repair issue. An alarm with a hand-back reaction
 that is already active when you switch control on blocks control at once.
