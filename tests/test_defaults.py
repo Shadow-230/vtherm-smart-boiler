@@ -95,6 +95,7 @@ def form_defaults(schema: vol.Schema) -> dict[str, Any]:
 ADVANCED = {"level": "advanced"}
 CURVE_FORM = form_defaults(config_flow.control_curve_schema(ADVANCED))
 MONITOR_FORM = form_defaults(config_flow.monitor_schema({}))
+BOILER_FORM = form_defaults(config_flow.boiler_schema({}))  # the pressure limits (I6)
 ENTITY_FORM = form_defaults(config_flow.control_entity_schema({}))
 # The tick is offered on the entity path with the virtual topology (answers F, M).
 OWN_CONTROL_FORM = form_defaults(
@@ -253,7 +254,7 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ("circuit-maximum alarm: + 5 K", lambda: CIRCUIT_ALARM_RISE_K, 5.0),
     ("circuit-maximum alarm: 10 min", lambda: CIRCUIT_ALARM_MIN, 10.0),
     # "Add water" threshold | none
-    ('"add water" threshold (form)', lambda: MONITOR_FORM["add_water_below"], vol.UNDEFINED),
+    ('"add water" threshold (form)', lambda: BOILER_FORM["add_water_below"], vol.UNDEFINED),
     ('"add water" threshold (parser)', lambda: CONFIG.monitor.alarms.add_water_below, None),
     # Boiler-fault signals | none
     # PB-95: read from the signals form, which offers every signal — not from options that map

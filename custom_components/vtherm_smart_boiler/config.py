@@ -919,6 +919,7 @@ def _control(
     panel: BoilerPanel | None = None,
 ) -> ControlOptions:
     panel = BoilerPanel() if panel is None else panel
+    entered = parameters.get(ParameterKey.DESIGN_OUTDOOR).estimate(Source.ENTERED)
     try:
         return parse_control(
             data,
@@ -926,6 +927,7 @@ def _control(
             parameters.value(ParameterKey.MAX_CH_SETPOINT),
             connection=panel.connection,
             control_mode=panel.control_mode,
+            design_outdoor=None if entered is None else entered.value,
         )
     except (AttributeError, KeyError, TypeError, ValueError) as err:
         raise ConfigError("invalid_control", str(err)) from err

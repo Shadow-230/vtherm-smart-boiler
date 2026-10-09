@@ -182,6 +182,10 @@ While heating is on, the plugin sets the boiler's water (flow) temperature:
 1. **The heating curve** — you enter it: the design outdoor temperature (default −15 °C), the
    design flow temperature (required, no default), the curve's room temperature (default 20 °C)
    and an optional offset. The curve gives a water temperature for each outdoor temperature.
+   The design outdoor temperature is one value with the building's: changing it in either step
+   changes both. The curve step also shows the boiler's maximum heating setpoint and the first
+   circuit's maximum flow temperature — the lowest of the three, these two and the highest water
+   temperature, applies.
 2. **Lowest water temperature** — the curve never goes below it. Default 20 °C (provisional).
    Too low, and the boiler may stop by itself again and again in mild weather; a boiler that does
    not condense may condense in its flue. Take the value from the boiler's manual. The monitor

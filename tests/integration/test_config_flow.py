@@ -159,7 +159,12 @@ async def test_simple_flow_creates_an_entry(hass: HomeAssistant, entities: dict[
         "return": entities["return"],
     }
     assert options["weather"] == WEATHER_ENTITY
-    assert options["parameters"] == {"boiler_min_power": 4.0, "boiler_max_power": 24.0}
+    # I6: the design outdoor temperature is asked at both levels, offered at −15 °C.
+    assert options["parameters"] == {
+        "boiler_min_power": 4.0,
+        "boiler_max_power": 24.0,
+        "design_outdoor": -15.0,
+    }
     assert options["circuits"] == [{"id": "main", "control": "unmixed_shared"}]
     assert options["zones"] == [
         {
@@ -450,12 +455,15 @@ async def test_control_through_the_gateway_at_the_simple_level(
         "confirmed_entity": "sensor.gw_control_setpoint",
         "ch_confirmed_entity": "binary_sensor.gw_central_heating",
         "gateway_id": "living_room_gw",
-        "curve": {"design_outdoor": -18, "design_flow": 52},
+        "curve": {"design_flow": 52},
         "hard_min": 25,
         "hard_max": 65,
         "activation_delay_s": 0,  # VT's delay, confirmed by saving (decision 5)
         "alarm_reactions": {"write_ignored": "hand_back"},
     }
+    # I6: the design outdoor temperature is the building's, one value with the curve's.
+    parameters = hass.config_entries.async_get_entry(entry_id).options["parameters"]
+    assert parameters["design_outdoor"] == -18
     switch = control_switch(hass, entry_id)
     assert switch is not None
     assert hass.states.get(switch).state == "off"  # off by default
@@ -569,13 +577,8 @@ async def test_control_at_the_advanced_level_and_back(
     await hass.async_block_till_done()
     entry = hass.config_entries.async_get_entry(entry_id)
     control = entry.options["control"]
-    assert control["curve"] == {
-        "design_outdoor": -15,
-        "design_flow": 55,
-        "room": 21,
-        "exponent": 1.25,
-        "offset": 1,
-    }
+    assert control["curve"] == {"design_flow": 55, "room": 21, "exponent": 1.25, "offset": 1}
+    assert entry.options["parameters"]["design_outdoor"] == -15
     assert control["ramp_k_per_min"] == 0.5
     assert control["off_setpoint"] == 12
     assert "daily_cap" not in control  # nothing is written to the boiler's memory
@@ -590,7 +593,7 @@ async def test_control_at_the_advanced_level_and_back(
     control = hass.config_entries.async_get_entry(entry_id).options["control"]
     assert "min_burn_min" not in control
     assert "alarm_reactions" not in control
-    assert control["curve"] == {"design_outdoor": -15, "design_flow": 55}
+    assert control["curve"] == {"design_flow": 55}
 
     # "No control" removes the section.
     result = await open_control(hass, entry_id)
@@ -3321,31 +3324,27 @@ async def test_the_relay_cannot_change_while_control_holds_it(
 # --- Y1: the fault signals, the "add water" threshold, the one reaction decision 7 offers -----
 
 
-async def test_the_monitor_step_offers_add_water_and_not_the_old_low_pressure_limits(
-    hass: HomeAssistant, entities: dict[str, str]
+@pytest.mark.parametrize("level", ["simple", "advanced"])
+async def test_the_boiler_step_offers_add_water_and_not_the_old_low_pressure_limits(
+    hass: HomeAssistant, entities: dict[str, str], level: str
 ) -> None:
-    """The monitor step (advanced) offers the optional "add water" threshold, empty by default,
-    within 0.1–2.0 bar, and no longer 0.2.1's two low-pressure limits."""
+    """The boiler step offers the optional "add water" threshold at both levels (I6: a fact from
+    the boiler's manual), empty by default, within 0.1–2.0 bar, and no longer 0.2.1's two
+    low-pressure limits; the monitor step no longer asks it. Stored in the monitor section."""
     from custom_components.vtherm_smart_boiler import config_flow as flow
 
-    fields = {str(marker) for marker in flow.monitor_schema({}).schema}
+    fields = {str(marker) for marker in flow.boiler_schema({}).schema}
     assert "add_water_below" in fields
     assert not {"pressure_low_warning", "pressure_low_alarm"} & fields
-    entry_id = await create_entry(hass, entities, "advanced")
+    assert not set(flow.PRESSURE_KEYS) & {str(m) for m in flow.monitor_schema({}).schema}
+    entry_id = await create_entry(hass, entities, level)
     menu = await hass.config_entries.options.async_init(entry_id)
-    result = await options_step(hass, menu, {"next_step_id": "monitor"})
+    result = await options_step(hass, menu, {"next_step_id": "boiler"})
     assert form_default(result, "add_water_below") is None  # optional, no value offered
-    base = {
-        "condensing_return": 55,
-        "short_burn_min": 10,
-        "monitoring_days": 7,
-        "near_room_k": 3,
-        "foreign_heat_hold_min": 60,
-    }
     for bad in (0.05, 2.5):
         with pytest.raises(InvalidData):
-            await options_step(hass, result, base | {"add_water_below": bad})
-    result = await options_step(hass, result, base | {"add_water_below": 0.8})
+            await options_step(hass, result, {"add_water_below": bad})
+    result = await options_step(hass, result, {"add_water_below": 0.8})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     options = hass.config_entries.async_get_entry(entry_id).options
@@ -3353,40 +3352,95 @@ async def test_the_monitor_step_offers_add_water_and_not_the_old_low_pressure_li
     assert EntryConfig.from_options(options).monitor.alarms.add_water_below == 0.8
 
 
-async def test_the_monitor_step_offers_no_high_pressure_limits(
-    hass: HomeAssistant, entities: dict[str, str]
+@pytest.mark.parametrize("level", ["simple", "advanced"])
+async def test_the_boiler_step_offers_no_high_pressure_limits(
+    hass: HomeAssistant, entities: dict[str, str], level: str
 ) -> None:
     """Decision 13 (SB-18): the high-pressure warning and alarm are optional and offered empty —
-    no default fits every safety valve. Left empty, none is stored and there is no such alarm;
-    one alone is kept; both must be in order — the step says so — and are kept."""
-    entry_id = await create_entry(hass, entities, "advanced")
-    base = {
-        "condensing_return": 55,
-        "short_burn_min": 10,
-        "monitoring_days": 7,
-        "near_room_k": 3,
-        "foreign_heat_hold_min": 60,
-    }
+    no default fits every safety valve — in the boiler step at both levels (I6). Left empty,
+    none is stored and there is no such alarm; one alone is kept; both must be in order — the
+    step says so on the alarm — and are kept."""
+    entry_id = await create_entry(hass, entities, level)
     for limits, expected in (
         ({}, None),
         ({"pressure_high_alarm": 2.0}, (None, 2.0)),
         ({"pressure_high_warning": 2.2, "pressure_high_alarm": 2.0}, "alarm_limits_out_of_order"),
+        ({"pressure_high_warning": 2.0, "pressure_high_alarm": 2.0}, "alarm_limits_out_of_order"),
         ({"pressure_high_warning": 1.8, "pressure_high_alarm": 2.0}, (1.8, 2.0)),
     ):
         menu = await hass.config_entries.options.async_init(entry_id)
-        result = await options_step(hass, menu, {"next_step_id": "monitor"})
+        result = await options_step(hass, menu, {"next_step_id": "boiler"})
         if not limits:
             assert form_default(result, "pressure_high_warning") is None
             assert form_default(result, "pressure_high_alarm") is None
-        result = await options_step(hass, result, base | limits)
+        result = await options_step(hass, result, limits)
         if isinstance(expected, str):
-            assert (result["step_id"], result["errors"]) == ("monitor", {"base": expected})
+            assert (result["step_id"], result["errors"]) == (
+                "boiler",
+                {"pressure_high_alarm": expected},
+            )
             continue
         assert result["type"] is FlowResultType.CREATE_ENTRY, limits
         await hass.async_block_till_done()
         options = hass.config_entries.async_get_entry(entry_id).options
         band = EntryConfig.from_options(options).monitor.alarms.pressure_high
         assert (None if band is None else (band.warning, band.alarm)) == expected
+
+
+async def test_the_pressure_limits_stay_as_facts_about_the_boiler(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """I6: the pressure limits are the boiler step's — the monitor step keeps them when saved;
+    at the simple level they are no hidden advanced setting, and "restore defaults" keeps them,
+    as it keeps the other facts; emptied in the boiler step, they go."""
+    from custom_components.vtherm_smart_boiler import config_flow as flow
+
+    limits = {"add_water_below": 0.8, "pressure_high_warning": 2.5, "pressure_high_alarm": 2.8}
+    entry_id = await create_entry(hass, entities, "advanced")
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "boiler"})
+    await options_step(hass, result, limits)
+    await hass.async_block_till_done()
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "monitor"})
+    await options_step(hass, result, {})
+    await hass.async_block_till_done()
+    assert (
+        limits.items() <= hass.config_entries.async_get_entry(entry_id).options["monitor"].items()
+    )
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "level"})
+    await options_step(hass, result, {"level": "simple", "restore_defaults": True})
+    await hass.async_block_till_done()
+    options = dict(hass.config_entries.async_get_entry(entry_id).options)
+    assert limits.items() <= options["monitor"].items()
+    # Neither the pressure limits nor the design outdoor temperature are advanced (I6).
+    simple = {"level": "simple", "monitor": limits, "parameters": {"design_outdoor": -20.0}}
+    assert not flow.has_hidden_advanced(simple)
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "boiler"})
+    await options_step(hass, result, {})
+    await hass.async_block_till_done()
+    monitor = hass.config_entries.async_get_entry(entry_id).options["monitor"]
+    assert not set(limits) & set(monitor)
+
+
+@pytest.mark.parametrize(
+    ("code", "subject", "step"),
+    [
+        ("alarm_limits_out_of_order", "pressure_high", "boiler"),
+        ("invalid_monitor", "add_water_below", "boiler"),
+        ("invalid_monitor", "pressure_high_alarm", "boiler"),
+        ("alarm_limits_out_of_order", "flue_gas", "monitor"),
+        ("invalid_monitor", "near_room_k", "monitor"),
+    ],
+)
+def test_a_pressure_problem_is_fixed_in_the_boiler_step(code: str, subject: str, step: str) -> None:
+    """I6: a stored pressure limit the save refuses (a hand edit) is shown on the boiler step,
+    which asks it; the monitor's own problems stay the monitor's."""
+    from custom_components.vtherm_smart_boiler import config_flow as flow
+
+    assert flow.problem_step(code, subject) == step
 
 
 def _form_optional(result: dict[str, Any], key: str) -> bool:
@@ -3562,6 +3616,7 @@ def test_a_reaction_stored_at_the_simple_level_is_not_hidden() -> None:
         },
     }
     assert "write_ignored" in {str(m) for m in flow.control_alarms_schema(options).schema}
+    print("DEBUG", options)
     assert not flow.has_hidden_advanced(options)
 
 
@@ -3573,6 +3628,7 @@ def test_the_relays_power_threshold_is_a_hidden_setting_kept_by_restore_defaults
 
     control = {"write_path": "relay", "relay_entity": "switch.relay"}
     options: dict[str, Any] = {"level": "simple", "control": dict(control)}
+    print("DEBUG", options)
     assert not flow.has_hidden_advanced(options)
     options["control"]["boiler_heats_above_w"] = 300
     assert flow.has_hidden_advanced(options)
@@ -4677,7 +4733,8 @@ async def test_full_control_is_set_up_in_the_setup_and_starts_off(
     await hass.async_block_till_done()
     entry = result["result"]
     assert entry.options["control"]["write_path"] == "opentherm_gw"
-    assert entry.options["control"]["curve"] == {"design_outdoor": -18, "design_flow": 52}
+    assert entry.options["control"]["curve"] == {"design_flow": 52}
+    assert entry.options["parameters"]["design_outdoor"] == -18  # the building's (I6)
     switch = er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_control")
     assert switch is not None
     assert hass.states.get(switch).state == "off"
@@ -4703,3 +4760,94 @@ async def test_monitoring_only_skips_the_control_steps(hass: HomeAssistant) -> N
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert "control" not in result["options"]
     await hass.async_block_till_done()
+
+
+# --- I6.6b: one design outdoor temperature; the curve step names the other water limits -------
+
+
+async def control_entry(
+    hass: HomeAssistant, entities: dict[str, str], level: str, **curve: float
+) -> str:
+    """An entry with the gateway's control set up through the options, its curve entered."""
+    loaded_gateway(hass, "living_room_gw")
+    hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
+    entry_id = await create_entry(hass, entities, level, ("living",))
+    result = await to_control_curve(hass, entry_id)
+    answers = {"design_outdoor": -18, "design_flow": 52, "hard_min": 25, "hard_max": 65}
+    result = await options_step(hass, result, answers | curve)
+    while result["type"] is not FlowResultType.CREATE_ENTRY:  # the advanced level's steps
+        result = await options_step(hass, result, {})
+    await hass.async_block_till_done()
+    return entry_id
+
+
+@pytest.mark.parametrize("level", ["simple", "advanced"])
+async def test_the_design_outdoor_temperature_is_one_value(
+    hass: HomeAssistant, entities: dict[str, str], level: str
+) -> None:
+    """I6: the building and the curve show and edit one design outdoor temperature, the
+    building's, at both levels: the curve's answer is stored there, the building step offers
+    it, a change there is what control's curve then uses; the curve keeps none of its own."""
+    entry_id = await control_entry(hass, entities, level)
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry.options["parameters"]["design_outdoor"] == -18
+    assert "design_outdoor" not in entry.options["control"]["curve"]
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "building"})
+    assert form_default(result, "design_outdoor") == -18
+    await options_step(hass, result, {"design_outdoor": -22})
+    await hass.async_block_till_done()
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry.options["parameters"]["design_outdoor"] == -22
+    config = EntryConfig.from_options(entry.options)
+    assert config.control.loop.control.curve.design_outdoor == -22
+    result = await to_control_curve(hass, entry_id)
+    assert form_default(result, "design_outdoor") == -22
+
+
+async def test_the_building_step_refuses_a_design_outdoor_too_warm_for_the_curve(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """I6: the curve step's check, made in the building step too, where the same value is
+    entered: at least 10 K below the curve's room temperature (X5.8). Without a curve entered,
+    nothing to check it against."""
+    entry_id = await control_entry(hass, entities, "advanced", room=18)
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "building"})
+    result = await options_step(hass, result, {"design_outdoor": 8.5})
+    assert result["errors"] == {"design_outdoor": "design_outdoor_too_warm"}
+    result = await options_step(hass, result, {"design_outdoor": 8.0})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    from custom_components.vtherm_smart_boiler import config_flow as flow
+
+    assert not flow.design_outdoor_too_warm({}, 10.0)
+    assert not flow.design_outdoor_too_warm({"control": {"curve": {"room": 15}}}, 10.0)
+    assert flow.design_outdoor_too_warm({"control": {"curve": {"design_flow": 50}}}, 10.5)
+
+
+@pytest.mark.parametrize(
+    ("parameters", "circuit", "shown"),
+    [
+        ({}, {}, ("—", "—")),
+        ({"max_ch_setpoint": 75.0}, {"max_flow": 45.0}, ("75 °C", "45 °C")),
+        ({"max_ch_setpoint": 80.5}, {"max_flow": "hot"}, ("80.5 °C", "—")),
+    ],
+)
+async def test_the_curve_step_names_the_other_water_limits(
+    hass: HomeAssistant,
+    entities: dict[str, str],
+    parameters: dict[str, Any],
+    circuit: dict[str, Any],
+    shown: tuple[str, str],
+) -> None:
+    """Decision 10 of I6: the curve step says what else caps the water — the boiler's maximum
+    heating setpoint and the first circuit's maximum flow, as entered, "—" where not."""
+    from custom_components.vtherm_smart_boiler import config_flow as flow
+
+    options = {"parameters": parameters, "circuits": [{"id": "main", **circuit}]}
+    assert flow.water_limits(options) == {"boiler_max": shown[0], "circuit_max": shown[1]}
+    assert flow.water_limits({}) == {"boiler_max": "—", "circuit_max": "—"}
+    loaded_gateway(hass, "living_room_gw")
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
+    result = await to_control_curve(hass, entry_id)
+    assert result["description_placeholders"] == {"boiler_max": "—", "circuit_max": "—"}

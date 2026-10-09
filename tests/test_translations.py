@@ -487,7 +487,7 @@ def test_y1_texts_are_translated() -> None:
     assert "likely" not in falling
     assert (
         "read on the valve"
-        in SOURCE["config"]["step"]["monitor"]["data_description"]["pressure_high_alarm"]
+        in SOURCE["config"]["step"]["boiler"]["data_description"]["pressure_high_alarm"]
     )
     binary = SOURCE["entity"]["binary_sensor"]
     for kind in ("pressure_low", "pressure_high", "flue_gas_high", "frequent_starts"):
@@ -502,9 +502,10 @@ def test_y1_texts_are_translated() -> None:
         for key in ("low_pressure_fault", "boiler_lockout", "fault_indication"):
             assert steps["signals"]["data"][key], key
             assert "Optional" in steps["signals"]["data_description"][key], key
-        monitor = steps["monitor"]
-        assert "Empty by default" in monitor["data_description"]["add_water_below"]
-        assert "pressure_low_warning" not in monitor["data"]
+        boiler = steps["boiler"]  # I6: the boiler step asks it
+        assert "Empty by default" in boiler["data_description"]["add_water_below"]
+        assert "add_water_below" not in steps["monitor"]["data"]
+        assert "pressure_low_warning" not in steps["monitor"]["data"]
 
 
 def test_y2_texts_are_translated() -> None:

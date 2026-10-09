@@ -111,7 +111,10 @@
           "gas_at_min_power": "Gas at minimum power",
           "gas_at_max_power": "Gas at maximum power",
           "modulation_scale": "Modulation means",
-          "bypass": "Bypass or low-loss header"
+          "bypass": "Bypass or low-loss header",
+          "add_water_below": "Add water below",
+          "pressure_high_warning": "High pressure warning",
+          "pressure_high_alarm": "High pressure alarm"
         },
         "data_description": {
           "boiler_min_power": "Lowest heating power from the manual, in kW. Compared with the building load: a load often below it means the boiler must cycle. A wrong value skews that judgement in the verdict.",
@@ -120,7 +123,10 @@
           "gas_at_min_power": "Gas per hour at minimum power, in your gas meter's unit. With the modulation it estimates gas use when there is no meter; a wrong value skews gas per degree-day.",
           "gas_at_max_power": "Gas per hour at maximum power, in the same unit; a wrong value skews the gas estimates.",
           "modulation_scale": "Whether 0 % is the minimum power (the OpenTherm definition) or the value is a percentage of maximum power. The wrong choice skews heat and gas estimates.",
-          "bypass": "Tick when the heating water always has a path — an automatic bypass valve or a low-loss header: the low-flow warning is then off, as closed valves cannot stop the flow. Left unticked on such a system, the warning is false; ticked without one, a real dead-end goes unwarned."
+          "bypass": "Tick when the heating water always has a path — an automatic bypass valve or a low-loss header: the low-flow warning is then off, as closed valves cannot stop the flow. Left unticked on such a system, the warning is false; ticked without one, a real dead-end goes unwarned.",
+          "add_water_below": "Optional: below this pressure you are told to add water, in bar — take it from your boiler's manual (its minimum operating pressure). Empty by default: no notification. It only informs; heating stops only while the boiler itself reports a fault that stops it. Too low tells you late; too high tells you while the pressure is fine.",
+          "pressure_high_warning": "Optional: pressure above this raises a warning, in bar. Empty by default: no warning. Set it below your safety valve's rating, read on the valve itself (often 3 bar in Europe, about 2.1 bar / 30 psi in North America), and below the alarm. It only informs. Too high warns too late; too low warns while the pressure is fine.",
+          "pressure_high_alarm": "Optional: pressure above this raises an alarm, in bar, and a notification after 5 minutes. Empty by default: no alarm. Set it below your safety valve's rating, read on the valve itself (often 3 bar in Europe, about 2.1 bar / 30 psi in North America); with a warning set too, above the warning. It only informs; heating stops only while the boiler itself reports a fault that stops it. Too high tells you only after the valve has let water out."
         }
       },
       "circuit": {
@@ -198,7 +204,7 @@
           "design_load_kw": "Your own heat-loss calculation, in kW at the design outdoor temperature. Always wins: recorded days never replace it, they show a mismatch. A value no house has is refused.",
           "loss_coefficient": "Heat loss per kelvin, in kW/K, if you know it. Always wins, measured values included: recorded days never replace it, they show a mismatch — a wrong value stays wrong.",
           "heating_threshold": "Outdoor temperature above which the house needs no heating, in °C; also the degree-day base. Default 15 °C, until recorded days over a wide enough range of outdoor temperatures measure it. Entered, it always wins; the measured value is shown beside it with any mismatch. Wrong, degree-days and gas per degree-day are skewed.",
-          "design_outdoor": "The coldest outdoor temperature your design load refers to, in °C. Default −15 °C. Wrong, the estimate from your design load is skewed."
+          "design_outdoor": "The coldest outdoor temperature your heating is designed for, in °C. Default −15 °C. One value with the heating curve's design outdoor temperature: changing it here changes the curve too. Too cold a value gives too little water in frost; wrong, the estimate from your design load is skewed."
         }
       },
       "reference": {
@@ -224,9 +230,6 @@
           "monitoring_days": "Days of data for the verdict",
           "near_room_k": "Near room temperature",
           "foreign_heat_hold_min": "Foreign heat hold",
-          "add_water_below": "Add water below",
-          "pressure_high_warning": "High pressure warning",
-          "pressure_high_alarm": "High pressure alarm",
           "flue_gas_warning": "Flue gas warning",
           "flue_gas_alarm": "Flue gas alarm",
           "starts_per_hour_limit": "Frequent starts",
@@ -239,9 +242,6 @@
           "monitoring_days": "How many days of data the monitor's verdict needs, counted from when this integration was added. It holds nothing back: control can be switched on at any time, even without a verdict, and until there is one the control switch shows \"not enough data\". Out of the heating season there may be too little data even after these days. Default 7; shorter is not allowed.",
           "near_room_k": "Water within this of the room counts as no heat reaching the zone, in K. Default 3. Larger says 'no heat reaches the zone' sooner.",
           "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60. Longer keeps learning paused longer after a fire.",
-          "add_water_below": "Optional: below this pressure you are told to add water, in bar — take it from your boiler's manual (its minimum operating pressure). Empty by default: no notification. It only informs; heating stops only while the boiler itself reports a fault that stops it. Too low tells you late; too high tells you while the pressure is fine.",
-          "pressure_high_warning": "Optional: pressure above this raises a warning, in bar. Empty by default: no warning. Set it below your safety valve's rating, read on the valve itself (often 3 bar in Europe, about 2.1 bar / 30 psi in North America), and below the alarm. It only informs. Too high warns too late; too low warns while the pressure is fine.",
-          "pressure_high_alarm": "Optional: pressure above this raises an alarm, in bar, and a notification after 5 minutes. Empty by default: no alarm. Set it below your safety valve's rating, read on the valve itself (often 3 bar in Europe, about 2.1 bar / 30 psi in North America); with a warning set too, above the warning. It only informs; heating stops only while the boiler itself reports a fault that stops it. Too high tells you only after the valve has let water out.",
           "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C. Too high warns too late.",
           "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
           "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12. Too high hides short-cycling.",
@@ -407,7 +407,7 @@
       },
       "control_curve": {
         "title": "Heating curve and limits",
-        "description": "The flow temperature the house needs at each outdoor temperature, the limits no setpoint may pass, and how long heating waits for slow valves.",
+        "description": "The flow temperature the house needs at each outdoor temperature, the limits no setpoint may pass, and how long heating waits for slow valves. The water is also capped by the boiler's maximum heating setpoint ({boiler_max}, boiler step) and the first circuit's maximum flow temperature ({circuit_max}, circuit step): the lowest of the three — these two and the highest water temperature below — applies.",
         "data": {
           "design_outdoor": "Design outdoor temperature",
           "design_flow": "Design flow temperature",
@@ -424,7 +424,7 @@
           "frost_zone": "Frost zone"
         },
         "data_description": {
-          "design_outdoor": "The coldest outdoor temperature your heating is designed for, in °C. Default: the building's design outdoor temperature, or −15 °C. Too cold a value gives too little water in frost.",
+          "design_outdoor": "The coldest outdoor temperature your heating is designed for, in °C. Default −15 °C. One value with the building's design outdoor temperature: changing it here changes it there too. Too cold a value gives too little water in frost.",
           "design_flow": "The flow temperature the heating needs at the design outdoor temperature, in °C, e.g. the value on your boiler's own curve. Required; there is no default. Too high wastes gas and makes the burner cycle; too low leaves rooms cold in hard frost. SmartPI (0.4.0) learns its own outdoor term in each zone, which cannot be switched off, so the weather counts twice — in the curve and in the zone: set the curve to what the house needs, no higher.",
           "hard_min": "The lowest water temperature the plugin sets, in °C, set like a point of the curve. Default 20 °C. Too low: in mild weather the boiler stops by itself again and again, and a boiler that is not condensing condenses in its flue — take the value from its manual. Too high: water warmer than the rooms need, and more gas. When the boiler keeps stopping at this temperature, the plugin shows its evidence and a suggested value; it never changes this setting itself.",
           "hard_max": "No setpoint above this, whatever the curve or a correction asks, in °C. Default 70 °C. Underfloor heating also needs its circuit's maximum flow. Too high: emitters, or a floor without its own maximum, get water that hot; too low: rooms stay cold in hard frost, as the curve is cut off. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum holds.",
@@ -757,7 +757,10 @@
           "gas_at_min_power": "Gas at minimum power",
           "gas_at_max_power": "Gas at maximum power",
           "modulation_scale": "Modulation means",
-          "bypass": "Bypass or low-loss header"
+          "bypass": "Bypass or low-loss header",
+          "add_water_below": "Add water below",
+          "pressure_high_warning": "High pressure warning",
+          "pressure_high_alarm": "High pressure alarm"
         },
         "data_description": {
           "boiler_min_power": "Lowest heating power from the manual, in kW. Compared with the building load: a load often below it means the boiler must cycle. A wrong value skews that judgement in the verdict.",
@@ -766,7 +769,10 @@
           "gas_at_min_power": "Gas per hour at minimum power, in your gas meter's unit. With the modulation it estimates gas use when there is no meter; a wrong value skews gas per degree-day.",
           "gas_at_max_power": "Gas per hour at maximum power, in the same unit; a wrong value skews the gas estimates.",
           "modulation_scale": "Whether 0 % is the minimum power (the OpenTherm definition) or the value is a percentage of maximum power. The wrong choice skews heat and gas estimates.",
-          "bypass": "Tick when the heating water always has a path — an automatic bypass valve or a low-loss header: the low-flow warning is then off, as closed valves cannot stop the flow. Left unticked on such a system, the warning is false; ticked without one, a real dead-end goes unwarned."
+          "bypass": "Tick when the heating water always has a path — an automatic bypass valve or a low-loss header: the low-flow warning is then off, as closed valves cannot stop the flow. Left unticked on such a system, the warning is false; ticked without one, a real dead-end goes unwarned.",
+          "add_water_below": "Optional: below this pressure you are told to add water, in bar — take it from your boiler's manual (its minimum operating pressure). Empty by default: no notification. It only informs; heating stops only while the boiler itself reports a fault that stops it. Too low tells you late; too high tells you while the pressure is fine.",
+          "pressure_high_warning": "Optional: pressure above this raises a warning, in bar. Empty by default: no warning. Set it below your safety valve's rating, read on the valve itself (often 3 bar in Europe, about 2.1 bar / 30 psi in North America), and below the alarm. It only informs. Too high warns too late; too low warns while the pressure is fine.",
+          "pressure_high_alarm": "Optional: pressure above this raises an alarm, in bar, and a notification after 5 minutes. Empty by default: no alarm. Set it below your safety valve's rating, read on the valve itself (often 3 bar in Europe, about 2.1 bar / 30 psi in North America); with a warning set too, above the warning. It only informs; heating stops only while the boiler itself reports a fault that stops it. Too high tells you only after the valve has let water out."
         }
       },
       "circuit": {
@@ -844,7 +850,7 @@
           "design_load_kw": "Your own heat-loss calculation, in kW at the design outdoor temperature. Always wins: recorded days never replace it, they show a mismatch. A value no house has is refused.",
           "loss_coefficient": "Heat loss per kelvin, in kW/K, if you know it. Always wins, measured values included: recorded days never replace it, they show a mismatch — a wrong value stays wrong.",
           "heating_threshold": "Outdoor temperature above which the house needs no heating, in °C; also the degree-day base. Default 15 °C, until recorded days over a wide enough range of outdoor temperatures measure it. Entered, it always wins; the measured value is shown beside it with any mismatch. Wrong, degree-days and gas per degree-day are skewed.",
-          "design_outdoor": "The coldest outdoor temperature your design load refers to, in °C. Default −15 °C. Wrong, the estimate from your design load is skewed."
+          "design_outdoor": "The coldest outdoor temperature your heating is designed for, in °C. Default −15 °C. One value with the heating curve's design outdoor temperature: changing it here changes the curve too. Too cold a value gives too little water in frost; wrong, the estimate from your design load is skewed."
         }
       },
       "reference": {
@@ -870,9 +876,6 @@
           "monitoring_days": "Days of data for the verdict",
           "near_room_k": "Near room temperature",
           "foreign_heat_hold_min": "Foreign heat hold",
-          "add_water_below": "Add water below",
-          "pressure_high_warning": "High pressure warning",
-          "pressure_high_alarm": "High pressure alarm",
           "flue_gas_warning": "Flue gas warning",
           "flue_gas_alarm": "Flue gas alarm",
           "starts_per_hour_limit": "Frequent starts",
@@ -885,9 +888,6 @@
           "monitoring_days": "How many days of data the monitor's verdict needs, counted from when this integration was added. It holds nothing back: control can be switched on at any time, even without a verdict, and until there is one the control switch shows \"not enough data\". Out of the heating season there may be too little data even after these days. Default 7; shorter is not allowed.",
           "near_room_k": "Water within this of the room counts as no heat reaching the zone, in K. Default 3. Larger says 'no heat reaches the zone' sooner.",
           "foreign_heat_hold_min": "How long a room still counts as warmed after its source stops, in minutes. Default 60. Longer keeps learning paused longer after a fire.",
-          "add_water_below": "Optional: below this pressure you are told to add water, in bar — take it from your boiler's manual (its minimum operating pressure). Empty by default: no notification. It only informs; heating stops only while the boiler itself reports a fault that stops it. Too low tells you late; too high tells you while the pressure is fine.",
-          "pressure_high_warning": "Optional: pressure above this raises a warning, in bar. Empty by default: no warning. Set it below your safety valve's rating, read on the valve itself (often 3 bar in Europe, about 2.1 bar / 30 psi in North America), and below the alarm. It only informs. Too high warns too late; too low warns while the pressure is fine.",
-          "pressure_high_alarm": "Optional: pressure above this raises an alarm, in bar, and a notification after 5 minutes. Empty by default: no alarm. Set it below your safety valve's rating, read on the valve itself (often 3 bar in Europe, about 2.1 bar / 30 psi in North America); with a warning set too, above the warning. It only informs; heating stops only while the boiler itself reports a fault that stops it. Too high tells you only after the valve has let water out.",
           "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C. Too high warns too late.",
           "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
           "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12. Too high hides short-cycling.",
@@ -973,7 +973,7 @@
       },
       "control_curve": {
         "title": "Heating curve and limits",
-        "description": "The flow temperature the house needs at each outdoor temperature, the limits no setpoint may pass, and how long heating waits for slow valves. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "The flow temperature the house needs at each outdoor temperature, the limits no setpoint may pass, and how long heating waits for slow valves. The water is also capped by the boiler's maximum heating setpoint ({boiler_max}, boiler step) and the first circuit's maximum flow temperature ({circuit_max}, circuit step): the lowest of the three — these two and the highest water temperature below — applies. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "design_outdoor": "Design outdoor temperature",
           "design_flow": "Design flow temperature",
@@ -990,7 +990,7 @@
           "frost_zone": "Frost zone"
         },
         "data_description": {
-          "design_outdoor": "The coldest outdoor temperature your heating is designed for, in °C. Default: the building's design outdoor temperature, or −15 °C. Too cold a value gives too little water in frost.",
+          "design_outdoor": "The coldest outdoor temperature your heating is designed for, in °C. Default −15 °C. One value with the building's design outdoor temperature: changing it here changes it there too. Too cold a value gives too little water in frost.",
           "design_flow": "The flow temperature the heating needs at the design outdoor temperature, in °C, e.g. the value on your boiler's own curve. Required; there is no default. Too high wastes gas and makes the burner cycle; too low leaves rooms cold in hard frost. SmartPI (0.4.0) learns its own outdoor term in each zone, which cannot be switched off, so the weather counts twice — in the curve and in the zone: set the curve to what the house needs, no higher.",
           "hard_min": "The lowest water temperature the plugin sets, in °C, set like a point of the curve. Default 20 °C. Too low: in mild weather the boiler stops by itself again and again, and a boiler that is not condensing condenses in its flue — take the value from its manual. Too high: water warmer than the rooms need, and more gas. When the boiler keeps stopping at this temperature, the plugin shows its evidence and a suggested value; it never changes this setting itself.",
           "hard_max": "No setpoint above this, whatever the curve or a correction asks, in °C. Default 70 °C. Underfloor heating also needs its circuit's maximum flow. Too high: emitters, or a floor without its own maximum, get water that hot; too low: rooms stay cold in hard frost, as the curve is cut off. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum holds.",
