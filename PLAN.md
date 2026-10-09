@@ -87,3 +87,6 @@ Checks before control code: `docs/plan-0.2.md`, phase F (done 2026-09-24; answer
 - 0.2.2 — `docs/plan-0.2.2.md` (details: `docs/plan-0.2.2-details.md`): the corrections after the
   review of 2026-09-26 and the user's decisions of 2026-09-26/27; the first version to be
   published (provisional)
+- 0.2, step I6 — `docs/plan-0.2-i6.md`: the setup opens with how the boiler is connected, the
+  control mode, the heat source and the boiler type (the user's decisions of 2026-10-08 and
+  2026-10-09)

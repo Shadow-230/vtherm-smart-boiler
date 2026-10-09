@@ -8,7 +8,8 @@ details of each step are in [`docs/plan-0.2.2-details.md`](docs/plan-0.2.2-detai
 with "Start here"), then in [`docs/plan-0.2.3.md`](docs/plan-0.2.3.md) (corrections after the
 review of 2026-10-04, in four parts, each ending with a stop where the user decides whether the
 next starts), then in [`docs/plan-0.2.md`](docs/plan-0.2.md), whose status line says where the
-build stands; phases run in order. A 🔒 step whose plan says it holds nothing up is noted in the
+build stands — its step I6 is planned step by step in [`docs/plan-0.2-i6.md`](docs/plan-0.2-i6.md);
+phases run in order. A 🔒 step whose plan says it holds nothing up is noted in the
 report and passed; work goes on with the next step. 0.1 and 0.2 are built in one go; the first
 published version is decided at K4 and K5 (`docs/plan-0.2.2.md`, decision 16; provisionally
 0.2.3b1).
@@ -18,7 +19,7 @@ published version is decided at K4 and K5 (`docs/plan-0.2.2.md`, decision 16; pr
   [`docs/plan-0.1.md`](docs/plan-0.1.md), [`docs/plan-0.2.md`](docs/plan-0.2.md),
   [`docs/plan-0.2.1.md`](docs/plan-0.2.1.md), [`docs/plan-0.2.2.md`](docs/plan-0.2.2.md) with
   [`docs/plan-0.2.2-details.md`](docs/plan-0.2.2-details.md),
-  [`docs/plan-0.2.3.md`](docs/plan-0.2.3.md)
+  [`docs/plan-0.2.3.md`](docs/plan-0.2.3.md), [`docs/plan-0.2-i6.md`](docs/plan-0.2-i6.md)
 - **Research** (network reads, and the notes and raw results of every analysis and check, dated):
   `research/`
 - **Author's own assessment**, private — never a source of values for code, defaults, tests or
