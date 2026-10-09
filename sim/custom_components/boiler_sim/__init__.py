@@ -70,6 +70,8 @@ SIGNALS = (
     "gateway_all",
     # The relay reports no state ("unknown") while it stays available.
     "relay",
+    # The flow setpoint entity alone unavailable, the device holding what it was given (J4's N6).
+    "flow_setpoint",
     # The wall thermostat's room setpoint (ID 16), as the gateway's thermostat device shows it.
     "thermostat_setpoint",
     *FAULTS,

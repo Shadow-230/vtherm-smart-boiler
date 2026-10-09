@@ -21,7 +21,8 @@ fail_signal:
   description: >-
     A signal's entity becomes unavailable (or, for the gateway, out of reach: its commands are
     dropped; "gateway_all" also takes every boiler signal the gateway carries; "relay" reports no
-    state while it stays available). Call again with "failed" off to bring it back.
+    state while it stays available; "flow_setpoint" takes the setpoint entity alone, the device
+    holding what it was given). Call again with "failed" off to bring it back.
   fields:
     signal:
       name: Signal
@@ -45,6 +46,7 @@ fail_signal:
             - gateway
             - gateway_all
             - relay
+            - flow_setpoint
             - thermostat_setpoint
             - low_pressure_fault
             - boiler_lockout

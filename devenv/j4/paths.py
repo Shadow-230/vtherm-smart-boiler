@@ -20,6 +20,10 @@ RELAY = "switch.boiler_sim_relay"
 SETPOINT = "number.boiler_sim_flow_setpoint"
 CH_SWITCH = "switch.boiler_sim_ch_enable"
 EXTERNAL = "switch.boiler_sim_external_control"
+# The relay rule judges no other state within its confirmation window (RELAY_CONFIRM_S, 120 s) of
+# a send — a resend, a rewrite included — so an event comes this long after the last send, as in
+# the in-process tests.
+PAST_CONFIRM_S = 130
 
 
 def _targets(data: dict[str, Any]) -> list[str]:
@@ -143,7 +147,7 @@ async def R2(r: Run):
     await rooms_call(r, True)
     await r.switch(True)
     await r.ha.until(lambda: relay_is(r, True), 120, 1)
-    await r.ha.wait(30)
+    await r.ha.wait(PAST_CONFIRM_S)
     t = time.time()
     await r.sim("relay_restart", reported=True)
     back = await r.ha.until(lambda: relay_is(r, True), 90, 1)
@@ -158,10 +162,10 @@ async def R3(r: Run):
     await rooms_call(r, True)
     await r.switch(True)
     await r.ha.until(lambda: relay_is(r, True), 120, 1)
-    await r.ha.wait(30)
+    await r.ha.wait(PAST_CONFIRM_S)
     t = time.time()
     await r.sim("relay_restart", reported=False)
-    back = await r.ha.until(lambda: relay_is(r, True), 120, 1)
+    back = await r.ha.until(lambda: relay_is(r, True), 90, 1)
     r.check(
         back is not None and True in relay_cmds(r, t),
         f"on again {back and round(back)} s after: {relay_cmds(r, t)}",
@@ -181,18 +185,24 @@ async def R4(r: Run):
     r.check(
         back is not None, f"written back off {back and round(back)} s after: {relay_cmds(r, t)}"
     )
-    await r.ha.wait(30)
+    await r.ha.wait(PAST_CONFIRM_S)
     t2 = time.time()
     await r.sim("relay_switch", on=True)
-    await r.ha.wait(60)
+    aside = await r.ha.until(lambda: _control_state(r, "handed_back"), 60, 1)
     st = await r.st("control_state")
     r.note(
         f"after the second: {st['state']}, latched {st['attributes'].get('latched_by')}, commands {relay_cmds(r, t2)}, relay {await r.s(RELAY)}"
     )
-    r.check(st["state"] == "handed_back", "stepped aside")
-    n = len(relay_cmds(r, t2))
+    r.check(aside is not None, f"stepped aside {aside and round(aside)} s after the second")
+    r.check(relay_cmds(r, t2) == [False], f"the rest state written once: {relay_cmds(r, t2)}")
+    await r.sim("relay_switch", on=True)  # the automation again
     await r.ha.wait(120)
-    r.check(len(relay_cmds(r, t2)) == n, "the relay left alone after the step aside")
+    r.check(relay_cmds(r, t2) == [False], "the relay left alone after the step aside")
+    r.check(await relay_is(r, True), "the automation's value kept")
+
+
+async def _control_state(r: Run, state: str) -> bool:
+    return await r.s("control_state") == state
 
 
 async def R5(r: Run):
@@ -301,7 +311,7 @@ async def N1(r: Run):
 
 
 async def N2(r: Run):
-    """the setpoint entity away at a hand-back: shown failed, kept, made once it is back"""
+    """the device restarting at a hand-back (its entities away 90 s): shown failed, kept, made once it is back"""
     await rooms_call(r, True)
     await r.switch(True)
     await r.ha.wait(120)
@@ -317,6 +327,35 @@ async def N2(r: Run):
     await r.ha.wait(140)
     c = entity_cmds(r, t)
     r.check(("setpoint", 0.0) in c, f"the hand-back made once back: {c}")
+    r.check(await r.s("alarm_hand_back_failed") == "off", "alarm cleared")
+
+
+async def N6(r: Run):
+    """the setpoint entity alone away at a hand-back, the device holding its value (the
+    in-process test's case): shown failed, kept, the lowest and the hand-back value once it is back"""
+    await rooms_call(r, True)
+    await r.switch(True)
+    await r.ha.wait(120)
+    await r.sim("fail_signal", signal="flow_setpoint")
+    await r.ha.wait(5)
+    t = time.time()
+    await r.switch(False)
+    await r.ha.wait(10)
+    r.check(
+        await r.s("alarm_hand_back_failed") == "on",
+        "hand-back failed alarm while the entity is away",
+    )
+    await r.ha.wait(120)
+    r.check(("setpoint", 0.0) not in entity_cmds(r, t), "nothing written to it meanwhile")
+    await r.sim("fail_signal", signal="flow_setpoint", failed=False)
+    t2 = time.time()
+    await r.ha.wait(80)
+    sp = [v for k, v in entity_cmds(r, t2) if k == "setpoint"]
+    r.check(sp[-1:] == [0.0], f"the hand-back made once back: {entity_cmds(r, t2)}")
+    await r.ha.wait(130)
+    r.note(
+        f"after the retry checks: alarm {await r.s('alarm_hand_back_failed')}, confirmation {await r.attr('control_state', 'hand_back_confirmation')}"
+    )
     r.check(await r.s("alarm_hand_back_failed") == "off", "alarm cleared")
 
 
@@ -444,7 +483,7 @@ async def S2(r: Run):
 
 
 SCENARIOS.update(
-    {f.__name__: f for f in (R1, R2, R3, R4, R5, R6, R7, R8, N1, N2, N3, N4, N5, S1, S2)}
+    {f.__name__: f for f in (R1, R2, R3, R4, R5, R6, R7, R8, N1, N2, N3, N4, N5, N6, S1, S2)}
 )
 
 
