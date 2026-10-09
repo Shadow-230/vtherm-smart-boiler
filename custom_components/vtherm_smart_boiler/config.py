@@ -36,8 +36,18 @@ from .const import (
     SIGNALS,
     WEATHER,
     ZONES,
+    has_control_section,
 )
-from .control_config import ControlOptions, WritePath, map_control_entities, parse_control
+from .control_config import (
+    CONNECTION_MODES,
+    Connection,
+    ControlMode,
+    ControlOptions,
+    WritePath,
+    boiler_class_for,
+    map_control_entities,
+    parse_control,
+)
 from .core.alarms import (
     ADD_WATER_RANGE_BAR,
     CIRCUIT_ALARM_MIN,
@@ -61,10 +71,12 @@ from .core.hot_water import DEFAULT_NEAR_ROOM_K
 from .core.installation import (
     Boiler,
     BoilerClass,
+    BoilerType,
     Circuit,
     CircuitControl,
     DhwType,
     EmitterType,
+    HeatSource,
     Installation,
     Zone,
 )
@@ -212,6 +224,63 @@ class MonitorConfig:
     alarms: AlarmThresholds = field(default_factory=AlarmThresholds)
 
 
+# The setup's first answers (I6), stored in the boiler section: the connection, the control mode,
+# the heat source, the boiler type and its hot-water priority. The boiler class and the hot-water
+# kind follow from them and are stored too, so a version without them reads the entry the same.
+INVALID_CONNECTION = "invalid_connection"
+
+
+@dataclass(frozen=True, slots=True)
+class BoilerPanel:
+    """The setup's first answers (I6, decisions 1, 6, 7, 8); ``None`` for an entry made before
+    them, which works as before."""
+
+    connection: Connection | None = None
+    control_mode: ControlMode | None = None
+    heat_source: HeatSource | None = None
+    boiler_type: BoilerType | None = None
+    dhw_priority: bool = True  # hot water takes the heat from the rooms while it runs
+
+
+def _answer[E: StrEnum](kind: type[E], data: Mapping[str, Any], key: str) -> E | None:
+    """One of the setup's first answers; none stored, ``None``; one this version does not know
+    raises ``ConfigError(invalid_connection, key)`` (decision 12)."""
+    raw = data.get(key)
+    if raw is None:
+        return None
+    try:
+        return kind(raw)
+    except ValueError as err:
+        raise ConfigError(INVALID_CONNECTION, key) from err
+
+
+def _panel(data: Mapping[str, Any]) -> BoilerPanel:
+    """The setup's first answers from the boiler section. A mode the connection cannot do — a
+    hand edit — cannot be read either."""
+    connection = _answer(Connection, data, "connection")
+    mode = _answer(ControlMode, data, "control_mode")
+    if connection is not None and mode is not None and mode not in CONNECTION_MODES[connection]:
+        raise ConfigError(INVALID_CONNECTION, "control_mode")
+    return BoilerPanel(
+        connection=connection,
+        control_mode=mode,
+        heat_source=_answer(HeatSource, data, "heat_source"),
+        boiler_type=_answer(BoilerType, data, "type"),
+        dhw_priority=_flag(INVALID_CONNECTION, data, "dhw_priority", True),
+    )
+
+
+def _resolved_boiler(data: Mapping[str, Any], panel: BoilerPanel) -> Mapping[str, Any]:
+    """The boiler section as the analysis reads it: where the panel is answered, the class and
+    the hot-water kind follow from it, whatever a hand edit left beside them."""
+    resolved = dict(data)
+    if panel.connection is not None and panel.control_mode is not None:
+        resolved["class"] = boiler_class_for(panel.connection, panel.control_mode).value
+    if panel.boiler_type is not None:
+        resolved["dhw"] = panel.boiler_type.dhw.value
+    return resolved
+
+
 @dataclass(frozen=True, slots=True)
 class EntryConfig:
     level: str
@@ -232,6 +301,7 @@ class EntryConfig:
     # Signals dropped because their entity feeds an earlier signal, each with the signal that
     # kept it (X5.2): inactive and named; control is blocked.
     shared_signals: Mapping[Signal, Signal] = field(default_factory=dict)
+    panel: BoilerPanel = field(default_factory=BoilerPanel)  # the setup's first answers (I6)
 
     @property
     def zone_entities(self) -> tuple[str, ...]:
@@ -267,7 +337,17 @@ class EntryConfig:
         cannot be used leaves control out with ``control_problem`` set instead of failing, so
         the monitor keeps running and a hand-back still owed can go out."""
         signals, shared = _signals(_section(options, SIGNALS))
-        boiler_data = _section(options, BOILER)
+        stored_boiler = _section(options, BOILER)
+        panel_problem: str | None = None
+        try:
+            panel = _panel(stored_boiler)
+        except ConfigError as err:
+            # Decision 12: an answer this version does not know leaves control out at setup,
+            # the monitor running; the options show it on its panel.
+            if strict_control:
+                raise
+            panel, panel_problem = BoilerPanel(), str(err)
+        boiler_data = _resolved_boiler(stored_boiler, panel)
         boiler = Boiler(
             _enum(BoilerClass, boiler_data, "class", BoilerClass.READ_ONLY, "invalid_boiler"),
             _enum(DhwType, boiler_data, "dhw", DhwType.NONE, "invalid_boiler"),
@@ -290,11 +370,13 @@ class EntryConfig:
         )
         control_problem: str | None = None
         try:
-            control = _control(_section(options, CONTROL), installation, parameters)
+            control = _control(_section(options, CONTROL), installation, parameters, panel)
         except ConfigError as err:
             if strict_control:
                 raise
             control, control_problem = ControlOptions(), str(err)
+        if panel_problem is not None and has_control_section(options):
+            control, control_problem = ControlOptions(), panel_problem
         return cls(
             level=str(options.get(LEVEL, LEVEL_SIMPLE)),
             signals=signals,
@@ -310,6 +392,7 @@ class EntryConfig:
             control_problem=control_problem,
             weather_max_age_s=weather_max_age,
             shared_signals=shared,
+            panel=panel,
         )
 
 
@@ -804,10 +887,20 @@ def _freshness(data: Mapping[str, Any]) -> tuple[dict[Signal, float | None], flo
 
 
 def _control(
-    data: Mapping[str, Any], installation: Installation, parameters: ParameterSet
+    data: Mapping[str, Any],
+    installation: Installation,
+    parameters: ParameterSet,
+    panel: BoilerPanel | None = None,
 ) -> ControlOptions:
+    panel = BoilerPanel() if panel is None else panel
     try:
-        return parse_control(data, installation, parameters.value(ParameterKey.MAX_CH_SETPOINT))
+        return parse_control(
+            data,
+            installation,
+            parameters.value(ParameterKey.MAX_CH_SETPOINT),
+            connection=panel.connection,
+            control_mode=panel.control_mode,
+        )
     except (AttributeError, KeyError, TypeError, ValueError) as err:
         raise ConfigError("invalid_control", str(err)) from err
 

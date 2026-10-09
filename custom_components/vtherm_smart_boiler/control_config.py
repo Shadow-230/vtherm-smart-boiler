@@ -149,6 +149,70 @@ class WritePath(StrEnum):
     RELAY = "relay"  # an on/off boiler's relay: heating on and off only (class 3, X8)
 
 
+class Connection(StrEnum):
+    """How the boiler is connected — the setup's first question (I6, decision 1)."""
+
+    OPENTHERM_GW = "opentherm_gw"  # Home Assistant's OpenTherm Gateway integration
+    OTGW_MQTT = "otgw_mqtt"  # the OTGW firmware over MQTT
+    ESPHOME = "esphome"  # ESPHome OpenTherm
+    EMS_ESP = "ems_esp"
+    RELAY = "relay"  # an on/off boiler's relay
+    BOILER_MODULE = "boiler_module"  # the boiler's own Wi-Fi module or the maker's integration
+    OTHER_ENTITY = "other_entity"  # another writable entity (advanced)
+    READ_ONLY = "read_only"  # another integration, read only
+
+
+class ControlMode(StrEnum):
+    """What the user wants the plugin to do (I6, decision 6); chosen on purpose, no default."""
+
+    FULL = "full"  # the curve: the plugin sets the water temperature
+    ON_OFF = "on_off"  # the relay: heating on and off
+    ROOM_VALUES = "room_values"  # room temperature only: from 0.3, monitoring until then
+    MONITOR = "monitor"  # monitoring only
+
+
+_WATER_MODES = (ControlMode.FULL, ControlMode.ROOM_VALUES, ControlMode.MONITOR)
+# The modes each connection can do (decision 6): monitoring always.
+CONNECTION_MODES: Mapping[Connection, tuple[ControlMode, ...]] = MappingProxyType(
+    {
+        Connection.OPENTHERM_GW: _WATER_MODES,
+        Connection.OTGW_MQTT: _WATER_MODES,
+        Connection.ESPHOME: _WATER_MODES,
+        Connection.EMS_ESP: _WATER_MODES,
+        Connection.RELAY: (ControlMode.ON_OFF, ControlMode.MONITOR),
+        Connection.BOILER_MODULE: _WATER_MODES,
+        Connection.OTHER_ENTITY: _WATER_MODES,
+        Connection.READ_ONLY: (ControlMode.MONITOR,),
+    }
+)
+# The modes that keep control off, each its own reason (decision 6).
+NO_CONTROL_MODES = frozenset({ControlMode.MONITOR, ControlMode.ROOM_VALUES})
+
+
+def boiler_class_for(connection: Connection, mode: ControlMode) -> BoilerClass:
+    """The boiler class, no longer asked (decision 2): what the connection can do, not what the
+    user wants now — the verdict can say "worth enabling" only for a flow-setpoint boiler. The
+    boiler's own module monitors by default and counts as able to set the water only where full
+    control is chosen on purpose (decision 5)."""
+    if connection is Connection.RELAY:
+        return BoilerClass.ON_OFF
+    if connection is Connection.READ_ONLY:
+        return BoilerClass.READ_ONLY
+    if connection is Connection.BOILER_MODULE and mode is not ControlMode.FULL:
+        return BoilerClass.READ_ONLY
+    return BoilerClass.FLOW_SETPOINT
+
+
+def connection_suggested_by(path: object) -> Connection | None:
+    """The connection a stored write path names, for an entry made before the question
+    (decision 12); an entity may be ESPHome, EMS-ESP or another device, so none is guessed."""
+    return {
+        WritePath.OPENTHERM_GW.value: Connection.OPENTHERM_GW,
+        WritePath.OTGW_MQTT.value: Connection.OTGW_MQTT,
+        WritePath.RELAY.value: Connection.RELAY,
+    }.get(path if isinstance(path, str) else "")
+
+
 class Topology(StrEnum):
     GATEWAY_STANDALONE = "gateway_standalone"  # the gateway is master: hand-back stops heating
     GATEWAY_WITH_THERMOSTAT = "gateway_with_thermostat"  # hand-back: the thermostat takes over
@@ -199,6 +263,9 @@ class AlarmReaction(StrEnum):
 
 # Everything ``config_blockers`` may report (translation keys).
 CONFIG_BLOCKERS = (
+    # I6 (decision 6): monitoring only, or room values until 0.3 — chosen on purpose.
+    "control_mode_monitor",
+    "control_mode_room_values",
     "no_write_path",
     # X8: the write path suits the boiler class — a setpoint path a flow-setpoint boiler, the
     # relay an on/off boiler; the other classes are monitored only.
@@ -481,6 +548,10 @@ class ControlOptions:
     # boiler is handed back to it; not ticked by default. It counts only where it is offered.
     own_room_controller: bool = False
     relay: RelayOptions = field(default_factory=RelayOptions)  # the relay path (X8)
+    # The setup's first answers (I6, decisions 1 and 6), carried even where control is not set
+    # up; ``None``: an entry made before the question.
+    connection: Connection | None = None
+    control_mode: ControlMode | None = None
 
     @property
     def configured(self) -> bool:
@@ -653,12 +724,18 @@ def parse_thermostat_kind(raw: object) -> ThermostatKind | None:
 
 
 def parse_control(
-    data: Mapping[str, Any] | None, installation: Installation, boiler_max: float | None
+    data: Mapping[str, Any] | None,
+    installation: Installation,
+    boiler_max: float | None,
+    *,
+    connection: Connection | None = None,
+    control_mode: ControlMode | None = None,
 ) -> ControlOptions:
-    """The control options; an empty section means control is not configured."""
+    """The control options; an empty section means control is not configured. ``connection``,
+    ``control_mode``: the setup's first answers (I6), ``None`` for an entry made before them."""
     data = data or {}
     if not data.get("write_path"):
-        return ControlOptions()
+        return ControlOptions(connection=connection, control_mode=control_mode)
     path = WritePath(data["write_path"])
     curve_data = _mapping(data, "curve")
     circuit = installation.circuits[0] if installation.circuits else None
@@ -804,6 +881,8 @@ def parse_control(
         restart_entity=data.get("restart_entity") or None,
         own_room_controller=data.get("own_room_controller") is True,
         relay=relay,
+        connection=connection,
+        control_mode=control_mode,
     )
     working = replace(loop.control, working_thermostat=working_thermostat(options))
     return replace(options, loop=replace(loop, control=working))
@@ -1295,6 +1374,9 @@ def config_blockers(
     every other entity the options name (``EntryConfig.watched_entities``), none of which may
     be the relay (PB-70). The order is the one the table in ``tests/test_control_config.py``
     pins (P-115)."""
+    if control.control_mode in NO_CONTROL_MODES:
+        # Chosen on purpose (decision 6): the one reason, whatever a stored section lacks.
+        return [f"control_mode_{control.control_mode.value}"]
     if not control.configured:
         return ["no_write_path"]
     found = _class_blockers(control, installation, shared_signals)

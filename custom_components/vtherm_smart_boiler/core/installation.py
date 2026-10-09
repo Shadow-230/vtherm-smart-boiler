@@ -22,6 +22,54 @@ class DhwType(StrEnum):
     COMBI = "combi"
 
 
+class BoilerType(StrEnum):
+    """The boiler's type by its standard name (I6, decision 8). The analysis reads its hot water
+    as ``DhwType``: a combi with a built-in tank reheats now and then, as a tank does."""
+
+    SINGLE = "single"  # single-function: heating only, no hot water
+    SINGLE_TANK = "single_tank"  # single-function with a hot-water tank
+    COMBI = "combi"  # combi: instantaneous hot water
+    COMBI_TANK = "combi_tank"  # combi with a built-in tank
+
+    @property
+    def dhw(self) -> DhwType:
+        return {
+            BoilerType.SINGLE: DhwType.NONE,
+            BoilerType.SINGLE_TANK: DhwType.STORAGE,
+            BoilerType.COMBI: DhwType.COMBI,
+            BoilerType.COMBI_TANK: DhwType.STORAGE,
+        }[self]
+
+    @property
+    def heats_hot_water(self) -> bool:
+        return self.dhw is not DhwType.NONE
+
+    @classmethod
+    def suggested_for(cls, dhw: object) -> BoilerType | None:
+        """The type an entry made before it most likely has, from its stored hot-water kind: a
+        tank on a single-function boiler, the commoner one; none for a value it cannot read."""
+        return {
+            DhwType.NONE.value: cls.SINGLE,
+            DhwType.STORAGE.value: cls.SINGLE_TANK,
+            DhwType.COMBI.value: cls.COMBI,
+        }.get(dhw if isinstance(dhw, str) else "")
+
+
+class HeatSource(StrEnum):
+    """What the boiler burns or uses (I6, decision 7): it decides which fields, signals and
+    alarms apply. "Other", like an entry without an answer, keeps them all."""
+
+    GAS = "gas"  # natural gas or LPG
+    OIL = "oil"
+    ELECTRIC = "electric"
+    OTHER = "other"
+
+    @property
+    def burns_fuel(self) -> bool:
+        """A burner — a flame, flue gas, maybe condensing — rather than heating elements."""
+        return self is not HeatSource.ELECTRIC
+
+
 class CircuitControl(StrEnum):
     """Who sets a circuit's water temperature."""
 

@@ -71,9 +71,13 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "level": "advanced",
         "circuits": [{"id": "main"}, {"id": "second"}],
         "zones": [{"entity_id": "climate.a"}],
+        # I6.1: a boiler that burns fuel and heats hot water shows every field of the panels.
+        "boiler": {"connection": "opentherm_gw", "heat_source": "gas", "type": "combi"},
     }
     schemas = {
-        "user": flow.user_schema({}),
+        "connection": flow.connection_schema(options),
+        "mode": flow.mode_schema(options),
+        "name": flow.user_schema({}),
         "signals": flow.signals_schema(options),
         "boiler": flow.boiler_schema(options),
         "circuit": flow.circuit_schema(options, {}),
@@ -108,7 +112,7 @@ def test_every_form_field_and_select_option_is_translated() -> None:
     for section in ("config", "options"):
         steps = schemas | (options_only if section == "options" else {})
         for step, schema in steps.items():
-            if section == "options" and step == "user":
+            if section == "options" and step == "name":
                 continue
             texts = SOURCE[section]["step"][step]
             assert schema.schema, (section, step)
@@ -123,6 +127,7 @@ def test_every_form_field_and_select_option_is_translated() -> None:
                         assert option in SOURCE["selector"][key]["options"], (key, option)
     menu = SOURCE["options"]["step"]["init"]["menu_options"]
     assert "control" in menu
+    assert next(iter(menu)) == "connection"  # I6.1: the options open with the first panels
 
 
 def test_every_config_error_code_can_be_shown() -> None:
@@ -680,11 +685,20 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     selectors: dict[str, set[str]] = {}
     for level in ("simple", "advanced"):
         for control in controls:
-            boiler = {"class": "on_off" if control["write_path"] == "relay" else "flow_setpoint"}
+            relay = control["write_path"] == "relay"
+            boiler = {
+                "class": "on_off" if relay else "flow_setpoint",
+                # I6.1: the panels — every mode a connection offers, and every field shown.
+                "connection": "relay" if relay else "opentherm_gw",
+                "heat_source": "gas",
+                "type": "combi",
+            }
             options = {"level": level, **zones, **circuits, **signals, "boiler": boiler}
             options["control"] = control
             schemas = {
-                "user": flow.user_schema({}),
+                "connection": flow.connection_schema(options),
+                "mode": flow.mode_schema(options),
+                "name": flow.user_schema({}),
                 "level": flow.level_schema(options),
                 "signals": flow.signals_schema(options),
                 "freshness": flow.freshness_schema(options),

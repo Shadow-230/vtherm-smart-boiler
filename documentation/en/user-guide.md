@@ -76,8 +76,16 @@ Only one entry of the integration can exist: it runs one boiler.
    even without a central boiler — restart Home Assistant once before you switch control on:
    until then control waits, as the plugin cannot tell what VT ran meanwhile.
 2. **Create the entry.** Settings → Devices & services → Add integration →
-   **Smart Boiler for Versatile Thermostat**. In the first step pick a name and the level of detail
-   (the level changes only what you see, never how the plugin behaves).
+   **Smart Boiler for Versatile Thermostat**. The first panel asks **how the boiler is connected**
+   (the OpenTherm Gateway integration, the OTGW firmware over MQTT, ESPHome OpenTherm, EMS-ESP, a
+   relay, the boiler's own Wi-Fi module or the manufacturer's integration, another writable
+   entity, or another integration that only reads), its **heat source** and its **type**
+   (single-function or combi, with or without a hot-water tank). The second asks the **control
+   mode** — full control, on/off, room temperature only (from version 0.3; monitoring until then)
+   or monitoring only — with condensing and the hot-water priority where they apply. None of these
+   is chosen for you, and none switches anything on. Then pick a name and the level of detail (the
+   level changes only what you see, never how the plugin behaves). The same panels open the
+   integration's options, under **Boiler, connection and control mode**.
 3. **Pick the signals.** In **Boiler signals** pick the entity for each signal you have — at
    least flame and flow temperature if you plan to control the boiler. The plugin only reads
    these entities.
