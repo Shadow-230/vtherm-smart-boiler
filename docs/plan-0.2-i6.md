@@ -7,7 +7,7 @@ decisions of 2026-10-08 and 2026-10-09 below. Control stays off by default: no a
 anything on.
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`.
 
-Status on 2026-10-09: approved by the user (I6.0); I6.1 to I6.4 done; next I6.5. The corrections from the test report
+Status on 2026-10-09: approved by the user (I6.0); I6.1 to I6.5 done; next I6.6. The corrections from the test report
 that the user put first (F1, F2, F5) are done as pull requests #32, #34 and #35.
 
 ## How to read this plan
@@ -158,7 +158,7 @@ that the user put first (F1, F2, F5) are done as pull requests #32, #34 and #35.
 | I6.2 ✅ | what the connection sets (decision 2) in the control steps: the paths offered, the write types, the hand-back, the topology; the ESPHome tick and its blocker (3); EMS-ESP's "off" at 0 and its answer-O latch (4, `core/` first); the blockers "connection does not fit the write path" and "topology does not fit the connection"; the entities suggested; translations, tests | every control scenario on the OTGW integration still passes unchanged; G1–G3 again |
 | I6.3 ✅ | the heat source (decision 7): fields, signals and alarms shown or hidden; the electric boiler's "heating on"; the defaults for condensing by source | the monitor's scenarios with the sim's gas boiler: none expected; F1, F2 |
 | I6.4 ✅ | the hot-water priority (decision 8): the learning pause and heat availability follow it (`core/` first); the optional hint deferred — how boilers report heating and hot water at once is not known, and a wrong hint would mislead (`docs/plan-0.2-i6.md`, Open after I6) | D8 (the SmartPI pause on a draw) |
-| I6.5 | freshness (decision 9): the plugin listening to the OTGW firmware's and EMS-ESP's MQTT messages for the report times; the defaults by connection; ESPHome's re-report check and warning; translations, tests | C1–C5 (stale data, link lost) |
+| I6.5 ✅ | freshness (decision 9): the plugin listening to the OTGW firmware's and EMS-ESP's MQTT messages for the report times; ESPHome's re-report check and warning; translations, tests. Built more cautiously than planned: a source earns its automatic limit only once seen repeating an unchanged value (a report with nothing changed since, by its own change time) at least twice in the run — five times its median heartbeat gap, 10 to 30 min for the boiler's signals (not 5 min), 3 to 12 h for the weather; a change-only source never gets one. In the form, empty is automatic, 0 none. It applies to every entry, one made before the panels included, as it can only add a limit a source has shown it keeps to | C1–C5 (stale data, link lost) |
 | I6.6 | control in the wizard (decision 11), with a new entry's first start never handing back a boiler it never held; the tidy-up: the design outdoor temperature in one place; the pressure limits in the boiler step at both levels and kept by "restore defaults"; the curve step naming the limit that applies (decision 10) | the setup with control; A1, B1 |
 | I6.7 | the user guides EN and PL (the connection table, the ESPHome sample, EMS-ESP), `SCOPE.md` §4, §5 and §11, `CLAUDE.md`'s verified facts (EMS-ESP's "Force Heating Off"; how ESPHome and MQTT report), and I6 marked ✅ in `docs/plan-0.2.md` | none |
 

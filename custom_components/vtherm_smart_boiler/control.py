@@ -2468,7 +2468,7 @@ class ControlUnit:
                 and command.ch_enable
                 and not out.blocked
             )
-            freshness = self._coordinator.config.freshness
+            freshness = self._coordinator.freshness_limits()
             seen = HeatSignSeen(
                 commanded=commanded,
                 calling=out.decision.calling,
@@ -3103,7 +3103,7 @@ class ControlUnit:
         """
         if self._relay_path:
             return True
-        freshness = self._coordinator.config.freshness
+        freshness = self._coordinator.freshness_limits()
         flame = snapshot.flag(Signal.FLAME, freshness.get(Signal.FLAME))
         flow = snapshot.number(Signal.FLOW, freshness.get(Signal.FLOW))
         return flame is not None and flow is not None
@@ -3118,16 +3118,17 @@ class ControlUnit:
         coordinator = self._coordinator
         config = coordinator.config
         # One freshness rule: a steady reading is not a stale one, so its age counts only with a
-        # limit the user set — each by its own, the weather entity's apart from the outdoor
-        # sensor's (P-41). A sensor the monitor found stuck leaves the curve to the weather
-        # entity, then the held value and the fallback; one far from the weather gives way where
-        # the weather reads colder (more heat, which the valves throttle), and without a weather
-        # reading where the check saw it read warmer.
-        outdoor_age = config.freshness.get(Signal.OUTDOOR)
+        # limit — the user's, or the one its source earned by repeating unchanged values (I6) —
+        # each by its own, the weather entity's apart from the outdoor sensor's (P-41). A sensor
+        # the monitor found stuck leaves the curve to the weather entity, then the held value and
+        # the fallback; one far from the weather gives way where the weather reads colder (more
+        # heat, which the valves throttle), and without a weather reading where the check saw it
+        # read warmer.
+        outdoor_age = coordinator.max_age(Signal.OUTDOOR)
         weather = None
         if config.weather:
             reading = read_weather_temperature(self._hass, config.weather)
-            if reading.is_fresh(now, config.weather_max_age_s):
+            if reading.is_fresh(now, coordinator.weather_max_age()):
                 weather = float(reading.value) if reading.value is not None else None
         check = getattr(self._coordinator.analysis, "outdoor", None)
         sensor = curve_sensor(check, snapshot.number(Signal.OUTDOOR, outdoor_age), weather)
@@ -3146,7 +3147,7 @@ class ControlUnit:
             restored_command=self._restore_command if restoring else None,
             target_ready=self._target_ready(),
             read_back_known=self._read_back_known(),
-            flame=snapshot.flag(Signal.FLAME, config.freshness.get(Signal.FLAME)),
+            flame=snapshot.flag(Signal.FLAME, coordinator.max_age(Signal.FLAME)),
             dhw=coordinator.dhw_now(snapshot),
             outdoor_sensor=sensor,
             outdoor_weather=weather,
@@ -4441,7 +4442,7 @@ class ControlUnit:
     def _proof_seen(self, snapshot: BoilerSnapshot) -> ProofSeen:
         """The proof inputs now (R12), each by its own age limit: the flame, the flow, the gas
         meter, and the boiler's electric power with the threshold the user gave it."""
-        freshness = self._coordinator.config.freshness
+        freshness = self._coordinator.freshness_limits()
         power = snapshot.number(Signal.BOILER_POWER, freshness.get(Signal.BOILER_POWER))
         return ProofSeen(
             flame=snapshot.flag(Signal.FLAME, freshness.get(Signal.FLAME)),
@@ -4665,7 +4666,7 @@ class ControlUnit:
             # Hot water pauses the zones' learning only where it takes their heat (I6).
             coordinator.dhw_takes_heat(snapshot),
             # The flow by its own age limit, as everywhere (X2): a stale one is unknown.
-            snapshot.number(Signal.FLOW, coordinator.config.freshness.get(Signal.FLOW)),
+            snapshot.number(Signal.FLOW, coordinator.max_age(Signal.FLOW)),
             heating_setpoint,  # the heating setpoint, not a low "off" value: no false swings
             now,
             self.options.learning,

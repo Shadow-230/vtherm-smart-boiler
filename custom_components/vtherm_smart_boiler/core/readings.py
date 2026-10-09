@@ -14,12 +14,15 @@ type Value = float | bool
 class Reading:
     """The last value of a signal and when its source last reported it, changed or not.
 
-    ``value`` is ``None`` when the source is unknown or unavailable. ``reported_at`` is in
-    seconds since the Unix epoch.
+    ``value`` is ``None`` when the source is unknown or unavailable. ``reported_at`` and
+    ``changed_at`` are in seconds since the Unix epoch.
     """
 
     value: Value | None = None
     reported_at: float | None = None
+    # When the source's value — or anything it reports with it — last changed (I6): a report
+    # with nothing changed since is a repeat. ``None`` where not known.
+    changed_at: float | None = None
 
     def age(self, now: float) -> float | None:
         """Seconds since the last report; ``None`` if never reported."""

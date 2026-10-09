@@ -15,6 +15,20 @@
           "type": "Jednofunkcyjny (tylko ogrzewanie), z zasobnikiem ciepłej wody albo bez, lub dwufunkcyjny (ciepła woda grzana w trakcie poboru), z wbudowanym zasobnikiem albo bez; wymagane. Służy do odróżniania grzania ciepłej wody od ogrzewania: zły rodzaj liczy ciepłą wodę jako ogrzewanie albo odwrotnie."
         }
       },
+      "mqtt_topics": {
+        "title": "Tematy MQTT",
+        "description": "Tematy, pod którymi publikuje Twój interfejs kotła. Home Assistant zapisuje wartość encji MQTT tylko wtedy, gdy się zmienia, więc stała wartość wygląda na tak starą jak jej ostatnia zmiana; sam interfejs powtarza swoje wartości (firmware OTGW co najmniej co 60 s, EMS-ESP domyślnie co 10 s), a wtyczka słucha tych powtórzeń na tych tematach — tylko czyta — żeby widzieć, że dane kotła wciąż płyną. Według nich oceniane są tylko własne encje MQTT Twojego interfejsu.",
+        "data": {
+          "mqtt_top": "Główny temat OTGW",
+          "mqtt_node": "Węzeł OTGW",
+          "ems_esp_base": "Temat bazowy EMS-ESP"
+        },
+        "data_description": {
+          "mqtt_top": "„MQTT top topic” firmware'u (domyślnie OTGW); jego wartości są pod top/value/node/.",
+          "mqtt_node": "Węzeł albo unikalny identyfikator firmware'u, jak w jego ustawieniach MQTT. Zły oznacza, że wtyczka nic nie usłyszy i oceni sygnały tylko według zgłoszeń samego Home Assistant.",
+          "ems_esp_base": "„Base” w ustawieniach MQTT EMS-ESP (domyślnie ems-esp); dane kotła są pod base/boiler_data. Przy czasie publikacji kotła ustawionym na 0 (tylko przy zmianie) EMS-ESP nie powtarza wartości, a wtyczka ocenia je wtedy tylko według zgłoszeń samego Home Assistant."
+        }
+      },
       "mode": {
         "title": "Sterowanie",
         "description": "Co wtyczka ma robić z kotłem. Wybór trybu niczego nie włącza: sterowanie ma własny przełącznik, wyłączony, dopóki go nie włączysz.\n\n- **Pełne sterowanie** — wtyczka ustawia temperaturę wody według swojej krzywej i włącza oraz wyłącza grzanie razem ze strefami VT.\n- **Wł./wył. (przekaźnik)** — wtyczka włącza i wyłącza grzanie razem ze strefami VT; temperaturę wody kocioł ustawia sam.\n- **Tylko temperatura pokoju — od wersji 0.3** — temperaturę wody ustawiałaby własna krzywa kotła na podstawie temperatury pokoju; do wersji 0.3 wtyczka tylko monitoruje.\n- **Tylko monitorowanie** — wtyczka odczytuje i raportuje, niczego nie zapisuje.\n\nPokazane są tylko tryby, na które pozwala Twoje połączenie.",
@@ -268,7 +282,8 @@
       "invalid_signals": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_parameters": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "unreadable_options": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
-      "invalid_connection": "Ta wersja nie potrafi odczytać jednej z odpowiedzi o połączeniu kotła, źródle ciepła, rodzaju kotła albo trybie sterowania: wybierz ją ponownie."
+      "invalid_connection": "Ta wersja nie potrafi odczytać jednej z odpowiedzi o połączeniu kotła, źródle ciepła, rodzaju kotła albo trybie sterowania: wybierz ją ponownie.",
+      "mqtt_topic_invalid": "Wpisz poziom tematu tak, jak używa go firmware bramki, bez spacji i symboli wieloznacznych + i #."
     }
   },
   "options": {
@@ -303,6 +318,20 @@
           "connection": "Jak Home Assistant łączy się z kotłem; wymagane. Decyduje, jakich ścieżek zapisu może używać sterowanie i co robi kocioł, gdy Home Assistant przestanie działać. Zła odpowiedź oferuje ścieżkę zapisu, której kocioł nie przyjmie.",
           "heat_source": "Gaz (ziemny lub LPG), olej, prąd albo inne; wymagane. Decyduje, które pola i alarmy mają sens: kocioł elektryczny nie ma płomienia, spalin ani kondensacji.",
           "type": "Jednofunkcyjny (tylko ogrzewanie), z zasobnikiem ciepłej wody albo bez, lub dwufunkcyjny (ciepła woda grzana w trakcie poboru), z wbudowanym zasobnikiem albo bez; wymagane. Służy do odróżniania grzania ciepłej wody od ogrzewania: zły rodzaj liczy ciepłą wodę jako ogrzewanie albo odwrotnie."
+        }
+      },
+      "mqtt_topics": {
+        "title": "Tematy MQTT",
+        "description": "Tematy, pod którymi publikuje Twój interfejs kotła. Home Assistant zapisuje wartość encji MQTT tylko wtedy, gdy się zmienia, więc stała wartość wygląda na tak starą jak jej ostatnia zmiana; sam interfejs powtarza swoje wartości (firmware OTGW co najmniej co 60 s, EMS-ESP domyślnie co 10 s), a wtyczka słucha tych powtórzeń na tych tematach — tylko czyta — żeby widzieć, że dane kotła wciąż płyną. Według nich oceniane są tylko własne encje MQTT Twojego interfejsu.\n\nZapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "data": {
+          "mqtt_top": "Główny temat OTGW",
+          "mqtt_node": "Węzeł OTGW",
+          "ems_esp_base": "Temat bazowy EMS-ESP"
+        },
+        "data_description": {
+          "mqtt_top": "„MQTT top topic” firmware'u (domyślnie OTGW); jego wartości są pod top/value/node/.",
+          "mqtt_node": "Węzeł albo unikalny identyfikator firmware'u, jak w jego ustawieniach MQTT. Zły oznacza, że wtyczka nic nie usłyszy i oceni sygnały tylko według zgłoszeń samego Home Assistant.",
+          "ems_esp_base": "„Base” w ustawieniach MQTT EMS-ESP (domyślnie ems-esp); dane kotła są pod base/boiler_data. Przy czasie publikacji kotła ustawionym na 0 (tylko przy zmianie) EMS-ESP nie powtarza wartości, a wtyczka ocenia je wtedy tylko według zgłoszeń samego Home Assistant."
         }
       },
       "mode": {
@@ -379,7 +408,7 @@
       },
       "freshness": {
         "title": "Limity świeżości",
-        "description": "Limit wieku dla każdego sygnału, w minutach: wartość niezgłoszona dłużej liczy się jako nieświeża, dla monitora i dla sterowania tak samo — bez świeżego płomienia i zasilania sterowanie nic nie zapisuje i po pięciu minutach oddaje kocioł. Puste (domyślnie): liczy się tylko dostępność encji, bo wiele źródeł (m.in. MQTT) zgłasza tylko zmiany, a stała wartość nie jest nieświeża. Ryzyko: bez limitu źródło, które przestaje się zmieniać, nie stając się niedostępne, nie zostanie wykryte; limit krótszy niż odstęp zgłoszeń źródła zatrzyma sterowanie przy stałej pogodzie. Sterowanie sprawdza płomień i temperaturę zasilania, każde według jego limitu; połączenie, które co chwilę znika, uznaje się za utracone, gdy przez pięć minut w ciągu dziesięciu nie ma świeżych danych. Encja pogody ma własny limit, domyślnie brak. Przy bramce OpenTherm Gateway połączonej przez MQTT jej rozłączenie widać w ciągu około 90 s (encje stają się niedostępne), ale zerwane połączenie wewnątrz niej, między modułem ESP a układem PIC, może w ogóle nie zostać wykryte: encje pozostają dostępne, a ich wartości po prostu przestają się zmieniać. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Limit wieku dla każdego sygnału, w minutach: wartość niezgłoszona dłużej liczy się jako nieświeża, dla monitora i dla sterowania tak samo — bez świeżego płomienia i zasilania sterowanie nic nie zapisuje i po pięciu minutach oddaje kocioł. Puste (domyślnie): automatyczny — brak limitu, dopóki źródło nie zostanie zauważone przy powtarzaniu niezmienionej wartości; wtedy pięciokrotność jego własnego rytmu, od 10 do 30 minut (encja pogody od 3 do 12 godzin). Źródło, które zgłasza tylko zmiany (MQTT, ESPHome bez force_update), nigdy go nie dostaje, bo stała wartość nie jest nieświeża. 0: brak limitu, liczy się tylko dostępność encji. Liczba: ten limit. Przy firmware OTGW przez MQTT i przy EMS-ESP wtyczka słyszy powtórzenia samego urządzenia na jego tematach MQTT, podanych w „Kocioł, połączenie i tryb sterowania”. Ryzyko: bez limitu źródło, które przestaje się zmieniać, nie stając się niedostępne, nie zostanie wykryte; limit krótszy niż odstęp zgłoszeń źródła zatrzyma sterowanie przy stałej pogodzie. Sterowanie sprawdza płomień i temperaturę zasilania, każde według jego limitu; połączenie, które co chwilę znika, uznaje się za utracone, gdy przez pięć minut w ciągu dziesięciu nie ma świeżych danych. Przy bramce OpenTherm Gateway połączonej przez MQTT jej rozłączenie widać w ciągu około 90 s (encje stają się niedostępne), a zerwane połączenie wewnątrz niej, między modułem ESP a układem PIC, widać tylko po tym, że ustają jej powtórzenia. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
         "data": {
           "flame": "Płomień",
           "flow": "Temperatura zasilania",
@@ -402,25 +431,25 @@
           "fault_indication": "Sygnalizacja usterki kotła"
         },
         "data_description": {
-          "flame": "Płomień: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą. Sterowanie czyta ten sygnał według tego limitu: nieświeży przez pięć minut w ciągu dziesięciu oznacza oddanie kotła.",
-          "flow": "Temperatura zasilania: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą. Sterowanie czyta ten sygnał według tego limitu: nieświeży przez pięć minut w ciągu dziesięciu oznacza oddanie kotła.",
-          "return": "Temperatura powrotu: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
-          "modulation": "Modulacja: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
-          "dhw_active": "Ciepła woda użytkowa (c.w.u.) aktywna: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
-          "pressure": "Ciśnienie wody: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
-          "outdoor": "Temperatura zewnętrzna (czujnik kotła): limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
-          "ch_setpoint": "Nastawa c.o.: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
-          "ch_active": "C.o. aktywne: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
-          "pump_running": "Pompa pracuje: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
-          "flue_gas": "Temperatura spalin: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
-          "gas_meter": "Licznik gazu: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
-          "room_setpoint": "Nastawa termostatu przewodowego: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
-          "room_temperature": "Temperatura z termostatu przewodowego: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
-          "weather": "Własny limit wieku encji pogody, w minutach, nigdy czujnika zewnętrznego: dłużej niezgłaszana temperatura liczy się jako nieznana. Puste (domyślnie): liczy się tylko dostępność encji.",
-          "boiler_power": "Moc elektryczna kotła: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
-          "low_pressure_fault": "Usterka niskiego ciśnienia wody (z kotła): limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
-          "boiler_lockout": "Blokada kotła: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
-          "fault_indication": "Sygnalizacja usterki kotła: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): liczy się tylko dostępność encji. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą."
+          "flame": "Płomień: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą. Sterowanie czyta ten sygnał według tego limitu: nieświeży przez pięć minut w ciągu dziesięciu oznacza oddanie kotła.",
+          "flow": "Temperatura zasilania: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą. Sterowanie czyta ten sygnał według tego limitu: nieświeży przez pięć minut w ciągu dziesięciu oznacza oddanie kotła.",
+          "return": "Temperatura powrotu: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "modulation": "Modulacja: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "dhw_active": "Ciepła woda użytkowa (c.w.u.) aktywna: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "pressure": "Ciśnienie wody: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "outdoor": "Temperatura zewnętrzna (czujnik kotła): limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "ch_setpoint": "Nastawa c.o.: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "ch_active": "C.o. aktywne: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "pump_running": "Pompa pracuje: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "flue_gas": "Temperatura spalin: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "gas_meter": "Licznik gazu: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "room_setpoint": "Nastawa termostatu przewodowego: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "room_temperature": "Temperatura z termostatu przewodowego: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "weather": "Własny limit wieku encji pogody, w minutach, nigdy czujnika zewnętrznego: dłużej niezgłaszana temperatura liczy się jako nieznana. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność.",
+          "boiler_power": "Moc elektryczna kotła: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "low_pressure_fault": "Usterka niskiego ciśnienia wody (z kotła): limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "boiler_lockout": "Blokada kotła: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą.",
+          "fault_indication": "Sygnalizacja usterki kotła: limit wieku w minutach; wartość dłużej niezgłaszana liczy się jako nieświeża. Puste (domyślnie): automatyczny, gdy jego źródło zostanie zauważone przy powtarzaniu niezmienionej wartości; 0: brak, liczy się tylko dostępność. Limit krótszy niż odstęp raportów źródła czyni stałą wartość nieświeżą."
         }
       },
       "boiler": {
@@ -3136,6 +3165,10 @@
     "learning_not_resumed": {
       "title": "Wtyczka nie mogła ponownie włączyć nauki w części stref",
       "description": "Sterowanie wstrzymało naukę SmartPI w tych strefach i od doby nie może jej ponownie włączyć, więc już nie próbuje: {zones}. SmartPI trzyma naukę wyłączoną, dopóki się jej nie włączy — w ustawieniach samego SmartPI albo jego usługą „set_smartpi_learning”. Jeśli wyłączyłeś ją sam, nic nie trzeba robić. To powiadomienie zniknie, gdy nauka znów będzie włączona."
+    },
+    "esphome_no_repeats": {
+      "title": "Czujniki ESPHome nie powtarzają niezmienionych wartości",
+      "description": "{entity} przez sześć godzin ani razu nie zgłosił ponownie niezmienionej wartości. Home Assistant zapisuje wartość czujnika ESPHome tylko przy zmianie, chyba że ESP wysyła ją z force_update: true; bez tego wtyczka nie odróżni stałej wartości od zamrożonej i ocenia te czujniki tylko według dostępności. Dopisz im force_update: true w konfiguracji ESP (przykład jest w instrukcji użytkownika)."
     }
   }
 }

@@ -46,6 +46,7 @@ from .control_config import (
     WritePath,
     boiler_class_for,
     map_control_entities,
+    mqtt_topic_valid,
     parse_control,
 )
 from .core.alarms import (
@@ -142,6 +143,8 @@ MONITOR_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
     }
 )
 FRESHNESS_BOUNDS_MIN = (1.0, 1440.0)
+# A freshness limit the user switched off (a stored 0): availability only (I6, decision 9).
+FRESHNESS_OFF = 0.0
 
 # Each section's reason where it is stored in another shape (PB-06); circuits and zones are
 # lists, every other section a mapping.
@@ -240,6 +243,11 @@ class BoilerPanel:
     heat_source: HeatSource | None = None
     boiler_type: BoilerType | None = None
     dhw_priority: bool = True  # hot water takes the heat from the rooms while it runs
+    # The MQTT topics the boiler interface publishes under (decision 9): the OTGW firmware's top
+    # level and node, EMS-ESP's base; ``None`` where not given.
+    mqtt_top: str | None = None
+    mqtt_node: str | None = None
+    ems_esp_base: str | None = None
 
 
 def _answer[E: StrEnum](kind: type[E], data: Mapping[str, Any], key: str) -> E | None:
@@ -267,7 +275,21 @@ def _panel(data: Mapping[str, Any]) -> BoilerPanel:
         heat_source=_answer(HeatSource, data, "heat_source"),
         boiler_type=_answer(BoilerType, data, "type"),
         dhw_priority=_flag(INVALID_CONNECTION, data, "dhw_priority", True),
+        mqtt_top=_topic(data, "mqtt_top"),
+        mqtt_node=_topic(data, "mqtt_node"),
+        ems_esp_base=_topic(data, "ems_esp_base"),
     )
+
+
+def _topic(data: Mapping[str, Any], key: str) -> str | None:
+    """A stored MQTT topic level; none stored, ``None``; one with a wildcard, a space or a
+    slash at an end cannot be read (decision 12)."""
+    raw = data.get(key)
+    if raw in (None, ""):
+        return None
+    if not isinstance(raw, str) or not mqtt_topic_valid(raw) or raw != raw.strip():
+        raise ConfigError(INVALID_CONNECTION, key)
+    return raw
 
 
 def _resolved_boiler(data: Mapping[str, Any], panel: BoilerPanel) -> Mapping[str, Any]:
@@ -865,12 +887,16 @@ def _alarm_thresholds(data: Mapping[str, Any]) -> AlarmThresholds:
 
 
 def _freshness(data: Mapping[str, Any]) -> tuple[dict[Signal, float | None], float | None]:
-    """The age limit of each signal, and the weather entity's own, stored under ``weather`` beside
-    them and taken out first: it is no signal. ``None``: no limit — availability only."""
+    """The age limit the user set for each signal, and the weather entity's own, stored under
+    ``weather`` beside them and taken out first: it is no signal. A signal not stored — and the
+    weather as ``None`` — takes its automatic limit, earned by its source (I6, decision 9);
+    ``FRESHNESS_OFF`` (a stored 0): no limit, availability only, as the user chose."""
 
     low, high = FRESHNESS_BOUNDS_MIN
 
     def limit(key: str, value: Any) -> float | None:
+        if value == 0 and not isinstance(value, bool):
+            return FRESHNESS_OFF
         return _bounded("invalid_freshness", {key: value}, key, (low * 60.0, high * 60.0))
 
     result: dict[Signal, float | None] = {}

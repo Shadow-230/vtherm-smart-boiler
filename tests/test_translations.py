@@ -734,6 +734,10 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                         offered = config["options"]
                         values = {o["value"] if isinstance(o, dict) else o for o in offered}
                         selectors.setdefault(key, set()).update(values)
+    # I6.5: the MQTT topics step, for the OTGW firmware and for EMS-ESP.
+    for connection in ("otgw_mqtt", "ems_esp"):
+        schema = flow.mqtt_topics_schema({"boiler": {"connection": connection}})
+        fields.setdefault("mqtt_topics", set()).update(str(m) for m in schema.schema)
     # I6.2: ESPHome's safe-start tick, asked on the writable-entity step for ESPHome only.
     esphome = {"boiler": {"connection": "esphome"}, "control": {"write_path": "entity"}}
     fields["control_entity"] |= {str(m) for m in flow.control_entity_schema(esphome).schema}

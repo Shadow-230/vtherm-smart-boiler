@@ -15,6 +15,20 @@
           "type": "Single-function (heating only), with or without a hot-water tank, or combi (hot water heated as you draw it), with or without a built-in tank; required. Used to tell hot-water runs from heating: the wrong type counts hot water as heating or the reverse."
         }
       },
+      "mqtt_topics": {
+        "title": "MQTT topics",
+        "description": "The topics your boiler interface publishes under. Home Assistant writes an MQTT entity's value only when it changes, so a steady value looks as old as its last change; the interface itself repeats its values (the OTGW firmware at least every 60 s, EMS-ESP every 10 s by default), and the plugin listens to those repeats on these topics — reading only — to see that the boiler's data still flow. Only your interface's own MQTT entities are judged by them.",
+        "data": {
+          "mqtt_top": "OTGW top-level topic",
+          "mqtt_node": "OTGW node",
+          "ems_esp_base": "EMS-ESP base topic"
+        },
+        "data_description": {
+          "mqtt_top": "The firmware's \"MQTT top topic\" (OTGW by default); its values come under top/value/node/.",
+          "mqtt_node": "The firmware's node or unique ID, as in its MQTT settings. A wrong one means the plugin hears nothing and judges the signals by Home Assistant's own reports only.",
+          "ems_esp_base": "EMS-ESP's \"Base\" in its MQTT settings (ems-esp by default); its boiler data come under base/boiler_data. With its boiler publish time at 0 (on change only) it does not repeat its values, and the plugin then judges them by Home Assistant's own reports only."
+        }
+      },
       "mode": {
         "title": "Control",
         "description": "What the plugin should do with the boiler. Choosing a mode switches nothing on: control has its own switch, off until you turn it on.\n\n- **Full control** — the plugin sets the water temperature from its curve and switches heating on and off with VT's zones.\n- **On/off (relay)** — the plugin switches heating on and off with VT's zones; the boiler keeps its own water temperature.\n- **Room temperature only — from version 0.3** — the boiler's own curve would set the water from the room's temperature; until 0.3 the plugin only monitors.\n- **Monitoring only** — the plugin reads and reports, and writes nothing.\n\nOnly the modes your connection can do are offered.",
@@ -268,7 +282,8 @@
       "invalid_signals": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_parameters": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "unreadable_options": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
-      "invalid_connection": "This version cannot read an answer about the boiler's connection, heat source, type or control mode: choose it again."
+      "invalid_connection": "This version cannot read an answer about the boiler's connection, heat source, type or control mode: choose it again.",
+      "mqtt_topic_invalid": "Enter the topic level as the gateway's firmware uses it, without spaces or the wildcards + and #."
     }
   },
   "options": {
@@ -303,6 +318,20 @@
           "connection": "How Home Assistant reaches the boiler; required. It decides which write paths control may use and what the boiler does if Home Assistant stops. The wrong answer offers a write path the boiler cannot take.",
           "heat_source": "Gas (natural gas or LPG), oil, electric or other; required. It decides which fields and alarms apply: an electric boiler has no flame, flue gas or condensing.",
           "type": "Single-function (heating only), with or without a hot-water tank, or combi (hot water heated as you draw it), with or without a built-in tank; required. Used to tell hot-water runs from heating: the wrong type counts hot water as heating or the reverse."
+        }
+      },
+      "mqtt_topics": {
+        "title": "MQTT topics",
+        "description": "The topics your boiler interface publishes under. Home Assistant writes an MQTT entity's value only when it changes, so a steady value looks as old as its last change; the interface itself repeats its values (the OTGW firmware at least every 60 s, EMS-ESP every 10 s by default), and the plugin listens to those repeats on these topics — reading only — to see that the boiler's data still flow. Only your interface's own MQTT entities are judged by them.\n\nSaving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "data": {
+          "mqtt_top": "OTGW top-level topic",
+          "mqtt_node": "OTGW node",
+          "ems_esp_base": "EMS-ESP base topic"
+        },
+        "data_description": {
+          "mqtt_top": "The firmware's \"MQTT top topic\" (OTGW by default); its values come under top/value/node/.",
+          "mqtt_node": "The firmware's node or unique ID, as in its MQTT settings. A wrong one means the plugin hears nothing and judges the signals by Home Assistant's own reports only.",
+          "ems_esp_base": "EMS-ESP's \"Base\" in its MQTT settings (ems-esp by default); its boiler data come under base/boiler_data. With its boiler publish time at 0 (on change only) it does not repeat its values, and the plugin then judges them by Home Assistant's own reports only."
         }
       },
       "mode": {
@@ -379,7 +408,7 @@
       },
       "freshness": {
         "title": "Freshness limits",
-        "description": "An age limit per signal, in minutes: a value not reported for longer counts as stale, for the monitor and for control alike — without a fresh flame and flow, control writes nothing and hands back after five minutes. Empty (default): only whether the entity is available counts, since many sources (MQTT among them) report only on change and a steady value is not a stale one. Risk: without a limit, a source that freezes without going unavailable is not caught; a limit shorter than a source's reporting interval stops control in steady weather. Control reads the flame and the flow each by its own limit; a link that keeps dropping in and out counts as lost once it has been stale for five minutes within ten. The weather entity has its own limit, none by default. On an OpenTherm Gateway over MQTT, the gateway dropping off shows within about 90 s (its entities turn unavailable), but a broken link inside it, between its ESP and its PIC, may not be seen at all: its entities stay available and their values simply stop changing. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "An age limit per signal, in minutes: a value not reported for longer counts as stale, for the monitor and for control alike — without a fresh flame and flow, control writes nothing and hands back after five minutes. Empty (default): automatic — no limit until the source is seen repeating an unchanged value; then five times its own rhythm, 10 to 30 minutes (the weather entity 3 to 12 hours). A source that reports only changes (MQTT, ESPHome without force_update) never gets one, as a steady value is not a stale one. 0: no limit, only whether the entity is available counts. A number: that limit. On the OTGW firmware over MQTT and on EMS-ESP the plugin hears the device's own repeats on its MQTT topics, given under \"Boiler, connection and control mode\". Risk: without a limit, a source that freezes without going unavailable is not caught; a limit shorter than a source's reporting interval stops control in steady weather. Control reads the flame and the flow each by its own limit; a link that keeps dropping in and out counts as lost once it has been stale for five minutes within ten. On an OpenTherm Gateway over MQTT, the gateway dropping off shows within about 90 s (its entities turn unavailable), but a broken link inside it, between its ESP and its PIC, shows only as its repeats stopping. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
         "data": {
           "flame": "Flame",
           "flow": "Flow temperature",
@@ -402,25 +431,25 @@
           "fault_indication": "Boiler fault indication"
         },
         "data_description": {
-          "flame": "Flame: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale. Control reads it by this limit: stale for five minutes within ten, the boiler is handed back.",
-          "flow": "Flow temperature: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale. Control reads it by this limit: stale for five minutes within ten, the boiler is handed back.",
-          "return": "Return temperature: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
-          "modulation": "Modulation: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
-          "dhw_active": "Hot water (DHW) active: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
-          "pressure": "Water pressure: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
-          "outdoor": "Outdoor temperature (boiler sensor): its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
-          "ch_setpoint": "Heating setpoint: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
-          "ch_active": "Heating active: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
-          "pump_running": "Pump running: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
-          "flue_gas": "Flue gas temperature: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
-          "gas_meter": "Gas meter: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
-          "room_setpoint": "Wired thermostat setpoint: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
-          "room_temperature": "Wired thermostat room temperature: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
-          "weather": "The weather entity's own age limit, in minutes, never the outdoor sensor's: not reported for longer, its temperature counts as unknown. Empty (default): only whether the entity is available counts.",
-          "boiler_power": "Boiler electric power: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
-          "low_pressure_fault": "Boiler's low-water-pressure fault: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
-          "boiler_lockout": "Boiler lockout: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale.",
-          "fault_indication": "Boiler fault indication: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): only whether the entity is available counts. A limit shorter than the source's reporting interval makes a steady value stale."
+          "flame": "Flame: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale. Control reads it by this limit: stale for five minutes within ten, the boiler is handed back.",
+          "flow": "Flow temperature: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale. Control reads it by this limit: stale for five minutes within ten, the boiler is handed back.",
+          "return": "Return temperature: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "modulation": "Modulation: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "dhw_active": "Hot water (DHW) active: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "pressure": "Water pressure: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "outdoor": "Outdoor temperature (boiler sensor): its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "ch_setpoint": "Heating setpoint: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "ch_active": "Heating active: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "pump_running": "Pump running: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "flue_gas": "Flue gas temperature: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "gas_meter": "Gas meter: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "room_setpoint": "Wired thermostat setpoint: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "room_temperature": "Wired thermostat room temperature: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "weather": "The weather entity's own age limit, in minutes, never the outdoor sensor's: not reported for longer, its temperature counts as unknown. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts.",
+          "boiler_power": "Boiler electric power: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "low_pressure_fault": "Boiler's low-water-pressure fault: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "boiler_lockout": "Boiler lockout: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale.",
+          "fault_indication": "Boiler fault indication: its age limit, in minutes; a value not reported for longer counts as stale. Empty (default): automatic, once its source is seen repeating an unchanged value; 0: none, only availability counts. A limit shorter than the source's reporting interval makes a steady value stale."
         }
       },
       "boiler": {
@@ -3136,6 +3165,10 @@
     "learning_not_resumed": {
       "title": "The plugin could not switch learning back on in some zones",
       "description": "Control paused SmartPI's learning in these zones and has not been able to switch it back on for a day, so it no longer tries: {zones}. SmartPI keeps learning off until it is switched on — in SmartPI's own settings, or with its service \"set_smartpi_learning\". If you switched it off yourself, nothing needs doing. This notice goes once learning is on again."
+    },
+    "esphome_no_repeats": {
+      "title": "ESPHome sensors do not repeat unchanged values",
+      "description": "{entity} did not report an unchanged value again in six hours. Home Assistant writes an ESPHome sensor's value only when it changes, unless the ESP sends it with force_update: true; without it the plugin cannot tell a steady value from a frozen one, and judges these sensors by availability alone. Add force_update: true to them in the ESP's configuration (the user guide has a sample)."
     }
   }
 }
