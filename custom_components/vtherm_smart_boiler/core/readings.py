@@ -40,6 +40,9 @@ UNKNOWN = Reading()
 # One meaning each, wherever a zone's valve opening or duty cycle is judged.
 ZONE_OPEN = 0.05  # above this the zone takes heat: it calls, it heats
 ZONE_SATURATED = 0.95  # this open, the zone cannot give its room more
+# SmartPI 0.4.0's upper hysteresis in its learning phase (``HYST_UPPER_C``): on/off, it keeps the
+# valve open until the room is this far over VT's setpoint (G11 C). SmartPI publishes no value.
+SMARTPI_HYSTERESIS_K = 0.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +94,11 @@ class ZoneState:
     (before VT's first refresh a thermostat shows a placeholder "off" with neither, which VT
     10.4.0 keeps for good while none of its devices reports); ``None``: not said, ``ready``
     alone decides.
+    ``window_open``: VT holds the zone for a window — its sensor or its automatic detection
+    (G11 F); ``None``: not configured or not known. ``window_suspected``: the plugin's own
+    guard sees a window probably open — the room falling fast while it heats (live only).
+    ``smartpi_learning_phase``: SmartPI runs its learning phase, on/off up to its upper
+    hysteresis (G11 C); ``False`` in another phase, ``None`` not SmartPI or not known (live only).
     ``temperature_at``: when the room temperature was last measured; the zone is fresh by it,
     else by the entity's report. ``room_sensor_lost``: the room sensor VT reads is gone,
     unavailable or unknown now, or VT's own safety mode is on — VT keeps the last temperature it
@@ -117,6 +125,9 @@ class ZoneState:
     safety_on: bool = False
     shedding: bool = False
     reported: bool | None = None
+    smartpi_learning_phase: bool | None = None
+    window_open: bool | None = None
+    window_suspected: bool = False
 
     @property
     def started(self) -> bool:
@@ -141,6 +152,16 @@ class ZoneState:
         if self.temperature is None or self.target is None:
             return None
         return self.target - self.temperature
+
+    @property
+    def shortfall(self) -> float | None:
+        """How far the room is below where its own controller stops heating, in kelvin: the
+        deficit, or with SmartPI in its learning phase the deficit plus its upper hysteresis —
+        what "short" is judged by (G11 C). "Too warm" stays the deficit's."""
+        deficit = self.deficit
+        if deficit is None or self.smartpi_learning_phase is not True:
+            return deficit
+        return deficit + SMARTPI_HYSTERESIS_K
 
     @property
     def fully_open(self) -> bool:

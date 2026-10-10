@@ -1129,20 +1129,35 @@ def test_the_no_sign_the_boiler_heats_issue_is_translated() -> None:
     assert alarm == "Control: no sign the boiler heats"
 
 
-def test_the_comfort_correction_says_it_is_off_and_what_it_risks() -> None:
-    """K4.1: the comfort correction's description says it is off by default, and what switching
-    it on risks with VT's TPI zones — the water at its +3 K edge while a zone at full duty stays
-    short by TPI's own offset, the burner stopped by every zone's cycle, 1.75 to 5 times the
-    starts in the simulation — in every language."""
+def test_the_comfort_correction_says_it_is_on_and_what_it_costs() -> None:
+    """G11 B: the comfort correction's description says it is on by default with full control,
+    what it costs — more gas, possibly more starts — and the risk with VT's TPI zones: the
+    water at its limit while a zone at full duty stays short by TPI's own offset, the burner
+    stopped by every zone's cycle, 1.75 to 5 times the starts in the simulation — in the
+    behaviour step and in the simple level's curve step, in every language; its limit and the
+    "curve too low" issue have their texts."""
+    for step in ("control_behaviour", "control_curve"):
+        text = SOURCE["options"]["step"][step]["data_description"]["comfort_correction"]
+        assert "On (default with full control)" in text, step
+        assert "more gas" in text, step
+        assert "TPI" in text, step
+        assert "1.75" in text, step
+        assert "5 times the starts" in text, step
+        assert "0.5 K" in text, step  # SmartPI's learning band (G11 C)
+        for language in LANGUAGES:
+            translated = _texts(language)["options"]["step"][step]["data_description"]
+            assert "1,75" in translated["comfort_correction"], (language, step)
     behaviour = SOURCE["options"]["step"]["control_behaviour"]["data_description"]
-    text = behaviour["comfort_correction"]
-    assert "Off (default)" in text
-    assert "TPI" in text
-    assert "1.75" in text
-    assert "5 times the starts" in text
-    for language in LANGUAGES:
-        translated = _texts(language)["options"]["step"]["control_behaviour"]
-        assert "1,75" in translated["data_description"]["comfort_correction"], language
+    assert "3 K a day" in behaviour["comfort_correction_max_k"]
+    for key in ("curve_too_low", "room_short_at_limit"):  # additions 2 and 3: the causes
+        issue = SOURCE["issues"][key]
+        assert set(PLACEHOLDER.findall(issue["title"] + issue["description"])) == {
+            "zones",
+            "limit",
+        }, key
+        assert "radiator" in issue["description"], key
+        assert "heat" in issue["description"], key
+        assert "does not climb further" in issue["description"], key
 
 
 def test_sb10_texts_are_translated() -> None:

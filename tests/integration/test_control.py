@@ -312,7 +312,9 @@ def options(zones: FakeZones, **control: Any) -> dict[str, Any]:
         "gateway_id": "gw",
         "confirmed_entity": CONFIRMED,
         "topology": "gateway_with_thermostat",
-        "curve": {"design_outdoor": -15, "design_flow": 55},
+        # Manual, as an entry from before G11 D runs: the curve through 20 °C (Auto's own tests
+        # give the mode).
+        "curve": {"design_outdoor": -15, "design_flow": 55, "room_mode": "manual"},
     } | control
     if "thermostat_kind" not in control:
         kind = FITTING_KIND.get(control_options["topology"])
@@ -11028,6 +11030,232 @@ async def test_the_reset_button_resets_the_comfort_correction(rig: Rig) -> None:
     assert rig.state("sensor", "control_state").state == "heating"
     await rig.advance(3600, step=60)
     assert 0.5 <= correction(rig) <= 1.5  # rising again, within the day's 3 K
+
+
+async def test_one_room_short_at_the_limit_is_named_with_its_radiator_and_heat_loss_first(
+    rig: Rig,
+) -> None:
+    """G11 B, additions 2 and 3: one room short while the others reach their setpoints counts
+    like any other — the correction rises for it, within its limit — and at the limit for three
+    hours the warning names that room, its entity ID among the placeholders (J4's Q5), with the
+    radiator and the heat loss first among the causes, then the curve."""
+    rig.zones.add("bedroom")
+    short_room(rig)
+    rig.zones.set("bedroom", current_temperature=21.0, temperature=21.0, valve_open_percent=30)
+    await start(rig, comfort_correction=True, comfort_correction_max_k=1.0)
+    await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
+    await rig.switch(True)
+    await rig.advance(1800 + 3 * 3600 + 300, step=60)
+    assert correction(rig) == pytest.approx(1.0)  # risen for one room, held at the limit
+    found = issue(rig, "curve_too_low")
+    assert found is not None
+    assert found.severity is ir.IssueSeverity.WARNING
+    assert found.translation_key == "room_short_at_limit"
+    assert found.translation_placeholders is not None
+    assert found.translation_placeholders["entities"] == rig.zones.entities["living"]
+
+
+def short_at(rig: Rig, temperature: float) -> None:
+    """``short_room`` at another room temperature."""
+    rig.zones.set(
+        "living",
+        current_temperature=temperature,
+        temperature=21.0,
+        hvac_action="heating",
+        valve_open_percent=100,
+        on_percent=1.0,
+    )
+
+
+async def test_a_room_falling_fast_while_it_heats_stops_the_rise_until_it_warms(
+    rig: Rig,
+) -> None:
+    """G11 F: a room short with its valve open and the correction rising falls 0.6 K within a
+    few minutes while it heats — a window probably open. The information sensor says so,
+    naming the room, and the correction stops rising (it holds: the room is not satisfied).
+    Once the room has warmed 0.2 K over its lowest reading and 30 minutes have passed, the
+    sensor goes off and the rise resumes."""
+    short_room(rig)
+    await start(rig, comfort_correction=True)
+    await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
+    await rig.switch(True)
+    await rig.advance(1800, step=60)
+    assert correction(rig) >= 0.8
+    assert rig.state("binary_sensor", "window_probably_open").state == "off"
+    short_at(rig, 18.4)  # 0.6 K down
+    await rig.advance(120, step=60)
+    window = rig.state("binary_sensor", "window_probably_open")
+    assert window.state == "on"
+    assert window.attributes["zones"] == [rig.zones.entities["living"]]
+    held = correction(rig)
+    await rig.advance(1200, step=60)
+    assert correction(rig) == pytest.approx(held, abs=0.01)  # no rise, no fall
+    short_at(rig, 18.7)  # warmed 0.3 K over its lowest
+    await rig.advance(900, step=60)  # past the 30 minutes
+    assert rig.state("binary_sensor", "window_probably_open").state == "off"
+    await rig.advance(1800, step=60)
+    assert correction(rig) > held + 0.5  # rising again
+
+
+async def test_a_room_vt_holds_for_a_window_does_not_raise_the_water(rig: Rig) -> None:
+    """G11 F: VT's own window detection reads "on" for a short room — its action may lower the
+    room's setpoint (frost, eco) rather than turn it off: the room is left out, and the
+    correction does not rise for it."""
+    short_room(rig)
+    rig.zones.set(
+        "living",
+        current_temperature=19.0,
+        temperature=21.0,
+        hvac_action="heating",
+        valve_open_percent=100,
+        on_percent=1.0,
+        window_manager={"window_state": "off", "window_auto_state": "on"},
+    )
+    await start(rig, comfort_correction=True)
+    await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
+    await rig.switch(True)
+    await rig.advance(1800, step=60)
+    assert correction(rig) == 0.0
+
+
+LIVING_SMARTPI = "sensor.living_smartpi_diagnostics"
+
+
+def learning_room(rig: Rig, phase: str) -> None:
+    """G11 C: a SmartPI room 0.2 K over VT's setpoint, its valve fully open, the burner on —
+    SmartPI's diagnostic sensor, named by the climate's ``specific_states``, in ``phase``."""
+    rig.zones.set(
+        "living",
+        current_temperature=21.2,
+        temperature=21.0,
+        hvac_action="heating",
+        valve_open_percent=100,
+        on_percent=1.0,
+        specific_states={"regulation_diagnostics": LIVING_SMARTPI},
+    )
+    rig.hass.states.async_set(LIVING_SMARTPI, phase)
+    rig.flame = True
+
+
+@pytest.mark.parametrize(("phase", "rises"), [("bootstrap_hysteresis", True), ("stable", False)])
+async def test_a_smartpi_room_learning_just_over_its_setpoint_raises_the_water(
+    rig: Rig, phase: str, rises: bool
+) -> None:
+    """G11 C (B+C): SmartPI in its learning phase runs on/off and keeps the valve open until the
+    room is 0.5 K over VT's setpoint; at 0.2 K over with water too cool, the room is still short
+    for it, so the correction raises the water. Negative: out of that phase the room counts as
+    warm enough, and nothing rises."""
+    learning_room(rig, phase)
+    await start(rig, comfort_correction=True)
+    await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
+    await rig.switch(True)
+    await rig.advance(3600, step=60)
+    assert (correction(rig) >= 1.5) is rises
+    assert (correction(rig) == 0.0) is not rises
+
+
+async def test_a_curve_too_low_for_a_room_is_named_at_the_correction_limit(rig: Rig) -> None:
+    """G11 B: the correction at the user's limit (1 K here) for three hours with the room still
+    short — the information alarm, and a warning repair issue naming the room: the curve is too
+    low for it. It goes once the room is no longer short; switching control off takes it too."""
+    short_room(rig)
+    await start(rig, comfort_correction=True, comfort_correction_max_k=1.0)
+    await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
+    await rig.switch(True)
+    await rig.advance(1800 + 3 * 3600 - 300, step=60)
+    assert correction(rig) == pytest.approx(1.0)  # the user's limit
+    assert issue(rig, "curve_too_low") is None  # not three hours at it yet
+    await rig.advance(600, step=60)
+    found = issue(rig, "curve_too_low")
+    assert found is not None
+    assert found.severity is ir.IssueSeverity.WARNING
+    assert found.translation_key == "curve_too_low"  # the only room: most of them — the curve first
+    assert found.translation_placeholders == {
+        "zones": rig.hass.states.get(rig.zones.entities["living"]).name,
+        "entities": rig.zones.entities["living"],
+        "limit": "1",
+    }
+    assert rig.state("binary_sensor", "alarm_correction_at_limit").state == "on"
+    rig.zones.set("living", current_temperature=21.0, temperature=21.0, valve_open_percent=40)
+    await rig.advance(60)
+    assert issue(rig, "curve_too_low") is None
+    # Short again by a setpoint raised, not by a fall — a sudden fall would read as a window
+    # probably open (G11 F).
+    rig.zones.set(
+        "living",
+        current_temperature=21.0,
+        temperature=23.0,
+        hvac_action="heating",
+        valve_open_percent=100,
+        on_percent=1.0,
+    )
+    await rig.advance(60)
+    assert issue(rig, "curve_too_low") is not None  # still at the limit, short again
+    await rig.switch(False)
+    assert issue(rig, "curve_too_low") is None
+
+
+AUTO_CURVE = {"design_outdoor": -15, "design_flow": 55, "room_mode": "auto"}
+
+
+def heated(rig: Rig, zone_id: str, target: float) -> None:
+    """A room heating towards ``target``, half a kelvin short, its valve half open."""
+    rig.zones.set(
+        zone_id,
+        current_temperature=target - 0.5,
+        temperature=target,
+        hvac_action="heating",
+        valve_open_percent=50,
+        on_percent=0.5,
+    )
+
+
+def curve_room(rig: Rig) -> float | None:
+    return rig.state("sensor", "control_state").attributes["curve_room"]
+
+
+async def test_the_auto_curve_room_follows_the_warmest_room(rig: Rig) -> None:
+    """G11 D: in Auto the curve passes through the warmest setpoint among the zones that heat,
+    shown on the control state: a preset lowering it (eco at night) moves it at the next water
+    decision, and one set above 23 °C is capped there."""
+    rig.zones.add("bedroom")
+    heated(rig, "living", 21.5)
+    heated(rig, "bedroom", 19.0)
+    await start(rig, curve=AUTO_CURVE)
+    await rig.advance(60)
+    await rig.switch(True)
+    await rig.advance(60)
+    assert curve_room(rig) == 21.5
+    heated(rig, "living", 18.0)  # eco
+    await rig.advance(6 * 60, step=60)  # the next water decision
+    assert curve_room(rig) == 19.0
+    heated(rig, "bedroom", 25.0)
+    await rig.advance(6 * 60, step=60)
+    assert curve_room(rig) == 23.0
+
+
+@pytest.mark.parametrize(
+    ("curve", "room"),
+    [
+        (AUTO_CURVE, 23.0),
+        (AUTO_CURVE | {"room_excluded": ["climate.fake_bedroom"]}, 21.5),
+        ({"design_outdoor": -15, "design_flow": 55, "room_mode": "manual", "room": 20.5}, 20.5),
+    ],
+    ids=["auto", "left_out", "manual"],
+)
+async def test_a_room_left_out_of_auto_or_manual_does_not_move_the_curve(
+    rig: Rig, curve: dict[str, Any], room: float
+) -> None:
+    """G11 D: a zone the user left out — a bathroom kept warmer — is not followed; Manual keeps
+    the value entered whatever the rooms ask."""
+    rig.zones.add("bedroom")
+    heated(rig, "living", 21.5)
+    heated(rig, "bedroom", 24.0)
+    await start(rig, curve=curve)
+    await rig.advance(60)
+    await rig.switch(True)
+    await rig.advance(60)
+    assert curve_room(rig) == room
 
 
 async def test_the_reset_button_exists_only_with_control_configured(rig: Rig) -> None:

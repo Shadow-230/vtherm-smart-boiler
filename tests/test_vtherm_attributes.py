@@ -282,3 +282,24 @@ def test_a_malformed_hvac_action_or_unit_is_unknown(action: object) -> None:
     )
     assert values.calling is None
     assert values.temperature is None
+
+
+@pytest.mark.parametrize(
+    ("attributes", "expected"),
+    [
+        ({"window_manager": {"window_state": "on", "window_auto_state": "off"}}, True),
+        ({"window_manager": {"window_state": "unavailable", "window_auto_state": "on"}}, True),
+        ({"window_manager": {"window_state": "off", "window_auto_state": "unavailable"}}, False),
+        ({"window_manager": {"window_state": "unknown", "window_auto_state": "unknown"}}, None),
+        ({"window_manager": "on"}, None),  # not VT's shape
+        ({"hvac_off_reason": "hvac_off_window_detection"}, True),  # its action turned it off
+        ({"hvac_off_reason": "hvac_off_manual"}, None),
+        ({}, None),  # no detection configured, or an older VT
+    ],
+)
+def test_vts_window_detection_holds_the_zone(
+    attributes: dict[str, object], expected: bool | None
+) -> None:
+    """G11 F: VT 10.4.0's window detection — a sensor or the slope — shows under
+    ``window_manager``; "on" in either holds the zone, and so does VT turning it off for one."""
+    assert zone_values("heat", attributes).window_open is expected

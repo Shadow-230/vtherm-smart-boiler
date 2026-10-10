@@ -505,6 +505,144 @@ def test_a_zone_capped_by_vt_counts_as_saturated() -> None:
     assert state.correction == pytest.approx(1.0)
 
 
+@pytest.mark.parametrize("limit", [2.0, 3.0])
+def test_the_correction_rises_up_to_the_users_limit_and_says_so_there(limit: float) -> None:
+    """G11 B: the limit is the user's — the correction stops at it, and three hours there are
+    "at its limit", whatever the default."""
+    config = replace(WATER, correction_max_k=limit)
+    state, _ = run(minutes(0.0, 121, lambda t: (short(t),)), config)
+    assert state.correction == pytest.approx(limit)
+    _state, decisions = run(minutes(7260.0, 181, lambda t: (short(t),)), config, state)
+    assert decisions[-1].correction_at_limit
+
+
+def test_a_limit_above_3_k_is_reached_at_3_k_a_day() -> None:
+    """G11 B: a limit of 5 K — the rise stays at most 3 K a day, so 3 K the first day, and the
+    rest only once a day has passed since the first rises."""
+    config = replace(WATER, correction_max_k=5.0)
+    state, _ = run(minutes(0.0, 121, lambda t: (short(t),)), config)
+    assert state.correction == pytest.approx(3.0)
+    start = 24 * 3600.0 + 7300.0
+    state, _ = run(minutes(start, 121, lambda t: (short(t),)), config, state)
+    assert state.correction == pytest.approx(5.0)
+
+
+def test_the_decision_names_the_rooms_short() -> None:
+    """G11 B: the rooms the correction rises for — fully open and short — named for the "curve
+    too low" warning; a satisfied room is not."""
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        return (short(t, "a"), satisfied(t, "b"))
+
+    _state, decisions = run(minutes(0.0, 2, zones), WATER)
+    assert decisions[-1].short_zones == ("a",)
+    assert not decisions[-1].most_short  # one of two: the room first, then the curve
+    _state, decisions = run(minutes(0.0, 2, lambda t: (satisfied(t),)), WATER)
+    assert decisions[-1].short_zones == ()
+    assert not decisions[-1].most_short
+
+    def most(t: float) -> tuple[ZoneState, ...]:
+        return (short(t, "a"), short(t, "b"), satisfied(t, "c"))
+
+    _state, decisions = run(minutes(0.0, 2, most), WATER)
+    assert decisions[-1].most_short  # two of three: the curve first (G11, addition 3)
+
+
+@pytest.mark.parametrize(("learning", "after"), [(True, 1.0), (None, 0.0)])
+def test_a_smartpi_zone_learning_just_over_its_setpoint_still_raises_the_correction(
+    learning: bool | None, after: float
+) -> None:
+    """G11 C: a SmartPI zone in its learning phase, fully open, its room 0.1 K over VT's setpoint
+    — SmartPI keeps heating it to 0.5 K over: short by 0.4 K, so the correction rises; without
+    the phase, the room counts as warm enough."""
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        return (
+            ZoneState(
+                "z",
+                21.1,
+                21.0,
+                True,
+                reported_at=t,
+                valve_open=1.0,
+                smartpi_learning_phase=learning,
+            ),
+        )
+
+    state, decisions = run(minutes(0.0, 31, zones), WATER)
+    assert state.correction == pytest.approx(after)
+    assert decisions[-1].short_zones == (("z",) if learning else ())
+
+
+AUTO = replace(CONFIG, room_auto=True)
+
+
+def heats(t: float, zone_id: str, target: float, **kw) -> ZoneState:
+    kw.setdefault("heating_enabled", True)
+    return ZoneState(zone_id, 20.0, target, reported_at=t, valve_open=0.4, **kw)
+
+
+@pytest.mark.parametrize(
+    ("targets", "config", "room"),
+    [
+        ({"a": 21.5, "b": 19.0}, AUTO, 21.5),  # the warmest room's setpoint
+        ({"a": 21.5, "b": 19.0}, CONFIG, 20.0),  # Manual: the value entered
+        ({"a": 21.5, "bath": 24.0}, replace(AUTO, room_excluded=frozenset({"bath"})), 21.5),
+        ({"a": 25.0}, AUTO, 23.0),  # at most 23 °C
+    ],
+    ids=["auto", "manual", "left_out", "capped"],
+)
+def test_the_curve_passes_through_its_auto_room(
+    targets: dict[str, float], config: ControlConfig, room: float
+) -> None:
+    """G11 D: in Auto the curve passes through the warmest setpoint among the zones that heat —
+    not one the user left out, at most 23 °C; in Manual, through the value entered. The decision
+    shows the room it used."""
+    _state, decisions = run(
+        [inputs(0.0, zones=tuple(heats(0.0, z, v) for z, v in targets.items()))], config
+    )
+    expected = replace(CURVE, room=room).flow(5.0)
+    assert decisions[-1].curve_room == pytest.approx(room)
+    assert decisions[-1].command.setpoint == pytest.approx(expected)
+
+
+def test_the_auto_room_follows_a_preset_and_holds_without_zones() -> None:
+    """G11 D: eco at night lowers the warmest setpoint, and the curve with it at the next water
+    decision; with no zone that heats, the last Auto value holds."""
+    config = replace(AUTO, decision_interval_s=60.0)
+    state, decisions = run([inputs(0.0, zones=(heats(0.0, "a", 21.5),))], config)
+    assert decisions[-1].curve_room == pytest.approx(21.5)
+    state, decisions = run([inputs(60.0, zones=(heats(60.0, "a", 18.0),))], config, state)
+    assert decisions[-1].curve_room == pytest.approx(18.0)
+    off = ZoneState("a", 20.0, 21.5, False, reported_at=120.0)
+    state, _ = run([inputs(120.0, zones=(off,))], config, state)
+    assert state.curve_room == pytest.approx(18.0)
+
+
+@pytest.mark.parametrize(
+    "window", [{"window_open": True}, {"window_suspected": True}], ids=["vt", "guard"]
+)
+def test_a_room_with_a_window_open_does_not_raise_the_correction(window: dict[str, bool]) -> None:
+    """G11 F: a zone VT holds for a window — or where the plugin sees a window probably open —
+    is left out of the rise, and is not named by the "curve too low" warning."""
+    state, decisions = run(minutes(0.0, 31, lambda t: (short(t, **window),)), WATER)
+    assert state.correction == 0.0
+    assert decisions[-1].short_zones == ()
+
+
+def test_a_window_probably_open_still_lets_the_correction_fall() -> None:
+    """G11 F: the guard only stops the rise; a zone over its setpoint still brings it down."""
+    state, _ = run(minutes(0.0, 31, lambda t: (short(t),)), WATER)
+    assert state.correction == pytest.approx(1.0)
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        hot = ZoneState("b", 22.5, 21.0, True, reported_at=t, valve_open=0.3)
+        return (short(t, window_suspected=True), hot)
+
+    state, _ = run(minutes(1860.0, 16, zones), WATER, state)
+    assert state.correction < 1.0
+
+
 def test_comfort_correction_can_be_off() -> None:
     state, _ = run(
         minutes(0.0, 31, lambda t: (short(t),)), replace(WATER, comfort_correction=False)

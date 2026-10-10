@@ -219,11 +219,24 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
         lambda: _demand(BARE),
         (1, None, None),
     ),
-    # Comfort correction | off (decided by the user 2026-10-03, K4.1); up to +3 K when on
-    ("comfort correction", lambda: CONTROL_DEFAULTS["comfort_correction"], False),
-    ("comfort correction (form)", lambda: BEHAVIOUR_FORM["comfort_correction"], False),
-    ("comfort correction (parser)", lambda: BARE.loop.control.comfort_correction, False),
-    ("comfort correction: its bound", lambda: CORRECTION_MAX_K, 3.0),
+    # Comfort correction | on in full control (the user, 2026-10-10, G11 B); up to its limit,
+    # 3 K by default (at most 10 K), rising at most 3 K a day
+    ("comfort correction", lambda: CONTROL_DEFAULTS["comfort_correction"], True),
+    ("comfort correction (form)", lambda: BEHAVIOUR_FORM["comfort_correction"], True),
+    ("comfort correction (parser)", lambda: BARE.loop.control.comfort_correction, True),
+    (
+        "comfort correction: not with the relay",
+        lambda: BARE_RELAY.loop.control.comfort_correction,
+        False,
+    ),
+    ("comfort correction: its limit", lambda: CONTROL_DEFAULTS["comfort_correction_max_k"], 3.0),
+    (
+        "comfort correction: its limit (form)",
+        lambda: BEHAVIOUR_FORM["comfort_correction_max_k"],
+        3.0,
+    ),
+    ("comfort correction: its limit (parser)", lambda: BARE.loop.control.correction_max_k, 3.0),
+    ("comfort correction: its limit (core)", lambda: CORRECTION_MAX_K, 3.0),
     # Learning pauses | on
     ("learning pauses", lambda: CONTROL_DEFAULTS["learning_pauses"], True),
     ("learning pauses (form)", lambda: BEHAVIOUR_FORM["learning_pauses"], True),

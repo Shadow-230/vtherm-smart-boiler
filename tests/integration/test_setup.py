@@ -896,9 +896,13 @@ async def test_an_entry_from_before_drops_the_options_that_are_gone(
     )
     await left_control_store(hass, entry)
     await setup(hass, entry)
-    assert entry.minor_version == 6
+    assert entry.minor_version == 8
     # Minor version 3 (X6): the lowest water temperature 0.2.1 used, kept.
-    assert entry.options["control"] == {"write_path": "entity", "hard_min": 25.0}
+    assert entry.options["control"] == {
+        "write_path": "entity",
+        "hard_min": 25.0,
+        "comfort_correction": False,  # what it ran with, stored (G11 B)
+    }
 
 
 @pytest.mark.parametrize(
@@ -946,7 +950,7 @@ async def test_the_alarm_migration_moves_to_the_add_water_threshold(
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 6
+    assert entry.minor_version == 8
     stored = entry.options["monitor"]
     assert "pressure_low_warning" not in stored
     assert "pressure_low_alarm" not in stored
@@ -986,7 +990,7 @@ async def test_the_alarm_migration_keeps_an_offered_reaction_and_raises_no_issue
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 6
+    assert entry.minor_version == 8
     assert entry.options["control"]["alarm_reactions"] == {"write_ignored": "hand_back"}
     assert ir.async_get(hass).async_get_issue(DOMAIN, f"reactions_removed_{entry.entry_id}") is None
 
@@ -1022,7 +1026,7 @@ async def test_migration_keeps_the_floor_of_a_control_section_without_it(
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 6
+    assert entry.minor_version == 8
     stored = entry.options.get("control")
     if hard_min is None:
         assert stored == control
@@ -1067,7 +1071,7 @@ STORED_BY_MINOR: dict[int, dict[str, Any]] = {
     },
 }
 STORED_BY_MINOR[5] = STORED_BY_MINOR[4]  # no pressure: 5 writes nothing
-CURRENT_OPTIONS = {  # I6: the curve's design outdoor temperature is the building's
+STORED_BY_MINOR[6] = {  # I6: the curve's design outdoor temperature is the building's
     "boiler": {"class": "flow_setpoint", "dhw": "combi"},
     "control": _GATEWAY
     | {
@@ -1078,7 +1082,31 @@ CURRENT_OPTIONS = {  # I6: the curve's design outdoor temperature is the buildin
     "monitor": {"monitoring_days": 7, "add_water_below": 0.8},
     "parameters": {"boiler_min_power": 4.0, "boiler_max_power": 25.0, "design_outdoor": -18.0},
 }
-STORED_BY_MINOR[6] = CURRENT_OPTIONS
+STORED_BY_MINOR[7] = {  # G11 B: the correction it ran with, off, now stored
+    "boiler": {"class": "flow_setpoint", "dhw": "combi"},
+    "control": _GATEWAY
+    | {
+        "alarm_reactions": {"write_ignored": "hand_back"},
+        "hard_min": 25.0,
+        "curve": {"design_flow": 55.0},
+        "comfort_correction": False,
+    },
+    "monitor": {"monitoring_days": 7, "add_water_below": 0.8},
+    "parameters": {"boiler_min_power": 4.0, "boiler_max_power": 25.0, "design_outdoor": -18.0},
+}
+CURRENT_OPTIONS = {  # G11 D: the curve's room temperature it ran with, Manual, now stored
+    "boiler": {"class": "flow_setpoint", "dhw": "combi"},
+    "control": _GATEWAY
+    | {
+        "alarm_reactions": {"write_ignored": "hand_back"},
+        "hard_min": 25.0,
+        "curve": {"design_flow": 55.0, "room_mode": "manual"},
+        "comfort_correction": False,
+    },
+    "monitor": {"monitoring_days": 7, "add_water_below": 0.8},
+    "parameters": {"boiler_min_power": 4.0, "boiler_max_power": 25.0, "design_outdoor": -18.0},
+}
+STORED_BY_MINOR[8] = CURRENT_OPTIONS
 
 
 @pytest.mark.parametrize(
@@ -1111,7 +1139,7 @@ async def test_an_entry_from_before_keeps_the_high_pressure_limits_it_ran_with(
         domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=minor
     )
     await setup(hass, entry)
-    assert entry.minor_version == 6
+    assert entry.minor_version == 8
     assert entry.options["monitor"] == {"monitoring_days": 7, **expected}
     key = f"{entry.entry_id}_alarm_pressure_high"
     found = er.async_get(hass).async_get_entity_id("binary_sensor", DOMAIN, key)
@@ -1183,22 +1211,105 @@ async def test_the_curves_design_outdoor_temperature_becomes_the_buildings(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 6
+    assert entry.minor_version == 8
     assert dict(entry.options) == expected
     assert ("replaces the building's -20.0 °C" in caplog.text) is replaced
+
+
+@pytest.mark.parametrize(
+    ("control", "expected"),
+    [
+        (
+            {"write_path": "opentherm_gw"},
+            {"write_path": "opentherm_gw", "comfort_correction": False},
+        ),
+        (
+            {"write_path": "opentherm_gw", "comfort_correction": True},
+            {"write_path": "opentherm_gw", "comfort_correction": True},
+        ),
+        ({"write_path": "relay"}, {"write_path": "relay", "comfort_correction": False}),
+        ({}, {}),  # an empty section: control not configured, the new default once it is
+        (None, None),
+    ],
+    ids=["never_stored", "stored_on", "relay", "empty", "no_control"],
+)
+async def test_an_upgraded_entry_keeps_the_comfort_correction_it_ran_with(
+    hass: HomeAssistant, control: dict[str, Any] | None, expected: dict[str, Any] | None
+) -> None:
+    """G11 B (minor version 7): the comfort correction is on by default in full control now. A
+    control section that never stored an answer ran with it off — the default since K4.1 — and
+    keeps that, stored; a stored answer stays; an entry without control gets nothing written,
+    and the new default once control is set up."""
+    from custom_components.vtherm_smart_boiler import async_migrate_entry
+
+    options = {} if control is None else {"control": control}
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=6
+    )
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry)
+    assert entry.minor_version == 8  # through the later steps too
+    assert entry.options.get("control") == expected
+
+
+@pytest.mark.parametrize(
+    ("control", "expected"),
+    [
+        (
+            {"write_path": "opentherm_gw", "curve": {"design_flow": 55.0, "room": 21.0}},
+            {
+                "write_path": "opentherm_gw",
+                "curve": {"design_flow": 55.0, "room": 21.0, "room_mode": "manual"},
+            },
+        ),
+        (
+            {"write_path": "opentherm_gw", "curve": {"design_flow": 55.0}},
+            {"write_path": "opentherm_gw", "curve": {"design_flow": 55.0, "room_mode": "manual"}},
+        ),
+        (
+            {"write_path": "opentherm_gw", "curve": {"room_mode": "auto"}},
+            {"write_path": "opentherm_gw", "curve": {"room_mode": "auto"}},
+        ),
+        ({"write_path": "relay"}, {"write_path": "relay"}),  # no curve: nothing to keep
+        ({}, {}),
+    ],
+    ids=["room_stored", "room_default", "mode_stored", "relay", "empty"],
+)
+async def test_an_upgraded_entry_keeps_the_curves_room_it_ran_with(
+    hass: HomeAssistant, control: dict[str, Any], expected: dict[str, Any]
+) -> None:
+    """G11 D (minor version 8): the curve's room temperature is Auto by default now. A curve
+    that stored no mode ran on the value entered, and keeps that — "Manual", its room as stored
+    (none: 20 °C, as it ran); a stored mode stays; a section without a curve gets Auto once one
+    is entered."""
+    from custom_components.vtherm_smart_boiler import async_migrate_entry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options={"control": control},
+        version=1,
+        minor_version=7,
+    )
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry)
+    assert entry.minor_version == 8
+    assert entry.options["control"] == expected
 
 
 @pytest.mark.parametrize("minor", sorted(STORED_BY_MINOR))
 async def test_an_entry_of_any_earlier_minor_version_migrates_to_this_ones_options(
     hass: HomeAssistant, minor: int
 ) -> None:
-    """P-124: from minor version 1 through 2 to 5 to this one (6), each step applied once and in
+    """P-124: from minor version 1 through 2 to 7 to this one (8), each step applied once and in
     order from where the entry stands — ``boiler.shared_return`` and 0.2.1's removed control
     options go (2), the lowest water temperature 0.2.1 used is kept (3, X6), the low-pressure
     limits become the "add water" threshold and the reactions decision 7 no longer offers go,
-    with their warning (4, Y1), and the curve's design outdoor temperature becomes the
-    building's (6, I6). Every starting point ends with the same options; an entry already
-    current is left as it is, and warns of nothing."""
+    with their warning (4, Y1), the curve's design outdoor temperature becomes the building's
+    (6, I6), the comfort correction it ran with, off, is stored (7, G11), and so is the curve's
+    room temperature it ran with, Manual (8, G11). Every starting point ends with the same
+    options; an entry already current is left as it is, and warns of nothing."""
     from homeassistant.helpers import issue_registry as ir
 
     from custom_components.vtherm_smart_boiler.config_flow import SmartBoilerConfigFlow

@@ -414,14 +414,17 @@
           "hard_min": "Najniższa temperatura wody",
           "hard_max": "Najwyższa temperatura wody",
           "activation_delay_s": "Opóźnienie włączenia",
-          "room": "Temperatura pokojowa krzywej",
+          "room": "Temperatura pokojowa krzywej (ręcznie)",
           "exponent": "Wykładnik krzywej",
           "offset": "Przesunięcie krzywej",
           "ceiling_band": "Zakres korekty",
           "fallback_setpoint": "Nastawa awaryjna",
           "frost_limit": "Ochrona przed mrozem poniżej",
           "frost_release": "Ochrona przed mrozem do",
-          "frost_zone": "Strefa przeciwmrozowa"
+          "frost_zone": "Strefa przeciwmrozowa",
+          "comfort_correction": "Korekta komfortu",
+          "room_mode": "Temperatura pokojowa krzywej",
+          "room_excluded": "Pokoje pomijane przez Auto"
         },
         "data_description": {
           "design_outdoor": "Najzimniejsza temperatura zewnętrzna, na którą zaprojektowano ogrzewanie, w °C. Domyślnie −15 °C. To ta sama wartość co projektowa temperatura zewnętrzna budynku: zmiana tutaj zmienia ją też tam. Zbyt zimna wartość daje za mało wody w mrozy.",
@@ -429,14 +432,17 @@
           "hard_min": "Najniższa temperatura wody, jaką ustawia wtyczka, w °C — ustawiana jak punkt krzywej. Domyślnie 20 °C. Za niska: przy łagodnej pogodzie kocioł raz po raz sam się wyłącza, a kocioł niekondensacyjny skrapla spaliny w przewodzie kominowym — weź wartość z jego instrukcji. Za wysoka: woda cieplejsza, niż potrzebują pokoje, i więcej gazu. Gdy kocioł wciąż się wyłącza przy tej temperaturze, wtyczka pokazuje dowody i proponowaną wartość; sama nigdy nie zmienia tego ustawienia.",
           "hard_max": "Żadna nastawa powyżej tej wartości, cokolwiek wyliczy krzywa lub korekta, w °C. Domyślnie 70 °C. Ogrzewanie podłogowe wymaga też maksymalnego zasilania swojego obiegu. Za wysoka: grzejniki albo podłoga bez własnego maksimum dostają tak gorącą wodę; za niska: pokoje zostają chłodne w silny mróz, bo krzywa jest ucięta. Obowiązuje tylko, gdy steruje wtyczka: po oddaniu sterowania albo gdy Home Assistant nie działa, obowiązuje własne maksimum kotła albo termostatu ściennego.",
           "activation_delay_s": "Sekundy, przez które grzanie czeka po pierwszym wezwaniu, aby wolne zawory (termoelektryczne, podłogówka) otworzyły się, zanim ruszą kocioł i pompa — jak w centralnym kotle Versatile Thermostat; wstępnie wypełnione ustawieniem VT, jeśli VT je zachował. Wyłączenie nigdy nie jest opóźniane. Domyślnie 0: od razu. Ryzyko: strefa z impulsem grzania krótszym niż opóźnienie nigdy nie uruchomi kotła, a impulsy niewiele dłuższe dają krótkie palenia; bez przełącznika grzania („wyłączone” jako niska nastawa) pompa i tak może pracować.",
-          "room": "Temperatura pokoju, dla której zbudowano krzywą, w °C. Domyślnie 20 °C. Za wysoka podnosi całą krzywą i marnuje gaz.",
+          "room": "Przy trybie ręcznym: nastawa najcieplejszego pokoju, tego, który chcesz mieć najcieplejszy, w °C. Domyślnie 20 °C. Za niska zostawia pokoje zimne przy łagodnej pogodzie, gdy krzywa daje niewiele wody ponad nią; za wysoka podnosi całą krzywą i marnuje gaz. Przy trybie Auto to wartość startowa, dopóki żadna strefa nie jest znana.",
           "exponent": "Jak wygina się krzywa. Puste pole bierze go z grzejników: grzejniki 1,3, konwektory 1,4, podłogówka 1,1. Złe wygięcie niedogrzewa w mrozy albo przegrzewa przy łagodnej pogodzie.",
           "offset": "Przesuwa całą krzywą w górę albo w dół, w K. Domyślnie 0. W górę marnuje gaz; w dół zostawia zimne pokoje.",
           "ceiling_band": "Jak wysoko ponad krzywą korekta komfortu może podnieść wodę, w K. Sama korekta zatrzymuje się na 3 K: zapas 3 K lub większy zostawia jej tę granicę, mniejszy ją obniża, a 0 w praktyce wyłącza korektę. Domyślnie 10 K. Ryzyko: mały zapas daje mniej pomocy pokojowi, który pozostaje zimny.",
           "fallback_setpoint": "Używana, gdy temperatura zewnętrzna jest nieznana — czujnik zawiódł albo monitor uznał go za zawieszony lub odbiegający od pogody, a encji pogody też brak — po trzech godzinach trzymania ostatniej temperatury efektywnej, w °C. Puste (domyślnie): krzywa w punkcie projektowym, najwięcej ciepła, jakie daje: nigdy za mało ciepła, zawory chronią pomieszczenia przed przegrzaniem.",
           "frost_limit": "Pilnowana strefa zimniejsza niż ta wartość uruchamia grzanie, bez względu na resztę, jeśli ciepło może do niej dotrzeć — zawór otwarty albo urządzenie włączone — w °C. Domyślnie 5 °C. Za niska grozi zamarznięciem rur; za wysoka grzeje pokoje, które trzymasz wyłączone.",
           "frost_release": "Ochrona przed mrozem kończy się, gdy każda pilnowana strefa jest powyżej tej wartości, w °C. Domyślnie 7 °C, powyżej progu. Blisko progu grzanie przeciwmrozowe włącza się i wyłącza częściej.",
-          "frost_zone": "Opcjonalnie: pilnuj przed mrozem tylko tej strefy. Puste (domyślnie): wszystkich stref. Grzanie przeciwmrozowe działa tylko dla zimnego pokoju, którego zawór może się otworzyć — Versatile Thermostat podaje go jako otwarty albo urządzenie jako włączone; zimny pokój, który VT trzyma zamknięty, zgłasza zamiast tego problem do naprawy. Grzanie, które przez dwie godziny nie ogrzewa pokoju, podnosi alarm; nigdy nie jest przerywane."
+          "frost_zone": "Opcjonalnie: pilnuj przed mrozem tylko tej strefy. Puste (domyślnie): wszystkich stref. Grzanie przeciwmrozowe działa tylko dla zimnego pokoju, którego zawór może się otworzyć — Versatile Thermostat podaje go jako otwarty albo urządzenie jako włączone; zimny pokój, który VT trzyma zamknięty, zgłasza zamiast tego problem do naprawy. Grzanie, które przez dwie godziny nie ogrzewa pokoju, podnosi alarm; nigdy nie jest przerywane.",
+          "comfort_correction": "Włączona (domyślnie przy pełnym sterowaniu): gdy zawór strefy jest całkiem otwarty, a pomieszczenie nadal nie dochodzi do nastawy — dla strefy, której SmartPI jest w fazie nauki, do nastawy + 0,5 K, gdzie SmartPI przestaje ją grzać — woda rośnie ponad krzywą, do swojego limitu (domyślnie 3 K; na poziomie zaawansowanym do 10 K) — 1 K na 30 minut, tylko gdy płynie ciepło (płomień, jeśli znany), najwyżej 3 K na dobę — i spada dwa razy szybciej; nie rośnie, gdy inna strefa przyjmująca ciepło jest o ponad 1 K za ciepła, ani gdy limit trzyma wodę; rośnie tylko, gdy kocioł nie uruchamia się częściej niż w tych samych godzinach przed jej początkiem, a spada, gdy uruchamia się częściej; wstrzymuje się podczas ciepłej wody i obcego ciepła; nie rośnie przy skrajnej pogodzie — temperaturze zewnętrznej poniżej projektowej temperatury krzywej, zmieniającej się szybciej niż 2 K na godzinę albo nieznanej, a także przez pierwszą godzinę po starcie, gdy ją odczytuje — ale może wtedy spadać; jest widoczna w stanie sterowania; zeruje się przy oddaniu sterowania i przyciskiem „Wyzeruj korektę komfortu”. Po trzech godzinach na limicie, gdy pomieszczenie nadal nie dochodzi do nastawy, alarm to zgłasza, a zgłoszenie w Naprawach podaje pomieszczenie i możliwe przyczyny — za niska krzywa grzewcza, za mały grzejnik w tym pomieszczeniu, pomieszczenie tracące ciepło (okno, nieszczelności): najpierw krzywą, gdy nie dochodzi większość pomieszczeń, najpierw grzejnik i straty ciepła, gdy jedno. Korekta stoi wtedy na limicie i dalej nie rośnie. Wyłączona: woda idzie za samą krzywą. Działa szeregowo z regulatorami PI stref (SmartPI, TPI): jej wolne tempo pozwala im najpierw się ustalić. Człon zewnętrzny algorytmu strefy (współczynnik zewnętrzny TPI) liczy pogodę drugi raz: trzymaj go mały, gdy wtyczka ustala wodę. Koszt: więcej gazu i możliwie więcej uruchomień. Ryzyko przy strefach TPI z Versatile Thermostat: strefa pracująca pełnym cyklem może zostawać poniżej swojej nastawy o własne przesunięcie TPI, więc woda dochodzi do limitu i tam zostaje, a cykl każdej strefy zatrzymuje wtedy palnik — w symulacji od 1,75 do 5 razy więcej uruchomień niż przy własnej regulacji kotła, a przy dobowym wahaniu temperatury zewnętrznej nawet 6,3 razy; reguła uruchomień tego nie zatrzymuje, gdy godziny przed początkiem korekty były równie pracowite (dom się nagrzewał). Wpis ustawiony przed tą wersją zachowuje to, z czym działał. Obserwuj liczbę uruchomień i wyłącz korektę, jeśli rośnie.",
+          "room_mode": "Auto (domyślnie): krzywa przechodzi przez najwyższą nastawę spośród stref, które teraz grzeją — najcieplejszy pokój, jaki utrzymujesz — najwyżej 23 °C, idąc za presetami VT (eco w nocy ją obniża) przez rampę; gdy żadna strefa nie grzeje, zostaje ostatnia wartość. Ręcznie: wartość poniżej. Wpis ustawiony przed tą wersją działa ręcznie ze swoją wartością. Ryzyko: Auto grzeje wodę dla najcieplejszego pokoju także wtedy, gdy pozostałe potrzebują mniej (ich zawory się przymykają); pokój ogrzewany mocniej tylko czasem, na przykład łazienkę, lepiej pominąć niżej.",
+          "room_excluded": "Strefy, za których nastawą Auto nie idzie — na przykład łazienka utrzymywana cieplej niż reszta. Pominięty pokój utrzymywany cieplej niż krzywa może przy łagodnej pogodzie nie dochodzić do nastawy; korekta komfortu podnosi wtedy dla niego wodę."
         }
       },
       "control_behaviour": {
@@ -450,7 +456,8 @@
           "power_threshold_kw": "Moc stref potrzebujących ciepła",
           "opening_threshold": "Otwarcie zaworów stref potrzebujących ciepła",
           "learning_pauses": "Wstrzymuj naukę stref",
-          "comfort_correction": "Korekta komfortu"
+          "comfort_correction": "Korekta komfortu",
+          "comfort_correction_max_k": "Największa korekta komfortu"
         },
         "data_description": {
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
@@ -460,7 +467,8 @@
           "power_threshold_kw": "Opcjonalnie: grzanie jest potrzebne, gdy średnia moc stref w cyklu, liczona jak w Versatile Thermostat, osiągnie tę wartość, w kW — liczona tylko wtedy, gdy choć jedna z nich ma otwarty zawór albo włączone urządzenie. Strefa bez mocy urządzenia ustawionej w VT nie daje temu progowi danych; przy liczbie stref 0 taka strefa nigdy nie poprosi o ciepło. Za wysoki próg zostawia małe pokoje bez ciepła.",
           "opening_threshold": "Opcjonalnie: ogrzewanie jest potrzebne, gdy największe otwarcie zaworu wśród stref potrzebujących ciepła osiąga tę wartość, w %. Strefa bez otwarcia zaworu ani wypełnienia (over_climate w VT) nie daje temu progowi danych; przy liczbie stref 0 taka strefa nigdy nie poprosi o ciepło. Za wysoka zostawia bez ciepła pokój, który otwiera zawór tylko trochę.",
           "learning_pauses": "Wstrzymuj naukę SmartPI podczas grzania ciepłej wody, gdy sterowanie wyłączyło grzanie z powodu usterki kotła, gdy strefę grzeje obce źródło i przy dużych wahaniach temperatury wody, żeby nie uczyła się tego, co zrobił kocioł; każde wstrzymanie i wznowienie jest sprawdzane w SmartPI. Po ciepłej wodzie lub usterce czeka na powrót temperatury wody; po obcym cieple lub wahaniu tylko minimalną przerwę. Wstrzymanie trwa najwyżej godzinę od początku, nawet gdy jego przyczyna trwa dalej. Domyślnie włączone. Auto-TPI nie da się wstrzymać bez skasowania tego, czego się nauczyło, więc strefy z nim są tylko zgłaszane. Wyłączone: SmartPI uczy się także w tych chwilach, co może zafałszować jego model.",
-          "comfort_correction": "Wyłączona (domyślnie): woda idzie za samą krzywą. Włączona: gdy zawór strefy jest całkiem otwarty, a pomieszczenie nadal nie dochodzi do nastawy, woda rośnie do 3 K ponad krzywą — 1 K na 30 minut, tylko gdy płynie ciepło (płomień, jeśli znany) — i spada dwa razy szybciej; nie rośnie, gdy inna strefa przyjmująca ciepło jest o ponad 1 K za ciepła, ani gdy limit trzyma wodę, i najwyżej 3 K na dobę; rośnie tylko, gdy kocioł nie uruchamia się częściej niż w tych samych godzinach przed jej początkiem, a spada, gdy uruchamia się częściej; wstrzymuje się podczas ciepłej wody i obcego ciepła; nie rośnie przy skrajnej pogodzie — temperaturze zewnętrznej poniżej projektowej temperatury krzywej, zmieniającej się szybciej niż 2 K na godzinę albo nieznanej, a także przez pierwszą godzinę po starcie, gdy ją odczytuje — ale może wtedy spadać; jest widoczna w stanie sterowania; zeruje się przy oddaniu sterowania i przyciskiem „Wyzeruj korektę komfortu”, a po trzech godzinach na 3 K informuje, że krzywa jest pewnie za niska. Działa szeregowo z regulatorami PI stref (SmartPI, TPI): jej wolne tempo pozwala im najpierw się ustalić. Człon zewnętrzny algorytmu strefy (współczynnik zewnętrzny TPI) liczy pogodę drugi raz: trzymaj go mały, gdy wtyczka ustala wodę. Ryzyko przy strefach TPI z Versatile Thermostat: strefa pracująca pełnym cyklem może zostawać poniżej swojej nastawy o własne przesunięcie TPI, więc woda dochodzi do granicy +3 K i tam zostaje, a cykl każdej strefy zatrzymuje wtedy palnik — w symulacji od 1,75 do 5 razy więcej uruchomień niż przy własnej regulacji kotła, a przy dobowym wahaniu temperatury zewnętrznej nawet 6,3 razy; reguła uruchomień tego nie zatrzymuje, gdy godziny przed początkiem korekty były równie pracowite (dom się nagrzewał). Włącz ją tylko tam, gdzie pomieszczenie zostaje zimne mimo otwartego zaworu, i obserwuj liczbę uruchomień."
+          "comfort_correction": "Włączona (domyślnie przy pełnym sterowaniu): gdy zawór strefy jest całkiem otwarty, a pomieszczenie nadal nie dochodzi do nastawy — dla strefy, której SmartPI jest w fazie nauki, do nastawy + 0,5 K, gdzie SmartPI przestaje ją grzać — woda rośnie ponad krzywą, do swojego limitu (domyślnie 3 K; na poziomie zaawansowanym do 10 K) — 1 K na 30 minut, tylko gdy płynie ciepło (płomień, jeśli znany), najwyżej 3 K na dobę — i spada dwa razy szybciej; nie rośnie, gdy inna strefa przyjmująca ciepło jest o ponad 1 K za ciepła, ani gdy limit trzyma wodę; rośnie tylko, gdy kocioł nie uruchamia się częściej niż w tych samych godzinach przed jej początkiem, a spada, gdy uruchamia się częściej; wstrzymuje się podczas ciepłej wody i obcego ciepła; nie rośnie przy skrajnej pogodzie — temperaturze zewnętrznej poniżej projektowej temperatury krzywej, zmieniającej się szybciej niż 2 K na godzinę albo nieznanej, a także przez pierwszą godzinę po starcie, gdy ją odczytuje — ale może wtedy spadać; jest widoczna w stanie sterowania; zeruje się przy oddaniu sterowania i przyciskiem „Wyzeruj korektę komfortu”. Po trzech godzinach na limicie, gdy pomieszczenie nadal nie dochodzi do nastawy, alarm to zgłasza, a zgłoszenie w Naprawach podaje pomieszczenie i możliwe przyczyny — za niska krzywa grzewcza, za mały grzejnik w tym pomieszczeniu, pomieszczenie tracące ciepło (okno, nieszczelności): najpierw krzywą, gdy nie dochodzi większość pomieszczeń, najpierw grzejnik i straty ciepła, gdy jedno. Korekta stoi wtedy na limicie i dalej nie rośnie. Wyłączona: woda idzie za samą krzywą. Działa szeregowo z regulatorami PI stref (SmartPI, TPI): jej wolne tempo pozwala im najpierw się ustalić. Człon zewnętrzny algorytmu strefy (współczynnik zewnętrzny TPI) liczy pogodę drugi raz: trzymaj go mały, gdy wtyczka ustala wodę. Koszt: więcej gazu i możliwie więcej uruchomień. Ryzyko przy strefach TPI z Versatile Thermostat: strefa pracująca pełnym cyklem może zostawać poniżej swojej nastawy o własne przesunięcie TPI, więc woda dochodzi do limitu i tam zostaje, a cykl każdej strefy zatrzymuje wtedy palnik — w symulacji od 1,75 do 5 razy więcej uruchomień niż przy własnej regulacji kotła, a przy dobowym wahaniu temperatury zewnętrznej nawet 6,3 razy; reguła uruchomień tego nie zatrzymuje, gdy godziny przed początkiem korekty były równie pracowite (dom się nagrzewał). Wpis ustawiony przed tą wersją zachowuje to, z czym działał. Obserwuj liczbę uruchomień i wyłącz korektę, jeśli rośnie.",
+          "comfort_correction_max_k": "O ile ponad krzywą korekta komfortu może podnieść wodę, w K. Domyślnie 3 K, od 0,5 do 10. Wzrost i tak wynosi najwyżej 3 K na dobę, a pułap pogodowy nadal go ogranicza. Wyższa wartość daje cieplejszą wodę pomieszczeniu, którego grzejnik nie nadąża na krzywej — kosztem większego zużycia gazu, cieplejszej wody dla pomieszczeń, które jej nie potrzebują, i możliwie większej liczby uruchomień. Korekta stojąca na limicie oznacza, że sama krzywa jest tam za niska: podnieś krzywą, a nie ten limit."
         }
       },
       "control_alarms": {
@@ -980,14 +988,17 @@
           "hard_min": "Najniższa temperatura wody",
           "hard_max": "Najwyższa temperatura wody",
           "activation_delay_s": "Opóźnienie włączenia",
-          "room": "Temperatura pokojowa krzywej",
+          "room": "Temperatura pokojowa krzywej (ręcznie)",
           "exponent": "Wykładnik krzywej",
           "offset": "Przesunięcie krzywej",
           "ceiling_band": "Zakres korekty",
           "fallback_setpoint": "Nastawa awaryjna",
           "frost_limit": "Ochrona przed mrozem poniżej",
           "frost_release": "Ochrona przed mrozem do",
-          "frost_zone": "Strefa przeciwmrozowa"
+          "frost_zone": "Strefa przeciwmrozowa",
+          "comfort_correction": "Korekta komfortu",
+          "room_mode": "Temperatura pokojowa krzywej",
+          "room_excluded": "Pokoje pomijane przez Auto"
         },
         "data_description": {
           "design_outdoor": "Najzimniejsza temperatura zewnętrzna, na którą zaprojektowano ogrzewanie, w °C. Domyślnie −15 °C. To ta sama wartość co projektowa temperatura zewnętrzna budynku: zmiana tutaj zmienia ją też tam. Zbyt zimna wartość daje za mało wody w mrozy.",
@@ -995,14 +1006,17 @@
           "hard_min": "Najniższa temperatura wody, jaką ustawia wtyczka, w °C — ustawiana jak punkt krzywej. Domyślnie 20 °C. Za niska: przy łagodnej pogodzie kocioł raz po raz sam się wyłącza, a kocioł niekondensacyjny skrapla spaliny w przewodzie kominowym — weź wartość z jego instrukcji. Za wysoka: woda cieplejsza, niż potrzebują pokoje, i więcej gazu. Gdy kocioł wciąż się wyłącza przy tej temperaturze, wtyczka pokazuje dowody i proponowaną wartość; sama nigdy nie zmienia tego ustawienia.",
           "hard_max": "Żadna nastawa powyżej tej wartości, cokolwiek wyliczy krzywa lub korekta, w °C. Domyślnie 70 °C. Ogrzewanie podłogowe wymaga też maksymalnego zasilania swojego obiegu. Za wysoka: grzejniki albo podłoga bez własnego maksimum dostają tak gorącą wodę; za niska: pokoje zostają chłodne w silny mróz, bo krzywa jest ucięta. Obowiązuje tylko, gdy steruje wtyczka: po oddaniu sterowania albo gdy Home Assistant nie działa, obowiązuje własne maksimum kotła albo termostatu ściennego.",
           "activation_delay_s": "Sekundy, przez które grzanie czeka po pierwszym wezwaniu, aby wolne zawory (termoelektryczne, podłogówka) otworzyły się, zanim ruszą kocioł i pompa — jak w centralnym kotle Versatile Thermostat; wstępnie wypełnione ustawieniem VT, jeśli VT je zachował. Wyłączenie nigdy nie jest opóźniane. Domyślnie 0: od razu. Ryzyko: strefa z impulsem grzania krótszym niż opóźnienie nigdy nie uruchomi kotła, a impulsy niewiele dłuższe dają krótkie palenia; bez przełącznika grzania („wyłączone” jako niska nastawa) pompa i tak może pracować.",
-          "room": "Temperatura pokoju, dla której zbudowano krzywą, w °C. Domyślnie 20 °C. Za wysoka podnosi całą krzywą i marnuje gaz.",
+          "room": "Przy trybie ręcznym: nastawa najcieplejszego pokoju, tego, który chcesz mieć najcieplejszy, w °C. Domyślnie 20 °C. Za niska zostawia pokoje zimne przy łagodnej pogodzie, gdy krzywa daje niewiele wody ponad nią; za wysoka podnosi całą krzywą i marnuje gaz. Przy trybie Auto to wartość startowa, dopóki żadna strefa nie jest znana.",
           "exponent": "Jak wygina się krzywa. Puste pole bierze go z grzejników: grzejniki 1,3, konwektory 1,4, podłogówka 1,1. Złe wygięcie niedogrzewa w mrozy albo przegrzewa przy łagodnej pogodzie.",
           "offset": "Przesuwa całą krzywą w górę albo w dół, w K. Domyślnie 0. W górę marnuje gaz; w dół zostawia zimne pokoje.",
           "ceiling_band": "Jak wysoko ponad krzywą korekta komfortu może podnieść wodę, w K. Sama korekta zatrzymuje się na 3 K: zapas 3 K lub większy zostawia jej tę granicę, mniejszy ją obniża, a 0 w praktyce wyłącza korektę. Domyślnie 10 K. Ryzyko: mały zapas daje mniej pomocy pokojowi, który pozostaje zimny.",
           "fallback_setpoint": "Używana, gdy temperatura zewnętrzna jest nieznana — czujnik zawiódł albo monitor uznał go za zawieszony lub odbiegający od pogody, a encji pogody też brak — po trzech godzinach trzymania ostatniej temperatury efektywnej, w °C. Puste (domyślnie): krzywa w punkcie projektowym, najwięcej ciepła, jakie daje: nigdy za mało ciepła, zawory chronią pomieszczenia przed przegrzaniem.",
           "frost_limit": "Pilnowana strefa zimniejsza niż ta wartość uruchamia grzanie, bez względu na resztę, jeśli ciepło może do niej dotrzeć — zawór otwarty albo urządzenie włączone — w °C. Domyślnie 5 °C. Za niska grozi zamarznięciem rur; za wysoka grzeje pokoje, które trzymasz wyłączone.",
           "frost_release": "Ochrona przed mrozem kończy się, gdy każda pilnowana strefa jest powyżej tej wartości, w °C. Domyślnie 7 °C, powyżej progu. Blisko progu grzanie przeciwmrozowe włącza się i wyłącza częściej.",
-          "frost_zone": "Opcjonalnie: pilnuj przed mrozem tylko tej strefy. Puste (domyślnie): wszystkich stref. Grzanie przeciwmrozowe działa tylko dla zimnego pokoju, którego zawór może się otworzyć — Versatile Thermostat podaje go jako otwarty albo urządzenie jako włączone; zimny pokój, który VT trzyma zamknięty, zgłasza zamiast tego problem do naprawy. Grzanie, które przez dwie godziny nie ogrzewa pokoju, podnosi alarm; nigdy nie jest przerywane."
+          "frost_zone": "Opcjonalnie: pilnuj przed mrozem tylko tej strefy. Puste (domyślnie): wszystkich stref. Grzanie przeciwmrozowe działa tylko dla zimnego pokoju, którego zawór może się otworzyć — Versatile Thermostat podaje go jako otwarty albo urządzenie jako włączone; zimny pokój, który VT trzyma zamknięty, zgłasza zamiast tego problem do naprawy. Grzanie, które przez dwie godziny nie ogrzewa pokoju, podnosi alarm; nigdy nie jest przerywane.",
+          "comfort_correction": "Włączona (domyślnie przy pełnym sterowaniu): gdy zawór strefy jest całkiem otwarty, a pomieszczenie nadal nie dochodzi do nastawy — dla strefy, której SmartPI jest w fazie nauki, do nastawy + 0,5 K, gdzie SmartPI przestaje ją grzać — woda rośnie ponad krzywą, do swojego limitu (domyślnie 3 K; na poziomie zaawansowanym do 10 K) — 1 K na 30 minut, tylko gdy płynie ciepło (płomień, jeśli znany), najwyżej 3 K na dobę — i spada dwa razy szybciej; nie rośnie, gdy inna strefa przyjmująca ciepło jest o ponad 1 K za ciepła, ani gdy limit trzyma wodę; rośnie tylko, gdy kocioł nie uruchamia się częściej niż w tych samych godzinach przed jej początkiem, a spada, gdy uruchamia się częściej; wstrzymuje się podczas ciepłej wody i obcego ciepła; nie rośnie przy skrajnej pogodzie — temperaturze zewnętrznej poniżej projektowej temperatury krzywej, zmieniającej się szybciej niż 2 K na godzinę albo nieznanej, a także przez pierwszą godzinę po starcie, gdy ją odczytuje — ale może wtedy spadać; jest widoczna w stanie sterowania; zeruje się przy oddaniu sterowania i przyciskiem „Wyzeruj korektę komfortu”. Po trzech godzinach na limicie, gdy pomieszczenie nadal nie dochodzi do nastawy, alarm to zgłasza, a zgłoszenie w Naprawach podaje pomieszczenie i możliwe przyczyny — za niska krzywa grzewcza, za mały grzejnik w tym pomieszczeniu, pomieszczenie tracące ciepło (okno, nieszczelności): najpierw krzywą, gdy nie dochodzi większość pomieszczeń, najpierw grzejnik i straty ciepła, gdy jedno. Korekta stoi wtedy na limicie i dalej nie rośnie. Wyłączona: woda idzie za samą krzywą. Działa szeregowo z regulatorami PI stref (SmartPI, TPI): jej wolne tempo pozwala im najpierw się ustalić. Człon zewnętrzny algorytmu strefy (współczynnik zewnętrzny TPI) liczy pogodę drugi raz: trzymaj go mały, gdy wtyczka ustala wodę. Koszt: więcej gazu i możliwie więcej uruchomień. Ryzyko przy strefach TPI z Versatile Thermostat: strefa pracująca pełnym cyklem może zostawać poniżej swojej nastawy o własne przesunięcie TPI, więc woda dochodzi do limitu i tam zostaje, a cykl każdej strefy zatrzymuje wtedy palnik — w symulacji od 1,75 do 5 razy więcej uruchomień niż przy własnej regulacji kotła, a przy dobowym wahaniu temperatury zewnętrznej nawet 6,3 razy; reguła uruchomień tego nie zatrzymuje, gdy godziny przed początkiem korekty były równie pracowite (dom się nagrzewał). Wpis ustawiony przed tą wersją zachowuje to, z czym działał. Obserwuj liczbę uruchomień i wyłącz korektę, jeśli rośnie.",
+          "room_mode": "Auto (domyślnie): krzywa przechodzi przez najwyższą nastawę spośród stref, które teraz grzeją — najcieplejszy pokój, jaki utrzymujesz — najwyżej 23 °C, idąc za presetami VT (eco w nocy ją obniża) przez rampę; gdy żadna strefa nie grzeje, zostaje ostatnia wartość. Ręcznie: wartość poniżej. Wpis ustawiony przed tą wersją działa ręcznie ze swoją wartością. Ryzyko: Auto grzeje wodę dla najcieplejszego pokoju także wtedy, gdy pozostałe potrzebują mniej (ich zawory się przymykają); pokój ogrzewany mocniej tylko czasem, na przykład łazienkę, lepiej pominąć niżej.",
+          "room_excluded": "Strefy, za których nastawą Auto nie idzie — na przykład łazienka utrzymywana cieplej niż reszta. Pominięty pokój utrzymywany cieplej niż krzywa może przy łagodnej pogodzie nie dochodzić do nastawy; korekta komfortu podnosi wtedy dla niego wodę."
         }
       },
       "control_behaviour": {
@@ -1016,7 +1030,8 @@
           "power_threshold_kw": "Moc stref potrzebujących ciepła",
           "opening_threshold": "Otwarcie zaworów stref potrzebujących ciepła",
           "learning_pauses": "Wstrzymuj naukę stref",
-          "comfort_correction": "Korekta komfortu"
+          "comfort_correction": "Korekta komfortu",
+          "comfort_correction_max_k": "Największa korekta komfortu"
         },
         "data_description": {
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
@@ -1026,7 +1041,8 @@
           "power_threshold_kw": "Opcjonalnie: grzanie jest potrzebne, gdy średnia moc stref w cyklu, liczona jak w Versatile Thermostat, osiągnie tę wartość, w kW — liczona tylko wtedy, gdy choć jedna z nich ma otwarty zawór albo włączone urządzenie. Strefa bez mocy urządzenia ustawionej w VT nie daje temu progowi danych; przy liczbie stref 0 taka strefa nigdy nie poprosi o ciepło. Za wysoki próg zostawia małe pokoje bez ciepła.",
           "opening_threshold": "Opcjonalnie: ogrzewanie jest potrzebne, gdy największe otwarcie zaworu wśród stref potrzebujących ciepła osiąga tę wartość, w %. Strefa bez otwarcia zaworu ani wypełnienia (over_climate w VT) nie daje temu progowi danych; przy liczbie stref 0 taka strefa nigdy nie poprosi o ciepło. Za wysoka zostawia bez ciepła pokój, który otwiera zawór tylko trochę.",
           "learning_pauses": "Wstrzymuj naukę SmartPI podczas grzania ciepłej wody, gdy sterowanie wyłączyło grzanie z powodu usterki kotła, gdy strefę grzeje obce źródło i przy dużych wahaniach temperatury wody, żeby nie uczyła się tego, co zrobił kocioł; każde wstrzymanie i wznowienie jest sprawdzane w SmartPI. Po ciepłej wodzie lub usterce czeka na powrót temperatury wody; po obcym cieple lub wahaniu tylko minimalną przerwę. Wstrzymanie trwa najwyżej godzinę od początku, nawet gdy jego przyczyna trwa dalej. Domyślnie włączone. Auto-TPI nie da się wstrzymać bez skasowania tego, czego się nauczyło, więc strefy z nim są tylko zgłaszane. Wyłączone: SmartPI uczy się także w tych chwilach, co może zafałszować jego model.",
-          "comfort_correction": "Wyłączona (domyślnie): woda idzie za samą krzywą. Włączona: gdy zawór strefy jest całkiem otwarty, a pomieszczenie nadal nie dochodzi do nastawy, woda rośnie do 3 K ponad krzywą — 1 K na 30 minut, tylko gdy płynie ciepło (płomień, jeśli znany) — i spada dwa razy szybciej; nie rośnie, gdy inna strefa przyjmująca ciepło jest o ponad 1 K za ciepła, ani gdy limit trzyma wodę, i najwyżej 3 K na dobę; rośnie tylko, gdy kocioł nie uruchamia się częściej niż w tych samych godzinach przed jej początkiem, a spada, gdy uruchamia się częściej; wstrzymuje się podczas ciepłej wody i obcego ciepła; nie rośnie przy skrajnej pogodzie — temperaturze zewnętrznej poniżej projektowej temperatury krzywej, zmieniającej się szybciej niż 2 K na godzinę albo nieznanej, a także przez pierwszą godzinę po starcie, gdy ją odczytuje — ale może wtedy spadać; jest widoczna w stanie sterowania; zeruje się przy oddaniu sterowania i przyciskiem „Wyzeruj korektę komfortu”, a po trzech godzinach na 3 K informuje, że krzywa jest pewnie za niska. Działa szeregowo z regulatorami PI stref (SmartPI, TPI): jej wolne tempo pozwala im najpierw się ustalić. Człon zewnętrzny algorytmu strefy (współczynnik zewnętrzny TPI) liczy pogodę drugi raz: trzymaj go mały, gdy wtyczka ustala wodę. Ryzyko przy strefach TPI z Versatile Thermostat: strefa pracująca pełnym cyklem może zostawać poniżej swojej nastawy o własne przesunięcie TPI, więc woda dochodzi do granicy +3 K i tam zostaje, a cykl każdej strefy zatrzymuje wtedy palnik — w symulacji od 1,75 do 5 razy więcej uruchomień niż przy własnej regulacji kotła, a przy dobowym wahaniu temperatury zewnętrznej nawet 6,3 razy; reguła uruchomień tego nie zatrzymuje, gdy godziny przed początkiem korekty były równie pracowite (dom się nagrzewał). Włącz ją tylko tam, gdzie pomieszczenie zostaje zimne mimo otwartego zaworu, i obserwuj liczbę uruchomień."
+          "comfort_correction": "Włączona (domyślnie przy pełnym sterowaniu): gdy zawór strefy jest całkiem otwarty, a pomieszczenie nadal nie dochodzi do nastawy — dla strefy, której SmartPI jest w fazie nauki, do nastawy + 0,5 K, gdzie SmartPI przestaje ją grzać — woda rośnie ponad krzywą, do swojego limitu (domyślnie 3 K; na poziomie zaawansowanym do 10 K) — 1 K na 30 minut, tylko gdy płynie ciepło (płomień, jeśli znany), najwyżej 3 K na dobę — i spada dwa razy szybciej; nie rośnie, gdy inna strefa przyjmująca ciepło jest o ponad 1 K za ciepła, ani gdy limit trzyma wodę; rośnie tylko, gdy kocioł nie uruchamia się częściej niż w tych samych godzinach przed jej początkiem, a spada, gdy uruchamia się częściej; wstrzymuje się podczas ciepłej wody i obcego ciepła; nie rośnie przy skrajnej pogodzie — temperaturze zewnętrznej poniżej projektowej temperatury krzywej, zmieniającej się szybciej niż 2 K na godzinę albo nieznanej, a także przez pierwszą godzinę po starcie, gdy ją odczytuje — ale może wtedy spadać; jest widoczna w stanie sterowania; zeruje się przy oddaniu sterowania i przyciskiem „Wyzeruj korektę komfortu”. Po trzech godzinach na limicie, gdy pomieszczenie nadal nie dochodzi do nastawy, alarm to zgłasza, a zgłoszenie w Naprawach podaje pomieszczenie i możliwe przyczyny — za niska krzywa grzewcza, za mały grzejnik w tym pomieszczeniu, pomieszczenie tracące ciepło (okno, nieszczelności): najpierw krzywą, gdy nie dochodzi większość pomieszczeń, najpierw grzejnik i straty ciepła, gdy jedno. Korekta stoi wtedy na limicie i dalej nie rośnie. Wyłączona: woda idzie za samą krzywą. Działa szeregowo z regulatorami PI stref (SmartPI, TPI): jej wolne tempo pozwala im najpierw się ustalić. Człon zewnętrzny algorytmu strefy (współczynnik zewnętrzny TPI) liczy pogodę drugi raz: trzymaj go mały, gdy wtyczka ustala wodę. Koszt: więcej gazu i możliwie więcej uruchomień. Ryzyko przy strefach TPI z Versatile Thermostat: strefa pracująca pełnym cyklem może zostawać poniżej swojej nastawy o własne przesunięcie TPI, więc woda dochodzi do limitu i tam zostaje, a cykl każdej strefy zatrzymuje wtedy palnik — w symulacji od 1,75 do 5 razy więcej uruchomień niż przy własnej regulacji kotła, a przy dobowym wahaniu temperatury zewnętrznej nawet 6,3 razy; reguła uruchomień tego nie zatrzymuje, gdy godziny przed początkiem korekty były równie pracowite (dom się nagrzewał). Wpis ustawiony przed tą wersją zachowuje to, z czym działał. Obserwuj liczbę uruchomień i wyłącz korektę, jeśli rośnie.",
+          "comfort_correction_max_k": "O ile ponad krzywą korekta komfortu może podnieść wodę, w K. Domyślnie 3 K, od 0,5 do 10. Wzrost i tak wynosi najwyżej 3 K na dobę, a pułap pogodowy nadal go ogranicza. Wyższa wartość daje cieplejszą wodę pomieszczeniu, którego grzejnik nie nadąża na krzywej — kosztem większego zużycia gazu, cieplejszej wody dla pomieszczeń, które jej nie potrzebują, i możliwie większej liczby uruchomień. Korekta stojąca na limicie oznacza, że sama krzywa jest tam za niska: podnieś krzywą, a nie ten limit."
         }
       },
       "control_alarms": {
@@ -1419,6 +1435,12 @@
       "options": {
         "electric": "Kocioł elektryczny: jako płomień przypisz włączenie grzałek (stycznik albo własny stan „grzanie” kotła) — z niego korzystają metryki palnika i łącze z kotłem; licznik gazu nie dotyczy, ale w jego miejsce można przypisać licznik energii. Spaliny nie dotyczą.",
         "oil": "Kocioł olejowy: nie ma licznika gazu, a wartości gazu nie dotyczą."
+      }
+    },
+    "room_mode": {
+      "options": {
+        "auto": "Auto (najcieplejszy pokój)",
+        "manual": "Ręcznie (wpisana wartość)"
       }
     }
   },
@@ -1963,6 +1985,9 @@
           },
           "monitor_failed_since": {
             "name": "Monitor nie działa od"
+          },
+          "curve_room": {
+            "name": "Temperatura pokojowa krzywej"
           }
         }
       },
@@ -2381,6 +2406,34 @@
               "unavailable_now": "chwilowo brak odczytu",
               "fuel_burner": "Kocioł spalający paliwo (nie elektryczny)"
             }
+          },
+          "window_guard": {
+            "name": "Wykrywanie otwartego okna",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "window_guard_missing": {
+            "name": "Wykrywanie otwartego okna: brakuje"
+          },
+          "window_guard_missing_text": {
+            "name": "Wykrywanie otwartego okna: czego brakuje"
+          },
+          "long_run": {
+            "name": "Długie palenie bez nagrzewania",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "long_run_missing": {
+            "name": "Długie palenie bez nagrzewania: brakuje"
+          },
+          "long_run_missing_text": {
+            "name": "Długie palenie bez nagrzewania: czego brakuje"
           }
         }
       }
@@ -2779,6 +2832,42 @@
       },
       "alarm_boiler_not_responding": {
         "name": "Sterowanie: brak oznak grzania kotła"
+      },
+      "window_probably_open": {
+        "name": "Prawdopodobnie otwarte okno",
+        "state_attributes": {
+          "rooms": {
+            "name": "Pomieszczenia"
+          },
+          "zones": {
+            "name": "Strefy"
+          }
+        }
+      },
+      "long_burn": {
+        "name": "Długie palenie bez nagrzewania",
+        "state_attributes": {
+          "reason": {
+            "name": "Dlaczego",
+            "state": {
+              "power_limit": "Kocioł na granicy mocy: poniżej nastawy przy wysokiej modulacji",
+              "water_too_cool": "Woda za chłodna dla niedogrzanych pomieszczeń: korekta komfortu ją podnosi",
+              "water_too_hot": "Woda za ciepła: obniż krzywą"
+            }
+          },
+          "rooms": {
+            "name": "Pomieszczenia"
+          },
+          "zones": {
+            "name": "Strefy"
+          },
+          "burning_hours": {
+            "name": "Palenie (h)"
+          },
+          "kept": {
+            "name": "Zapisane do strojenia"
+          }
+        }
       }
     },
     "switch": {
@@ -3464,6 +3553,18 @@
     "esphome_no_repeats": {
       "title": "Czujniki ESPHome nie powtarzają niezmienionych wartości",
       "description": "{entity} przez sześć godzin ani razu nie zgłosił ponownie niezmienionej wartości. Home Assistant zapisuje wartość czujnika ESPHome tylko przy zmianie, chyba że ESP wysyła ją z force_update: true; bez tego wtyczka nie odróżni stałej wartości od zamrożonej i ocenia te czujniki tylko według dostępności. Dopisz im force_update: true w konfiguracji ESP (przykład jest w instrukcji użytkownika)."
+    },
+    "curve_too_low": {
+      "title": "Krzywa grzewcza wygląda na za niską dla: {zones}",
+      "description": "Od trzech godzin korekta komfortu stoi na swoim limicie {limit} K, a większość pomieszczeń — {zones} — nadal nie dochodzi do nastaw przy całkiem otwartych zaworach. Możliwe przyczyny, od najbardziej prawdopodobnej: krzywa grzewcza jest za niska — podnieś projektową temperaturę zasilania w opcjach integracji (Sterowanie, Krzywa grzewcza i limity); grzejnik w pomieszczeniu jest dla niego za mały; pomieszczenie traci ciepło (otwarte okno, nieszczelności). Korekta stoi na limicie i dalej nie rośnie; możesz obniżyć limit. Zgłoszenie znika, gdy korekta spadnie poniżej limitu albo pomieszczenia się nagrzeją."
+    },
+    "room_short_at_limit": {
+      "title": "{zones} nie dochodzi do nastawy",
+      "description": "Od trzech godzin korekta komfortu stoi na swoim limicie {limit} K, a {zones} nadal nie dochodzi do nastawy przy całkiem otwartym zaworze, choć pozostałe pomieszczenia dochodzą. Możliwe przyczyny, od najbardziej prawdopodobnej: grzejnik jest dla niego za mały; traci ciepło — otwarte okno, jego zawór, nieszczelności; albo krzywa grzewcza jest dla niego za niska — podnieś projektową temperaturę zasilania w opcjach integracji (Sterowanie, Krzywa grzewcza i limity). Sprawdź też jego grzejnik, zawór i okno. Korekta stoi na limicie i dalej dla niego nie rośnie; możesz obniżyć limit. Zgłoszenie znika, gdy korekta spadnie poniżej limitu albo pomieszczenie się nagrzeje."
+    },
+    "boiler_power_limit": {
+      "title": "Kocioł jest na granicy mocy dla: {zones}",
+      "description": "Od trzech godzin palnik pracuje bez przerwy, a {zones} nadal nie dochodzi do nastawy, przy czym woda zostaje ponad kelwin poniżej nastawy przy modulacji 90 % lub wyższej: kocioł nie da więcej. Sprawdź, czy ma ustawioną pełną moc grzania (w wielu kotłach to ustawienie serwisowe) i czy dom nie traci więcej ciepła, niż przewidziano przy doborze kotła. Sterowanie niczego nie zmienia. Zgłoszenie znika, gdy palenie się skończy albo pomieszczenia się nagrzeją."
     }
   }
 }

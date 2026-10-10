@@ -26,9 +26,13 @@ Another controller (decision "Safe hand-back", W3, W6): a held value target whos
 the same third value — neither the plugin's, nor the lowest, nor the hand-back value — at two
 retry checks a minute apart (three over two minutes with hot water unknown; no judgement during a
 draw or for two minutes after it) is held by another controller: the hand-back counts as done
-there and is not retried. A two-valued target counts as held by another once its hand-back
-state was read back and then changed with no trace of an outage; with a trace, the command was
-lost and is written again. All values provisional (K4).
+there and is not retried — judged only once the plugin's hand-back write to it got through in
+this debt, and never while a trace of an outage of the target or its device, or a restart, seen
+since that write says the device lost the command (F7: a held master that restarts during the
+hand-back comes back with its own start value), which stays owed and is written again. A
+two-valued target counts as held by another once its hand-back state was read back and then
+changed with no trace of an outage; with a trace, the command was lost and is written again.
+All values provisional (K4).
 """
 
 from __future__ import annotations
@@ -195,6 +199,23 @@ def watch_foreign(
         watch = ForeignWatch(watch.value, watch.checks + 1, watch.dhw_unknown or dhw is None)
     needed = FOREIGN_CHECKS_DHW_UNKNOWN if watch.dhw_unknown else FOREIGN_CHECKS
     return watch, watch.checks >= needed
+
+
+def third_value_judged(
+    delivered_at: float | None,
+    outage_at: float | None,
+    now: float,
+    window: float = OUTAGE_WINDOW_S,
+) -> bool:
+    """Whether a held value target's read-back may be judged for another controller's third
+    value (F7): only once the plugin's hand-back write to it got through in this debt
+    (``delivered_at``: when that write ended, ``None`` before), and not while a trace of an
+    outage of the target or its device, or a restart, seen after it and within ``window``
+    (``outage_at``: the last such trace) says the device lost the command. One seen later than
+    now — the wall clock set back — counts."""
+    if delivered_at is None:
+        return False
+    return outage_at is None or outage_at <= delivered_at or now - outage_at > window
 
 
 def judge_switch(

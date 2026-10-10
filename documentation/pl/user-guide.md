@@ -197,9 +197,15 @@ stref VT, tak samo jak kocioł centralny VT. Wybierasz jedno lub więcej z tych 
 Gdy grzanie jest włączone, wtyczka ustawia temperaturę wody w kotle (temperaturę zasilania):
 
 1. **Krzywa grzewcza** — wpisujesz ją sam: projektową temperaturę zewnętrzną (domyślnie
-   −15 °C), projektową temperaturę zasilania (wymagana, bez wartości domyślnej), temperaturę
-   pokojową krzywej (domyślnie 20 °C) i opcjonalne przesunięcie. Krzywa podaje temperaturę wody
-   dla każdej temperatury zewnętrznej. Projektowa temperatura zewnętrzna to ta sama wartość co
+   −15 °C), projektową temperaturę zasilania (wymagana, bez wartości domyślnej) i opcjonalne
+   przesunięcie. Krzywa podaje temperaturę wody dla każdej temperatury zewnętrznej.
+   **Temperatura pokojowa krzywej** (poziom zaawansowany): **Auto** (domyślnie) idzie za
+   najwyższą nastawą spośród stref, które teraz grzeją — najcieplejszym pokojem, jaki
+   utrzymujesz — najwyżej 23 °C, i za presetami VT (eco w nocy ją obniża); możesz pominąć
+   wybrane pokoje (łazienkę utrzymywaną cieplej). **Ręcznie** zostawia wpisaną wartość: nastawę
+   najcieplejszego pokoju. Za niska zostawia pokoje zimne przy łagodnej pogodzie. Wpis ustawiony
+   przed tą wersją działa ręcznie ze swoją wartością. Stan sterowania pokazuje używaną
+   temperaturę (`curve_room`). Projektowa temperatura zewnętrzna to ta sama wartość co
    w danych budynku: zmiana w jednym kroku zmienia obie. Krok krzywej pokazuje też maksymalną
    nastawę c.o. kotła i maksymalną temperaturę zasilania pierwszego obiegu — obowiązuje najniższa
    z trzech wartości: tych dwóch i najwyższej temperatury wody.
@@ -222,12 +228,20 @@ Gdy brakuje temperatury zewnętrznej, wtyczka używa encji pogody, potem przez 3
 ostatnią znaną wartość, a następnie używa twojej nastawy awaryjnej albo punktu projektowego
 krzywej. Awaria czujnika zewnętrznego nigdy nie oznacza zerowego grzania.
 
-**Korekta komfortu** — **domyślnie wyłączona**. Gdy ją włączysz, a pomieszczenie nie dochodzi
-do swojej nastawy mimo w pełni otwartego zaworu, woda może powoli wzrosnąć do 3 K ponad
-krzywą. Nie rośnie, gdy kocioł startuje częściej niż wcześniej. Jej opis w formularzu wyjaśnia
-ryzyko przy strefach TPI w VT (więcej startów palnika). Włącz ją tylko tam, gdzie pomieszczenie
-zostaje zimne przy otwartym zaworze, i obserwuj starty. Przycisk „Wyzeruj korektę komfortu”
-cofa ją do zera.
+**Korekta komfortu** — **domyślnie włączona przy pełnym sterowaniu** (wpis ustawiony przed tą
+wersją zachowuje to, z czym działał). Gdy pomieszczenie nie dochodzi do swojej nastawy mimo w
+pełni otwartego zaworu, woda powoli rośnie ponad krzywą, do swojego limitu: domyślnie 3 K, na
+poziomie zaawansowanym do 10 K, nigdy więcej niż 3 K na dobę. Dla pomieszczenia, którego SmartPI
+jest w fazie nauki, „nie dochodzi” znaczy: poniżej nastawy + 0,5 K, gdzie SmartPI przestaje je
+grzać. Nie rośnie, gdy kocioł startuje częściej niż wcześniej. Jedno niedogrzane pomieszczenie
+liczy się jak każde inne, w tych granicach — woda nigdy nie idzie wyżej dla jednego pokoju. Po
+trzech godzinach na limicie, gdy pomieszczenie nadal nie dochodzi do nastawy, korekta tam stoi,
+a zgłoszenie w Naprawach podaje pomieszczenie i możliwe przyczyny: za niska krzywa grzewcza, za
+mały grzejnik w tym pomieszczeniu albo pomieszczenie tracące ciepło (okno, nieszczelności) —
+najpierw krzywą, gdy nie dochodzi większość pomieszczeń, najpierw grzejnik i straty ciepła, gdy
+jedno. Koszt: więcej gazu i możliwie więcej startów palnika;
+jej opis w formularzu wyjaśnia ryzyko przy strefach TPI w VT. Obserwuj starty i wyłącz ją, jeśli
+rosną. Przycisk „Wyzeruj korektę komfortu” cofa ją do zera.
 
 ### 4.5 Ochrona przed mrozem
 
@@ -309,6 +323,22 @@ z wbudowanym zasobnikiem. Dla każdego kotła, który grzeje ciepłą wodę, ekr
 
 Zła odpowiedź albo niepotrzebnie wstrzymuje naukę, albo pozwala jej uczyć się z poborów, które
 zabrały pomieszczeniom ciepło. Rozróżnianie, czy kocioł grzał dom, czy wodę, od niej nie zależy.
+
+### 4.9 Otwarte okna
+
+Otwarte okno wygląda jak za niska krzywa: pomieszczenie nie dochodzi do nastawy, choćby woda była
+ciepła. Wtyczka wyłącza takie pomieszczenie z korekty komfortu:
+
+- **Własne wykrywanie okna w VT** — czujnik okna albo automatyczne wykrywanie VT po szybkości
+  zmian temperatury — jest odczytywane: pomieszczenie, które VT trzyma z powodu okna, jest
+  pomijane. Dla stref bez czujnika włącz w VT automatyczne wykrywanie okna.
+- **Własna straż wtyczki**, dla stref bez jednego i drugiego: pomieszczenie, którego temperatura
+  spada o 0,5 K w ciągu 10 minut przy otwartym zaworze i płynącym cieple, ma prawdopodobnie
+  otwarte okno. Czujnik binarny **Prawdopodobnie otwarte okno** to pokazuje i podaje
+  pomieszczenie; korekta nie rośnie dla niego, dopóki pomieszczenie nie ogrzeje się o 0,2 K ponad
+  najniższy odczyt, i przez co najmniej 30 minut. Nic innego się nie zmienia.
+- Uchylone okno chłodzi powoli i nie jest tak rozpoznawane: pomieszczenie nie dochodzi do nastawy,
+  a na limicie korekty jej ostrzeżenie wymienia ucieczkę ciepła wśród przyczyn.
 
 ## 5. Podłączenie kotła
 
@@ -620,6 +650,12 @@ nim po ponownym uruchomieniu. Dopóki jest zaległe, mówi o tym zgłoszenie w N
 ręcznie przywrócisz kotłu własne sterowanie, możesz to potwierdzić w tym zgłoszeniu, a wtyczka
 przestanie ponawiać.
 
+Stała inna wartość w odczycie zwrotnym nastawy po oddaniu liczy się jako wartość innego
+sterownika („Po oddaniu kotłem steruje inny sterownik”) dopiero wtedy, gdy wartość oddania
+dotarła do nastawy. Jeśli od tego czasu urządzenie się zrestartowało albo jego encje były
+niedostępne, ta wartość jest jego własną wartością startową: oddanie zostaje zaległe, pokazane
+jako nieudane, i jest wysyłane ponownie.
+
 Co kocioł robi po oddaniu sterowania, zależy od twojej instalacji: zobacz
 [Co oznacza oddanie sterowania](#52-co-oznacza-oddanie-sterowania).
 
@@ -782,6 +818,8 @@ Alarmy monitora. Informują; wtyczka dalej grzeje.
 | Dryf histerezy c.o. | pasmo wł./wył. kotła z czasem się przesuwa | zleć sprawdzenie |
 | Brak przepływu: wszystkie zawory zamknięte przy pracującej pompie | woda nie ma którędy płynąć | sprawdź zawory albo obejście (bypass) |
 | Za gorąca woda w obiegu | zasilanie powyżej temperatury alarmowej obiegu | sprawdź jego maksimum |
+| Długie palenie bez nagrzewania | płomień 3 h bez przerwy, a pomieszczenia się nie nagrzewają: przyczyna mówi, czy woda jest za chłodna dla niedogrzanych pomieszczeń, kocioł na granicy mocy, czy woda za ciepła | korekta podnosi za chłodną wodę; przy za ciepłej obniż krzywą |
+| Prawdopodobnie otwarte okno | pomieszczenie straciło 0,5 K w 10 minut podczas grzania | zamknij okno; do tego czasu pomieszczenie jest pomijane w korekcie |
 
 Zgłoszenia w Naprawach:
 
@@ -794,6 +832,7 @@ Zgłoszenia w Naprawach:
 | Kocioł zgłasza usterkę, która go zatrzymuje | grzanie jest wyłączone, dopóki nie zniknie; zobacz instrukcję |
 | Kocioł wciąż się wyłącza przy najniższej temperaturze wody | rozważ podniesienie tego limitu |
 | Kocioł wciąż się wyłącza przy swojej najniższej temperaturze wody | to samo, na własnej krzywej urządzenia |
+| Kocioł jest na granicy mocy | 3 h na wysokiej modulacji poniżej nastawy przy niedogrzanych pomieszczeniach: sprawdź ustawienie mocy grzania |
 
 Dla ciśnienia twój limit alarmu musi być niższy niż ciśnienie zadziałania zaworu
 bezpieczeństwa, wydrukowane na zaworze.
@@ -809,7 +848,7 @@ Alarmy sterowania mają nazwy „Sterowanie: …”.
 | Sterowanie: zmiana przez inny sterownik | coś innego zapisało do kotła |
 | Sterowanie: oddanie nieudane | oddanie sterowania nie zostało potwierdzone |
 | Sterowanie: błąd wewnętrzny | błąd we wtyczce zatrzymał sterowanie |
-| Sterowanie: korekta komfortu na granicy | +3 K przez 3 godziny: krzywa jest pewnie za niska |
+| Sterowanie: korekta komfortu na granicy | na swoim limicie (domyślnie 3 K) przez 3 godziny: zobacz jej zgłoszenie |
 | Sterowanie: brak potwierdzenia z kotła | nastawa nie jest pokazywana z powrotem przez 5 minut |
 | Sterowanie: polecenia często giną | 3 utracone polecenia w ciągu 24 godzin (informacja) |
 | Sterowanie: brak oznak grzania kotła | grzanie włączone przez 30 minut bez płomienia i bez wzrostu temperatury |
@@ -835,6 +874,8 @@ Zgłoszenia w Naprawach dotyczące sterowania:
 | Sterowanie czeka na potwierdzenie z bramki | odczyt zwrotny nastawy nie ma wartości |
 | Opcji sterowania nie da się użyć | otwórz opcje i ustaw sterowanie ponownie |
 | Reakcje na alarmy nie są już dostępne | te alarmy teraz tylko informują |
+| Krzywa grzewcza wygląda na za niską dla: … | korekta 3 h na limicie, większość pomieszczeń niedogrzana: najpierw podnieś krzywą, potem sprawdź grzejniki i ucieczkę ciepła |
+| … nie dochodzi do nastawy | korekta 3 h na limicie, jedno pomieszczenie niedogrzane: najpierw sprawdź jego grzejnik, zawór i okno, potem krzywą |
 
 Przełącznik sterowania podaje też odpowiedzi z kreatora, które zostawiają sterowanie wyłączone:
 tylko monitorowanie, tylko temperatura pokoju (od wersji 0.3), sterowanie albo topologia

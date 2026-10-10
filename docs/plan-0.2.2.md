@@ -620,7 +620,9 @@ Left on purpose for a later release:
     is off by default (K4.1); with it off the starts equal the boiler's own at a constant outdoor
     temperature, and a room set above the curve's room temperature stays up to about 2 K short in
     cold weather; a rule that rises only while starts do not rise may come in 0.3 if data show a
-    need — built in 0.2.3 instead (decision 11 of `docs/plan-0.2.3.md`).
+    need — built in 0.2.3 instead (decision 11 of `docs/plan-0.2.3.md`). Reversed by the user on
+    2026-10-10: on by default in full control again, within the user's limit, an upgraded entry
+    keeping what it ran with (step G11, `docs/plan-0.2-g11.md` B).
 25. The simulator starts every TPI zone's cycle together (staggered cycles not modelled), and
     the wall thermostat's own overrides are not modelled (Z3) — later.
 26. A "heating stops" hand-back leaves the heating switch on where the plugin was heating, so the

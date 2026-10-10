@@ -118,6 +118,7 @@ from .curve import (
     HeatingCurve,
     OutdoorSource,
     OutdoorState,
+    auto_room,
     update_outdoor,
 )
 from .demand import Demand, DemandConfig, boiler_demand
@@ -136,7 +137,7 @@ from .zone_watch import ZoneWatch, follow_zones, graced, in_recognition, unjudge
 
 HOUR = 3600.0
 DAY = 24 * HOUR
-CORRECTION_MAX_K = 3.0  # the firm band of the comfort correction
+CORRECTION_MAX_K = 3.0  # the correction's limit by default; the user's, 0.5 to 10 K (G11)
 CORRECTION_RISE_S = 30 * 60.0  # seconds of heat flow per kelvin of rise; the fall is twice as fast
 CORRECTION_LIMIT_S = 3 * HOUR  # at the band's edge this long: tell the user
 CORRECTION_DAY_K = 3.0  # at most this much rise within 24 h (principle 13 (2); provisional, K4)
@@ -241,7 +242,14 @@ class ControlConfig:
     # sensor last changed, which a steady room does not do for hours; a zone is unknown by its
     # state (unavailable, not started), and a room sensor gone quiet is VT's own safety mode's.
     zone_max_age_s: float | None = None
-    comfort_correction: bool = False  # off unless switched on (the user, 2026-10-03, K4.1)
+    # On by default in full control (the user, 2026-10-10, G11 B): the option's default lives in
+    # the options; the core's own, off, serves tests and the bare config.
+    comfort_correction: bool = False
+    correction_max_k: float = CORRECTION_MAX_K  # its limit, the user's (G11 B)
+    # The curve's room temperature (G11 D): Auto follows the warmest setpoint among the zones
+    # that heat, but those left out; Manual (``False``) keeps ``curve.room``, the value entered.
+    room_auto: bool = False
+    room_excluded: frozenset[str] = frozenset()
     # The boiler link is lost once its stale steps cover this long within the last
     # ``OUTAGE_WINDOW_S`` (X2): control then hands back. ``None``: never lost (tests, simulator).
     stale_hand_back_s: float | None = OUTAGE_LOST_S
@@ -329,6 +337,7 @@ class ControlState:
     water_reasons: tuple[Reason, ...] = ()  # why the water temperature is what it is
     decided_at: float | None = None  # when the water temperature was last decided
     correction: float = 0.0  # K added to the curve for a zone that cannot reach its setpoint
+    curve_room: float | None = None  # the curve's room temperature at the last water decision
     heat_s: float = 0.0  # seconds heat has flowed since the last water decision
     water_s: float = 0.0  # seconds counted since the last water decision (P-46)
     last_step_at: float | None = None
@@ -370,6 +379,13 @@ class ControlDecision:
     effective_outdoor: float | None = None
     frost_stuck: bool = False  # frost heating for long without the room warming: tell the user
     correction_at_limit: bool = False  # the correction at its band's edge for hours: tell the user
+    # The rooms fully open and short now — the ones the correction rises for, named by the
+    # "curve too low" warning at its limit (G11 B).
+    short_zones: tuple[str, ...] = ()
+    # More than half of the rooms judged are short: the curve first among the warning's causes;
+    # fewer, the room's radiator and its heat loss first (G11, addition 3).
+    most_short: bool = False
+    curve_room: float | None = None  # the curve's room temperature the water was decided with
     link_lost: bool = False  # the boiler link is lost (X2): stale for five minutes within ten
     # Decision 3: every configured zone unknown after the recognition period and the graces;
     # the zones known but no configured criterion judged (PB-03); the configured demand criteria
@@ -867,8 +883,10 @@ def _heating_decision(
     prior_target, prior_upper = state.target, state.upper
     if _water_due(state, now, config, frost, nobody_asks and outdoor.effective is None):
         water: list[Reason] = [_OUTDOOR_REASON[outdoor.source]]
+        room = _curve_room(state, inputs, config)
+        state = replace(state, curve_room=room)
         if outdoor.effective is not None:
-            curve_value = config.curve.flow(outdoor.effective)
+            curve_value = replace(config.curve, room=room).flow(outdoor.effective)
         elif nobody_asks:
             curve_value = config.limits.hard_min  # the fallback serves only with zones known
         else:
@@ -887,7 +905,7 @@ def _heating_decision(
             water_s=0.0,
             rises=rises,
             starts_baseline=baseline,
-            correction_limit_s=_limit_time(state, correction, held),
+            correction_limit_s=_limit_time(state, correction, held, config.correction_max_k),
         )
         if correction > 0:
             water.append(Reason.COMFORT_CORRECTION)
@@ -937,6 +955,9 @@ def _heating_decision(
         effective_outdoor=outdoor.effective,
         frost_stuck=frost_stuck,
         correction_at_limit=new_state.correction_limit_s >= CORRECTION_LIMIT_S,
+        short_zones=_short_zones(inputs, config),
+        most_short=_most_short(inputs, config),
+        curve_room=new_state.curve_room,
         activation_at=activation_at,
     )
 
@@ -1060,6 +1081,58 @@ def _saturated(zone: ZoneState) -> bool:
     return zone.fully_open  # one meaning, shared with the critical zone
 
 
+def _counted(inputs: ControlInputs, config: ControlConfig) -> list[ZoneState]:
+    """The zones the correction judges: heating enabled, and known — not one VT holds for a
+    window (G11 F)."""
+    now = inputs.now
+    return [
+        z
+        for z in inputs.zones
+        if z.heating_enabled is True
+        and z.is_known(now, config.zone_max_age_s)
+        and z.window_open is not True
+    ]
+
+
+def is_short(zone: ZoneState) -> bool:
+    """Fully open and short by at least ``SHORT_K`` of where its own controller stops heating —
+    VT's setpoint, or with SmartPI learning its upper hysteresis over it (G11 C); never with a
+    window probably open, which no water warms (G11 F)."""
+    shortfall = zone.shortfall
+    return (
+        _saturated(zone)
+        and not zone.window_suspected
+        and shortfall is not None
+        and shortfall >= SHORT_K
+    )
+
+
+def _curve_room(state: ControlState, inputs: ControlInputs, config: ControlConfig) -> float:
+    """The curve's room temperature for this water decision (G11 D): in Manual the value
+    entered; in Auto the warmest setpoint among the zones that heat — heating enabled, known,
+    not left out by the user — within ``auto_room``'s bounds, the last one holding without
+    any."""
+    if not config.room_auto:
+        return config.curve.room
+    targets = [
+        z.target
+        for z in _counted(inputs, config)
+        if z.target is not None and z.zone_id not in config.room_excluded
+    ]
+    return auto_room(targets, config.curve, state.curve_room)
+
+
+def _short_zones(inputs: ControlInputs, config: ControlConfig) -> tuple[str, ...]:
+    """The rooms fully open and short now (G11 B)."""
+    return tuple(z.zone_id for z in _counted(inputs, config) if is_short(z))
+
+
+def _most_short(inputs: ControlInputs, config: ControlConfig) -> bool:
+    """More than half of the rooms judged are short (G11, addition 3)."""
+    counted = _counted(inputs, config)
+    return 2 * sum(1 for z in counted if is_short(z)) > len(counted)
+
+
 def _taking_heat(zone: ZoneState) -> bool:
     """The zone takes heat now: an opening above ``ZONE_OPEN`` or its device on (S-08) — one
     VT lowered (eco, away, frost) with its valve closed does not."""
@@ -1095,15 +1168,11 @@ def _correction(
     baseline = follow_baseline(baseline, state.correction, now)
     starts = inputs.starts
     rose = starts is not None and baseline is not None and starts_rose(baseline, starts, now)
-    known = [
-        z
-        for z in inputs.zones
-        if z.heating_enabled is True and z.is_known(now, config.zone_max_age_s)
-    ]
+    known = _counted(inputs, config)
     too_warm = any(
         _taking_heat(z) and z.deficit is not None and z.deficit < -OVERHEAT_K for z in known
     )
-    short = any(_saturated(z) and z.deficit is not None and z.deficit >= SHORT_K for z in known)
+    short = any(is_short(z) for z in known)
     opened = [z for z in known if z.demand is not None]  # no opening: never blocks the fall
     satisfied = bool(opened) and all(z.demand is not None and z.demand < SATISFIED for z in opened)
     correction = state.correction
@@ -1122,24 +1191,26 @@ def _correction(
         rise = min(
             state.heat_s / CORRECTION_RISE_S,
             CORRECTION_DAY_K - spent,
-            CORRECTION_MAX_K - correction,
+            config.correction_max_k - correction,
         )
         if rise > _EPSILON:
             if baseline is None:
                 baseline = StartsBaseline(now, tuple(t for t in starts if t < now))
             correction += rise
             rises = (*rises, (now, rise))
-    if correction > CORRECTION_MAX_K - _EPSILON:
-        correction = CORRECTION_MAX_K  # the band's edge, not a rounding error below it
+    limit = config.correction_max_k
+    if correction > limit - _EPSILON:
+        correction = limit  # the band's edge, not a rounding error below it
     return max(0.0, correction), rises, baseline
 
 
-def _limit_time(state: ControlState, correction: float, held: bool) -> float:
-    """The time the correction has sat at its band's edge, counted from the decision that
-    reached it; paused while a cap or a clip holds the setpoint (S-25, T-48)."""
-    if correction < CORRECTION_MAX_K:
+def _limit_time(state: ControlState, correction: float, held: bool, limit: float) -> float:
+    """The time the correction has sat at its band's edge, the user's ``limit``, counted from
+    the decision that reached it; paused while a cap or a clip holds the setpoint (S-25,
+    T-48)."""
+    if correction < limit:
         return 0.0
-    if state.correction < CORRECTION_MAX_K or held:
+    if state.correction < limit or held:
         return state.correction_limit_s
     return state.correction_limit_s + state.water_s
 

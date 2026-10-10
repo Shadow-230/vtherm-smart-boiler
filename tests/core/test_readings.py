@@ -10,6 +10,7 @@ from custom_components.vtherm_smart_boiler.core.curve import (
     update_outdoor,
 )
 from custom_components.vtherm_smart_boiler.core.readings import (
+    SMARTPI_HYSTERESIS_K,
     UNKNOWN,
     BoilerSnapshot,
     Reading,
@@ -266,3 +267,17 @@ def test_a_plausible_range_includes_its_bounds_and_may_be_open() -> None:
     assert SignalSpec(SignalKind.PRESSURE, low=0.0).plausible(1e6)
     assert SignalSpec(SignalKind.PRESSURE, high=4.0).plausible(-1e6)
     assert not SignalSpec(SignalKind.PRESSURE, high=4.0).plausible(4.01)
+
+
+@pytest.mark.parametrize(("learning", "shortfall"), [(None, 0.2), (False, 0.2), (True, 0.7)])
+def test_a_smartpi_zone_in_its_learning_phase_is_short_up_to_its_upper_hysteresis(
+    learning: bool | None, shortfall: float
+) -> None:
+    """G11 C: SmartPI 0.4.0 in its learning phase runs on/off and keeps the valve open until the
+    room is 0.5 K over VT's setpoint, so "short" is judged against that; out of it, or with the
+    phase unknown, against VT's setpoint. The deficit itself stays VT's."""
+    assert SMARTPI_HYSTERESIS_K == 0.5
+    zone = ZoneState("z", 20.8, 21.0, True, smartpi_learning_phase=learning)
+    assert zone.deficit == pytest.approx(0.2)
+    assert zone.shortfall == pytest.approx(shortfall)
+    assert ZoneState("z", None, 21.0, True, smartpi_learning_phase=True).shortfall is None

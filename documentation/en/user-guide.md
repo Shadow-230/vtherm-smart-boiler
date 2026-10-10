@@ -188,8 +188,14 @@ same way VT's central boiler does. You choose one or more of these criteria:
 While heating is on, the plugin sets the boiler's water (flow) temperature:
 
 1. **The heating curve** — you enter it: the design outdoor temperature (default −15 °C), the
-   design flow temperature (required, no default), the curve's room temperature (default 20 °C)
-   and an optional offset. The curve gives a water temperature for each outdoor temperature.
+   design flow temperature (required, no default) and an optional offset. The curve gives a
+   water temperature for each outdoor temperature.
+   **The curve's room temperature** (advanced level): **Auto** (default) follows the highest
+   setpoint among the zones that heat now — the warmest room you keep — at most 23 °C, and with
+   VT's presets (eco at night lowers it); you can leave rooms out (a bathroom kept warmer).
+   **Manual** keeps the value you enter: the setpoint of your warmest room. Too low leaves rooms
+   cold in mild weather. An entry set up before this version runs Manual with its value. The
+   control state shows the room temperature in use (`curve_room`).
    The design outdoor temperature is one value with the building's: changing it in either step
    changes both. The curve step also shows the boiler's maximum heating setpoint and the first
    circuit's maximum flow temperature — the lowest of the three, these two and the highest water
@@ -212,11 +218,19 @@ If the outdoor temperature is lost, the plugin uses the weather entity, then kee
 known value for 3 hours, then uses your fallback setpoint or the curve's design point. A failed
 outdoor sensor never means zero heat.
 
-**Comfort correction** — **off by default**. When switched on, and a room stays short of its
-setpoint with its valve fully open, the water may rise up to 3 K above the curve, slowly. It
-does not rise when the boiler starts more often than before. Its text in the form explains the
-risk with VT's TPI zones (more burner starts). Switch it on only where a room stays cold with its
-valve open, and watch the starts. A "Reset comfort correction" button sets it back to zero.
+**Comfort correction** — **on by default with full control** (an entry set up before this
+version keeps what it ran with). When a room stays short of its setpoint with its valve fully
+open, the water rises slowly above the curve, up to its limit: 3 K by default, up to 10 K at the
+advanced level, never more than 3 K a day. For a room whose SmartPI is in its learning phase,
+"short" means below its setpoint + 0.5 K, where SmartPI stops heating it. It does not rise when
+the boiler starts more often than before. One room short counts like any other, within these
+limits — the water never goes higher for one room's sake. After three hours at its limit with a
+room still short, the correction holds there, and a repair issue names the room and the possible
+causes: the heating curve too low, the room's radiator too small for it, or the room losing heat
+(a window, leaks) — the curve first when most rooms are short, the radiator and the heat loss
+first when one is. What it costs: more gas, and possibly more burner starts; its text in the form explains the risk with
+VT's TPI zones. Watch the starts, and switch it off if they climb. A "Reset comfort correction"
+button sets it back to zero.
 
 ### 4.5 Frost protection
 
@@ -293,6 +307,21 @@ every boiler that heats hot water the panels ask whether **hot water has priorit
 
 The wrong answer either pauses learning for nothing or lets it learn from draws that took the
 rooms' heat. How burns are told apart as heating or hot water does not depend on it.
+
+### 4.9 Open windows
+
+An open window looks like a curve too low: the room stays short however warm the water is. The
+plugin keeps such a room out of the comfort correction:
+
+- **VT's own window detection** — a window sensor, or VT's automatic detection by the
+  temperature's slope — is read: a room VT holds for a window is left out. For zones without a
+  sensor, switch on VT's automatic window detection.
+- **The plugin's own guard**, for zones with neither: a room falling by 0.5 K within 10 minutes
+  while its valve is open and heat flows has a window probably open. The binary sensor **Window
+  probably open** says so and names the room; the correction does not rise for it until the room
+  has warmed 0.2 K over its lowest reading, and for at least 30 minutes. Nothing else changes.
+- A tilted window cools slowly and is not seen as one: the room stays short, and at the
+  correction's limit its warning names the heat loss among the causes.
 
 ## 5. Connecting the boiler
 
@@ -596,6 +625,11 @@ A hand-back is **retried every minute until it is confirmed**, and the plugin re
 through restarts. While it is owed, a repair issue says so. If you return the boiler to its own
 control by hand, you can confirm that in the repair issue and the plugin stops retrying.
 
+A steady other value on the setpoint's read-back after the hand-back counts as another
+controller's ("After the hand-back another controller holds the boiler") only once the hand-back
+value reached the setpoint. If the device restarted, or its entities were away, since then, the
+value is its own start value: the hand-back stays owed, shown as failed, and is sent again.
+
 What the boiler does after a hand-back depends on your installation: see
 [What hand-back means](#52-what-hand-back-means).
 
@@ -748,6 +782,8 @@ Alarms from the monitor. They inform; the plugin keeps heating.
 | Heating hysteresis drifting | the boiler's on/off band drifts over time | have it checked |
 | Low flow: all valves closed while the pump runs | no path for the water | check valves or bypass |
 | Circuit water too hot | flow above the circuit's alarm temperature | check its maximum |
+| Long burn without warming | the flame on for 3 h without a break, the rooms not warming: its reason says the water too cool for the rooms short, the boiler at its power limit, or the water too hot | the correction raises cool water; lower the curve if too hot |
+| Window probably open | a room fell 0.5 K within 10 minutes while it heated | close the window; the room is left out of the correction meanwhile |
 
 Repair issues:
 
@@ -760,6 +796,7 @@ Repair issues:
 | The boiler reports a fault that stops it | heating is kept off until it clears; see the manual |
 | The boiler keeps stopping at the lowest water temperature | consider raising that limit |
 | The boiler keeps stopping at its lowest water temperature | the same, on the device's own curve |
+| The boiler is at its power limit | 3 h at high modulation below its setpoint with rooms short: check its heating power setting |
 
 For pressure, your alarm limit must be below the safety valve's rating, printed on the valve.
 
@@ -774,7 +811,7 @@ Control alarms are named "Control: …".
 | Control: changed by another controller | something else wrote to the boiler |
 | Control: hand-back failed | the hand-back has not been confirmed |
 | Control: internal error | an error in the plugin stopped control |
-| Control: comfort correction at its limit | at +3 K for 3 hours: the curve is likely too low |
+| Control: comfort correction at its limit | at its limit (3 K by default) for 3 hours: see its repair issue |
 | Control: the boiler's confirmation is missing | a setpoint not shown back for 5 minutes |
 | Control: commands often lost | 3 lost commands within 24 hours (information) |
 | Control: no sign the boiler heats | heating on for 30 minutes with no flame or rise |
@@ -800,6 +837,8 @@ Repair issues about control:
 | Control waits for the gateway's confirmation | the setpoint read-back has no value |
 | The control options cannot be used | open the options and set control up again |
 | Alarm reactions no longer offered | those alarms now only inform |
+| The heating curve looks too low for … | the correction at its limit for 3 h, most rooms short: raise the curve first, then check radiators and heat loss |
+| … stays short of its setpoint | the correction at its limit for 3 h, one room short: check its radiator, valve and window first, then the curve |
 
 The control switch also names the setup answers that keep control off: monitoring only, room
 temperature only (from version 0.3), a control or a topology that does not fit the boiler's
