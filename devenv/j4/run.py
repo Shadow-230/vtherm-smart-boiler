@@ -47,6 +47,11 @@ BASE_CURVE = {
     "ceiling_band": 10.0,
     "frost_limit": 5.0,
     "frost_release": 7.0,
+    # As the scenarios ran before G11: the curve's room entered, the correction off; the
+    # corrections' scenarios (corrections.py) switch them on themselves.
+    "room_mode": "manual",
+    "room_excluded": [],
+    "comfort_correction": False,
 }
 BASE_BEHAVIOUR = {
     "ramp_k_per_min": 1.0,
@@ -152,8 +157,17 @@ class Run:
             }.get(step)
             if body is None:
                 return {"unexpected_step": step}
+            # Each step starts from what the form shows now, so a field the runner does not set
+            # keeps its value instead of falling back to the plugin's default (G11 made the
+            # comfort correction and the curve's Auto room the defaults).
+            current = {
+                f["name"]: v
+                for f in d.get("data_schema") or []
+                if (v := (f.get("description") or {}).get("suggested_value", f.get("default")))
+                is not None
+            }
             fields = {f["name"] for f in d.get("data_schema") or []}
-            body = {k: v for k, v in body.items() if v is not None and k in fields}
+            body = {k: v for k, v in (current | body).items() if v is not None and k in fields}
             _s, d = await self.ha.rest(
                 "POST", f"/api/config/config_entries/options/flow/{fid}", body
             )

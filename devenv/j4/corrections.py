@@ -1,12 +1,12 @@
-"""J4's scenarios for the corrections decided on 2026-10-10 (test instance 1: the gateway path,
-full control, VT's zones with SmartPI in the bedroom and TPI elsewhere).
+"""J4's scenarios for the corrections of 2026-10-10 (G11, docs/plan-0.2-g11.md), on test instance
+1: the gateway path, full control, VT's zones with SmartPI in the bedroom and TPI elsewhere.
 
-They test the behaviour decided before it is built — run them once the corrections are merged:
-the comfort correction with a user limit and a warning at its edge, SmartPI's learning band in
-"is the room short", the curve's room temperature in Auto, the long-run rule and the guard for
-an open window without a sensor. The new notices' names are the code's to choose, so these
-scenarios look for any new repair issue or alarm and note what they find; once the names exist,
-tighten the checks to them.
+The comfort correction with its limit and the warning at its edge (repair issue
+``curve_too_low_<entry>``, key ``curve_too_low`` or ``room_short_at_limit``, the rooms' entity IDs
+in its ``entities`` placeholder), SmartPI's learning band in "is the room short", the curve's
+room temperature in Auto (option ``room_mode``, ``room_excluded``; the control state's
+``curve_room``), the long-burn rule (binary sensor ``long_burn``, its ``reason``) and the guard
+for an open window without a sensor (binary sensor ``window_probably_open``).
 
 Usage: HA_INSTANCE=1 scripts/env.sh python devenv/j4/corrections.py ID...
 """
@@ -20,30 +20,11 @@ import time
 from typing import Any
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from paths import options_walk
 from run import SCENARIOS, ZONES, Run, main
 
 FLAME = "binary_sensor.boiler_sim_flame"
 SMARTPI_ZONE = "climate.zone_bedroom"
 LOW_CURVE = {"design_flow": 38.0}  # well below what the simulated house needs
-
-
-async def notices(r: Run) -> dict[str, dict[str, Any]]:
-    """The plugin's repair issues and its alarms that are on, by id."""
-    out: dict[str, dict[str, Any]] = {}
-    for issue in await r.ha.issues():
-        out[f"issue:{issue['issue_id']}"] = {
-            "severity": issue.get("severity"),
-            "key": issue.get("translation_key"),
-            "placeholders": issue.get("translation_placeholders") or {},
-        }
-    for alarm in await r.alarms_on():
-        out[f"alarm:{alarm}"] = {"severity": None, "key": alarm, "placeholders": {}}
-    return out
-
-
-def new_since(before: dict[str, Any], now: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in now.items() if k not in before}
 
 
 async def correction_on(r: Run) -> bool:
@@ -59,48 +40,6 @@ async def room(r: Run, zone: str) -> float | None:
     with contextlib.suppress(TypeError, ValueError):
         return float(await r.s(f"sensor.boiler_sim_{zone}_temperature"))
     return None
-
-
-async def curve_fields(r: Run, step: str = "control_curve") -> list[dict[str, Any]]:
-    """The fields of one control options step as the form shows them now (the flow is left
-    unsaved)."""
-    ha = r.ha
-    entry = await ha.entry("vtherm_smart_boiler")
-    _s, d = await ha.rest(
-        "POST",
-        "/api/config/config_entries/options/flow",
-        {"handler": entry["entry_id"], "show_advanced_options": True},
-    )
-    path = f"/api/config/config_entries/options/flow/{d['flow_id']}"
-    _s, d = await ha.rest("POST", path, {"next_step_id": "control"})
-    try:
-        while d.get("type") == "form":
-            if d["step_id"] == step:
-                return list(d.get("data_schema") or [])
-            body = {
-                f["name"]: v
-                for f in d.get("data_schema") or []
-                if (v := (f.get("description") or {}).get("suggested_value", f.get("default")))
-                is not None
-            }
-            _s, d = await ha.rest("POST", path, body)
-        return []
-    finally:
-        await ha.rest("DELETE", path)
-
-
-def _options_of(field: dict[str, Any]) -> list[str]:
-    options = ((field.get("selector") or {}).get("select") or {}).get("options") or []
-    return [o["value"] if isinstance(o, dict) else str(o) for o in options]
-
-
-async def room_mode_field(r: Run) -> tuple[str | None, str | None]:
-    """The curve's room temperature mode (a choice with "auto" and "manual") and the field
-    that leaves zones out of Auto, as the form names them; ``None`` where not found."""
-    fields = await curve_fields(r)
-    mode = next((f["name"] for f in fields if {"auto", "manual"} <= set(_options_of(f))), None)
-    exclude = next((f["name"] for f in fields if "exclu" in f["name"]), None)
-    return mode, exclude
 
 
 async def set_targets(r: Run, targets: dict[str, float]) -> None:
@@ -126,36 +65,44 @@ async def flame_on_for(r: Run, seconds: float, within: float) -> float | None:
     return None
 
 
+CORRECTION_ON = {"comfort_correction": True}
+
+
+async def curve_issue(r: Run) -> dict[str, Any] | None:
+    """The warning at the correction's limit, if raised."""
+    return next(
+        (i for i in await r.ha.issues() if i["issue_id"].startswith("curve_too_low_")), None
+    )
+
+
 async def Q1(r: Run):
     """a curve too low with the correction on, the bedroom's SmartPI in its learning phase and
     the rooms just under their setpoints: SmartPI's band (+0.5 K) counts, so the water rises; at
-    the correction's limit for 3 h with a room still short, a warning"""
+    the correction's limit for 3 h with a room still short, the warning naming it"""
     try:
-        await r.options(curve=LOW_CURVE, behaviour={"comfort_correction": True})
+        await r.options(curve=LOW_CURVE, behaviour=CORRECTION_ON)
         r.ent.update(await r.ha.entities())
         await r.sim("set_outdoor", temperature=0.0)
         await r.ha.call("vtherm_smartpi", "reset_smartpi_learning", entity_id=SMARTPI_ZONE)
         for zone, value in ZONES:
             await r.sim("set_room_temperature", zone=zone, temperature=value - 0.2)
-        before = await notices(r)
         await r.switch(True)
         await r.ha.wait(300)
         start = await target(r)
         rose = await r.ha.until(lambda: correction_on(r), 7200, 60)
         r.check(rose is not None, f"the correction started ({rose and round(rose / 60)} min)")
+        issue = None
         t = time.time()
-        warned: dict[str, Any] = {}
-        while time.time() - t < 6 * 3600 and not warned:
+        while time.time() - t < 6 * 3600 and issue is None:
             await r.ha.wait(300)
-            warned = {
-                k: v
-                for k, v in new_since(before, await notices(r)).items()
-                if v["severity"] == "warning"
-            }
+            issue = await curve_issue(r)
         r.note(
-            f"target {start} → {await target(r)}; bedroom {await room(r, 'zone_bedroom')} °C; new {new_since(before, await notices(r))}"
+            f"target {start} → {await target(r)}; bedroom {await room(r, 'zone_bedroom')} °C; issue {issue and (issue.get('translation_key'), issue.get('translation_placeholders'))}"
         )
-        r.check(bool(warned), f"a warning at the limit with a room short: {warned}")
+        r.check(
+            issue is not None and issue.get("severity") == "warning",
+            "the warning at the limit with a room short",
+        )
     finally:
         await r.switch(False)
         await r.ha.wait(10)
@@ -165,24 +112,26 @@ async def Q1(r: Run):
 
 async def Q2(r: Run):
     """a curve too low with the correction off: the water stays on the curve; after 3 h of the
-    flame on with the rooms not warming, information that the water is too cool"""
+    flame on with the rooms not warming, the long-burn sensor says the water is too cool — not
+    the boiler's power limit (the flow holds its setpoint)"""
     try:
-        await r.options(curve=LOW_CURVE, behaviour={"comfort_correction": False})
+        await r.options(curve=LOW_CURVE)
+        r.ent.update(await r.ha.entities())
         await r.sim("set_outdoor", temperature=0.0)
-        before = await notices(r)
-        rooms0 = {z: await room(r, z) for z, _v in ZONES}
         await r.switch(True)
         burned = await flame_on_for(r, 3 * 3600, 5 * 3600)
         r.check(burned is not None, f"the flame on for 3 h ({burned and round(burned / 60)} min)")
-        await r.ha.wait(600)
-        rooms1 = {z: await room(r, z) for z, _v in ZONES}
-        new = new_since(before, await notices(r))
-        r.note(f"rooms {rooms0} → {rooms1}; new {new}")
+        told = await r.ha.until(lambda: _long_burn(r), 1800, 30)
+        st = await r.st("long_burn")
+        r.note(f"long burn: {st['state']} {st['attributes']}")
         r.check(not await correction_on(r), "no correction: off")
-        r.check(bool(new), f"told the water is too cool: {new}")
         r.check(
-            not any("power" in str(v["key"]) for v in new.values()),
-            "not taken for the boiler's power limit (the flow holds its setpoint)",
+            told is not None and st["attributes"].get("reason") == "water_too_cool",
+            f"the water too cool: {st['attributes'].get('reason')}",
+        )
+        r.check(
+            not any(i["issue_id"].startswith("boiler_power_limit") for i in await r.ha.issues()),
+            "no power-limit warning",
         )
     finally:
         await r.switch(False)
@@ -191,107 +140,109 @@ async def Q2(r: Run):
         await r.options()
 
 
+async def _long_burn(r: Run) -> bool:
+    return await r.s("long_burn") == "on"
+
+
+async def _curve_room(r: Run) -> float | None:
+    value = await r.attr("control_state", "curve_room")
+    return float(value) if isinstance(value, (int, float)) else None
+
+
 async def Q3(r: Run):
     """the curve's room temperature in Auto: the warmest heating room's setpoint, at most
     23 °C, a zone left out ignored; Manual back after"""
-    mode, exclude = await room_mode_field(r)
-    if mode is None:
-        r.check(False, "no Auto/Manual choice for the curve's room temperature in the form")
-        return
     try:
-        d = await options_walk(r, {"control_curve": {mode: "auto"}})
-        r.check(not d.get("errors"), f"Auto saved: {d.get('errors')}")
+        await r.options(curve={"room_mode": "auto"})
+        await r.switch(True)
+        steps = []
+        for targets in (
+            {},
+            {"zone_bath": 23.0},
+            {"zone_bath": 25.0},
+            {"zone_bath": 22.0, "zone_living": 21.0},
+        ):
+            await set_targets(r, targets)
+            await r.ha.wait(420)
+            steps.append(await _curve_room(r))
+        r.note(f"curve room: base, bath 23, bath 25, living 21 → {steps}")
+        r.check(steps[0] == 22.0, f"the warmest room, the bath at 22 °C: {steps[0]}")
+        r.check(steps[1] == 23.0, f"follows the bath to 23 °C: {steps[1]}")
+        r.check(steps[2] == 23.0, f"at most 23 °C: {steps[2]}")
+        r.check(steps[3] == 22.0, f"a room that is not the warmest changes nothing: {steps[3]}")
+        await r.options(curve={"room_mode": "auto", "room_excluded": ["climate.zone_bath"]})
         await r.switch(True)
         await r.ha.wait(420)
-        base = await target(r)  # the bath, 22 °C, is the warmest
-        await set_targets(r, {"zone_bath": 23.0})
-        await r.ha.wait(420)
-        up = await target(r)
-        await set_targets(r, {"zone_bath": 25.0})
-        await r.ha.wait(420)
-        capped = await target(r)
-        await set_targets(r, {"zone_bath": 22.0, "zone_living": 21.0})
-        await r.ha.wait(420)
-        other = await target(r)
-        r.note(f"targets: base {base}, bath 23 → {up}, bath 25 → {capped}, living 21 → {other}")
-        r.check(base is not None and up is not None and up > base + 0.3, "follows the warmest room")
-        r.check(capped is not None and up is not None and abs(capped - up) < 0.3, "at most 23 °C")
-        r.check(
-            other is not None and base is not None and abs(other - base) < 0.3,
-            "a room that is not the warmest changes nothing",
-        )
-        if exclude is not None:
-            d = await options_walk(r, {"control_curve": {exclude: ["climate.zone_bath"]}})
-            await r.ha.wait(420)
-            left = await target(r)
-            r.check(
-                left is not None and base is not None and left < base - 0.3,
-                f"the bath left out: {left} (the living room, 21 °C, is the warmest now)",
-            )
-        else:
-            r.note("no field to leave zones out found in the form")
+        left = await _curve_room(r)
+        r.check(left == 21.0, f"the bath left out: the living room's 21 °C: {left}")
     finally:
         await r.switch(False)
         await r.ha.wait(10)
-        answers: dict[str, Any] = {mode: "manual", "room": 20.0}
-        if exclude is not None:
-            answers[exclude] = []
-        await options_walk(r, {"control_curve": answers})
+        await r.options()
         await r.zones()
 
 
 async def Q4(r: Run):
-    """a window opened in one room without a sensor (its temperature falls 1.5 K at once): no
-    correction for it for at least 30 min, and information that a window is probably open"""
+    """a window opened in one room without a sensor (its temperature falls 1.5 K at once): the
+    window sensor on, no correction for it for at least 30 min"""
     try:
-        await r.options(behaviour={"comfort_correction": True})
+        await r.options(behaviour=CORRECTION_ON)
+        r.ent.update(await r.ha.entities())
         await r.switch(True)
         await r.ha.wait(900)
-        before = await notices(r)
         base = await target(r)
         await r.sim("set_room_temperature", zone="zone_living", temperature=ZONES[0][1] - 1.5)
+        seen = await r.ha.until(lambda: _window(r), 600, 10)
+        st = await r.st("window_probably_open")
+        r.check(
+            seen is not None,
+            f"window probably open {seen and round(seen)} s after: {st['attributes']}",
+        )
         rose_at = None
         t = time.time()
         while time.time() - t < 1800:
             await r.ha.wait(60)
             if rose_at is None and await correction_on(r):
                 rose_at = round((time.time() - t) / 60)
-        new = new_since(before, await notices(r))
-        r.note(f"target {base} → {await target(r)}; new {new}")
+        r.note(f"target {base} → {await target(r)}")
         r.check(rose_at is None, f"no correction for 30 min (rose at {rose_at} min)")
-        r.check(bool(new), f"told a window is probably open: {new}")
     finally:
         await r.switch(False)
         await r.ha.wait(10)
         await r.options()
 
 
+async def _window(r: Run) -> bool:
+    return await r.s("window_probably_open") == "on"
+
+
 async def Q5(r: Run):
-    """one room short while the others hold (its setpoint out of reach): the curve must hold every
-    room — the correction raises the water for it, and at its limit for 3 h the warning names
-    that room"""
+    """one room short while the others hold (its setpoint out of reach): the curve must hold
+    every room — the correction rises for it, and at its limit for 3 h the warning names that
+    room, the radiator and the heat loss first"""
     try:
-        await r.options(behaviour={"comfort_correction": True})
-        before = await notices(r)
+        await r.options(behaviour=CORRECTION_ON)
         await set_targets(r, {"zone_living": 28.0})
         await r.switch(True)
         rose = await r.ha.until(lambda: correction_on(r), 7200, 60)
         r.check(
             rose is not None, f"the correction rises for one room ({rose and round(rose / 60)} min)"
         )
+        issue = None
         t = time.time()
-        named: list[dict[str, Any]] = []
-        while time.time() - t < 6 * 3600 and not named:
+        while time.time() - t < 6 * 3600 and issue is None:
             await r.ha.wait(300)
-            named = [
-                v
-                for v in new_since(before, await notices(r)).values()
-                if v["severity"] == "warning" and "living" in str(v["placeholders"])
-            ]
+            issue = await curve_issue(r)
+        placeholders = (issue or {}).get("translation_placeholders") or {}
         r.note(
-            f"after {round((time.time() - t) / 3600, 1)} h: new {new_since(before, await notices(r))}"
+            f"after {round((time.time() - t) / 3600, 1)} h: {issue and (issue.get('translation_key'), placeholders)}"
         )
-        r.check(bool(named), f"a warning naming the living room: {named}")
+        r.check(
+            issue is not None
+            and issue.get("translation_key") == "room_short_at_limit"
+            and "climate.zone_living" in placeholders.get("entities", ""),
+            "the warning names the living room, one room short",
+        )
     finally:
         await r.switch(False)
         await r.ha.wait(10)

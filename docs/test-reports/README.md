@@ -33,10 +33,9 @@ HA_INSTANCE=6 scripts/env.sh python devenv/j4/paths.py R1 ...      # relay (6), 
 HA_INSTANCE=1 scripts/env.sh python devenv/j4/corrections.py Q1 ... # the corrections of 2026-10-10
 ```
 
-`corrections.py` tests behaviour decided on 2026-10-10 before it is built — the comfort
+`corrections.py` tests the corrections of 2026-10-10 (G11, `docs/plan-0.2-g11.md`): the comfort
 correction's limit and warning, SmartPI's learning band, the curve's room temperature in Auto, the
-long-run rule, an open window without a sensor; it runs once those corrections are merged, and its
-checks are tightened to the new notices' names then. A long run (`run.py L1`, hours set by
+long-burn rule and an open window without a sensor. A long run (`run.py L1`, hours set by
 `J4_HOURS`) outlasts a background command's two hours and runs detached.
 
 Each scenario starts and ends from a clean state — control off and handed back, the

@@ -38,14 +38,14 @@ boiler_sim:
 
 # The run's mean outdoor temperature (+8 °C or −5 °C), set through the API when the run starts;
 # the automation below adds the daily swing of ±3 K, warmest at 15:00, every five minutes — as
-# sim/simulator.py's daily_cycle does in-process.
+# sim/simulator.py's daily_cycle does in-process. No ``initial``: with one, a restart (a deploy)
+# set the mean back to it; without, Home Assistant restores the value the run set.
 input_number:
   j4_outdoor_mean:
     name: J4 outdoor mean
     min: -20
     max: 20
     step: 0.5
-    initial: 8
     unit_of_measurement: "°C"
 
 automation:
