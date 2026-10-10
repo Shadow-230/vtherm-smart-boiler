@@ -2,7 +2,7 @@
 
 Goal: the first release with control — the 0.1 monitor (`docs/plan-0.1.md`) plus minimal, safe
 control in flow-setpoint mode: the plugin decides the water temperature. Room-value mode (the
-boiler's own curve decides it) moves to 0.3. Control is opt-in, marked experimental, and
+boiler's own curve decides it) moves to 0.3 — since I8 the thermostat-like mode. Control is opt-in, marked experimental, and
 available from the first day; the monitor's verdict comes after 7 days of data (`SCOPE.md` §10;
 the user's decision of 2026-10-08 replaced the monitoring period that held control back). On/off-only boilers
 (relay) come later (0.2.2: on/off boilers through a relay, `docs/plan-0.2.2.md` X8). GitHub and
@@ -15,7 +15,8 @@ the review and the release. S3 can happen at any time.
 Status on 2026-10-10: built through 0.2.3 (`docs/plan-0.2.3.md`, done). The repository is public
 on GitHub since 2026-10-07 (K5's first half, below), with its checks green; J2 done (2026-10-08);
 I6 done (2026-10-09; `docs/plan-0.2-i6.md`); G11 done (2026-10-10; `docs/plan-0.2-g11.md`); I7
-done (2026-10-10; `docs/plan-0.2-i7.md`); J4 running (the scenarios I6, G11 and I7 touch run again, each pull
+done (2026-10-10; `docs/plan-0.2-i7.md`); I8 approved by the user on 2026-10-10 and being built
+(`docs/plan-0.2-i8.md`); J4 running (the scenarios I6, G11 and I7 touch run again, each pull
 request names them);
 then the rest of K1, K4, then K5's
 pre-release (provisionally 0.2.3b1, `docs/plan-0.2.2.md` decision 16), K6 and K7. S3 stays
@@ -143,6 +144,7 @@ reaches a real boiler.
 | I5 ✅ | alarm thresholds as advanced options (open from 0.1) |
 | I6 ✅ | the first panel of the setup asks how the boiler is connected (the user's decisions of 2026-10-08): the OpenTherm Gateway through Home Assistant's integration; the OTGW firmware over MQTT; ESPHome OpenTherm; EMS-ESP; a relay (an on/off boiler); the boiler's own Wi-Fi module or the manufacturer's integration; another writable entity (advanced); monitoring only. The choice sets the write path, the write types, the hand-back and whether a heating switch is required, suggests the signal entities, and says what happens to the boiler when Home Assistant stops — the OTGW: its override lapses within a minute and the thermostat takes over (stand-alone, heating stops); EMS-ESP: its setpoint lapses within about a minute, so the plugin repeats it; ESPHome: it holds the last setpoint and CH enable until it restarts (its API `reboot_timeout`, 15 min by default), then its configured initial values — control needs the user's tick that a safe initial value and a short `reboot_timeout` are set on the ESP, as the relay needs its separate-contact tick, with a sample ESPHome configuration in the user guide; the boiler's Wi-Fi module or the manufacturer's integration: writes usually go to the boiler's memory or through a cloud, so monitoring, and control only where the write type is known and not persistent. Control stays off by default: the choice switches nothing on. The config and options flows, translations (EN, PL), tests, the user guides and `SCOPE.md` §4. Widened by the user's decisions of 2026-10-08 and 2026-10-09 — the control mode, the heat source, the boiler type and hot-water priority, freshness defaults, control in the wizard — and planned step by step in `docs/plan-0.2-i6.md`. Done on 2026-10-09 (pull requests #36 to #48 and I6.7's) |
 | I7 ✅ | the setup and the options move through a menu of sections, as in Versatile Thermostat (the user's decisions of 2026-10-10): a section returns to the menu, nothing is saved until "Save and finish" (in the setup "Create", offered once every section shown has been confirmed and the whole passes the check), which runs every check of the save and reloads once; sections that do not apply are not shown; the menu names the unsaved changes, and closing the window discards them; the pressure and flue-gas limits shown only with their sensor. Planned step by step in `docs/plan-0.2-i7.md`. Done on 2026-10-10 (pull requests #59 and #60) |
+| I8 | the corrections of 2026-10-10 after trying I7: the plugin is for the boiler — the reference room, window handling, foreign heat and the per-zone entities go, with the building fields no function needs and the curve's "correction range"; the options become single forms with no sub-menus (connection and mode apart, a boiler interface item, the read-backs among the signals, circuits as menu items with their zones and devices, the control chain split into items), each field shown only where it can work; circuits run by other automation ask for heat and set a water floor; the boiler's water serves the most demanding circuit asking; texts short and plain, functions not recommendations; every document checked against the code at the end. Planned step by step in `docs/plan-0.2-i8.md` |
 
 Done when: integration tests cover enabling and disabling control, every hand-back path, the
 "no write without fresh data" rule and the list of allowed service calls.
@@ -162,7 +164,7 @@ Done when: every scenario passes in the test HA.
 
 | Step | Work |
 |---|---|
-| K1 🔒 | release files — done on 2026-10-07: `LICENSE` (the official Apache-2.0 text, fetched with the user's consent), no `NOTICE` (as the other Apache-2.0 Home Assistant projects; the user's decision), the brand (`brand/` icon and logo in the Versatile Thermostat family's style, the name "Smart Boiler for Versatile Thermostat" — the user's choice), a first `README.md` and `README.pl.md` (status, roadmap, links) and the guides `documentation/en|pl/` (user guide, technical documentation); still to do: `CHANGELOG.md` and the full `README.md` (a high-level description, use cases and automation examples, as Home Assistant's quality-scale documentation rules ask; installation, what each entity means, what stays local, a section "Options and risks", a section "Versatile Thermostat settings with the plugin" (TPI's `tpi_coef_ext` beside the curve, and SmartPI 0.4.0's own outdoor term `u_ff1`, which cannot be switched off — principle 9, S-50), what hand-back does on each write path, a template for the user's manual fallback; removal; how often data update — the 30 s tick, the 10 s control step, the 5-min analysis, forecasts every 30 min; troubleshooting; known limitations, among them changes no read-back can see and a clip of a flat setpoint judged as another controller; supported devices; the relay setup recommendations, with the Shelly timer "not documented" until K6; the wall-thermostat texts — S-52), `CHANGELOG.md`, `hacs.json`; `manifest.json` code owners, documentation and issue tracker once the repository exists (K5); the README states the minimum VT version (10.2.0 loads external feature managers; 10.4.0 is the version tested) |
+| K1 🔒 | release files — done on 2026-10-07: `LICENSE` (the official Apache-2.0 text, fetched with the user's consent), no `NOTICE` (as the other Apache-2.0 Home Assistant projects; the user's decision), the brand (`brand/` icon and logo in the Versatile Thermostat family's style, the name "Smart Boiler for Versatile Thermostat" — the user's choice), a first `README.md` and `README.pl.md` (status, roadmap, links) and the guides `documentation/en|pl/` (user guide, technical documentation); still to do: `CHANGELOG.md` and the full `README.md` (a high-level description, use cases and automation examples, as Home Assistant's quality-scale documentation rules ask; installation, what each entity means, what stays local, a section "Options and risks", a section on how the plugin works beside Versatile Thermostat (what TPI's `tpi_coef_ext` and SmartPI 0.4.0's own outdoor term `u_ff1`, which cannot be switched off, do beside the plugin's curve — described, not advised; principle 9, S-50), what hand-back does on each write path, the manual way back when Home Assistant is down; removal; how often data update — the 30 s tick, the 10 s control step, the 5-min analysis, forecasts every 30 min; troubleshooting; known limitations, among them changes no read-back can see and a clip of a flat setpoint judged as another controller; supported devices; what the relay's settings mean (its state after a power cut, its own timer — the Shelly timer "not documented" until K6), described, not advised (I8, decision A4); the wall-thermostat texts — S-52), `CHANGELOG.md`, `hacs.json`; `manifest.json` code owners, documentation and issue tracker once the repository exists (K5); the README states the minimum VT version (10.2.0 loads external feature managers; 10.4.0 is the version tested) |
 | K2 ✅ | workflows: tests, ruff, Hassfest, HACS action — written; its ✅ withdrawn until the validation passes (`docs/plan-0.2.1.md`, R1). Passing on GitHub since 2026-10-07: the two required test checks (the supported and the oldest supported Home Assistant), hassfest and HACS; the early warnings weekly and before `qas` and `main`; the tests on every CPU; a documentation-only pull request skips the tests (`CONTRIBUTING.md`, "Checks") |
 | K3 ✅ | local git since 2026-09-24; `.gitignore` written before the first commit: `.tools/`, `.venv/`, `.tmp/`, `data/`, `vendor/`, `research/`, `home-assessment.md`, `devenv/local.env`, `devenv/ssh/` |
 | K4 🔒 | the user reviews the 0.1 monitor laws, the control laws, the write guards and the defaults, and confirms the provisional decisions — before anything reaches a real boiler (the user's decisions, 2026-09-24). The agenda adds `docs/plan-0.2.2-details.md` Q4's list: the first published version (decision 16); the default of 20 °C and every "(provisional, K4)" value of `SCOPE.md`'s fixed-values table; the plan's answers to review questions 3, 5, 6, 8–12, 19 and 20; whether to lift the block on "off" as a low setpoint and on decision 1's low `CS` (decision 11, answer K); every item marked K4 in "Open after 0.2.2" and "Open after 0.2.3" (`docs/plan-0.2.2.md`, `docs/plan-0.2.3.md`), with J4's acceptable starts ratio (decision 8 of `docs/plan-0.2.3.md`; 0.2.2's #24 and #27); and the 0.2.1 change log read together with `docs/review-2026-09-26-vs-0.2.md` |
@@ -227,11 +229,15 @@ boiler (K4).
 
 ## Moved to 0.3
 
-Room-value mode: the plugin sends the reference room's temperature and setpoint to the boiler —
-built-in OTGW (`RT` / `BS`, overriding a physical thermostat's values, or injected with `AA` when
-there is none) or picked entities; it never writes the flow setpoint or the curve; only from a
-valid reference room, within plausible room bounds, rate-limited, cleared when no valid reference
-exists and on hand-back. Its checks: room values with a physical thermostat (override) and
-without one (does the boiler heat on its own curve with only `RT` / `BS` and CH enable, no `CS`);
-the OTGW firmware version that added `RT` and `BS`. Its acceptance scenarios: room values cleared
-when the reference room is lost; room-value mode never writing the flow setpoint.
+The thermostat-like mode (room-value mode until the user's decisions of 2026-10-10;
+`docs/plan-0.2-i8.md` G, `SCOPE.md` §5): heating on and off with the zones' demand; the boiler
+gets the room temperature and setpoint, or their difference, of the zone asking for heat that
+lacks most — built-in OTGW (`RT` / `BS`, overriding a physical thermostat's values, or injected
+with `AA` when there is none) or picked entities; it never writes the flow setpoint or the curve;
+at least a minimum deficit while a zone asks; within plausible room bounds, sent on a change and
+not too often, cleared without a valid zone and on hand-back. Its checks: with a physical
+thermostat (override) and without one (does the boiler heat on its own regulation with only
+`RT` / `BS` and CH enable, no `CS`); the OTGW firmware version that added `RT` and `BS`; what
+ESPHome OpenTherm and EMS-ESP take. Its acceptance scenarios: the values cleared when no zone
+asks or none is valid; never a zero deficit while a zone asks; the mode never writing the flow
+setpoint.

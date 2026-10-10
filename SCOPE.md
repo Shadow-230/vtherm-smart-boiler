@@ -41,8 +41,8 @@ a heat pump controller (excluded), or anything that sends data outside.
    flow. Most installations give only some of the inputs: every feature works with what it has,
    and missing data never switches heating off by itself (the missing-data rule, §7).
 3. **Central water, local valves** — each circuit has one water temperature and its own curve;
-   the plugin decides it centrally (flow-setpoint mode), leaves it to the boiler's own curve
-   (room-value mode), or supplies a circuit that has its own controller. Zones throttle with
+   the plugin decides it centrally (flow-setpoint mode), leaves it to the boiler's own regulation
+   (the thermostat-like mode, from 0.3), or supplies a circuit that has its own controller. Zones throttle with
    their valves; information flows from the boiler to the zones. A boiler switched on and off
    by a relay (class 3) gets only heating on and off: its water temperature stays the boiler's.
 4. **Do not damage other models** — pause zone-algorithm learning through their public services
@@ -64,11 +64,11 @@ a heat pump controller (excluded), or anything that sends data outside.
     kept settings stay active, and the simple view shows that some advanced settings differ
     from defaults.
 11. **The user decides, informed** — control choices belong to the user: write path, hand-back
-    method, control mode (flow setpoint or room values), limits, curve, demand thresholds,
+    method, control mode (flow setpoint, on/off, and from 0.3 thermostat-like), limits, curve, demand thresholds,
     learning pauses, the days of data the verdict needs. Each has a cautious default and a
     description of what it does and what it risks — in the config flow and in the documentation. Fixed safeguards, not
-    options, for every write (flow setpoint, CH on/off, modulation cap, room values to the
-    boiler, a relay): no write without fresh input data — water-temperature control needs flame
+    options, for every write (flow setpoint, CH on/off, modulation cap, the thermostat-like
+    mode's values to the boiler, a relay): no write without fresh input data — water-temperature control needs flame
     and flow known, and a relay's link is the relay itself; values within hard limits, except
     "off" and the hand-back value, which have checks of their own (§7) — the hand-back value
     still within the circuit maximum and the highest water temperature (S-21); nothing written
@@ -83,8 +83,8 @@ a heat pump controller (excluded), or anything that sends data outside.
     override cleared, never held back by a guard, and retried until it is confirmed — except a
     target another controller takes after the hand-back, which counts as handed back; control
     only with a known hand-back and, for setpoint control, a source for the confirmed setpoint;
-    on a failed outdoor sensor a safe fallback setpoint, never zero heat, or in room-value mode
-    the room values cleared so the boiler's own control carries on; the DHW-enable bit kept as it
+    on a failed outdoor sensor a safe fallback setpoint, never zero heat, or in the thermostat-like
+    mode its values cleared so the boiler's own control carries on; the DHW-enable bit kept as it
     was. The values of limits are options; the guards themselves are not, and none of them
     decides whether to heat (principle 12). A relay that reports no state of its own is
     controlled with blind repeats and shown as "controlled without confirmation"; freshness then
@@ -175,11 +175,13 @@ What the plugin can do depends on what the integration can write:
 - Reading works with any integration: the user maps each signal to an entity in the config flow;
   capabilities follow from the filled fields.
 - Control mode, one at a time, the user's choice: **flow setpoint** (from 0.2) — the plugin
-  decides the water temperature from its curve and writes the setpoint; **room values** (from
-  0.3) — the plugin sends the reference room's temperature and setpoint (§5, "Reference room")
-  and the boiler's own curve and room influence decide the water temperature; in this mode the
-  plugin changes neither the curve nor the water temperature. Room-value mode needs a device that
-  takes room values (OpenTherm ID 24 / 16 through built-in support, or entities the user picks).
+  decides the water temperature from its curve and writes the setpoint; **on/off** (from 0.2.2,
+  a relay); **thermostat-like** (from 0.3) — the plugin switches heating on and off with the
+  zones' demand and sends the boiler the room temperature and setpoint, or their difference, of
+  the zone asking for heat that lacks most, and the boiler's own regulation decides the water
+  temperature; in this mode the plugin changes neither the curve nor the water temperature. It
+  needs a device that takes these values (OpenTherm ID 24 / 16 through built-in support, or
+  entities the user picks), and a boiler that uses them (§5, "The thermostat-like mode").
 - Writing (from 0.2), in this order: (1) a writable entity the user picks — any integration,
   including entities the user made; (2) built-in support for devices without such an entity —
   first OTGW, through `opentherm_gw` or its firmware over MQTT; (3) from 0.2.2, a relay for an
@@ -386,11 +388,11 @@ no presence entity).
 | Gateway mode | Thermostat | Who controls the boiler | What the plugin may do | Hand-back leads to |
 |---|---|---|---|---|
 | monitor | physical | the thermostat; the gateway only listens | monitor only | — |
-| gateway | an OpenTherm thermostat | the thermostat; the gateway may override its values | flow setpoint (override `CS`) or room values (override the thermostat's room temperature and setpoint) | overrides cleared — the thermostat takes over, heating continues |
+| gateway | an OpenTherm thermostat | the thermostat; the gateway may override its values | flow setpoint (override `CS`) or, from 0.3, the thermostat-like mode (override the thermostat's room temperature and setpoint) | overrides cleared — the thermostat takes over, heating continues |
 | gateway | an on/off contact, or "I don't know" | the contact through the gateway | monitor only — control is blocked (decision 1) | — |
-| gateway | none | the gateway acts as master | flow setpoint; room values (injected with `AA`) if the boiler heats on its own curve without `CS` | overrides cleared — heating stops |
+| gateway | none | the gateway acts as master | flow setpoint; from 0.3 the thermostat-like mode (injected with `AA`) if the boiler heats on its own regulation without `CS` | overrides cleared — heating stops |
 | monitor | none | nobody | nothing | — |
-| — | virtual — a controller on the HA side (e.g. DIYLess or ESPHome as master) | that controller | through its entities: flow setpoint if it exposes one, room values if it runs its own regulator | the user's chosen method for its entities |
+| — | virtual — a controller on the HA side (e.g. DIYLess or ESPHome as master) | that controller | through its entities: flow setpoint if it exposes one, from 0.3 the thermostat-like mode's values if it runs its own regulator | the user's chosen method for its entities |
 | — | relay (class 3), an optional old thermostat in parallel | the plugin, through the relay | heating on and off only | the declared rest state: "off" — heating stops unless an old thermostat in parallel heats; "on" — the boiler heats on its own dial or thermostat |
 
 - The topology is part of the configuration, declared by the user in the config flow (F3: it
@@ -494,13 +496,28 @@ takes the emitter types of its zones (S-33); the burner is shared.
   come from the same zone — for the average, from the same set of zones; the choice changes only
   on a clear difference; no invented fallback —
   "no active zone" and "no valid measurement" are explicit states.
-- In room-value mode (a control mode from 0.3, off by default) the reference goes to the boiler as
-  OpenTherm room temperature (ID 24) and room setpoint (ID 16) through built-in support, or to
-  entities the user picked. Safeguards: sent only from a valid reference room and within
-  plausible room bounds; rate-limited; cleared — never frozen at the last value — when no valid
-  reference exists; cleared on hand-back. Only a boiler with room influence enabled acts on
-  these values, and then it changes its flow temperature with them — which is why they are
-  guarded.
+
+### The thermostat-like mode (0.3)
+
+Decided by the user on 2026-10-10 (`docs/plan-0.2-i8.md` G; sources:
+`research/2026-10-10-room-values-mode-sources.md`). Hidden in the options until it works.
+
+- Heating on and off follow the zones' demand, as in the other modes; never a comparison of
+  temperatures.
+- Only zones asking for heat now count. The one that lacks most wins; its target is the highest
+  known — the VT setpoint, +0.5 K while SmartPI's learning phase heats, SmartPI's published
+  setpoint. The zone changes only on a clear difference, and at once when it stops asking.
+- While a zone asks, the boiler sees at least a minimum deficit — its own regulation never stops
+  heating a room VT still heats (provisional value, K4).
+- Two kinds, the user's choice by the device: "temperature and setpoint" (two entities, or
+  OpenTherm ID 24 / 16 through built-in support) or "difference" (one entity).
+- Rounding to 0.1 °C or the target entity's step: the deficit up, the temperature down, the
+  setpoint their sum — never no deficit while a zone asks.
+- Safeguards: within plausible room bounds; sent on a change only and not too often; cleared —
+  never frozen at the last value — without a valid zone, and on hand-back. Only a boiler with
+  room influence enabled acts on these values, and then it changes its flow temperature with
+  them — which is why they are guarded. What ESPHome OpenTherm and EMS-ESP take is checked before
+  it is planned.
 
 ## 6. Data and its sources
 
@@ -529,7 +546,7 @@ takes the emitter types of its zones (S-33); the burner is shared.
 |---|---|---|
 | **Monitor** | starts per hour, burn time, condensing share, gas per degree-day, connection state; alarms — information, with a hand-back reaction only where decision 7 allows one (§7); **early warning** (flue gas, ignitions, pressure, hysteresis); **a long burn without warming** — the flame on for 3 h with the rooms not rising: the water too cool for the rooms short, the boiler at its power limit (a warning), the water too hot (`docs/plan-0.2-g11.md` E); **a window probably open** in a room (F); **report explaining changes** (weather / DHW / settings); outdoor sensor check; DHW and foreign-heat detection; **forecast recording** (FC0); **reference room** (§5); **signal check** — which optional signals are present and fresh | no |
 | **Advisor** | curve and anti-cycling suggestions with rationale and an "apply" button | no |
-| **Curve (strategy A)** | replaces VT's on/off and user automations; curve per circuit; effective outdoor temperature; **summer/winter switch from a multi-day forecast** (FC1 — to be decided against principle 12, decision 13); ramp; keep-alive; frost protection; learning pauses (DHW, foreign heat, large changes — under control only, S-61) | yes |
+| **Curve (strategy A)** | replaces VT's on/off and user automations; curve per circuit; effective outdoor temperature; ramp; keep-alive; frost protection; learning pauses (DHW, foreign heat, large changes — under control only, S-61) | yes |
 | **Anti-cycling** (to be decided against principle 12, decision 13) | duty cycling at low load, starts-per-hour budget, modulation cap; **planning from the forecast** — mild hours ahead → long cycles from the start (FC2) | yes |
 | **Curve tuning (strategy B)** | tuning band Low / Medium / High / Custom (3 / 8 / 15 % defaults); manual / semi-automatic / automatic; **seasonal tune-up** — a little lower each day while rooms hold comfort; per circuit | yes |
 | **Forecast** | **anticipation for slow emitters** — raise water earlier before frost, lower it earlier before a warm or sunny day (FC3); lead time learned per circuit | yes |
@@ -786,7 +803,7 @@ How control decides (principle 12):
   the pressure.
 
 Fixed safeguards (principle 11), for every write — flow setpoint, CH on/off, modulation cap,
-room values and a relay:
+the thermostat-like mode's values (0.3) and a relay:
 
 - No write without fresh input data — the data the decision uses: for water-temperature control,
   flame and flow known; for a relay, the relay itself (§5 class 3). One freshness rule serves the
@@ -822,8 +839,8 @@ room values and a relay:
   8 °C as a setpoint, as lower values do not lapse (`CS=0` at hand-back cancels the override and
   is not a setpoint, S-59) — and the hand-back value (§5, the safe hand-back). "Off" is refused
   within 0.5 K of a hand-back value declared "the device's own control resumes" (S-49). The
-  weather ceiling never falls below the lowest water temperature. Room values stay within
-  plausible room bounds.
+  weather ceiling never falls below the lowest water temperature. The thermostat-like mode's
+  values (0.3) stay within plausible room bounds.
 - Nothing is written to the boiler's persistent memory: control writes only to targets declared
   expiring (repeated every 30 s) or held (the device keeps the value; the plugin sends it on a
   change, after the device returns and every 5 min, with no echo required — provisional, K4 — which
@@ -884,9 +901,8 @@ room values and a relay:
   itself once the monitor works again, with an information note (answer I).
 - Control only with a known hand-back and, for setpoint control, a source for the confirmed
   setpoint.
-- Room values go to the boiler only from a valid reference room; without one they are cleared.
-  In room-value mode a failed sensor clears the room values, and the boiler's own control
-  carries on.
+- In the thermostat-like mode (0.3) values go to the boiler only from a zone asking for heat
+  with valid readings; without one they are cleared, and the boiler's own control carries on.
 - The DHW-enable bit stays as it was before the plugin took over.
 
 The four classes of a change seen in the read-back:
@@ -1019,8 +1035,8 @@ How control resumes after it stopped:
 | An alarm with a hand-back reaction already active when control is switched on | blocks control at once; the switch's text says so |
 | A blocker — a missing setting, VT's central boiler configured, Home Assistant starting | on its own, once the blocker is gone; "VT central boiler active" only after the Home Assistant restart its text asks for |
 
-In room-value mode the boiler runs its own control: the curve, ramp, anti-cycling and flow limit
-options do not apply; the fixed safeguards do.
+In the thermostat-like mode (0.3) the boiler runs its own regulation: the curve, ramp,
+anti-cycling and flow limit options do not apply; the fixed safeguards do.
 
 Which alarms may hand back (decision 7):
 
@@ -1060,7 +1076,8 @@ in K):
 - Decision interval for the water temperature.
 - A fixed fallback setpoint, replacing the curve-based one on outdoor-sensor failure.
 - The lowest water temperature (decision 2), the highest water temperature, the circuit maximum
-  and its alarm temperature and time (decision 10), and the room-value bounds. The plugin's
+  and its alarm temperature and time (decision 10), and, from 0.3, the thermostat-like mode's
+  bounds. The plugin's
   limits bind only while it controls; after a hand-back or a Home Assistant outage the boiler's or
   the wall thermostat's own maximum holds (§5, the safe hand-back). The write-rate
   guard and the hand-back's retry are fixed, not options.
@@ -1239,7 +1256,7 @@ finds it needs beyond this table is added with "reason to confirm at K4", as a d
 | Step | Use of the forecast | Stage | Release |
 |---|---|---|---|
 | FC0 | record forecast snapshots from day one | Monitor | 0.1 |
-| FC1 | summer/winter switch from a multi-day forecast, without flip-flopping (to be decided against principle 12, decision 13) | Curve | 0.3 |
+| FC1 | ~~summer/winter switch from a multi-day forecast~~ — struck by the user on 2026-10-10: summer and winter stay VT's | — | — |
 | FC2 | anti-cycling planning for mild hours ahead (to be decided against principle 12, decision 13) | Anti-cycling | 0.3 |
 | FC3 | anticipation for slow emitters (underfloor) | Forecast | 0.5 |
 | FC4 | wind and sun correction of the curve | later | later |
@@ -1297,24 +1314,28 @@ occupancy layer — VT's job); Rush Hour Rewards (not relevant to gas).
 
 **Later (out of current scope):** load-based setpoint (strategy C); wind and sun correction of the
 curve (FC4); gas-usage modes (eco / balanced / comfort); emulated OpenTherm thermostat; built-in
-support for more devices without writable entities (EMS-ESP, ebusd, BSB-LAN, as needed);
-proposal to the SmartPI and adaptive TPI authors to read the two zone values (a fork only for
-tests).
+support for more devices without writable entities (EMS-ESP, ebusd, BSB-LAN, as needed); the gas
+estimated from the boiler's power where no gas rates are given.
 
 With no release yet, unless the user names one at K4 (S-60): the fresh flow read after a write;
 the overshoot calibration; the boiler's MemberID and supported messages; the condensing
 indicator; the boiler's installer settings; SmartPI's better signal and bootstrap state (S-29);
 relay commands beyond a switch and a boiler thermostat entity (VT's free-form actions), if asked;
-a separate echo entity for a relay; a wiring field for the relay (alone, parallel, series), if
-asked; for the power user (§4) the raw cycle data, the building fit's rejected samples and manual
+a separate echo entity for a relay; for the power user (§4) the raw cycle data, the building fit's rejected samples and manual
 edits of learned values; boiler data read from the integration as suggested parameter values (§6);
 the circuit control "controlled separately" (§5; `docs/plan-0.2.3.md`, Open after 0.2.3, item 52).
 With a release: the "apply" mode of the lowest water temperature (0.3, once the simulator
-shows it helps); the wall thermostat linked to a VT zone, VT leading and off by default (0.3 at
-the earliest); radiators and underfloor behind a mixing valve as one written circuit plus passive
-fixed circuits (0.3); a warning for zones the boiler does not feed — air conditioners in heat
-mode, electric heaters (0.3); a recorded "heating commanded" entity and event for users leaving
-VT's central boiler (0.3).
+shows it helps); the wall thermostat as a fallback for Home Assistant failing — one way, VT to
+the thermostat: the user picks the thermostat's setpoint entity and a VT zone, off by default;
+rounded to the thermostat's step, never stored in the thermostat's or the gateway's permanent
+memory, nothing sent in the recognition period (0.3 at the earliest; `docs/plan-0.2-i8.md` I1);
+radiators and underfloor behind a mixing valve as one written circuit plus passive fixed circuits
+(0.3); a recorded "heating commanded" entity and event for users leaving VT's central boiler
+(0.3).
+
+**Struck by the user on 2026-10-10** (`docs/plan-0.2-i8.md` B): summer/winter switching of any
+kind (FC1), the warning for zones the boiler does not feed, the proposal to the SmartPI and
+adaptive TPI authors, a wiring field for the relay.
 
 **Excluded:** heat pumps, room regulation, valve control, sending data outside.
 
@@ -1360,9 +1381,9 @@ Starts per hour count the hours with heating.
 
 - Learning pause during long anti-cycling pauses (water near room temperature while a zone calls
   for heat) — decide on data from the first installations (before 0.3).
-- Room values with an OTGW (0.3): with a physical thermostat (override) and without one (`AA`
-  injection — does the boiler heat on its own curve without `CS`); firmware version that added
-  `RT` and `BS` (before 0.3).
+- The thermostat-like mode with an OTGW (0.3): with a physical thermostat (override) and without
+  one (`AA` injection — does the boiler heat on its own regulation without `CS`); firmware
+  version that added `RT` and `BS`; what ESPHome OpenTherm and EMS-ESP take (before 0.3).
 - Lifting the block on control without a heating switch ("off" as a low setpoint) and on
   decision 1's low `CS` with `CH` left alone: only the user, at K4, on the research of whether a
   low setpoint stops both the boiler and its pump — even if that research is favourable
@@ -1396,7 +1417,8 @@ Starts per hour count the hours with heating.
   keeps a margin.
 - OTGW equipment database: not bundled. The plugin uses the boiler's MemberID and supported
   messages when the integration exposes them; boiler profiles are our own.
-- 0.2 controls in flow-setpoint mode only; room-value mode comes in 0.3 (2026-09-24).
+- 0.2 controls in flow-setpoint mode only; room-value mode comes in 0.3 (2026-09-24); renamed the
+  thermostat-like mode and redefined by the user on 2026-10-10 (§5).
 - 0.2 supports every write path, for any installation: a writable entity the user picks, and
   built-in OTGW through `opentherm_gw` or its firmware over MQTT (2026-09-24).
 - GitHub and every publication come after 0.2.2 — 0.2.1 and 0.2.2 correct 0.2 after its reviews;
