@@ -66,7 +66,6 @@ from .core.building import (
     loss_from_design_load,
     time_constant_from_mass,
 )
-from .core.hot_water import DEFAULT_NEAR_ROOM_K
 from .core.installation import (
     Boiler,
     BoilerClass,
@@ -114,9 +113,6 @@ CIRCUIT_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
         "max_flow_alarm_min": (1.0, 120.0),
     }
 )
-ZONE_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
-    {"reference_output_w": (50.0, 20000.0), "exponent": (1.0, 2.0)}
-)
 # Shorter would let control start before the monitoring period (X5); the integration tests lift
 # it in their one place to start control at once.
 MONITORING_DAYS_BOUNDS = (7.0, 60.0)
@@ -125,7 +121,6 @@ MONITOR_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
         "condensing_return": (40.0, 65.0),
         "short_burn_min": (1.0, 60.0),
         "verdict_window_days": (7.0, 365.0),
-        "near_room_k": (1.0, 10.0),
         "pressure_high_warning": (1.5, 4.0),
         "pressure_high_alarm": (1.5, 4.0),
         "flue_gas_warning": (40.0, 200.0),
@@ -205,7 +200,6 @@ class AlarmThresholds:
 class MonitorConfig:
     monitor: MonitorOptions = field(default_factory=MonitorOptions)
     monitoring_days: float = 7.0
-    near_room_k: float = DEFAULT_NEAR_ROOM_K
     alarms: AlarmThresholds = field(default_factory=AlarmThresholds)
 
 
@@ -596,10 +590,6 @@ def _circuits(data: Any) -> tuple[tuple[Circuit, ...], dict[str, str]]:
     return tuple(circuits), flow_entities
 
 
-def _zone_number(item: Mapping[str, Any], key: str) -> float | None:
-    return _bounded("invalid_zone", item, key, ZONE_BOUNDS[key])
-
-
 def _zones(data: Any, circuit_ids: set[str]) -> tuple[tuple[Zone, ...], list[ZoneConfig]]:
     zones: list[Zone] = []
     configs: list[ZoneConfig] = []
@@ -614,8 +604,6 @@ def _zones(data: Any, circuit_ids: set[str]) -> tuple[tuple[Zone, ...], list[Zon
                 entity_id,
                 str(circuit),
                 _enum(EmitterType, item, "emitter", EmitterType.RADIATOR, "invalid_zone"),
-                _zone_number(item, "reference_output_w"),
-                _zone_number(item, "exponent"),
                 # Decision 4: only a clear "yes" counts; the zone step shows it (X5).
                 closes_when_off=item.get("closes_when_off") is True,
             )
@@ -724,7 +712,6 @@ def _monitor(
             ),
         ),
         monitoring_days=monitoring_days,
-        near_room_k=_monitor_value(data, "near_room_k", DEFAULT_NEAR_ROOM_K),
         alarms=_alarm_thresholds(data),
     )
 

@@ -1,4 +1,4 @@
-"""Sensors: boiler metrics, verdict, critical zones, emitter power factors, the
+"""Sensors: boiler metrics, verdict, critical zones, the
 building model's heat loss and heating threshold, the lowest water temperature's suggestion, the
 features and what each lacks (the missing-data rule), and the state and setpoint of control.
 
@@ -26,7 +26,6 @@ from homeassistant.util import dt as dt_util
 from .control_config import WritePath
 from .coordinator import MonitorData, SmartBoilerConfigEntry, SmartBoilerCoordinator
 from .core.controller import ControlMode
-from .core.emitters import FactorStatus
 from .core.lowest_water import SuggestionState
 from .core.monitor import MonitorSummary
 from .core.parameters import ParameterKey, Source
@@ -392,11 +391,6 @@ async def async_setup_entry(
         CriticalZoneSensor(coordinator, circuit.circuit_id)
         for circuit in coordinator.config.installation.circuits
     ]
-    if feature_configured(coordinator, "emitter_power_factor"):
-        entities += [
-            EmitterFactorSensor(coordinator, zone.zone_id)
-            for zone in coordinator.config.installation.zones
-        ]
     if coordinator.control is not None:
         entities.append(ControlStateSensor(coordinator))
         if coordinator.control.options.write_path is not WritePath.RELAY:
@@ -529,36 +523,6 @@ class CriticalZoneSensor(SmartBoilerEntity, SensorEntity):
             "demand": _percent(critical.demand),
             "deficit": _round(critical.deficit, 2),
             "saturated": critical.saturated,
-        }
-
-
-class EmitterFactorSensor(SmartBoilerEntity, SensorEntity):
-    _unrecorded_attributes = frozenset({"status", "reason", "computed_at", "output_w", "held"})
-    # A power user's diagnostic (SCOPE.md §4): there, but hidden until enabled.
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_entity_registry_enabled_default = False
-
-    _attr_native_unit_of_measurement = UnitOfRatio.PERCENTAGE
-    _attr_state_class = SensorStateClass.MEASUREMENT
-
-    def __init__(self, coordinator: SmartBoilerCoordinator, zone: str) -> None:
-        super().__init__(coordinator, "emitter_power_factor", zone=zone)
-
-    @property
-    def native_value(self) -> float | None:
-        """Unknown (not unavailable) without a value, so the reason stays visible."""
-        view = self.coordinator.data.zones[self.zone or ""]
-        return _percent(view.factor.value)
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        factor = self.coordinator.data.zones[self.zone or ""].factor
-        return {
-            "status": factor.status.value,
-            "reason": None if factor.reason is None else factor.reason.value,
-            "computed_at": _time(factor.at),
-            "output_w": _round(factor.output_w, 0),
-            "held": factor.status is FactorStatus.HELD,
         }
 
 

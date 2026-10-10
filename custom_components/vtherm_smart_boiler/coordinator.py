@@ -1274,7 +1274,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 state.temperature,
                 dhw,
                 self._hot_water.get(zone.zone_id),
-                config.monitor.near_room_k,
             )
             self._hot_water[zone.zone_id] = hot.available
             factor = update_factor(

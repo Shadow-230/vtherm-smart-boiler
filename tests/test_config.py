@@ -110,7 +110,7 @@ def test_full_options() -> None:
                 "circuit": "c1",
                 "emitter": "underfloor",
             },
-            {"entity_id": "climate.b", "circuit": "c2", "reference_output_w": 1500},
+            {"entity_id": "climate.b", "circuit": "c2"},
         ],
         "building": {"design_load_kw": 8.0, "thermal_mass": "heavy"},
         "monitor": {"condensing_return": 52, "short_burn_min": 8, "monitoring_days": 10},
@@ -502,10 +502,6 @@ def _floor_circuit(**values: object) -> dict:
     return UNDERFLOOR | {"circuits": [{"id": "floor", "max_flow": 40} | values]}
 
 
-def _zone(**values: object) -> dict:
-    return MINIMAL | {"zones": [{"entity_id": "climate.a", "emitter": "radiator"} | values]}
-
-
 @pytest.mark.parametrize(
     ("options", "code", "subject"),
     [
@@ -517,8 +513,6 @@ def _zone(**values: object) -> dict:
         (_floor_circuit(max_flow_alarm=101), "invalid_circuit", "max_flow_alarm"),
         (_floor_circuit(max_flow_alarm_min=0), "invalid_circuit", "max_flow_alarm_min"),
         (_floor_circuit(fixed_temperature="-inf"), "invalid_circuit", "fixed_temperature"),
-        (_zone(exponent="nan"), "invalid_zone", "exponent"),
-        (_zone(reference_output_w=0), "invalid_zone", "reference_output_w"),
         *(
             (MINIMAL | {"monitor": {"monitoring_days": v}}, "invalid_monitor", "monitoring_days")
             for v in ("nan", INF, 0, 6, 61, -7)
@@ -531,7 +525,6 @@ def _zone(**values: object) -> dict:
                 ("unstable_burns_limit", 0),
                 ("pressure_high_alarm", "nan"),
                 ("flue_gas_warning", 500),
-                ("near_room_k", -1),
                 ("condensing_return", NAN),
                 ("short_burn_min", 0),
             )

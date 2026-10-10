@@ -184,15 +184,11 @@
         "data": {
           "circuit": "Obieg",
           "emitter": "Typ grzejnika",
-          "reference_output_w": "Moc grzejników",
-          "exponent": "Wykładnik grzejnika",
           "closes_when_off": "Zamyka się, gdy VT ją wyłącza"
         },
         "data_description": {
           "circuit": "Obieg grzewczy tej strefy. Zły obieg przypisuje ciepło strefy niewłaściwej wodzie.",
           "emitter": "Grzejniki, podłogówka albo konwektory. Ustala wykładnik EN 442 mocy grzejnika i domyślny kształt krzywej; zły typ wypacza oba.",
-          "reference_output_w": "Moc grzejników w warunkach odniesienia, w W. Tylko do bezwzględnego szacunku mocy; zła wartość wypacza tylko ten szacunek.",
-          "exponent": "Zastępuje wykładnik EN 442 typu grzejnika. Zły wykładnik wypacza współczynnik mocy grzejnika.",
           "closes_when_off": "Zaznacz, jeśli zawór lub grzejnik tej strefy zamyka się zawsze, gdy Versatile Thermostat wyłącza strefę, choć VT nie podaje jej otwarcia (np. głowica, którą VT wyłącza). Ochrona przed mrozem nie grzeje wtedy dla tej strefy, dopóki VT trzyma ją wyłączoną, i zamiast tego zgłasza problem do naprawy. Wyłączone (domyślnie): strefa jest grzana w mróz jak dotąd, przez co kocioł może pracować na zamknięty zawór."
         }
       },
@@ -225,7 +221,6 @@
           "condensing_return": "Próg powrotu dla kondensacji",
           "short_burn_min": "Krótkie palenie",
           "monitoring_days": "Dni danych do werdyktu",
-          "near_room_k": "Blisko temperatury pokoju",
           "flue_gas_warning": "Ostrzeżenie: spaliny",
           "flue_gas_alarm": "Alarm: spaliny",
           "starts_per_hour_limit": "Częste starty",
@@ -236,7 +231,6 @@
           "condensing_return": "Powrót poniżej tej wartości liczy się jako kondensacja, w °C. Domyślnie 55 °C. Za wysoka zawyża udział kondensacji.",
           "short_burn_min": "Palenia krótsze niż ta wartość liczą się jako krótkie, w minutach. Domyślnie 10. Dłuższa czyni więcej paleń krótkimi, a werdykt surowszym.",
           "monitoring_days": "Ile dni danych potrzebuje werdykt monitora, licząc od dodania tej integracji. Niczego nie wstrzymuje: sterowanie można włączyć w każdej chwili, nawet bez werdyktu, a dopóki go nie ma, przełącznik sterowania pokazuje „za mało danych”. Poza sezonem grzewczym danych może być za mało nawet po tych dniach. Domyślnie 7; krócej nie można.",
-          "near_room_k": "Woda cieplejsza od pokoju najwyżej o tyle liczy się jako brak ciepła w strefie, w K. Domyślnie 3. Większa wartość szybciej pokazuje „Ciepło nie dociera do strefy”.",
           "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
           "starts_per_hour_limit": "Więcej startów palnika w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12. Za wysoka ukrywa taktowanie.",
@@ -651,7 +645,7 @@
         },
         "data_description": {
           "level": "Prosty pokazuje to, co najważniejsze; zaawansowany pokazuje każdy parametr.",
-          "restore_defaults": "Przy przejściu na prosty: zaznacz, aby przywrócić domyślne strojenie zaawansowane — kształt krzywej, limity i zachowanie sterowania, reakcje na alarmy, progi monitora. Fakty o instalacji zostają niezależnie od wyboru: zmapowane sygnały, kocioł, obiegi, wielkości grzejników i wpisane wartości — a także okres monitorowania i okno werdyktu. Niezaznaczone strojenie zostaje aktywne, ale ukryte, a opcje pokazują, że część ustawień zaawansowanych jest aktywna."
+          "restore_defaults": "Przy przejściu na prosty: zaznacz, aby przywrócić domyślne strojenie zaawansowane — kształt krzywej, limity i zachowanie sterowania, reakcje na alarmy, progi monitora. Fakty o instalacji zostają niezależnie od wyboru: zmapowane sygnały, kocioł, obiegi, strefy i wpisane wartości — a także okres monitorowania i okno werdyktu. Niezaznaczone strojenie zostaje aktywne, ale ukryte, a opcje pokazują, że część ustawień zaawansowanych jest aktywna."
         }
       },
       "signals": {
@@ -812,15 +806,11 @@
         "data": {
           "circuit": "Obieg",
           "emitter": "Typ grzejnika",
-          "reference_output_w": "Moc grzejników",
-          "exponent": "Wykładnik grzejnika",
           "closes_when_off": "Zamyka się, gdy VT ją wyłącza"
         },
         "data_description": {
           "circuit": "Obieg grzewczy tej strefy. Zły obieg przypisuje ciepło strefy niewłaściwej wodzie.",
           "emitter": "Grzejniki, podłogówka albo konwektory. Ustala wykładnik EN 442 mocy grzejnika i domyślny kształt krzywej; zły typ wypacza oba.",
-          "reference_output_w": "Moc grzejników w warunkach odniesienia, w W. Tylko do bezwzględnego szacunku mocy; zła wartość wypacza tylko ten szacunek.",
-          "exponent": "Zastępuje wykładnik EN 442 typu grzejnika. Zły wykładnik wypacza współczynnik mocy grzejnika.",
           "closes_when_off": "Zaznacz, jeśli zawór lub grzejnik tej strefy zamyka się zawsze, gdy Versatile Thermostat wyłącza strefę, choć VT nie podaje jej otwarcia (np. głowica, którą VT wyłącza). Ochrona przed mrozem nie grzeje wtedy dla tej strefy, dopóki VT trzyma ją wyłączoną, i zamiast tego zgłasza problem do naprawy. Wyłączone (domyślnie): strefa jest grzana w mróz jak dotąd, przez co kocioł może pracować na zamknięty zawór."
         }
       },
@@ -853,7 +843,6 @@
           "condensing_return": "Próg powrotu dla kondensacji",
           "short_burn_min": "Krótkie palenie",
           "monitoring_days": "Dni danych do werdyktu",
-          "near_room_k": "Blisko temperatury pokoju",
           "flue_gas_warning": "Ostrzeżenie: spaliny",
           "flue_gas_alarm": "Alarm: spaliny",
           "starts_per_hour_limit": "Częste starty",
@@ -864,7 +853,6 @@
           "condensing_return": "Powrót poniżej tej wartości liczy się jako kondensacja, w °C. Domyślnie 55 °C. Za wysoka zawyża udział kondensacji.",
           "short_burn_min": "Palenia krótsze niż ta wartość liczą się jako krótkie, w minutach. Domyślnie 10. Dłuższa czyni więcej paleń krótkimi, a werdykt surowszym.",
           "monitoring_days": "Ile dni danych potrzebuje werdykt monitora, licząc od dodania tej integracji. Niczego nie wstrzymuje: sterowanie można włączyć w każdej chwili, nawet bez werdyktu, a dopóki go nie ma, przełącznik sterowania pokazuje „za mało danych”. Poza sezonem grzewczym danych może być za mało nawet po tych dniach. Domyślnie 7; krócej nie można.",
-          "near_room_k": "Woda cieplejsza od pokoju najwyżej o tyle liczy się jako brak ciepła w strefie, w K. Domyślnie 3. Większa wartość szybciej pokazuje „Ciepło nie dociera do strefy”.",
           "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
           "starts_per_hour_limit": "Więcej startów palnika w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12. Za wysoka ukrywa taktowanie.",
@@ -1665,30 +1653,6 @@
           "no_valid_measurement": "Brak poprawnego pomiaru"
         }
       },
-      "emitter_power_factor": {
-        "name": "{zone} moc grzejnika",
-        "state_attributes": {
-          "status": {
-            "name": "Stan",
-            "state": {
-              "computed": "Obliczony teraz",
-              "held": "Ostatnia wartość, utrzymana",
-              "unavailable": "Niedostępny"
-            }
-          },
-          "reason": {
-            "name": "Dlaczego niedostępny",
-            "state": {
-              "flow_unknown": "Temperatura zasilania nieznana",
-              "flow_stale": "Odczyt zasilania jest za stary",
-              "circuit_not_measured": "Zasilanie obiegu nie jest mierzone",
-              "room_unknown": "Temperatura pokoju nieznana",
-              "zone_unknown": "Stan strefy nieznany",
-              "not_heating_yet": "Strefa jeszcze nie grzała"
-            }
-          }
-        }
-      },
       "control_state": {
         "name": "Stan sterowania",
         "state": {
@@ -2382,26 +2346,6 @@
           },
           "problems_text": {
             "name": "Sygnały z problemami (tekst)"
-          }
-        }
-      },
-      "hot_water": {
-        "name": "{zone} ciepło dostępne",
-        "state": {
-          "on": "Ciepło dociera do strefy",
-          "off": "Ciepło nie dociera do strefy"
-        },
-        "state_attributes": {
-          "reason": {
-            "name": "Dlaczego nie",
-            "state": {
-              "dhw_active": "Kocioł grzeje ciepłą wodę",
-              "flow_near_room": "Woda ledwie cieplejsza od pokoju",
-              "flow_stale": "Odczyt zasilania jest za stary",
-              "flow_unknown": "Temperatura zasilania nieznana",
-              "circuit_not_measured": "Zasilanie obiegu nie jest mierzone",
-              "room_unknown": "Temperatura pokoju nieznana"
-            }
           }
         }
       },

@@ -252,7 +252,6 @@ async def test_advanced_flow_with_two_circuits(
             "condensing_return": 52,
             "short_burn_min": 8,
             "monitoring_days": 10,
-            "near_room_k": 3,
         },
     )
     assert result["step_id"] == "control"  # I6.6: full control is set up in the setup
@@ -299,7 +298,6 @@ async def create_entry(
                 "condensing_return": 55,
                 "short_burn_min": 10,
                 "monitoring_days": 7,
-                "near_room_k": 3,
             },
         )
     if result.get("step_id") == "control":  # I6.6: full control or on/off asks it in the setup
@@ -1138,11 +1136,10 @@ def _rich_options(entities: dict[str, str]) -> dict[str, Any]:
             {"id": "circuit_2", "control": "unmixed_shared"},
         ],
         "zones": [
-            {"entity_id": entities["living"], "emitter": "radiator", "circuit": "main",
-             "reference_output_w": 1500},
+            {"entity_id": entities["living"], "emitter": "radiator", "circuit": "main"},
             {"entity_id": entities["bedroom"], "emitter": "radiator", "circuit": "circuit_2"},
         ],
-        "monitor": {"monitoring_days": 14.0, "near_room_k": 4.0},
+        "monitor": {"monitoring_days": 14.0, "short_burn_min": 12.0},
     }  # fmt: skip
 
 
@@ -1167,8 +1164,8 @@ async def _section(hass: HomeAssistant, entry_id: str, section: str, *answers: d
 async def test_the_simple_level_keeps_what_it_does_not_show(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    """P38: at the simple level an edit changes only what its form shows — the second circuit,
-    a circuit's flow sensor, a zone's emitter size and a source's threshold stay."""
+    """P38: at the simple level an edit changes only what its form shows — the second circuit and
+    a circuit's flow sensor stay."""
     entry_id = await _entry(hass, _rich_options(entities))
     options = await _section(hass, entry_id, "circuit", {"control": "unmixed_shared"})
     assert [c["id"] for c in options["circuits"]] == ["main", "circuit_2"]
@@ -1181,8 +1178,8 @@ async def test_the_simple_level_keeps_what_it_does_not_show(
         {"circuit": "main", "emitter": "radiator"},
         {"circuit": "circuit_2", "emitter": "radiator"},
     )
-    living, _bedroom = options["zones"]
-    assert living["reference_output_w"] == 1500
+    assert [z["circuit"] for z in options["zones"]] == ["main", "circuit_2"]
+    assert [c["id"] for c in options["circuits"]] == ["main", "circuit_2"]
 
 
 async def test_restoring_defaults_keeps_the_installation(
@@ -1195,7 +1192,7 @@ async def test_restoring_defaults_keeps_the_installation(
     assert options["boiler"]["modulation_scale"] == "capacity"
     assert [c["id"] for c in options["circuits"]] == ["main", "circuit_2"]
     assert options["circuits"][0]["flow_entity"] == entities["return"]
-    assert options["zones"][0]["reference_output_w"] == 1500
+    assert options["zones"][0]["circuit"] == "main"
     assert options["monitor"] == {"monitoring_days": 14.0}  # the period stays (P-65)
 
 
@@ -1207,7 +1204,7 @@ async def test_hidden_settings_are_those_that_differ_from_defaults(
     options["circuits"] = [{"id": "main", "control": "unmixed_shared"}]
     options["zones"] = [{"entity_id": entities["living"], "emitter": "radiator", "circuit": "main"}]
     options["boiler"]["modulation_scale"] = "range"
-    options["monitor"] = {"monitoring_days": 7.0, "near_room_k": 3.0}
+    options["monitor"] = {"monitoring_days": 7.0, "short_burn_min": 10.0}
     entry_id = await _entry(hass, options)
     menu = await hass.config_entries.options.async_init(entry_id)
     assert "level" in menu["menu_options"]
@@ -2202,14 +2199,14 @@ async def test_restoring_defaults_keeps_the_monitoring_days(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
     """P-65: "restore defaults" resets the monitor's thresholds but keeps its periods."""
-    monitor = {"monitoring_days": 14.0, "verdict_window_days": 30, "near_room_k": 4.0}
+    monitor = {"monitoring_days": 14.0, "verdict_window_days": 30, "short_burn_min": 12.0}
     options = _rich_options(entities) | {"level": "advanced", "monitor": monitor}
     entry_id = await _entry(hass, options)
     options = await _section(hass, entry_id, "level", {"level": "simple", "restore_defaults": True})
     assert options["monitor"] == {"monitoring_days": 14.0, "verdict_window_days": 30}
     config = EntryConfig.from_options(options).monitor
     assert (config.monitoring_days, config.monitor.verdict_window_days) == (14.0, 30)
-    assert config.near_room_k == 3.0  # a threshold: back to its default
+    assert config.monitor.short_burn_s == 600.0  # a threshold: back to its default
 
 
 def controlled_options(entities: dict[str, str]) -> dict[str, Any]:
@@ -2475,7 +2472,7 @@ def test_the_form_helpers_read_missing_parts_as_nothing() -> None:
     zones = {"zones": [{"entity_id": "climate.a"}, {"entity_id": "climate.b", "circuit": ""}]}
     assert not flow.circuit_left_with_zones(zones, [{"id": "other"}])
     assert flow.circuit_left_with_zones({"zones": [{"circuit": "gone"}]}, [{"id": "main"}])
-    options: dict[str, Any] = {"monitor": {"near_room_k": 4.0}}
+    options: dict[str, Any] = {"monitor": {"short_burn_min": 12.0}}
     flow.restore_advanced_defaults(options)
     assert "monitor" not in options
     options = {}
@@ -3426,7 +3423,7 @@ async def test_the_pressure_limits_stay_as_facts_about_the_boiler(
         ("invalid_monitor", "add_water_below", "boiler"),
         ("invalid_monitor", "pressure_high_alarm", "boiler"),
         ("alarm_limits_out_of_order", "flue_gas", "monitor"),
-        ("invalid_monitor", "near_room_k", "monitor"),
+        ("invalid_monitor", "short_burn_min", "monitor"),
     ],
 )
 def test_a_pressure_problem_is_fixed_in_the_boiler_step(code: str, subject: str, step: str) -> None:
@@ -3752,22 +3749,27 @@ async def test_the_entity_steps_targets_are_checked_on_the_server(
     assert result["step_id"] == "control_curve"
 
 
-async def test_the_zones_emitter_size(hass: HomeAssistant, entities: dict[str, str]) -> None:
-    """Appendix D: at the advanced level the zone's emitter size and exponent are stored as
-    entered."""
+async def test_the_zone_form_asks_the_emitter_alone(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """I8.1d: even at the advanced level a zone is its emitter type and whether it closes when
+    off (and its circuit, with more than one) — its size and exponent are no longer asked, and
+    none is stored."""
     entry_id = await create_entry(hass, entities, "advanced", ("living",))
     menu = await hass.config_entries.options.async_init(entry_id)
     result = await options_step(hass, menu, {"next_step_id": "zones"})
     assert result["step_id"] == "zones"
     result = await options_step(hass, result, {"zones": [entities["living"]]})
     assert result["step_id"] == "zone"
-    zone = {"emitter": "radiator", "reference_output_w": 1500, "exponent": 1.25}
-    result = await options_step(hass, result, zone)
+    assert {str(marker) for marker in result["data_schema"].schema} == {
+        "emitter",
+        "closes_when_off",
+    }
+    result = await options_step(hass, result, {"emitter": "radiator"})
     assert result["type"] is FlowResultType.CREATE_ENTRY  # the section saves at once
     await hass.async_block_till_done()
     (stored,) = hass.config_entries.async_get_entry(entry_id).options["zones"]
-    assert stored["reference_output_w"] == 1500
-    assert stored["exponent"] == 1.25
+    assert set(stored) <= {"entity_id", "emitter", "circuit", "closes_when_off"}
 
 
 async def test_a_blocker_text_without_a_count_is_given_whole(

@@ -476,16 +476,6 @@ async def test_an_input_unavailable_now_shows_its_feature_inactive(
     unknown = hass.states.get(snapshots)
     assert unknown is not None
     assert unknown.state == "unknown"  # the weather unavailable: no count shown
-    hot = hass.states.get(
-        registry.async_get_entity_id(
-            "binary_sensor",
-            DOMAIN,
-            f"{entry.entry_id}_hot_water_{registry.async_get(zones.entities['living']).id}",
-        )
-        or ""
-    )
-    assert hot is not None
-    assert hot.state == "unknown"  # the entity keeps its own rule: unknown, with its reason
     hass.states.async_set(ENTITIES[Signal.FLOW], "45", {"unit_of_measurement": "°C"})
     await coordinator.async_refresh()
     await hass.async_block_till_done()

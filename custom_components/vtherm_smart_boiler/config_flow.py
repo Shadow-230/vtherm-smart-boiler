@@ -54,7 +54,6 @@ from .config import (
     MONITOR_BOUNDS,
     MONITORING_DAYS_BOUNDS,
     SECTION_CODES,
-    ZONE_BOUNDS,
     ConfigError,
     EntryConfig,
     section_fits,
@@ -735,11 +734,6 @@ def zone_schema(options: dict[str, Any], current: dict[str, Any]) -> vol.Schema:
     fields[vol.Required(CLOSES_WHEN_OFF, default=current.get(CLOSES_WHEN_OFF) is True)] = (
         selector.BooleanSelector()
     )
-    if _advanced(options):
-        fields[_optional("reference_output_w", current)] = _number(
-            *ZONE_BOUNDS["reference_output_w"], 10, "W"
-        )
-        fields[_optional("exponent", current)] = _number(*ZONE_BOUNDS["exponent"], 0.01)
     return vol.Schema(fields)
 
 
@@ -811,9 +805,6 @@ def monitor_schema(options: dict[str, Any]) -> vol.Schema:
             ),
             _optional("verdict_window_days", monitor): _number(
                 *MONITOR_BOUNDS["verdict_window_days"], 1, "d"
-            ),
-            vol.Required("near_room_k", default=monitor.get("near_room_k", 3.0)): _number(
-                *MONITOR_BOUNDS["near_room_k"], 0.5, "K"
             ),
             # I6 (decision 7): a condensing boiler's only — the alarm is off for any other.
             **(
@@ -2021,8 +2012,8 @@ MONITOR_KEPT = ("monitoring_days", "verdict_window_days", *PRESSURE_KEYS)
 
 def restore_advanced_defaults(options: dict[str, Any]) -> None:
     """Drop every tuning value only the advanced level shows, so its default applies again.
-    Facts about the installation — what is mapped, the boiler, circuits, emitter sizes, values
-    the user entered — stay (``SCOPE.md`` principle 10), and so do the monitor's periods."""
+    Facts about the installation — what is mapped, the boiler, circuits, zones, values the user
+    entered — stay (``SCOPE.md`` principle 10), and so do the monitor's periods."""
     monitor = options.get(MONITOR, {})
     kept = {key: monitor[key] for key in MONITOR_KEPT if key in monitor}
     if kept:
@@ -2061,7 +2052,6 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
     advanced = {LEVEL: LEVEL_ADVANCED}
     params = options.get(PARAMETERS, {})
     circuits = options.get(CIRCUITS, [])
-    zones = options.get(ZONES, [])
     control = options.get(CONTROL, {})
     monitor = options.get(MONITOR, {})
     curve_defaults = _schema_defaults(control_curve_schema(advanced))
@@ -2091,7 +2081,6 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
         or len(circuits) > 1
         or any("flow_entity" in c for c in circuits)
         or any(_circuit_alarm_hidden(c) for c in circuits)
-        or any("reference_output_w" in z or "exponent" in z for z in zones)
         or _differ(
             monitor,
             _schema_defaults(monitor_schema({})),
@@ -2503,11 +2492,6 @@ class _Steps:
                 zone[CLOSES_WHEN_OFF] = True
             circuits = [c["id"] for c in self.options.get(CIRCUITS, [])] or ["main"]
             zone["circuit"] = user_input.get("circuit", current.get("circuit", circuits[0]))
-            for key in ("reference_output_w", "exponent"):
-                if user_input.get(key) not in (None, ""):
-                    zone[key] = user_input[key]
-                elif not _advanced(self.options) and current.get(key) is not None:
-                    zone[key] = current[key]  # not shown: kept
             self._zones_done.append(zone)
             self._zone_queue.pop(0)
             return await self.async_step_zone()
@@ -3085,9 +3069,10 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # the building's, the curve's moved there; 7: the comfort correction, now on by default, stays
     # off in a control section that never stored it; 8: the curve's room temperature, now Auto
     # by default, stays Manual where a curve stored no mode; 9: the reference room is gone, its
-    # settings with it; 10: foreign heat is gone, the zones' sources and the hold time with it
-    # (see async_migrate_entry).
-    MINOR_VERSION = 10
+    # settings with it; 10: foreign heat is gone, the zones' sources and the hold time with it;
+    # 11: the zones' emitter output and exponent and "near room temperature" go (see
+    # async_migrate_entry).
+    MINOR_VERSION = 11
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}

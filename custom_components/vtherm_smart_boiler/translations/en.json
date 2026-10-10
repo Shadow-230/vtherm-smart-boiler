@@ -184,15 +184,11 @@
         "data": {
           "circuit": "Circuit",
           "emitter": "Emitter type",
-          "reference_output_w": "Emitter output",
-          "exponent": "Emitter exponent",
           "closes_when_off": "Closes when VT switches it off"
         },
         "data_description": {
           "circuit": "The heating circuit this zone is on. The wrong circuit attributes the zone's heat to the wrong water.",
           "emitter": "Radiators, underfloor or convectors. Sets the EN 442 exponent of the emitter power and the curve's default shape; the wrong type skews both.",
-          "reference_output_w": "The emitters' output at their reference condition, in W. Only for an absolute output estimate; a wrong value only skews that estimate.",
-          "exponent": "Overrides the EN 442 exponent of the emitter type. A wrong exponent skews the emitter power factor.",
           "closes_when_off": "Tick if this zone's valve or emitter closes whenever Versatile Thermostat switches the zone off, although VT does not report its opening (e.g. a radiator thermostat VT turns off). Frost protection then does not heat for this zone while VT keeps it off, and raises a repair issue instead. Off (default): the zone is heated in frost as before, which may run the boiler against a closed valve."
         }
       },
@@ -225,7 +221,6 @@
           "condensing_return": "Condensing return threshold",
           "short_burn_min": "Short burn",
           "monitoring_days": "Days of data for the verdict",
-          "near_room_k": "Near room temperature",
           "flue_gas_warning": "Flue gas warning",
           "flue_gas_alarm": "Flue gas alarm",
           "starts_per_hour_limit": "Frequent starts",
@@ -236,7 +231,6 @@
           "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C. Too high overstates the condensing share.",
           "short_burn_min": "Burns shorter than this count as short, in minutes. Default 10. Longer makes more burns short, and the verdict harsher.",
           "monitoring_days": "How many days of data the monitor's verdict needs, counted from when this integration was added. It holds nothing back: control can be switched on at any time, even without a verdict, and until there is one the control switch shows \"not enough data\". Out of the heating season there may be too little data even after these days. Default 7; shorter is not allowed.",
-          "near_room_k": "Water within this of the room counts as no heat reaching the zone, in K. Default 3. Larger says 'no heat reaches the zone' sooner.",
           "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C. Too high warns too late.",
           "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
           "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12. Too high hides short-cycling.",
@@ -651,7 +645,7 @@
         },
         "data_description": {
           "level": "Simple shows the essentials; advanced shows every parameter.",
-          "restore_defaults": "When switching to simple: tick to reset the advanced tuning — control's curve shape, limits and behaviour, the alarm reactions, the monitor's thresholds — to its defaults. Facts about your installation stay whatever you choose: mapped signals, the boiler, circuits, emitter sizes and values you entered — and the monitoring period and verdict window. Left unticked, the tuning stays active but hidden, and the options show that some advanced settings are active."
+          "restore_defaults": "When switching to simple: tick to reset the advanced tuning — control's curve shape, limits and behaviour, the alarm reactions, the monitor's thresholds — to its defaults. Facts about your installation stay whatever you choose: mapped signals, the boiler, circuits, zones and values you entered — and the monitoring period and verdict window. Left unticked, the tuning stays active but hidden, and the options show that some advanced settings are active."
         }
       },
       "signals": {
@@ -812,15 +806,11 @@
         "data": {
           "circuit": "Circuit",
           "emitter": "Emitter type",
-          "reference_output_w": "Emitter output",
-          "exponent": "Emitter exponent",
           "closes_when_off": "Closes when VT switches it off"
         },
         "data_description": {
           "circuit": "The heating circuit this zone is on. The wrong circuit attributes the zone's heat to the wrong water.",
           "emitter": "Radiators, underfloor or convectors. Sets the EN 442 exponent of the emitter power and the curve's default shape; the wrong type skews both.",
-          "reference_output_w": "The emitters' output at their reference condition, in W. Only for an absolute output estimate; a wrong value only skews that estimate.",
-          "exponent": "Overrides the EN 442 exponent of the emitter type. A wrong exponent skews the emitter power factor.",
           "closes_when_off": "Tick if this zone's valve or emitter closes whenever Versatile Thermostat switches the zone off, although VT does not report its opening (e.g. a radiator thermostat VT turns off). Frost protection then does not heat for this zone while VT keeps it off, and raises a repair issue instead. Off (default): the zone is heated in frost as before, which may run the boiler against a closed valve."
         }
       },
@@ -853,7 +843,6 @@
           "condensing_return": "Condensing return threshold",
           "short_burn_min": "Short burn",
           "monitoring_days": "Days of data for the verdict",
-          "near_room_k": "Near room temperature",
           "flue_gas_warning": "Flue gas warning",
           "flue_gas_alarm": "Flue gas alarm",
           "starts_per_hour_limit": "Frequent starts",
@@ -864,7 +853,6 @@
           "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C. Too high overstates the condensing share.",
           "short_burn_min": "Burns shorter than this count as short, in minutes. Default 10. Longer makes more burns short, and the verdict harsher.",
           "monitoring_days": "How many days of data the monitor's verdict needs, counted from when this integration was added. It holds nothing back: control can be switched on at any time, even without a verdict, and until there is one the control switch shows \"not enough data\". Out of the heating season there may be too little data even after these days. Default 7; shorter is not allowed.",
-          "near_room_k": "Water within this of the room counts as no heat reaching the zone, in K. Default 3. Larger says 'no heat reaches the zone' sooner.",
           "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C. Too high warns too late.",
           "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
           "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12. Too high hides short-cycling.",
@@ -1665,30 +1653,6 @@
           "no_valid_measurement": "No valid measurement"
         }
       },
-      "emitter_power_factor": {
-        "name": "{zone} emitter power",
-        "state_attributes": {
-          "status": {
-            "name": "Status",
-            "state": {
-              "computed": "Computed now",
-              "held": "Last value, held",
-              "unavailable": "Unavailable"
-            }
-          },
-          "reason": {
-            "name": "Why unavailable",
-            "state": {
-              "flow_unknown": "The flow is unknown",
-              "flow_stale": "The flow reading is too old",
-              "circuit_not_measured": "The circuit's own flow is not measured",
-              "room_unknown": "The room temperature is unknown",
-              "zone_unknown": "The zone's state is unknown",
-              "not_heating_yet": "The zone has not heated yet"
-            }
-          }
-        }
-      },
       "control_state": {
         "name": "Control state",
         "state": {
@@ -2382,26 +2346,6 @@
           },
           "problems_text": {
             "name": "Signals with problems (text)"
-          }
-        }
-      },
-      "hot_water": {
-        "name": "{zone} heat available",
-        "state": {
-          "on": "Heat reaches the zone",
-          "off": "No heat reaches the zone"
-        },
-        "state_attributes": {
-          "reason": {
-            "name": "Why not",
-            "state": {
-              "dhw_active": "The boiler heats hot water",
-              "flow_near_room": "The water is barely above the room",
-              "flow_stale": "The flow reading is too old",
-              "flow_unknown": "The flow is unknown",
-              "circuit_not_measured": "The circuit's own flow is not measured",
-              "room_unknown": "The room temperature is unknown"
-            }
           }
         }
       },
