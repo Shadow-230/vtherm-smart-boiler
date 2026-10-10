@@ -391,6 +391,8 @@ that the user's answer changes one place in the code.
     does not have either (the user, 2026-09-27: "as VT's native control works"); Q1 removes both from
     `SCOPE.md`'s class 3. Duty cycling, a start budget and an FC1 summer switch in `PLAN.md` 0.3 still
     contradict principle 12; `PLAN.md` marks them "to be decided against principle 12" (Q2).
+    (I8, 2026-10-10: the FC1 summer switch struck by the user — summer and winter stay VT's; duty
+    cycling and the start budget remain to be decided; `docs/plan-0.2-i8.md` B8, B9.)
 14. **Tests with the real VT in CI** (P-119, review question 14). *Decided (2026-09-27):* CI fetches
     VT 10.4.0 and SmartPI 0.4.0 from their tags on GitHub's servers, so the real-VT tests run on
     every change; nothing is downloaded locally.
@@ -579,7 +581,8 @@ Left on purpose for a later release:
 9. A warning for zones the boiler does not feed — air conditioners in heat mode, electric heaters
    (review question 19, its second half) — 0.3.
 10. A recorded "heating commanded" entity and event for users leaving VT's central boiler — 0.3.
-11. A wiring field for the relay (alone, parallel, series) — later, if asked.
+11. ~~A wiring field for the relay (alone, parallel, series) — later, if asked.~~ Struck by the
+    user on 2026-10-10: the plugin describes no wiring (`docs/plan-0.2-i8.md` C4).
 12. Whether a Shelly relay's switch-off timer restarts on a repeated "on" (Q3.10) — K6, on the
     user's own relay if they have one; until then the relay texts say it is not documented.
 13. A broken link between the OTGW firmware's ESP and its PIC is not visible through Home
