@@ -52,7 +52,7 @@ import copy
 import logging
 import math
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
@@ -158,7 +158,7 @@ from .core.lowest_water import (
 )
 from .core.metrics import CH_KINDS
 from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
-from .core.readings import BoilerSnapshot, ZoneState
+from .core.readings import ZONE_OPEN, BoilerSnapshot, ZoneState
 from .core.reference_room import ReferenceRoom, select_reference
 from .core.series import Series, known_duration
 from .core.signal_check import (
@@ -175,6 +175,7 @@ from .core.signal_check import (
 )
 from .core.signals import GatewayOutdoor, Signal
 from .core.supply import circuit_return, circuit_supply
+from .core.window_guard import WindowWatch, follow_window
 from .core.zone_watch import every_zone_unknown_since, issue_due
 from .forecasts import ForecastRecorder
 from .transport.entities import (
@@ -403,6 +404,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # What each source has shown of its rhythm in this run, by signal and "weather" (I6).
         self._rhythms: dict[str, Rhythm] = {}
         self._foreign: dict[str, ForeignHeatState] = {}
+        self._windows: dict[str, WindowWatch] = {}  # G11 F: each room's window guard
         self._reference: ReferenceRoom | None = None
         self._critical: dict[str, CriticalZone] = {}
         self._alarms: dict[AlarmKind, Alarm] = {}
@@ -1152,6 +1154,28 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 weather.changed_at,
             )
 
+    @property
+    def window_suspected(self) -> frozenset[str]:
+        """The rooms with a window probably open (G11 F): left out of the comfort correction's
+        rise and of the long-run rule."""
+        return frozenset(zone for zone, watch in self._windows.items() if watch.suspected)
+
+    def _follow_windows(self, zones: Mapping[str, ZoneState], flame: bool, now: float) -> None:
+        """G11 F: each room's window guard, a look at every refresh — a fall counts while heat
+        flows (the flame known on) and the room takes it (its valve open or its device on).
+        Told once in the log as it starts and ends; the binary sensor shows it."""
+        for zone_id, zone in zones.items():
+            before = self._windows.get(zone_id, WindowWatch())
+            takes = zone.device_active is True or (zone.demand or 0.0) > ZONE_OPEN
+            watch = follow_window(before, now, zone.temperature, flame and takes)
+            self._windows[zone_id] = watch
+            if watch.suspected != before.suspected:
+                _LOGGER.info(
+                    "A window is %s in %s",
+                    "probably open" if watch.suspected else "no longer seen open",
+                    self.link.zone_name(zone_id),
+                )
+
     def _compute(self, now: float) -> MonitorData:
         config = self.config
         snapshot = self.transport.snapshot(now)
@@ -1165,6 +1189,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         dhw = self.dhw_takes_heat(snapshot)
 
         zone_states = {z.zone_id: self.link.zone(z.zone_id) for z in config.installation.zones}
+        flame = snapshot.flag(Signal.FLAME, self._max_age(Signal.FLAME))
+        self._follow_windows(zone_states, flame is True, now)
         views: dict[str, ZoneView] = {}
         for zone_config, zone in zip(config.zones, config.installation.zones, strict=True):
             state = zone_states[zone.zone_id]

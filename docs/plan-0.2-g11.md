@@ -7,7 +7,7 @@ with nothing raising it or telling the user. Step G11 of `docs/plan-0.2.md`. Con
 default; nothing here writes to the boiler beyond what control already writes.
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`.
 
-Status on 2026-10-10: G11.0 (this plan), G11.A, G11.B and G11.D done; next G11.E.
+Status on 2026-10-10: G11.0 (this plan), G11.A, G11.B, G11.B2, G11.D and G11.F done; next G11.E (E and F split in two steps, the window guard first, which E relies on).
 
 ## How to read this plan
 
@@ -232,9 +232,10 @@ Reverses K4.1 (`docs/plan-0.2.2.md`, open item 24; the user, 2026-10-03).
 | G11.0 ✅ | this plan; `SCOPE.md` where it states the old behaviour; `CLAUDE.md` (where to continue, the plans, two verified facts); `PLAN.md`'s 0.2 row; `docs/plan-0.2.md`'s step G11 | none |
 | G11.A ✅ | F7 (decision A), pull request #51 | N2, N6, N7, N8 (instance 7) |
 | G11.B ✅ | B and C: the correction on by default in full control, at both levels, its limit option, the warning repair issue, the entry migration (minor version 7); SmartPI's learning band read in `vtherm_link.py` and used by the correction and the critical zone; translations, tests (`core/` first). Found on the way: a session's stored options (`taken_with`) are read as the migration leaves a section, or a restart after the update would hand back instead of restoring | E4 again; the starts comparison with the correction on (instances 2–5); new: a curve too low in mild weather with a SmartPI zone in its learning phase, correction off and on |
-| G11.B2 | additions 2 and 3: the warning's two texts — the curve first with most rooms short, the radiator and the heat loss first with fewer — and the rooms' entity IDs among its placeholders; the plan, `SCOPE.md`, the user guides | E4 again; J4's Q1 and Q5 (a warning repair issue naming the room) |
+| G11.B2 ✅ | additions 2 and 3: the warning's two texts — the curve first with most rooms short, the radiator and the heat loss first with fewer — and the rooms' entity IDs among its placeholders; the plan, `SCOPE.md`, the user guides | E4 again; J4's Q1 and Q5 (a warning repair issue naming the room) |
 | G11.D ✅ | D: the curve's room Auto or Manual, the rooms left out, the entry migration (minor version 8: Manual for upgraded entries); translations, tests | E4 again; new: the Auto curve room following a preset |
-| G11.E | E and F: the long-run rule and its sensor, warning and kept counts; VT's window detection read and its zones left out of B, C and E; the plugin's own window guard and its sensor; translations, tests | new: a window opened in one room; a long run in each class |
+| G11.F ✅ | F: VT's window detection read (`window_manager`, `hvac_off_reason`) and its zones left out of the correction (and of E); the plugin's own guard (`core/window_guard.py`), run by the coordinator at every refresh, its rooms left out of the correction's rise, and the information binary sensor "Window probably open" with its feature; translations, tests | new: a window opened in one room |
+| G11.E | E: the long-run rule and its sensor, warning and kept counts; translations, tests | new: a long run in each class |
 | G11.G | the user guides EN and PL, and every document G names that the steps above did not already change | none |
 
 ## Open after G11

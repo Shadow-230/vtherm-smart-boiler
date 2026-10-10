@@ -107,6 +107,8 @@ class Feature(StrEnum):
     WALL_THERMOSTAT_FALLBACK = "wall_thermostat_fallback"
     RELAY_PROOF = "relay_proof"
     FORECASTS = "forecasts"
+    # G11 F: a window probably open, seen without a sensor.
+    WINDOW_GUARD = "window_guard"
 
 
 class FeatureStatus(StrEnum):
@@ -266,6 +268,11 @@ def features(
     )
     result[Feature.HYSTERESIS_DRIFT] = _state(
         lacking(Signal.FLAME, Signal.FLOW) + ([] if zone_data else [ZONE_DATA])
+    )
+    # G11 F: a room falling fast while it heats — the flame shows the heat flowing, the zones
+    # their rooms.
+    result[Feature.WINDOW_GUARD] = _state(
+        lacking(Signal.FLAME) + ([] if zone_data else [ZONE_DATA])
     )
     if not burner:
         result[Feature.UNSTABLE_IGNITION] = _state([FUEL_BURNER])

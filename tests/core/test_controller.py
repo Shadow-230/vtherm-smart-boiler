@@ -619,6 +619,30 @@ def test_the_auto_room_follows_a_preset_and_holds_without_zones() -> None:
     assert state.curve_room == pytest.approx(18.0)
 
 
+@pytest.mark.parametrize(
+    "window", [{"window_open": True}, {"window_suspected": True}], ids=["vt", "guard"]
+)
+def test_a_room_with_a_window_open_does_not_raise_the_correction(window: dict[str, bool]) -> None:
+    """G11 F: a zone VT holds for a window — or where the plugin sees a window probably open —
+    is left out of the rise, and is not named by the "curve too low" warning."""
+    state, decisions = run(minutes(0.0, 31, lambda t: (short(t, **window),)), WATER)
+    assert state.correction == 0.0
+    assert decisions[-1].short_zones == ()
+
+
+def test_a_window_probably_open_still_lets_the_correction_fall() -> None:
+    """G11 F: the guard only stops the rise; a zone over its setpoint still brings it down."""
+    state, _ = run(minutes(0.0, 31, lambda t: (short(t),)), WATER)
+    assert state.correction == pytest.approx(1.0)
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        hot = ZoneState("b", 22.5, 21.0, True, reported_at=t, valve_open=0.3)
+        return (short(t, window_suspected=True), hot)
+
+    state, _ = run(minutes(1860.0, 16, zones), WATER, state)
+    assert state.correction < 1.0
+
+
 def test_comfort_correction_can_be_off() -> None:
     state, _ = run(
         minutes(0.0, 31, lambda t: (short(t),)), replace(WATER, comfort_correction=False)
