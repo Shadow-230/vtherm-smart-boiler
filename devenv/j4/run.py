@@ -1380,7 +1380,86 @@ async def _is_on(r: Run, entity_id: str) -> bool:
     return await r.s(entity_id) == "on"
 
 
-SCENARIOS.update({f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6, L1, W1)})
+async def _vt_central_temps(r: Run, tmin: float, tmax: float) -> dict:
+    """VT's central configuration given new temperature limits — in the unit Home Assistant
+    shows: VT takes its limits as numbers in that unit."""
+    ha = r.ha
+    central = await ha.entry("versatile_thermostat", "Central configuration")
+    _s, d = await ha.rest(
+        "POST",
+        "/api/config/config_entries/options/flow",
+        {"handler": central["entry_id"], "show_advanced_options": True},
+    )
+    path = f"/api/config/config_entries/options/flow/{d['flow_id']}"
+    _s, d = await ha.rest("POST", path, {"next_step_id": "main"})
+    body = {}
+    for field in d.get("data_schema") or []:
+        value = (field.get("description") or {}).get("suggested_value", field.get("default"))
+        if value is not None:
+            body[field["name"]] = value
+    body |= {"temp_min": tmin, "temp_max": tmax}
+    _s, d = await ha.rest("POST", path, body)
+    if d.get("type") == "menu":
+        _s, d = await ha.rest("POST", path, {"next_step_id": "finalize"})
+    await ha.wait(20)
+    return d
+
+
+async def T1(r: Run):
+    """Home Assistant in US customary units: the boiler's signals and the weather in °F, VT's
+    zones set in °F; the boiler still gets what the plugin means in °C, no alarm from a reading
+    taken in the wrong unit, and the hand-back arrives"""
+    targets_f = {zone: round(target * 9 / 5 + 32, 1) for zone, target in ZONES}
+    try:
+        await r.ha.ws_cmd({"type": "config/core/update", "unit_system": "us_customary"})
+        await r.ha.wait(10)
+        d = await _vt_central_temps(r, 45.0, 95.0)
+        r.note(f"VT limits 45–95 °F: {d.get('type')} {d.get('errors')}")
+        flow = await r.st("sensor.boiler_sim_flow")
+        r.check(
+            flow["attributes"].get("unit_of_measurement") == "°F",
+            f"the flow in {flow['attributes'].get('unit_of_measurement')}: {flow['state']}",
+        )
+        for zone, target in ZONES:
+            await r.sim("set_room_temperature", zone=zone, temperature=target - 3.0)
+            await r.ha.call(
+                "climate",
+                "set_temperature",
+                entity_id=f"climate.{zone}",
+                temperature=targets_f[zone],
+            )
+        await r.switch(True)
+        t = time.time()
+        await r.ha.wait(1800)
+        values = [float(v) for _k, v in r.cmds(t, "setpoint")]
+        r.check(
+            bool(values) and all(20.0 <= v <= 70.0 for v in values),
+            f"°C at the boiler: {min(values, default=None)}–{max(values, default=None)}",
+        )
+        r.check(
+            await r.s("control_state") in ("heating", "idle"), f"state {await r.s('control_state')}"
+        )
+        on = await r.alarms_on()
+        r.check(not [a for a in on if a != "alarm_outdoor_sensor_suspect"], f"alarms {on}")
+        r.check(
+            await r.attr("control_state", "boiler_heats") in (None, "heats"),
+            f"heats: {await r.attr('control_state', 'boiler_heats')}",
+        )
+        t2 = time.time()
+        await r.switch(False)
+        await r.ha.wait(20)
+        r.check(bool(r.cmds(t2)), f"the hand-back: {r.cmds(t2)}")
+    finally:
+        if await r.s("control") == "on":
+            await r.switch(False)
+            await r.ha.wait(10)
+        await r.ha.ws_cmd({"type": "config/core/update", "unit_system": "metric"})
+        await r.ha.wait(10)
+        await _vt_central_temps(r, 7.0, 35.0)
+        await r.zones()
+
+
+SCENARIOS.update({f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6, L1, W1, T1)})
 
 
 if __name__ == "__main__":
