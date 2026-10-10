@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from ..const import MQTT_DOMAIN, OPENTHERM_GW_DOMAIN
-from ..core.foreign_heat import SourceKind
 from ..core.hand_back import RestartKind
 from ..core.limits import Grid
 from ..core.readings import BoilerSnapshot, Reading
@@ -15,7 +14,6 @@ from ..units import (
     celsius_to,
     parse_binary,
     parse_number,
-    power_to_kw,
     signal_value,
     temperature_to_celsius,
     temperature_unit_known,
@@ -180,35 +178,6 @@ def read_on_off(hass: HomeAssistant, entity_id: str) -> bool | None:
     """An on/off entity (e.g. an echo of heating on/off); anything else is unknown."""
     state = hass.states.get(entity_id)
     return None if state is None else parse_binary(state.state)
-
-
-# A foreign-heat source's plausible readings (PB-43): outside them a probe's fault value or a
-# meter's spike is unknown rather than an hour of foreign heat.
-SOURCE_LOW, SOURCE_HIGH = -30.0, 110.0  # °C
-SOURCE_KW_LOW, SOURCE_KW_HIGH = 0.0, 100.0  # kW
-
-
-def read_source(hass: HomeAssistant, entity_id: str, kind: SourceKind) -> bool | float | None:
-    """A foreign-heat source: on/off for switches and binary sensors, W or °C for sensors;
-    unknown outside the plausible range (PB-43)."""
-    state = hass.states.get(entity_id)
-    if state is None:
-        return None
-    if kind in (SourceKind.SWITCH, SourceKind.BINARY):
-        return parse_binary(state.state)
-    number = parse_number(state.state)
-    if number is None:
-        return None
-    unit = state.attributes.get("unit_of_measurement")
-    if kind is SourceKind.POWER:
-        kw = power_to_kw(number, unit)
-        if kw is None or not SOURCE_KW_LOW <= kw <= SOURCE_KW_HIGH:
-            return None
-        return kw * 1000.0
-    celsius = temperature_to_celsius(number, unit)
-    if celsius is None or not SOURCE_LOW <= celsius <= SOURCE_HIGH:
-        return None
-    return celsius
 
 
 def read_weather_temperature(hass: HomeAssistant, entity_id: str) -> Reading:

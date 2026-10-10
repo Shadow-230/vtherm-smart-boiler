@@ -50,7 +50,6 @@ from homeassistant.util import dt as dt_util
 
 from .config import (
     CIRCUIT_BOUNDS,
-    FOREIGN_HEAT_THRESHOLDS,
     FRESHNESS_BOUNDS_MIN,
     MONITOR_BOUNDS,
     MONITORING_DAYS_BOUNDS,
@@ -133,7 +132,6 @@ from .core.alarms import (
 )
 from .core.building import InsulationClass, ThermalMass
 from .core.demand import feeds_opening, feeds_power
-from .core.foreign_heat import SourceKind
 from .core.guards import WriteType
 from .core.installation import BoilerClass, BoilerType, CircuitControl, EmitterType, HeatSource
 from .core.metrics import ModulationScale
@@ -718,18 +716,6 @@ def zones_schema(options: dict[str, Any]) -> vol.Schema:
     )
 
 
-def foreign_heat_filters(options: dict[str, Any]) -> list[dict[str, Any]]:
-    """What a zone's other heat sources may be; a temperature sensor needs its threshold,
-    entered at the advanced level only."""
-    offered: list[dict[str, Any]] = [
-        {"domain": ["switch", "binary_sensor"]},
-        {"domain": "sensor", "device_class": "power"},
-    ]
-    if _advanced(options):
-        offered.append({"domain": "sensor", "device_class": "temperature"})
-    return offered
-
-
 def zone_schema(options: dict[str, Any], current: dict[str, Any]) -> vol.Schema:
     circuits = [c["id"] for c in options.get(CIRCUITS, [])] or ["main"]
     fields: dict[Any, Any] = {}
@@ -749,28 +735,11 @@ def zone_schema(options: dict[str, Any], current: dict[str, Any]) -> vol.Schema:
     fields[vol.Required(CLOSES_WHEN_OFF, default=current.get(CLOSES_WHEN_OFF) is True)] = (
         selector.BooleanSelector()
     )
-    sources = [s["entity_id"] for s in current.get("foreign_heat", [])]
-    fields[vol.Optional("foreign_heat", default=sources)] = _entity(
-        foreign_heat_filters(options), multiple=True
-    )
     if _advanced(options):
         fields[_optional("reference_output_w", current)] = _number(
             *ZONE_BOUNDS["reference_output_w"], 10, "W"
         )
         fields[_optional("exponent", current)] = _number(*ZONE_BOUNDS["exponent"], 0.01)
-        thresholds = {
-            s["kind"]: s.get("threshold")
-            for s in current.get("foreign_heat", [])
-            if s.get("threshold")
-        }
-        fields[_optional("power_threshold", {"power_threshold": thresholds.get("power")})] = (
-            _number(*FOREIGN_HEAT_THRESHOLDS[SourceKind.POWER], 1, "W")
-        )
-        fields[
-            _optional(
-                "temperature_threshold", {"temperature_threshold": thresholds.get("temperature")}
-            )
-        ] = _number(*FOREIGN_HEAT_THRESHOLDS[SourceKind.TEMPERATURE], 1, "°C")
     return vol.Schema(fields)
 
 
@@ -846,9 +815,6 @@ def monitor_schema(options: dict[str, Any]) -> vol.Schema:
             vol.Required("near_room_k", default=monitor.get("near_room_k", 3.0)): _number(
                 *MONITOR_BOUNDS["near_room_k"], 0.5, "K"
             ),
-            vol.Required(
-                "foreign_heat_hold_min", default=monitor.get("foreign_heat_hold_min", 60.0)
-            ): _number(*MONITOR_BOUNDS["foreign_heat_hold_min"], 5, "min"),
             # I6 (decision 7): a condensing boiler's only — the alarm is off for any other.
             **(
                 _limit(
@@ -2035,18 +2001,6 @@ def _circuit_alarm_hidden(circuit: Mapping[str, Any]) -> bool:
     )
 
 
-def source_kind(hass_state_domain: str, device_class: str | None) -> SourceKind | None:
-    if hass_state_domain == "switch":
-        return SourceKind.SWITCH
-    if hass_state_domain == "binary_sensor":
-        return SourceKind.BINARY
-    if device_class == "power":
-        return SourceKind.POWER
-    if device_class == "temperature":
-        return SourceKind.TEMPERATURE
-    return None
-
-
 def apply_monitor(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     """The monitor step's answers; the flue-gas limits it does not show, and the pressure limits
     the boiler step asks, are kept (I6)."""
@@ -2138,7 +2092,6 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
         or any("flow_entity" in c for c in circuits)
         or any(_circuit_alarm_hidden(c) for c in circuits)
         or any("reference_output_w" in z or "exponent" in z for z in zones)
-        or any("threshold" in s for z in zones for s in z.get("foreign_heat", []))
         or _differ(
             monitor,
             _schema_defaults(monitor_schema({})),
@@ -2555,42 +2508,9 @@ class _Steps:
                     zone[key] = user_input[key]
                 elif not _advanced(self.options) and current.get(key) is not None:
                     zone[key] = current[key]  # not shown: kept
-            thresholds = {
-                s["entity_id"]: s["threshold"]
-                for s in current.get("foreign_heat", [])
-                if s.get("threshold") is not None
-            }
-            sources = []
-            for source_id in user_input.get("foreign_heat", []):
-                state = self.hass.states.get(source_id)  # type: ignore[attr-defined]
-                kind = source_kind(
-                    source_id.split(".")[0],
-                    state.attributes.get("device_class") if state is not None else None,
-                )
-                if kind is None:
-                    errors["foreign_heat"] = "foreign_heat_unsupported"
-                    break
-                source: dict[str, Any] = {"entity_id": source_id, "kind": kind.value}
-                threshold = user_input.get(f"{kind.value}_threshold")
-                if threshold in (None, "") and not _advanced(self.options):
-                    threshold = thresholds.get(source_id)  # not shown: kept
-                if threshold not in (None, ""):
-                    source["threshold"] = threshold
-                elif kind is SourceKind.TEMPERATURE:
-                    errors["foreign_heat"] = "temperature_threshold_missing"
-                    break
-                sources.append(source)
-            if not errors:
-                errors = entity_errors(
-                    self.hass,  # type: ignore[attr-defined]
-                    user_input,
-                    {"foreign_heat": foreign_heat_filters(self.options)},
-                )
-            if not errors:
-                zone["foreign_heat"] = sources
-                self._zones_done.append(zone)
-                self._zone_queue.pop(0)
-                return await self.async_step_zone()
+            self._zones_done.append(zone)
+            self._zone_queue.pop(0)
+            return await self.async_step_zone()
         return self._form(
             step_id="zone",
             data_schema=zone_schema(self.options, current),
@@ -3165,8 +3085,9 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # the building's, the curve's moved there; 7: the comfort correction, now on by default, stays
     # off in a control section that never stored it; 8: the curve's room temperature, now Auto
     # by default, stays Manual where a curve stored no mode; 9: the reference room is gone, its
-    # settings with it (see async_migrate_entry).
-    MINOR_VERSION = 9
+    # settings with it; 10: foreign heat is gone, the zones' sources and the hold time with it
+    # (see async_migrate_entry).
+    MINOR_VERSION = 10
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}

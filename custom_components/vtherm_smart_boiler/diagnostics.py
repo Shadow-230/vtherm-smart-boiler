@@ -170,9 +170,6 @@ async def async_get_config_entry_diagnostics(
                     "state": asdict(view.state),
                     "hot_water": asdict(view.hot_water),
                     "factor": asdict(view.factor),
-                    "foreign_heat": None
-                    if view.foreign_heat is None
-                    else asdict(view.foreign_heat),
                 }
                 for zone_id, view in data.zones.items()
             },

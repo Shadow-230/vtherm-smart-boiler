@@ -125,7 +125,7 @@ a heat pump controller (excluded), or anything that sends data outside.
     and per day; (3) it moves only while every other criterion holds — comfort in every zone, no
     zone overheating, cycling not rising, every limit kept — and steps back when another one
     gets worse; (4) the aim is a "good enough" band, not an optimum: learning stops inside it;
-    (5) it freezes in unusual conditions — hot water, foreign heat, data gaps, hand-back,
+    (5) it freezes in unusual conditions — hot water, data gaps, hand-back,
     extreme weather (the outdoor temperature below the design outdoor temperature, or changing
     faster than 2 K per hour; provisional, K4); (6) at the band's edge it informs instead of
     pushing on — the starting point is probably wrong; (7) every learned value is visible and can
@@ -534,9 +534,9 @@ Decided by the user on 2026-10-10 (`docs/plan-0.2-i8.md` G; sources:
 
 | Stage | Delivers | Controls the boiler |
 |---|---|---|
-| **Monitor** | starts per hour, burn time, condensing share, gas per degree-day, connection state; alarms — information, with a hand-back reaction only where decision 7 allows one (§7); **early warning** (flue gas, ignitions, pressure, hysteresis); **a long burn without warming** — the flame on for 3 h with the rooms not rising: the water too cool for the rooms short, the boiler at its power limit (a warning), the water too hot (`docs/plan-0.2-g11.md` E); **report explaining changes** (weather / DHW / settings); outdoor sensor check; DHW and foreign-heat detection; **forecast recording** (FC0); **signal check** — which optional signals are present and fresh | no |
+| **Monitor** | starts per hour, burn time, condensing share, gas per degree-day, connection state; alarms — information, with a hand-back reaction only where decision 7 allows one (§7); **early warning** (flue gas, ignitions, pressure, hysteresis); **a long burn without warming** — the flame on for 3 h with the rooms not rising: the water too cool for the rooms short, the boiler at its power limit (a warning), the water too hot (`docs/plan-0.2-g11.md` E); **report explaining changes** (weather / DHW / settings); outdoor sensor check; DHW detection; **forecast recording** (FC0); **signal check** — which optional signals are present and fresh | no |
 | **Advisor** | curve and anti-cycling suggestions with rationale and an "apply" button | no |
-| **Curve (strategy A)** | replaces VT's on/off and user automations; curve per circuit; effective outdoor temperature; ramp; keep-alive; frost protection; learning pauses (DHW, foreign heat, large changes — under control only, S-61) | yes |
+| **Curve (strategy A)** | replaces VT's on/off and user automations; curve per circuit; effective outdoor temperature; ramp; keep-alive; frost protection; learning pauses (DHW, a boiler fault, large changes — under control only, S-61) | yes |
 | **Anti-cycling** (to be decided against principle 12, decision 13) | duty cycling at low load, starts-per-hour budget, modulation cap; **planning from the forecast** — mild hours ahead → long cycles from the start (FC2) | yes |
 | **Curve tuning (strategy B)** | tuning band Low / Medium / High / Custom (3 / 8 / 15 % defaults); manual / semi-automatic / automatic; **seasonal tune-up** — a little lower each day while rooms hold comfort; per circuit | yes |
 | **Forecast** | **anticipation for slow emitters** — raise water earlier before frost, lower it earlier before a warm or sunny day (FC3); lead time learned per circuit | yes |
@@ -546,8 +546,9 @@ Decided by the user on 2026-10-10 (`docs/plan-0.2-i8.md` G; sources:
 
 - **Water-side learning:** from HA history when it covers a heating season, then live; bounded
   change per day.
-- **Foreign heat:** other heaters (fireplace, stove, electric heater) — **not** the sun. Switch or
-  sensor → detected in every stage; under control, learning paused in affected zones (S-61).
+- **Foreign heat** (a fireplace, a stove, an electric heater) is VT's and SmartPI's to handle:
+  the plugin neither detects it nor pauses learning for it (I8.1c, the user's decision of
+  2026-10-10). A room it warms does not ask for heat.
 - **DHW** is detected in every stage; under control it pauses learning — in zones calling for
   heat (§5), and it holds the plugin's comfort correction at every draw (S-61).
 

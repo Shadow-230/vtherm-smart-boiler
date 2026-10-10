@@ -66,7 +66,6 @@ from .core.building import (
     loss_from_design_load,
     time_constant_from_mass,
 )
-from .core.foreign_heat import DEFAULT_HOLD_S, ForeignHeatSource, SourceKind
 from .core.hot_water import DEFAULT_NEAR_ROOM_K
 from .core.installation import (
     Boiler,
@@ -118,9 +117,6 @@ CIRCUIT_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
 ZONE_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
     {"reference_output_w": (50.0, 20000.0), "exponent": (1.0, 2.0)}
 )
-FOREIGN_HEAT_THRESHOLDS: Mapping[SourceKind, tuple[float, float]] = MappingProxyType(
-    {SourceKind.POWER: (1.0, 10000.0), SourceKind.TEMPERATURE: (20.0, 300.0)}
-)
 # Shorter would let control start before the monitoring period (X5); the integration tests lift
 # it in their one place to start control at once.
 MONITORING_DAYS_BOUNDS = (7.0, 60.0)
@@ -130,7 +126,6 @@ MONITOR_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
         "short_burn_min": (1.0, 60.0),
         "verdict_window_days": (7.0, 365.0),
         "near_room_k": (1.0, 10.0),
-        "foreign_heat_hold_min": (0.0, 720.0),
         "pressure_high_warning": (1.5, 4.0),
         "pressure_high_alarm": (1.5, 4.0),
         "flue_gas_warning": (40.0, 200.0),
@@ -186,7 +181,6 @@ def _section(options: Mapping[str, Any], key: str) -> Any:
 @dataclass(frozen=True, slots=True)
 class ZoneConfig:
     entity_id: str
-    foreign_heat: tuple[ForeignHeatSource, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,7 +206,6 @@ class MonitorConfig:
     monitor: MonitorOptions = field(default_factory=MonitorOptions)
     monitoring_days: float = 7.0
     near_room_k: float = DEFAULT_NEAR_ROOM_K
-    foreign_heat_hold_s: float = DEFAULT_HOLD_S
     alarms: AlarmThresholds = field(default_factory=AlarmThresholds)
 
 
@@ -334,7 +327,6 @@ class EntryConfig:
             *self.zone_entities,
             *self.circuit_flow_entities.values(),
         ]
-        entities += [source.source_id for zone in self.zones for source in zone.foreign_heat]
         if self.weather:
             entities.append(self.weather)
         if self.setpoint_read_back:
@@ -472,20 +464,10 @@ def _visit_item(
 
 
 def _zone_entities(visit: EntityVisit, item: Any) -> Any:
-    """A zone item with its thermostat and its foreign-heat sources visited."""
+    """A zone item with its thermostat visited."""
     if not isinstance(item, Mapping):
         return item
-    zone = _visit_item(visit, item, "entity_id", ZONES)
-    sources = item.get("foreign_heat")
-    if isinstance(sources, list):
-        field_name = f"{ZONES}.foreign_heat ({item.get('entity_id')})"
-        zone["foreign_heat"] = [
-            _visit_item(visit, source, "entity_id", field_name)
-            if isinstance(source, Mapping)
-            else source
-            for source in sources
-        ]
-    return zone
+    return _visit_item(visit, item, "entity_id", ZONES)
 
 
 def _enum[E: StrEnum](kind: type[E], data: Mapping[str, Any], key: str, default: E, code: str) -> E:
@@ -618,23 +600,6 @@ def _zone_number(item: Mapping[str, Any], key: str) -> float | None:
     return _bounded("invalid_zone", item, key, ZONE_BOUNDS[key])
 
 
-def _source(source: Mapping[str, Any]) -> ForeignHeatSource:
-    kind = SourceKind(source.get("kind", SourceKind.SWITCH))
-    threshold = _float_or_none(source.get("threshold"))
-    if threshold is not None:
-        low, high = FOREIGN_HEAT_THRESHOLDS.get(kind, (-math.inf, math.inf))
-        if isinstance(source.get("threshold"), bool) or not low <= threshold <= high:
-            raise ValueError(f"threshold {threshold!r} outside {low} to {high}")
-    return ForeignHeatSource(str(source["entity_id"]), kind, threshold)
-
-
-def _sources(item: Mapping[str, Any]) -> tuple[ForeignHeatSource, ...]:
-    def read() -> tuple[ForeignHeatSource, ...]:
-        return tuple(_source(source) for source in item.get("foreign_heat") or [])
-
-    return _read("invalid_zone", "foreign_heat", read)
-
-
 def _zones(data: Any, circuit_ids: set[str]) -> tuple[tuple[Zone, ...], list[ZoneConfig]]:
     zones: list[Zone] = []
     configs: list[ZoneConfig] = []
@@ -655,7 +620,7 @@ def _zones(data: Any, circuit_ids: set[str]) -> tuple[tuple[Zone, ...], list[Zon
                 closes_when_off=item.get("closes_when_off") is True,
             )
         )
-        configs.append(ZoneConfig(entity_id, _sources(item)))
+        configs.append(ZoneConfig(entity_id))
     return tuple(zones), configs
 
 
@@ -760,8 +725,6 @@ def _monitor(
         ),
         monitoring_days=monitoring_days,
         near_room_k=_monitor_value(data, "near_room_k", DEFAULT_NEAR_ROOM_K),
-        foreign_heat_hold_s=_monitor_value(data, "foreign_heat_hold_min", DEFAULT_HOLD_S / 60.0)
-        * 60.0,
         alarms=_alarm_thresholds(data),
     )
 

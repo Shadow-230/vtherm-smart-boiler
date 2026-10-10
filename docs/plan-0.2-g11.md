@@ -41,6 +41,9 @@ change to the plugin; N8's clean-up is the testing session's.
 
 ### B. The comfort correction: on by default in full control, a user limit, a warning at the edge
 
+(I8.1c, 2026-10-10: the correction no longer freezes for foreign heat — foreign heat removed,
+`docs/plan-0.2-i8.md` B3.)
+
 Reverses K4.1 (`docs/plan-0.2.2.md`, open item 24; the user, 2026-10-03).
 
 1. **On by default where the control mode is full control** (a flow setpoint); not offered with
@@ -130,8 +133,8 @@ Reverses K4.1 (`docs/plan-0.2.2.md`, open item 24; the user, 2026-10-03).
 
 ### E. "A long run that does not reach the rooms" — a monitor rule, information and warnings only
 
-(I8.1b: rooms held for a window or with one probably open are no longer left out; I8.1c removes
-the foreign-heat exclusion. `docs/plan-0.2-i8.md` B2, B3.)
+(I8.1b: rooms held for a window or with one probably open are no longer left out; I8.1c: nor
+rooms warmed by foreign heat. `docs/plan-0.2-i8.md` B2, B3.)
 
 1. **Judged once the flame has been on continuously for 3 h** (the flame known throughout;
    without a flame signal the rule does not run), and only while the rooms' temperatures have

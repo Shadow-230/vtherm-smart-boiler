@@ -2,7 +2,7 @@
 plugin's entities publish.
 
 Two paths. The quick one runs on state changes (debounced) and every 30 s: current readings,
-signal check, hot water, emitter factors, foreign heat, critical zones, current
+signal check, hot water, emitter factors, critical zones, current
 alarms. The analysis runs every few minutes on a copy of the history, off the event loop:
 summaries, verdict, trend warnings, report, outdoor check and building fit. After a restart the
 history is rebuilt from the recorder, which keeps these states anyway; the entry's own store
@@ -135,7 +135,6 @@ from .core.daily import (
     summarize_day,
 )
 from .core.emitters import FactorResult, FactorStatus, update_factor
-from .core.foreign_heat import ForeignHeatState, update_foreign_heat
 from .core.freshness import Rhythm, automatic_limit, observe
 from .core.history import History, ZoneSeries, with_downtime
 from .core.hot_water import HotWater, hot_water_available
@@ -180,7 +179,6 @@ from .forecasts import ForecastRecorder
 from .transport.entities import (
     EntityTransport,
     gateway_signals,
-    read_source,
     read_temperature,
     reading_from_state,
     weather_from_state,
@@ -307,7 +305,6 @@ class ZoneView:
     state: ZoneState
     hot_water: HotWater
     factor: FactorResult
-    foreign_heat: ForeignHeatState | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -403,7 +400,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._hot_water: dict[str, bool | None] = {}
         # What each source has shown of its rhythm in this run, by signal and "weather" (I6).
         self._rhythms: dict[str, Rhythm] = {}
-        self._foreign: dict[str, ForeignHeatState] = {}
         # G11 E: the flame's run, and the counts kept for 0.4's tuning (stored).
         self.long_run = LongRun()
         self.long_run_totals: dict[str, float] = {}
@@ -1167,17 +1163,14 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         flame: bool | None,
         now: float,
     ) -> None:
-        """G11 E, a look at every refresh: the rooms counted — heating, known, not warmed by
-        foreign heat — against the flow,
+        """G11 E, a look at every refresh: the rooms counted — heating, known — against the flow,
         the setpoint (control's written one, else the boiler's CH setpoint) and the modulation.
         Information on its binary sensor; the power limit a warning repair issue too. The counts
         kept for 0.4's tuning, the correction's hours at its limit among them."""
         rooms = [
             RoomLook(zone.zone_id, zone.temperature, zone.target, is_short(zone))
             for zone in zones.values()
-            if zone.heating_enabled is True
-            and zone.is_known(now, ZONE_MAX_AGE_S)
-            and not self._warmed_by_foreign_heat(zone.zone_id)
+            if zone.heating_enabled is True and zone.is_known(now, ZONE_MAX_AGE_S)
         ]
         before = self.long_run
         self.long_run = follow_long_run(
@@ -1209,10 +1202,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     ", ".join(self.link.zone_name(zone) for zone in self.long_run.rooms_named),
                 )
             self._show_power_limit(found is LongRunClass.POWER_LIMIT)
-
-    def _warmed_by_foreign_heat(self, zone_id: str) -> bool:
-        foreign = self._foreign.get(zone_id)
-        return foreign is not None and foreign.active is True
 
     def _water_setpoint(self, snapshot: BoilerSnapshot) -> float | None:
         """The setpoint the flow is judged against (G11 E): the one control wrote while it holds
@@ -1269,7 +1258,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         flame = snapshot.flag(Signal.FLAME, self._max_age(Signal.FLAME))
         self._follow_long_run(snapshot, zone_states, flame, now)
         views: dict[str, ZoneView] = {}
-        for zone_config, zone in zip(config.zones, config.installation.zones, strict=True):
+        for zone in config.installation.zones:
             state = zone_states[zone.zone_id]
             circuit = config.installation.circuit(zone.circuit_id)
             assert circuit is not None  # the config was validated
@@ -1301,18 +1290,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 self.schedule_save(FACTOR_SAVE_DELAY_S)
             if factor.value is not None:
                 self._factors[zone.zone_id] = factor
-            foreign = None
-            if zone_config.foreign_heat:
-                foreign = update_foreign_heat(
-                    self._foreign.get(zone.zone_id),
-                    [
-                        (source, read_source(self.hass, source.source_id, source.kind))
-                        for source in zone_config.foreign_heat
-                    ],
-                    now,
-                    config.monitor.foreign_heat_hold_s,
-                )
-                self._foreign[zone.zone_id] = foreign
             views[zone.zone_id] = ZoneView(
                 zone.zone_id,
                 self.link.zone_name(zone.zone_id),
@@ -1320,7 +1297,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 state,
                 hot,
                 factor,
-                foreign,
             )
 
         for circuit in config.installation.circuits:

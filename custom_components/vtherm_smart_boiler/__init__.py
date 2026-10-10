@@ -233,6 +233,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_room_mode(hass, entry)
     if entry.minor_version < 9:
         _migrate_reference_room(hass, entry)
+    if entry.minor_version < 10:
+        _migrate_foreign_heat(hass, entry)
     return True
 
 
@@ -269,6 +271,27 @@ def _migrate_reference_room(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     options = {key: value for key, value in entry.options.items() if key != REFERENCE_ROOM}
     hass.config_entries.async_update_entry(entry, options=options, minor_version=9)
+
+
+def _migrate_foreign_heat(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.1c (minor version 10): foreign heat is gone (`docs/plan-0.2-i8.md` B3) — a room warmed
+    by something else is VT's and SmartPI's to handle; the zones' sources and the monitor's hold
+    time go. Their binary sensors leave the registry at the next setup."""
+    from .const import MONITOR, ZONES
+
+    options = dict(entry.options)
+    zones = options.get(ZONES)
+    if isinstance(zones, list):
+        options[ZONES] = [
+            {key: value for key, value in zone.items() if key != "foreign_heat"}
+            if isinstance(zone, Mapping)
+            else zone
+            for zone in zones
+        ]
+    monitor = options.get(MONITOR)
+    if isinstance(monitor, Mapping) and "foreign_heat_hold_min" in monitor:
+        options[MONITOR] = {k: v for k, v in monitor.items() if k != "foreign_heat_hold_min"}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=10)
 
 
 def control_as_run(options: Mapping[str, Any]) -> Any:
