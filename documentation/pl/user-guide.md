@@ -343,19 +343,9 @@ zabrały pomieszczeniom ciepło. Rozróżnianie, czy kocioł grzał dom, czy wod
 
 ### 4.9 Otwarte okna
 
-Otwarte okno wygląda jak za niska krzywa: pomieszczenie nie dochodzi do nastawy, choćby woda była
-ciepła. Wtyczka wyłącza takie pomieszczenie z korekty komfortu:
-
-- **Własne wykrywanie okna w VT** — czujnik okna albo automatyczne wykrywanie VT po szybkości
-  zmian temperatury — jest odczytywane: pomieszczenie, które VT trzyma z powodu okna, jest
-  pomijane. Dla stref bez czujnika włącz w VT automatyczne wykrywanie okna.
-- **Własna straż wtyczki**, dla stref bez jednego i drugiego: pomieszczenie, którego temperatura
-  spada o 0,5 K w ciągu 10 minut przy otwartym zaworze i płynącym cieple, ma prawdopodobnie
-  otwarte okno. Czujnik binarny **Prawdopodobnie otwarte okno** to pokazuje i podaje
-  pomieszczenie; korekta nie rośnie dla niego, dopóki pomieszczenie nie ogrzeje się o 0,2 K ponad
-  najniższy odczyt, i przez co najmniej 30 minut. Nic innego się nie zmienia.
-- Uchylone okno chłodzi powoli i nie jest tak rozpoznawane: pomieszczenie nie dochodzi do nastawy,
-  a na limicie korekty jej ostrzeżenie wymienia ucieczkę ciepła wśród przyczyn.
+Otwartymi oknami zajmuje się VT. Jego własne wykrywanie okna — czujnik okna albo automatyczne
+wykrywanie po szybkości zmian temperatury — wyłącza strefę albo obniża jej nastawę; taka strefa
+przestaje wołać o ciepło. Wtyczka nie ma własnej obsługi okien.
 
 ## 5. Podłączenie kotła
 

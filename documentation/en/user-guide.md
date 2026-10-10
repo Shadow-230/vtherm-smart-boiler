@@ -325,18 +325,9 @@ rooms' heat. How burns are told apart as heating or hot water does not depend on
 
 ### 4.9 Open windows
 
-An open window looks like a curve too low: the room stays short however warm the water is. The
-plugin keeps such a room out of the comfort correction:
-
-- **VT's own window detection** — a window sensor, or VT's automatic detection by the
-  temperature's slope — is read: a room VT holds for a window is left out. For zones without a
-  sensor, switch on VT's automatic window detection.
-- **The plugin's own guard**, for zones with neither: a room falling by 0.5 K within 10 minutes
-  while its valve is open and heat flows has a window probably open. The binary sensor **Window
-  probably open** says so and names the room; the correction does not rise for it until the room
-  has warmed 0.2 K over its lowest reading, and for at least 30 minutes. Nothing else changes.
-- A tilted window cools slowly and is not seen as one: the room stays short, and at the
-  correction's limit its warning names the heat loss among the causes.
+Open windows are VT's to handle. VT's own window detection — a window sensor, or its automatic
+detection by the temperature's slope — turns the zone off or lowers its setpoint; such a zone no
+longer asks for heat. The plugin has no window handling of its own.
 
 ## 5. Connecting the boiler
 

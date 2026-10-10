@@ -8,7 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-10: the plan approved by the user; I8.0 and I8.1a done; I8.1b next.
+Status on 2026-10-10: the plan approved by the user; I8.0, I8.1a and I8.1b done; I8.1c next.
 
 ## How to read this plan
 
@@ -292,6 +292,10 @@ impact below.
   room" items, the problem codes `reference_zone_unknown` and `invalid_reference`, the level's
   "restore defaults" text; `SCOPE.md` §5 and §7, both user guides, `docs/plan-0.2-i7.md`). Done
   on 2026-10-10.
+- I8.1b ✅ windows (the window guard and its binary sensor, VT's window state no longer read, the
+  comfort correction's and the long-run rule's window exclusions, the feature and its texts; no
+  stored option, no migration; `SCOPE.md` §7, both user guides' 4.9, `docs/plan-0.2-g11.md` E and
+  F, `docs/plan-0.2.md` G11). Done on 2026-10-10.
 
 - Code: remove the reference room (section, `core/reference_room.py`, sensors, diagnostics,
   options key), the window guard and every use of windows (`core/window_guard.py`, the window

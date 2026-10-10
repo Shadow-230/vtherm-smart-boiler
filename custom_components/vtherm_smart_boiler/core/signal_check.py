@@ -108,7 +108,6 @@ class Feature(StrEnum):
     RELAY_PROOF = "relay_proof"
     FORECASTS = "forecasts"
     # G11 F: a window probably open, seen without a sensor; G11 E: a long burn without warming.
-    WINDOW_GUARD = "window_guard"
     LONG_RUN = "long_run"
 
 
@@ -269,11 +268,6 @@ def features(
     )
     result[Feature.HYSTERESIS_DRIFT] = _state(
         lacking(Signal.FLAME, Signal.FLOW) + ([] if zone_data else [ZONE_DATA])
-    )
-    # G11 F: a room falling fast while it heats — the flame shows the heat flowing, the zones
-    # their rooms.
-    result[Feature.WINDOW_GUARD] = _state(
-        lacking(Signal.FLAME) + ([] if zone_data else [ZONE_DATA])
     )
     # G11 E: the flame's run and the rooms; the flow, a setpoint (the boiler's, or control's
     # written one) and the modulation make every class judged.
