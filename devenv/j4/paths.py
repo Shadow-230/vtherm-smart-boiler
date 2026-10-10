@@ -730,10 +730,19 @@ async def N2(r: Run):
         await r.s("alarm_hand_back_failed") == "on",
         "hand-back failed alarm while the device is away",
     )
-    await r.ha.wait(140)
+    made = await r.ha.until(lambda: _handed(r, t), 240, 5)
     c = entity_cmds(r, t)
-    r.check(("setpoint", 0.0) in c, f"the hand-back made once back: {c}")
-    r.check(await r.s("alarm_hand_back_failed") == "off", "alarm cleared")
+    r.check(made is not None, f"the hand-back made once back: {c}")
+    # A held device on its own control reads back the boiler's own value, not the hand-back
+    # value: judged at the retry checks after the write, two a minute apart (the K4 question in
+    # the in-process test), and the alarm clears then.
+    await r.ha.wait(150)
+    r.note(f"confirmation {await r.attr('control_state', 'hand_back_confirmation')}")
+    r.check(await r.s("alarm_hand_back_failed") == "off", "alarm cleared after the retry checks")
+
+
+async def _handed(r: Run, since: float) -> bool:
+    return ("setpoint", 0.0) in entity_cmds(r, since)
 
 
 async def N6(r: Run):
