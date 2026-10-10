@@ -3371,6 +3371,14 @@ async def test_the_relay_cannot_change_while_control_holds_it(
 # --- Y1: the fault signals, the "add water" threshold, the one reaction decision 7 offers -----
 
 
+async def with_pressure(hass: HomeAssistant, entry_id: str, entities: dict[str, str]) -> None:
+    """The pressure sensor mapped: the boiler step asks the pressure limits with it (I7)."""
+    entry = hass.config_entries.async_get_entry(entry_id)
+    signals = {**entry.options["signals"], "pressure": entities["pressure"]}
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "signals": signals})
+    await hass.async_block_till_done()
+
+
 @pytest.mark.parametrize("level", ["simple", "advanced"])
 async def test_the_boiler_step_offers_add_water_and_not_the_old_low_pressure_limits(
     hass: HomeAssistant, entities: dict[str, str], level: str
@@ -3380,11 +3388,13 @@ async def test_the_boiler_step_offers_add_water_and_not_the_old_low_pressure_lim
     low-pressure limits; the monitor step no longer asks it. Stored in the monitor section."""
     from custom_components.vtherm_smart_boiler import config_flow as flow
 
-    fields = {str(marker) for marker in flow.boiler_schema({}).schema}
+    pressure = {"signals": {"pressure": entities["pressure"]}}
+    fields = {str(marker) for marker in flow.boiler_schema(pressure).schema}
     assert "add_water_below" in fields
     assert not {"pressure_low_warning", "pressure_low_alarm"} & fields
-    assert not set(flow.PRESSURE_KEYS) & {str(m) for m in flow.monitor_schema({}).schema}
+    assert not set(flow.PRESSURE_KEYS) & {str(m) for m in flow.monitor_schema(pressure).schema}
     entry_id = await create_entry(hass, entities, level)
+    await with_pressure(hass, entry_id, entities)
     menu = await hass.config_entries.options.async_init(entry_id)
     result = await options_step(hass, menu, {"next_step_id": "boiler"})
     assert form_default(result, "add_water_below") is None  # optional, no value offered
@@ -3408,6 +3418,7 @@ async def test_the_boiler_step_offers_no_high_pressure_limits(
     none is stored and there is no such alarm; one alone is kept; both must be in order — the
     step says so on the alarm — and are kept."""
     entry_id = await create_entry(hass, entities, level)
+    await with_pressure(hass, entry_id, entities)
     for limits, expected in (
         ({}, None),
         ({"pressure_high_alarm": 2.0}, (None, 2.0)),
@@ -3444,6 +3455,7 @@ async def test_the_pressure_limits_stay_as_facts_about_the_boiler(
 
     limits = {"add_water_below": 0.8, "pressure_high_warning": 2.5, "pressure_high_alarm": 2.8}
     entry_id = await create_entry(hass, entities, "advanced")
+    await with_pressure(hass, entry_id, entities)
     menu = await hass.config_entries.options.async_init(entry_id)
     result = await options_step(hass, menu, {"next_step_id": "boiler"})
     await options_step(hass, result, limits)
@@ -4582,13 +4594,17 @@ def test_the_gas_rates_are_asked_for_a_gas_boiler_only(source: str | None, rates
 
 def test_the_flue_gas_limits_are_asked_for_a_condensing_boiler_only() -> None:
     """Decision 7: the flue-gas alarm judges a condensing boiler only — its limits are not asked
-    for any other, and a stored one is kept for when it is condensing again."""
+    for any other, and a stored one is kept for when it is condensing again. I7: and only with
+    a flue-gas sensor mapped."""
     from custom_components.vtherm_smart_boiler.config_flow import apply_monitor, monitor_schema
 
-    condensing = {str(m) for m in monitor_schema({"boiler": {"condensing": True}}).schema}
-    assert {"flue_gas_warning", "flue_gas_alarm"} <= condensing
-    assert {"flue_gas_warning", "flue_gas_alarm"} <= {str(m) for m in monitor_schema({}).schema}
-    other = {"boiler": {"condensing": False}, "monitor": {"flue_gas_warning": 70}}
+    limits = {"flue_gas_warning", "flue_gas_alarm"}
+    sensor = {"signals": {"flue_gas": "sensor.flue"}}
+    condensing = {str(m) for m in monitor_schema(sensor | {"boiler": {"condensing": True}}).schema}
+    assert limits <= condensing
+    assert limits <= {str(m) for m in monitor_schema(sensor).schema}
+    assert not limits & {str(m) for m in monitor_schema({"boiler": {"condensing": True}}).schema}
+    other = sensor | {"boiler": {"condensing": False}, "monitor": {"flue_gas_warning": 70}}
     assert not {"flue_gas_warning", "flue_gas_alarm"} & {
         str(m) for m in monitor_schema(other).schema
     }
@@ -5116,3 +5132,52 @@ async def test_the_options_save_once_with_one_reload(
     saved = hass.config_entries.async_get_entry(entry_id).options
     assert saved["building"]["floor_area"] == 150
     assert saved["signals"]["pressure"] == entities["pressure"]
+
+
+async def test_the_limits_come_with_their_sensor_in_the_same_session(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """I7, decision 4: without a pressure sensor the boiler step asks no pressure limit, and
+    without a flue-gas sensor the monitor step no flue-gas limit; mapping them in "Boiler
+    signals" shows them in the same session, without the whole setup again. Unmapped later,
+    the limits stored are kept — hidden, judging nothing."""
+    entry_id = await create_entry(hass, entities, "advanced")
+    configure = hass.config_entries.options.async_configure
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await configure(menu["flow_id"], {"next_step_id": "boiler"})
+    assert "add_water_below" not in result["data_schema"].schema
+    result = await configure(result["flow_id"], {"modulation_scale": "range"})
+    result = await configure(result["flow_id"], {"next_step_id": "monitor"})
+    assert "flue_gas_warning" not in result["data_schema"].schema
+    result = await configure(result["flow_id"], {})
+    signals = {"flame": entities["flame"], "flow": entities["flow"]}
+    result = await configure(result["flow_id"], {"next_step_id": "signals"})
+    sensors = {"pressure": entities["pressure"], "flue_gas": entities["flue_gas"]}
+    result = await configure(result["flow_id"], signals | sensors)
+    result = await configure(result["flow_id"], {"next_step_id": "boiler"})
+    assert form_default(result, "add_water_below") is None  # now asked, empty
+    answer = {"modulation_scale": "range", "add_water_below": 0.8}
+    result = await configure(result["flow_id"], answer)
+    result = await configure(result["flow_id"], {"next_step_id": "monitor"})
+    assert form_default(result, "flue_gas_warning") == 85
+    result = await configure(result["flow_id"], {"flue_gas_warning": 80, "flue_gas_alarm": 95})
+    result = await configure(result["flow_id"], {"next_step_id": "save"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    monitor = hass.config_entries.async_get_entry(entry_id).options["monitor"]
+    assert (monitor["add_water_below"], monitor["flue_gas_warning"]) == (0.8, 80)
+    # The sensors unmapped: the limits hidden, and kept.
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "signals"})
+    result = await options_step(hass, result, signals)
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "boiler"})
+    assert "add_water_below" not in result["data_schema"].schema
+    await options_step(hass, result, {"modulation_scale": "range"})
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "monitor"})
+    assert "flue_gas_warning" not in result["data_schema"].schema
+    await options_step(hass, result, {})
+    await hass.async_block_till_done()
+    monitor = hass.config_entries.async_get_entry(entry_id).options["monitor"]
+    assert (monitor["add_water_below"], monitor["flue_gas_warning"]) == (0.8, 80)

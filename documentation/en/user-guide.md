@@ -101,8 +101,10 @@ Only one entry of the integration can exist: it runs one boiler.
 4. **Describe the installation.** The sections **Boiler**, **Heating circuits**, **VT zones**
    (with one **Zone** step for each zone you pick), **Building** and **Reference room** ask what
    you know. Leave unknown values empty: the plugin then says what it cannot judge. **Boiler** also
-   takes the water-pressure limits from the boiler's manual and its safety valve; **Building**
-   takes the design outdoor temperature, which the heating curve shares.
+   takes the water-pressure limits from the boiler's manual and its safety valve — they appear
+   once a pressure sensor is mapped in **Boiler signals**, as the flue-gas limits in **Monitor
+   thresholds** appear with a flue-gas sensor; **Building** takes the design outdoor
+   temperature, which the heating curve shares.
 5. **Days of data for the verdict.** At the advanced level the section **Monitor thresholds**
    holds **Days of data for the verdict** (7 days by default, 7 to 60). It can also be changed
    later in the options, in the same section. It holds nothing back: you may set up and switch on

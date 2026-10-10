@@ -121,7 +121,7 @@
       },
       "boiler": {
         "title": "Kocioł",
-        "description": "Co wiesz o swoim kotle. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić.",
+        "description": "Co wiesz o swoim kotle. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Limity ciśnienia wody pojawiają się, gdy w „Sygnały kotła” zmapujesz czujnik ciśnienia; bez niego ustawione już limity zostają zapisane i niczego nie oceniają.",
         "data": {
           "boiler_min_power": "Moc minimalna",
           "boiler_max_power": "Moc maksymalna",
@@ -241,7 +241,7 @@
       },
       "monitor": {
         "title": "Monitor",
-        "description": "Progi analizy.",
+        "description": "Progi analizy. Limity temperatury spalin pojawiają się dla kotła kondensacyjnego, gdy w „Sygnały kotła” zmapujesz czujnik spalin; bez niego ustawione już limity zostają zapisane i niczego nie oceniają.",
         "data": {
           "condensing_return": "Próg powrotu dla kondensacji",
           "short_burn_min": "Krótkie palenie",
@@ -776,7 +776,7 @@
       },
       "boiler": {
         "title": "Kocioł",
-        "description": "Co wiesz o swoim kotle. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić.",
+        "description": "Co wiesz o swoim kotle. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Limity ciśnienia wody pojawiają się, gdy w „Sygnały kotła” zmapujesz czujnik ciśnienia; bez niego ustawione już limity zostają zapisane i niczego nie oceniają.",
         "data": {
           "boiler_min_power": "Moc minimalna",
           "boiler_max_power": "Moc maksymalna",
@@ -896,7 +896,7 @@
       },
       "monitor": {
         "title": "Monitor",
-        "description": "Progi analizy.",
+        "description": "Progi analizy. Limity temperatury spalin pojawiają się dla kotła kondensacyjnego, gdy w „Sygnały kotła” zmapujesz czujnik spalin; bez niego ustawione już limity zostają zapisane i niczego nie oceniają.",
         "data": {
           "condensing_return": "Próg powrotu dla kondensacji",
           "short_burn_min": "Krótkie palenie",

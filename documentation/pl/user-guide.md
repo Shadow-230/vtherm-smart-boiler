@@ -108,7 +108,9 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    krokiem **Strefa** dla każdej wybranej strefy), **Budynek** i **Pokój odniesienia** pytają o
    to, co wiesz. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić.
    Sekcja **Kocioł** pyta też o limity ciśnienia wody z instrukcji kotła i z zaworu
-   bezpieczeństwa; sekcja **Budynek** o projektową temperaturę zewnętrzną, wspólną z krzywą grzewczą.
+   bezpieczeństwa — pojawiają się, gdy w **Sygnały kotła** zmapujesz czujnik ciśnienia, tak jak
+   limity spalin w **Progi monitora** pojawiają się z czujnikiem spalin; sekcja **Budynek** pyta o
+   projektową temperaturę zewnętrzną, wspólną z krzywą grzewczą.
 5. **Dni danych do werdyktu.** Na poziomie zaawansowanym sekcja **Progi monitora** zawiera
    **Dni danych do werdyktu** (domyślnie 7, od 7 do 60). Można je też zmienić później w opcjach,
    w tej samej sekcji. Niczego nie wstrzymują: sterowanie możesz ustawić i włączyć w każdej chwili. Dopóki
