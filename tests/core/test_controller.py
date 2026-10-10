@@ -505,6 +505,67 @@ def test_a_zone_capped_by_vt_counts_as_saturated() -> None:
     assert state.correction == pytest.approx(1.0)
 
 
+@pytest.mark.parametrize("limit", [2.0, 3.0])
+def test_the_correction_rises_up_to_the_users_limit_and_says_so_there(limit: float) -> None:
+    """G11 B: the limit is the user's — the correction stops at it, and three hours there are
+    "at its limit", whatever the default."""
+    config = replace(WATER, correction_max_k=limit)
+    state, _ = run(minutes(0.0, 121, lambda t: (short(t),)), config)
+    assert state.correction == pytest.approx(limit)
+    _state, decisions = run(minutes(7260.0, 181, lambda t: (short(t),)), config, state)
+    assert decisions[-1].correction_at_limit
+
+
+def test_a_limit_above_3_k_is_reached_at_3_k_a_day() -> None:
+    """G11 B: a limit of 5 K — the rise stays at most 3 K a day, so 3 K the first day, and the
+    rest only once a day has passed since the first rises."""
+    config = replace(WATER, correction_max_k=5.0)
+    state, _ = run(minutes(0.0, 121, lambda t: (short(t),)), config)
+    assert state.correction == pytest.approx(3.0)
+    start = 24 * 3600.0 + 7300.0
+    state, _ = run(minutes(start, 121, lambda t: (short(t),)), config, state)
+    assert state.correction == pytest.approx(5.0)
+
+
+def test_the_decision_names_the_rooms_short() -> None:
+    """G11 B: the rooms the correction rises for — fully open and short — named for the "curve
+    too low" warning; a satisfied room is not."""
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        return (short(t, "a"), satisfied(t, "b"))
+
+    _state, decisions = run(minutes(0.0, 2, zones), WATER)
+    assert decisions[-1].short_zones == ("a",)
+    _state, decisions = run(minutes(0.0, 2, lambda t: (satisfied(t),)), WATER)
+    assert decisions[-1].short_zones == ()
+
+
+@pytest.mark.parametrize(("learning", "after"), [(True, 1.0), (None, 0.0)])
+def test_a_smartpi_zone_learning_just_over_its_setpoint_still_raises_the_correction(
+    learning: bool | None, after: float
+) -> None:
+    """G11 C: a SmartPI zone in its learning phase, fully open, its room 0.1 K over VT's setpoint
+    — SmartPI keeps heating it to 0.5 K over: short by 0.4 K, so the correction rises; without
+    the phase, the room counts as warm enough."""
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        return (
+            ZoneState(
+                "z",
+                21.1,
+                21.0,
+                True,
+                reported_at=t,
+                valve_open=1.0,
+                smartpi_learning_phase=learning,
+            ),
+        )
+
+    state, decisions = run(minutes(0.0, 31, zones), WATER)
+    assert state.correction == pytest.approx(after)
+    assert decisions[-1].short_zones == (("z",) if learning else ())
+
+
 def test_comfort_correction_can_be_off() -> None:
     state, _ = run(
         minutes(0.0, 31, lambda t: (short(t),)), replace(WATER, comfort_correction=False)

@@ -2,7 +2,8 @@
 
 Its valve opening (or duty cycle) is the demand; among zones with about the same demand the one
 furthest below its setpoint wins. A critical zone that is fully open and still too cold is
-*saturated*: the water is too cold for it, so it bounds how low the circuit's water can go.
+*saturated*: the water is too cold for it, so it bounds how low the circuit's water can go —
+"too cold" judged against where its own controller stops heating (``ZoneState.shortfall``).
 """
 
 from __future__ import annotations
@@ -80,5 +81,6 @@ def critical_zone(
             best = kept
     demand = best.demand
     deficit = best.deficit
-    saturated = best.fully_open and deficit is not None and deficit > 0
+    shortfall = best.shortfall  # G11 C: SmartPI learning keeps heating to its hysteresis
+    saturated = best.fully_open and shortfall is not None and shortfall > 0
     return CriticalZone(circuit_id, SelectionStatus.OK, best.zone_id, demand, deficit, saturated)

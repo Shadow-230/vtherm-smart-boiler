@@ -222,12 +222,16 @@ Gdy brakuje temperatury zewnętrznej, wtyczka używa encji pogody, potem przez 3
 ostatnią znaną wartość, a następnie używa twojej nastawy awaryjnej albo punktu projektowego
 krzywej. Awaria czujnika zewnętrznego nigdy nie oznacza zerowego grzania.
 
-**Korekta komfortu** — **domyślnie wyłączona**. Gdy ją włączysz, a pomieszczenie nie dochodzi
-do swojej nastawy mimo w pełni otwartego zaworu, woda może powoli wzrosnąć do 3 K ponad
-krzywą. Nie rośnie, gdy kocioł startuje częściej niż wcześniej. Jej opis w formularzu wyjaśnia
-ryzyko przy strefach TPI w VT (więcej startów palnika). Włącz ją tylko tam, gdzie pomieszczenie
-zostaje zimne przy otwartym zaworze, i obserwuj starty. Przycisk „Wyzeruj korektę komfortu”
-cofa ją do zera.
+**Korekta komfortu** — **domyślnie włączona przy pełnym sterowaniu** (wpis ustawiony przed tą
+wersją zachowuje to, z czym działał). Gdy pomieszczenie nie dochodzi do swojej nastawy mimo w
+pełni otwartego zaworu, woda powoli rośnie ponad krzywą, do swojego limitu: domyślnie 3 K, na
+poziomie zaawansowanym do 10 K, nigdy więcej niż 3 K na dobę. Dla pomieszczenia, którego SmartPI
+jest w fazie nauki, „nie dochodzi” znaczy: poniżej nastawy + 0,5 K, gdzie SmartPI przestaje je
+grzać. Nie rośnie, gdy kocioł startuje częściej niż wcześniej. Po trzech godzinach na limicie,
+gdy pomieszczenie nadal nie dochodzi do nastawy, zgłoszenie w Naprawach podaje to pomieszczenie:
+krzywa jest tam za niska — podnieś krzywą. Koszt: więcej gazu i możliwie więcej startów palnika;
+jej opis w formularzu wyjaśnia ryzyko przy strefach TPI w VT. Obserwuj starty i wyłącz ją, jeśli
+rosną. Przycisk „Wyzeruj korektę komfortu” cofa ją do zera.
 
 ### 4.5 Ochrona przed mrozem
 

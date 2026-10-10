@@ -212,11 +212,16 @@ If the outdoor temperature is lost, the plugin uses the weather entity, then kee
 known value for 3 hours, then uses your fallback setpoint or the curve's design point. A failed
 outdoor sensor never means zero heat.
 
-**Comfort correction** — **off by default**. When switched on, and a room stays short of its
-setpoint with its valve fully open, the water may rise up to 3 K above the curve, slowly. It
-does not rise when the boiler starts more often than before. Its text in the form explains the
-risk with VT's TPI zones (more burner starts). Switch it on only where a room stays cold with its
-valve open, and watch the starts. A "Reset comfort correction" button sets it back to zero.
+**Comfort correction** — **on by default with full control** (an entry set up before this
+version keeps what it ran with). When a room stays short of its setpoint with its valve fully
+open, the water rises slowly above the curve, up to its limit: 3 K by default, up to 10 K at the
+advanced level, never more than 3 K a day. For a room whose SmartPI is in its learning phase,
+"short" means below its setpoint + 0.5 K, where SmartPI stops heating it. It does not rise when
+the boiler starts more often than before. After three hours at its limit with a room still
+short, a repair issue names the room: the curve is too low there — raise the curve. What it
+costs: more gas, and possibly more burner starts; its text in the form explains the risk with
+VT's TPI zones. Watch the starts, and switch it off if they climb. A "Reset comfort correction"
+button sets it back to zero.
 
 ### 4.5 Frost protection
 

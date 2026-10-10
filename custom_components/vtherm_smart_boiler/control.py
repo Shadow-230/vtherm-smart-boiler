@@ -167,6 +167,7 @@ from .control_config import (
     highest_water_temperature,
     map_control_entities,
     rename_in_control,
+    section_as_migrated,
     working_thermostat,
 )
 from .core.alarms import UNKNOWN_HOLD_S, fault_stops, follow_fault
@@ -383,6 +384,9 @@ MONITOR_NOTE = "monitor_recovered"
 # raised while the zones report in the recognition period, and only while control is on
 # (provisional, K4). Shown again when a room's temperature has moved this much.
 FROST_CLOSED_ISSUE = "frost_zone_closed"
+# G11 B: the comfort correction at its limit for 3 h with rooms still short — the heating curve is
+# too low for them.
+CURVE_TOO_LOW_ISSUE = "curve_too_low"
 FROST_CLOSED_SHOWN_K = 1.0
 # SB-27: the issue's advice by VT's reason for keeping a room off (``hvac_off_reason``, VT
 # 10.4.0): "off" by hand or in sleep mode, or a reason not known — VT's frost preset instead;
@@ -992,6 +996,7 @@ class ControlUnit:
         self._external_unseen_since: float | None = None
         # Decision 4: the rooms the frost issue shows now, with the temperature it shows.
         self._frost_issue_shown: dict[str, float] = {}
+        self._curve_issue_rooms: tuple[str, ...] = ()  # the rooms the "curve too low" issue names
         self._frost_issue_advice = ""  # the shown issue's advice (SB-27)
         # X8, the relay: whether its last change carried one of the plugin's own write contexts,
         # and whether it has shown a state since the unit started (its first report after a
@@ -1329,7 +1334,9 @@ class ControlUnit:
         self._stored_enabled = wish
         self._last_command = field("last_command", parse_last_command, None)
         self._command_stored = self._last_command
-        self._taken_with = data.get("taken_with")
+        # Stored before this version's entry migration, it is read as the migration leaves a
+        # section: compared with the options as they are now (G11 B).
+        self._taken_with = section_as_migrated(data.get("taken_with"))
         # Read cautiously too: the issue follows only while a blocker holds (S-10).
         self._stopped_by_blocker = _flag(data.get("stopped_heating")) and not self.hand_back_only
         # Read cautiously too: raised at the start only while the wish is on, and gone once
@@ -1551,6 +1558,7 @@ class ControlUnit:
         # next run raises it again at its first step outside the recognition period.
         self._delete_stopped_heating_issue()
         self._show_frost_closed({})
+        self._show_curve_too_low(())  # the next run tells again, after its own 3 hours
         self._show_store_issue(False)  # the next run tells again at its first write that fails
         self._delete_vt_central_issue()  # the next run tells again, ten minutes on
         self._delete_relay_issues()  # not during a planned stop; the next run tells again
@@ -2019,6 +2027,7 @@ class ControlUnit:
         self._follow_stopped_heating(now, blockers)
         self._follow_frost(now, zones)
         self._follow_frost_closed(out.decision.frost_closed, zones)
+        self._follow_curve_too_low(out.decision)
         unknown = self._follow_unknown_zones(now, zones)
         self._follow_no_zone_known(now, out.decision)
         self._follow_read_back_wait(now, out.decision.reasons)
@@ -2689,6 +2698,42 @@ class ControlUnit:
         link = self._coordinator.link
         advice = {_FROST_ADVICE.get(link.zone_off_reason(zone) or "", "") for zone in rooms}
         self._show_frost_closed(rooms, advice.pop() if len(advice) == 1 else _FROST_ADVICE_MIXED)
+
+    def _follow_curve_too_low(self, decision: ControlDecision) -> None:
+        """G11 B: the comfort correction at its limit for 3 h with rooms still short — the
+        information alarm, and a warning repair issue naming those rooms: the heating curve is
+        too low for them. It goes once the correction falls below its limit, no room is short,
+        or control is switched off."""
+        at_limit = self.enabled and self.options.configured and decision.correction_at_limit
+        self._show_curve_too_low(decision.short_zones if at_limit else ())
+
+    def _show_curve_too_low(self, rooms: Sequence[str]) -> None:
+        shown = tuple(rooms)
+        if shown == self._curve_issue_rooms:
+            return
+        issue_id = f"{CURVE_TOO_LOW_ISSUE}_{self._coordinator.config_entry.entry_id}"
+        self._curve_issue_rooms = shown
+        if not shown:
+            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+            return
+        names = ", ".join(self._coordinator.link.zone_name(zone) for zone in shown)
+        limit = self.options.loop.control.correction_max_k
+        _LOGGER.warning(
+            "The heating curve looks too low for %s: the comfort correction has been at its "
+            "limit of %g K for three hours and the room is still short",
+            names,
+            limit,
+        )
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=CURVE_TOO_LOW_ISSUE,
+            translation_placeholders={"zones": names, "limit": f"{limit:g}"},
+        )
 
     def _show_frost_closed(self, rooms: Mapping[str, float], advice: str = "") -> None:
         """The frost issue for these rooms (°C), at error level (SB-27), its advice by VT's
