@@ -8,10 +8,12 @@ from itertools import pairwise
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.curve import (
+    AUTO_ROOM_MAX,
     HOUR,
     HeatingCurve,
     OutdoorSource,
     OutdoorState,
+    auto_room,
     update_outdoor,
 )
 
@@ -105,3 +107,40 @@ def test_missing_readings_hold_the_last_value_then_give_up() -> None:
     assert gone.source is OutdoorSource.NONE
     assert gone.effective is None
     assert update_outdoor(OutdoorState(), None, None, 0.0).source is OutdoorSource.NONE
+
+
+AUTO_CURVE = HeatingCurve(design_outdoor=-15.0, design_flow=55.0, room=20.0, exponent=1.3)
+
+
+@pytest.mark.parametrize(
+    ("targets", "previous", "expected"),
+    [
+        ((21.5, 19.0), None, 21.5),  # the warmest room's setpoint
+        ((25.0, 19.0), None, AUTO_ROOM_MAX),  # at most 23 °C
+        ((), 21.0, 21.0),  # no zone that heats: the last Auto value holds
+        ((), None, 20.0),  # none yet: the curve's own, the manual value
+        ((12.0,), None, 15.0),  # never below the room temperature's bounds
+    ],
+)
+def test_the_auto_room_is_the_warmest_setpoint_within_bounds(
+    targets: tuple[float, ...], previous: float | None, expected: float
+) -> None:
+    """G11 D: Auto takes the highest setpoint among the zones that heat, at most 23 °C, within
+    the room temperature's bounds; with none, the last Auto value, else the manual one."""
+    assert AUTO_ROOM_MAX == 23.0
+    assert auto_room(targets, AUTO_CURVE, previous) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("curve", "expected"),
+    [
+        (HeatingCurve(design_outdoor=-15.0, design_flow=26.0, room=20.0), 21.0),  # flow − 5 K
+        (HeatingCurve(design_outdoor=9.0, design_flow=55.0, room=20.0), 19.0),  # outdoor + 10 K
+    ],
+)
+def test_the_auto_room_keeps_the_curves_own_checks(curve: HeatingCurve, expected: float) -> None:
+    """G11 D: Auto stays where the curve step's checks hold — at most the design flow − 5 K,
+    at least the design outdoor temperature + 10 K — so the curve it builds is always valid."""
+    room = auto_room((22.0,) if expected > 20 else (17.0,), curve, None)
+    assert room == pytest.approx(expected)
+    assert curve.design_outdoor < room < curve.design_flow

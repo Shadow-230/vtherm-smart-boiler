@@ -300,6 +300,9 @@ def own_curve_loop(
             "design_flow": room + boiler.curve_slope * (room + 15.0) + flow_shift,
             "exponent": 1.0,
             "offset": boiler.curve_offset - room,
+            # Through 20 °C, as the boiler's own curve: Auto would follow the rooms' setpoints
+            # and make it another curve (G11 D).
+            "room_mode": "manual",
         },
         "hard_min": boiler.min_setpoint,
         "hard_max": boiler.max_setpoint,

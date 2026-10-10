@@ -46,7 +46,11 @@ from typing import Any
 
 from .const import CONTROL, has_control_section
 from .core.controller import OUTAGE_LOST_S, ControlConfig
-from .core.curve import HeatingCurve
+from .core.curve import (
+    DESIGN_FLOW_OVER_ROOM_K,
+    DESIGN_OUTDOOR_UNDER_ROOM_K,
+    HeatingCurve,
+)
 from .core.demand import DemandConfig
 from .core.guards import HELD_REFRESH_S, GuardConfig, WriteType
 from .core.hand_back import DEVICE_TIMEOUT_BOUNDS_S, DEVICE_TIMEOUT_DEFAULT_S
@@ -453,11 +457,9 @@ OFF_AS_LOW_SETPOINT_ALLOWED = False
 # A thermostatic mixing valve needs supply water above its own temperature: the boiler's flow is
 # kept at least this far above a passive fixed circuit's temperature (S-42; provisional, K4).
 FIXED_CIRCUIT_MARGIN_K = 5.0
-# The curve's values must fit together (P-68; provisional, K4): the design flow at least this far
-# above the curve's room temperature, and the design outdoor temperature at least this far below
-# it.
-DESIGN_FLOW_OVER_ROOM_K = 5.0
-DESIGN_OUTDOOR_UNDER_ROOM_K = 10.0
+# The curve's values must fit together (P-68; provisional, K4): ``DESIGN_FLOW_OVER_ROOM_K`` and
+# ``DESIGN_OUTDOOR_UNDER_ROOM_K``, held in ``core.curve`` with the Auto room that keeps them
+# (G11 D).
 # Decision 7's allow-list (S-30, S-62), the one place that says which alarms may hand back.
 # Always, with no reaction to choose: an internal error and the plugin's own monitor failing for
 # five minutes (runtime blockers: control hands back, and resumes once they are gone — answer I);
@@ -711,12 +713,9 @@ def _mapping(data: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     return value
 
 
-def section_as_migrated(section: Any) -> Any:
-    """A control section as this version's entry migration leaves one (G11 B, minor version 7):
-    the comfort correction "off" where it stored no answer — what it ran with, its default since
-    K4.1. The entry migration writes it into the options; the options a stored session took the
-    boiler with (``taken_with``), which no migration reaches, are read through it, so a restart
-    after the update compares like with like."""
+def with_correction_answer(section: Any) -> Any:
+    """G11 B (minor version 7): the comfort correction "off" where a section stored no answer —
+    what it ran with, its default since K4.1."""
     if (
         isinstance(section, Mapping)
         and section.get("write_path")
@@ -724,6 +723,46 @@ def section_as_migrated(section: Any) -> Any:
     ):
         return {**section, "comfort_correction": False}
     return section
+
+
+def with_room_mode(section: Any) -> Any:
+    """G11 D (minor version 8): the curve's room temperature "Manual" where a section's curve
+    stored no mode — the value entered, as it ran; a section without a curve gets Auto once
+    one is entered."""
+    if not isinstance(section, Mapping) or not section.get("write_path"):
+        return section
+    curve = section.get("curve")
+    if not isinstance(curve, Mapping) or ROOM_MODE in curve:
+        return section
+    return {**section, "curve": {**curve, ROOM_MODE: RoomMode.MANUAL.value}}
+
+
+def section_as_migrated(section: Any) -> Any:
+    """A control section as this version's entry migrations leave one (G11 B and D). The entry
+    migration writes each into the options; the options a stored session took the boiler with
+    (``taken_with``), which no migration reaches, are read through them, so a restart after the
+    update compares like with like."""
+    return with_room_mode(with_correction_answer(section))
+
+
+class RoomMode(StrEnum):
+    """The curve's room temperature (G11 D)."""
+
+    AUTO = "auto"  # the warmest setpoint among the zones that heat, at most 23 °C
+    MANUAL = "manual"  # the value entered
+
+
+ROOM_MODE = "room_mode"
+ROOM_EXCLUDED = "room_excluded"  # the zones Auto leaves out
+
+
+def _room_excluded(curve_data: Mapping[str, Any], zones: Collection[str]) -> frozenset[str]:
+    """The zones Auto leaves out, among those configured; one no longer configured is dropped. A
+    stored value of another shape raises ``ValueError`` naming it (PB-24)."""
+    raw = curve_data.get(ROOM_EXCLUDED) or []
+    if not isinstance(raw, list) or not all(isinstance(zone, str) for zone in raw):
+        raise ValueError(f"{ROOM_EXCLUDED}: {raw!r} is not a list of zones")
+    return frozenset(zone for zone in raw if zone in zones)
 
 
 def parse_relay(data: Mapping[str, Any]) -> RelayOptions:
@@ -860,6 +899,9 @@ def parse_control(
         # The relay sets no water temperature: nothing to correct (R5).
         comfort_correction=_yes_no(value, "comfort_correction") and not on_off,
         correction_max_k=_required(value, "comfort_correction_max_k"),
+        # G11 D: Auto by default for a curve entered now; an entry from before runs Manual.
+        room_auto=RoomMode(curve_data.get(ROOM_MODE, RoomMode.AUTO)) is RoomMode.AUTO,
+        room_excluded=_room_excluded(curve_data, {z.zone_id for z in installation.zones}),
         # Only what the user saved: VT's own value is a pre-fill in the form, never taken here.
         activation_delay_s=_required(value, "activation_delay_s"),
         # The relay path (R5, R6): heating on and off only, and its link is the relay itself —

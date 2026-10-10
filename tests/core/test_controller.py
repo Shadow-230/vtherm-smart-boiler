@@ -566,6 +566,51 @@ def test_a_smartpi_zone_learning_just_over_its_setpoint_still_raises_the_correct
     assert decisions[-1].short_zones == (("z",) if learning else ())
 
 
+AUTO = replace(CONFIG, room_auto=True)
+
+
+def heats(t: float, zone_id: str, target: float, **kw) -> ZoneState:
+    kw.setdefault("heating_enabled", True)
+    return ZoneState(zone_id, 20.0, target, reported_at=t, valve_open=0.4, **kw)
+
+
+@pytest.mark.parametrize(
+    ("targets", "config", "room"),
+    [
+        ({"a": 21.5, "b": 19.0}, AUTO, 21.5),  # the warmest room's setpoint
+        ({"a": 21.5, "b": 19.0}, CONFIG, 20.0),  # Manual: the value entered
+        ({"a": 21.5, "bath": 24.0}, replace(AUTO, room_excluded=frozenset({"bath"})), 21.5),
+        ({"a": 25.0}, AUTO, 23.0),  # at most 23 °C
+    ],
+    ids=["auto", "manual", "left_out", "capped"],
+)
+def test_the_curve_passes_through_its_auto_room(
+    targets: dict[str, float], config: ControlConfig, room: float
+) -> None:
+    """G11 D: in Auto the curve passes through the warmest setpoint among the zones that heat —
+    not one the user left out, at most 23 °C; in Manual, through the value entered. The decision
+    shows the room it used."""
+    _state, decisions = run(
+        [inputs(0.0, zones=tuple(heats(0.0, z, v) for z, v in targets.items()))], config
+    )
+    expected = replace(CURVE, room=room).flow(5.0)
+    assert decisions[-1].curve_room == pytest.approx(room)
+    assert decisions[-1].command.setpoint == pytest.approx(expected)
+
+
+def test_the_auto_room_follows_a_preset_and_holds_without_zones() -> None:
+    """G11 D: eco at night lowers the warmest setpoint, and the curve with it at the next water
+    decision; with no zone that heats, the last Auto value holds."""
+    config = replace(AUTO, decision_interval_s=60.0)
+    state, decisions = run([inputs(0.0, zones=(heats(0.0, "a", 21.5),))], config)
+    assert decisions[-1].curve_room == pytest.approx(21.5)
+    state, decisions = run([inputs(60.0, zones=(heats(60.0, "a", 18.0),))], config, state)
+    assert decisions[-1].curve_room == pytest.approx(18.0)
+    off = ZoneState("a", 20.0, 21.5, False, reported_at=120.0)
+    state, _ = run([inputs(120.0, zones=(off,))], config, state)
+    assert state.curve_room == pytest.approx(18.0)
+
+
 def test_comfort_correction_can_be_off() -> None:
     state, _ = run(
         minutes(0.0, 31, lambda t: (short(t),)), replace(WATER, comfort_correction=False)
