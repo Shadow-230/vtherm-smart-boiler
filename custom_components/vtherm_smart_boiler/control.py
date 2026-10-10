@@ -215,6 +215,7 @@ from .core.hand_back import (
     restart_seen,
     shown,
     third_value,
+    third_value_judged,
     timeout_lapsed,
     timeout_late,
     watch_foreign,
@@ -488,6 +489,13 @@ def _setpoint(raw: Any) -> float:
     if isinstance(raw, bool) or not isinstance(raw, int | float) or not math.isfinite(raw):
         raise ValueError(f"not a finite number: {raw!r}")
     return float(raw)
+
+
+def _written_at(started: float) -> float:
+    """When an attempt's writes ended: now, never before the attempt began (a clock set back).
+    A target's return from unknown that its own write brings, reported during the attempt, comes
+    before it — no trace of an outage after the write (F7)."""
+    return max(started, dt_util.utcnow().timestamp())
 
 
 def _cancelled_from_outside() -> bool:
@@ -808,6 +816,9 @@ class _Target:
     lost: bool = False  # it left that state with a trace of an outage: written again at once
     third: bool = False  # a held target shows a third value: its retry write is held back
     watch: ForeignWatch | None = None  # that value at the retry checks
+    # When this debt's hand-back write to it last got through (``None`` before): a held value
+    # target's third value is judged only after it (F7).
+    delivered_at: float | None = None
 
     @property
     def done(self) -> bool:
@@ -3444,7 +3455,7 @@ class ControlUnit:
             self._attempt_failed(now, err, expected=False)
             return
         except HandBackFailed as err:  # a part failed; what did go out is followed all the same
-            self._follow_targets(err.checks, now, skip, new)
+            self._follow_targets(err.checks, now, skip, new, _written_at(now))
             if not self._all_done():
                 self._attempt_failed(now, err, expected=True)
                 return
@@ -3457,7 +3468,7 @@ class ControlUnit:
             return
         else:
             self._attempt_whole = True
-            self._follow_targets(checks, now, skip, new)
+            self._follow_targets(checks, now, skip, new, _written_at(now))
         if not self._all_done():
             self._hand_back_pending = True
             self._coordinator.schedule_control_save()
@@ -3630,12 +3641,21 @@ class ControlUnit:
         """The retry check of held value targets (W3, W6): a third value held at consecutive
         checks — two a minute apart, three over two minutes with hot water unknown, none during
         a draw or two minutes after it — is another controller's. While one is shown, its retry
-        write is held back."""
+        write is held back. F7: judged only once the hand-back write to the target got through
+        in this debt, and not while a trace of an outage of the target or its device, or a
+        restart, seen since says the device lost it — a held master restarting during the
+        hand-back comes back with its own start value; the target stays owed and is written
+        again at the next retry."""
         dhw = self._note_hot_water(now)
         recent = self._dhw_seen_at is not None and now - self._dhw_seen_at <= DHW_QUIET_S
         for target in self._targets.values():
             check = target.check
             if target.done or not check.held or check.kind is not CheckKind.VALUE:
+                continue
+            outage_at = self._outage_at({check.entity_id, check.key})
+            if not third_value_judged(target.delivered_at, outage_at, now):
+                target.third = False
+                target.watch = None
                 continue
             value = read_temperature(self._hass, check.entity_id).value
             target.third = third_value(check.rule, value)
@@ -3654,12 +3674,18 @@ class ControlUnit:
         return all(target.done for target in self._targets.values())
 
     def _follow_targets(
-        self, checks: Sequence[HandBackCheck], now: float, skip: set[str], new: bool
+        self,
+        checks: Sequence[HandBackCheck],
+        now: float,
+        skip: set[str],
+        new: bool,
+        written_at: float,
     ) -> None:
         """The targets an attempt stands for. One written now starts afresh — the one a stored
         debt had judged held by another controller stays so; one left alone keeps what its
         read-back showed. Each report of them is looked at as it comes: a release shown only for
-        a moment still counts, and a stop waiting for them ends once all show the hand-back."""
+        a moment still counts, and a stop waiting for them ends once all show the hand-back.
+        ``written_at``: when the attempt's writes ended — what got through is delivered then."""
         if new:
             self._targets = {}
         for check in checks:
@@ -3670,6 +3696,7 @@ class ControlUnit:
             target = _Target(check, now)
             target.seen = known is not None and known.seen
             target.taken = key in self._taken_targets
+            target.delivered_at = written_at if check.written else None
             self._targets[key] = target
         self._watch_targets()
         self._evaluate(now)

@@ -620,6 +620,12 @@ nim po ponownym uruchomieniu. Dopóki jest zaległe, mówi o tym zgłoszenie w N
 ręcznie przywrócisz kotłu własne sterowanie, możesz to potwierdzić w tym zgłoszeniu, a wtyczka
 przestanie ponawiać.
 
+Stała inna wartość w odczycie zwrotnym nastawy po oddaniu liczy się jako wartość innego
+sterownika („Po oddaniu kotłem steruje inny sterownik”) dopiero wtedy, gdy wartość oddania
+dotarła do nastawy. Jeśli od tego czasu urządzenie się zrestartowało albo jego encje były
+niedostępne, ta wartość jest jego własną wartością startową: oddanie zostaje zaległe, pokazane
+jako nieudane, i jest wysyłane ponownie.
+
 Co kocioł robi po oddaniu sterowania, zależy od twojej instalacji: zobacz
 [Co oznacza oddanie sterowania](#52-co-oznacza-oddanie-sterowania).
 

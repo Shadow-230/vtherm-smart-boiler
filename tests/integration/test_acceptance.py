@@ -1274,6 +1274,39 @@ async def test_an_entity_hand_back_waits_for_its_target_and_is_stored(rig: Rig) 
     assert not rig.storage[key]["data"]["control"]["hand_back_pending"]
 
 
+async def test_a_held_device_restarting_at_the_hand_back_gets_its_hand_back(rig: Rig) -> None:
+    """F7 (J4, N2): the held device restarts — out of reach for 90 s, back with what it was
+    given lost — and control is switched off meanwhile. The boiler, its override gone, shows its
+    own value on the read-back: a third value, but one the device's restart explains, and the
+    setpoint never had its hand-back. So nothing counts as taken by another controller and the
+    failure stays shown until, once the device is back, the setpoint gets the lowest and the
+    hand-back value; only the retry checks after that write judge it (taken by another at the
+    second, as for a device that kept its value: a question for K4)."""
+    await start(rig, sim={"write_type": "held"}, **ENTITY_CONTROL)
+    await rig.switch(True)
+    await rig.advance(60)
+    assert rig.sim.plant.override_active(rig.now())
+    await rig.scenario("restart_device", seconds=90)
+    await rig.advance(5)
+    count = len(entity_setpoints(rig))
+    await rig.switch(False)
+    off_at = rig.now()
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+    while not entity_setpoints(rig)[count:]:  # through the outage, and the retries after it
+        assert rig.now() - off_at < 600, "the hand-back never reached the setpoint"
+        assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+        confirmation = rig.state("sensor", "control_state").attributes["hand_back_confirmation"]
+        assert confirmation != "taken_by_other"
+        await rig.advance(10)
+    assert entity_setpoints(rig)[count:] == [LOWEST, 0.0]  # the lowest, then the hand-back value
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"  # not judged yet
+    await rig.advance(130)
+    assert entity_setpoints(rig)[count:] == [LOWEST, 0.0]  # judged, not sent again
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "off"
+    confirmation = rig.state("sensor", "control_state").attributes["hand_back_confirmation"]
+    assert confirmation == "taken_by_other"
+
+
 async def test_a_held_device_that_restarts_gets_its_values_again(rig: Rig) -> None:
     """S-13 (T-47), reachable at J4 (P-114): control through a held device — an ESPHome-like
     master — which restarts: out of reach for 20 s, back with what it was given lost. Its

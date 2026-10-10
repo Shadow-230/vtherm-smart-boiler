@@ -244,7 +244,11 @@ What the plugin can do depends on what the integration can write:
     the release is not confirmed, the boiler stays at the lowest water temperature: an alarm
     rises at once, and the release is retried every minute until it is confirmed.
   - A target another controller takes after the hand-back counts as handed back, with no retry:
-    the setpoint when a steady foreign value holds for 2 retries; a two-valued target (the
+    the setpoint when a steady foreign value holds for 2 retries — counted only once the
+    plugin's hand-back write to it got through in this debt, and not while a trace of an outage
+    of its device, or a restart, seen since that write says the device lost it (a held master
+    restarting during the hand-back comes back with its own start value: J4's F7); a two-valued
+    target (the
     heating switch, the external-control switch, a relay after a hand-back other than a step
     aside, provisional, K4) when its hand-back state was read back once and then changed without
     a trace of an outage. Before that it stays owed and is retried. This changes "retried every
