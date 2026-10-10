@@ -414,7 +414,7 @@
           "hard_min": "Lowest water temperature",
           "hard_max": "Highest water temperature",
           "activation_delay_s": "Activation delay",
-          "room": "Room temperature of the curve",
+          "room": "Room temperature of the curve (Manual)",
           "exponent": "Curve exponent",
           "offset": "Curve offset",
           "ceiling_band": "Room for correction",
@@ -422,7 +422,9 @@
           "frost_limit": "Frost protection below",
           "frost_release": "Frost protection until",
           "frost_zone": "Frost zone",
-          "comfort_correction": "Comfort correction"
+          "comfort_correction": "Comfort correction",
+          "room_mode": "Curve's room temperature",
+          "room_excluded": "Rooms Auto leaves out"
         },
         "data_description": {
           "design_outdoor": "The coldest outdoor temperature your heating is designed for, in °C. Default −15 °C. One value with the building's design outdoor temperature: changing it here changes it there too. Too cold a value gives too little water in frost.",
@@ -430,7 +432,7 @@
           "hard_min": "The lowest water temperature the plugin sets, in °C, set like a point of the curve. Default 20 °C. Too low: in mild weather the boiler stops by itself again and again, and a boiler that is not condensing condenses in its flue — take the value from its manual. Too high: water warmer than the rooms need, and more gas. When the boiler keeps stopping at this temperature, the plugin shows its evidence and a suggested value; it never changes this setting itself.",
           "hard_max": "No setpoint above this, whatever the curve or a correction asks, in °C. Default 70 °C. Underfloor heating also needs its circuit's maximum flow. Too high: emitters, or a floor without its own maximum, get water that hot; too low: rooms stay cold in hard frost, as the curve is cut off. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum holds.",
           "activation_delay_s": "Seconds heating waits after the first call for heat, so slow valves (thermoelectric, underfloor) open before the boiler and its pump run — as Versatile Thermostat's central boiler did; pre-filled from VT's own setting where VT kept one. Stopping is never delayed. Default 0: at once. Risk: a zone whose heating pulse is shorter than the delay never starts the boiler, and pulses close to it give short burns; without a heating switch (\"off\" as a low setpoint) the pump may run anyway.",
-          "room": "The room temperature the curve is built for, in °C. Default 20 °C. Too high raises the whole curve and wastes gas.",
+          "room": "With Manual: the setpoint of the warmest room, the one you want heated highest, in °C. Default 20 °C. Too low leaves rooms cold in mild weather, where the curve gives little water above it; too high raises the whole curve and wastes gas. With Auto it is the start value until a zone is known.",
           "exponent": "How the curve bends. Empty picks it from the emitters: radiators 1.3, convectors 1.4, underfloor 1.1. The wrong bend under-heats in frost or overheats in mild weather.",
           "offset": "Shifts the whole curve up or down, in K. Default 0. Up wastes gas; down leaves rooms cold.",
           "ceiling_band": "How far above the curve the comfort correction may raise the water, in K. The correction stops at 3 K on its own: a band of 3 K or more leaves it that bound, a smaller one lowers it, and 0 turns correction off in effect. Default 10 K. Risk: a small band gives a room that stays cold less help.",
@@ -438,7 +440,9 @@
           "frost_limit": "A watched zone colder than this starts heating, whatever else applies, where heat can reach it — its valve open or its device on — in °C. Default 5 °C. Too low risks frozen pipes; too high heats rooms you keep off.",
           "frost_release": "Frost protection ends once every watched zone is above this, in °C. Default 7 °C, above the limit. Close to the limit, frost heating starts and stops more often.",
           "frost_zone": "Optional: watch only this zone for frost. Empty (default): every zone. Frost heating runs only for a cold room whose valve can open — Versatile Thermostat reports it open or its device on; a cold room VT keeps closed raises a repair issue instead. Frost heating that does not warm the room for two hours raises an alarm; it is never stopped.",
-          "comfort_correction": "On (default with full control): while a zone's valve is fully open and its room stays short of its setpoint — for a zone whose SmartPI is in its learning phase, short of the setpoint + 0.5 K, where SmartPI stops heating it — the water goes up above the curve, to its limit (3 K by default; at the advanced level up to 10 K) — 1 K per 30 minutes, only while heat flows (the flame, where known), at most 3 K a day — and falls twice as fast; it never rises while another zone taking heat is more than 1 K too warm, nor while a limit holds the water; it rises only while the boiler starts no more often than in the same hours before the correction began, and falls while it starts more often; it holds during hot water and foreign heat; it does not rise in extreme weather — the outdoor temperature below the curve's design outdoor temperature, changing faster than 2 K an hour, or unknown, and for the first hour after a start while it is read — but it may fall then; it is shown on the control state; it resets at hand-back and with the \"Reset comfort correction\" button. After three hours at its limit with a room still short, an alarm says so and a repair issue names the room: the curve is too low there — raise it. Off: the water follows the curve alone. It acts in series with the zones' own PI (SmartPI, TPI): its slow rate lets them settle first. A zone algorithm's outdoor term (TPI's external coefficient) counts the weather a second time: keep it small while the plugin sets the water. What it costs: more gas, and possibly more starts. Risk with Versatile Thermostat's TPI zones: a zone at full duty can stay short of its target by TPI's own offset, so the water climbs to its limit and stays there, and every zone's cycle then stops the burner — in the simulation, 1.75 to 5 times the starts of the boiler's own regulation, up to 6.3 times with a daily outdoor swing; the starts rule does not stop it where the hours before the correction began were as busy (a house warming up). An entry set up before this version keeps what it ran with. Watch the starts, and switch it off if they climb."
+          "comfort_correction": "On (default with full control): while a zone's valve is fully open and its room stays short of its setpoint — for a zone whose SmartPI is in its learning phase, short of the setpoint + 0.5 K, where SmartPI stops heating it — the water goes up above the curve, to its limit (3 K by default; at the advanced level up to 10 K) — 1 K per 30 minutes, only while heat flows (the flame, where known), at most 3 K a day — and falls twice as fast; it never rises while another zone taking heat is more than 1 K too warm, nor while a limit holds the water; it rises only while the boiler starts no more often than in the same hours before the correction began, and falls while it starts more often; it holds during hot water and foreign heat; it does not rise in extreme weather — the outdoor temperature below the curve's design outdoor temperature, changing faster than 2 K an hour, or unknown, and for the first hour after a start while it is read — but it may fall then; it is shown on the control state; it resets at hand-back and with the \"Reset comfort correction\" button. After three hours at its limit with a room still short, an alarm says so and a repair issue names the room: the curve is too low there — raise it. Off: the water follows the curve alone. It acts in series with the zones' own PI (SmartPI, TPI): its slow rate lets them settle first. A zone algorithm's outdoor term (TPI's external coefficient) counts the weather a second time: keep it small while the plugin sets the water. What it costs: more gas, and possibly more starts. Risk with Versatile Thermostat's TPI zones: a zone at full duty can stay short of its target by TPI's own offset, so the water climbs to its limit and stays there, and every zone's cycle then stops the burner — in the simulation, 1.75 to 5 times the starts of the boiler's own regulation, up to 6.3 times with a daily outdoor swing; the starts rule does not stop it where the hours before the correction began were as busy (a house warming up). An entry set up before this version keeps what it ran with. Watch the starts, and switch it off if they climb.",
+          "room_mode": "Auto (default): the curve passes through the highest setpoint among the zones that heat now — the warmest room you keep — at most 23 °C, following VT's presets (eco at night lowers it) through the ramp; with no zone heating, the last value holds. Manual: the value below. An entry set up before this version runs Manual with its value. Risk: Auto heats the water for the warmest room even where the others need less (their valves close); a room kept warm only now and then, a bathroom say, is better left out below.",
+          "room_excluded": "Zones whose setpoint Auto does not follow — a bathroom kept warmer than the rest, for example. A room left out that is kept warmer than the curve's may stay short in mild weather; the comfort correction then raises the water for it."
         }
       },
       "control_behaviour": {
@@ -984,7 +988,7 @@
           "hard_min": "Lowest water temperature",
           "hard_max": "Highest water temperature",
           "activation_delay_s": "Activation delay",
-          "room": "Room temperature of the curve",
+          "room": "Room temperature of the curve (Manual)",
           "exponent": "Curve exponent",
           "offset": "Curve offset",
           "ceiling_band": "Room for correction",
@@ -992,7 +996,9 @@
           "frost_limit": "Frost protection below",
           "frost_release": "Frost protection until",
           "frost_zone": "Frost zone",
-          "comfort_correction": "Comfort correction"
+          "comfort_correction": "Comfort correction",
+          "room_mode": "Curve's room temperature",
+          "room_excluded": "Rooms Auto leaves out"
         },
         "data_description": {
           "design_outdoor": "The coldest outdoor temperature your heating is designed for, in °C. Default −15 °C. One value with the building's design outdoor temperature: changing it here changes it there too. Too cold a value gives too little water in frost.",
@@ -1000,7 +1006,7 @@
           "hard_min": "The lowest water temperature the plugin sets, in °C, set like a point of the curve. Default 20 °C. Too low: in mild weather the boiler stops by itself again and again, and a boiler that is not condensing condenses in its flue — take the value from its manual. Too high: water warmer than the rooms need, and more gas. When the boiler keeps stopping at this temperature, the plugin shows its evidence and a suggested value; it never changes this setting itself.",
           "hard_max": "No setpoint above this, whatever the curve or a correction asks, in °C. Default 70 °C. Underfloor heating also needs its circuit's maximum flow. Too high: emitters, or a floor without its own maximum, get water that hot; too low: rooms stay cold in hard frost, as the curve is cut off. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum holds.",
           "activation_delay_s": "Seconds heating waits after the first call for heat, so slow valves (thermoelectric, underfloor) open before the boiler and its pump run — as Versatile Thermostat's central boiler did; pre-filled from VT's own setting where VT kept one. Stopping is never delayed. Default 0: at once. Risk: a zone whose heating pulse is shorter than the delay never starts the boiler, and pulses close to it give short burns; without a heating switch (\"off\" as a low setpoint) the pump may run anyway.",
-          "room": "The room temperature the curve is built for, in °C. Default 20 °C. Too high raises the whole curve and wastes gas.",
+          "room": "With Manual: the setpoint of the warmest room, the one you want heated highest, in °C. Default 20 °C. Too low leaves rooms cold in mild weather, where the curve gives little water above it; too high raises the whole curve and wastes gas. With Auto it is the start value until a zone is known.",
           "exponent": "How the curve bends. Empty picks it from the emitters: radiators 1.3, convectors 1.4, underfloor 1.1. The wrong bend under-heats in frost or overheats in mild weather.",
           "offset": "Shifts the whole curve up or down, in K. Default 0. Up wastes gas; down leaves rooms cold.",
           "ceiling_band": "How far above the curve the comfort correction may raise the water, in K. The correction stops at 3 K on its own: a band of 3 K or more leaves it that bound, a smaller one lowers it, and 0 turns correction off in effect. Default 10 K. Risk: a small band gives a room that stays cold less help.",
@@ -1008,7 +1014,9 @@
           "frost_limit": "A watched zone colder than this starts heating, whatever else applies, where heat can reach it — its valve open or its device on — in °C. Default 5 °C. Too low risks frozen pipes; too high heats rooms you keep off.",
           "frost_release": "Frost protection ends once every watched zone is above this, in °C. Default 7 °C, above the limit. Close to the limit, frost heating starts and stops more often.",
           "frost_zone": "Optional: watch only this zone for frost. Empty (default): every zone. Frost heating runs only for a cold room whose valve can open — Versatile Thermostat reports it open or its device on; a cold room VT keeps closed raises a repair issue instead. Frost heating that does not warm the room for two hours raises an alarm; it is never stopped.",
-          "comfort_correction": "On (default with full control): while a zone's valve is fully open and its room stays short of its setpoint — for a zone whose SmartPI is in its learning phase, short of the setpoint + 0.5 K, where SmartPI stops heating it — the water goes up above the curve, to its limit (3 K by default; at the advanced level up to 10 K) — 1 K per 30 minutes, only while heat flows (the flame, where known), at most 3 K a day — and falls twice as fast; it never rises while another zone taking heat is more than 1 K too warm, nor while a limit holds the water; it rises only while the boiler starts no more often than in the same hours before the correction began, and falls while it starts more often; it holds during hot water and foreign heat; it does not rise in extreme weather — the outdoor temperature below the curve's design outdoor temperature, changing faster than 2 K an hour, or unknown, and for the first hour after a start while it is read — but it may fall then; it is shown on the control state; it resets at hand-back and with the \"Reset comfort correction\" button. After three hours at its limit with a room still short, an alarm says so and a repair issue names the room: the curve is too low there — raise it. Off: the water follows the curve alone. It acts in series with the zones' own PI (SmartPI, TPI): its slow rate lets them settle first. A zone algorithm's outdoor term (TPI's external coefficient) counts the weather a second time: keep it small while the plugin sets the water. What it costs: more gas, and possibly more starts. Risk with Versatile Thermostat's TPI zones: a zone at full duty can stay short of its target by TPI's own offset, so the water climbs to its limit and stays there, and every zone's cycle then stops the burner — in the simulation, 1.75 to 5 times the starts of the boiler's own regulation, up to 6.3 times with a daily outdoor swing; the starts rule does not stop it where the hours before the correction began were as busy (a house warming up). An entry set up before this version keeps what it ran with. Watch the starts, and switch it off if they climb."
+          "comfort_correction": "On (default with full control): while a zone's valve is fully open and its room stays short of its setpoint — for a zone whose SmartPI is in its learning phase, short of the setpoint + 0.5 K, where SmartPI stops heating it — the water goes up above the curve, to its limit (3 K by default; at the advanced level up to 10 K) — 1 K per 30 minutes, only while heat flows (the flame, where known), at most 3 K a day — and falls twice as fast; it never rises while another zone taking heat is more than 1 K too warm, nor while a limit holds the water; it rises only while the boiler starts no more often than in the same hours before the correction began, and falls while it starts more often; it holds during hot water and foreign heat; it does not rise in extreme weather — the outdoor temperature below the curve's design outdoor temperature, changing faster than 2 K an hour, or unknown, and for the first hour after a start while it is read — but it may fall then; it is shown on the control state; it resets at hand-back and with the \"Reset comfort correction\" button. After three hours at its limit with a room still short, an alarm says so and a repair issue names the room: the curve is too low there — raise it. Off: the water follows the curve alone. It acts in series with the zones' own PI (SmartPI, TPI): its slow rate lets them settle first. A zone algorithm's outdoor term (TPI's external coefficient) counts the weather a second time: keep it small while the plugin sets the water. What it costs: more gas, and possibly more starts. Risk with Versatile Thermostat's TPI zones: a zone at full duty can stay short of its target by TPI's own offset, so the water climbs to its limit and stays there, and every zone's cycle then stops the burner — in the simulation, 1.75 to 5 times the starts of the boiler's own regulation, up to 6.3 times with a daily outdoor swing; the starts rule does not stop it where the hours before the correction began were as busy (a house warming up). An entry set up before this version keeps what it ran with. Watch the starts, and switch it off if they climb.",
+          "room_mode": "Auto (default): the curve passes through the highest setpoint among the zones that heat now — the warmest room you keep — at most 23 °C, following VT's presets (eco at night lowers it) through the ramp; with no zone heating, the last value holds. Manual: the value below. An entry set up before this version runs Manual with its value. Risk: Auto heats the water for the warmest room even where the others need less (their valves close); a room kept warm only now and then, a bathroom say, is better left out below.",
+          "room_excluded": "Zones whose setpoint Auto does not follow — a bathroom kept warmer than the rest, for example. A room left out that is kept warmer than the curve's may stay short in mild weather; the comfort correction then raises the water for it."
         }
       },
       "control_behaviour": {
@@ -1427,6 +1435,12 @@
       "options": {
         "electric": "Electric boiler: map the heating elements' on/off (a contactor, or the boiler's own \"heating\" state) as the flame — the burner's metrics and the boiler link read it; a gas meter does not apply, but an energy meter may be mapped in its place. Flue gas does not apply.",
         "oil": "Oil boiler: there is no gas meter, and the gas figures do not apply."
+      }
+    },
+    "room_mode": {
+      "options": {
+        "auto": "Auto (the warmest room)",
+        "manual": "Manual (the value entered)"
       }
     }
   },
@@ -1971,6 +1985,9 @@
           },
           "monitor_failed_since": {
             "name": "Monitor failing since"
+          },
+          "curve_room": {
+            "name": "Curve's room temperature"
           }
         }
       },

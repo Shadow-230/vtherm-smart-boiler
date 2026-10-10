@@ -96,6 +96,8 @@ from .control_config import (
     RELAY_DEFAULTS,
     RELAY_DOMAINS,
     RELAY_KEYS,
+    ROOM_EXCLUDED,
+    ROOM_MODE,
     TARGET_KEYS,
     VIRTUAL_CONNECTIONS,
     AlarmReaction,
@@ -103,6 +105,7 @@ from .control_config import (
     ControlMode,
     ControlOptions,
     HandBack,
+    RoomMode,
     ThermostatKind,
     Topology,
     ValueEffect,
@@ -939,7 +942,9 @@ CONTROL_ADVANCED_KEYS = (
     "return_after_outside_change",
     "return_after_switch_hand_back",
 )
-CURVE_KEYS = ("design_flow", "room", "exponent", "offset")  # the design outdoor: the building's
+# The design outdoor temperature is the building's (I6); the room's mode and the zones Auto leaves
+# out are the curve's (G11 D).
+CURVE_KEYS = ("design_flow", ROOM_MODE, "room", ROOM_EXCLUDED, "exponent", "offset")
 OWN_ROOM_CONTROLLER = "own_room_controller"
 HAND_BACK_TIMEOUT = "hand_back_timeout_min"
 # What an absent hand-back answer means: the form fills in this default (an entry saved before
@@ -1243,8 +1248,19 @@ def control_curve_schema(options: dict[str, Any], vt_delay: float | None = None)
         )
     if _advanced(options):
         fields |= {
+            # G11 D: Auto follows the warmest room; Manual keeps the value below.
+            vol.Required(ROOM_MODE, default=curve.get(ROOM_MODE, RoomMode.AUTO.value)): _select(
+                ROOM_MODE, [mode.value for mode in RoomMode]
+            ),
             vol.Required("room", default=curve.get("room", CURVE_DEFAULTS["room"])): _number(
                 *CURVE_BOUNDS["room"], 0.5, "°C"
+            ),
+            vol.Optional(ROOM_EXCLUDED, default=list(curve.get(ROOM_EXCLUDED, []))): (
+                selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        include_entities=_zone_entities(options), multiple=True
+                    )
+                )
             ),
             _optional("exponent", curve): _number(*CURVE_BOUNDS["exponent"], 0.05),
             vol.Required("offset", default=curve.get("offset", CURVE_DEFAULTS["offset"])): (
@@ -1620,7 +1636,7 @@ def apply_control_curve(options: dict[str, Any], user_input: dict[str, Any]) -> 
     shown = CURVE_KEYS if _advanced(options) else ("design_flow",)
     for key in shown:
         value = user_input.get(key)
-        if value in (None, ""):
+        if value in (None, "") or value == []:
             curve.pop(key, None)
         else:
             curve[key] = value
@@ -2077,7 +2093,7 @@ def restore_advanced_defaults(options: dict[str, Any]) -> None:
     control = options.get(CONTROL, {})
     for key in CONTROL_ADVANCED_KEYS:
         control.pop(key, None)
-    for key in ("room", "exponent", "offset"):
+    for key in (ROOM_MODE, "room", ROOM_EXCLUDED, "exponent", "offset"):
         control.get("curve", {}).pop(key, None)
 
 
@@ -2153,7 +2169,11 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
         )
         # The ignored write's reaction is shown at both levels, and a stored one it does not
         # offer only informs (decision 7, Y1): none is hidden.
-        or _differ(control.get("curve", {}), curve_defaults, ("room", "exponent", "offset"))
+        or _differ(
+            control.get("curve", {}),
+            curve_defaults,
+            (ROOM_MODE, "room", ROOM_EXCLUDED, "exponent", "offset"),
+        )
         # PB-71: a fact about the boiler the user gave at the advanced level; "restore
         # defaults" keeps it, as it keeps the other facts.
         or HEATS_ABOVE in control
@@ -3115,8 +3135,9 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # alarm reactions no longer offered go; 5: the high-pressure limits have no default, and an
     # entry from before keeps those it ran with; 6: the design outdoor temperature is one value,
     # the building's, the curve's moved there; 7: the comfort correction, now on by default, stays
-    # off in a control section that never stored it (see async_migrate_entry).
-    MINOR_VERSION = 7
+    # off in a control section that never stored it; 8: the curve's room temperature, now Auto
+    # by default, stays Manual where a curve stored no mode (see async_migrate_entry).
+    MINOR_VERSION = 8
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}

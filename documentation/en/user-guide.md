@@ -188,8 +188,14 @@ same way VT's central boiler does. You choose one or more of these criteria:
 While heating is on, the plugin sets the boiler's water (flow) temperature:
 
 1. **The heating curve** — you enter it: the design outdoor temperature (default −15 °C), the
-   design flow temperature (required, no default), the curve's room temperature (default 20 °C)
-   and an optional offset. The curve gives a water temperature for each outdoor temperature.
+   design flow temperature (required, no default) and an optional offset. The curve gives a
+   water temperature for each outdoor temperature.
+   **The curve's room temperature** (advanced level): **Auto** (default) follows the highest
+   setpoint among the zones that heat now — the warmest room you keep — at most 23 °C, and with
+   VT's presets (eco at night lowers it); you can leave rooms out (a bathroom kept warmer).
+   **Manual** keeps the value you enter: the setpoint of your warmest room. Too low leaves rooms
+   cold in mild weather. An entry set up before this version runs Manual with its value. The
+   control state shows the room temperature in use (`curve_room`).
    The design outdoor temperature is one value with the building's: changing it in either step
    changes both. The curve step also shows the boiler's maximum heating setpoint and the first
    circuit's maximum flow temperature — the lowest of the three, these two and the highest water

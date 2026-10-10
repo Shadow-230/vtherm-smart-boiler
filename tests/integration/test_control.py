@@ -312,7 +312,9 @@ def options(zones: FakeZones, **control: Any) -> dict[str, Any]:
         "gateway_id": "gw",
         "confirmed_entity": CONFIRMED,
         "topology": "gateway_with_thermostat",
-        "curve": {"design_outdoor": -15, "design_flow": 55},
+        # Manual, as an entry from before G11 D runs: the curve through 20 °C (Auto's own tests
+        # give the mode).
+        "curve": {"design_outdoor": -15, "design_flow": 55, "room_mode": "manual"},
     } | control
     if "thermostat_kind" not in control:
         kind = FITTING_KIND.get(control_options["topology"])
@@ -11094,6 +11096,69 @@ async def test_a_curve_too_low_for_a_room_is_named_at_the_correction_limit(rig: 
     assert issue(rig, "curve_too_low") is not None  # still at the limit, short again
     await rig.switch(False)
     assert issue(rig, "curve_too_low") is None
+
+
+AUTO_CURVE = {"design_outdoor": -15, "design_flow": 55, "room_mode": "auto"}
+
+
+def heated(rig: Rig, zone_id: str, target: float) -> None:
+    """A room heating towards ``target``, half a kelvin short, its valve half open."""
+    rig.zones.set(
+        zone_id,
+        current_temperature=target - 0.5,
+        temperature=target,
+        hvac_action="heating",
+        valve_open_percent=50,
+        on_percent=0.5,
+    )
+
+
+def curve_room(rig: Rig) -> float | None:
+    return rig.state("sensor", "control_state").attributes["curve_room"]
+
+
+async def test_the_auto_curve_room_follows_the_warmest_room(rig: Rig) -> None:
+    """G11 D: in Auto the curve passes through the warmest setpoint among the zones that heat,
+    shown on the control state: a preset lowering it (eco at night) moves it at the next water
+    decision, and one set above 23 °C is capped there."""
+    rig.zones.add("bedroom")
+    heated(rig, "living", 21.5)
+    heated(rig, "bedroom", 19.0)
+    await start(rig, curve=AUTO_CURVE)
+    await rig.advance(60)
+    await rig.switch(True)
+    await rig.advance(60)
+    assert curve_room(rig) == 21.5
+    heated(rig, "living", 18.0)  # eco
+    await rig.advance(6 * 60, step=60)  # the next water decision
+    assert curve_room(rig) == 19.0
+    heated(rig, "bedroom", 25.0)
+    await rig.advance(6 * 60, step=60)
+    assert curve_room(rig) == 23.0
+
+
+@pytest.mark.parametrize(
+    ("curve", "room"),
+    [
+        (AUTO_CURVE, 23.0),
+        (AUTO_CURVE | {"room_excluded": ["climate.fake_bedroom"]}, 21.5),
+        ({"design_outdoor": -15, "design_flow": 55, "room_mode": "manual", "room": 20.5}, 20.5),
+    ],
+    ids=["auto", "left_out", "manual"],
+)
+async def test_a_room_left_out_of_auto_or_manual_does_not_move_the_curve(
+    rig: Rig, curve: dict[str, Any], room: float
+) -> None:
+    """G11 D: a zone the user left out — a bathroom kept warmer — is not followed; Manual keeps
+    the value entered whatever the rooms ask."""
+    rig.zones.add("bedroom")
+    heated(rig, "living", 21.5)
+    heated(rig, "bedroom", 24.0)
+    await start(rig, curve=curve)
+    await rig.advance(60)
+    await rig.switch(True)
+    await rig.advance(60)
+    assert curve_room(rig) == room
 
 
 async def test_the_reset_button_exists_only_with_control_configured(rig: Rig) -> None:

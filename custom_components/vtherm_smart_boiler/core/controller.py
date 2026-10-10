@@ -118,6 +118,7 @@ from .curve import (
     HeatingCurve,
     OutdoorSource,
     OutdoorState,
+    auto_room,
     update_outdoor,
 )
 from .demand import Demand, DemandConfig, boiler_demand
@@ -245,6 +246,10 @@ class ControlConfig:
     # the options; the core's own, off, serves tests and the bare config.
     comfort_correction: bool = False
     correction_max_k: float = CORRECTION_MAX_K  # its limit, the user's (G11 B)
+    # The curve's room temperature (G11 D): Auto follows the warmest setpoint among the zones
+    # that heat, but those left out; Manual (``False``) keeps ``curve.room``, the value entered.
+    room_auto: bool = False
+    room_excluded: frozenset[str] = frozenset()
     # The boiler link is lost once its stale steps cover this long within the last
     # ``OUTAGE_WINDOW_S`` (X2): control then hands back. ``None``: never lost (tests, simulator).
     stale_hand_back_s: float | None = OUTAGE_LOST_S
@@ -332,6 +337,7 @@ class ControlState:
     water_reasons: tuple[Reason, ...] = ()  # why the water temperature is what it is
     decided_at: float | None = None  # when the water temperature was last decided
     correction: float = 0.0  # K added to the curve for a zone that cannot reach its setpoint
+    curve_room: float | None = None  # the curve's room temperature at the last water decision
     heat_s: float = 0.0  # seconds heat has flowed since the last water decision
     water_s: float = 0.0  # seconds counted since the last water decision (P-46)
     last_step_at: float | None = None
@@ -376,6 +382,7 @@ class ControlDecision:
     # The rooms fully open and short now — the ones the correction rises for, named by the
     # "curve too low" warning at its limit (G11 B).
     short_zones: tuple[str, ...] = ()
+    curve_room: float | None = None  # the curve's room temperature the water was decided with
     link_lost: bool = False  # the boiler link is lost (X2): stale for five minutes within ten
     # Decision 3: every configured zone unknown after the recognition period and the graces;
     # the zones known but no configured criterion judged (PB-03); the configured demand criteria
@@ -873,8 +880,10 @@ def _heating_decision(
     prior_target, prior_upper = state.target, state.upper
     if _water_due(state, now, config, frost, nobody_asks and outdoor.effective is None):
         water: list[Reason] = [_OUTDOOR_REASON[outdoor.source]]
+        room = _curve_room(state, inputs, config)
+        state = replace(state, curve_room=room)
         if outdoor.effective is not None:
-            curve_value = config.curve.flow(outdoor.effective)
+            curve_value = replace(config.curve, room=room).flow(outdoor.effective)
         elif nobody_asks:
             curve_value = config.limits.hard_min  # the fallback serves only with zones known
         else:
@@ -944,6 +953,7 @@ def _heating_decision(
         frost_stuck=frost_stuck,
         correction_at_limit=new_state.correction_limit_s >= CORRECTION_LIMIT_S,
         short_zones=_short_zones(inputs, config),
+        curve_room=new_state.curve_room,
         activation_at=activation_at,
     )
 
@@ -1082,6 +1092,21 @@ def _is_short(zone: ZoneState) -> bool:
     VT's setpoint, or with SmartPI learning its upper hysteresis over it (G11 C)."""
     shortfall = zone.shortfall
     return _saturated(zone) and shortfall is not None and shortfall >= SHORT_K
+
+
+def _curve_room(state: ControlState, inputs: ControlInputs, config: ControlConfig) -> float:
+    """The curve's room temperature for this water decision (G11 D): in Manual the value
+    entered; in Auto the warmest setpoint among the zones that heat — heating enabled, known,
+    not left out by the user — within ``auto_room``'s bounds, the last one holding without
+    any."""
+    if not config.room_auto:
+        return config.curve.room
+    targets = [
+        z.target
+        for z in _counted(inputs, config)
+        if z.target is not None and z.zone_id not in config.room_excluded
+    ]
+    return auto_room(targets, config.curve, state.curve_room)
 
 
 def _short_zones(inputs: ControlInputs, config: ControlConfig) -> tuple[str, ...]:

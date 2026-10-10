@@ -229,6 +229,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_design_outdoor(hass, entry)
     if entry.minor_version < 7:
         _migrate_comfort_correction(hass, entry)
+    if entry.minor_version < 8:
+        _migrate_room_mode(hass, entry)
     return True
 
 
@@ -237,12 +239,24 @@ def _migrate_comfort_correction(hass: HomeAssistant, entry: ConfigEntry) -> None
     control section that never stored an answer ran with it off (its default since K4.1), and
     keeps that: "off" is written into it. A stored answer stays; an entry without control gets
     the new default once control is set up."""
-    from .control_config import section_as_migrated
+    from .control_config import with_correction_answer
 
     options = dict(entry.options)
     if has_control_section(options):
-        options[CONTROL] = section_as_migrated(options[CONTROL])
+        options[CONTROL] = with_correction_answer(options[CONTROL])
     hass.config_entries.async_update_entry(entry, options=options, minor_version=7)
+
+
+def _migrate_room_mode(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """G11 D (minor version 8): the curve's room temperature is Auto by default now. A control
+    section's curve that stored no mode ran on the value entered, and keeps that: "Manual" is
+    written into it, its stored room temperature kept (none stored: 20 °C, as it ran)."""
+    from .control_config import with_room_mode
+
+    options = dict(entry.options)
+    if has_control_section(options):
+        options[CONTROL] = with_room_mode(options[CONTROL])
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=8)
 
 
 def control_as_run(options: Mapping[str, Any]) -> Any:

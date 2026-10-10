@@ -579,7 +579,13 @@ async def test_control_at_the_advanced_level_and_back(
     await hass.async_block_till_done()
     entry = hass.config_entries.async_get_entry(entry_id)
     control = entry.options["control"]
-    assert control["curve"] == {"design_flow": 55, "room": 21, "exponent": 1.25, "offset": 1}
+    assert control["curve"] == {
+        "design_flow": 55,
+        "room_mode": "auto",  # G11 D: Auto by default, the room the start value
+        "room": 21,
+        "exponent": 1.25,
+        "offset": 1,
+    }
     assert entry.options["parameters"]["design_outdoor"] == -15
     assert control["ramp_k_per_min"] == 0.5
     assert control["off_setpoint"] == 12
@@ -4853,3 +4859,28 @@ async def test_the_curve_step_names_the_other_water_limits(
     entry_id = await create_entry(hass, entities, "simple", ("living",))
     result = await to_control_curve(hass, entry_id)
     assert result["description_placeholders"] == {"boiler_max": "—", "circuit_max": "—"}
+
+
+def test_the_curves_room_is_auto_or_manual_at_the_advanced_level() -> None:
+    """G11 D: the curve step offers Auto (the default) or Manual, and the rooms Auto leaves
+    out, at the advanced level only; at the simple level a stored Manual is a hidden advanced
+    setting, and "restore defaults" brings Auto back. No room left out stores nothing."""
+    from custom_components.vtherm_smart_boiler import config_flow as flow
+
+    advanced = {"level": "advanced"}
+    assert flow._schema_defaults(flow.control_curve_schema(advanced))["room_mode"] == "auto"
+    simple_fields = {str(marker) for marker in flow.control_curve_schema({}).schema}
+    assert not {"room_mode", "room_excluded"} & simple_fields
+    stored = {
+        "level": "simple",
+        "control": {"write_path": "opentherm_gw", "curve": {"room_mode": "manual"}},
+    }
+    assert flow.has_hidden_advanced(stored)
+    flow.restore_advanced_defaults(stored)
+    assert stored["control"]["curve"] == {}
+    options: dict[str, Any] = {"level": "advanced", "control": {"curve": {}}}
+    answers = {"design_outdoor": -15, "design_flow": 55, "room_mode": "manual", "room": 21}
+    flow.apply_control_curve(options, answers | {"room_excluded": []})
+    assert options["control"]["curve"] == {"design_flow": 55, "room_mode": "manual", "room": 21}
+    flow.apply_control_curve(options, answers | {"room_excluded": ["climate.bath"]})
+    assert options["control"]["curve"]["room_excluded"] == ["climate.bath"]

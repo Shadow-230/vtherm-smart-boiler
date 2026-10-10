@@ -741,6 +741,9 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "monitor_failed_since": _time(status.monitor_failed_since),
             # The comfort correction the session learned, K (P-38); the button resets it.
             "comfort_correction": _round(status.correction, 2),
+            # The curve's room temperature the water was decided with — Auto's warmest room, or
+            # the value entered (G11 D).
+            "curve_room": _round(status.curve_room, 1),
             # A start waiting VT's activation delay is due then (decision 5).
             "activation_at": _time(status.activation_at),
             **self._relay(status),

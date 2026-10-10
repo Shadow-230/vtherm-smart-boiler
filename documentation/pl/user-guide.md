@@ -197,9 +197,15 @@ stref VT, tak samo jak kocioł centralny VT. Wybierasz jedno lub więcej z tych 
 Gdy grzanie jest włączone, wtyczka ustawia temperaturę wody w kotle (temperaturę zasilania):
 
 1. **Krzywa grzewcza** — wpisujesz ją sam: projektową temperaturę zewnętrzną (domyślnie
-   −15 °C), projektową temperaturę zasilania (wymagana, bez wartości domyślnej), temperaturę
-   pokojową krzywej (domyślnie 20 °C) i opcjonalne przesunięcie. Krzywa podaje temperaturę wody
-   dla każdej temperatury zewnętrznej. Projektowa temperatura zewnętrzna to ta sama wartość co
+   −15 °C), projektową temperaturę zasilania (wymagana, bez wartości domyślnej) i opcjonalne
+   przesunięcie. Krzywa podaje temperaturę wody dla każdej temperatury zewnętrznej.
+   **Temperatura pokojowa krzywej** (poziom zaawansowany): **Auto** (domyślnie) idzie za
+   najwyższą nastawą spośród stref, które teraz grzeją — najcieplejszym pokojem, jaki
+   utrzymujesz — najwyżej 23 °C, i za presetami VT (eco w nocy ją obniża); możesz pominąć
+   wybrane pokoje (łazienkę utrzymywaną cieplej). **Ręcznie** zostawia wpisaną wartość: nastawę
+   najcieplejszego pokoju. Za niska zostawia pokoje zimne przy łagodnej pogodzie. Wpis ustawiony
+   przed tą wersją działa ręcznie ze swoją wartością. Stan sterowania pokazuje używaną
+   temperaturę (`curve_room`). Projektowa temperatura zewnętrzna to ta sama wartość co
    w danych budynku: zmiana w jednym kroku zmienia obie. Krok krzywej pokazuje też maksymalną
    nastawę c.o. kotła i maksymalną temperaturę zasilania pierwszego obiegu — obowiązuje najniższa
    z trzech wartości: tych dwóch i najwyższej temperatury wody.
