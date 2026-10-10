@@ -591,6 +591,7 @@ class VThermLink:
             safety_on=values.safety_on,
             shedding=values.shedding,
             reported=values.reported,
+            window_open=values.window_open,
         )
 
     def zones(self) -> list[ZoneState]:

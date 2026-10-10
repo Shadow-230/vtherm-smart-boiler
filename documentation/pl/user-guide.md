@@ -324,6 +324,22 @@ z wbudowanym zasobnikiem. Dla każdego kotła, który grzeje ciepłą wodę, ekr
 Zła odpowiedź albo niepotrzebnie wstrzymuje naukę, albo pozwala jej uczyć się z poborów, które
 zabrały pomieszczeniom ciepło. Rozróżnianie, czy kocioł grzał dom, czy wodę, od niej nie zależy.
 
+### 4.9 Otwarte okna
+
+Otwarte okno wygląda jak za niska krzywa: pomieszczenie nie dochodzi do nastawy, choćby woda była
+ciepła. Wtyczka wyłącza takie pomieszczenie z korekty komfortu:
+
+- **Własne wykrywanie okna w VT** — czujnik okna albo automatyczne wykrywanie VT po szybkości
+  zmian temperatury — jest odczytywane: pomieszczenie, które VT trzyma z powodu okna, jest
+  pomijane. Dla stref bez czujnika włącz w VT automatyczne wykrywanie okna.
+- **Własna straż wtyczki**, dla stref bez jednego i drugiego: pomieszczenie, którego temperatura
+  spada o 0,5 K w ciągu 10 minut przy otwartym zaworze i płynącym cieple, ma prawdopodobnie
+  otwarte okno. Czujnik binarny **Prawdopodobnie otwarte okno** to pokazuje i podaje
+  pomieszczenie; korekta nie rośnie dla niego, dopóki pomieszczenie nie ogrzeje się o 0,2 K ponad
+  najniższy odczyt, i przez co najmniej 30 minut. Nic innego się nie zmienia.
+- Uchylone okno chłodzi powoli i nie jest tak rozpoznawane: pomieszczenie nie dochodzi do nastawy,
+  a na limicie korekty jej ostrzeżenie wymienia ucieczkę ciepła wśród przyczyn.
+
 ## 5. Podłączenie kotła
 
 Wtyczka czyta kocioł przez encje, które wybierasz w jej formularzach. Do sterowania potrzebuje

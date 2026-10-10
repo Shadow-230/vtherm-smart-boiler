@@ -11055,6 +11055,69 @@ async def test_one_room_short_at_the_limit_is_named_with_its_radiator_and_heat_l
     assert found.translation_placeholders["entities"] == rig.zones.entities["living"]
 
 
+def short_at(rig: Rig, temperature: float) -> None:
+    """``short_room`` at another room temperature."""
+    rig.zones.set(
+        "living",
+        current_temperature=temperature,
+        temperature=21.0,
+        hvac_action="heating",
+        valve_open_percent=100,
+        on_percent=1.0,
+    )
+
+
+async def test_a_room_falling_fast_while_it_heats_stops_the_rise_until_it_warms(
+    rig: Rig,
+) -> None:
+    """G11 F: a room short with its valve open and the correction rising falls 0.6 K within a
+    few minutes while it heats — a window probably open. The information sensor says so,
+    naming the room, and the correction stops rising (it holds: the room is not satisfied).
+    Once the room has warmed 0.2 K over its lowest reading and 30 minutes have passed, the
+    sensor goes off and the rise resumes."""
+    short_room(rig)
+    await start(rig, comfort_correction=True)
+    await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
+    await rig.switch(True)
+    await rig.advance(1800, step=60)
+    assert correction(rig) >= 0.8
+    assert rig.state("binary_sensor", "window_probably_open").state == "off"
+    short_at(rig, 18.4)  # 0.6 K down
+    await rig.advance(120, step=60)
+    window = rig.state("binary_sensor", "window_probably_open")
+    assert window.state == "on"
+    assert window.attributes["zones"] == [rig.zones.entities["living"]]
+    held = correction(rig)
+    await rig.advance(1200, step=60)
+    assert correction(rig) == pytest.approx(held, abs=0.01)  # no rise, no fall
+    short_at(rig, 18.7)  # warmed 0.3 K over its lowest
+    await rig.advance(900, step=60)  # past the 30 minutes
+    assert rig.state("binary_sensor", "window_probably_open").state == "off"
+    await rig.advance(1800, step=60)
+    assert correction(rig) > held + 0.5  # rising again
+
+
+async def test_a_room_vt_holds_for_a_window_does_not_raise_the_water(rig: Rig) -> None:
+    """G11 F: VT's own window detection reads "on" for a short room — its action may lower the
+    room's setpoint (frost, eco) rather than turn it off: the room is left out, and the
+    correction does not rise for it."""
+    short_room(rig)
+    rig.zones.set(
+        "living",
+        current_temperature=19.0,
+        temperature=21.0,
+        hvac_action="heating",
+        valve_open_percent=100,
+        on_percent=1.0,
+        window_manager={"window_state": "off", "window_auto_state": "on"},
+    )
+    await start(rig, comfort_correction=True)
+    await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
+    await rig.switch(True)
+    await rig.advance(1800, step=60)
+    assert correction(rig) == 0.0
+
+
 LIVING_SMARTPI = "sensor.living_smartpi_diagnostics"
 
 
@@ -11116,7 +11179,16 @@ async def test_a_curve_too_low_for_a_room_is_named_at_the_correction_limit(rig: 
     rig.zones.set("living", current_temperature=21.0, temperature=21.0, valve_open_percent=40)
     await rig.advance(60)
     assert issue(rig, "curve_too_low") is None
-    short_room(rig)
+    # Short again by a setpoint raised, not by a fall — a sudden fall would read as a window
+    # probably open (G11 F).
+    rig.zones.set(
+        "living",
+        current_temperature=21.0,
+        temperature=23.0,
+        hvac_action="heating",
+        valve_open_percent=100,
+        on_percent=1.0,
+    )
     await rig.advance(60)
     assert issue(rig, "curve_too_low") is not None  # still at the limit, short again
     await rig.switch(False)

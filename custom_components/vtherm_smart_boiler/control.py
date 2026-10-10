@@ -2007,7 +2007,12 @@ class ControlUnit:
         # Home Assistant starting alone does not stop a command kept or restored (decision 3).
         if self._enabled_now() and set(blockers) <= {HA_STARTING} and self._writer is None:
             self._writer = self._writer_factory(self._hass, self.options)
-        zones = self._coordinator.link.zones()
+        # G11 F: a room with a window probably open, as the monitor's guard sees it.
+        suspected = self._coordinator.window_suspected
+        zones = [
+            replace(zone, window_suspected=True) if zone.zone_id in suspected else zone
+            for zone in self._coordinator.link.zones()
+        ]
         snapshot = self._coordinator.transport.snapshot(now)
         dhw = self._coordinator.dhw_now(snapshot)
         if dhw:

@@ -94,6 +94,9 @@ class ZoneState:
     (before VT's first refresh a thermostat shows a placeholder "off" with neither, which VT
     10.4.0 keeps for good while none of its devices reports); ``None``: not said, ``ready``
     alone decides.
+    ``window_open``: VT holds the zone for a window — its sensor or its automatic detection
+    (G11 F); ``None``: not configured or not known. ``window_suspected``: the plugin's own
+    guard sees a window probably open — the room falling fast while it heats (live only).
     ``smartpi_learning_phase``: SmartPI runs its learning phase, on/off up to its upper
     hysteresis (G11 C); ``False`` in another phase, ``None`` not SmartPI or not known (live only).
     ``temperature_at``: when the room temperature was last measured; the zone is fresh by it,
@@ -123,6 +126,8 @@ class ZoneState:
     shedding: bool = False
     reported: bool | None = None
     smartpi_learning_phase: bool | None = None
+    window_open: bool | None = None
+    window_suspected: bool = False
 
     @property
     def started(self) -> bool:

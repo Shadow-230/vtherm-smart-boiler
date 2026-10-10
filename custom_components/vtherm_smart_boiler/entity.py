@@ -47,6 +47,7 @@ FEATURE_ENTITIES: Mapping[Feature, tuple[str, ...]] = MappingProxyType(
         Feature.LOWEST_WATER_SUGGESTION: ("lowest_water_suggestion",),
         Feature.RELAY_PROOF: ("alarm_boiler_not_responding",),
         Feature.FORECASTS: ("forecast_snapshots",),
+        Feature.WINDOW_GUARD: ("window_probably_open",),
     }
 )
 _FEATURE_OF = {key: feature for feature, keys in FEATURE_ENTITIES.items() for key in keys}
