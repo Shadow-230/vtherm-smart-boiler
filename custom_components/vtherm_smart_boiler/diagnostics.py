@@ -153,6 +153,16 @@ async def async_get_config_entry_diagnostics(
             "features": {f.value: asdict(state) for f, state in data.features.items()},
             "features_now": {f.value: asdict(state) for f, state in data.features_now.items()},
             "parameters": _parameters(coordinator),
+            # G11: the long burn now, the window guard, and the counts kept for 0.4's tuning.
+            "long_run": {
+                "found": None
+                if coordinator.long_run.found is None
+                else coordinator.long_run.found.value,
+                "rooms": list(coordinator.long_run.rooms_named),
+                "burning_s": coordinator.long_run.burning_s,
+                "kept": dict(coordinator.long_run_totals),
+            },
+            "window_suspected": sorted(coordinator.window_suspected),
             # P-90: where the user reset a measured building value, the moment it happened.
             "fit_since": {key.value: at for key, at in coordinator.fit_since.items()},
             "zones": {

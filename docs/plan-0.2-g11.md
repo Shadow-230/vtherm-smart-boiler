@@ -7,7 +7,7 @@ with nothing raising it or telling the user. Step G11 of `docs/plan-0.2.md`. Con
 default; nothing here writes to the boiler beyond what control already writes.
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`.
 
-Status on 2026-10-10: G11.0 (this plan), G11.A, G11.B, G11.B2, G11.D and G11.F done; next G11.E (E and F split in two steps, the window guard first, which E relies on).
+Status on 2026-10-10: G11.0 (this plan), G11.A, G11.B, G11.B2, G11.D and G11.F done; G11.E and G11.G done — G11 is complete (E and F were split in two steps, the window guard first, which E relies on); the comfort correction's default may be revisited after J4's starts comparison.
 
 ## How to read this plan
 
@@ -235,8 +235,8 @@ Reverses K4.1 (`docs/plan-0.2.2.md`, open item 24; the user, 2026-10-03).
 | G11.B2 ✅ | additions 2 and 3: the warning's two texts — the curve first with most rooms short, the radiator and the heat loss first with fewer — and the rooms' entity IDs among its placeholders; the plan, `SCOPE.md`, the user guides | E4 again; J4's Q1 and Q5 (a warning repair issue naming the room) |
 | G11.D ✅ | D: the curve's room Auto or Manual, the rooms left out, the entry migration (minor version 8: Manual for upgraded entries); translations, tests | E4 again; new: the Auto curve room following a preset |
 | G11.F ✅ | F: VT's window detection read (`window_manager`, `hvac_off_reason`) and its zones left out of the correction (and of E); the plugin's own guard (`core/window_guard.py`), run by the coordinator at every refresh, its rooms left out of the correction's rise, and the information binary sensor "Window probably open" with its feature; translations, tests | new: a window opened in one room |
-| G11.E | E: the long-run rule and its sensor, warning and kept counts; translations, tests | new: a long run in each class |
-| G11.G | the user guides EN and PL, and every document G names that the steps above did not already change | none |
+| G11.E ✅ | E: the long-run rule (`core/long_run.py`) run by the coordinator at every refresh, on monitor-only entries too; the information binary sensor "Long burn without warming" with its reason, rooms and the kept counts; the power limit's warning repair issue; the counts (runs and hours per class, the correction's hours at its limit) in the entry store and the diagnostics; its feature; translations, tests; the user guides' tables | new: a long run in each class |
+| G11.G ✅ | the user guides EN and PL, and every document G names that the steps above did not already change — none left: each step carried its own texts, guides, `SCOPE.md`, plan, `CLAUDE.md` and `PLAN.md` changes | none |
 
 ## Open after G11
 
