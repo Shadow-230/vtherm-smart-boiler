@@ -24,6 +24,7 @@ from custom_components.vtherm_smart_boiler.core.hand_back import (
     released,
     shown,
     third_value,
+    third_value_judged,
     timeout_lapsed,
     timeout_late,
     watch_foreign,
@@ -284,6 +285,30 @@ def test_an_outage_within_five_minutes_is_a_trace() -> None:
     assert outage_seen(outages, ("switch.elsewhere", "sensor.other_device"), 1100.0)
     assert outage_seen(outages, ("switch.ch",), 900.0)  # a clock set back: still a trace
     assert not outage_seen({}, ("switch.ch",), 1000.0)  # no information: no trace
+
+
+@pytest.mark.parametrize(
+    ("delivered_at", "outage_at", "now", "judged"),
+    [
+        (None, None, 1000.0, False),  # never written in this debt: nothing to judge
+        (None, 500.0, 1000.0, False),
+        (900.0, None, 1000.0, True),  # written, no trace: judged
+        (900.0, 800.0, 1000.0, True),  # the outage before the write it explains nothing
+        (900.0, 900.0, 1000.0, True),  # seen as the write went out: its own return
+        (900.0, 950.0, 1000.0, False),  # an outage since the write: the command was lost
+        (900.0, 950.0, 1250.0, False),
+        (900.0, 950.0, 1251.0, True),  # out of the trace window: judged again
+        (900.0, 1200.0, 1000.0, False),  # a clock set back: still a trace
+    ],
+)
+def test_a_held_value_target_is_judged_only_after_its_write_got_through(
+    delivered_at: float | None, outage_at: float | None, now: float, judged: bool
+) -> None:
+    """F7 (J4, N2): a third value says another controller holds a held target only once the
+    plugin's hand-back write to it got through in this debt; a trace of an outage of the target
+    or its device, or a restart, seen since that write and within the trace window, says the
+    device lost the command — it stays owed and is written again."""
+    assert third_value_judged(delivered_at, outage_at, now) is judged
 
 
 def test_what_is_shown_follows_the_weakest_target() -> None:

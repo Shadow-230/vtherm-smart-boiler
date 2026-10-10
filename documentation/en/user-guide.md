@@ -596,6 +596,11 @@ A hand-back is **retried every minute until it is confirmed**, and the plugin re
 through restarts. While it is owed, a repair issue says so. If you return the boiler to its own
 control by hand, you can confirm that in the repair issue and the plugin stops retrying.
 
+A steady other value on the setpoint's read-back after the hand-back counts as another
+controller's ("After the hand-back another controller holds the boiler") only once the hand-back
+value reached the setpoint. If the device restarted, or its entities were away, since then, the
+value is its own start value: the hand-back stays owed, shown as failed, and is sent again.
+
 What the boiler does after a hand-back depends on your installation: see
 [What hand-back means](#52-what-hand-back-means).
 
