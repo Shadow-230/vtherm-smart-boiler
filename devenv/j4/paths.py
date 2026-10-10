@@ -625,6 +625,62 @@ async def R16(r: Run):
         await relay_defaults(r)
 
 
+async def R17(r: Run):
+    """every zone unknown on the relay path with the own-room-controller tick: the rest state
+    "on" hands the boiler back to its own controller, "off" switches heating off"""
+    try:
+        for rest, back in (("on", True), ("off", False)):
+            await relay_setup(r, {"relay_rest_state": rest, "own_room_controller": True})
+            await relay_on_under_control(r)
+            entries = await _zones_unknown(r, 11.5)
+            st = await r.st("control_state")
+            issue = await _issue(r, "no_zone_known")
+            r.check(
+                st["state"] == ("handed_back" if back else "idle")
+                and await relay_is(r, back)
+                and issue is not None
+                and issue.get("translation_key")
+                == ("no_zone_known_handed_back" if back else "no_zone_known_off"),
+                f"rest {rest}: {st['state']}, relay {await r.s(RELAY)}, issue {issue and issue.get('translation_key')}",
+            )
+            await _zones_back(r, entries)
+            await r.switch(False)
+            await r.ha.wait(10)
+    finally:
+        await options_walk(
+            r, {"control_relay": {"relay_rest_state": "off", "own_room_controller": False}}
+        )
+        await relay_defaults(r)
+
+
+async def R18(r: Run):
+    """VT's activation delay of 120 s on the relay path: a start waits for it"""
+    try:
+        d = await options_walk(r, {"control_relay_behaviour": {"activation_delay_s": 120}})
+        if d.get("errors"):
+            raise RuntimeError(f"options not saved: {d['errors']}")
+        await r.switch(True)
+        waits = []
+        for _ in range(2):
+            await rooms_call(r, False)
+            await r.ha.until(lambda: relay_is(r, False), 420, 5)
+            await r.ha.wait(30)
+            await rooms_call(r, True)
+            await r.ha.until(lambda: _any_valve(r), 420, 1)
+            t_call = time.time()
+            on = await r.ha.until(lambda: relay_is(r, True), 300, 1)
+            waits.append(None if on is None else round(time.time() - t_call))
+        r.check(
+            all(w is not None and w >= 115 for w in waits),
+            f"each start waited at least 120 s: {waits}",
+        )
+    finally:
+        if await r.s("control") == "on":
+            await r.switch(False)
+            await r.ha.wait(10)
+        await options_walk(r, {"control_relay_behaviour": {"activation_delay_s": 0}})
+
+
 # --- the entity path (instance 7, --config entity) ---------------------------------------------
 
 
@@ -978,7 +1034,7 @@ SCENARIOS.update(
     {
         f.__name__: f
         for f in (
-            *(R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12, R13, R14, R15, R16),
+            *(R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12, R13, R14, R15, R16, R17, R18),
             *(N1, N2, N3, N4, N5, N6, N7, N8, U1, U2),
             *(S1, S2),
         )
