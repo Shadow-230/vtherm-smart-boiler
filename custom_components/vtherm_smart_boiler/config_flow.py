@@ -610,7 +610,8 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
         if gas_rates_shown(options):  # I6, decision 7: a gas boiler's, or one not said
             fields[_optional("gas_at_min_power", current)] = _number(0, 200, 0.01)
             fields[_optional("gas_at_max_power", current)] = _number(0, 500, 0.01)
-    fields |= pressure_fields(options)
+    if pressure_limits_shown(options):
+        fields |= pressure_fields(options)
     if _advanced(options):
         fields.update(
             {
@@ -632,8 +633,14 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
 
 # The water pressure's limits, from the boiler's manual and the safety valve's rating: facts about
 # the boiler, asked in its step at both levels and kept by "restore defaults" (I6); stored in the
-# monitor section, whose alarms they set.
+# monitor section, whose alarms they set. Asked with a pressure sensor mapped (I7).
 PRESSURE_KEYS = ("add_water_below", "pressure_high_warning", "pressure_high_alarm")
+
+
+def pressure_limits_shown(options: Mapping[str, Any]) -> bool:
+    """I7, decision 4: the pressure limits judge the pressure sensor — asked only with one
+    mapped; without, those stored are kept and judge nothing."""
+    return "pressure" in _stored_signals(options)
 
 
 def pressure_fields(options: dict[str, Any]) -> dict[Any, Any]:
@@ -1047,8 +1054,10 @@ def gas_rates_shown(options: Mapping[str, Any]) -> bool:
 
 
 def flue_gas_limits_shown(options: Mapping[str, Any]) -> bool:
-    """A condensing boiler's, or one never declared otherwise (as before)."""
-    return _stored_boiler(options).get("condensing") is not False
+    """A condensing boiler's, or one never declared otherwise (as before), with a flue-gas
+    sensor mapped — the limits judge it (I7, decision 4)."""
+    condensing = _stored_boiler(options).get("condensing") is not False
+    return condensing and "flue_gas" in _stored_signals(options)
 
 
 def stored_connection(options: Mapping[str, Any]) -> Connection | None:
@@ -1948,7 +1957,8 @@ def apply_boiler(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     options[BOILER] = boiler
     _apply_parameters(options, user_input, BOILER_PARAMETER_KEYS)
     monitor = dict(options.get(MONITOR, {}))
-    _set_or_drop(monitor, user_input, PRESSURE_KEYS)
+    if pressure_limits_shown(options):  # not shown: kept (I7)
+        _set_or_drop(monitor, user_input, PRESSURE_KEYS)
     if monitor:
         options[MONITOR] = monitor
     else:
@@ -2257,6 +2267,49 @@ def problem_step(code: str, subject: str | None) -> str:
     return _PROBLEM_STEPS.get(code, "signals")
 
 
+# --- the menu (I7) ------------------------------------------------------------------------------
+
+# The texts the menu reads into its description: what is left, what to fix, what changed.
+MENU_STATE = "menu_state"
+_SECTION_OF_STEP = {
+    "mode": "connection",
+    "mqtt_topics": "connection",
+    "zone": "zones",
+    "level_hidden": "level",
+}
+
+
+def section_of(step: str) -> str:
+    """The menu's section a step belongs to: the control steps are one section, as are the
+    connection's panels and the zones' forms."""
+    if step.startswith("control"):
+        return "control"
+    return _SECTION_OF_STEP.get(step, step)
+
+
+def control_offered(options: Mapping[str, Any]) -> bool:
+    """Whether the menu offers the control section: with full control or on/off; for an entry
+    made before the control mode, as before; and while a write path is still set, so control
+    can be switched off once monitoring only is chosen — its step then offers "no control"
+    alone."""
+    if wants_control(options) or _stored_boiler(options).get(CONTROL_MODE) is None:
+        return True
+    control = options.get(CONTROL)
+    return isinstance(control, Mapping) and control.get("write_path") not in (None, NO_CONTROL)
+
+
+def section_shown(options: Mapping[str, Any], section: str) -> bool:
+    """A section that does not apply is not on the menu (decision 2): the reference room
+    without zones, the monitor's thresholds at the simple level, control as above."""
+    if section == "reference":
+        return bool(options.get(ZONES))
+    if section == "monitor":
+        return options.get(LEVEL) == LEVEL_ADVANCED
+    if section == "control":
+        return control_offered(options)
+    return True
+
+
 # --- flows ------------------------------------------------------------------------------------
 
 
@@ -2270,6 +2323,12 @@ class _Steps:
     # A problem the last check found: shown on its step, which the flow goes back to.
     _problem: tuple[str, dict[str, str]] | None = None
     _unfed_zones: str = ""  # PB-23: the zones a count of 0 could never hear, for the form
+    # I7: the menu's step, and where its section labels are in the translations.
+    _MENU = "menu"
+    _CATEGORY = "config"
+    _confirmed: set[str]  # the sections confirmed in this flow
+    _changed: list[str]  # the sections whose answers changed the options, in that order
+    _at_menu: dict[str, Any] | None  # the options as the menu last showed them
 
     def _form(
         self,
@@ -2286,11 +2345,15 @@ class _Steps:
         )
         return result
 
-    async def _back_to_problem(self, code: str, subject: str | None) -> ConfigFlowResult:
-        """The answers stay: the step that can fix the problem is shown again, with it."""
+    def _problem_step(self, code: str, subject: str | None) -> str:
         step = problem_step(code, subject)
         if not hasattr(self, f"async_step_{step}"):
             step = "signals"  # a section this flow does not have (the setup has no freshness)
+        return step
+
+    async def _back_to_problem(self, code: str, subject: str | None) -> ConfigFlowResult:
+        """The answers stay: the step that can fix the problem is shown again, with it."""
+        step = self._problem_step(code, subject)
         self._problem = (step, {"base": code})
         return await self._goto(step)
 
@@ -2300,6 +2363,34 @@ class _Steps:
     async def _goto(self, step: str) -> ConfigFlowResult:
         result: ConfigFlowResult = await getattr(self, f"async_step_{step}")()
         return result
+
+    async def _after(self, step: str) -> ConfigFlowResult:
+        """A step answered: the next one of its section, or the menu — nothing is saved (I7).
+        Its section counts as confirmed, and as changed where the options differ from those the
+        menu last showed."""
+        section = section_of(step)
+        self._confirmed.add(section)
+        changed = self._at_menu is not None and self.options != self._at_menu
+        if changed and section not in self._changed:
+            self._changed.append(section)
+        return await self._goto(self._next_after(step))
+
+    def _menu_shown(self) -> None:
+        self._at_menu = copy.deepcopy(self.options)
+
+    async def _async_menu_text(self, state: str, sections: Sequence[str] = ()) -> str:
+        """The menu's line for ``state``, naming ``sections`` by their menu labels, in Home
+        Assistant's language."""
+        hass: HomeAssistant = self.hass  # type: ignore[attr-defined]
+        language = hass.config.language
+        states = await async_get_translations(hass, language, "selector", [DOMAIN])
+        text = states.get(f"component.{DOMAIN}.selector.{MENU_STATE}.options.{state}", "")
+        if not sections:
+            return text
+        labels = await async_get_translations(hass, language, self._CATEGORY, [DOMAIN])
+        prefix = f"component.{DOMAIN}.{self._CATEGORY}.step.{self._MENU}.menu_options"
+        names = ", ".join(labels.get(f"{prefix}.{section}", section) for section in sections)
+        return f"{text} {names}."
 
     async def async_step_connection(
         self, user_input: dict[str, Any] | None = None
@@ -2338,7 +2429,7 @@ class _Steps:
         hot-water priority where they apply."""
         if user_input is not None:
             apply_mode(self.options, user_input)
-            return await self._goto(self._next_after("mode"))
+            return await self._after("mode")
         return self._form(step_id="mode", data_schema=mode_schema(self.options))
 
     async def async_step_signals(
@@ -2356,7 +2447,7 @@ class _Steps:
                 errors = shared_signal_error(self.options, user_input)
             if not errors:
                 apply_signals(self.options, user_input)
-                return await self._goto(self._next_after("signals"))
+                return await self._after("signals")
         connection = stored_connection(self.options)
         suggested: dict[str, str] = {}
         if connection is Connection.OPENTHERM_GW and not _stored_signals(self.options):
@@ -2399,7 +2490,7 @@ class _Steps:
                 errors = found
             else:
                 apply_boiler(self.options, user_input)
-                return await self._goto(self._next_after("boiler"))
+                return await self._after("boiler")
         return self._form(step_id="boiler", data_schema=boiler_schema(self.options), errors=errors)
 
     async def async_step_circuit(
@@ -2441,7 +2532,7 @@ class _Steps:
                 else:
                     self.options[CIRCUITS] = circuits
                     self._circuits_done = []
-                    return await self._goto(self._next_after("circuit"))
+                    return await self._after("circuit")
         return self._form(
             step_id="circuit",
             data_schema=circuit_schema(self.options, current, more=index + 1 < len(existing)),
@@ -2481,7 +2572,7 @@ class _Steps:
     async def async_step_zone(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if not self._zone_queue:
             self.options[ZONES] = self._zones_done
-            return await self._goto(self._next_after("zones"))
+            return await self._after("zones")
         entity_id = self._zone_queue[0]
         previous = {z["entity_id"]: z for z in self.options.get(ZONES, [])}
         current = previous.get(entity_id, {})
@@ -2550,7 +2641,7 @@ class _Steps:
                 errors["design_outdoor"] = "design_outdoor_too_warm"
             else:
                 apply_building(self.options, user_input)
-                return await self._goto(self._next_after("building"))
+                return await self._after("building")
         return self._form(
             step_id="building", data_schema=building_schema(self.options), errors=errors
         )
@@ -2576,7 +2667,7 @@ class _Steps:
                 if reference.get("strategy") != Strategy.CHOSEN_ZONE:
                     reference.pop("zone", None)
                 self.options[REFERENCE_ROOM] = reference
-                return await self._goto(self._next_after("reference"))
+                return await self._after("reference")
         return self._form(
             step_id="reference", data_schema=reference_schema(self.options), errors=errors
         )
@@ -2586,7 +2677,7 @@ class _Steps:
     ) -> ConfigFlowResult:
         if user_input is not None:
             apply_monitor(self.options, user_input)
-            return await self._goto(self._next_after("monitor"))
+            return await self._after("monitor")
         return self._form(step_id="monitor", data_schema=monitor_schema(self.options))
 
 
@@ -2606,9 +2697,6 @@ class _ControlSteps(_Steps):
     async def _async_hand_back_blocker(self) -> str | None:
         """Why what the hand-back goes through must not change now; the setup has none."""
         return None
-
-    async def async_step_save(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        raise NotImplementedError
 
     def _changed_read_back(self, user_input: dict[str, Any], blocker: str) -> str | None:
         """The read-back the answer re-picks on the path kept, where it judges a hand-back's
@@ -2672,7 +2760,7 @@ class _ControlSteps(_Steps):
                 )
             apply_control(self.options, user_input)
             if path == NO_CONTROL:
-                return await self.async_step_save()
+                return await self._after("control")
             if path == WritePath.RELAY:
                 # R14: moving over from VT's central boiler, where it is set up or its commands
                 # are still kept: its settings offered, with the steps that follow.
@@ -2893,7 +2981,7 @@ class _ControlSteps(_Steps):
                 apply_control_relay_behaviour(self.options, user_input)
                 if alarm_step_offered(self.options):  # nothing is offered for relays (Y1)
                     return await self.async_step_control_alarms()
-                return await self.async_step_save()
+                return await self._after("control")
         return self._form(
             step_id="control_relay_behaviour",
             data_schema=control_relay_behaviour_schema(self.options, prefill),
@@ -2957,7 +3045,7 @@ class _ControlSteps(_Steps):
                 if alarm_step_offered(self.options):
                     # Y1: the reaction to an ignored write, where offered, at both levels.
                     return await self.async_step_control_alarms()
-                return await self.async_step_save()
+                return await self._after("control")
         # VT's own activation delay, where VT kept one, is offered for the user to confirm.
         vt_delay = VThermLink(self.hass, _zone_entities(self.options)).vt_central_activation_delay()
         return self._form(
@@ -3000,7 +3088,7 @@ class _ControlSteps(_Steps):
                 apply_control_behaviour(self.options, user_input)
                 if alarm_step_offered(self.options):
                     return await self.async_step_control_alarms()
-                return await self.async_step_save()
+                return await self._after("control")
         return self._form(
             step_id="control_behaviour",
             data_schema=control_behaviour_schema(self.options),
@@ -3107,7 +3195,7 @@ class _ControlSteps(_Steps):
                 self._alarms_answer = user_input
                 return await self.async_step_control_return_confirm()
             apply_control_alarms(self.options, user_input)
-            return await self.async_step_save()
+            return await self._after("control")
         return self._form(step_id="control_alarms", data_schema=control_alarms_schema(self.options))
 
     async def async_step_control_return_confirm(
@@ -3119,7 +3207,7 @@ class _ControlSteps(_Steps):
             if user_input.get("understood") is True and self._alarms_answer is not None:
                 apply_control_alarms(self.options, self._alarms_answer)
                 self._alarms_answer = None
-                return await self.async_step_save()
+                return await self._after("control")
             errors = {"understood": "return_needs_confirmation"}
         return self._form(
             step_id="control_return_confirm",
@@ -3145,28 +3233,34 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
         self._zone_queue = []
         self._zones_done = []
         self._circuits_done = []
+        self._confirmed = set()
+        self._changed = []
+        self._at_menu = None
 
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         return SmartBoilerOptionsFlow()
 
-    ORDER = (
-        "connection", "mode", "name", "signals", "boiler", "circuit", "zones", "building",
-        "reference", "monitor", "control", "finish",
+    # I7: the first panels, the name and the level come first — they decide what follows; then
+    # the menu, in this order, each section shown where it applies.
+    SECTIONS = (
+        "connection", "name", "signals", "boiler", "circuit", "zones", "building", "reference",
+        "monitor", "control",
     )  # fmt: skip
 
     def _next_after(self, step: str) -> str:
-        following = self.ORDER[self.ORDER.index(step) + 1]
-        if following == "monitor" and not _advanced(self.options):
-            following = "control"
-        if following == "control" and not wants_control(self.options):
-            following = "finish"
-        return following
+        if step == "mode" and "name" not in self._confirmed:
+            return "name"
+        return "menu"
 
-    async def async_step_save(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """The control steps' end, in the setup: the entry is made (I6, decision 11)."""
-        return await self.async_step_finish()
+    def _missing(self) -> list[str]:
+        """The sections shown and not confirmed yet."""
+        return [
+            section
+            for section in self.SECTIONS
+            if section_shown(self.options, section) and section not in self._confirmed
+        ]
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """The setup opens with how the boiler is connected (I6)."""
@@ -3176,12 +3270,41 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self._title = user_input["name"]
             self.options[LEVEL] = user_input[LEVEL]
-            return await self._goto(self._next_after("name"))
+            return await self._after("name")
         texts = await async_get_translations(
             self.hass, self.hass.config.language, "device", [DOMAIN]
         )
         name = texts.get(f"component.{DOMAIN}.device.{DEFAULT_NAME_KEY}.name") or DEFAULT_NAME
-        return self.async_show_form(step_id="name", data_schema=user_schema({}, name))
+        current = {"name": self._title, **self.options} if "name" in self._confirmed else {}
+        return self.async_show_form(step_id="name", data_schema=user_schema(current, name))
+
+    async def async_step_menu(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """The setup's menu (I7): every section that applies, then "Create" once each has been
+        confirmed and the whole passes the check — else "Configuration incomplete", the
+        description naming what is left or what to fix."""
+        missing = self._missing()
+        problem = None if missing else validate_problem(self.options)
+        if missing:
+            state = await self._async_menu_text("left", missing)
+        elif problem is not None:
+            state = await self._async_menu_text("fix", [section_of(self._problem_step(*problem))])
+        else:
+            state = await self._async_menu_text("ready")
+        shown = [section for section in self.SECTIONS if section_shown(self.options, section)]
+        last = "incomplete" if missing or problem is not None else "finish"
+        return self.async_show_menu(
+            step_id="menu", menu_options=[*shown, last], description_placeholders={"state": state}
+        )
+
+    async def async_step_incomplete(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The first section not confirmed yet; with none, the step with the problem the check
+        found."""
+        missing = self._missing()
+        if missing:
+            return await self._goto(missing[0])
+        return await self.async_step_finish()
 
     async def async_step_finish(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         problem = validate_problem(self.options)
@@ -3191,13 +3314,20 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
 
 
 class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
-    """A menu of sections; each saves the options when done."""
+    """A menu of sections, each returning to it; "Save and finish" saves them together (I7)."""
+
+    _MENU = "init"
+    _CATEGORY = "options"
 
     def __init__(self) -> None:
         self._zone_queue = []
         self._zones_done = []
         self._circuits_done = []
+        self._confirmed = set()
+        self._changed = []
+        self._at_menu = None
         self._options: dict[str, Any] | None = None
+        self._first: dict[str, Any] = {}  # the options as this flow first made them
         self._alarms_answer: dict[str, Any] | None = None  # awaiting the return's confirmation
         # Blockers the edit would add to control, awaiting confirmation; confirmed: saved anyway.
         self._blocking: list[str] = []
@@ -3220,6 +3350,7 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
             for key in self._unreadable:
                 options[key] = [] if key in (CIRCUITS, ZONES) else {}
             self._options = options
+            self._first = copy.deepcopy(options)
         return self._options
 
     def _next_unreadable(self) -> str | None:
@@ -3233,7 +3364,7 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
         return current if isinstance(current, Mapping) else {}
 
     def _next_after(self, step: str) -> str:
-        return "mode" if step == "connection" else "save"
+        return "init"
 
     async def _async_hand_back_blocker(self) -> str | None:
         """Why what the hand-back goes through must not change now: it has not reached the
@@ -3278,15 +3409,27 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
         return any(_hand_back_answer(new, key) != _hand_back_answer(current, key) for key in keys)
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """The menu (I7): the sections that apply, then "Save and finish"; the description names
+        the sections changed in this flow — closing the window discards them."""
         menu = [
-            "connection", "signals", "freshness", "boiler", "circuit", "zones", "building",
-            "reference", "control",
+            section
+            for section in (
+                "connection", "signals", "freshness", "boiler", "circuit", "zones", "building",
+                "reference", "control", "monitor",
+            )
+            if section_shown(self.options, section)
         ]  # fmt: skip
-        if _advanced(self.options):
-            menu.append("monitor")
         # At the simple level, say when hidden advanced settings are still active.
         menu.append("level_hidden" if has_hidden_advanced(self.options) else "level")
-        return self.async_show_menu(step_id="init", menu_options=menu)
+        menu.append("save")
+        if self._changed and self.options != self._first:
+            changes = await self._async_menu_text("changed", self._changed)
+        else:
+            changes = await self._async_menu_text("unchanged")
+        self._menu_shown()
+        return self.async_show_menu(
+            step_id="init", menu_options=menu, description_placeholders={"changes": changes}
+        )
 
     async def async_step_level_hidden(
         self, user_input: dict[str, Any] | None = None
@@ -3306,7 +3449,7 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
             else:
                 self._options = candidate
                 self.options[LEVEL] = user_input[LEVEL]
-                return await self.async_step_save()
+                return await self._after("level")
         return self.async_show_form(
             step_id="level", data_schema=level_schema(self.options), errors=errors
         )
@@ -3316,7 +3459,7 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
     ) -> ConfigFlowResult:
         if user_input is not None:
             apply_freshness(self.options, user_input)
-            return await self.async_step_save()
+            return await self._after("freshness")
         return self._form(step_id="freshness", data_schema=freshness_schema(self.options))
 
     async def async_step_save(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -3369,12 +3512,12 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Open after R6 #3: the first new blocker's text and how many more; saved only when the
-        user ticks "save anyway", else nothing is saved and the menu shows again."""
+        user ticks "save anyway", else nothing is saved and the menu shows again — with this
+        flow's answers, to change, save or discard by closing the window (I7)."""
         if user_input is not None:
             if user_input.get("save_anyway") is True and self._blocking:
                 self._blocking_confirmed = True
                 return await self.async_step_save()
-            self._options = None  # the answers of this edit go: nothing saved
             self._blocking = []
             return await self.async_step_init()
         first, *others = self._blocking

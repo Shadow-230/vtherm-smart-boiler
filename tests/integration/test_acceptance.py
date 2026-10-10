@@ -1274,6 +1274,97 @@ async def test_an_entity_hand_back_waits_for_its_target_and_is_stored(rig: Rig) 
     assert not rig.storage[key]["data"]["control"]["hand_back_pending"]
 
 
+async def test_j4s_n6_the_setpoint_back_between_two_retries_gets_its_hand_back(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """J4's N6 timeline (2026-10-10), the hand-back writing a value: the setpoint entity alone
+    away, the device holding its value; control switched off; the hand-back failing, retried
+    every minute; the boiler's own value moving on the read-back meanwhile — a change the
+    plugin did not make settles nothing; the entity back 130 s later, between two retries,
+    showing its held value; at the next retry the lowest, then the hand-back value. The alarm
+    stays on until that write."""
+    import logging
+
+    caplog.set_level(logging.DEBUG, logger="custom_components.vtherm_smart_boiler.control")
+    await start(rig, sim={"write_type": "held"}, **ENTITY_CONTROL)
+    await rig.switch(True)
+    await rig.advance(120)
+    rig.sim.failed.add("flow_setpoint")
+    rig.hub.refresh()
+    await rig.advance(5)
+    count = len(entity_setpoints(rig))
+    await rig.switch(False)
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+    await rig.advance(70)
+    assert "Handing control back failed again" in caplog.text  # retried while it is away
+    rig.sim.plant.clear_override()  # the read-back moves to the boiler's own value
+    rig.hub.refresh()
+    await rig.advance(60)
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"  # nothing settled
+    assert entity_setpoints(rig)[count:] == []
+    rig.sim.failed.discard("flow_setpoint")  # back, between two retries
+    rig.hub.refresh()
+    await rig.advance(70)
+    assert entity_setpoints(rig)[count:] == [LOWEST, 0.0]
+
+
+async def test_j4s_n2_the_device_back_with_its_values_lost_gets_its_hand_back_at_once(
+    rig: Rig,
+) -> None:
+    """J4's N2 timeline (2026-10-10), the hand-back writing a value: the device restarts — both
+    entities away 90 s, back with their values unknown, the read-back already at the boiler's
+    own value — and control is switched off 5 s into it. The retry after the device is back
+    writes the lowest, then the hand-back value, within a minute and a step."""
+    await start(rig, sim={"write_type": "held"}, **ENTITY_CONTROL)
+    await rig.switch(True)
+    await rig.advance(120)
+    await rig.scenario("restart_device", seconds=90)
+    await rig.advance(5)
+    count = len(entity_setpoints(rig))
+    await rig.switch(False)
+    await rig.advance(85)  # the device back now
+    assert entity_setpoints(rig)[count:] == []
+    assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
+    await rig.advance(70)
+    assert entity_setpoints(rig)[count:] == [LOWEST, 0.0]
+
+
+async def test_j4s_n6_with_the_timeout_hand_back_n8_leaves(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """What J4's N6 and N2 met on 2026-10-10: the hand-back by the device's own timeout, which
+    J4's N8 sets and could not set back — the options refuse to change the hand-back while one
+    is owed (PB-09), and N8 leaves one owed for good (a device declared expiring that keeps its
+    value). By design that hand-back writes only the lowest, never again — every write would
+    arm the device's timer anew — and is judged by the read-back leaving the plugin's values
+    after the device's timeout: with the setpoint away at the hand-back, one error, no retry,
+    no setpoint written."""
+    import logging
+
+    caplog.set_level(logging.DEBUG, logger="custom_components.vtherm_smart_boiler.control")
+    control = {k: v for k, v in ENTITY_CONTROL.items() if not k.startswith("hand_back")}
+    control |= {"write_type": "expiring", "hand_back": "timeout"}
+    await start(rig, sim={"write_type": "held"}, **control)
+    await rig.switch(True)
+    await rig.advance(120)
+    rig.sim.failed.add("flow_setpoint")
+    rig.hub.refresh()
+    await rig.advance(5)
+    count = len(entity_setpoints(rig))
+    await rig.switch(False)
+    await rig.advance(130)
+    rig.sim.failed.discard("flow_setpoint")
+    rig.hub.refresh()
+    await rig.advance(210)
+    assert entity_setpoints(rig)[count:] == []  # never written again
+    assert "Handing control back failed again" not in caplog.text
+    errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+    assert errors == [
+        "Handing control back failed; retrying every minute: "
+        "number.boiler_sim_flow_setpoint is unavailable"
+    ]
+
+
 async def test_a_held_device_restarting_at_the_hand_back_gets_its_hand_back(rig: Rig) -> None:
     """F7 (J4, N2): the held device restarts — out of reach for 90 s, back with what it was
     given lost — and control is switched off meanwhile. The boiler, its override gone, shows its
@@ -1386,9 +1477,9 @@ async def options_step(rig: Rig, result: dict[str, Any], data: dict[str, Any]) -
 async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> None:
     """T-23 (P-37): the plugin past its monitoring and no control yet; the simulated gateway set
     up through the stub's config flow, as at J4 — options → Control → OpenTherm Gateway →
-    gateway ID ``sim``: the flow completes; the plugin then controls the simulated boiler
-    through it, its setpoint confirmed by the gateway's read-back and its heating switch by the
-    boiler's "Central heating 1"."""
+    gateway ID ``sim`` → "Save and finish" (I7): the flow completes; the plugin then controls
+    the simulated boiler through it, its setpoint confirmed by the gateway's read-back and its
+    heating switch by the boiler's "Central heating 1"."""
     await start(rig, with_control=False)
     assert rig.entry is not None
     hass = rig.hass
@@ -1415,6 +1506,9 @@ async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> Non
     result = await options_step(rig, result, curve)
     if result.get("step_id") == "control_alarms":
         result = await options_step(rig, result, {})
+    assert result["type"] == "menu"  # I7: back at the menu, nothing saved yet
+    assert "control" not in rig.entry.options
+    result = await options_step(rig, result, {"next_step_id": "save"})
     assert result["type"] == "create_entry"
     await hass.async_block_till_done()
     control = rig.entry.options["control"]

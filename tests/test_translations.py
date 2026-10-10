@@ -748,6 +748,10 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     selectors.setdefault(flow.SIGNAL_HINT, set()).update(c.value for c in Connection)
     # I6.3: and the heat source's, where it changes what to pick.
     selectors.setdefault(flow.SOURCE_HINT, set()).update(("electric", "oil"))
+    # I7: the menus read what is left, what to fix and what changed into their descriptions.
+    selectors.setdefault(flow.MENU_STATE, set()).update(
+        ("left", "fix", "ready", "changed", "unchanged")
+    )
     return fields, selectors
 
 

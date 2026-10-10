@@ -94,8 +94,9 @@ def form_defaults(schema: vol.Schema) -> dict[str, Any]:
 
 ADVANCED = {"level": "advanced"}
 CURVE_FORM = form_defaults(config_flow.control_curve_schema(ADVANCED))
-MONITOR_FORM = form_defaults(config_flow.monitor_schema({}))
-BOILER_FORM = form_defaults(config_flow.boiler_schema({}))  # the pressure limits (I6)
+# The pressure and flue-gas limits, asked with their sensors (I6, I7).
+MONITOR_FORM = form_defaults(config_flow.monitor_schema({"signals": {"flue_gas": "sensor.flue"}}))
+BOILER_FORM = form_defaults(config_flow.boiler_schema({"signals": {"pressure": "sensor.water"}}))
 ENTITY_FORM = form_defaults(config_flow.control_entity_schema({}))
 # The tick is offered on the entity path with the virtual topology (answers F, M).
 OWN_CONTROL_FORM = form_defaults(

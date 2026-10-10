@@ -87,29 +87,46 @@ Only one entry of the integration can exist: it runs one boiler.
    level changes only what you see, never how the plugin behaves). The same panels open the
    integration's options, under **Boiler, connection and control mode**. What each connection
    means is in [Connecting the boiler](#5-connecting-the-boiler).
-3. **Pick the signals.** In **Boiler signals** pick the entity for each signal you have — at
+   Then comes a **menu of sections**, as in VT's own setup: open a section, confirm it, and you
+   are back at the menu — nothing is created yet. A section that does not apply is not shown:
+   the reference room without zones, the monitor's thresholds at the simple level, control with
+   monitoring only. The menu says which sections are still to confirm; **Configuration
+   incomplete** opens the first of them, or the step with a problem to fix, and **Create**
+   appears once every section shown is confirmed. Closing the window discards the setup.
+3. **Pick the signals.** In the section **Boiler signals** pick the entity for each signal you have — at
    least flame and flow temperature if you plan to control the boiler. The plugin only reads
    these entities. With the OpenTherm Gateway integration and exactly one gateway, its boiler
    entities are filled in for you to check. On the OTGW firmware over MQTT and on EMS-ESP a step
    asks the device's MQTT topics (see [Fresh data](#68-fresh-data)).
-4. **Describe the installation.** The steps **Boiler**, **Heating circuit**, **VT zones** (with
-   one **Zone** step for each zone you pick), **Building** and **Reference room** ask what you
-   know. Leave unknown values empty: the plugin then says what it cannot judge. **Boiler** also
-   takes the water-pressure limits from the boiler's manual and its safety valve; **Building**
-   takes the design outdoor temperature, which the heating curve shares.
-5. **Days of data for the verdict.** At the advanced level the step **Monitor** holds
-   **Days of data for the verdict** (7 days by default, 7 to 60). It can also be changed later in
-   the options under **Monitor thresholds**. It holds nothing back: you may set up and switch on
+4. **Describe the installation.** The sections **Boiler**, **Heating circuits**, **VT zones**
+   (with one **Zone** step for each zone you pick), **Building** and **Reference room** ask what
+   you know. Leave unknown values empty: the plugin then says what it cannot judge. **Boiler** also
+   takes the water-pressure limits from the boiler's manual and its safety valve — they appear
+   once a pressure sensor is mapped in **Boiler signals**, as the flue-gas limits in **Monitor
+   thresholds** appear with a flue-gas sensor; **Building** takes the design outdoor
+   temperature, which the heating curve shares.
+5. **Days of data for the verdict.** At the advanced level the section **Monitor thresholds**
+   holds **Days of data for the verdict** (7 days by default, 7 to 60). It can also be changed
+   later in the options, in the same section. It holds nothing back: you may set up and switch on
    control at any time. Until you do, the plugin writes nothing to the boiler.
 6. **Read the verdict.** Once it has these days of data, the sensor **Control verdict** says
    whether control is worth enabling (see
    [Monitoring and the verdict](#41-monitoring-and-the-verdict)). You decide.
-7. **Set up control.** With full control or on/off chosen, the setup itself goes on into the
-   control steps: the write path, then the steps that follow (for example **Heating curve and
-   limits** and **Control behaviour**). To set it up later, or change it, open
-   **Control (experimental)** in the integration's options. "No control" keeps monitoring only.
+7. **Set up control.** With full control or on/off chosen, the setup's menu also offers the
+   section **Control (experimental)**: the write path, then the steps that follow (for example
+   **Heating curve and limits** and **Control behaviour**). To set it up later, or change it,
+   open the same section in the integration's options. "No control" keeps monitoring only.
 8. **Switch control on** with the switch **Control (experimental)** of the integration's device.
    If something is missing, the switch says what, and the monitor keeps running.
+
+**Changing settings later.** The integration's options open the same menu. Each section returns
+to it, and nothing is saved until **Save and finish**: it checks everything, saves it and reloads
+the integration once — while control holds the boiler, it is handed back and taken again (a
+relay goes to its rest state and back); a change of the level alone reloads nothing. The menu
+names the sections with unsaved changes; closing the window discards them. A problem found at
+the save opens its step with the reason: fix it and choose **Save and finish** again. A change
+that would stop control asks first; declined, you are back at the menu with your changes, to
+change them or to discard them by closing the window.
 
 ## 4. How it works
 

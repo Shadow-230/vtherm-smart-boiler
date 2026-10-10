@@ -55,6 +55,24 @@
           "level": "Simple shows the essentials with cautious defaults; advanced shows every parameter. The level changes only what you see, never how the plugin behaves."
         }
       },
+      "menu": {
+        "title": "Smart Boiler for Versatile Thermostat",
+        "description": "Go through each section: once confirmed it returns here, and nothing is created until you choose “Create”. Closing this window discards the setup. {state}",
+        "menu_options": {
+          "connection": "Boiler, connection and control mode",
+          "name": "Name and level of detail",
+          "signals": "Boiler signals",
+          "boiler": "Boiler",
+          "circuit": "Heating circuits",
+          "zones": "VT zones",
+          "building": "Building",
+          "reference": "Reference room",
+          "monitor": "Monitor thresholds",
+          "control": "Control (experimental)",
+          "finish": "Create",
+          "incomplete": "Configuration incomplete"
+        }
+      },
       "signals": {
         "title": "Boiler signals",
         "description": "Pick the entity that provides each signal. None is required: flame and flow temperature enable the burner's metrics, the boiler link and control of the water temperature, which needs both; every other signal enables more of the monitor. A home with only a relay is monitored too. The plugin only reads these entities. One entity feeds one signal only.\n\n{hint}",
@@ -103,7 +121,7 @@
       },
       "boiler": {
         "title": "Boiler",
-        "description": "What you know about your boiler. Leave unknown values empty: the plugin then says what it cannot judge.",
+        "description": "What you know about your boiler. Leave unknown values empty: the plugin then says what it cannot judge. The water-pressure limits appear once a pressure sensor is mapped under “Boiler signals”; without it, limits already set are kept and judge nothing.",
         "data": {
           "boiler_min_power": "Minimum power",
           "boiler_max_power": "Maximum power",
@@ -223,7 +241,7 @@
       },
       "monitor": {
         "title": "Monitor",
-        "description": "Thresholds of the analysis.",
+        "description": "Thresholds of the analysis. The flue-gas limits appear for a condensing boiler once a flue-gas sensor is mapped under “Boiler signals”; without it, limits already set are kept and judge nothing.",
         "data": {
           "condensing_return": "Condensing return threshold",
           "short_burn_min": "Short burn",
@@ -593,7 +611,7 @@
     "step": {
       "init": {
         "title": "Smart Boiler for Versatile Thermostat options",
-        "description": "Change one section; every other setting stays as it is. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "{changes}\n\nEach section returns here once confirmed; nothing is saved until you choose “Save and finish”, which checks everything, saves it and reloads the integration once: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back). Changing only the level reloads nothing. Closing this window discards the unsaved changes.",
         "menu_options": {
           "connection": "Boiler, connection and control mode",
           "signals": "Boiler signals",
@@ -606,12 +624,13 @@
           "monitor": "Monitor thresholds",
           "level": "Level of detail",
           "level_hidden": "Level of detail (some hidden advanced settings are active)",
-          "control": "Control (experimental)"
+          "control": "Control (experimental)",
+          "save": "Save and finish"
         }
       },
       "connection": {
         "title": "How is the boiler connected?",
-        "description": "These first choices shape everything after them; they switch nothing on. Choose how Home Assistant reaches your boiler:\n\n- **OpenTherm Gateway (integration)** — Home Assistant's OpenTherm Gateway integration. If Home Assistant stops, the gateway drops the plugin's setpoint within a minute: with a thermostat on the gateway, the thermostat takes over; without one, heating stops.\n- **OTGW firmware over MQTT** — the same gateway through its firmware's MQTT messages; the same when Home Assistant stops.\n- **ESPHome OpenTherm** — an ESP running ESPHome's OpenTherm component. It keeps the last setpoint and heating on until it restarts (by default after 15 minutes without Home Assistant), then takes the start values of its own configuration.\n- **EMS-ESP** — its flow setpoint lapses within about a minute and EMS-ESP does not repeat it, so the plugin does; if Home Assistant stops, the boiler returns to its own setting.\n- **Relay (on/off boiler)** — a relay on the boiler's room-thermostat terminals; it stays as it was if Home Assistant stops.\n- **The boiler's Wi-Fi module or the manufacturer's integration** — writes usually go to the boiler's memory or through a cloud: monitoring by default.\n- **Another writable entity (advanced)** — any other device; what it does when Home Assistant stops is its own.\n- **Another integration, read only** — the plugin only reads the boiler.\n\nSaving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "These first choices shape everything after them; they switch nothing on. Choose how Home Assistant reaches your boiler:\n\n- **OpenTherm Gateway (integration)** — Home Assistant's OpenTherm Gateway integration. If Home Assistant stops, the gateway drops the plugin's setpoint within a minute: with a thermostat on the gateway, the thermostat takes over; without one, heating stops.\n- **OTGW firmware over MQTT** — the same gateway through its firmware's MQTT messages; the same when Home Assistant stops.\n- **ESPHome OpenTherm** — an ESP running ESPHome's OpenTherm component. It keeps the last setpoint and heating on until it restarts (by default after 15 minutes without Home Assistant), then takes the start values of its own configuration.\n- **EMS-ESP** — its flow setpoint lapses within about a minute and EMS-ESP does not repeat it, so the plugin does; if Home Assistant stops, the boiler returns to its own setting.\n- **Relay (on/off boiler)** — a relay on the boiler's room-thermostat terminals; it stays as it was if Home Assistant stops.\n- **The boiler's Wi-Fi module or the manufacturer's integration** — writes usually go to the boiler's memory or through a cloud: monitoring by default.\n- **Another writable entity (advanced)** — any other device; what it does when Home Assistant stops is its own.\n- **Another integration, read only** — the plugin only reads the boiler.",
         "data": {
           "connection": "Connection",
           "heat_source": "Heat source",
@@ -625,7 +644,7 @@
       },
       "mqtt_topics": {
         "title": "MQTT topics",
-        "description": "The topics your boiler interface publishes under. Home Assistant writes an MQTT entity's value only when it changes, so a steady value looks as old as its last change; the interface itself repeats its values (the OTGW firmware at least every 60 s, EMS-ESP every 10 s by default), and the plugin listens to those repeats on these topics — reading only — to see that the boiler's data still flow. Only your interface's own MQTT entities are judged by them.\n\nSaving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "The topics your boiler interface publishes under. Home Assistant writes an MQTT entity's value only when it changes, so a steady value looks as old as its last change; the interface itself repeats its values (the OTGW firmware at least every 60 s, EMS-ESP every 10 s by default), and the plugin listens to those repeats on these topics — reading only — to see that the boiler's data still flow. Only your interface's own MQTT entities are judged by them.",
         "data": {
           "mqtt_top": "OTGW top-level topic",
           "mqtt_node": "OTGW node",
@@ -639,7 +658,7 @@
       },
       "mode": {
         "title": "Control",
-        "description": "What the plugin should do with the boiler. Choosing a mode switches nothing on: control has its own switch, off until you turn it on.\n\n- **Full control** — the plugin sets the water temperature from its curve and switches heating on and off with VT's zones.\n- **On/off (relay)** — the plugin switches heating on and off with VT's zones; the boiler keeps its own water temperature.\n- **Room temperature only — from version 0.3** — the boiler's own curve would set the water from the room's temperature; until 0.3 the plugin only monitors.\n- **Monitoring only** — the plugin reads and reports, and writes nothing.\n\nOnly the modes your connection can do are offered.\n\nSaving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "What the plugin should do with the boiler. Choosing a mode switches nothing on: control has its own switch, off until you turn it on.\n\n- **Full control** — the plugin sets the water temperature from its curve and switches heating on and off with VT's zones.\n- **On/off (relay)** — the plugin switches heating on and off with VT's zones; the boiler keeps its own water temperature.\n- **Room temperature only — from version 0.3** — the boiler's own curve would set the water from the room's temperature; until 0.3 the plugin only monitors.\n- **Monitoring only** — the plugin reads and reports, and writes nothing.\n\nOnly the modes your connection can do are offered.",
         "data": {
           "control_mode": "Control mode",
           "condensing": "Condensing boiler",
@@ -653,7 +672,7 @@
       },
       "level": {
         "title": "Level of detail",
-        "description": "The level changes only what you see, never how the plugin behaves; switching it alone reloads nothing. With the defaults restored, saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "The level changes only what you see, never how the plugin behaves: switching it alone reloads nothing at “Save and finish”; restoring the defaults reloads the integration.",
         "data": {
           "level": "Level of detail",
           "restore_defaults": "Restore advanced settings to their defaults"
@@ -665,7 +684,7 @@
       },
       "signals": {
         "title": "Boiler signals",
-        "description": "Pick the entity that provides each signal. None is required: flame and flow temperature enable the burner's metrics, the boiler link and control of the water temperature, which needs both; every other signal enables more of the monitor. A home with only a relay is monitored too. The plugin only reads these entities. One entity feeds one signal only.\n\n{hint}\n\nSaving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "Pick the entity that provides each signal. None is required: flame and flow temperature enable the burner's metrics, the boiler link and control of the water temperature, which needs both; every other signal enables more of the monitor. A home with only a relay is monitored too. The plugin only reads these entities. One entity feeds one signal only.\n\n{hint}",
         "data": {
           "flame": "Flame",
           "flow": "Flow temperature",
@@ -711,7 +730,7 @@
       },
       "freshness": {
         "title": "Freshness limits",
-        "description": "An age limit per signal, in minutes: a value not reported for longer counts as stale, for the monitor and for control alike — without a fresh flame and flow, control writes nothing and hands back after five minutes. Empty (default): automatic — no limit until the source is seen repeating an unchanged value; then five times its own rhythm, 10 to 30 minutes (the weather entity 3 to 12 hours). A source that reports only changes (MQTT, ESPHome without force_update) never gets one, as a steady value is not a stale one. 0: no limit, only whether the entity is available counts. A number: that limit. On the OTGW firmware over MQTT and on EMS-ESP the plugin hears the device's own repeats on its MQTT topics, given under \"Boiler, connection and control mode\". Risk: without a limit, a source that freezes without going unavailable is not caught; a limit shorter than a source's reporting interval stops control in steady weather. Control reads the flame and the flow each by its own limit; a link that keeps dropping in and out counts as lost once it has been stale for five minutes within ten. On an OpenTherm Gateway over MQTT, the gateway dropping off shows within about 90 s (its entities turn unavailable), but a broken link inside it, between its ESP and its PIC, shows only as its repeats stopping. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "An age limit per signal, in minutes: a value not reported for longer counts as stale, for the monitor and for control alike — without a fresh flame and flow, control writes nothing and hands back after five minutes. Empty (default): automatic — no limit until the source is seen repeating an unchanged value; then five times its own rhythm, 10 to 30 minutes (the weather entity 3 to 12 hours). A source that reports only changes (MQTT, ESPHome without force_update) never gets one, as a steady value is not a stale one. 0: no limit, only whether the entity is available counts. A number: that limit. On the OTGW firmware over MQTT and on EMS-ESP the plugin hears the device's own repeats on its MQTT topics, given under \"Boiler, connection and control mode\". Risk: without a limit, a source that freezes without going unavailable is not caught; a limit shorter than a source's reporting interval stops control in steady weather. Control reads the flame and the flow each by its own limit; a link that keeps dropping in and out counts as lost once it has been stale for five minutes within ten. On an OpenTherm Gateway over MQTT, the gateway dropping off shows within about 90 s (its entities turn unavailable), but a broken link inside it, between its ESP and its PIC, shows only as its repeats stopping.",
         "data": {
           "flame": "Flame",
           "flow": "Flow temperature",
@@ -757,7 +776,7 @@
       },
       "boiler": {
         "title": "Boiler",
-        "description": "What you know about your boiler. Leave unknown values empty: the plugin then says what it cannot judge. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "What you know about your boiler. Leave unknown values empty: the plugin then says what it cannot judge. The water-pressure limits appear once a pressure sensor is mapped under “Boiler signals”; without it, limits already set are kept and judge nothing.",
         "data": {
           "boiler_min_power": "Minimum power",
           "boiler_max_power": "Maximum power",
@@ -785,7 +804,7 @@
       },
       "circuit": {
         "title": "Heating circuit {number}",
-        "description": "How this circuit's water temperature is set. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "How this circuit's water temperature is set.",
         "data": {
           "control": "Control",
           "max_flow": "Maximum flow temperature",
@@ -807,7 +826,7 @@
       },
       "zones": {
         "title": "VT zones",
-        "description": "Pick the Versatile Thermostat zones heated by this boiler. Zones not picked are ignored. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "Pick the Versatile Thermostat zones heated by this boiler. Zones not picked are ignored.",
         "data": {
           "zones": "Zones"
         },
@@ -817,7 +836,7 @@
       },
       "zone": {
         "title": "Zone {zone}",
-        "description": "How this zone is heated. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "How this zone is heated.",
         "data": {
           "circuit": "Circuit",
           "emitter": "Emitter type",
@@ -841,7 +860,7 @@
       },
       "building": {
         "title": "Building",
-        "description": "A first estimate of your house's heat loss: rough answers are refined by recorded heating days. A value you enter always wins — the data never replace it; they show a mismatch. Leave empty what you do not know. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "A first estimate of your house's heat loss: rough answers are refined by recorded heating days. A value you enter always wins — the data never replace it; they show a mismatch. Leave empty what you do not know.",
         "data": {
           "floor_area": "Heated floor area",
           "insulation": "Insulation",
@@ -863,7 +882,7 @@
       },
       "reference": {
         "title": "Reference room",
-        "description": "One room temperature and setpoint for controllers that need a single room. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "One room temperature and setpoint for controllers that need a single room.",
         "data": {
           "strategy": "Strategy",
           "zone": "Chosen zone",
@@ -877,7 +896,7 @@
       },
       "monitor": {
         "title": "Monitor",
-        "description": "Thresholds of the analysis. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "Thresholds of the analysis. The flue-gas limits appear for a condensing boiler once a flue-gas sensor is mapped under “Boiler signals”; without it, limits already set are kept and judge nothing.",
         "data": {
           "condensing_return": "Condensing return threshold",
           "short_burn_min": "Short burn",
@@ -905,7 +924,7 @@
       },
       "control": {
         "title": "Control (experimental)",
-        "description": "How the plugin controls the boiler: the flow setpoint it writes, or on and off through a relay. Until you switch control on, nothing changes: the boiler runs as it does today — under Versatile Thermostat's central boiler, a wall thermostat or its own regulation — and the plugin only watches and reports. Switched on, it takes the place of VT's central boiler (remove that first and restart Home Assistant): heating goes on and off with VT's zones at once, and where the plugin writes the water temperature it follows your curve, never below your lowest or above your highest water temperature; the comfort correction, if you enable it, adds at most 3 K above the curve. You may switch control on from the first day, even without a verdict: the monitor's verdict comes once it has enough days of data, and the control switch shows it. Choose \"No control\" to keep monitoring only. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "How the plugin controls the boiler: the flow setpoint it writes, or on and off through a relay. Until you switch control on, nothing changes: the boiler runs as it does today — under Versatile Thermostat's central boiler, a wall thermostat or its own regulation — and the plugin only watches and reports. Switched on, it takes the place of VT's central boiler (remove that first and restart Home Assistant): heating goes on and off with VT's zones at once, and where the plugin writes the water temperature it follows your curve, never below your lowest or above your highest water temperature; the comfort correction, if you enable it, adds at most 3 K above the curve. You may switch control on from the first day, even without a verdict: the monitor's verdict comes once it has enough days of data, and the control switch shows it. Choose \"No control\" to keep monitoring only.",
         "data": {
           "write_path": "Write path",
           "topology": "Gateway connection",
@@ -927,7 +946,7 @@
       },
       "control_entity": {
         "title": "Writable entity",
-        "description": "The entity that takes the flow setpoint, and how control is handed back. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "The entity that takes the flow setpoint, and how control is handed back.",
         "data": {
           "setpoint_entity": "Setpoint entity",
           "write_type": "Write type",
@@ -959,7 +978,7 @@
       },
       "control_gateway": {
         "title": "OpenTherm Gateway",
-        "description": "The gateway set up in Home Assistant's OpenTherm Gateway integration. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "The gateway set up in Home Assistant's OpenTherm Gateway integration.",
         "data": {
           "gateway_id": "Gateway ID"
         },
@@ -969,7 +988,7 @@
       },
       "control_mqtt": {
         "title": "OTGW firmware over MQTT",
-        "description": "Commands are published on the topic prefix/set/node/command, with the prefix and node name given below. Heating on/off (CH=) is kept by the gateway until it changes or the gateway restarts; the plugin sends it again with the control setpoint, every 30 s, and when the gateway returns. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "Commands are published on the topic prefix/set/node/command, with the prefix and node name given below. Heating on/off (CH=) is kept by the gateway until it changes or the gateway restarts; the plugin sends it again with the control setpoint, every 30 s, and when the gateway returns.",
         "data": {
           "mqtt_top": "Topic prefix",
           "mqtt_node": "Node name"
@@ -981,7 +1000,7 @@
       },
       "control_curve": {
         "title": "Heating curve and limits",
-        "description": "The flow temperature the house needs at each outdoor temperature, the limits no setpoint may pass, and how long heating waits for slow valves. The water is also capped by the boiler's maximum heating setpoint ({boiler_max}, boiler step) and the first circuit's maximum flow temperature ({circuit_max}, circuit step): the lowest of the three — these two and the highest water temperature below — applies. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "The flow temperature the house needs at each outdoor temperature, the limits no setpoint may pass, and how long heating waits for slow valves. The water is also capped by the boiler's maximum heating setpoint ({boiler_max}, boiler step) and the first circuit's maximum flow temperature ({circuit_max}, circuit step): the lowest of the three — these two and the highest water temperature below — applies.",
         "data": {
           "design_outdoor": "Design outdoor temperature",
           "design_flow": "Design flow temperature",
@@ -1021,7 +1040,7 @@
       },
       "control_behaviour": {
         "title": "Control behaviour",
-        "description": "The ramp, the decision interval, the \"off\" setpoint, demand thresholds and learning pauses. Heating goes on and off with Versatile Thermostat's zones, at once: nothing counted or timed holds it. Every default is the cautious one. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "The ramp, the decision interval, the \"off\" setpoint, demand thresholds and learning pauses. Heating goes on and off with Versatile Thermostat's zones, at once: nothing counted or timed holds it. Every default is the cautious one.",
         "data": {
           "ramp_k_per_min": "Setpoint ramp",
           "decision_interval_min": "Decision interval",
@@ -1047,7 +1066,7 @@
       },
       "control_alarms": {
         "title": "Alarm reactions",
-        "description": "What control does when the boiler ignores a value the plugin writes. Other alarms only inform; the plugin stops heating only while the boiler itself reports a fault that stops it. Another controller writing to the boiler always makes the plugin step aside; it never fights it. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "What control does when the boiler ignores a value the plugin writes. Other alarms only inform; the plugin stops heating only while the boiler itself reports a fault that stops it. Another controller writing to the boiler always makes the plugin step aside; it never fights it.",
         "data": {
           "write_ignored": "Boiler ignores a value",
           "return_after_outside_change": "Return by itself after another controller",
@@ -1061,7 +1080,7 @@
       },
       "control_return_confirm": {
         "title": "Confirm the return by itself",
-        "description": "The plugin will take the boiler back by itself an hour after another controller last wrote to it. If that controller is still there, both will control the boiler in turns. Tick to confirm. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "The plugin will take the boiler back by itself an hour after another controller last wrote to it. If that controller is still there, both will control the boiler in turns. Tick to confirm.",
         "data": {
           "understood": "I understand"
         },
@@ -1076,12 +1095,12 @@
           "save_anyway": "Save anyway"
         },
         "data_description": {
-          "save_anyway": "Tick to save the change all the same. Left unticked (default), nothing is saved and the menu shows again."
+          "save_anyway": "Tick to save the change all the same. Left unticked (default), nothing is saved and the menu shows again with your changes: change them, or close the window to discard them."
         }
       },
       "control_relay": {
         "title": "Relay",
-        "description": "How the plugin switches an on/off boiler, as Versatile Thermostat's central boiler did. Recommended: the relay contact on the boiler's room-thermostat terminals — a volt-free contact; check the manual or ask an installer, as these terminals may carry mains voltage — never in the boiler's power supply, which would also cut its pump overrun and its own frost protection. Keep the old thermostat wired in parallel on the boiler's terminals (not on the relay's input), set low: it heats if Home Assistant fails — but valves Versatile Thermostat drives stay where they were while Home Assistant is down, so its heat may not reach every room. Set the relay to start off after a power cut. Set the relay's own button or input to \"detached\", so pressing it does not switch the boiler. Optionally give the relay its own switch-off timer, renewed by every \"on\"; set it only once the plugin's control starts. Test all this once in summer. The boiler sets its own water temperature: the curve and water limits do not apply, and with underfloor heating on a loop without a mixing valve its own setting must suit the floor. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "How the plugin switches an on/off boiler, as Versatile Thermostat's central boiler did. Recommended: the relay contact on the boiler's room-thermostat terminals — a volt-free contact; check the manual or ask an installer, as these terminals may carry mains voltage — never in the boiler's power supply, which would also cut its pump overrun and its own frost protection. Keep the old thermostat wired in parallel on the boiler's terminals (not on the relay's input), set low: it heats if Home Assistant fails — but valves Versatile Thermostat drives stay where they were while Home Assistant is down, so its heat may not reach every room. Set the relay to start off after a power cut. Set the relay's own button or input to \"detached\", so pressing it does not switch the boiler. Optionally give the relay its own switch-off timer, renewed by every \"on\"; set it only once the plugin's control starts. Test all this once in summer. The boiler sets its own water temperature: the curve and water limits do not apply, and with underfloor heating on a loop without a mixing valve its own setting must suit the floor.",
         "data": {
           "relay_entity": "Relay",
           "relay_is_separate_contact": "This relay or thermostat entity is not a setting stored in the boiler's memory",
@@ -1109,7 +1128,7 @@
       },
       "control_relay_from_vt": {
         "title": "Relay — moving over from Versatile Thermostat",
-        "description": "How the plugin switches an on/off boiler, as Versatile Thermostat's central boiler did. Recommended: the relay contact on the boiler's room-thermostat terminals — a volt-free contact; check the manual or ask an installer, as these terminals may carry mains voltage — never in the boiler's power supply, which would also cut its pump overrun and its own frost protection. Keep the old thermostat wired in parallel on the boiler's terminals (not on the relay's input), set low: it heats if Home Assistant fails — but valves Versatile Thermostat drives stay where they were while Home Assistant is down, so its heat may not reach every room. Set the relay to start off after a power cut. Set the relay's own button or input to \"detached\", so pressing it does not switch the boiler. Optionally give the relay its own switch-off timer, renewed by every \"on\"; set it only once the plugin's control starts. Test all this once in summer. The boiler sets its own water temperature: the curve and water limits do not apply, and with underfloor heating on a loop without a mixing valve its own setting must suit the floor. Versatile Thermostat's central boiler drives this boiler now. Its settings are filled in where the plugin can use them — the relay from its commands (a switch turned on and off, or a boiler thermostat set to heat and off; otherwise pick the relay), the start delay, the repeat interval, and the thresholds as VT really used them (VT rounds them down to whole numbers in its power unit; VT counts devices and the plugin counts rooms, so the count is filled in only where every room has one device). Check them and save. Then: 1. wait for the monitoring period; 2. in VT's central configuration untick \"Use a central boiler\" (VT then deletes its commands); 3. restart Home Assistant — until then VT may still switch the relay, so control waits; 4. untick \"Used by central boiler\" in rooms where Auto-TPI learns (the plugin's repair issue names them); 5. move automations and dashboards off VT's boiler sensor and event; 6. switch control on — and only now set the relay's own timer. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "How the plugin switches an on/off boiler, as Versatile Thermostat's central boiler did. Recommended: the relay contact on the boiler's room-thermostat terminals — a volt-free contact; check the manual or ask an installer, as these terminals may carry mains voltage — never in the boiler's power supply, which would also cut its pump overrun and its own frost protection. Keep the old thermostat wired in parallel on the boiler's terminals (not on the relay's input), set low: it heats if Home Assistant fails — but valves Versatile Thermostat drives stay where they were while Home Assistant is down, so its heat may not reach every room. Set the relay to start off after a power cut. Set the relay's own button or input to \"detached\", so pressing it does not switch the boiler. Optionally give the relay its own switch-off timer, renewed by every \"on\"; set it only once the plugin's control starts. Test all this once in summer. The boiler sets its own water temperature: the curve and water limits do not apply, and with underfloor heating on a loop without a mixing valve its own setting must suit the floor. Versatile Thermostat's central boiler drives this boiler now. Its settings are filled in where the plugin can use them — the relay from its commands (a switch turned on and off, or a boiler thermostat set to heat and off; otherwise pick the relay), the start delay, the repeat interval, and the thresholds as VT really used them (VT rounds them down to whole numbers in its power unit; VT counts devices and the plugin counts rooms, so the count is filled in only where every room has one device). Check them and save. Then: 1. wait for the monitoring period; 2. in VT's central configuration untick \"Use a central boiler\" (VT then deletes its commands); 3. restart Home Assistant — until then VT may still switch the relay, so control waits; 4. untick \"Used by central boiler\" in rooms where Auto-TPI learns (the plugin's repair issue names them); 5. move automations and dashboards off VT's boiler sensor and event; 6. switch control on — and only now set the relay's own timer.",
         "data": {
           "relay_entity": "Relay",
           "relay_is_separate_contact": "This relay or thermostat entity is not a setting stored in the boiler's memory",
@@ -1137,7 +1156,7 @@
       },
       "control_relay_behaviour": {
         "title": "Relay: when it switches",
-        "description": "The relay switches the boiler on and off with Versatile Thermostat's zones and frost protection, at once — after VT's activation delay for a start; nothing counted or timed holds it, as in VT's own central boiler. Every default is the cautious one. Saving reloads the integration: while control holds the boiler, it is handed back and taken again (a relay goes to its rest state and back).",
+        "description": "The relay switches the boiler on and off with Versatile Thermostat's zones and frost protection, at once — after VT's activation delay for a start; nothing counted or timed holds it, as in VT's own central boiler. Every default is the cautious one.",
         "data": {
           "activation_delay_s": "Activation delay",
           "count_threshold": "Zones calling",
@@ -1441,6 +1460,15 @@
       "options": {
         "auto": "Auto (the warmest room)",
         "manual": "Manual (the value entered)"
+      }
+    },
+    "menu_state": {
+      "options": {
+        "left": "Still to confirm:",
+        "fix": "To fix before creating:",
+        "ready": "Every section is confirmed: choose “Create”.",
+        "changed": "Unsaved changes:",
+        "unchanged": "No unsaved changes."
       }
     }
   },

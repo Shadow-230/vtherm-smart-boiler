@@ -2528,6 +2528,7 @@ async def test_an_entry_that_is_not_running_is_guarded_by_its_store(
     flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": other})
     assert flow["errors"] == {"confirmed_entity": "hand_back_pending"}
     flow = await _first_control_step(rig, {"write_path": "none"})
+    flow = await _saved(rig, flow)
     assert flow["type"] == "create_entry"
 
 
@@ -2565,6 +2566,7 @@ async def test_choosing_no_control_while_a_hand_back_is_owed_keeps_handing_back(
     flow = await rig.hass.config_entries.options.async_configure(
         flow["flow_id"], {"write_path": "none"}
     )
+    flow = await _saved(rig, flow)
     assert flow["type"] == "create_entry"
     await rig.hass.async_block_till_done()
     assert "control" not in rig.entry.options
@@ -5236,6 +5238,7 @@ async def test_options_saved_in_setup_error_reload_the_entry(
         flow["flow_id"], {"next_step_id": "freshness"}
     )
     flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], {"flow": 30})
+    flow = await _saved(rig, flow)
     assert flow["type"] == "create_entry"
     await rig.hass.async_block_till_done()
     assert entry.state is ConfigEntryState.LOADED
@@ -5901,10 +5904,19 @@ CURVE_ANSWER = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_
 async def _through_alarms(rig: Rig, flow: Any) -> Any:
     """Y1 (decision 7): where a thermostat or the boiler's own control takes over, the alarm
     step — the reaction to an ignored write — follows the curve at every level; its default
-    answer goes on to the save."""
+    answer ends the control section, and the options are saved."""
     if flow.get("step_id") == "control_alarms":
         flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], {})
-    return flow
+    return await _saved(rig, flow)
+
+
+async def _saved(rig: Rig, flow: Any) -> Any:
+    """I7: a section ends at the menu; "Save and finish" saves."""
+    if flow.get("type") != "menu":
+        return flow
+    return await rig.hass.config_entries.options.async_configure(
+        flow["flow_id"], {"next_step_id": "save"}
+    )
 
 
 def unit_of(rig: Rig) -> Any:
@@ -6317,6 +6329,7 @@ async def test_the_gateways_read_back_cannot_change_at_the_save(rig: Rig) -> Non
     flow = await rig.hass.config_entries.options.async_configure(
         flow["flow_id"], {"write_path": "none"}
     )
+    flow = await _saved(rig, flow)
     assert flow["type"] == "create_entry"
     await rig.hass.async_block_till_done()
     assert "control" not in rig.entry.options
@@ -7572,7 +7585,7 @@ async def test_off_near_an_own_control_hand_back_value_is_refused(
     assert flow["errors"] == {"off_setpoint": "off_setpoint_near_hand_back_value"}
     flow = await configure(flow["flow_id"], {"off_setpoint": 5})
     assert flow["step_id"] == "control_alarms"
-    flow = await configure(flow["flow_id"], {})
+    flow = await _through_alarms(rig, flow)
     assert flow["type"] == "create_entry"
     await rig.hass.async_block_till_done()  # the entry reloads with the options
 
