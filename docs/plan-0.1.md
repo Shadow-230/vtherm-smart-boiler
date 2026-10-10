@@ -1,18 +1,19 @@
 # Plan 0.1 — Monitor (read-only)
 
 Goal: the read-only monitor that any user configures by picking entities — the first part of
-0.2, not released on its own. Testing in the test HA and on the author's installation happens
-with 0.2 (`docs/plan-0.2.md`). Scope: `SCOPE.md`; overview: `PLAN.md`.
+0.2. It is published with 0.2 (the user's decision, 2026-09-24); the test HA comes with 0.2.
+Scope: `SCOPE.md`; overview: `PLAN.md`.
 
 ## Starting point (2026-09-24)
 
 - The development machine is a Debian 12 LXC on Proxmox with system Python 3.11 only; no `uv`,
   Docker or Podman. Claude does not use `sudo`.
-- No code, no git. Documents: `CLAUDE.md`, `SCOPE.md`, `PLAN.md`, this plan, `docs/plan-0.2.md`,
-  `research/`.
-- Decided on 2026-09-24: domain `vtherm_smart_boiler`; consent for A1–A5 and A7; Claude's own
-  code, test and tool files may be changed without asking; 0.1 and 0.2 are built in one go, in
-  order, and 0.2 is the first release.
+- No code; local git since 2026-09-24. Documents: `CLAUDE.md`, `SCOPE.md`, `PLAN.md`, this plan,
+  `docs/plan-0.2.md`, `research/`.
+- Decided on 2026-09-24: domain `vtherm_smart_boiler`; consent for every step of this plan
+  (after A1–A5 and A7, the user accepted all steps needed to build 0.1); Claude's own code, test
+  and tool files may be changed without asking; 0.1 and 0.2 are built in one go, in order, and
+  0.2 is the first release.
 
 ## Rules that shape this step
 
@@ -22,10 +23,12 @@ with 0.2 (`docs/plan-0.2.md`). Scope: `SCOPE.md`; overview: `PLAN.md`.
 - Everything inside the project: `.tools/`, `.venv/`, `.tmp/`; commands run as
   `scripts/env.sh <command>`; no `sudo`.
 - Claude connects only to the test HA.
-- No git until the user decides. 🔒 marks steps that need the user's consent or action; ✓ marks
-  consent already given.
-- Working mode: each phase ends with all tests and `ruff` passing and a short summary for the
-  user; work stops at every 🔒 step.
+- Local git: a commit after every completed step; no remote without the user's consent.
+- 🔒 marks steps that need the user's consent or action; ✓ marks consent already given; ✅
+  marks a finished step.
+- Working mode: phases run in order without waiting; each phase ends with all tests and `ruff`
+  passing and a short summary for the user; work stops at every 🔒 step and at the review stop
+  after phase B.
 
 ## Layout
 
@@ -52,13 +55,13 @@ the project.
 
 | Step | Work | Done when |
 |---|---|---|
-| A4 ✓ | `scripts/env.sh <command>`: sets `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, `UV_PYTHON_BIN_DIR=.tools/bin`, `PIP_CACHE_DIR`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME` (all under `.tools/`), `TMPDIR=.tmp`, `PATH`, then runs the command | written before any install |
-| A1 ✓ | through `scripts/env.sh`: `.tools/bootstrap` venv from system Python, `uv` installed into it | `uv --version` |
-| A2 ✓ | through `scripts/env.sh`: Python 3.14 into `.tools/python/` without shims outside the project (`--no-bin` or `UV_PYTHON_BIN_DIR` — check against the installed uv version first) | Python ≥ 3.14.2; `uv cache dir`, `uv python dir` and `uv python dir --bin` all point inside the project |
-| A5 ✓ | VT 10.4.0 and SmartPI 0.4.0 sources from their release tags in `vendor/` (git-ignored); newer VT features (e.g. `get_feature_manager` from 10.5) are tested with fakes | loadable in tests and the test HA |
-| A3 ✓ | `.venv` with `pytest-homeassistant-custom-component==0.13.366` (pins Home Assistant 2026.9.3), `vtherm-api==0.5.0`, `ruff`, plus the requirements in the VT and SmartPI manifests from `vendor/` (e.g. `numpy`, `scipy` for VT), at the versions those manifests allow; pins change only deliberately | imports succeed; VT loads in a test |
-| A6 | system packages for the test dependencies, only if one fails to build — installed by the user | — |
-| A7 ✓ | layout, `pyproject.toml` (pytest `--basetemp=.tmp/pytest`, ruff `py314`) | `pytest -q` and `ruff check .` pass on an empty suite |
+| A4 ✓ ✅ | `scripts/env.sh <command>`: sets `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, `UV_PYTHON_BIN_DIR=.tools/bin`, `PIP_CACHE_DIR`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME` (all under `.tools/`), `TMPDIR=.tmp`, `PATH`, then runs the command | written before any install |
+| A1 ✓ ✅ | through `scripts/env.sh`: `.tools/bootstrap` venv from system Python, `uv` installed into it. Done without a venv: the system Python has no `ensurepip` or `pip`, so the `uv` wheel from PyPI (0.12.18) was unpacked into `.tools/bootstrap/bin/` after its SHA-256 matched PyPI | `uv --version` |
+| A2 ✓ ✅ | through `scripts/env.sh`: Python 3.14 into `.tools/python/` without shims outside the project (`--no-bin` or `UV_PYTHON_BIN_DIR` — check against the installed uv version first). Done: Python 3.14.7 with `--no-bin`, `UV_PYTHON_BIN_DIR` kept as a safety net | Python ≥ 3.14.2; `uv cache dir`, `uv python dir` and `uv python dir --bin` all point inside the project |
+| A5 ✓ ✅ | VT 10.4.0 and SmartPI 0.4.0 sources from their release tags in `vendor/` (git-ignored); newer VT features (e.g. `get_feature_manager` from 10.5) are tested with fakes. Done: tag archives streamed from GitHub (no archive kept), commits checked (VT `78090166e88a`, SmartPI `51db763bb0db`), images left out; `vendor/custom_components/` links the two integrations, so only `vendor/` joins `sys.path` | loadable in tests and the test HA |
+| A3 ✓ ✅ | `.venv` with `pytest-homeassistant-custom-component==0.13.366` (pins Home Assistant 2026.9.3), `vtherm-api==0.5.0`, `ruff`, plus the requirements in the VT and SmartPI manifests from `vendor/` (e.g. `numpy`, `scipy` for VT), at the versions those manifests allow, constrained by Home Assistant's `package_constraints.txt` so the versions match a real Home Assistant (to verify: the file ships in the `homeassistant` package); pins change only deliberately. Done: the file ships in the package; `numpy` 2.3.2 (as pinned by Home Assistant), `scipy` 1.18.1, `ruff` 0.16.8; pins recorded in `pyproject.toml` (`test` group) | imports succeed; VT loads in a test |
+| A6 🔒 ✅ | system packages for the test dependencies, only if one fails to build — installed by the user. Not needed: every package installed from a wheel | — |
+| A7 ✓ ✅ | layout, `pyproject.toml` (pytest `--basetemp=.tmp/pytest`, ruff `py314`). Done: `tests/conftest.py` imports `custom_components` as a namespace package before Home Assistant's loader would take the one in its test configuration directory | `pytest -q` and `ruff check .` pass on an empty suite |
 
 ## Phase B — core (test first)
 
@@ -68,31 +71,35 @@ so `core` can be imported on its own; `core` tests import it directly.
 
 | Step | Work |
 |---|---|
-| B1 | data format: boiler state (flame, flow, return, modulation, setpoint, DHW, pressure, flue gas), zone state (on_percent, valve, temperature, target, active, power), weather |
-| B2 | installation model (boiler → circuits of four control types → zones); parameters with source and confidence; declared-versus-measured findings |
-| B3 | building load estimate: coarse answers (insulation, thermal mass) or an entered design heat load or loss coefficient; refined from measured data |
-| B4 | burn-cycle detection; DHW from its signal, inference from a shared return with a confidence |
-| B5 | metrics: starts per hour, burn times, condensing share (return threshold as a parameter, default 55 °C), degree-days, gas per degree-day from a mapped gas meter, else estimated from modulation when consumption data exist; binned by outdoor temperature |
-| B6 | emitter power factor (EN 442 exponent by emitter type — defaults: radiator 1.3, underfloor 1.1, convector 1.4, advanced override), heating zones only, last value held, unavailable with a reason |
-| B7 | hot water available per zone: no while DHW is active, while the flow has fallen near room temperature, or while the flow signal is stale |
-| B8 | reference room: strategies, selection hysteresis, explicit "no active zone" and "no valid measurement" |
-| B9 | critical zone per circuit |
-| B10 | signal check: which optional signals are present and fresh; outdoor sensor plausibility against the weather entity |
-| B11 | foreign heat from user-mapped switches or sensors, per zone |
-| B12 | verdict — worth it / not worth it / not enough data (minimum 7 days), always with reasons; compares the building load with the boiler's minimum power |
-| B13 | alarms and early warning (flue gas, ignitions, pressure, hysteresis drift), information only |
-| B14 | report explaining changes (weather, DHW, settings) |
-| B15 | forecast snapshot model (FC0) |
+| B1 ✅ | data format: boiler state (flame, flow, return, modulation, setpoint, DHW, pressure, flue gas), zone state (on_percent, valve, temperature, target, active, power), weather |
+| B2 ✅ | installation model (boiler → circuits of four control types → zones); parameters with source and confidence; declared-versus-measured findings |
+| B3 ✅ | building load estimate: coarse answers (insulation, thermal mass) or an entered design heat load or loss coefficient; refined from measured data |
+| B4 ✅ | burn-cycle detection; DHW from its signal, inference from a shared return with a confidence (0.2.1: inference from a shared return removed, W2) |
+| B5 ✅ | metrics: starts per hour, burn times, condensing share (return threshold as a parameter, default 55 °C), degree-days, gas per degree-day from a mapped gas meter, else estimated from modulation when consumption data exist; binned by outdoor temperature |
+| B6 ✅ | emitter power factor (EN 442 exponent by emitter type — defaults: radiator 1.3, underfloor 1.1, convector 1.4, advanced override), heating zones only, last value held, unavailable with a reason |
+| B7 ✅ | hot water available per zone: no while DHW is active, while the flow has fallen near room temperature, or while the flow signal is stale (0.2.1: unknown, not "no", while the flow is unknown or stale, W5) |
+| B8 ✅ | reference room: strategies, selection hysteresis, explicit "no active zone" and "no valid measurement" |
+| B9 ✅ | critical zone per circuit |
+| B10 ✅ | signal check: which optional signals are present and fresh; outdoor sensor plausibility against the weather entity |
+| B11 ✅ | foreign heat from user-mapped switches or sensors, per zone |
+| B12 ✅ | verdict — worth it / not worth it / not enough data (minimum 7 days), always with reasons; compares the building load with the boiler's minimum power |
+| B13 ✅ | alarms and early warning (flue gas, ignitions, pressure, hysteresis drift), information only |
+| B14 ✅ | report explaining changes (weather, DHW, settings) |
+| B15 ✅ | forecast snapshot model (FC0) |
 
 Done when: every law has unit tests, including missing and stale data.
+
+**Review stop 🔒:** the user reviews the core laws and the model before phase C starts.
+Covered by the consent to every 0.1 step (2026-09-24): work continues without waiting, and the
+core is reviewed together with the rest of 0.1.
 
 ## Phase C — simulator and test harness
 
 | Step | Work |
 |---|---|
-| C1 | `sim/`: boiler (minimum and maximum power, hysteresis, water volume), house as one mass, one circuit, zones; generic profiles per boiler class and circuit type |
-| C2 | `tools/`: importer for a copy of an HA database (read-only) with a user-written entity mapping kept in `data/` |
-| C3 | integration-test harness: `enable_custom_integrations`, fake boiler entities, VT zones (from `vendor/` or fakes), time control |
+| C1 ✅ | `sim/`: boiler (minimum and maximum power, hysteresis, water volume), house as one mass, one circuit, zones; generic profiles per boiler class and circuit type. Done, with `core/history.py` and `core/monitor.py`: the one history container and the monitor pipeline (burns, metrics, daily points, verdict) that the simulator, the importer and the integration share |
+| C2 ✅ | `tools/`: importer for a copy of an HA database (read-only) with a user-written entity mapping kept in `data/`. Done: `scripts/env.sh python -m tools.import_history --db … --mapping data/mapping.toml` (template: `tools/mapping.example.toml`); the database is opened `mode=ro&immutable=1`; VT zones read from the top-level climate attributes the recorder keeps |
+| C3 ✅ | integration-test harness: `enable_custom_integrations`, fake boiler entities, VT zones (from `vendor/` or fakes), time control. Done: `tests/integration/harness.py` — fake boiler states with units, fake VT zones registered under VT's platform, canned `weather.get_forecasts` recording its calls, replay of a simulated history with a frozen clock; VT itself loads from `vendor/` |
 
 Done when: simulator output and an imported history pass through the core and give sensible
 metrics. The test HA (`devenv/`, test LXC) is built with 0.2 (`docs/plan-0.2.md`, phase J).
@@ -101,23 +108,23 @@ metrics. The test HA (`devenv/`, test LXC) is built with 0.2 (`docs/plan-0.2.md`
 
 | Step | Work |
 |---|---|
-| D1 | `manifest.json`: `vtherm-api>=0.4.0`, config flow, local; newer VT features detected at runtime |
-| D2 | config flow, simple and advanced: boiler class and power, optional gas consumption at minimum and maximum power, entity fields per signal (required: flame, flow temperature), circuits, VT zones per circuit with emitter type and size, foreign-heat switches or sensors per zone, building (coarse answers or heat loss), weather entity, reference-room strategy; options flow; every option with a cautious default and a description of what it does and what it risks |
-| D3 | transport from mapped entities: freshness per signal, capabilities from filled fields |
-| D4 | `vtherm_link.py`: VT zones, `central_mode`, device power; capability detection |
-| D5 | coordinator: state events plus a 30 s tick; bounded rolling history in HA storage |
-| D6 | entities: boiler metrics, connection, signal check, per-zone hot water available and emitter power factor, critical zone, reference room, verdict, alarms; advanced entities hidden by default |
-| D7 | FC0: `weather.get_forecasts` (hourly and daily) every 30 min, 90-day retention |
-| D8 | diagnostics download, redacted |
-| D9 | translations EN and PL, key-parity test |
-| D10 | "no writes" test |
+| D1 ✅ | `manifest.json`: `vtherm-api>=0.4.0`, config flow, local; newer VT features detected at runtime (raised to `vtherm-api>=0.5.0` in 0.2.1, R1: the feature-manager contract was checked on 0.5.0) |
+| D2 ✅ | config flow, simple and advanced: boiler class and power, optional gas consumption at minimum and maximum power, entity fields per signal (required: flame, flow temperature — optional since 0.2.2, `docs/plan-0.2.2.md` X8), circuits, VT zones per circuit with emitter type and size, foreign-heat switches or sensors per zone, building (coarse answers or heat loss), weather entity, reference-room strategy; options flow; every option with a cautious default and a description of what it does and what it risks |
+| D3 ✅ | transport from mapped entities: freshness per signal, capabilities from filled fields |
+| D4 ✅ | `vtherm_link.py`: VT zones, `central_mode`, device power; capability detection |
+| D5 ✅ | coordinator: state events plus a 30 s tick; bounded rolling history in HA storage. Done differently: the rolling history (8 days) is rebuilt from the recorder at start, which keeps these states anyway, and seeded from current states; HA storage keeps only the monitoring start, held emitter factors and measured parameters. Without the recorder the history starts empty after a restart. The analysis (`core/analysis.py`) runs every 5 min on a copy, off the event loop (0.2: the store also keeps the control state; 0.2.2 V1: in its own store, written at once; a store of its own also marks the plugin alive every 10 min, and forecasts keep theirs, D7) |
+| D6 ✅ | entities: boiler metrics, connection, signal check, per-zone hot water available and emitter power factor, critical zone, reference room, verdict, alarms; advanced entities hidden by default. Entities for a feature exist only when its signals are mapped |
+| D7 ✅ | FC0: `weather.get_forecasts` (hourly and daily) every 30 min, 90-day retention. Stored in weekly partitions, one storage file each |
+| D8 ✅ | diagnostics download, redacted |
+| D9 ✅ | translations EN and PL, key-parity test |
+| D10 ✅ | "no writes" test |
 
 Config-flow signal fields — entity pickers filtered by domain and device class, as in VT:
 
 | Signal | Required | Entity |
 |---|---|---|
-| flame | yes | `binary_sensor` |
-| flow temperature | yes | `sensor`, temperature |
+| flame | yes (optional since 0.2.2, X8) | `binary_sensor` |
+| flow temperature | yes (optional since 0.2.2, X8) | `sensor`, temperature |
 | return temperature | no | `sensor`, temperature |
 | modulation | no | `sensor`, % |
 | CH setpoint | no | `sensor` or `number`, temperature |
@@ -138,11 +145,23 @@ The VT feature manager is registered in 0.2, not here: its code runs inside VT's
 Done when: integration tests pass for setup, unload, reload, missing entities, stale data and
 replayed history.
 
-## Done for 0.1
+## Done for 0.1 ✅
 
-All unit and integration tests and `ruff` pass. 0.1 is not released on its own: work continues
-with `docs/plan-0.2.md`, and the release steps are there (phase K).
+All unit and integration tests and `ruff` pass. 0.1 is published with 0.2
+(`docs/plan-0.2.md`, phase K); work continues with `docs/plan-0.2.md`.
+
+Reached 2026-09-24: 318 tests (core, simulator, importer, integration in-process), `ruff check`
+and `ruff format --check` clean.
 
 ## Open for 0.1
 
 None at the start. New questions go to the user; answers are recorded here.
+
+For the user (2026-09-24):
+
+- Review of the core laws and the model: the review stop after phase B was covered by the
+  consent to every 0.1 step; the review happens when 0.2 is ready (the user's decision,
+  2026-09-24; `docs/plan-0.2.md`, K4).
+- History after a restart comes from the recorder (D5); without the recorder it starts empty.
+- `manifest.json` has no `codeowners`, `documentation` or `issue_tracker` yet; they follow the
+  repository (`docs/plan-0.2.md`, K1 and K5).

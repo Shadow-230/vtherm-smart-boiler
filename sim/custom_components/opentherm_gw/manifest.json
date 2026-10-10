@@ -1,0 +1,11 @@
+{
+  "domain": "opentherm_gw",
+  "name": "OpenTherm Gateway (simulator stub, test only)",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["boiler_sim"],
+  "integration_type": "hub",
+  "iot_class": "calculated",
+  "requirements": [],
+  "version": "0.0.1"
+}

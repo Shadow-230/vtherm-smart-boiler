@@ -1,0 +1,267 @@
+# Tests, lint, formatting and types on every push and pull request (docs/plan-0.2.md, K2;
+# docs/plan-0.2.1.md, R3), on the Home Assistant version tested and on the declared minimum
+# (hacs.json). vendor/ (VT 10.4.0 and SmartPI 0.4.0) is not in the repository: CI fetches both
+# on GitHub's servers by the full commit their release tags pointed at, so a tag moved later
+# changes nothing, and so runs the real-VT tests on every change (docs/plan-0.2.2.md, decision
+# 14; PB-86; nothing is downloaded on the developer's machine). Coverage counts branches, and
+# every module keeps its own floor (P-35). The canaries (newest vtherm_api; newest VT and
+# SmartPI releases) are early warnings of a change upstream, not of ours: they run weekly, on
+# demand and on pull requests into qas and main, not on every pull request (PB-85). A pull
+# request is checked once, up to date with its base (the rulesets require it), so the merge into
+# dev is not checked again; pushes to qas and main are, as the last word before tests on a real
+# Home Assistant and before a release; the weekly run checks dev. The tests run on every CPU
+# (pytest-xdist). Actions are pinned to full commits (PB-86); the comment names the version.
+name: Tests
+
+on:
+  push:
+    branches: [qas, main]
+  pull_request:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Dependency groups in pyproject.toml; the labels are the names the rulesets require.
+        include:
+          - group: ha
+            label: "Tests – supported Home Assistant version"
+          - group: ha-minimum
+            label: "Tests – oldest supported Home Assistant version"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # A pull request that changes documentation only (Markdown, documentation/, docs/, LICENSE —
+      # not CLAUDE.md, nothing under .github/) passes without the tests: no test reads those
+      # files. Anything else, and every push, schedule and manual run, runs everything.
+      - name: Documentation only?
+        id: docs
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          only=false
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            files="$(git diff --name-only "$BASE" HEAD)"
+            echo "$files"
+            if [ -n "$files" ] && ! printf '%s\n' "$files" \
+                | grep -v -E '^(documentation/.*|docs/.*|LICENSE|[^/]*\.md|[^.][^/]*/.*\.md)$' \
+                | grep -q . && ! printf '%s\n' "$files" | grep -q -E '^(CLAUDE\.md|\.github/)'; then
+              only=true
+              echo "Documentation only: tests skipped." | tee -a "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          echo "only=$only" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: steps.docs.outputs.only != 'true'
+        with:
+          python-version: "3.14"
+      - name: Install the pinned test environment under Home Assistant's constraints
+        if: steps.docs.outputs.only != 'true'
+        env:
+          GROUP: ${{ matrix.group }}
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --group "$GROUP"
+          constraints="$(python -c 'import homeassistant, pathlib; print(pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt")')"
+          python -m pip install --group test --group "$GROUP" -c "$constraints"
+      - name: The minimum is the version hacs.json declares
+        if: steps.docs.outputs.only != 'true' && matrix.group == 'ha-minimum'
+        run: |
+          python - <<'PY'
+          import json
+          from homeassistant.const import __version__
+          minimum = json.load(open("hacs.json", encoding="utf-8"))["homeassistant"]
+          assert __version__ == minimum, (__version__, minimum)
+          PY
+      # Decision 14 (P-119): the commits are those the 10.4.0 and 0.4.0 tags pointed at when
+      # docs/plan-0.1.md A5 checked them, fetched by their full hash (PB-86); an archive that
+      # cannot be reached fails the job rather than skipping tests.
+      - name: VT 10.4.0 and SmartPI 0.4.0 by their release commits
+        if: steps.docs.outputs.only != 'true'
+        run: |
+          set -euo pipefail
+          fetch() {  # repository, the full commit, the folder under vendor/
+            local repo="$1" commit="$2" folder="$3"
+            mkdir -p "vendor/$folder"
+            curl -fsSL "https://github.com/$repo/archive/$commit.tar.gz" \
+              | tar -xz -C "vendor/$folder" --strip-components=1
+          }
+          mkdir -p vendor/custom_components
+          fetch jmcollin78/versatile_thermostat 78090166e88a77dfbae619eb8eb842bdd1d7259e \
+            versatile_thermostat-10.4.0
+          fetch KipK/vtherm_smartpi 51db763bb0db7b74747613fe9003b4c22e696b76 vtherm_smartpi-0.4.0
+          ln -s ../versatile_thermostat-10.4.0/custom_components/versatile_thermostat \
+            vendor/custom_components/versatile_thermostat
+          ln -s ../vtherm_smartpi-0.4.0/custom_components/vtherm_smartpi \
+            vendor/custom_components/vtherm_smartpi
+          test -f vendor/custom_components/versatile_thermostat/manifest.json
+          test -f vendor/custom_components/vtherm_smartpi/manifest.json
+      - name: The Home Assistant version tested
+        if: steps.docs.outputs.only != 'true'
+        run: python -c 'from homeassistant.const import __version__; print(f"Home Assistant {__version__}")' | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Ruff
+        if: steps.docs.outputs.only != 'true'
+        run: ruff check .
+      - name: Formatting
+        if: steps.docs.outputs.only != 'true'
+        run: ruff format --check .
+      - name: Types
+        if: steps.docs.outputs.only != 'true'
+        run: mypy
+      # Two runs (P-120): the core tests on their own, without Home Assistant's pytest plugin
+      # (layer 1 of PLAN.md's "Test environment"; sockets stay closed, as that plugin keeps them),
+      # then every other test with it; coverage adds up over both, and its floor is checked once,
+      # at the end of the second run.
+      - name: Core tests, without Home Assistant
+        if: steps.docs.outputs.only != 'true'
+        run: |
+          mkdir -p .tmp
+          python -m pytest -q -n auto -p no:homeassistant --disable-socket --allow-unix-socket --cov --cov-branch --cov-report= --cov-fail-under=0 tests/core
+      - name: The other tests, with coverage of both runs
+        if: steps.docs.outputs.only != 'true'
+        run: python -m pytest -q -n auto --cov --cov-branch --cov-append --cov-report=term --ignore=tests/core
+      # P-35: every module at least 95 % with branches, the config and options flows 100 %.
+      - name: Coverage of each module
+        if: steps.docs.outputs.only != 'true'
+        run: |
+          python -m coverage json -o .tmp/coverage-report.json
+          python - <<'PY'
+          import json, sys
+          files = json.load(open(".tmp/coverage-report.json", encoding="utf-8"))["files"]
+          package = "custom_components/vtherm_smart_boiler/"
+          floors = {package + "config_flow.py": 100.0}
+          low = [
+              f"{name}: {data['summary']['percent_covered']:.2f} % < {floors.get(name, 95.0):.0f} %"
+              for name, data in sorted(files.items())
+              if name.startswith(package)
+              and data["summary"]["percent_covered"] < floors.get(name, 95.0)
+          ]
+          print("\n".join(low) or "every module at its floor")
+          sys.exit(1 if low else 0)
+          PY
+
+  # P-109: the newest vtherm_api, beside the pinned one — a failure here is a finding: VT's API
+  # changed under the plugin.
+  latest-vtherm-api:
+    name: Early warning – newest vtherm_api
+    if: >-
+      github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && (github.base_ref == 'qas' || github.base_ref == 'main'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install the pinned test environment, then the newest vtherm_api
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --group ha
+          constraints="$(python -c 'import homeassistant, pathlib; print(pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt")')"
+          python -m pip install --group test --group ha -c "$constraints"
+          python -m pip install -U vtherm-api
+          python -m pip show vtherm-api | head -2
+      - name: VT 10.4.0 and SmartPI 0.4.0 by their release commits
+        run: |
+          set -euo pipefail
+          fetch() {  # repository, the full commit, the folder under vendor/
+            local repo="$1" commit="$2" folder="$3"
+            mkdir -p "vendor/$folder"
+            curl -fsSL "https://github.com/$repo/archive/$commit.tar.gz" \
+              | tar -xz -C "vendor/$folder" --strip-components=1
+          }
+          mkdir -p vendor/custom_components
+          fetch jmcollin78/versatile_thermostat 78090166e88a77dfbae619eb8eb842bdd1d7259e \
+            versatile_thermostat-10.4.0
+          fetch KipK/vtherm_smartpi 51db763bb0db7b74747613fe9003b4c22e696b76 vtherm_smartpi-0.4.0
+          ln -s ../versatile_thermostat-10.4.0/custom_components/versatile_thermostat \
+            vendor/custom_components/versatile_thermostat
+          ln -s ../vtherm_smartpi-0.4.0/custom_components/vtherm_smartpi \
+            vendor/custom_components/vtherm_smartpi
+      - name: Types
+        run: mypy
+      - name: All tests
+        run: |
+          mkdir -p .tmp
+          python -m pytest -q -n auto -p no:homeassistant --disable-socket --allow-unix-socket tests/core
+          python -m pytest -q -n auto --ignore=tests/core
+
+  # PB-85: the newest VT and SmartPI releases (and the newest vtherm_api VT runs with) — a
+  # failure here is a finding: VT or SmartPI changed under the plugin, not a broken change of
+  # ours. Each release tag is resolved to its commit and fetched by that commit.
+  latest-vt-smartpi:
+    name: Early warning – newest Versatile Thermostat and SmartPI
+    if: >-
+      github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && (github.base_ref == 'qas' || github.base_ref == 'main'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: The newest VT and SmartPI releases by their commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          fetch() {  # repository, the folder under custom_components/
+            local repo="$1" component="$2" tag commit
+            tag="$(gh api "repos/$repo/releases/latest" --jq .tag_name)"
+            commit="$(git ls-remote --tags "https://github.com/$repo.git" \
+              | awk -v t="refs/tags/$tag" '$2 == t "^{}" {peeled = $1} $2 == t {plain = $1}
+                                            END {print (peeled != "" ? peeled : plain)}')"
+            case "$commit" in
+              [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
+              *) echo "$repo release $tag has no commit ('$commit')" >&2; exit 1 ;;
+            esac
+            echo "$repo $tag $commit"
+            mkdir -p "vendor/$component-latest"
+            curl -fsSL "https://github.com/$repo/archive/$commit.tar.gz" \
+              | tar -xz -C "vendor/$component-latest" --strip-components=1
+            ln -s "../$component-latest/custom_components/$component" \
+              "vendor/custom_components/$component"
+            test -f "vendor/custom_components/$component/manifest.json"
+          }
+          mkdir -p vendor/custom_components
+          fetch jmcollin78/versatile_thermostat versatile_thermostat
+          fetch KipK/vtherm_smartpi vtherm_smartpi
+      - name: Install the pinned test environment, the newest vtherm_api and VT's requirements
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --group ha
+          constraints="$(python -c 'import homeassistant, pathlib; print(pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt")')"
+          python -m pip install --group test --group ha -c "$constraints"
+          python -m pip install -U vtherm-api
+          mkdir -p .tmp
+          python - <<'PY' > .tmp/upstream-requirements.txt
+          import json
+          for component in ("versatile_thermostat", "vtherm_smartpi"):
+              path = f"vendor/custom_components/{component}/manifest.json"
+              print("\n".join(json.load(open(path, encoding="utf-8")).get("requirements", [])))
+          PY
+          python -m pip install -r .tmp/upstream-requirements.txt -c "$constraints"
+          python -m pip show vtherm-api | head -2
+      - name: Types
+        run: mypy
+      - name: All tests
+        env:
+          # The newest releases, not the versions the pinned tests name.
+          VENDOR_VERSIONS_PINNED: "0"
+        run: |
+          mkdir -p .tmp
+          python -m pytest -q -n auto -p no:homeassistant --disable-socket --allow-unix-socket tests/core
+          python -m pytest -q -n auto --ignore=tests/core

@@ -1,0 +1,45 @@
+monitor:
+  fields:
+    failing:
+      required: true
+      example: true
+      selector:
+        boolean:
+restart_with_stores:
+  fields:
+    main:
+      example: '{"monitoring_since": 0.0, "control": {}, "control_store": 1}'
+      selector:
+        object:
+    main_version:
+      selector:
+        number:
+          min: 1
+          max: 999
+    main_removed:
+      selector:
+        boolean:
+    control:
+      example: '{"controlling": true}'
+      selector:
+        object:
+    control_version:
+      selector:
+        number:
+          min: 1
+          max: 999
+    control_removed:
+      selector:
+        boolean:
+remove_options:
+  fields:
+    section:
+      required: true
+      example: control
+      selector:
+        text:
+    keys:
+      required: true
+      example: '["thermostat_kind"]'
+      selector:
+        object:

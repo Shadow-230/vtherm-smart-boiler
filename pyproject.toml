@@ -1,0 +1,86 @@
+# Tooling for the Smart Boiler for Versatile Thermostat plugin. The plugin itself ships as
+# custom_components/vtherm_smart_boiler (HACS); this file is not a package build.
+
+[dependency-groups]
+# Test environment, pinned deliberately (docs/plan-0.1.md, A3). Install with
+#   scripts/env.sh uv pip install --group test --group ha -c <homeassistant>/package_constraints.txt
+# so shared packages (numpy, SQLAlchemy, ...) match a real Home Assistant.
+test = [
+    "vtherm-api==0.5.0",
+    "ruff==0.16.8",
+    # Home Assistant 2026.9.3's own test pins (requirements_test.txt).
+    "mypy==2.3.1",
+    "pytest-cov==7.1.0",
+    "pytest-xdist==3.8.0",
+    # Requirements of the vendored VT 10.4.0 manifest.
+    "numpy==2.3.2",
+    "scipy==1.18.1",
+]
+# Home Assistant with its test harness: the version tested, and the declared minimum
+# (hacs.json), on which CI runs the tests too.
+ha = ["pytest-homeassistant-custom-component==0.13.366"]  # pins homeassistant==2026.9.3
+ha-minimum = ["pytest-homeassistant-custom-component==0.13.363"]  # pins homeassistant==2026.9.0
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# vendor/ holds VT 10.4.0 and SmartPI 0.4.0; vendor/custom_components links their integrations.
+pythonpath = [".", "vendor", "sim"]
+addopts = "--basetemp=.tmp/pytest"
+timeout = 300  # a test that hangs fails instead of holding up the run (pytest-timeout)
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+extend-exclude = ["vendor", ".tools", ".venv", ".tmp", "research", "data"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # bugbear
+    "UP",     # pyupgrade
+    "SIM",    # simplify
+    "C4",     # comprehensions
+    "RUF",    # ruff-specific
+    "ASYNC",  # async pitfalls
+    "PT",     # pytest style
+]
+# Comparisons with UPPER_CASE module constants on the left read naturally in tests.
+ignore = ["SIM300"]
+# Formulas in docstrings use the typographic minus and en dash on purpose.
+allowed-confusables = ["−", "–"]
+
+[tool.ruff.lint.per-file-ignores]
+# J4's scenario runner (a test tool): its checks carry their evidence in long messages.
+"devenv/j4/*" = ["E501"]
+
+[tool.ruff.lint.isort]
+required-imports = ["from __future__ import annotations"]
+known-first-party = ["custom_components.vtherm_smart_boiler", "sim", "tools", "tests"]
+
+[tool.mypy]
+python_version = "3.14"
+packages = ["custom_components.vtherm_smart_boiler"]
+strict = true
+warn_unreachable = true
+cache_dir = ".tmp/mypy"
+untyped_calls_exclude = ["vtherm_api"]
+
+# vtherm_api ships no type marker; its sources are read for the names the plugin uses.
+[[tool.mypy.overrides]]
+module = ["vtherm_api", "vtherm_api.*"]
+follow_untyped_imports = true
+
+[tool.coverage.run]
+source = ["custom_components.vtherm_smart_boiler"]
+branch = true  # P-35: CI and the local run count branches alike
+data_file = ".tmp/coverage"
+
+[tool.coverage.report]
+skip_covered = true
+show_missing = true
+fail_under = 95  # 97 % when set (R3); a floor for regressions, not a goal

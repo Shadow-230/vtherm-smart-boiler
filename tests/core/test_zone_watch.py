@@ -1,0 +1,309 @@
+"""Decision 3: the recognition period, each zone's grace, and every zone unknown."""
+
+from __future__ import annotations
+
+import pytest
+
+from custom_components.vtherm_smart_boiler.core.readings import ZoneState
+from custom_components.vtherm_smart_boiler.core.zone_watch import (
+    GRACE_S,
+    NO_ZONE_ISSUE_S,
+    RECOGNITION_S,
+    ZoneWatch,
+    follow_zones,
+    graced,
+    in_recognition,
+    no_zone_issue_due,
+    unjudged_since,
+)
+
+MIN = 60.0
+
+
+def zone(zone_id: str, t: float, **kw) -> ZoneState:
+    """A zone VT has started, heating and calling."""
+    kw.setdefault("heating_enabled", True)
+    kw.setdefault("reported", True)
+    kw.setdefault("valve_open", 0.6)
+    return ZoneState(zone_id, reported_at=t, **kw)
+
+
+def gone(zone_id: str) -> ZoneState:
+    return ZoneState(zone_id)  # unavailable: no mode, nothing reported
+
+
+def placeholder(zone_id: str, t: float) -> ZoneState:
+    """What VT 10.4.0 shows before a thermostat's first refresh: "off", neither is_ready nor
+    the rest of its state."""
+    return ZoneState(zone_id, heating_enabled=False, reported=False, reported_at=t)
+
+
+def run(steps, watch: ZoneWatch | None = None, starting=lambda _t: False) -> list[ZoneWatch]:
+    watch = watch or ZoneWatch()
+    seen = []
+    for t, zones in steps:
+        watch = follow_zones(watch, zones, t, None, starting=starting(t))
+        seen.append(watch)
+    return seen
+
+
+def test_the_recognition_period_runs_from_the_first_step() -> None:
+    assert in_recognition(ZoneWatch())  # before any step: the unit has just started
+    [first] = run([(100.0, (placeholder("a", 100.0),))])
+    assert in_recognition(first)
+    assert first.recognition_since == 100.0
+
+
+def test_recognition_ends_once_every_zone_has_reported() -> None:
+    """Zones report one by one; a zone that reported and went away again still counts."""
+    seen = run(
+        [
+            (0.0, (zone("a", 0.0), placeholder("b", 0.0))),
+            (10.0, (gone("a"), placeholder("b", 10.0))),
+            (20.0, (gone("a"), zone("b", 20.0))),
+        ]
+    )
+    assert [in_recognition(w) for w in seen] == [True, True, False]
+
+
+def test_recognition_ends_after_ten_minutes_whatever_the_zones_show() -> None:
+    steps = [(t, (placeholder("a", t),)) for t in (0.0, RECOGNITION_S - 10.0, RECOGNITION_S)]
+    seen = run(steps)
+    assert [in_recognition(w) for w in seen] == [True, True, False]
+
+
+def test_recognition_cannot_end_while_home_assistant_starts() -> None:
+    """Every zone reported, or ten minutes gone: still not over until Home Assistant runs."""
+    steps = [(t, (zone("a", t),)) for t in (0.0, 700.0, 710.0)]
+    seen = run(steps, starting=lambda t: t < 710.0)
+    assert [in_recognition(w) for w in seen] == [True, True, False]
+
+
+def test_a_vt_reload_starts_a_recognition_period() -> None:
+    """Every zone stops answering at once after having answered: VT reloads."""
+    seen = run(
+        [
+            (0.0, (zone("a", 0.0), zone("b", 0.0))),
+            (10.0, (gone("a"), placeholder("b", 10.0))),
+            (20.0, (zone("a", 20.0), placeholder("b", 20.0))),
+            (30.0, (zone("a", 30.0), zone("b", 30.0))),
+        ]
+    )
+    assert [in_recognition(w) for w in seen] == [False, True, True, False]
+    assert seen[1].recognition_since == 10.0
+
+
+def test_zones_going_away_one_by_one_get_their_grace_not_a_recognition() -> None:
+    """Not at once: each zone keeps its last answer for its own ten minutes."""
+    seen = run(
+        [
+            (0.0, (zone("a", 0.0), zone("b", 0.0))),
+            (10.0, (gone("a"), zone("b", 10.0))),
+            (20.0, (gone("a"), gone("b"))),
+        ]
+    )
+    assert not in_recognition(seen[1])
+    assert set(graced(seen[1])) == {"a"}
+    assert not in_recognition(seen[2])
+    assert seen[2].lost_at == {"a": 10.0, "b": 20.0}
+
+
+def test_no_zone_ever_answering_starts_no_new_recognition() -> None:
+    steps = [(t, (gone("a"),)) for t in (0.0, RECOGNITION_S, RECOGNITION_S + 10.0)]
+    seen = run(steps)
+    assert [in_recognition(w) for w in seen] == [True, False, False]
+
+
+def test_a_zone_keeps_its_last_answer_for_ten_minutes() -> None:
+    first = zone("a", 0.0, valve_open=0.7)
+    seen = run(
+        [
+            (0.0, (first, zone("b", 0.0))),
+            (10.0, (gone("a"), zone("b", 10.0))),
+            (10.0 + GRACE_S - 10.0, (gone("a"), zone("b", GRACE_S))),
+            (10.0 + GRACE_S, (gone("a"), zone("b", GRACE_S + 10.0))),
+        ]
+    )
+    assert graced(seen[1]) == {"a": first}
+    assert graced(seen[2]) == {"a": first}
+    assert graced(seen[3]) == {}  # dropped out: the known zones decide
+
+
+def test_a_not_started_zone_keeps_its_grace() -> None:
+    """VT's placeholder "off" during a thermostat's reload is not the user's "off": the zone's
+    last answer holds."""
+    first = zone("a", 0.0)
+    seen = run([(0.0, (first, zone("b", 0.0))), (10.0, (placeholder("a", 10.0), zone("b", 10.0)))])
+    assert graced(seen[1]) == {"a": first}
+
+
+def test_a_zone_that_answers_again_leaves_its_grace() -> None:
+    seen = run(
+        [
+            (0.0, (zone("a", 0.0), zone("b", 0.0))),
+            (10.0, (gone("a"), zone("b", 10.0))),
+            (20.0, (zone("a", 20.0, valve_open=0.1), zone("b", 20.0))),
+        ]
+    )
+    assert graced(seen[2]) == {}
+    assert seen[2].last["a"].valve_open == 0.1
+
+
+def test_a_zone_never_known_this_session_gets_no_grace() -> None:
+    seen = run([(0.0, (zone("b", 0.0), gone("a"))), (10.0, (zone("b", 10.0), gone("a")))])
+    assert graced(seen[-1]) == {}
+
+
+def test_a_zone_away_when_the_recognition_ends_keeps_its_grace_from_when_it_went_away() -> None:
+    """SB-28: a zone that answered during the recognition, then went away, keeps its last
+    answer for the grace counted from when it went away — not dropped as the period ends."""
+    steps = [
+        (0.0, (zone("a", 0.0), placeholder("b", 0.0))),
+        (10.0, (gone("a"), placeholder("b", 10.0))),
+        (60.0, (gone("a"), zone("b", 60.0))),
+        (10.0 + GRACE_S - 1.0, (gone("a"), zone("b", 10.0 + GRACE_S - 1.0))),
+        (10.0 + GRACE_S, (gone("a"), zone("b", 10.0 + GRACE_S))),
+    ]
+    seen = run(steps)
+    assert graced(seen[1]) == {"a": steps[0][1][0]}
+    assert not in_recognition(seen[2])
+    assert graced(seen[2]) == {"a": steps[0][1][0]}
+    assert graced(seen[3]) == {"a": steps[0][1][0]}
+    assert graced(seen[4]) == {}
+    assert "a" not in seen[4].last
+
+
+def test_a_zone_that_never_answered_drops_out_when_the_recognition_ends() -> None:
+    """SB-28's negative: a zone with no answer in the period has no grace when it ends."""
+    steps = [
+        (0.0, (zone("a", 0.0), placeholder("b", 0.0))),
+        (RECOGNITION_S, (zone("a", RECOGNITION_S), placeholder("b", RECOGNITION_S))),
+    ]
+    seen = run(steps)
+    assert in_recognition(seen[0])
+    assert not in_recognition(seen[1])
+    assert graced(seen[1]) == {}
+    assert set(seen[1].last) == {"a"}
+
+
+def test_a_zone_taken_out_of_the_options_is_forgotten() -> None:
+    seen = run([(0.0, (zone("a", 0.0), zone("b", 0.0))), (10.0, (zone("b", 10.0),))])
+    assert set(seen[-1].last) == {"b"}
+    assert graced(seen[-1]) == {}
+
+
+def test_a_clock_set_back_restarts_the_waits_now() -> None:
+    """C9: a start later than now counts as now, for the recognition and for a grace."""
+    seen = run(
+        [
+            (1000.0, (zone("a", 1000.0), zone("b", 1000.0))),
+            (1010.0, (gone("a"), zone("b", 1010.0))),
+            (500.0, (gone("a"), zone("b", 500.0))),  # the clock went back
+            (500.0 + GRACE_S - 10.0, (gone("a"), zone("b", 500.0))),
+        ]
+    )
+    assert seen[2].lost_at["a"] == 500.0
+    assert set(graced(seen[3])) == {"a"}
+    back = 500.0
+    recognition = run(
+        [
+            (t, (placeholder("a", t),))
+            for t in (1000.0, back, back + RECOGNITION_S - 10.0, back + RECOGNITION_S)
+        ]
+    )
+    assert recognition[1].recognition_since == back
+    assert [in_recognition(w) for w in recognition] == [True, True, True, False]
+
+
+def test_with_no_zone_configured_the_recognition_has_nothing_to_wait_for() -> None:
+    [watch] = run([(0.0, ())])
+    assert not in_recognition(watch)
+    assert watch.unknown_since is None
+
+
+@pytest.mark.parametrize(
+    ("zones", "since"),
+    [
+        ((gone("a"), gone("b")), 0.0),
+        ((gone("a"), zone("b", 0.0)), None),
+        ((), None),  # no zone configured: nothing is unknown
+    ],
+)
+def test_every_zone_unknown_since(zones: tuple[ZoneState, ...], since: float | None) -> None:
+    [watch] = run([(0.0, zones)])
+    assert watch.unknown_since == since
+
+
+def test_the_no_zone_issue_is_due_after_ten_minutes_of_every_zone_unknown() -> None:
+    steps = [(t, (gone("a"),)) for t in (0.0, NO_ZONE_ISSUE_S - 10.0, NO_ZONE_ISSUE_S)]
+    seen = run(steps)
+    assert [no_zone_issue_due(w, t) for w, (t, _z) in zip(seen, steps, strict=True)] == [
+        False,
+        False,
+        True,
+    ]
+    [back] = run([(NO_ZONE_ISSUE_S + 10.0, (zone("a", 0.0),))], watch=seen[-1])
+    assert back.unknown_since is None
+    assert not no_zone_issue_due(back, NO_ZONE_ISSUE_S + 10.0)
+
+
+@pytest.mark.parametrize("ready", [False, None], ids=["not_ready", "placeholder"])
+@pytest.mark.parametrize("heating_enabled", [False, True], ids=["off_or_cool", "heat"])
+def test_a_zone_vt_cannot_start_stays_unknown_after_the_recognition(
+    heating_enabled: bool, ready: bool | None
+) -> None:
+    """SB-02 (decision 1 of 2026-10-05): VT shows a thermostat it cannot start — an underlying
+    device unavailable — "off" ("heat" for over_valve) for as long as it cannot: ``is_ready``
+    false, or, while none of its devices has ever reported, its placeholder with neither
+    ``is_ready`` nor ``specific_states`` (VT 10.4.0, check C's F1). Every zone stays unknown
+    after the recognition period, and the repair issue follows."""
+
+    def unstarted(t: float) -> ZoneState:
+        return ZoneState(
+            "a", heating_enabled=heating_enabled, ready=ready, reported=False, reported_at=t
+        )
+
+    seen = run([(t, (unstarted(t),)) for t in (0.0, RECOGNITION_S, NO_ZONE_ISSUE_S + 10.0)])
+    assert [watch.unknown_since for watch in seen] == [0.0, 0.0, 0.0]
+    assert not in_recognition(seen[-1])
+    assert no_zone_issue_due(seen[-1], NO_ZONE_ISSUE_S + 10.0)
+
+
+def test_a_started_off_zone_is_known_during_the_recognition_and_after() -> None:
+    """S-34 kept: "off" on a zone VT has started (``is_ready`` true) is the user's "off"."""
+    steps = [
+        (t, (zone("a", t, heating_enabled=False, ready=True, valve_open=0.0),))
+        for t in (0.0, RECOGNITION_S)
+    ]
+    assert [watch.unknown_since for watch in run(steps)] == [None, None]
+
+
+def test_since_when_no_criterion_is_judged() -> None:
+    """PB-03: kept from its start while it lasts, begun again now when the wall clock was set
+    back (C9), and over the step a criterion is judged — or nothing is known (``None``)."""
+    assert unjudged_since(None, True, 100.0) == 100.0
+    assert unjudged_since(100.0, True, 700.0) == 100.0
+    assert unjudged_since(700.0, True, 100.0) == 100.0
+    assert unjudged_since(100.0, False, 700.0) is None
+    assert unjudged_since(None, False, 700.0) is None
+
+
+def test_a_slow_home_assistant_start_does_not_use_up_the_recognition_period() -> None:
+    """PB-53: the period's clock starts with Home Assistant running — a start slower than ten
+    minutes does not end it at the first running step, so VT's placeholders do not read as
+    "no demand" then; and no no-zone-known issue rises while Home Assistant starts."""
+    steps = [(t, (placeholder("a", t),)) for t in (0.0, 700.0, 710.0, 720.0 + RECOGNITION_S)]
+    seen = run(steps, starting=lambda t: t < 710.0)
+    assert [in_recognition(w) for w in seen] == [True, True, True, False]
+    assert all(w.unknown_since is None for w in seen[:2])
+    assert seen[2].unknown_since == 710.0
+    assert not no_zone_issue_due(seen[2], 710.0 + NO_ZONE_ISSUE_S - 1.0)
+
+
+def test_a_clock_set_back_restarts_the_every_zone_unknown_wait_now() -> None:
+    """TB-26 (C9): every zone unknown since 10 000, the clock set back to 6 400: the wait for
+    the no-zone issue counts from 6 400, not from 10 000."""
+    from custom_components.vtherm_smart_boiler.core.zone_watch import every_zone_unknown_since
+
+    assert every_zone_unknown_since(10_000.0, (gone("a"),), 6_400.0, None) == 6_400.0
+    assert every_zone_unknown_since(6_400.0, (gone("a"),), 10_000.0, None) == 6_400.0

@@ -1,0 +1,27 @@
+{
+  "domain": "vtherm_smart_boiler",
+  "name": "Smart Boiler for Versatile Thermostat",
+  "after_dependencies": [
+    "mqtt",
+    "opentherm_gw",
+    "recorder",
+    "repairs",
+    "versatile_thermostat",
+    "vtherm_smartpi",
+    "weather"
+  ],
+  "codeowners": [
+    "@Shadow-230"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/Shadow-230/vtherm-smart-boiler",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/Shadow-230/vtherm-smart-boiler/issues",
+  "requirements": [
+    "vtherm_api>=0.5.0"
+  ],
+  "single_config_entry": true,
+  "version": "0.2.3b1"
+}

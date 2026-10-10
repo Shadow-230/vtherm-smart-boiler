@@ -1,0 +1,47 @@
+# Entity mapping for the history importer.
+#
+# Copy this file to data/mapping.toml (git-ignored) and replace every entity ID with your own.
+# Only [boiler] flame and flow are required; leave out what you do not have.
+
+[boiler]
+flame = "binary_sensor.boiler_flame"
+flow = "sensor.boiler_flow_temperature"
+# return = "sensor.boiler_return_temperature"
+# modulation = "sensor.boiler_modulation"
+# ch_setpoint = "sensor.boiler_control_setpoint"
+# dhw_active = "binary_sensor.boiler_dhw_active"
+# ch_active = "binary_sensor.boiler_ch_active"
+# pump_running = "binary_sensor.boiler_pump"
+# pressure = "sensor.boiler_water_pressure"
+# flue_gas = "sensor.boiler_flue_gas_temperature"
+# outdoor = "sensor.boiler_outdoor_temperature"
+# room_setpoint = "sensor.thermostat_room_setpoint"          # a wired room thermostat's
+# room_temperature = "sensor.thermostat_room_temperature"
+# gas_meter = "sensor.gas_meter"
+# boiler_power = "sensor.boiler_plug_power"                  # a relay's proof of heat (W)
+# low_pressure_fault = "binary_sensor.boiler_low_water_pressure"  # the boiler's own fault
+# boiler_lockout = "binary_sensor.boiler_lockout"            # a fault that stops the boiler
+# fault_indication = "binary_sensor.boiler_fault_indication"  # the boiler's general fault bit
+
+[weather]
+# entity = "weather.home"
+
+# VT thermostats: zone name = climate entity.
+[zones]
+# living_room = "climate.living_room"
+# bedroom = "climate.bedroom"
+
+# What you know about your boiler and house (all optional); used for estimates and the verdict.
+[parameters]
+# boiler_min_power = 4.0        # kW
+# boiler_max_power = 24.0       # kW
+# max_ch_setpoint = 70.0        # °C
+# gas_at_min_power = 0.4        # per hour, in your gas meter's unit
+# gas_at_max_power = 2.5
+# loss_coefficient = 0.2        # kW/K
+# heating_threshold = 15.0      # °C
+
+[options]
+# modulation_scale = "range"    # "range": 0 % is minimum power; "capacity": % of maximum power
+# condensing_return = 55.0      # °C
+# temperature_unit = "°C"       # Home Assistant's unit system, for VT zone temperatures

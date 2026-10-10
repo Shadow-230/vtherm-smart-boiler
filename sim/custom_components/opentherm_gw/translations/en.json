@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Simulated OpenTherm Gateway (test only)",
+        "description": "Sets up the boiler simulator's gateway, ID {gateway_id}, for the test Home Assistant. It stands in for the real OpenTherm Gateway integration and must never be installed anywhere else."
+      }
+    },
+    "abort": {
+      "already_configured": "The simulated gateway is already set up.",
+      "no_simulator": "The boiler simulator (boiler_sim) is not set up: add it to configuration.yaml first."
+    }
+  }
+}

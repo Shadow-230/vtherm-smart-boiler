@@ -1,0 +1,68 @@
+{
+  "entity": {
+    "sensor": {
+      "starts_per_hour": { "default": "mdi:counter" },
+      "median_burn": { "default": "mdi:timer-outline" },
+      "burner_hours": { "default": "mdi:fire" },
+      "short_burn_share": { "default": "mdi:fire-alert" },
+      "condensing_share": { "default": "mdi:water-percent" },
+      "degree_days": { "default": "mdi:thermometer-lines" },
+      "gas_per_degree_day": { "default": "mdi:meter-gas" },
+      "verdict": { "default": "mdi:scale-balance" },
+      "signal_problems": { "default": "mdi:alert-circle-outline" },
+      "features": { "default": "mdi:format-list-checks" },
+      "reference_room": { "default": "mdi:home-thermometer" },
+      "reference_room_setpoint": { "default": "mdi:thermostat" },
+      "change_report": { "default": "mdi:chart-line" },
+      "loss_coefficient": { "default": "mdi:home-export-outline" },
+      "heating_threshold": { "default": "mdi:home-thermometer-outline" },
+      "forecast_snapshots": { "default": "mdi:weather-partly-cloudy" },
+      "critical_zone": { "default": "mdi:radiator" },
+      "emitter_power_factor": { "default": "mdi:radiator" },
+      "control_state": { "default": "mdi:state-machine" },
+      "control_setpoint": { "default": "mdi:thermometer-water" }
+    },
+    "binary_sensor": {
+      "connection": { "default": "mdi:lan-connect", "state": { "off": "mdi:lan-disconnect" } },
+      "hot_water": { "default": "mdi:water-thermometer", "state": { "off": "mdi:water-off" } },
+      "foreign_heat": { "default": "mdi:fireplace", "state": { "off": "mdi:fireplace-off" } },
+      "alarm_frequent_starts": { "default": "mdi:fire-alert", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_unstable_ignition": { "default": "mdi:fire-alert", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_pressure_low": { "default": "mdi:gauge-low", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_pressure_high": { "default": "mdi:gauge-full", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_pressure_falling": { "default": "mdi:gauge-low", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_flue_gas_high": { "default": "mdi:smoke", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_flue_gas_rising": { "default": "mdi:smoke", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_hysteresis_drift": { "default": "mdi:chart-bell-curve", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_low_flow": { "default": "mdi:pump-off", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_circuit_too_hot": { "default": "mdi:thermometer-high", "state": { "off": "mdi:check-circle-outline" } },
+      "outdoor_sensor_problem": { "default": "mdi:thermometer-alert", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_write_failed": { "default": "mdi:pencil-off", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_write_ignored": { "default": "mdi:pencil-remove", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_outside_change": { "default": "mdi:account-switch", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_control_error": { "default": "mdi:alert-octagon", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_hand_back_failed": { "default": "mdi:hand-back-left-off", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_boiler_link_lost": { "default": "mdi:lan-disconnect", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_zone_unknown": { "default": "mdi:help-circle-outline", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_frost_not_warming": { "default": "mdi:snowflake-alert", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_correction_at_limit": { "default": "mdi:chart-bell-curve-cumulative", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_outdoor_sensor_suspect": { "default": "mdi:thermometer-alert", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_monitor_failed": { "default": "mdi:eye-off", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_handed_back_in_frost": { "default": "mdi:snowflake-thermometer", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_commands_lost": { "default": "mdi:message-alert-outline", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_confirmation_missing": { "default": "mdi:help-rhombus-outline", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_no_zone_known": { "default": "mdi:home-alert-outline", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_demand_criterion_no_data": { "default": "mdi:database-alert-outline", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_relay_unreachable": { "default": "mdi:electric-switch", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_boiler_not_responding": { "default": "mdi:fire-off", "state": { "off": "mdi:check-circle-outline" } }
+    },
+    "switch": {
+      "control": { "default": "mdi:radiator", "state": { "off": "mdi:radiator-off" } }
+    },
+    "button": {
+      "reset_comfort_correction": { "default": "mdi:restore" },
+      "reset_loss_coefficient": { "default": "mdi:restore" },
+      "reset_heating_threshold": { "default": "mdi:restore" }
+    }
+  }
+}
