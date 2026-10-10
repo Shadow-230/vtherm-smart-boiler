@@ -2420,6 +2420,20 @@
           },
           "window_guard_missing_text": {
             "name": "Window guard: what is missing"
+          },
+          "long_run": {
+            "name": "Long burn without warming",
+            "state": {
+              "available": "Available",
+              "degraded": "Degraded: works from weaker inputs",
+              "inactive": "Inactive: an input it needs is missing or unavailable"
+            }
+          },
+          "long_run_missing": {
+            "name": "Long burn without warming: missing"
+          },
+          "long_run_missing_text": {
+            "name": "Long burn without warming: what is missing"
           }
         }
       }
@@ -2827,6 +2841,31 @@
           },
           "zones": {
             "name": "Zones"
+          }
+        }
+      },
+      "long_burn": {
+        "name": "Long burn without warming",
+        "state_attributes": {
+          "reason": {
+            "name": "Why",
+            "state": {
+              "power_limit": "The boiler at its power limit: below its setpoint at high modulation",
+              "water_too_cool": "The water too cool for the rooms short: the comfort correction raises it",
+              "water_too_hot": "The water too hot: lower the curve"
+            }
+          },
+          "rooms": {
+            "name": "Rooms"
+          },
+          "zones": {
+            "name": "Zones"
+          },
+          "burning_hours": {
+            "name": "Burning (h)"
+          },
+          "kept": {
+            "name": "Kept for tuning"
           }
         }
       }
@@ -3522,6 +3561,10 @@
     "room_short_at_limit": {
       "title": "{zones} stays short of its setpoint",
       "description": "For three hours the comfort correction has been at its limit of {limit} K, and {zones} still does not reach its setpoint with its valve fully open, while the other rooms do. Possible causes, the likeliest first: its radiator is too small for it; it loses heat — an open window, its valve, leaks; or the heating curve is too low for it — raise its design flow temperature in the integration's options (Control, Heating curve and limits). Check also its radiator, valve and window. The correction holds at its limit and does not climb further for it; you can lower the limit. This notice goes once the correction falls below its limit or the room is warm enough."
+    },
+    "boiler_power_limit": {
+      "title": "The boiler is at its power limit for {zones}",
+      "description": "For three hours the burner has run without a break while {zones} stays short of its setpoint, and the water stays more than a kelvin below the setpoint at a modulation of 90 % or more: the boiler cannot give more. Check that it is set to its full heating power (an installer's setting on many boilers), and whether the house loses more heat than the boiler was sized for. Nothing changes in control. This notice goes once the burn ends or the rooms warm."
     }
   }
 }

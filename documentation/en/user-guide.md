@@ -782,6 +782,8 @@ Alarms from the monitor. They inform; the plugin keeps heating.
 | Heating hysteresis drifting | the boiler's on/off band drifts over time | have it checked |
 | Low flow: all valves closed while the pump runs | no path for the water | check valves or bypass |
 | Circuit water too hot | flow above the circuit's alarm temperature | check its maximum |
+| Long burn without warming | the flame on for 3 h without a break, the rooms not warming: its reason says the water too cool for the rooms short, the boiler at its power limit, or the water too hot | the correction raises cool water; lower the curve if too hot |
+| Window probably open | a room fell 0.5 K within 10 minutes while it heated | close the window; the room is left out of the correction meanwhile |
 
 Repair issues:
 
@@ -794,6 +796,7 @@ Repair issues:
 | The boiler reports a fault that stops it | heating is kept off until it clears; see the manual |
 | The boiler keeps stopping at the lowest water temperature | consider raising that limit |
 | The boiler keeps stopping at its lowest water temperature | the same, on the device's own curve |
+| The boiler is at its power limit | 3 h at high modulation below its setpoint with rooms short: check its heating power setting |
 
 For pressure, your alarm limit must be below the safety valve's rating, printed on the valve.
 
@@ -808,7 +811,7 @@ Control alarms are named "Control: …".
 | Control: changed by another controller | something else wrote to the boiler |
 | Control: hand-back failed | the hand-back has not been confirmed |
 | Control: internal error | an error in the plugin stopped control |
-| Control: comfort correction at its limit | at +3 K for 3 hours: the curve is likely too low |
+| Control: comfort correction at its limit | at its limit (3 K by default) for 3 hours: see its repair issue |
 | Control: the boiler's confirmation is missing | a setpoint not shown back for 5 minutes |
 | Control: commands often lost | 3 lost commands within 24 hours (information) |
 | Control: no sign the boiler heats | heating on for 30 minutes with no flame or rise |
@@ -834,6 +837,8 @@ Repair issues about control:
 | Control waits for the gateway's confirmation | the setpoint read-back has no value |
 | The control options cannot be used | open the options and set control up again |
 | Alarm reactions no longer offered | those alarms now only inform |
+| The heating curve looks too low for … | the correction at its limit for 3 h, most rooms short: raise the curve first, then check radiators and heat loss |
+| … stays short of its setpoint | the correction at its limit for 3 h, one room short: check its radiator, valve and window first, then the curve |
 
 The control switch also names the setup answers that keep control off: monitoring only, room
 temperature only (from version 0.3), a control or a topology that does not fit the boiler's

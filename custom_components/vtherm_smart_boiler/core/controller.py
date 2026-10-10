@@ -1094,7 +1094,7 @@ def _counted(inputs: ControlInputs, config: ControlConfig) -> list[ZoneState]:
     ]
 
 
-def _is_short(zone: ZoneState) -> bool:
+def is_short(zone: ZoneState) -> bool:
     """Fully open and short by at least ``SHORT_K`` of where its own controller stops heating —
     VT's setpoint, or with SmartPI learning its upper hysteresis over it (G11 C); never with a
     window probably open, which no water warms (G11 F)."""
@@ -1124,13 +1124,13 @@ def _curve_room(state: ControlState, inputs: ControlInputs, config: ControlConfi
 
 def _short_zones(inputs: ControlInputs, config: ControlConfig) -> tuple[str, ...]:
     """The rooms fully open and short now (G11 B)."""
-    return tuple(z.zone_id for z in _counted(inputs, config) if _is_short(z))
+    return tuple(z.zone_id for z in _counted(inputs, config) if is_short(z))
 
 
 def _most_short(inputs: ControlInputs, config: ControlConfig) -> bool:
     """More than half of the rooms judged are short (G11, addition 3)."""
     counted = _counted(inputs, config)
-    return 2 * sum(1 for z in counted if _is_short(z)) > len(counted)
+    return 2 * sum(1 for z in counted if is_short(z)) > len(counted)
 
 
 def _taking_heat(zone: ZoneState) -> bool:
@@ -1172,7 +1172,7 @@ def _correction(
     too_warm = any(
         _taking_heat(z) and z.deficit is not None and z.deficit < -OVERHEAT_K for z in known
     )
-    short = any(_is_short(z) for z in known)
+    short = any(is_short(z) for z in known)
     opened = [z for z in known if z.demand is not None]  # no opening: never blocks the fall
     satisfied = bool(opened) and all(z.demand is not None and z.demand < SATISFIED for z in opened)
     correction = state.correction

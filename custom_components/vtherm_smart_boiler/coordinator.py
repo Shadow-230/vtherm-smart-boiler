@@ -124,7 +124,7 @@ from .core.alarms import (
 )
 from .core.analysis import Analysis, analyse
 from .core.comfort_rules import heating_starts
-from .core.controller import OutageWindow, follow_outage
+from .core.controller import OutageWindow, follow_outage, is_short
 from .core.critical_zone import CriticalZone, critical_zone
 from .core.daily import (
     DAY_MARGIN_S,
@@ -140,6 +140,7 @@ from .core.freshness import Rhythm, automatic_limit, observe
 from .core.history import History, ZoneSeries, with_downtime
 from .core.hot_water import HotWater, hot_water_available
 from .core.installation import CircuitControl, IssueCode, Severity
+from .core.long_run import LongRun, LongRunClass, RoomLook, follow_long_run, tally
 from .core.lowest_water import (
     LowestWaterSuggestion,
     SetpointSource,
@@ -208,6 +209,8 @@ WALL_ISSUE = "wall_thermostat_fallback"
 # I6 (decision 9): an ESPHome sensor never seen repeating an unchanged value in the run's first
 # six hours — its force_update is likely off, so a steady value cannot be told from a frozen one.
 ESPHOME_REPEATS_ISSUE = "esphome_no_repeats"
+# G11 E: the boiler at its power limit in a long burn without warming.
+POWER_LIMIT_ISSUE = "boiler_power_limit"
 ESPHOME_REPEATS_AFTER_S = 6 * 3600.0
 # The signals an ESP's sensors can repeat with force_update (its binary sensors cannot).
 REPEATABLE_SIGNALS = frozenset(
@@ -405,6 +408,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._rhythms: dict[str, Rhythm] = {}
         self._foreign: dict[str, ForeignHeatState] = {}
         self._windows: dict[str, WindowWatch] = {}  # G11 F: each room's window guard
+        # G11 E: the flame's run, and the counts kept for 0.4's tuning (stored).
+        self.long_run = LongRun()
+        self.long_run_totals: dict[str, float] = {}
+        self._long_run_at: float | None = None
         self._reference: ReferenceRoom | None = None
         self._critical: dict[str, CriticalZone] = {}
         self._alarms: dict[AlarmKind, Alarm] = {}
@@ -580,6 +587,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             WALL_ISSUE,
             LOWEST_WATER_ISSUE,
             ESPHOME_REPEATS_ISSUE,
+            POWER_LIMIT_ISSUE,
         ):
             ir.async_delete_issue(self.hass, DOMAIN, f"{key}_{self.config_entry.entry_id}")
         self._no_zone_issue = None
@@ -672,6 +680,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             except KeyError, TypeError, ValueError:
                 _LOGGER.warning("Ignoring an unreadable stored value for %s", key)
         self.fit_since = _fit_since(stored.get("fit_since"), now)
+        self.long_run_totals = _totals(stored.get("long_runs"))
         self._loaded = True
         if read.rewrite:
             # Moved from a 0.2.1 store, or taken cautiously after a loss: written at once, so
@@ -723,6 +732,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             "measured": measured,
             "fit_since": {key.value: at for key, at in self.fit_since.items()},
             "daily": {str(int(start)): day.to_dict() for start, day in sorted(self.daily.items())},
+            # G11 E: long runs without warming and the correction at its limit, for 0.4's tuning.
+            "long_runs": dict(self.long_run_totals),
             # A copy of the control state: the fallback, and what 0.2.1 reads after a downgrade.
             "control": control,
             CONTROL_STORE_MARKER: CONTROL_STORE_VERSION,
@@ -1176,6 +1187,102 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     self.link.zone_name(zone_id),
                 )
 
+    def _follow_long_run(
+        self,
+        snapshot: BoilerSnapshot,
+        zones: Mapping[str, ZoneState],
+        flame: bool | None,
+        now: float,
+    ) -> None:
+        """G11 E, a look at every refresh: the rooms counted — heating, known, neither held by VT
+        for a window nor with one probably open, nor warmed by foreign heat — against the flow,
+        the setpoint (control's written one, else the boiler's CH setpoint) and the modulation.
+        Information on its binary sensor; the power limit a warning repair issue too. The counts
+        kept for 0.4's tuning, the correction's hours at its limit among them."""
+        suspected = self.window_suspected
+        rooms = [
+            RoomLook(zone.zone_id, zone.temperature, zone.target, is_short(zone))
+            for zone in zones.values()
+            if zone.heating_enabled is True
+            and zone.is_known(now, ZONE_MAX_AGE_S)
+            and zone.window_open is not True
+            and zone.zone_id not in suspected
+            and not self._warmed_by_foreign_heat(zone.zone_id)
+        ]
+        before = self.long_run
+        self.long_run = follow_long_run(
+            before,
+            now,
+            flame,
+            snapshot.number(Signal.FLOW, self._max_age(Signal.FLOW)),
+            self._water_setpoint(snapshot),
+            snapshot.number(Signal.MODULATION, self._max_age(Signal.MODULATION)),
+            rooms,
+        )
+        step = 0.0 if self._long_run_at is None else min(max(0.0, now - self._long_run_at), 600.0)
+        self._long_run_at = now
+        found = self.long_run.found
+        totals = tally(self.long_run_totals, before.found, found, step)
+        if self._correction_at_limit():
+            key = "correction_at_limit_hours"
+            totals[key] = totals.get(key, 0.0) + step / 3600.0
+        if totals != self.long_run_totals:
+            self.long_run_totals = totals
+            self.schedule_save(FACTOR_SAVE_DELAY_S)
+        if found is not before.found:
+            if found is None:
+                _LOGGER.info("The long burn without warming is over")
+            else:
+                _LOGGER.info(
+                    "A long burn without warming: %s (%s)",
+                    found.value,
+                    ", ".join(self.link.zone_name(zone) for zone in self.long_run.rooms_named),
+                )
+            self._show_power_limit(found is LongRunClass.POWER_LIMIT)
+
+    def _warmed_by_foreign_heat(self, zone_id: str) -> bool:
+        foreign = self._foreign.get(zone_id)
+        return foreign is not None and foreign.active is True
+
+    def _water_setpoint(self, snapshot: BoilerSnapshot) -> float | None:
+        """The setpoint the flow is judged against (G11 E): the one control wrote while it holds
+        the boiler, else the boiler's CH setpoint signal."""
+        control = self.control
+        if control is not None and control.holding:
+            written = control.status.requested
+            if written is not None:
+                return written
+        return snapshot.number(Signal.CH_SETPOINT, self._max_age(Signal.CH_SETPOINT))
+
+    def _correction_at_limit(self) -> bool:
+        control = self.control
+        if control is None or not control.options.configured:
+            return False
+        limit = control.options.loop.control.correction_max_k
+        return control.status.correction >= limit - 1e-9 and control.status.correction > 0
+
+    def _show_power_limit(self, shown: bool) -> None:
+        """G11 E: the boiler at its power limit — a warning repair issue naming the rooms; it
+        goes with the class."""
+        issue_id = f"{POWER_LIMIT_ISSUE}_{self.config_entry.entry_id}"
+        if not shown:
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            return
+        named = self.long_run.rooms_named
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=POWER_LIMIT_ISSUE,
+            translation_placeholders={
+                "zones": ", ".join(self.link.zone_name(zone) for zone in named),
+                "entities": ", ".join(named),
+            },
+        )
+
     def _compute(self, now: float) -> MonitorData:
         config = self.config
         snapshot = self.transport.snapshot(now)
@@ -1191,6 +1298,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         zone_states = {z.zone_id: self.link.zone(z.zone_id) for z in config.installation.zones}
         flame = snapshot.flag(Signal.FLAME, self._max_age(Signal.FLAME))
         self._follow_windows(zone_states, flame is True, now)
+        self._follow_long_run(snapshot, zone_states, flame, now)
         views: dict[str, ZoneView] = {}
         for zone_config, zone in zip(config.zones, config.installation.zones, strict=True):
             state = zone_states[zone.zone_id]
@@ -2454,6 +2562,17 @@ def _first_start(hass: HomeAssistant, entry_id: str) -> bool:
     if created is None or dt_util.utcnow().timestamp() - created >= NEW_ENTRY_S:
         return False
     return not er.async_entries_for_config_entry(er.async_get(hass), entry_id)
+
+
+def _totals(stored: object) -> dict[str, float]:
+    """The long-run counts as stored (G11 E): numbers by name; anything else is dropped."""
+    if not isinstance(stored, dict):
+        return {}
+    return {
+        str(key): float(value)
+        for key, value in stored.items()
+        if isinstance(value, int | float) and not isinstance(value, bool) and value >= 0
+    }
 
 
 def _created_at(entry: ConfigEntry) -> float | None:

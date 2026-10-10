@@ -2420,6 +2420,20 @@
           },
           "window_guard_missing_text": {
             "name": "Wykrywanie otwartego okna: czego brakuje"
+          },
+          "long_run": {
+            "name": "Długie palenie bez nagrzewania",
+            "state": {
+              "available": "Dostępna",
+              "degraded": "Ograniczona: działa ze słabszych danych",
+              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
+            }
+          },
+          "long_run_missing": {
+            "name": "Długie palenie bez nagrzewania: brakuje"
+          },
+          "long_run_missing_text": {
+            "name": "Długie palenie bez nagrzewania: czego brakuje"
           }
         }
       }
@@ -2827,6 +2841,31 @@
           },
           "zones": {
             "name": "Strefy"
+          }
+        }
+      },
+      "long_burn": {
+        "name": "Długie palenie bez nagrzewania",
+        "state_attributes": {
+          "reason": {
+            "name": "Dlaczego",
+            "state": {
+              "power_limit": "Kocioł na granicy mocy: poniżej nastawy przy wysokiej modulacji",
+              "water_too_cool": "Woda za chłodna dla niedogrzanych pomieszczeń: korekta komfortu ją podnosi",
+              "water_too_hot": "Woda za ciepła: obniż krzywą"
+            }
+          },
+          "rooms": {
+            "name": "Pomieszczenia"
+          },
+          "zones": {
+            "name": "Strefy"
+          },
+          "burning_hours": {
+            "name": "Palenie (h)"
+          },
+          "kept": {
+            "name": "Zapisane do strojenia"
           }
         }
       }
@@ -3522,6 +3561,10 @@
     "room_short_at_limit": {
       "title": "{zones} nie dochodzi do nastawy",
       "description": "Od trzech godzin korekta komfortu stoi na swoim limicie {limit} K, a {zones} nadal nie dochodzi do nastawy przy całkiem otwartym zaworze, choć pozostałe pomieszczenia dochodzą. Możliwe przyczyny, od najbardziej prawdopodobnej: grzejnik jest dla niego za mały; traci ciepło — otwarte okno, jego zawór, nieszczelności; albo krzywa grzewcza jest dla niego za niska — podnieś projektową temperaturę zasilania w opcjach integracji (Sterowanie, Krzywa grzewcza i limity). Sprawdź też jego grzejnik, zawór i okno. Korekta stoi na limicie i dalej dla niego nie rośnie; możesz obniżyć limit. Zgłoszenie znika, gdy korekta spadnie poniżej limitu albo pomieszczenie się nagrzeje."
+    },
+    "boiler_power_limit": {
+      "title": "Kocioł jest na granicy mocy dla: {zones}",
+      "description": "Od trzech godzin palnik pracuje bez przerwy, a {zones} nadal nie dochodzi do nastawy, przy czym woda zostaje ponad kelwin poniżej nastawy przy modulacji 90 % lub wyższej: kocioł nie da więcej. Sprawdź, czy ma ustawioną pełną moc grzania (w wielu kotłach to ustawienie serwisowe) i czy dom nie traci więcej ciepła, niż przewidziano przy doborze kotła. Sterowanie niczego nie zmienia. Zgłoszenie znika, gdy palenie się skończy albo pomieszczenia się nagrzeją."
     }
   }
 }

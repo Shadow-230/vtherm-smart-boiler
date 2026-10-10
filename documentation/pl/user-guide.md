@@ -818,6 +818,8 @@ Alarmy monitora. Informują; wtyczka dalej grzeje.
 | Dryf histerezy c.o. | pasmo wł./wył. kotła z czasem się przesuwa | zleć sprawdzenie |
 | Brak przepływu: wszystkie zawory zamknięte przy pracującej pompie | woda nie ma którędy płynąć | sprawdź zawory albo obejście (bypass) |
 | Za gorąca woda w obiegu | zasilanie powyżej temperatury alarmowej obiegu | sprawdź jego maksimum |
+| Długie palenie bez nagrzewania | płomień 3 h bez przerwy, a pomieszczenia się nie nagrzewają: przyczyna mówi, czy woda jest za chłodna dla niedogrzanych pomieszczeń, kocioł na granicy mocy, czy woda za ciepła | korekta podnosi za chłodną wodę; przy za ciepłej obniż krzywą |
+| Prawdopodobnie otwarte okno | pomieszczenie straciło 0,5 K w 10 minut podczas grzania | zamknij okno; do tego czasu pomieszczenie jest pomijane w korekcie |
 
 Zgłoszenia w Naprawach:
 
@@ -830,6 +832,7 @@ Zgłoszenia w Naprawach:
 | Kocioł zgłasza usterkę, która go zatrzymuje | grzanie jest wyłączone, dopóki nie zniknie; zobacz instrukcję |
 | Kocioł wciąż się wyłącza przy najniższej temperaturze wody | rozważ podniesienie tego limitu |
 | Kocioł wciąż się wyłącza przy swojej najniższej temperaturze wody | to samo, na własnej krzywej urządzenia |
+| Kocioł jest na granicy mocy | 3 h na wysokiej modulacji poniżej nastawy przy niedogrzanych pomieszczeniach: sprawdź ustawienie mocy grzania |
 
 Dla ciśnienia twój limit alarmu musi być niższy niż ciśnienie zadziałania zaworu
 bezpieczeństwa, wydrukowane na zaworze.
@@ -845,7 +848,7 @@ Alarmy sterowania mają nazwy „Sterowanie: …”.
 | Sterowanie: zmiana przez inny sterownik | coś innego zapisało do kotła |
 | Sterowanie: oddanie nieudane | oddanie sterowania nie zostało potwierdzone |
 | Sterowanie: błąd wewnętrzny | błąd we wtyczce zatrzymał sterowanie |
-| Sterowanie: korekta komfortu na granicy | +3 K przez 3 godziny: krzywa jest pewnie za niska |
+| Sterowanie: korekta komfortu na granicy | na swoim limicie (domyślnie 3 K) przez 3 godziny: zobacz jej zgłoszenie |
 | Sterowanie: brak potwierdzenia z kotła | nastawa nie jest pokazywana z powrotem przez 5 minut |
 | Sterowanie: polecenia często giną | 3 utracone polecenia w ciągu 24 godzin (informacja) |
 | Sterowanie: brak oznak grzania kotła | grzanie włączone przez 30 minut bez płomienia i bez wzrostu temperatury |
@@ -871,6 +874,8 @@ Zgłoszenia w Naprawach dotyczące sterowania:
 | Sterowanie czeka na potwierdzenie z bramki | odczyt zwrotny nastawy nie ma wartości |
 | Opcji sterowania nie da się użyć | otwórz opcje i ustaw sterowanie ponownie |
 | Reakcje na alarmy nie są już dostępne | te alarmy teraz tylko informują |
+| Krzywa grzewcza wygląda na za niską dla: … | korekta 3 h na limicie, większość pomieszczeń niedogrzana: najpierw podnieś krzywą, potem sprawdź grzejniki i ucieczkę ciepła |
+| … nie dochodzi do nastawy | korekta 3 h na limicie, jedno pomieszczenie niedogrzane: najpierw sprawdź jego grzejnik, zawór i okno, potem krzywą |
 
 Przełącznik sterowania podaje też odpowiedzi z kreatora, które zostawiają sterowanie wyłączone:
 tylko monitorowanie, tylko temperatura pokoju (od wersji 0.3), sterowanie albo topologia

@@ -66,6 +66,8 @@ async def async_setup_entry(
         entities.append(OutdoorSensorProblem(coordinator))
     if feature_configured(coordinator, "window_probably_open"):
         entities.append(WindowSensor(coordinator))
+    if feature_configured(coordinator, "long_burn"):
+        entities.append(LongBurnSensor(coordinator))
     if coordinator.control is not None:
         # Each path's own alarms (R15): the relay's only on the relay path, the boiler link's
         # and the missing confirmation not there; each only where its feature is not inactive.
@@ -205,6 +207,37 @@ class WindowSensor(SmartBoilerEntity, BinarySensorEntity):
         return {
             "rooms": [self.coordinator.link.zone_name(zone) for zone in zones],
             "zones": zones,
+        }
+
+
+class LongBurnSensor(SmartBoilerEntity, BinarySensorEntity):
+    """G11 E: a long burn without warming — on while the flame has burnt 3 h with the rooms not
+    warming as they should: the water too cool for the rooms short, the boiler at its power
+    limit (a warning issue too), or the water too hot. Information only: control changes
+    nothing for it beyond the comfort correction. The counts kept for 0.4's tuning show here."""
+
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+
+    def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
+        super().__init__(coordinator, "long_burn")
+
+    @property
+    def is_on(self) -> bool:
+        return self.coordinator.long_run.found is not None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        run = self.coordinator.long_run
+        named = run.rooms_named
+        burning = run.burning_s
+        return {
+            "reason": None if run.found is None else run.found.value,
+            "rooms": [self.coordinator.link.zone_name(zone) for zone in named],
+            "zones": list(named),
+            "burning_hours": None if burning is None else round(burning / 3600.0, 1),
+            "kept": {
+                key: round(value, 2) for key, value in self.coordinator.long_run_totals.items()
+            },
         }
 
 
