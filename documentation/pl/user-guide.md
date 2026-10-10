@@ -92,29 +92,45 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    szczegółowości (poziom zmienia tylko to, co widzisz, nigdy działanie wtyczki). Te same ekrany
    otwierają opcje integracji, w pozycji **Kocioł, połączenie i tryb sterowania**. Co oznacza
    każde połączenie, opisuje [Podłączenie kotła](#5-podłączenie-kotła).
-3. **Wybierz sygnały.** W kroku **Sygnały kotła** wybierz encję dla każdego sygnału, który masz —
+   Potem pojawia się **menu sekcji**, jak we własnym kreatorze VT: otwierasz sekcję, zatwierdzasz
+   ją i wracasz do menu — nic jeszcze nie jest tworzone. Sekcja, która nie dotyczy Twojej
+   instalacji, nie jest pokazywana: pokój odniesienia bez stref, progi monitora na poziomie
+   prostym, sterowanie przy samym monitorowaniu. Menu mówi, które sekcje zostały do
+   zatwierdzenia; **Konfiguracja niekompletna** otwiera pierwszą z nich albo krok z problemem do
+   poprawienia, a **Utwórz** pojawia się, gdy każda pokazana sekcja jest zatwierdzona. Zamknięcie
+   okna porzuca konfigurację.
+3. **Wybierz sygnały.** W sekcji **Sygnały kotła** wybierz encję dla każdego sygnału, który masz —
    co najmniej płomień i temperaturę zasilania, jeśli chcesz sterować kotłem. Wtyczka tylko
    czyta te encje. Przy integracji OpenTherm Gateway i dokładnie jednej bramce jej encje kotła
    są wpisane za Ciebie do sprawdzenia. Przy firmware OTGW przez MQTT i przy EMS-ESP osobny krok
    pyta o tematy MQTT urządzenia (zobacz [Świeżość danych](#68-świeżość-danych)).
-4. **Opisz instalację.** Kroki **Kocioł**, **Obieg grzewczy**, **Strefy VT** (z jednym krokiem
-   **Strefa** dla każdej wybranej strefy), **Budynek** i **Pokój odniesienia** pytają o to, co
-   wiesz. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Krok
-   **Kocioł** pyta też o limity ciśnienia wody z instrukcji kotła i z zaworu bezpieczeństwa;
-   krok **Budynek** o projektową temperaturę zewnętrzną, wspólną z krzywą grzewczą.
-5. **Dni danych do werdyktu.** Na poziomie zaawansowanym krok **Monitor** zawiera **Dni danych
-   do werdyktu** (domyślnie 7, od 7 do 60). Można je też zmienić później w opcjach, w **Progi
-   monitora**. Niczego nie wstrzymują: sterowanie możesz ustawić i włączyć w każdej chwili. Dopóki
+4. **Opisz instalację.** Sekcje **Kocioł**, **Obiegi grzewcze**, **Strefy VT** (z jednym
+   krokiem **Strefa** dla każdej wybranej strefy), **Budynek** i **Pokój odniesienia** pytają o
+   to, co wiesz. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić.
+   Sekcja **Kocioł** pyta też o limity ciśnienia wody z instrukcji kotła i z zaworu
+   bezpieczeństwa; sekcja **Budynek** o projektową temperaturę zewnętrzną, wspólną z krzywą grzewczą.
+5. **Dni danych do werdyktu.** Na poziomie zaawansowanym sekcja **Progi monitora** zawiera
+   **Dni danych do werdyktu** (domyślnie 7, od 7 do 60). Można je też zmienić później w opcjach,
+   w tej samej sekcji. Niczego nie wstrzymują: sterowanie możesz ustawić i włączyć w każdej chwili. Dopóki
    tego nie zrobisz, wtyczka nic nie zapisuje do kotła.
 6. **Przeczytaj werdykt.** Gdy zbierze tyle dni danych, czujnik **Werdykt sterowania** mówi, czy
    warto włączyć sterowanie (zobacz [Monitorowanie i werdykt](#41-monitorowanie-i-werdykt)).
    Decyzja należy do ciebie.
-7. **Ustaw sterowanie.** Przy pełnym sterowaniu albo wł./wył. kreator sam przechodzi do kroków
-   sterowania: ścieżka zapisu, potem kolejne kroki (na przykład **Krzywa grzewcza i limity** oraz
-   **Zachowanie sterowania**). Żeby ustawić je później albo zmienić, otwórz w opcjach integracji
-   **Sterowanie (eksperymentalne)**. „Bez sterowania” zostawia samo monitorowanie.
+7. **Ustaw sterowanie.** Przy pełnym sterowaniu albo wł./wył. menu kreatora pokazuje też sekcję
+   **Sterowanie (eksperymentalne)**: ścieżka zapisu, potem kolejne kroki (na przykład **Krzywa
+   grzewcza i limity** oraz **Zachowanie sterowania**). Żeby ustawić je później albo zmienić,
+   otwórz tę samą sekcję w opcjach integracji. „Bez sterowania” zostawia samo monitorowanie.
 8. **Włącz sterowanie** przełącznikiem **Sterowanie (eksperymentalne)** na urządzeniu
    integracji. Jeśli czegoś brakuje, przełącznik mówi czego, a monitor dalej działa.
+
+**Późniejsze zmiany ustawień.** Opcje integracji otwierają to samo menu. Każda sekcja do niego
+wraca i nic nie jest zapisywane do czasu **Zapisz i zakończ**: sprawdza ono całość, zapisuje ją
+i raz przeładowuje integrację — gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty
+ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem); sama zmiana poziomu niczego
+nie przeładowuje. Menu wymienia sekcje z niezapisanymi zmianami; zamknięcie okna je porzuca.
+Problem znaleziony przy zapisie otwiera jego krok z powodem: popraw go i wybierz **Zapisz i
+zakończ** jeszcze raz. Zmiana, która zatrzymałaby sterowanie, najpierw pyta; jeśli odmówisz,
+wracasz do menu ze swoimi zmianami — możesz je poprawić albo porzucić, zamykając okno.
 
 ## 4. Jak to działa
 

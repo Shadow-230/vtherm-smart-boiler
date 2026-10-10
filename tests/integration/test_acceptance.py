@@ -1477,9 +1477,9 @@ async def options_step(rig: Rig, result: dict[str, Any], data: dict[str, Any]) -
 async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> None:
     """T-23 (P-37): the plugin past its monitoring and no control yet; the simulated gateway set
     up through the stub's config flow, as at J4 — options → Control → OpenTherm Gateway →
-    gateway ID ``sim``: the flow completes; the plugin then controls the simulated boiler
-    through it, its setpoint confirmed by the gateway's read-back and its heating switch by the
-    boiler's "Central heating 1"."""
+    gateway ID ``sim`` → "Save and finish" (I7): the flow completes; the plugin then controls
+    the simulated boiler through it, its setpoint confirmed by the gateway's read-back and its
+    heating switch by the boiler's "Central heating 1"."""
     await start(rig, with_control=False)
     assert rig.entry is not None
     hass = rig.hass
@@ -1506,6 +1506,9 @@ async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> Non
     result = await options_step(rig, result, curve)
     if result.get("step_id") == "control_alarms":
         result = await options_step(rig, result, {})
+    assert result["type"] == "menu"  # I7: back at the menu, nothing saved yet
+    assert "control" not in rig.entry.options
+    result = await options_step(rig, result, {"next_step_id": "save"})
     assert result["type"] == "create_entry"
     await hass.async_block_till_done()
     control = rig.entry.options["control"]

@@ -14,8 +14,9 @@ the review and the release. S3 can happen at any time.
 
 Status on 2026-10-10: built through 0.2.3 (`docs/plan-0.2.3.md`, done). The repository is public
 on GitHub since 2026-10-07 (K5's first half, below), with its checks green; J2 done (2026-10-08);
-I6 done (2026-10-09; `docs/plan-0.2-i6.md`); G11 done (2026-10-10; `docs/plan-0.2-g11.md`); J4
-running (the scenarios I6 and G11 touch run again, each pull request names them);
+I6 done (2026-10-09; `docs/plan-0.2-i6.md`); G11 done (2026-10-10; `docs/plan-0.2-g11.md`); I7
+next (`docs/plan-0.2-i7.md`); J4 running (the scenarios I6, G11 and I7 touch run again, each pull
+request names them);
 then the rest of K1, K4, then K5's
 pre-release (provisionally 0.2.3b1, `docs/plan-0.2.2.md` decision 16), K6 and K7. S3 stays
 optional.
@@ -141,6 +142,7 @@ reaches a real boiler.
 | I4 ✅ | translations EN and PL; key-parity test |
 | I5 ✅ | alarm thresholds as advanced options (open from 0.1) |
 | I6 ✅ | the first panel of the setup asks how the boiler is connected (the user's decisions of 2026-10-08): the OpenTherm Gateway through Home Assistant's integration; the OTGW firmware over MQTT; ESPHome OpenTherm; EMS-ESP; a relay (an on/off boiler); the boiler's own Wi-Fi module or the manufacturer's integration; another writable entity (advanced); monitoring only. The choice sets the write path, the write types, the hand-back and whether a heating switch is required, suggests the signal entities, and says what happens to the boiler when Home Assistant stops — the OTGW: its override lapses within a minute and the thermostat takes over (stand-alone, heating stops); EMS-ESP: its setpoint lapses within about a minute, so the plugin repeats it; ESPHome: it holds the last setpoint and CH enable until it restarts (its API `reboot_timeout`, 15 min by default), then its configured initial values — control needs the user's tick that a safe initial value and a short `reboot_timeout` are set on the ESP, as the relay needs its separate-contact tick, with a sample ESPHome configuration in the user guide; the boiler's Wi-Fi module or the manufacturer's integration: writes usually go to the boiler's memory or through a cloud, so monitoring, and control only where the write type is known and not persistent. Control stays off by default: the choice switches nothing on. The config and options flows, translations (EN, PL), tests, the user guides and `SCOPE.md` §4. Widened by the user's decisions of 2026-10-08 and 2026-10-09 — the control mode, the heat source, the boiler type and hot-water priority, freshness defaults, control in the wizard — and planned step by step in `docs/plan-0.2-i6.md`. Done on 2026-10-09 (pull requests #36 to #48 and I6.7's) |
+| I7 | the setup and the options move through a menu of sections, as in Versatile Thermostat (the user's decisions of 2026-10-10): a section returns to the menu, nothing is saved until "Save and finish" (in the setup "Create", offered once every section shown has been confirmed and the whole passes the check), which runs every check of the save and reloads once; sections that do not apply are not shown; the menu names the unsaved changes, and closing the window discards them; the pressure and flue-gas limits shown only with their sensor. Planned step by step in `docs/plan-0.2-i7.md` |
 
 Done when: integration tests cover enabling and disabling control, every hand-back path, the
 "no write without fresh data" rule and the list of allowed service calls.
