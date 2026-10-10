@@ -382,6 +382,9 @@ class ControlDecision:
     # The rooms fully open and short now — the ones the correction rises for, named by the
     # "curve too low" warning at its limit (G11 B).
     short_zones: tuple[str, ...] = ()
+    # More than half of the rooms judged are short: the curve first among the warning's causes;
+    # fewer, the room's radiator and its heat loss first (G11, addition 3).
+    most_short: bool = False
     curve_room: float | None = None  # the curve's room temperature the water was decided with
     link_lost: bool = False  # the boiler link is lost (X2): stale for five minutes within ten
     # Decision 3: every configured zone unknown after the recognition period and the graces;
@@ -953,6 +956,7 @@ def _heating_decision(
         frost_stuck=frost_stuck,
         correction_at_limit=new_state.correction_limit_s >= CORRECTION_LIMIT_S,
         short_zones=_short_zones(inputs, config),
+        most_short=_most_short(inputs, config),
         curve_room=new_state.curve_room,
         activation_at=activation_at,
     )
@@ -1112,6 +1116,12 @@ def _curve_room(state: ControlState, inputs: ControlInputs, config: ControlConfi
 def _short_zones(inputs: ControlInputs, config: ControlConfig) -> tuple[str, ...]:
     """The rooms fully open and short now (G11 B)."""
     return tuple(z.zone_id for z in _counted(inputs, config) if _is_short(z))
+
+
+def _most_short(inputs: ControlInputs, config: ControlConfig) -> bool:
+    """More than half of the rooms judged are short (G11, addition 3)."""
+    counted = _counted(inputs, config)
+    return 2 * sum(1 for z in counted if _is_short(z)) > len(counted)
 
 
 def _taking_heat(zone: ZoneState) -> bool:

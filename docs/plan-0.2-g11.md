@@ -52,9 +52,21 @@ Reverses K4.1 (`docs/plan-0.2.2.md`, open item 24; the user, 2026-10-03).
    saved entry stores the band, 10 K by default, so making the band carry the limit would turn
    it into a 10 K correction on upgrade.)
 5. **At the limit for 3 h with a room still short:** the information alarm "comfort correction
-   at its limit" stays, and a **warning repair issue** names the rooms: "The heating curve is too
-   low for {rooms} — raise it". It goes once the correction falls below the limit or no room is
-   short any more.
+   at its limit" stays, and a **warning repair issue** names the rooms. It goes once the
+   correction falls below the limit or no room is short any more.
+   - **Additions 2 and 3 (the user, 2026-10-10): one room short counts like any other, and the
+     limits stay.** The curve must hold every room, so the correction rises for a single short
+     room as for several, bounded as above: its limit, 3 K a day, no rise while another heated
+     room is more than 1 K too warm, none while the starts rise, and the hard, circuit and
+     weather caps. The water never goes higher for one room's sake.
+   - The warning names the room and the possible causes: the heating curve too low, the room's
+     radiator too small for it, the room losing heat (a window, leaks). With most rooms short
+     the curve comes first; with fewer, the radiator and the heat loss come first, then the
+     curve — "check also its radiator, valve and window". The correction then holds at its
+     limit; the user can lower it.
+   - One issue, `curve_too_low`, with the text `curve_too_low` (most) or `room_short_at_limit`
+     (fewer). Its placeholders carry the rooms' names (`zones`) and entity IDs (`entities`) —
+     J4's Q5 looks for the room there.
 6. **The description** says what it does and what it risks: more gas, possibly more starts. The
    simulation showed 1.75 to 5 times the starts of the boiler's own regulation with VT's TPI
    zones, whose own offset can keep a full-duty zone just short of its setpoint. The testing
@@ -119,14 +131,15 @@ Reverses K4.1 (`docs/plan-0.2.2.md`, open item 24; the user, 2026-10-03).
 3. **The classes**, first that fits:
    1. Rooms short, and the flow below the setpoint by more than 1 K at a modulation of at least
       90 % (modulation known) → **warning** "the boiler is at its power limit".
-   2. More than half of the counted rooms short, and the flow holding the setpoint within 1 K →
-      **information** "the water is too cool for the rooms"; the correction (B) raises it, and
-      at its limit B's warning.
-   3. One room short, or fewer than half, while the others hold their setpoints → **information**
-      "check room X (window, radiator, valve)", never "raise the curve".
-   4. Every counted room over its setpoint by at least 0.3 K at every check of the last hour →
+   2. Rooms short — one or more, each counts (addition 2) — and the flow holding the setpoint
+      within 1 K → **information** "the water is too cool for {rooms}"; the correction (B) raises
+      it, and at its limit B's warning names the room and the causes.
+   3. Every counted room over its setpoint by at least 0.3 K at every check of the last hour →
       **information** "the water is too hot: lower the curve".
-   5. Rooms at their setpoints → nothing: the ideal state, few starts, condensing.
+   4. Rooms at their setpoints → nothing: the ideal state, few starts, condensing.
+   - Withdrawn by addition 2: "one room short while the others hold → check room X, never raise
+     the curve". A tilted window is now B's warning's business, and a fast-cooling window is
+     F's.
 4. **Thresholds** (provisional, K4, each with its reason):
    - 1 K for "holding the setpoint" — the boiler's own regulation band;
    - 90 % for "high modulation" — the burner near its top;
@@ -161,7 +174,9 @@ Reverses K4.1 (`docs/plan-0.2.2.md`, open item 24; the user, 2026-10-03).
    - Reference values read on 2026-10-10: radiator-mounted sensors about 0.5 K in 2 min to 1.5 K
      in 10 min; room sensors away from the window about 0.3–0.5 K in 5–10 min; Danfoss Ally
      pauses 30 min, at least 45 min between detections.
-3. **A tilted window** cools slowly; it is caught by E's "one room short while the others hold".
+3. **A tilted window** cools slowly; the room stays short, so the correction rises for it within
+   its limits, and at the limit B's warning names the room and the heat loss among the causes
+   (addition 2).
 4. The user guide recommends VT's automatic window detection for zones without a sensor.
 
 ### G. Documentation, translations and tests
@@ -217,6 +232,7 @@ Reverses K4.1 (`docs/plan-0.2.2.md`, open item 24; the user, 2026-10-03).
 | G11.0 ✅ | this plan; `SCOPE.md` where it states the old behaviour; `CLAUDE.md` (where to continue, the plans, two verified facts); `PLAN.md`'s 0.2 row; `docs/plan-0.2.md`'s step G11 | none |
 | G11.A ✅ | F7 (decision A), pull request #51 | N2, N6, N7, N8 (instance 7) |
 | G11.B ✅ | B and C: the correction on by default in full control, at both levels, its limit option, the warning repair issue, the entry migration (minor version 7); SmartPI's learning band read in `vtherm_link.py` and used by the correction and the critical zone; translations, tests (`core/` first). Found on the way: a session's stored options (`taken_with`) are read as the migration leaves a section, or a restart after the update would hand back instead of restoring | E4 again; the starts comparison with the correction on (instances 2–5); new: a curve too low in mild weather with a SmartPI zone in its learning phase, correction off and on |
+| G11.B2 | additions 2 and 3: the warning's two texts — the curve first with most rooms short, the radiator and the heat loss first with fewer — and the rooms' entity IDs among its placeholders; the plan, `SCOPE.md`, the user guides | E4 again; J4's Q1 and Q5 (a warning repair issue naming the room) |
 | G11.D ✅ | D: the curve's room Auto or Manual, the rooms left out, the entry migration (minor version 8: Manual for upgraded entries); translations, tests | E4 again; new: the Auto curve room following a preset |
 | G11.E | E and F: the long-run rule and its sensor, warning and kept counts; VT's window detection read and its zones left out of B, C and E; the plugin's own window guard and its sensor; translations, tests | new: a window opened in one room; a long run in each class |
 | G11.G | the user guides EN and PL, and every document G names that the steps above did not already change | none |

@@ -1149,8 +1149,15 @@ def test_the_comfort_correction_says_it_is_on_and_what_it_costs() -> None:
             assert "1,75" in translated["comfort_correction"], (language, step)
     behaviour = SOURCE["options"]["step"]["control_behaviour"]["data_description"]
     assert "3 K a day" in behaviour["comfort_correction_max_k"]
-    issue = SOURCE["issues"]["curve_too_low"]
-    assert set(PLACEHOLDER.findall(issue["title"] + issue["description"])) == {"zones", "limit"}
+    for key in ("curve_too_low", "room_short_at_limit"):  # additions 2 and 3: the causes
+        issue = SOURCE["issues"][key]
+        assert set(PLACEHOLDER.findall(issue["title"] + issue["description"])) == {
+            "zones",
+            "limit",
+        }, key
+        assert "radiator" in issue["description"], key
+        assert "heat" in issue["description"], key
+        assert "does not climb further" in issue["description"], key
 
 
 def test_sb10_texts_are_translated() -> None:

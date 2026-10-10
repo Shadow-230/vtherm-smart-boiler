@@ -11032,6 +11032,29 @@ async def test_the_reset_button_resets_the_comfort_correction(rig: Rig) -> None:
     assert 0.5 <= correction(rig) <= 1.5  # rising again, within the day's 3 K
 
 
+async def test_one_room_short_at_the_limit_is_named_with_its_radiator_and_heat_loss_first(
+    rig: Rig,
+) -> None:
+    """G11 B, additions 2 and 3: one room short while the others reach their setpoints counts
+    like any other — the correction rises for it, within its limit — and at the limit for three
+    hours the warning names that room, its entity ID among the placeholders (J4's Q5), with the
+    radiator and the heat loss first among the causes, then the curve."""
+    rig.zones.add("bedroom")
+    short_room(rig)
+    rig.zones.set("bedroom", current_temperature=21.0, temperature=21.0, valve_open_percent=30)
+    await start(rig, comfort_correction=True, comfort_correction_max_k=1.0)
+    await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
+    await rig.switch(True)
+    await rig.advance(1800 + 3 * 3600 + 300, step=60)
+    assert correction(rig) == pytest.approx(1.0)  # risen for one room, held at the limit
+    found = issue(rig, "curve_too_low")
+    assert found is not None
+    assert found.severity is ir.IssueSeverity.WARNING
+    assert found.translation_key == "room_short_at_limit"
+    assert found.translation_placeholders is not None
+    assert found.translation_placeholders["entities"] == rig.zones.entities["living"]
+
+
 LIVING_SMARTPI = "sensor.living_smartpi_diagnostics"
 
 
@@ -11083,8 +11106,10 @@ async def test_a_curve_too_low_for_a_room_is_named_at_the_correction_limit(rig: 
     found = issue(rig, "curve_too_low")
     assert found is not None
     assert found.severity is ir.IssueSeverity.WARNING
+    assert found.translation_key == "curve_too_low"  # the only room: most of them — the curve first
     assert found.translation_placeholders == {
         "zones": rig.hass.states.get(rig.zones.entities["living"]).name,
+        "entities": rig.zones.entities["living"],
         "limit": "1",
     }
     assert rig.state("binary_sensor", "alarm_correction_at_limit").state == "on"
