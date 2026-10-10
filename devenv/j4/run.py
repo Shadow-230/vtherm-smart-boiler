@@ -1286,13 +1286,14 @@ async def L1(r: Run):
     gaps = [b[0] - a[0] for a, b in pairwise(sp)]
     ch = writes(t, "ch")
     toggles = sum(1 for a, b in pairwise(ch) if bool(a[2]) != bool(b[2]))
-    # A heating write matches VT's demand as read within the 40 s before it (the plugin's step
-    # and the gateway's 30-s repeat).
+    # A heating write matches VT's demand as sampled from 40 s before it (the plugin's step and
+    # the gateway's 30-s repeat) to 15 s after it: the runner samples every 10 s, so a change the
+    # plugin followed within seconds may be sampled only after the write.
     mismatched = [
         round((at - t) / 60)
         for at, _k, v in ch
-        if bool(v) not in {c for when, c in samples if at - 40 <= when <= at}
-        and any(at - 40 <= when <= at for when, _c in samples)
+        if bool(v) not in {c for when, c in samples if at - 40 <= when <= at + 15}
+        and any(at - 40 <= when <= at + 15 for when, _c in samples)
     ]
     rooms = {}
     for zone, target in ZONES:
