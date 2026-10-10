@@ -8,8 +8,8 @@ details of each step are in [`docs/plan-0.2.2-details.md`](docs/plan-0.2.2-detai
 with "Start here"), then in [`docs/plan-0.2.3.md`](docs/plan-0.2.3.md) (corrections after the
 review of 2026-10-04, in four parts, each ending with a stop where the user decides whether the
 next starts), then in [`docs/plan-0.2.md`](docs/plan-0.2.md), whose status line says where the
-build stands — its step I6 is planned step by step in [`docs/plan-0.2-i6.md`](docs/plan-0.2-i6.md);
-phases run in order. A 🔒 step whose plan says it holds nothing up is noted in the
+build stands — its step I6 is planned step by step in [`docs/plan-0.2-i6.md`](docs/plan-0.2-i6.md),
+its step G11 in [`docs/plan-0.2-g11.md`](docs/plan-0.2-g11.md); phases run in order. A 🔒 step whose plan says it holds nothing up is noted in the
 report and passed; work goes on with the next step. 0.1 and 0.2 are built in one go; the first
 published version is decided at K4 and K5 (`docs/plan-0.2.2.md`, decision 16; provisionally
 0.2.3b1).
@@ -19,7 +19,8 @@ published version is decided at K4 and K5 (`docs/plan-0.2.2.md`, decision 16; pr
   [`docs/plan-0.1.md`](docs/plan-0.1.md), [`docs/plan-0.2.md`](docs/plan-0.2.md),
   [`docs/plan-0.2.1.md`](docs/plan-0.2.1.md), [`docs/plan-0.2.2.md`](docs/plan-0.2.2.md) with
   [`docs/plan-0.2.2-details.md`](docs/plan-0.2.2-details.md),
-  [`docs/plan-0.2.3.md`](docs/plan-0.2.3.md), [`docs/plan-0.2-i6.md`](docs/plan-0.2-i6.md)
+  [`docs/plan-0.2.3.md`](docs/plan-0.2.3.md), [`docs/plan-0.2-i6.md`](docs/plan-0.2-i6.md),
+  [`docs/plan-0.2-g11.md`](docs/plan-0.2-g11.md)
 - **Research** (network reads, and the notes and raw results of every analysis and check, dated):
   `research/`
 - **Author's own assessment**, private — never a source of values for code, defaults, tests or
@@ -171,7 +172,11 @@ Each topic lives only in its file; do not copy it here.
   commands are free-form actions; its power criterion uses each zone's `mean_cycle_power`
   (`sensor.py`); it counts heating devices, not zones. Unticking it deletes its two commands
   (`config_flow.py`); that its keep-alive keeps resending the old command until Home Assistant
-  restarts is inferred from the code, not seen.
+  restarts is inferred from the code, not seen. VT 10.4.0's window detection, per zone: a sensor,
+  or automatic by the temperature's slope (the author's office values 3 °C/h to detect, 0 °C/h to
+  end); its action turns the zone off, fan only, frost or eco; the climate shows `window_manager`
+  (`window_state`, `window_auto_state`: "on" or "off") and, when turned off, `hvac_off_reason`
+  `hvac_off_window_detection` (`feature_window_manager.py`; `docs/plan-0.2-g11.md`, Facts).
 - **VT** uses current outdoor temperature only; forecast is on its "future improvements" list.
   Auto-TPI learns in sessions (≥ 50 cycles). `set_auto_tpi_mode` is not a pure pause: the
   `reinitialise` default is true (wipes the learning), the allow-flags are overwritten on every
@@ -189,7 +194,10 @@ Each topic lives only in its file; do not copy it here.
   `u_ff2`, `u_ff_final`, `bootstrap_state`, drift states, `deadtime_heat_s`. `u_ff1` contains
   outdoor temperature. Reads no external input (no entity option, no plugin lookup, no boiler
   concept); power shedding freezes its learning. `set_smartpi_learning` pauses without losing
-  the model.
+  the model. SmartPI 0.4.0's learning phase ("Hysteresis") runs on/off: off at setpoint + 0.5 °C,
+  on at setpoint − 0.3 °C (`smartpi/const.py` `HYST_UPPER_C`, `HYST_LOWER_C`); its diagnostic
+  sensor's state is "bootstrap_hysteresis" then, and the VT climate names that sensor in
+  `specific_states.regulation_diagnostics` (`docs/plan-0.2-g11.md`, Facts).
 - **HA forecasts**: only through `weather.get_forecasts`, not in entity state — the recorder
   does not keep them. HACS inclusion has no license requirement.
 - **Home Assistant 2026.9.3**: shutdown jobs (`hass.async_add_shutdown_job`) run before
