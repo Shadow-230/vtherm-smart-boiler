@@ -28,6 +28,17 @@ Done as pull request #51 (2026-10-10): a held value target's third value is judg
 the plugin's hand-back write to it got through in this debt, and not while a trace of an outage
 of its device, or a restart, seen since says the device lost it.
 
+J4's rerun the same day saw N2 still fail and N6 regress, with the timeout hand-back's own
+signs. There was one error naming the setpoint (only the lowest is written), no retry (that
+method never writes again), and a release judged from the read-back leaving the plugin's values.
+J4's N8 sets that method and cannot set it back: the options refuse to change the hand-back while
+one is owed (PB-09), and N8 leaves one owed for good — its device, declared expiring, keeps its
+value. With the hand-back writing a value, both timelines pass in-process: the setpoint back
+between two retries showing its held value, a read-back change meanwhile settling nothing, and
+the device back with its values lost, each gets the lowest, then the hand-back value, at the
+next retry (`tests/integration/test_acceptance.py`, `test_j4s_n6_*`, `test_j4s_n2_*`). No
+change to the plugin; N8's clean-up is the testing session's.
+
 ### B. The comfort correction: on by default in full control, a user limit, a warning at the edge
 
 Reverses K4.1 (`docs/plan-0.2.2.md`, open item 24; the user, 2026-10-03).
