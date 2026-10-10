@@ -610,7 +610,8 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
         if gas_rates_shown(options):  # I6, decision 7: a gas boiler's, or one not said
             fields[_optional("gas_at_min_power", current)] = _number(0, 200, 0.01)
             fields[_optional("gas_at_max_power", current)] = _number(0, 500, 0.01)
-    fields |= pressure_fields(options)
+    if pressure_limits_shown(options):
+        fields |= pressure_fields(options)
     if _advanced(options):
         fields.update(
             {
@@ -632,8 +633,14 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
 
 # The water pressure's limits, from the boiler's manual and the safety valve's rating: facts about
 # the boiler, asked in its step at both levels and kept by "restore defaults" (I6); stored in the
-# monitor section, whose alarms they set.
+# monitor section, whose alarms they set. Asked with a pressure sensor mapped (I7).
 PRESSURE_KEYS = ("add_water_below", "pressure_high_warning", "pressure_high_alarm")
+
+
+def pressure_limits_shown(options: Mapping[str, Any]) -> bool:
+    """I7, decision 4: the pressure limits judge the pressure sensor — asked only with one
+    mapped; without, those stored are kept and judge nothing."""
+    return "pressure" in _stored_signals(options)
 
 
 def pressure_fields(options: dict[str, Any]) -> dict[Any, Any]:
@@ -1047,8 +1054,10 @@ def gas_rates_shown(options: Mapping[str, Any]) -> bool:
 
 
 def flue_gas_limits_shown(options: Mapping[str, Any]) -> bool:
-    """A condensing boiler's, or one never declared otherwise (as before)."""
-    return _stored_boiler(options).get("condensing") is not False
+    """A condensing boiler's, or one never declared otherwise (as before), with a flue-gas
+    sensor mapped — the limits judge it (I7, decision 4)."""
+    condensing = _stored_boiler(options).get("condensing") is not False
+    return condensing and "flue_gas" in _stored_signals(options)
 
 
 def stored_connection(options: Mapping[str, Any]) -> Connection | None:
@@ -1948,7 +1957,8 @@ def apply_boiler(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     options[BOILER] = boiler
     _apply_parameters(options, user_input, BOILER_PARAMETER_KEYS)
     monitor = dict(options.get(MONITOR, {}))
-    _set_or_drop(monitor, user_input, PRESSURE_KEYS)
+    if pressure_limits_shown(options):  # not shown: kept (I7)
+        _set_or_drop(monitor, user_input, PRESSURE_KEYS)
     if monitor:
         options[MONITOR] = monitor
     else:

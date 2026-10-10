@@ -7,7 +7,7 @@ on 2026-10-10 after the J4 tests. Nothing here changes what the plugin does with
 how its settings are asked and saved.
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`.
 
-Status on 2026-10-10: I7.0 (this plan) and I7.1 (the menus) done; I7.2 next.
+Status on 2026-10-10: I7.0 (this plan), I7.1 (the menus) and I7.2 (the limits with their sensors) done — I7 is complete.
 
 ## How to read this plan
 
@@ -99,10 +99,13 @@ This file, step I7 in `docs/plan-0.2.md`, `CLAUDE.md`'s "Where to continue" and 
   from before the `weather` key reads one change as made where the signals step adds the key
   empty: the menu then names "Boiler signals" though nothing visible changed — harmless.
 
-### I7.2 The limits shown with their sensor (decision 4)
+### I7.2 ✅ The limits shown with their sensor (decision 4)
 
 - The boiler step shows the pressure limits only with a pressure sensor mapped; the monitor step
   shows the flue-gas limits only with a flue-gas sensor mapped (and for a condensing boiler, as
   before). Hidden limits are kept.
 - Translations where a description names them, the user guides, tests.
 - J4 impact: none unless a scenario sets a pressure or flue-gas limit without the sensor.
+- Done on 2026-10-10. A limit stored in a shape this version cannot read, with its sensor not
+  mapped, sends the save to its step without the field: mapping the sensor shows it there. Only
+  a hand-edited entry can hold one (PB-06, P-70).

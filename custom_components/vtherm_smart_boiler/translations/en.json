@@ -121,7 +121,7 @@
       },
       "boiler": {
         "title": "Boiler",
-        "description": "What you know about your boiler. Leave unknown values empty: the plugin then says what it cannot judge.",
+        "description": "What you know about your boiler. Leave unknown values empty: the plugin then says what it cannot judge. The water-pressure limits appear once a pressure sensor is mapped under “Boiler signals”; without it, limits already set are kept and judge nothing.",
         "data": {
           "boiler_min_power": "Minimum power",
           "boiler_max_power": "Maximum power",
@@ -241,7 +241,7 @@
       },
       "monitor": {
         "title": "Monitor",
-        "description": "Thresholds of the analysis.",
+        "description": "Thresholds of the analysis. The flue-gas limits appear for a condensing boiler once a flue-gas sensor is mapped under “Boiler signals”; without it, limits already set are kept and judge nothing.",
         "data": {
           "condensing_return": "Condensing return threshold",
           "short_burn_min": "Short burn",
@@ -776,7 +776,7 @@
       },
       "boiler": {
         "title": "Boiler",
-        "description": "What you know about your boiler. Leave unknown values empty: the plugin then says what it cannot judge.",
+        "description": "What you know about your boiler. Leave unknown values empty: the plugin then says what it cannot judge. The water-pressure limits appear once a pressure sensor is mapped under “Boiler signals”; without it, limits already set are kept and judge nothing.",
         "data": {
           "boiler_min_power": "Minimum power",
           "boiler_max_power": "Maximum power",
@@ -896,7 +896,7 @@
       },
       "monitor": {
         "title": "Monitor",
-        "description": "Thresholds of the analysis.",
+        "description": "Thresholds of the analysis. The flue-gas limits appear for a condensing boiler once a flue-gas sensor is mapped under “Boiler signals”; without it, limits already set are kept and judge nothing.",
         "data": {
           "condensing_return": "Condensing return threshold",
           "short_burn_min": "Short burn",
