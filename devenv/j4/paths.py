@@ -664,7 +664,9 @@ async def R18(r: Run):
         for _ in range(2):
             await rooms_call(r, False)
             await r.ha.until(lambda: relay_is(r, False), 420, 5)
-            await r.ha.wait(30)
+            # Past the delay since any earlier pulse: a wait it started runs on through a drop
+            # (VT's rule), and would shorten the one measured here.
+            await r.ha.wait(150)
             await rooms_call(r, True)
             await r.ha.until(lambda: _any_valve(r), 420, 1)
             t_call = time.time()
