@@ -75,7 +75,6 @@ async def test_only_forecasts_are_requested(
             Signal.GAS_METER: 10.0,
         }
     )
-    hass.states.async_set("switch.fireplace", "on")
     living = zones.add("living", hvac_action="heating", valve_open_percent=60)
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -83,12 +82,7 @@ async def test_only_forecasts_are_requested(
         options={
             "signals": boiler.mapping(),
             "weather": WEATHER_ENTITY,
-            "zones": [
-                {
-                    "entity_id": living,
-                    "foreign_heat": [{"entity_id": "switch.fireplace", "kind": "switch"}],
-                }
-            ],
+            "zones": [{"entity_id": living}],
         },
     )
     entry.add_to_hass(hass)

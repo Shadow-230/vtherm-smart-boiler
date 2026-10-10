@@ -55,7 +55,7 @@ def test_every_entity_key_has_a_name() -> None:
         assert "name" in sensors[key]
     for kind in AlarmKind:
         assert "name" in binary[f"alarm_{kind.value}"], kind
-    for key in ("connection", "hot_water", "foreign_heat", "outdoor_sensor_problem"):
+    for key in ("connection", "hot_water", "outdoor_sensor_problem"):
         assert "name" in binary[key]
 
 

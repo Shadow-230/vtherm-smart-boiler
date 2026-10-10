@@ -605,15 +605,10 @@ HA_ATTRIBUTES = frozenset(
 async def test_every_attribute_has_a_translated_name(
     hass: HomeAssistant, zones: FakeZones, forecasts: FakeForecasts, base: str
 ) -> None:
-    """TB-36 (PB-76, PB-77): on the water and relay installations with a foreign-heat source,
-    once every entity has been written, every attribute outside Home Assistant's own has a
-    translated name, and every state shown a text, in English and Polish."""
-    hass.states.async_set("switch.fake_stove", "off")
-
-    def stove(options: dict[str, Any]) -> None:
-        options["zones"][0]["foreign_heat"] = [{"entity_id": "switch.fake_stove"}]
-
-    entry = await _setup(hass, zones, base, stove)
+    """TB-36 (PB-76, PB-77): on the water and relay installations, once every entity has been
+    written, every attribute outside Home Assistant's own has a translated name, and every
+    state shown a text, in English and Polish."""
+    entry = await _setup(hass, zones, base, lambda options: None)
     registry = er.async_get(hass)
     # A zone is shown by its own name, which needs no text (the critical zone, the reference).
     coordinator = entry.runtime_data

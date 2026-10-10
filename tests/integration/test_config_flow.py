@@ -159,7 +159,7 @@ async def test_simple_flow_creates_an_entry(hass: HomeAssistant, entities: dict[
     assert result["step_id"] == "zones"
     result = await step(hass, result, {"zones": [entities["living"]]})
     assert result["step_id"] == "zone"
-    result = await step(hass, result, {"emitter": "radiator", "foreign_heat": ["switch.fireplace"]})
+    result = await step(hass, result, {"emitter": "radiator"})
     assert result["step_id"] == "building"
     result = await step(hass, result, {"floor_area": 120, "insulation": "average"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -184,7 +184,6 @@ async def test_simple_flow_creates_an_entry(hass: HomeAssistant, entities: dict[
             "entity_id": entities["living"],
             "emitter": "radiator",
             "circuit": "main",
-            "foreign_heat": [{"entity_id": "switch.fireplace", "kind": "switch"}],
         }
     ]
     assert options["building"] == {"floor_area": 120, "insulation": "average"}
@@ -240,26 +239,9 @@ async def test_advanced_flow_with_two_circuits(
     )
     result = await step(hass, result, {"zones": [entities["living"], entities["bedroom"]]})
     assert "circuit" in result["data_schema"].schema
-    result = await step(
-        hass,
-        result,
-        {"circuit": "main", "emitter": "radiator", "foreign_heat": ["sensor.humidity"]},
-    )
-    assert result["errors"] == {"foreign_heat": "foreign_heat_unsupported"}
-    result = await step(
-        hass,
-        result,
-        {
-            "circuit": "main",
-            "emitter": "radiator",
-            "foreign_heat": ["sensor.heater_power"],
-            "power_threshold": 300,
-        },
-    )
+    result = await step(hass, result, {"circuit": "main", "emitter": "radiator"})
     assert result["step_id"] == "zone"
-    result = await step(
-        hass, result, {"circuit": "circuit_2", "emitter": "underfloor", "foreign_heat": []}
-    )
+    result = await step(hass, result, {"circuit": "circuit_2", "emitter": "underfloor"})
     assert result["step_id"] == "building"
     result = await step(hass, result, {"design_load_kw": 8.0, "heating_threshold": 16})
     assert result["step_id"] == "monitor"
@@ -271,7 +253,6 @@ async def test_advanced_flow_with_two_circuits(
             "short_burn_min": 8,
             "monitoring_days": 10,
             "near_room_k": 3,
-            "foreign_heat_hold_min": 30,
         },
     )
     assert result["step_id"] == "control"  # I6.6: full control is set up in the setup
@@ -280,9 +261,6 @@ async def test_advanced_flow_with_two_circuits(
     options = result["options"]
     assert [c["id"] for c in options["circuits"]] == ["main", "circuit_2"]
     assert options["circuits"][1]["flow_entity"] == entities["return"]
-    assert options["zones"][0]["foreign_heat"] == [
-        {"entity_id": "sensor.heater_power", "kind": "power", "threshold": 300}
-    ]
     assert options["zones"][1]["circuit"] == "circuit_2"
     assert options["monitor"]["monitoring_days"] == 10
     await hass.async_block_till_done()
@@ -322,7 +300,6 @@ async def create_entry(
                 "short_burn_min": 10,
                 "monitoring_days": 7,
                 "near_room_k": 3,
-                "foreign_heat_hold_min": 60,
             },
         )
     if result.get("step_id") == "control":  # I6.6: full control or on/off asks it in the setup
@@ -1162,11 +1139,8 @@ def _rich_options(entities: dict[str, str]) -> dict[str, Any]:
         ],
         "zones": [
             {"entity_id": entities["living"], "emitter": "radiator", "circuit": "main",
-             "reference_output_w": 1500, "foreign_heat": []},
-            {"entity_id": entities["bedroom"], "emitter": "radiator", "circuit": "circuit_2",
-             "foreign_heat": [
-                 {"entity_id": "sensor.heater_power", "kind": "power", "threshold": 300}
-             ]},
+             "reference_output_w": 1500},
+            {"entity_id": entities["bedroom"], "emitter": "radiator", "circuit": "circuit_2"},
         ],
         "monitor": {"monitoring_days": 14.0, "near_room_k": 4.0},
     }  # fmt: skip
@@ -1204,12 +1178,11 @@ async def test_the_simple_level_keeps_what_it_does_not_show(
         entry_id,
         "zones",
         {"zones": [entities["living"], entities["bedroom"]]},
-        {"circuit": "main", "emitter": "radiator", "foreign_heat": []},
-        {"circuit": "circuit_2", "emitter": "radiator", "foreign_heat": ["sensor.heater_power"]},
+        {"circuit": "main", "emitter": "radiator"},
+        {"circuit": "circuit_2", "emitter": "radiator"},
     )
-    living, bedroom = options["zones"]
+    living, _bedroom = options["zones"]
     assert living["reference_output_w"] == 1500
-    assert bedroom["foreign_heat"][0]["threshold"] == 300
 
 
 async def test_restoring_defaults_keeps_the_installation(
@@ -1223,7 +1196,6 @@ async def test_restoring_defaults_keeps_the_installation(
     assert [c["id"] for c in options["circuits"]] == ["main", "circuit_2"]
     assert options["circuits"][0]["flow_entity"] == entities["return"]
     assert options["zones"][0]["reference_output_w"] == 1500
-    assert options["zones"][1]["foreign_heat"][0]["threshold"] == 300
     assert options["monitor"] == {"monitoring_days": 14.0}  # the period stays (P-65)
 
 
@@ -1344,19 +1316,6 @@ async def test_modulation_must_be_in_percent(hass: HomeAssistant, entities: dict
     assert result["errors"] == {"modulation": "modulation_not_percent"}
     result = await step(hass, result, signals | {"modulation": "sensor.boiler_modulation"})
     assert result["step_id"] == "boiler"
-
-
-def test_a_temperature_sensor_as_foreign_heat_needs_the_advanced_level() -> None:
-    """Its threshold is entered at the advanced level only, and it cannot work without one: at
-    the simple level it is not offered."""
-    from custom_components.vtherm_smart_boiler.config_flow import zone_schema
-
-    temperature = {"domain": ["sensor"], "device_class": ["temperature"]}
-    simple = _filters(zone_schema({"level": "simple"}, {}), "foreign_heat")
-    advanced = _filters(zone_schema({"level": "advanced"}, {}), "foreign_heat")
-    assert temperature not in simple
-    assert temperature in advanced
-    assert {"domain": ["sensor"], "device_class": ["power"]} in simple
 
 
 # --- X3: control needs a zone (S-04); criteria a zone must feed (P-14); the own room controller -
@@ -1764,7 +1723,7 @@ async def test_the_zone_step_keeps_a_stored_closes_when_off(
     menu = await hass.config_entries.options.async_init(entry_id)
     result = await options_step(hass, menu, {"next_step_id": "zones"})
     result = await options_step(hass, result, {"zones": [entities["living"]]})
-    result = await options_step(hass, result, {"emitter": "radiator", "foreign_heat": []})
+    result = await options_step(hass, result, {"emitter": "radiator"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     zone = hass.config_entries.async_get_entry(entry_id).options["zones"][0]
@@ -2170,9 +2129,7 @@ async def test_entities_are_checked_on_the_server(
     result = await step(hass, result, {"zones": [entities["living"], other]})
     assert result["errors"] == {"zones": "zone_not_vt"}
     result = await step(hass, result, {"zones": [entities["living"]]})
-    result = await step(hass, result, {"emitter": "radiator", "foreign_heat": ["sensor.humidity"]})
-    assert result["errors"] == {"foreign_heat": "foreign_heat_unsupported"}
-    result = await step(hass, result, {"emitter": "radiator", "foreign_heat": []})
+    result = await step(hass, result, {"emitter": "radiator"})
     result = await step(hass, result, {})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["options"]["signals"]["flow"] == "sensor.not_reported_yet"
@@ -2477,7 +2434,7 @@ async def test_the_zone_step_offers_closes_when_off(
         marker = next(m for m in schema.schema if str(m) == "closes_when_off")
         assert marker.default() is False
     entry_id = await create_entry(hass, entities, "simple", ("living", "bedroom"))
-    plain = {"emitter": "radiator", "foreign_heat": []}
+    plain = {"emitter": "radiator"}
 
     async def open_zones(*picked: str) -> dict[str, Any]:
         menu = await hass.config_entries.options.async_init(entry_id)
@@ -2974,7 +2931,7 @@ async def test_a_relay_in_another_role_is_refused(hass: HomeAssistant) -> None:
     from custom_components.vtherm_smart_boiler.config_flow import relay_entity_error
 
     options = {
-        "zones": [{"entity_id": "climate.a", "foreign_heat": [{"entity_id": "switch.stove"}]}],
+        "signals": {"flame": "switch.stove"},
         "control": {"write_path": "relay", "relay_entity": "switch.stove"},
     }
     assert relay_entity_error(hass, options, "switch.stove") == "relay_in_another_role"
@@ -3795,51 +3752,22 @@ async def test_the_entity_steps_targets_are_checked_on_the_server(
     assert result["step_id"] == "control_curve"
 
 
-async def test_foreign_heat_sources_of_every_kind_and_the_zones_emitter_size(
-    hass: HomeAssistant, entities: dict[str, str]
-) -> None:
-    """Appendix D: the kinds a foreign heat source can be — a switch, a binary sensor, a power
-    sensor, a temperature sensor — each stored with its kind; a temperature sensor needs its
-    threshold (``temperature_threshold_missing``); at the advanced level the zone's emitter size
-    and exponent are stored as entered."""
-    hass.states.async_set("binary_sensor.stove", "off")
-    hass.states.async_set(
-        "sensor.stove_temperature",
-        "22",
-        {"device_class": "temperature", "unit_of_measurement": "°C"},
-    )
+async def test_the_zones_emitter_size(hass: HomeAssistant, entities: dict[str, str]) -> None:
+    """Appendix D: at the advanced level the zone's emitter size and exponent are stored as
+    entered."""
     entry_id = await create_entry(hass, entities, "advanced", ("living",))
     menu = await hass.config_entries.options.async_init(entry_id)
     result = await options_step(hass, menu, {"next_step_id": "zones"})
     assert result["step_id"] == "zones"
     result = await options_step(hass, result, {"zones": [entities["living"]]})
     assert result["step_id"] == "zone"
-    sources = [
-        "switch.fireplace",
-        "binary_sensor.stove",
-        "sensor.heater_power",
-        "sensor.stove_temperature",
-    ]
     zone = {"emitter": "radiator", "reference_output_w": 1500, "exponent": 1.25}
-    result = await options_step(hass, result, zone | {"foreign_heat": sources})
-    assert (result["step_id"], result["errors"]) == (
-        "zone",
-        {"foreign_heat": "temperature_threshold_missing"},
-    )
-    result = await options_step(
-        hass, result, zone | {"foreign_heat": sources, "temperature_threshold": 30}
-    )
+    result = await options_step(hass, result, zone)
     assert result["type"] is FlowResultType.CREATE_ENTRY  # the section saves at once
     await hass.async_block_till_done()
     (stored,) = hass.config_entries.async_get_entry(entry_id).options["zones"]
     assert stored["reference_output_w"] == 1500
     assert stored["exponent"] == 1.25
-    assert stored["foreign_heat"] == [
-        {"entity_id": "switch.fireplace", "kind": "switch"},
-        {"entity_id": "binary_sensor.stove", "kind": "binary"},
-        {"entity_id": "sensor.heater_power", "kind": "power"},
-        {"entity_id": "sensor.stove_temperature", "kind": "temperature", "threshold": 30},
-    ]
 
 
 async def test_a_blocker_text_without_a_count_is_given_whole(

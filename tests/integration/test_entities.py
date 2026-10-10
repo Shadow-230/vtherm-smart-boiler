@@ -75,7 +75,7 @@ async def test_one_service_device_holds_every_entity(
     for key, device_class in DEVICE_CLASSES.items():
         assert entities[key].original_device_class == device_class, key
     for key, entity in entities.items():
-        if key.startswith(("hot_water_", "foreign_heat_")):
+        if key.startswith("hot_water_"):
             assert entity.original_device_class == BinarySensorDeviceClass.HEAT, key
         elif key.startswith("alarm_"):
             assert entity.original_device_class == BinarySensorDeviceClass.PROBLEM, key

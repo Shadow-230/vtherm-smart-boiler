@@ -8,7 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-10: the plan approved by the user; I8.0, I8.1a and I8.1b done; I8.1c next.
+Status on 2026-10-10: the plan approved by the user; I8.0, I8.1a, I8.1b and I8.1c done; I8.1d next.
 
 ## How to read this plan
 
@@ -296,6 +296,12 @@ impact below.
   comfort correction's and the long-run rule's window exclusions, the feature and its texts; no
   stored option, no migration; `SCOPE.md` §7, both user guides' 4.9, `docs/plan-0.2-g11.md` E and
   F, `docs/plan-0.2.md` G11). Done on 2026-10-10.
+- I8.1c ✅ foreign heat (`core/foreign_heat.py`, the zones' sources and thresholds, the monitor's
+  hold time, the source reader, the per-zone binary sensor, the SmartPI pause cause — a stored
+  "foreign_heat" cause reads as unknown, so as hot water, the cautious rule —, the comfort
+  correction's freeze, the long-run exclusion; minor version 10 drops the stored sources and hold
+  time; `SCOPE.md` §3 and §7, `docs/plan-0.2.md` H5, `docs/plan-0.2-g11.md` B and E; the
+  learning-pause and comfort-correction texts). Done on 2026-10-10.
 
 - Code: remove the reference room (section, `core/reference_room.py`, sensors, diagnostics,
   options key), the window guard and every use of windows (`core/window_guard.py`, the window

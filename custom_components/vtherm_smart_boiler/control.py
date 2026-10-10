@@ -3223,23 +3223,9 @@ class ControlUnit:
             outdoor_sensor=sensor,
             outdoor_weather=weather,
             zones=tuple(zones),
-            foreign_heat=self._foreign_heat(),
             boiler_fault=self._boiler_fault(now, snapshot),
             starts=coordinator.heating_starts(now),
         )
-
-    def _foreign_heat(self) -> bool | None:
-        """Foreign heat warms a zone, as the monitor sees it (the comfort correction freezes):
-        ``None`` where no zone has a source, or the monitor's data is stale — unknown freezes
-        nothing."""
-        coordinator = self._coordinator
-        data = coordinator.data
-        if data is None or coordinator.monitor_failing:
-            return None
-        states = [view.foreign_heat for view in data.zones.values() if view.foreign_heat]
-        if not states:
-            return None
-        return any(state.active for state in states)
 
     def _read_back_known(self) -> bool:
         """On a gateway path its setpoint read-back holds a value: without one, a hand-back could
@@ -4728,23 +4714,18 @@ class ControlUnit:
             await self._async_release_learning(now)
             return
         coordinator = self._coordinator
-        data = coordinator.data
         opening = self.options.loop.control.demand.zone_opening
         learning_zones = []
         for zone in zones:
             algorithm = coordinator.link.zone_algorithm(zone.zone_id)
             if algorithm.smartpi_learning is None:
                 continue
-            view = data.zones.get(zone.zone_id) if data is not None else None
-            heat = view.foreign_heat if view is not None else None
-            foreign = heat is not None and heat.active
             demand = zone.demand
             learning_zones.append(
                 ZoneLearning(
                     zone.zone_id,
                     algorithm.smartpi_learning,
                     demand is not None and demand > opening,
-                    foreign,
                 )
             )
         plan = plan_learning(

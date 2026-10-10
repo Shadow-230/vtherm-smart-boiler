@@ -892,7 +892,7 @@ async def test_an_entry_from_before_drops_the_options_that_are_gone(
     )
     await left_control_store(hass, entry)
     await setup(hass, entry)
-    assert entry.minor_version == 9
+    assert entry.minor_version == 10
     # Minor version 3 (X6): the lowest water temperature 0.2.1 used, kept.
     assert entry.options["control"] == {
         "write_path": "entity",
@@ -946,7 +946,7 @@ async def test_the_alarm_migration_moves_to_the_add_water_threshold(
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 9
+    assert entry.minor_version == 10
     stored = entry.options["monitor"]
     assert "pressure_low_warning" not in stored
     assert "pressure_low_alarm" not in stored
@@ -986,7 +986,7 @@ async def test_the_alarm_migration_keeps_an_offered_reaction_and_raises_no_issue
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 9
+    assert entry.minor_version == 10
     assert entry.options["control"]["alarm_reactions"] == {"write_ignored": "hand_back"}
     assert ir.async_get(hass).async_get_issue(DOMAIN, f"reactions_removed_{entry.entry_id}") is None
 
@@ -1022,7 +1022,7 @@ async def test_migration_keeps_the_floor_of_a_control_section_without_it(
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 9
+    assert entry.minor_version == 10
     stored = entry.options.get("control")
     if hard_min is None:
         assert stored == control
@@ -1103,7 +1103,10 @@ CURRENT_OPTIONS = {  # G11 D: the curve's room temperature it ran with, Manual, 
     "parameters": {"boiler_min_power": 4.0, "boiler_max_power": 25.0, "design_outdoor": -18.0},
 }
 STORED_BY_MINOR[8] = CURRENT_OPTIONS | {"reference_room": {"strategy": "average"}}
-STORED_BY_MINOR[9] = CURRENT_OPTIONS  # I8.1: the reference room gone
+STORED_BY_MINOR[9] = CURRENT_OPTIONS | {
+    "monitor": {**CURRENT_OPTIONS["monitor"], "foreign_heat_hold_min": 30}
+}
+STORED_BY_MINOR[10] = CURRENT_OPTIONS  # I8.1a, I8.1c: the reference room and foreign heat gone
 
 
 @pytest.mark.parametrize(
@@ -1136,7 +1139,7 @@ async def test_an_entry_from_before_keeps_the_high_pressure_limits_it_ran_with(
         domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=minor
     )
     await setup(hass, entry)
-    assert entry.minor_version == 9
+    assert entry.minor_version == 10
     assert entry.options["monitor"] == {"monitoring_days": 7, **expected}
     key = f"{entry.entry_id}_alarm_pressure_high"
     found = er.async_get(hass).async_get_entity_id("binary_sensor", DOMAIN, key)
@@ -1208,7 +1211,7 @@ async def test_the_curves_design_outdoor_temperature_becomes_the_buildings(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 9
+    assert entry.minor_version == 10
     assert dict(entry.options) == expected
     assert ("replaces the building's -20.0 °C" in caplog.text) is replaced
 
@@ -1245,8 +1248,31 @@ async def test_an_upgraded_entry_keeps_the_comfort_correction_it_ran_with(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 9  # through the later steps too
+    assert entry.minor_version == 10  # through the later steps too
     assert entry.options.get("control") == expected
+
+
+async def test_an_upgraded_entry_drops_foreign_heat(hass: HomeAssistant) -> None:
+    """I8.1c (minor version 10): foreign heat is gone; the zones' sources and the monitor's hold
+    time go, and nothing else changes."""
+    from custom_components.vtherm_smart_boiler import async_migrate_entry
+
+    zone = {"entity_id": "climate.a", "emitter": "radiator"}
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options={
+            "zones": [zone | {"foreign_heat": [{"entity_id": "switch.stove", "kind": "switch"}]}],
+            "monitor": {"monitoring_days": 7, "foreign_heat_hold_min": 30},
+        },
+        version=1,
+        minor_version=9,
+    )
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry)
+    assert entry.minor_version == 10
+    assert dict(entry.options) == {"zones": [zone], "monitor": {"monitoring_days": 7}}
 
 
 async def test_an_upgraded_entry_drops_the_reference_room(hass: HomeAssistant) -> None:
@@ -1265,7 +1291,7 @@ async def test_an_upgraded_entry_drops_the_reference_room(hass: HomeAssistant) -
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 9
+    assert entry.minor_version == 10
     assert dict(entry.options) == kept
 
 
@@ -1311,7 +1337,7 @@ async def test_an_upgraded_entry_keeps_the_curves_room_it_ran_with(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 9
+    assert entry.minor_version == 10
     assert entry.options["control"] == expected
 
 
@@ -1319,13 +1345,14 @@ async def test_an_upgraded_entry_keeps_the_curves_room_it_ran_with(
 async def test_an_entry_of_any_earlier_minor_version_migrates_to_this_ones_options(
     hass: HomeAssistant, minor: int
 ) -> None:
-    """P-124: from minor version 1 through 2 to 8 to this one (9), each step applied once and in
+    """P-124: from minor version 1 through 2 to 9 to this one (10), each step applied once and in
     order from where the entry stands — ``boiler.shared_return`` and 0.2.1's removed control
     options go (2), the lowest water temperature 0.2.1 used is kept (3, X6), the low-pressure
     limits become the "add water" threshold and the reactions decision 7 no longer offers go,
     with their warning (4, Y1), the curve's design outdoor temperature becomes the building's
     (6, I6), the comfort correction it ran with, off, is stored (7, G11), and so is the curve's
-    room temperature it ran with, Manual (8, G11), and the reference room goes (9, I8). Every
+    room temperature it ran with, Manual (8, G11), the reference room goes (9, I8) and foreign
+    heat (10, I8). Every
     starting point ends with the same options; an entry already current is left as it is, and
     warns of nothing."""
     from homeassistant.helpers import issue_registry as ir
@@ -1359,7 +1386,7 @@ async def test_an_entry_of_any_earlier_minor_version_migrates_to_this_ones_optio
 
 @pytest.mark.parametrize(
     ("version", "minor", "refused"),
-    [(2, 1, True), (3, 4, True), (1, 9, False)],
+    [(2, 1, True), (3, 4, True), (1, 99, False)],  # 99: newer than any minor version here
     ids=["version_2", "version_3", "newer_minor_of_version_1"],
 )
 async def test_a_newer_entry_is_refused(

@@ -54,13 +54,9 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     entities: list[BinarySensorEntity] = [ConnectionSensor(coordinator)]
     hot_water = feature_configured(coordinator, "hot_water")
-    for zone_config, zone in zip(
-        coordinator.config.zones, coordinator.config.installation.zones, strict=True
-    ):
+    for zone in coordinator.config.installation.zones:
         if hot_water:
             entities.append(HotWaterSensor(coordinator, zone.zone_id))
-        if zone_config.foreign_heat:
-            entities.append(ForeignHeatSensor(coordinator, zone.zone_id))
     entities += [AlarmSensor(coordinator, kind) for kind in _alarm_kinds(coordinator)]
     if feature_configured(coordinator, "outdoor_sensor_problem"):
         entities.append(OutdoorSensorProblem(coordinator))
@@ -127,31 +123,6 @@ class HotWaterSensor(SmartBoilerEntity, BinarySensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         hot = self.coordinator.data.zones[self.zone or ""].hot_water
         return {"reason": None if hot.reason is None else hot.reason.value}
-
-
-class ForeignHeatSensor(SmartBoilerEntity, BinarySensorEntity):
-    _unrecorded_attributes = frozenset({"unknown", "holding"})
-
-    _attr_device_class = BinarySensorDeviceClass.HEAT
-
-    def __init__(self, coordinator: SmartBoilerCoordinator, zone: str) -> None:
-        super().__init__(coordinator, "foreign_heat", zone=zone)
-
-    @property
-    def is_on(self) -> bool | None:
-        state = self.coordinator.data.zones[self.zone or ""].foreign_heat
-        return None if state is None else state.active
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        state = self.coordinator.data.zones[self.zone or ""].foreign_heat
-        if state is None:
-            return {}
-        return {
-            "sources": list(state.sources),
-            "unknown": list(state.unknown),
-            "holding": state.holding,
-        }
 
 
 class AlarmSensor(SmartBoilerEntity, BinarySensorEntity):

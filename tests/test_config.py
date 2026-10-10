@@ -11,7 +11,6 @@ from custom_components.vtherm_smart_boiler.config import (
     named_entities,
     rename_entity,
 )
-from custom_components.vtherm_smart_boiler.core.foreign_heat import SourceKind
 from custom_components.vtherm_smart_boiler.core.installation import (
     BoilerClass,
     CircuitControl,
@@ -110,10 +109,6 @@ def test_full_options() -> None:
                 "entity_id": "climate.a",
                 "circuit": "c1",
                 "emitter": "underfloor",
-                "foreign_heat": [
-                    {"entity_id": "switch.fire", "kind": "switch"},
-                    {"entity_id": "sensor.stove", "kind": "temperature", "threshold": 60},
-                ],
             },
             {"entity_id": "climate.b", "circuit": "c2", "reference_output_w": 1500},
         ],
@@ -127,8 +122,6 @@ def test_full_options() -> None:
     assert config.installation.circuit("c2").control is CircuitControl.SEPARATE
     assert config.circuit_flow_entities == {"c2": "sensor.mixed_flow"}
     assert config.installation.zone("climate.a").emitter is EmitterType.UNDERFLOOR
-    assert config.zones[0].foreign_heat[1].kind is SourceKind.TEMPERATURE
-    assert config.zones[0].foreign_heat[1].threshold == 60.0
     # design load 8 kW between 20 °C indoor and a 0 °C design outdoor temperature
     loss = config.parameters.get(ParameterKey.LOSS_COEFFICIENT).effective()
     assert loss is not None
@@ -142,7 +135,6 @@ def test_full_options() -> None:
     assert config.monitor.monitor.short_burn_s == 480.0
     assert config.monitor.monitor.verdict.min_days == 10.0
     assert config.freshness == {Signal.FLOW: 600.0, Signal.PRESSURE: None}
-    assert "switch.fire" in config.watched_entities
     assert "sensor.mixed_flow" in config.watched_entities
     assert "weather.home" in config.watched_entities
 
@@ -465,19 +457,6 @@ def test_the_form_lists_the_signals_in_their_precedence() -> None:
             "invalid_zone",
             "emitter",
         ),
-        (
-            MINIMAL
-            | {
-                "zones": [
-                    {
-                        "entity_id": "climate.a",
-                        "foreign_heat": [{"entity_id": "x.y", "kind": "dragon"}],
-                    }
-                ]
-            },
-            "invalid_zone",
-            "foreign_heat",
-        ),
         (MINIMAL | {"zones": [{"emitter": "radiator"}]}, "invalid_zone", "entity_id"),
         (
             MINIMAL | {"monitor": {"monitoring_days": "a week"}},
@@ -540,16 +519,6 @@ def _zone(**values: object) -> dict:
         (_floor_circuit(fixed_temperature="-inf"), "invalid_circuit", "fixed_temperature"),
         (_zone(exponent="nan"), "invalid_zone", "exponent"),
         (_zone(reference_output_w=0), "invalid_zone", "reference_output_w"),
-        (
-            _zone(foreign_heat=[{"entity_id": "sensor.p", "kind": "power", "threshold": NAN}]),
-            "invalid_zone",
-            "foreign_heat",
-        ),
-        (
-            _zone(foreign_heat=[{"entity_id": "sensor.t", "kind": "temperature", "threshold": 5}]),
-            "invalid_zone",
-            "foreign_heat",
-        ),
         *(
             (MINIMAL | {"monitor": {"monitoring_days": v}}, "invalid_monitor", "monitoring_days")
             for v in ("nan", INF, 0, 6, 61, -7)
@@ -565,7 +534,6 @@ def _zone(**values: object) -> dict:
                 ("near_room_k", -1),
                 ("condensing_return", NAN),
                 ("short_burn_min", 0),
-                ("foreign_heat_hold_min", -5),
             )
         ),
         (MINIMAL | {"freshness": {"flow": "nan"}}, "invalid_freshness", "flow"),
@@ -707,11 +675,7 @@ NAMING = {
     "boiler": {"class": "flow_setpoint"},
     "circuits": [{"id": "main", "flow_entity": "sensor.circuit_flow"}],
     "zones": [
-        {
-            "entity_id": "climate.living",
-            "circuit": "main",
-            "foreign_heat": [{"entity_id": "switch.stove", "kind": "switch"}],
-        },
+        {"entity_id": "climate.living", "circuit": "main"},
         {"entity_id": "climate.bedroom", "circuit": "main"},
     ],
     "freshness": {"flow": 600},
@@ -739,7 +703,6 @@ def test_every_entity_the_options_name_is_found_with_its_fields() -> None:
         "weather.home": ("weather",),
         "sensor.circuit_flow": ("circuits.main.flow_entity",),
         "climate.living": ("zones",),
-        "switch.stove": ("zones.foreign_heat (climate.living)",),
         "climate.bedroom": ("zones", "control.frost_zone"),
         "number.setpoint": ("control.setpoint_entity",),
         "switch.heating": ("control.ch_entity",),
@@ -759,7 +722,6 @@ def test_every_entity_the_options_name_is_found_with_its_fields() -> None:
         ("climate.living", "climate.lounge", ("zones",)),
         ("climate.bedroom", "climate.guest_room", ("zones", "control")),
         ("sensor.flow", "sensor.boiler_flow", ("signals",)),
-        ("switch.stove", "switch.fireplace", ("zones",)),
         ("sensor.circuit_flow", "sensor.radiator_flow", ("circuits",)),
         ("weather.home", "weather.house", ("weather",)),
         ("number.setpoint", "number.boiler_setpoint", ("control",)),
@@ -796,7 +758,7 @@ def test_renaming_what_the_options_do_not_name_as_an_entity_changes_nothing(old:
     "broken",
     [
         {"signals": None, "zones": "climate.a", "circuits": {"id": "main"}},
-        {"zones": [None, {"entity_id": None}, {"entity_id": "climate.a", "foreign_heat": None}]},
+        {"zones": [None, {"entity_id": None}, {"entity_id": "climate.a"}]},
         {"control": ["setpoint_entity"], "weather": 5},
         {},
     ],

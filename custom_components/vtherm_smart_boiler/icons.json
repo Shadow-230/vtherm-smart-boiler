@@ -23,7 +23,6 @@
     "binary_sensor": {
       "connection": { "default": "mdi:lan-connect", "state": { "off": "mdi:lan-disconnect" } },
       "hot_water": { "default": "mdi:water-thermometer", "state": { "off": "mdi:water-off" } },
-      "foreign_heat": { "default": "mdi:fireplace", "state": { "off": "mdi:fireplace-off" } },
       "alarm_frequent_starts": { "default": "mdi:fire-alert", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_unstable_ignition": { "default": "mdi:fire-alert", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_pressure_low": { "default": "mdi:gauge-low", "state": { "off": "mdi:check-circle-outline" } },

@@ -73,10 +73,10 @@ rules of bounded learning (principle 13), each mapped:
    weather ceiling) or a clip holds the setpoint, the "at limit" timer paused meanwhile (S-25,
    T-48); stepping back: the fall.
 4. Good enough: the rise stops once no zone is 0.3 K short.
-5. Freezes: hot water and foreign heat — neither rise nor fall (foreign heat unknown freezes
-   nothing); data gaps — held while the link is stale or no zone is known; hand-back — reset;
-   extreme weather — the outdoor reading below the design outdoor temperature or changing faster
-   than 2 K per hour, or unknown (``core.comfort_rules``, decision 11 of 0.2.3).
+5. Freezes: hot water — neither rise nor fall; data gaps — held while the link is stale or no
+   zone is known; hand-back — reset; extreme weather — the outdoor reading below the design
+   outdoor temperature or changing faster than 2 K per hour, or unknown (``core.comfort_rules``,
+   decision 11 of 0.2.3).
 6. At the edge: "at limit" after 3 h at 3 K.
 7. Visible and resettable: published with each decision (the control state, diagnostics); reset
    at hand-back, at a session's end and by the user (``reset_correction``, the "Reset comfort
@@ -297,9 +297,6 @@ class ControlInputs:
     outdoor_weather: float | None = None
     zones: Sequence[ZoneState] = ()  # every configured zone
     clipped: bool = False  # the boiler holds the water lower than asked: its own limit
-    # Foreign heat warms a zone (the monitor's view): the comfort correction freezes. ``None``:
-    # not known — no freeze.
-    foreign_heat: bool | None = None
     # The boiler's heating starts within ``comfort_rules.STARTS_WINDOW_S`` up to ``now``
     # (``comfort_rules.heating_starts``), for the comfort correction's rule 3. ``None``: not
     # known — the correction does not rise.
@@ -1142,17 +1139,16 @@ def _correction(
 ) -> tuple[float, tuple[tuple[float, float], ...], StartsBaseline | None]:
     """The comfort correction for this water decision, within its firm band (bounded learning),
     the rises within the last day and rule 3's baseline. ``held``: a cap or a clip holds the
-    setpoint — no rise. Frozen — neither rise nor fall — while hot water runs or foreign heat
-    warms a zone; no rise while the weather is extreme or unknown (rule 5), while every fall —
-    rooms satisfied or too warm, rule 3's step back — passes, the cautious side (M1 of the part-2
-    check); rising only while the starts are known and do not rise, stepping back while they do
-    (rule 3)."""
+    setpoint — no rise. Frozen — neither rise nor fall — while hot water runs; no rise while the
+    weather is extreme or unknown (rule 5), while every fall — rooms satisfied or too warm, rule
+    3's step back — passes, the cautious side (M1 of the part-2 check); rising only while the
+    starts are known and do not rise, stepping back while they do (rule 3)."""
     now = inputs.now
     rises = tuple((t, k) for t, k in state.rises if abs(now - t) < DAY)
     if not config.comfort_correction:
         return 0.0, rises, None
     baseline = state.starts_baseline
-    if inputs.dhw is True or inputs.foreign_heat is True:
+    if inputs.dhw is True:
         return state.correction, rises, baseline
     extreme = extreme_weather(
         state.outdoor_seen, _outdoor_reading(inputs), now, config.curve.design_outdoor

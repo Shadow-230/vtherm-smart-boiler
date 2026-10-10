@@ -2234,16 +2234,15 @@ def test_the_correction_rises_at_most_3_k_a_day() -> None:
     assert state.correction == pytest.approx(1.0)
 
 
-def test_the_correction_freezes_during_hot_water_and_foreign_heat() -> None:
-    """Principle 13 (5): neither rise nor fall while hot water runs or foreign heat warms a
-    zone. Negative: foreign heat unknown freezes nothing."""
+def test_the_correction_freezes_during_hot_water() -> None:
+    """Principle 13 (5): neither rise nor fall while hot water runs. Negative: hot water not
+    known, or not running, freezes nothing (I8.1c: foreign heat no longer freezes it)."""
     start = replace(ControlState(), correction=2.0)
-    for kw in ({"dhw": True}, {"foreign_heat": True}):
-        state, _ = run(minutes(0.0, 30, lambda t: (satisfied(t),), **kw), WATER, start)
-        assert state.correction == 2.0, kw  # no fall
-        state, _ = run(minutes(0.0, 30, lambda t: (short(t),), **kw), WATER, start)
-        assert state.correction == 2.0, kw  # no rise
-    for kw in ({"foreign_heat": None}, {"foreign_heat": False}):
+    state, _ = run(minutes(0.0, 30, lambda t: (satisfied(t),), dhw=True), WATER, start)
+    assert state.correction == 2.0  # no fall
+    state, _ = run(minutes(0.0, 30, lambda t: (short(t),), dhw=True), WATER, start)
+    assert state.correction == 2.0  # no rise
+    for kw in ({"dhw": None}, {"dhw": False}):
         state, _ = run(minutes(0.0, 31, lambda t: (satisfied(t),), **kw), WATER, start)
         assert state.correction == pytest.approx(0.0), kw
 

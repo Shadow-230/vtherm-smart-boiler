@@ -11364,37 +11364,23 @@ async def test_learning_reads_the_flow_by_its_own_age_limit(
     assert resumed is (limit is not None)
 
 
-async def test_the_correction_freezes_while_foreign_heat_warms_a_zone(rig: Rig) -> None:
-    """Principle 13 (5): foreign heat — the monitor's view of a zone's source — freezes the
-    comfort correction. Negative: the source off, it rises."""
-    rig.hass.states.async_set("switch.fireplace", "on")
-    entry_options = options(rig.zones, comfort_correction=True)  # off by default since K4.1
-    entry_options["zones"][0]["foreign_heat"] = [
-        {"entity_id": "switch.fireplace", "kind": "switch"}
-    ]
-    short_room(rig)
-    entry = add_entry(rig, entry_options)
-    await set_up(rig, entry)
-    await rig.switch(True)
-    await rig.advance(2400, step=60)
-    assert correction(rig) == 0.0
-    rig.hass.states.async_set("switch.fireplace", "off")
-    await rig.advance(3600 + 2400, step=60)  # its hold of an hour, then heat flows
-    assert correction(rig) > 0.5
-
-
 @pytest.mark.parametrize(
     ("causes", "resumed"),
-    [(["foreign_heat"], True), (None, False), (["a_cause_of_a_later_version"], False)],
-    ids=["foreign_heat", "not_stored", "unknown"],
+    [
+        (["water_swing"], True),
+        (None, False),
+        (["a_cause_of_a_later_version"], False),
+        (["foreign_heat"], False),  # gone since I8.1c: unknown now
+    ],
+    ids=["water_swing", "not_stored", "unknown", "foreign_heat"],
 )
 async def test_a_pauses_causes_come_back_after_a_restart(
     rig: Rig, hass_storage: dict[str, Any], causes: list[str] | None, resumed: bool
 ) -> None:
-    """P-89 with V3: the causes of a pause are stored, and a restart resumes by them — after
-    foreign heat once it is gone and the minimum pause has passed, whatever the flow. A pause
-    stored without its causes, or with causes this version does not know, is taken for hot
-    water: it waits for the flow to come back."""
+    """P-89 with V3: the causes of a pause are stored, and a restart resumes by them — after a
+    water swing once it is gone and the minimum pause has passed, whatever the flow. A pause
+    stored without its causes, or with causes this version does not know (foreign heat since
+    I8.1c), is taken for hot water: it waits for the flow to come back."""
     calls = smartpi_learner(rig)
     smartpi_zone(rig, False)  # paused by the last run
     zone = rig.zones.entities["living"]
