@@ -410,13 +410,14 @@ async def R9(r: Run):
 
 
 async def R10(r: Run):
-    """a declared 10-min timer that runs from the first "on" (a Shelly's auto-off): each lapse
-    answered at once, never counted"""
+    """a declared 11-min timer that runs from the first "on" (a Shelly's auto-off): each lapse
+    answered at once, never counted. 11, not 10: a lapse at a multiple of the 5-min renewal
+    comes with one, and the renewal hides it from Home Assistant (PB-25)"""
     try:
         await relay_setup(
             r,
-            {"relay_off_timer": "minutes", "relay_off_timer_min": 10},
-            off_timer_min=10,
+            {"relay_off_timer": "minutes", "relay_off_timer_min": 11},
+            off_timer_min=11,
             timer_restarts_on_repeat=False,
         )
         await relay_on_under_control(r)
