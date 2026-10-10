@@ -45,6 +45,39 @@ async def test_zones_from_vt_climate_entities(hass: HomeAssistant, zones: FakeZo
     assert vt_climate_entities(hass) == sorted([living, bedroom])
 
 
+@pytest.mark.parametrize(
+    ("specific", "sensor", "expected"),
+    [
+        ({"regulation_diagnostics": "sensor.diag"}, "bootstrap_hysteresis", True),
+        ({"regulation_diagnostics": "sensor.diag"}, "stable", False),
+        ({"regulation_diagnostics": "sensor.diag"}, "calibration", False),
+        ({"regulation_diagnostics": "sensor.diag"}, "inactive", False),
+        ({"regulation_diagnostics": "sensor.diag"}, "unavailable", None),
+        ({"regulation_diagnostics": "sensor.diag"}, "a_later_phase", None),
+        ({"regulation_diagnostics": "sensor.diag"}, None, None),  # the sensor away
+        ({"regulation_diagnostics": 7}, "bootstrap_hysteresis", None),  # not an entity ID
+        ({}, "bootstrap_hysteresis", None),  # not SmartPI, or an older one
+        (None, "bootstrap_hysteresis", None),  # VT not started
+    ],
+)
+async def test_smartpis_learning_phase_is_read_from_its_diagnostic_sensor(
+    hass: HomeAssistant,
+    zones: FakeZones,
+    specific: dict[str, Any] | None,
+    sensor: str | None,
+    expected: bool | None,
+) -> None:
+    """G11 C: SmartPI 0.4.0 shows its phase on its diagnostic sensor, which the VT climate names
+    in ``specific_states``; "bootstrap_hysteresis" is its learning phase. Anything else that
+    cannot be told — no such key, not an entity ID, the sensor away, a state this version does
+    not know — leaves the phase unknown, and today's rule applies."""
+    living = zones.add("living", specific_states=specific)
+    if sensor is not None:
+        hass.states.async_set("sensor.diag", sensor)
+    zone = VThermLink(hass, [living]).zone(living)
+    assert zone.smartpi_learning_phase is expected
+
+
 async def test_zone_temperatures_follow_the_unit_system(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:

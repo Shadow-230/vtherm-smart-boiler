@@ -11030,6 +11030,72 @@ async def test_the_reset_button_resets_the_comfort_correction(rig: Rig) -> None:
     assert 0.5 <= correction(rig) <= 1.5  # rising again, within the day's 3 K
 
 
+LIVING_SMARTPI = "sensor.living_smartpi_diagnostics"
+
+
+def learning_room(rig: Rig, phase: str) -> None:
+    """G11 C: a SmartPI room 0.2 K over VT's setpoint, its valve fully open, the burner on —
+    SmartPI's diagnostic sensor, named by the climate's ``specific_states``, in ``phase``."""
+    rig.zones.set(
+        "living",
+        current_temperature=21.2,
+        temperature=21.0,
+        hvac_action="heating",
+        valve_open_percent=100,
+        on_percent=1.0,
+        specific_states={"regulation_diagnostics": LIVING_SMARTPI},
+    )
+    rig.hass.states.async_set(LIVING_SMARTPI, phase)
+    rig.flame = True
+
+
+@pytest.mark.parametrize(("phase", "rises"), [("bootstrap_hysteresis", True), ("stable", False)])
+async def test_a_smartpi_room_learning_just_over_its_setpoint_raises_the_water(
+    rig: Rig, phase: str, rises: bool
+) -> None:
+    """G11 C (B+C): SmartPI in its learning phase runs on/off and keeps the valve open until the
+    room is 0.5 K over VT's setpoint; at 0.2 K over with water too cool, the room is still short
+    for it, so the correction raises the water. Negative: out of that phase the room counts as
+    warm enough, and nothing rises."""
+    learning_room(rig, phase)
+    await start(rig, comfort_correction=True)
+    await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
+    await rig.switch(True)
+    await rig.advance(3600, step=60)
+    assert (correction(rig) >= 1.5) is rises
+    assert (correction(rig) == 0.0) is not rises
+
+
+async def test_a_curve_too_low_for_a_room_is_named_at_the_correction_limit(rig: Rig) -> None:
+    """G11 B: the correction at the user's limit (1 K here) for three hours with the room still
+    short — the information alarm, and a warning repair issue naming the room: the curve is too
+    low for it. It goes once the room is no longer short; switching control off takes it too."""
+    short_room(rig)
+    await start(rig, comfort_correction=True, comfort_correction_max_k=1.0)
+    await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
+    await rig.switch(True)
+    await rig.advance(1800 + 3 * 3600 - 300, step=60)
+    assert correction(rig) == pytest.approx(1.0)  # the user's limit
+    assert issue(rig, "curve_too_low") is None  # not three hours at it yet
+    await rig.advance(600, step=60)
+    found = issue(rig, "curve_too_low")
+    assert found is not None
+    assert found.severity is ir.IssueSeverity.WARNING
+    assert found.translation_placeholders == {
+        "zones": rig.hass.states.get(rig.zones.entities["living"]).name,
+        "limit": "1",
+    }
+    assert rig.state("binary_sensor", "alarm_correction_at_limit").state == "on"
+    rig.zones.set("living", current_temperature=21.0, temperature=21.0, valve_open_percent=40)
+    await rig.advance(60)
+    assert issue(rig, "curve_too_low") is None
+    short_room(rig)
+    await rig.advance(60)
+    assert issue(rig, "curve_too_low") is not None  # still at the limit, short again
+    await rig.switch(False)
+    assert issue(rig, "curve_too_low") is None
+
+
 async def test_the_reset_button_exists_only_with_control_configured(rig: Rig) -> None:
     """Without control, no button; with control switched off (the correction already 0) a
     press changes nothing and raises no error."""

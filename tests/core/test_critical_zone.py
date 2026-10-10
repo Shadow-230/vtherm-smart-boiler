@@ -95,3 +95,13 @@ def test_the_hysteresis_compares_demand_before_deficit() -> None:
     assert not _clearly_worse(zone("b", 15.0, 21.0, 0.5), current, 0.1, 0.3)
     assert not _clearly_worse(zone("b", 15.0, 21.0, None), current, 0.1, 0.3)
     assert _clearly_worse(zone("b", 20.0, 21.0, 0.8), zone("a", 20.0, 21.0, None), 0.1, 0.3)
+
+
+def test_a_smartpi_zone_in_its_learning_phase_is_saturated_up_to_its_hysteresis() -> None:
+    """G11 C: fully open, 0.2 K over VT's setpoint — SmartPI in its learning phase holds the
+    valve open until 0.5 K over it, so the water is still too cool for it; without the phase,
+    the room is warm enough."""
+    learning = zone("a", 21.2, 21.0, 1.0, smartpi_learning_phase=True)
+    assert pick([learning]).saturated
+    assert pick([learning]).deficit == pytest.approx(-0.2)  # shown as VT sees it
+    assert not pick([zone("a", 21.2, 21.0, 1.0)]).saturated

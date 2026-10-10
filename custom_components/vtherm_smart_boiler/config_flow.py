@@ -934,7 +934,7 @@ CONTROL_ADVANCED_KEYS = (
     "decision_interval_min",
     "off_setpoint",
     "learning_pauses",
-    "comfort_correction",
+    "comfort_correction_max_k",
     "alarm_reactions",
     "return_after_outside_change",
     "return_after_switch_hand_back",
@@ -1235,6 +1235,12 @@ def control_curve_schema(options: dict[str, Any], vt_delay: float | None = None)
         ),
         **activation_delay_field(control, vt_delay),
     }
+    if not _advanced(options):
+        # G11 B: on by default, so shown at the simple level too — here, where that level has
+        # no behaviour step; the advanced level shows it there, beside its limit.
+        fields[vol.Required("comfort_correction", default=default("comfort_correction"))] = (
+            selector.BooleanSelector()
+        )
     if _advanced(options):
         fields |= {
             vol.Required("room", default=curve.get("room", CURVE_DEFAULTS["room"])): _number(
@@ -1456,6 +1462,10 @@ def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
             ),
             **required("learning_pauses", selector.BooleanSelector()),
             **required("comfort_correction", selector.BooleanSelector()),
+            **required(
+                "comfort_correction_max_k",
+                _number(*CONTROL_BOUNDS["comfort_correction_max_k"], 0.5, "K"),
+            ),
         }
     )
 
@@ -1618,6 +1628,8 @@ def apply_control_curve(options: dict[str, Any], user_input: dict[str, Any]) -> 
     keys = ["hard_min", "hard_max", ACTIVATION_DELAY]
     if _advanced(options):
         keys += ["ceiling_band", "fallback_setpoint", "frost_limit", "frost_release", "frost_zone"]
+    else:
+        keys.append("comfort_correction")  # G11 B: the simple level's place for it
     _set_or_drop(control, user_input, tuple(keys))
     options[CONTROL] = control
 
@@ -3102,8 +3114,9 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # temperature keeps 25 °C; 4: the "add water" threshold replaces the low-pressure limits, and
     # alarm reactions no longer offered go; 5: the high-pressure limits have no default, and an
     # entry from before keeps those it ran with; 6: the design outdoor temperature is one value,
-    # the building's, the curve's moved there (see async_migrate_entry).
-    MINOR_VERSION = 6
+    # the building's, the curve's moved there; 7: the comfort correction, now on by default, stays
+    # off in a control section that never stored it (see async_migrate_entry).
+    MINOR_VERSION = 7
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}

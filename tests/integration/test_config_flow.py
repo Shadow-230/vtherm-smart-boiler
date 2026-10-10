@@ -459,6 +459,8 @@ async def test_control_through_the_gateway_at_the_simple_level(
         "hard_min": 25,
         "hard_max": 65,
         "activation_delay_s": 0,  # VT's delay, confirmed by saving (decision 5)
+        # G11 B: on by default, shown in the simple level's curve step and stored.
+        "comfort_correction": True,
         "alarm_reactions": {"write_ignored": "hand_back"},
     }
     # I6: the design outdoor temperature is the building's, one value with the curve's.

@@ -389,14 +389,14 @@ def test_tpi_switch_zones_starts_per_hour_under_control(mean: float) -> None:
     assert comfort_parity(own, controlled), comfort_shortfall(own, controlled)
 
 
-def test_the_defaults_are_the_correction_off_run() -> None:
-    """J4's criterion with the plugin's defaults — the comfort correction off since the user's
-    decision of 2026-10-03 (K4.1): the defaults' loop is the one the correction-off test runs,
-    so that test is J4's criterion with the defaults too (PB-94: no second run of the same).
-    Negative: the correction on is another loop."""
+def test_the_defaults_are_the_correction_on_run() -> None:
+    """The plugin's defaults — the comfort correction on in full control since the user's
+    decision of 2026-10-10 (G11 B, reversing K4.1): the defaults' loop is the one the
+    correction-on test runs, so that test is J4's criterion with the defaults (PB-94: no second
+    run of the same). Negative: the correction off is another loop."""
     boiler = BOILERS["condensing_large"]
-    assert own_curve_loop(boiler, None) == own_curve_loop(boiler, False)
-    assert own_curve_loop(boiler, None) != own_curve_loop(boiler, True)
+    assert own_curve_loop(boiler, None) == own_curve_loop(boiler, True)
+    assert own_curve_loop(boiler, None) != own_curve_loop(boiler, False)
 
 
 @pytest.mark.parametrize("mean", [8.0, -5.0])
@@ -404,7 +404,8 @@ def test_a_cooler_curve_meets_the_starts_but_not_comfort_parity(mean: float) -> 
     """SB-08 (decision 8), negative: a curve 10 K cooler at the design point than the boiler's
     own starts the burner less often — the starts criterion alone would pass it — and leaves the
     rooms colder, which J4's comfort parity refuses."""
-    own, controlled = starts_both_ways(mean, comfort_correction=None, flow_shift=-10.0)
+    # The correction off: on, it raises the cooler curve's water and meets parity (G11 B).
+    own, controlled = starts_both_ways(mean, comfort_correction=False, flow_shift=-10.0)
     assert starts(controlled, DAY, 2 * DAY) <= STARTS_CRITERION * starts(own, DAY, 2 * DAY)
     assert not comfort_parity(own, controlled), comfort_shortfall(own, controlled)
 
@@ -429,10 +430,10 @@ def test_comfort_parity_without_rooms_is_not_met() -> None:
 @pytest.mark.parametrize("mean", [8.0, -5.0])
 def test_j4s_starts_criterion_with_the_daily_swing(mean: float) -> None:
     """J4's starts criterion with its conditions (SB-08, decision 8): 24 h at +8 °C and at
-    −5 °C, each with a ±3 K daily outdoor swing, the plugin's defaults on the boiler's own curve:
-    at most 1.10 times the boiler's own regulation's starts per hour, with every room as warm as
-    under it (comfort parity)."""
-    own, controlled = starts_both_ways(mean, comfort_correction=None, swing=SWING_K)
+    −5 °C, each with a ±3 K daily outdoor swing, on the boiler's own curve with the comfort
+    correction off (the defaults until G11): at most 1.10 times the boiler's own regulation's
+    starts per hour, with every room as warm as under it (comfort parity)."""
+    own, controlled = starts_both_ways(mean, comfort_correction=False, swing=SWING_K)
     assert controlled.override_s > 0.95 * 2 * DAY  # the control held the boiler throughout
     assert starts(own, DAY, 2 * DAY) > 0
     assert comfort_parity(own, controlled), comfort_shortfall(own, controlled)
@@ -462,20 +463,33 @@ def test_tpi_switch_zones_starts_per_hour_with_the_correction_on(mean: float) ->
 @pytest.mark.parametrize(
     ("mean", "correction", "swing", "low", "high"),
     [
-        (8.0, None, SWING_K, 1.15, 1.25),
-        (-5.0, None, SWING_K, 2.0, 2.3),
+        (8.0, False, SWING_K, 1.15, 1.25),
+        (-5.0, False, SWING_K, 2.0, 2.3),
         (8.0, True, 0.0, 1.65, 1.85),
         (-5.0, True, 0.0, 4.7, 5.5),
+        # G11 B: the correction on by default — with the daily swing, x1.39 and x6.28 (the
+        # "up to 6.3" the option's text names); the default may be revisited after J4's starts
+        # comparison with it on (about 2026-10-12).
+        (8.0, True, SWING_K, 1.3, 1.5),
+        (-5.0, True, SWING_K, 5.9, 6.7),
     ],
-    ids=["swing_plus_8", "swing_minus_5", "correction_on_plus_8", "correction_on_minus_5"],
+    ids=[
+        "swing_plus_8",
+        "swing_minus_5",
+        "correction_on_plus_8",
+        "correction_on_minus_5",
+        "correction_on_swing_plus_8",
+        "correction_on_swing_minus_5",
+    ],
 )
 def test_the_documented_starts_ratios_hold(
     mean: float, correction: bool | None, swing: float, low: float, high: float
 ) -> None:
     """PB-94: the two strict xfails above fail on the starts criterion alone; this pins the
-    ratios their reasons document (x1.20 and x2.16 with the daily swing, x1.75 and x5 with the
-    correction on), so a far worse ratio — or a crash — shows here instead of passing as the
-    expected failure. Comfort parity holds in each (within 0.05 K)."""
+    ratios their reasons document (x1.20 and x2.16 with the daily swing and the correction off,
+    x1.75 and x5 with the correction on), and those of the defaults since G11 — the correction
+    on with the daily swing — so a far worse ratio, or a crash, shows here instead of passing
+    as the expected failure. Comfort parity holds in each (within 0.05 K)."""
     own, controlled = starts_both_ways(mean, comfort_correction=correction, swing=swing)
     ratio = starts(controlled, DAY, 2 * DAY) / starts(own, DAY, 2 * DAY)
     assert low <= ratio <= high, ratio

@@ -94,9 +94,12 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         "decision_interval_min": 5.0,
         "off_setpoint": DEFAULT_OFF_SETPOINT,
         "learning_pauses": True,
-        # Off: with VT's TPI zones it can hold the water at its +3 K edge and multiply the
-        # burner's starts (decided by the user 2026-10-03, K4.1).
-        "comfort_correction": False,
+        # On in full control (the user, 2026-10-10, G11 B, reversing K4.1): a room its emitter
+        # cannot heat on the curve gets warmer water, within the limit below. An entry from
+        # before keeps what it ran with — the migration writes "off" where it stored no answer.
+        "comfort_correction": True,
+        # The correction's limit, the user's (G11 B); the weather ceiling still caps it.
+        "comfort_correction_max_k": 3.0,
         # Without the tick, VT giving no answer at all means no heating and an alarm (answer F).
         "own_room_controller": False,
         # VT's activation delay (decision 5): 0 s, VT's own default — heating starts at once.
@@ -114,6 +117,7 @@ CONTROL_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
         "hard_min": (10.0, 50.0),
         "hard_max": (30.0, 90.0),
         "ceiling_band": (0.0, 20.0),
+        "comfort_correction_max_k": (0.5, 10.0),
         "frost_limit": (3.0, 10.0),
         "frost_release": (4.0, 12.0),
         "count_threshold": (0.0, 20.0),
@@ -707,6 +711,21 @@ def _mapping(data: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     return value
 
 
+def section_as_migrated(section: Any) -> Any:
+    """A control section as this version's entry migration leaves one (G11 B, minor version 7):
+    the comfort correction "off" where it stored no answer — what it ran with, its default since
+    K4.1. The entry migration writes it into the options; the options a stored session took the
+    boiler with (``taken_with``), which no migration reaches, are read through it, so a restart
+    after the update compares like with like."""
+    if (
+        isinstance(section, Mapping)
+        and section.get("write_path")
+        and "comfort_correction" not in section
+    ):
+        return {**section, "comfort_correction": False}
+    return section
+
+
 def parse_relay(data: Mapping[str, Any]) -> RelayOptions:
     """The relay's answers, each unanswered one with its cautious default (R3). A choice this
     version does not know raises ``ValueError`` (P-70); hand-edited numbers outside their range
@@ -840,6 +859,7 @@ def parse_control(
         decision_interval_s=_required(value, "decision_interval_min") * MINUTE,
         # The relay sets no water temperature: nothing to correct (R5).
         comfort_correction=_yes_no(value, "comfort_correction") and not on_off,
+        correction_max_k=_required(value, "comfort_correction_max_k"),
         # Only what the user saved: VT's own value is a pre-fill in the form, never taken here.
         activation_delay_s=_required(value, "activation_delay_s"),
         # The relay path (R5, R6): heating on and off only, and its link is the relay itself —

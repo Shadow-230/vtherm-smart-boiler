@@ -95,6 +95,12 @@ POWER_THRESHOLD_UNIQUE_ID = "boiler_power_activation_threshold"
 # The plugin's repeat interval takes VT's keep-alive only within its own range (R3).
 REPEAT_RANGE_S = (10.0, 300.0)
 HVAC_OFF_REASON = "hvac_off_reason"  # a thermostat's attribute (VT 10.4.0)
+# SmartPI 0.4.0 (G11 C): the VT climate's ``specific_states`` names its diagnostic sensor, whose
+# state is the phase — "bootstrap_hysteresis" its learning phase, run on/off (``handler.py``,
+# ``sensor.py``). Any other state, or none, tells nothing: the phase is unknown.
+SMARTPI_DIAGNOSTICS = "regulation_diagnostics"
+SMARTPI_LEARNING_PHASE = "bootstrap_hysteresis"
+SMARTPI_PHASES = frozenset({SMARTPI_LEARNING_PHASE, "stable", "calibration", "inactive"})
 ROOM_SENSOR = "temperature_sensor_entity_id"  # in a thermostat's entry data (VT 10.4.0)
 # The entities a thermostat drives — switches, valves or climates — in its entry's data (VT 10.4.0
 # ``const.py:63``, ``CONF_UNDERLYING_LIST``; migrated there from the older per-slot keys).
@@ -512,6 +518,22 @@ def vt_loads_feature_managers(version: str | None) -> bool | None:
         return None
 
 
+def smartpi_learning_phase(hass: HomeAssistant, state: State | None) -> bool | None:
+    """Whether a zone's SmartPI runs its learning phase (G11 C), as its diagnostic sensor shows:
+    ``True`` in it, ``False`` in another phase, ``None`` where it cannot be told — not SmartPI,
+    an older one without that sensor, the sensor away, or a state this version does not know."""
+    if state is None:
+        return None
+    specific = state.attributes.get("specific_states")
+    sensor = specific.get(SMARTPI_DIAGNOSTICS) if isinstance(specific, dict) else None
+    if not isinstance(sensor, str) or not sensor:
+        return None
+    diagnostics = hass.states.get(sensor)
+    if diagnostics is None or diagnostics.state not in SMARTPI_PHASES:
+        return None
+    return diagnostics.state == SMARTPI_LEARNING_PHASE
+
+
 class VThermLink:
     """Zones as the core sees them, read from VT's climate entities."""
 
@@ -527,9 +549,11 @@ class VThermLink:
         self._api_version = await self._hass.async_add_executor_job(_vtherm_api_version)
 
     def zone(self, entity_id: str) -> ZoneState:
-        zone = self.zone_from_state(entity_id, self._hass.states.get(entity_id))
+        state = self._hass.states.get(entity_id)
+        zone = self.zone_from_state(entity_id, state)
         lost = zone.safety_on or self._room_sensor_lost(entity_id)
-        return replace(zone, room_sensor_lost=lost)
+        learning = smartpi_learning_phase(self._hass, state)
+        return replace(zone, room_sensor_lost=lost, smartpi_learning_phase=learning)
 
     def _room_sensor_lost(self, entity_id: str) -> bool:
         """The room sensor VT reads is gone, unavailable or unknown: VT keeps its last
