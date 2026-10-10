@@ -55,6 +55,24 @@
           "level": "Prosty pokazuje to, co najważniejsze, z ostrożnymi wartościami domyślnymi; zaawansowany pokazuje każdy parametr. Poziom zmienia tylko to, co widzisz, nigdy działanie wtyczki."
         }
       },
+      "menu": {
+        "title": "Smart Boiler for Versatile Thermostat",
+        "description": "Przejdź przez każdą sekcję: po zatwierdzeniu wraca tutaj, a nic nie zostanie utworzone, dopóki nie wybierzesz „Utwórz”. Zamknięcie tego okna porzuca konfigurację. {state}",
+        "menu_options": {
+          "connection": "Kocioł, połączenie i tryb sterowania",
+          "name": "Nazwa i poziom szczegółowości",
+          "signals": "Sygnały kotła",
+          "boiler": "Kocioł",
+          "circuit": "Obiegi grzewcze",
+          "zones": "Strefy VT",
+          "building": "Budynek",
+          "reference": "Pokój odniesienia",
+          "monitor": "Progi monitora",
+          "control": "Sterowanie (eksperymentalne)",
+          "finish": "Utwórz",
+          "incomplete": "Konfiguracja niekompletna"
+        }
+      },
       "signals": {
         "title": "Sygnały kotła",
         "description": "Wskaż encję, która podaje każdy sygnał. Żaden nie jest wymagany: płomień i temperatura zasilania włączają metryki palnika, łącze z kotłem i sterowanie temperaturą wody, które wymaga obu; każdy kolejny sygnał rozszerza monitor. Dom z samym przekaźnikiem też jest monitorowany. Wtyczka tylko czyta te encje. Jedna encja zasila tylko jeden sygnał.\n\n{hint}",
@@ -593,7 +611,7 @@
     "step": {
       "init": {
         "title": "Opcje Smart Boiler for Versatile Thermostat",
-        "description": "Zmień jedną sekcję; wszystkie inne ustawienia zostają bez zmian. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "{changes}\n\nKażda sekcja po zatwierdzeniu wraca tutaj; nic nie zostaje zapisane, dopóki nie wybierzesz „Zapisz i zakończ”, które sprawdza całość, zapisuje ją i raz przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem). Sama zmiana poziomu niczego nie przeładowuje. Zamknięcie tego okna porzuca niezapisane zmiany.",
         "menu_options": {
           "connection": "Kocioł, połączenie i tryb sterowania",
           "signals": "Sygnały kotła",
@@ -606,12 +624,13 @@
           "monitor": "Progi monitora",
           "level": "Poziom szczegółowości",
           "level_hidden": "Poziom szczegółowości (aktywne są ukryte ustawienia zaawansowane)",
-          "control": "Sterowanie (eksperymentalne)"
+          "control": "Sterowanie (eksperymentalne)",
+          "save": "Zapisz i zakończ"
         }
       },
       "connection": {
         "title": "Jak kocioł jest podłączony?",
-        "description": "Te pierwsze wybory decydują o wszystkim, co dalej; same niczego nie włączają. Wybierz, jak Home Assistant łączy się z kotłem:\n\n- **OpenTherm Gateway (integracja)** — integracja OpenTherm Gateway w Home Assistant. Gdy Home Assistant przestanie działać, bramka najpóźniej po minucie porzuca nastawę wtyczki: z termostatem na bramce sterowanie przejmuje termostat, bez termostatu grzanie staje.\n- **Firmware OTGW przez MQTT** — ta sama bramka przez wiadomości MQTT jej firmware'u; po zatrzymaniu Home Assistant tak samo.\n- **ESPHome OpenTherm** — ESP z komponentem OpenTherm ESPHome. Trzyma ostatnią nastawę i włączone grzanie aż do restartu (domyślnie po 15 minutach bez Home Assistant), potem przyjmuje wartości startowe z własnej konfiguracji.\n- **EMS-ESP** — jego nastawa zasilania wygasa po około minucie, a EMS-ESP jej nie ponawia, więc ponawia ją wtyczka; gdy Home Assistant przestanie działać, kocioł wraca do własnego ustawienia.\n- **Przekaźnik (kocioł wł./wył.)** — przekaźnik na zaciskach termostatu pokojowego kotła; po zatrzymaniu Home Assistant zostaje w ostatnim stanie.\n- **Moduł Wi-Fi kotła lub integracja producenta** — zapisy trafiają zwykle do pamięci kotła albo przez chmurę: domyślnie tylko monitorowanie.\n- **Inna encja do zapisu (zaawansowane)** — dowolne inne urządzenie; to, co robi po zatrzymaniu Home Assistant, zależy od niego.\n- **Inna integracja, tylko odczyt** — wtyczka tylko odczytuje kocioł.\n\nZapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Te pierwsze wybory decydują o wszystkim, co dalej; same niczego nie włączają. Wybierz, jak Home Assistant łączy się z kotłem:\n\n- **OpenTherm Gateway (integracja)** — integracja OpenTherm Gateway w Home Assistant. Gdy Home Assistant przestanie działać, bramka najpóźniej po minucie porzuca nastawę wtyczki: z termostatem na bramce sterowanie przejmuje termostat, bez termostatu grzanie staje.\n- **Firmware OTGW przez MQTT** — ta sama bramka przez wiadomości MQTT jej firmware'u; po zatrzymaniu Home Assistant tak samo.\n- **ESPHome OpenTherm** — ESP z komponentem OpenTherm ESPHome. Trzyma ostatnią nastawę i włączone grzanie aż do restartu (domyślnie po 15 minutach bez Home Assistant), potem przyjmuje wartości startowe z własnej konfiguracji.\n- **EMS-ESP** — jego nastawa zasilania wygasa po około minucie, a EMS-ESP jej nie ponawia, więc ponawia ją wtyczka; gdy Home Assistant przestanie działać, kocioł wraca do własnego ustawienia.\n- **Przekaźnik (kocioł wł./wył.)** — przekaźnik na zaciskach termostatu pokojowego kotła; po zatrzymaniu Home Assistant zostaje w ostatnim stanie.\n- **Moduł Wi-Fi kotła lub integracja producenta** — zapisy trafiają zwykle do pamięci kotła albo przez chmurę: domyślnie tylko monitorowanie.\n- **Inna encja do zapisu (zaawansowane)** — dowolne inne urządzenie; to, co robi po zatrzymaniu Home Assistant, zależy od niego.\n- **Inna integracja, tylko odczyt** — wtyczka tylko odczytuje kocioł.",
         "data": {
           "connection": "Połączenie",
           "heat_source": "Źródło ciepła",
@@ -625,7 +644,7 @@
       },
       "mqtt_topics": {
         "title": "Tematy MQTT",
-        "description": "Tematy, pod którymi publikuje Twój interfejs kotła. Home Assistant zapisuje wartość encji MQTT tylko wtedy, gdy się zmienia, więc stała wartość wygląda na tak starą jak jej ostatnia zmiana; sam interfejs powtarza swoje wartości (firmware OTGW co najmniej co 60 s, EMS-ESP domyślnie co 10 s), a wtyczka słucha tych powtórzeń na tych tematach — tylko czyta — żeby widzieć, że dane kotła wciąż płyną. Według nich oceniane są tylko własne encje MQTT Twojego interfejsu.\n\nZapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Tematy, pod którymi publikuje Twój interfejs kotła. Home Assistant zapisuje wartość encji MQTT tylko wtedy, gdy się zmienia, więc stała wartość wygląda na tak starą jak jej ostatnia zmiana; sam interfejs powtarza swoje wartości (firmware OTGW co najmniej co 60 s, EMS-ESP domyślnie co 10 s), a wtyczka słucha tych powtórzeń na tych tematach — tylko czyta — żeby widzieć, że dane kotła wciąż płyną. Według nich oceniane są tylko własne encje MQTT Twojego interfejsu.",
         "data": {
           "mqtt_top": "Główny temat OTGW",
           "mqtt_node": "Węzeł OTGW",
@@ -639,7 +658,7 @@
       },
       "mode": {
         "title": "Sterowanie",
-        "description": "Co wtyczka ma robić z kotłem. Wybór trybu niczego nie włącza: sterowanie ma własny przełącznik, wyłączony, dopóki go nie włączysz.\n\n- **Pełne sterowanie** — wtyczka ustawia temperaturę wody według swojej krzywej i włącza oraz wyłącza grzanie razem ze strefami VT.\n- **Wł./wył. (przekaźnik)** — wtyczka włącza i wyłącza grzanie razem ze strefami VT; temperaturę wody kocioł ustawia sam.\n- **Tylko temperatura pokoju — od wersji 0.3** — temperaturę wody ustawiałaby własna krzywa kotła na podstawie temperatury pokoju; do wersji 0.3 wtyczka tylko monitoruje.\n- **Tylko monitorowanie** — wtyczka odczytuje i raportuje, niczego nie zapisuje.\n\nPokazane są tylko tryby, na które pozwala Twoje połączenie.\n\nZapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Co wtyczka ma robić z kotłem. Wybór trybu niczego nie włącza: sterowanie ma własny przełącznik, wyłączony, dopóki go nie włączysz.\n\n- **Pełne sterowanie** — wtyczka ustawia temperaturę wody według swojej krzywej i włącza oraz wyłącza grzanie razem ze strefami VT.\n- **Wł./wył. (przekaźnik)** — wtyczka włącza i wyłącza grzanie razem ze strefami VT; temperaturę wody kocioł ustawia sam.\n- **Tylko temperatura pokoju — od wersji 0.3** — temperaturę wody ustawiałaby własna krzywa kotła na podstawie temperatury pokoju; do wersji 0.3 wtyczka tylko monitoruje.\n- **Tylko monitorowanie** — wtyczka odczytuje i raportuje, niczego nie zapisuje.\n\nPokazane są tylko tryby, na które pozwala Twoje połączenie.",
         "data": {
           "control_mode": "Tryb sterowania",
           "condensing": "Kocioł kondensacyjny",
@@ -653,7 +672,7 @@
       },
       "level": {
         "title": "Poziom szczegółowości",
-        "description": "Poziom zmienia tylko to, co widzisz, nigdy działanie wtyczki; sama jego zmiana niczego nie przeładowuje. Po przywróceniu ustawień domyślnych zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Poziom zmienia tylko to, co widzisz, nigdy działanie wtyczki: sama jego zmiana niczego nie przeładowuje przy „Zapisz i zakończ”; przywrócenie ustawień domyślnych przeładowuje integrację.",
         "data": {
           "level": "Poziom szczegółowości",
           "restore_defaults": "Przywróć domyślne ustawienia zaawansowane"
@@ -665,7 +684,7 @@
       },
       "signals": {
         "title": "Sygnały kotła",
-        "description": "Wskaż encję, która podaje każdy sygnał. Żaden nie jest wymagany: płomień i temperatura zasilania włączają metryki palnika, łącze z kotłem i sterowanie temperaturą wody, które wymaga obu; każdy kolejny sygnał rozszerza monitor. Dom z samym przekaźnikiem też jest monitorowany. Wtyczka tylko czyta te encje. Jedna encja zasila tylko jeden sygnał.\n\n{hint}\n\nZapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Wskaż encję, która podaje każdy sygnał. Żaden nie jest wymagany: płomień i temperatura zasilania włączają metryki palnika, łącze z kotłem i sterowanie temperaturą wody, które wymaga obu; każdy kolejny sygnał rozszerza monitor. Dom z samym przekaźnikiem też jest monitorowany. Wtyczka tylko czyta te encje. Jedna encja zasila tylko jeden sygnał.\n\n{hint}",
         "data": {
           "flame": "Płomień",
           "flow": "Temperatura zasilania",
@@ -711,7 +730,7 @@
       },
       "freshness": {
         "title": "Limity świeżości",
-        "description": "Limit wieku dla każdego sygnału, w minutach: wartość niezgłoszona dłużej liczy się jako nieświeża, dla monitora i dla sterowania tak samo — bez świeżego płomienia i zasilania sterowanie nic nie zapisuje i po pięciu minutach oddaje kocioł. Puste (domyślnie): automatyczny — brak limitu, dopóki źródło nie zostanie zauważone przy powtarzaniu niezmienionej wartości; wtedy pięciokrotność jego własnego rytmu, od 10 do 30 minut (encja pogody od 3 do 12 godzin). Źródło, które zgłasza tylko zmiany (MQTT, ESPHome bez force_update), nigdy go nie dostaje, bo stała wartość nie jest nieświeża. 0: brak limitu, liczy się tylko dostępność encji. Liczba: ten limit. Przy firmware OTGW przez MQTT i przy EMS-ESP wtyczka słyszy powtórzenia samego urządzenia na jego tematach MQTT, podanych w „Kocioł, połączenie i tryb sterowania”. Ryzyko: bez limitu źródło, które przestaje się zmieniać, nie stając się niedostępne, nie zostanie wykryte; limit krótszy niż odstęp zgłoszeń źródła zatrzyma sterowanie przy stałej pogodzie. Sterowanie sprawdza płomień i temperaturę zasilania, każde według jego limitu; połączenie, które co chwilę znika, uznaje się za utracone, gdy przez pięć minut w ciągu dziesięciu nie ma świeżych danych. Przy bramce OpenTherm Gateway połączonej przez MQTT jej rozłączenie widać w ciągu około 90 s (encje stają się niedostępne), a zerwane połączenie wewnątrz niej, między modułem ESP a układem PIC, widać tylko po tym, że ustają jej powtórzenia. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Limit wieku dla każdego sygnału, w minutach: wartość niezgłoszona dłużej liczy się jako nieświeża, dla monitora i dla sterowania tak samo — bez świeżego płomienia i zasilania sterowanie nic nie zapisuje i po pięciu minutach oddaje kocioł. Puste (domyślnie): automatyczny — brak limitu, dopóki źródło nie zostanie zauważone przy powtarzaniu niezmienionej wartości; wtedy pięciokrotność jego własnego rytmu, od 10 do 30 minut (encja pogody od 3 do 12 godzin). Źródło, które zgłasza tylko zmiany (MQTT, ESPHome bez force_update), nigdy go nie dostaje, bo stała wartość nie jest nieświeża. 0: brak limitu, liczy się tylko dostępność encji. Liczba: ten limit. Przy firmware OTGW przez MQTT i przy EMS-ESP wtyczka słyszy powtórzenia samego urządzenia na jego tematach MQTT, podanych w „Kocioł, połączenie i tryb sterowania”. Ryzyko: bez limitu źródło, które przestaje się zmieniać, nie stając się niedostępne, nie zostanie wykryte; limit krótszy niż odstęp zgłoszeń źródła zatrzyma sterowanie przy stałej pogodzie. Sterowanie sprawdza płomień i temperaturę zasilania, każde według jego limitu; połączenie, które co chwilę znika, uznaje się za utracone, gdy przez pięć minut w ciągu dziesięciu nie ma świeżych danych. Przy bramce OpenTherm Gateway połączonej przez MQTT jej rozłączenie widać w ciągu około 90 s (encje stają się niedostępne), a zerwane połączenie wewnątrz niej, między modułem ESP a układem PIC, widać tylko po tym, że ustają jej powtórzenia.",
         "data": {
           "flame": "Płomień",
           "flow": "Temperatura zasilania",
@@ -757,7 +776,7 @@
       },
       "boiler": {
         "title": "Kocioł",
-        "description": "Co wiesz o swoim kotle. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Co wiesz o swoim kotle. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić.",
         "data": {
           "boiler_min_power": "Moc minimalna",
           "boiler_max_power": "Moc maksymalna",
@@ -785,7 +804,7 @@
       },
       "circuit": {
         "title": "Obieg grzewczy {number}",
-        "description": "Jak ustalana jest temperatura wody w tym obiegu. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Jak ustalana jest temperatura wody w tym obiegu.",
         "data": {
           "control": "Sterowanie",
           "max_flow": "Maksymalna temperatura zasilania",
@@ -807,7 +826,7 @@
       },
       "zones": {
         "title": "Strefy VT",
-        "description": "Wybierz strefy Versatile Thermostat ogrzewane tym kotłem. Strefy niewybrane są pomijane. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Wybierz strefy Versatile Thermostat ogrzewane tym kotłem. Strefy niewybrane są pomijane.",
         "data": {
           "zones": "Strefy"
         },
@@ -817,7 +836,7 @@
       },
       "zone": {
         "title": "Strefa {zone}",
-        "description": "Jak ogrzewana jest ta strefa. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Jak ogrzewana jest ta strefa.",
         "data": {
           "circuit": "Obieg",
           "emitter": "Typ grzejnika",
@@ -841,7 +860,7 @@
       },
       "building": {
         "title": "Budynek",
-        "description": "Pierwszy szacunek strat ciepła domu; zapisane dni grzania poprawiają szacunek ze zgrubnych odpowiedzi. Wartość, którą wpiszesz, zawsze wygrywa — dane nigdy jej nie zastępują, pokazują tylko rozbieżność. Czego nie wiesz, zostaw puste. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Pierwszy szacunek strat ciepła domu; zapisane dni grzania poprawiają szacunek ze zgrubnych odpowiedzi. Wartość, którą wpiszesz, zawsze wygrywa — dane nigdy jej nie zastępują, pokazują tylko rozbieżność. Czego nie wiesz, zostaw puste.",
         "data": {
           "floor_area": "Powierzchnia ogrzewana",
           "insulation": "Izolacja",
@@ -863,7 +882,7 @@
       },
       "reference": {
         "title": "Pokój odniesienia",
-        "description": "Jedna temperatura i nastawa pokoju dla sterowników, które potrzebują jednego pomieszczenia. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Jedna temperatura i nastawa pokoju dla sterowników, które potrzebują jednego pomieszczenia.",
         "data": {
           "strategy": "Strategia",
           "zone": "Wybrana strefa",
@@ -877,7 +896,7 @@
       },
       "monitor": {
         "title": "Monitor",
-        "description": "Progi analizy. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Progi analizy.",
         "data": {
           "condensing_return": "Próg powrotu dla kondensacji",
           "short_burn_min": "Krótkie palenie",
@@ -905,7 +924,7 @@
       },
       "control": {
         "title": "Sterowanie (eksperymentalne)",
-        "description": "Jak wtyczka steruje kotłem: zapisując nastawę zasilania albo włączając i wyłączając go przekaźnikiem. Dopóki nie włączysz sterowania, nic się nie zmienia: kocioł pracuje jak dotąd — pod kotłem centralnym Versatile Thermostat, termostatem ściennym albo własną automatyką — a wtyczka tylko obserwuje i raportuje. Po włączeniu zajmuje miejsce kotła centralnego VT (najpierw go usuń i uruchom ponownie Home Assistant): grzanie włącza się i wyłącza od razu razem ze strefami VT, a tam, gdzie wtyczka zapisuje temperaturę wody, idzie ona za Twoją krzywą, nigdy poniżej najniższej ani powyżej najwyższej temperatury wody; korekta komfortu, jeśli ją włączysz, dodaje najwyżej 3 K ponad krzywą. Sterowanie możesz włączyć od pierwszego dnia, nawet bez werdyktu: werdykt monitora pojawi się, gdy zbierze dość dni danych, a przełącznik sterowania go pokaże. Wybierz „Bez sterowania”, żeby tylko monitorować. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Jak wtyczka steruje kotłem: zapisując nastawę zasilania albo włączając i wyłączając go przekaźnikiem. Dopóki nie włączysz sterowania, nic się nie zmienia: kocioł pracuje jak dotąd — pod kotłem centralnym Versatile Thermostat, termostatem ściennym albo własną automatyką — a wtyczka tylko obserwuje i raportuje. Po włączeniu zajmuje miejsce kotła centralnego VT (najpierw go usuń i uruchom ponownie Home Assistant): grzanie włącza się i wyłącza od razu razem ze strefami VT, a tam, gdzie wtyczka zapisuje temperaturę wody, idzie ona za Twoją krzywą, nigdy poniżej najniższej ani powyżej najwyższej temperatury wody; korekta komfortu, jeśli ją włączysz, dodaje najwyżej 3 K ponad krzywą. Sterowanie możesz włączyć od pierwszego dnia, nawet bez werdyktu: werdykt monitora pojawi się, gdy zbierze dość dni danych, a przełącznik sterowania go pokaże. Wybierz „Bez sterowania”, żeby tylko monitorować.",
         "data": {
           "write_path": "Ścieżka zapisu",
           "topology": "Podłączenie bramki",
@@ -927,7 +946,7 @@
       },
       "control_entity": {
         "title": "Encja do zapisu",
-        "description": "Encja, która przyjmuje nastawę zasilania, i sposób oddawania sterowania. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Encja, która przyjmuje nastawę zasilania, i sposób oddawania sterowania.",
         "data": {
           "setpoint_entity": "Encja nastawy",
           "write_type": "Typ zapisu",
@@ -959,7 +978,7 @@
       },
       "control_gateway": {
         "title": "OpenTherm Gateway",
-        "description": "Bramka skonfigurowana w integracji OpenTherm Gateway w Home Assistant. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Bramka skonfigurowana w integracji OpenTherm Gateway w Home Assistant.",
         "data": {
           "gateway_id": "Identyfikator bramki"
         },
@@ -969,7 +988,7 @@
       },
       "control_mqtt": {
         "title": "Firmware OTGW przez MQTT",
-        "description": "Polecenia są publikowane w temacie prefiks/set/węzeł/polecenie, z prefiksem i nazwą węzła podanymi niżej. Włączenie ogrzewania (CH=) bramka trzyma, dopóki się nie zmieni albo bramka nie uruchomi się ponownie; wtyczka wysyła je znowu razem z nastawą sterowania, co 30 s, i po powrocie bramki. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Polecenia są publikowane w temacie prefiks/set/węzeł/polecenie, z prefiksem i nazwą węzła podanymi niżej. Włączenie ogrzewania (CH=) bramka trzyma, dopóki się nie zmieni albo bramka nie uruchomi się ponownie; wtyczka wysyła je znowu razem z nastawą sterowania, co 30 s, i po powrocie bramki.",
         "data": {
           "mqtt_top": "Prefiks tematu",
           "mqtt_node": "Nazwa węzła"
@@ -981,7 +1000,7 @@
       },
       "control_curve": {
         "title": "Krzywa grzewcza i limity",
-        "description": "Temperatura zasilania potrzebna domowi przy każdej temperaturze zewnętrznej, limity, których żadna nastawa nie przekroczy, i jak długo grzanie czeka na wolne zawory. Wodę ograniczają też maksymalna nastawa c.o. kotła ({boiler_max}, krok kotła) i maksymalna temperatura zasilania pierwszego obiegu ({circuit_max}, krok obiegu): obowiązuje najniższa z trzech wartości: tych dwóch i najwyższej temperatury wody poniżej. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Temperatura zasilania potrzebna domowi przy każdej temperaturze zewnętrznej, limity, których żadna nastawa nie przekroczy, i jak długo grzanie czeka na wolne zawory. Wodę ograniczają też maksymalna nastawa c.o. kotła ({boiler_max}, krok kotła) i maksymalna temperatura zasilania pierwszego obiegu ({circuit_max}, krok obiegu): obowiązuje najniższa z trzech wartości: tych dwóch i najwyższej temperatury wody poniżej.",
         "data": {
           "design_outdoor": "Projektowa temperatura zewnętrzna",
           "design_flow": "Projektowa temperatura zasilania",
@@ -1021,7 +1040,7 @@
       },
       "control_behaviour": {
         "title": "Zachowanie sterowania",
-        "description": "Rampa, interwał decyzji, nastawa „wyłącz”, progi zapotrzebowania i pauzy nauki. Grzanie włącza się i wyłącza razem ze strefami Versatile Thermostat, od razu: nic, co wtyczka liczy lub odmierza, go nie wstrzymuje. Każda wartość domyślna jest ostrożna. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Rampa, interwał decyzji, nastawa „wyłącz”, progi zapotrzebowania i pauzy nauki. Grzanie włącza się i wyłącza razem ze strefami Versatile Thermostat, od razu: nic, co wtyczka liczy lub odmierza, go nie wstrzymuje. Każda wartość domyślna jest ostrożna.",
         "data": {
           "ramp_k_per_min": "Rampa nastawy",
           "decision_interval_min": "Odstęp decyzji",
@@ -1047,7 +1066,7 @@
       },
       "control_alarms": {
         "title": "Reakcje na alarmy",
-        "description": "Co robi sterowanie, gdy kocioł ignoruje wartość zapisywaną przez wtyczkę. Pozostałe alarmy tylko informują; wtyczka wyłącza grzanie wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Inny sterownik piszący do kotła zawsze sprawia, że wtyczka ustępuje; nigdy z nim nie walczy. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Co robi sterowanie, gdy kocioł ignoruje wartość zapisywaną przez wtyczkę. Pozostałe alarmy tylko informują; wtyczka wyłącza grzanie wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Inny sterownik piszący do kotła zawsze sprawia, że wtyczka ustępuje; nigdy z nim nie walczy.",
         "data": {
           "write_ignored": "Kocioł ignoruje wartość",
           "return_after_outside_change": "Powrót po innym sterowniku bez udziału użytkownika",
@@ -1061,7 +1080,7 @@
       },
       "control_return_confirm": {
         "title": "Potwierdź samodzielny powrót",
-        "description": "Wtyczka sama przejmie kocioł godzinę po ostatnim zapisie innego sterownika. Jeśli ten sterownik nadal działa, oba będą sterować kotłem na zmianę. Zaznacz, aby potwierdzić. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Wtyczka sama przejmie kocioł godzinę po ostatnim zapisie innego sterownika. Jeśli ten sterownik nadal działa, oba będą sterować kotłem na zmianę. Zaznacz, aby potwierdzić.",
         "data": {
           "understood": "Rozumiem"
         },
@@ -1076,12 +1095,12 @@
           "save_anyway": "Zapisz mimo to"
         },
         "data_description": {
-          "save_anyway": "Zaznacz, aby mimo to zapisać zmianę. Bez zaznaczenia (domyślnie) nic nie zostanie zapisane i wrócisz do menu."
+          "save_anyway": "Zaznacz, aby mimo to zapisać zmianę. Bez zaznaczenia (domyślnie) nic nie zostanie zapisane i wrócisz do menu ze swoimi zmianami: możesz je poprawić albo zamknąć okno, żeby je porzucić."
         }
       },
       "control_relay": {
         "title": "Przekaźnik",
-        "description": "Jak wtyczka włącza i wyłącza kocioł dwustanowy — tak jak kocioł centralny Versatile Thermostat. Zalecane: styk przekaźnika na zaciskach termostatu pokojowego kotła — styk bezpotencjałowy; sprawdź instrukcję albo zapytaj instalatora, bo na tych zaciskach może być napięcie sieciowe — nigdy w zasilaniu kotła, co odcięłoby też wybieg pompy i jego własną ochronę przed zamarzaniem. Zostaw stary termostat podłączony równolegle na zaciskach kotła (nie na wejściu przekaźnika), nastawiony nisko: zagrzeje, gdy Home Assistant zawiedzie — ale zawory sterowane przez Versatile Thermostat zostają wtedy tam, gdzie były, więc ciepło może nie dojść do każdego pokoju. Ustaw przekaźnik tak, by po zaniku zasilania startował wyłączony. Ustaw własny przycisk lub wejście przekaźnika jako „odłączone”, żeby jego naciśnięcie nie przełączało kotła. Opcjonalnie włącz w przekaźniku własny wyłącznik czasowy, odnawiany każdym „włącz”; ustaw go dopiero, gdy ruszy sterowanie wtyczki. Sprawdź to wszystko raz latem. Temperaturę wody ustala sam kocioł: krzywa i granice temperatury wody nie mają zastosowania, a przy ogrzewaniu podłogowym bez zaworu mieszającego jego ustawienie musi pasować do podłogi. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Jak wtyczka włącza i wyłącza kocioł dwustanowy — tak jak kocioł centralny Versatile Thermostat. Zalecane: styk przekaźnika na zaciskach termostatu pokojowego kotła — styk bezpotencjałowy; sprawdź instrukcję albo zapytaj instalatora, bo na tych zaciskach może być napięcie sieciowe — nigdy w zasilaniu kotła, co odcięłoby też wybieg pompy i jego własną ochronę przed zamarzaniem. Zostaw stary termostat podłączony równolegle na zaciskach kotła (nie na wejściu przekaźnika), nastawiony nisko: zagrzeje, gdy Home Assistant zawiedzie — ale zawory sterowane przez Versatile Thermostat zostają wtedy tam, gdzie były, więc ciepło może nie dojść do każdego pokoju. Ustaw przekaźnik tak, by po zaniku zasilania startował wyłączony. Ustaw własny przycisk lub wejście przekaźnika jako „odłączone”, żeby jego naciśnięcie nie przełączało kotła. Opcjonalnie włącz w przekaźniku własny wyłącznik czasowy, odnawiany każdym „włącz”; ustaw go dopiero, gdy ruszy sterowanie wtyczki. Sprawdź to wszystko raz latem. Temperaturę wody ustala sam kocioł: krzywa i granice temperatury wody nie mają zastosowania, a przy ogrzewaniu podłogowym bez zaworu mieszającego jego ustawienie musi pasować do podłogi.",
         "data": {
           "relay_entity": "Przekaźnik",
           "relay_is_separate_contact": "Ten przekaźnik albo encja termostatu nie jest ustawieniem zapisywanym w pamięci kotła",
@@ -1109,7 +1128,7 @@
       },
       "control_relay_from_vt": {
         "title": "Przekaźnik — przejście z Versatile Thermostat",
-        "description": "Jak wtyczka włącza i wyłącza kocioł dwustanowy — tak jak kocioł centralny Versatile Thermostat. Zalecane: styk przekaźnika na zaciskach termostatu pokojowego kotła — styk bezpotencjałowy; sprawdź instrukcję albo zapytaj instalatora, bo na tych zaciskach może być napięcie sieciowe — nigdy w zasilaniu kotła, co odcięłoby też wybieg pompy i jego własną ochronę przed zamarzaniem. Zostaw stary termostat podłączony równolegle na zaciskach kotła (nie na wejściu przekaźnika), nastawiony nisko: zagrzeje, gdy Home Assistant zawiedzie — ale zawory sterowane przez Versatile Thermostat zostają wtedy tam, gdzie były, więc ciepło może nie dojść do każdego pokoju. Ustaw przekaźnik tak, by po zaniku zasilania startował wyłączony. Ustaw własny przycisk lub wejście przekaźnika jako „odłączone”, żeby jego naciśnięcie nie przełączało kotła. Opcjonalnie włącz w przekaźniku własny wyłącznik czasowy, odnawiany każdym „włącz”; ustaw go dopiero, gdy ruszy sterowanie wtyczki. Sprawdź to wszystko raz latem. Temperaturę wody ustala sam kocioł: krzywa i granice temperatury wody nie mają zastosowania, a przy ogrzewaniu podłogowym bez zaworu mieszającego jego ustawienie musi pasować do podłogi. Tym kotłem steruje teraz kocioł centralny Versatile Thermostat. Jego ustawienia są wpisane tam, gdzie wtyczka może ich użyć — przekaźnik z jego poleceń (przełącznik włączany i wyłączany albo termostat kotła ustawiany na grzanie i wyłączenie; w innym razie wybierz przekaźnik), opóźnienie startu, odstęp powtórzeń i progi tak, jak VT ich naprawdę używał (VT zaokrągla je w dół do liczb całkowitych w swojej jednostce mocy; VT liczy urządzenia, a wtyczka pokoje, więc liczba jest wpisana tylko tam, gdzie każdy pokój ma jedno urządzenie). Sprawdź je i zapisz. Potem: 1. poczekaj na koniec okresu monitorowania; 2. w centralnej konfiguracji VT odznacz „Użyj kotła centralnego” (VT usunie wtedy swoje polecenia); 3. uruchom ponownie Home Assistant — do tego czasu VT może jeszcze przełączać przekaźnik, więc sterowanie czeka; 4. odznacz „Używany przez kocioł centralny” w pokojach, w których uczy się Auto-TPI (problem do naprawy wtyczki je wymienia); 5. przenieś automatyzacje i pulpity z czujnika i zdarzenia kotła VT; 6. włącz sterowanie — i dopiero teraz ustaw własny wyłącznik czasowy przekaźnika. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Jak wtyczka włącza i wyłącza kocioł dwustanowy — tak jak kocioł centralny Versatile Thermostat. Zalecane: styk przekaźnika na zaciskach termostatu pokojowego kotła — styk bezpotencjałowy; sprawdź instrukcję albo zapytaj instalatora, bo na tych zaciskach może być napięcie sieciowe — nigdy w zasilaniu kotła, co odcięłoby też wybieg pompy i jego własną ochronę przed zamarzaniem. Zostaw stary termostat podłączony równolegle na zaciskach kotła (nie na wejściu przekaźnika), nastawiony nisko: zagrzeje, gdy Home Assistant zawiedzie — ale zawory sterowane przez Versatile Thermostat zostają wtedy tam, gdzie były, więc ciepło może nie dojść do każdego pokoju. Ustaw przekaźnik tak, by po zaniku zasilania startował wyłączony. Ustaw własny przycisk lub wejście przekaźnika jako „odłączone”, żeby jego naciśnięcie nie przełączało kotła. Opcjonalnie włącz w przekaźniku własny wyłącznik czasowy, odnawiany każdym „włącz”; ustaw go dopiero, gdy ruszy sterowanie wtyczki. Sprawdź to wszystko raz latem. Temperaturę wody ustala sam kocioł: krzywa i granice temperatury wody nie mają zastosowania, a przy ogrzewaniu podłogowym bez zaworu mieszającego jego ustawienie musi pasować do podłogi. Tym kotłem steruje teraz kocioł centralny Versatile Thermostat. Jego ustawienia są wpisane tam, gdzie wtyczka może ich użyć — przekaźnik z jego poleceń (przełącznik włączany i wyłączany albo termostat kotła ustawiany na grzanie i wyłączenie; w innym razie wybierz przekaźnik), opóźnienie startu, odstęp powtórzeń i progi tak, jak VT ich naprawdę używał (VT zaokrągla je w dół do liczb całkowitych w swojej jednostce mocy; VT liczy urządzenia, a wtyczka pokoje, więc liczba jest wpisana tylko tam, gdzie każdy pokój ma jedno urządzenie). Sprawdź je i zapisz. Potem: 1. poczekaj na koniec okresu monitorowania; 2. w centralnej konfiguracji VT odznacz „Użyj kotła centralnego” (VT usunie wtedy swoje polecenia); 3. uruchom ponownie Home Assistant — do tego czasu VT może jeszcze przełączać przekaźnik, więc sterowanie czeka; 4. odznacz „Używany przez kocioł centralny” w pokojach, w których uczy się Auto-TPI (problem do naprawy wtyczki je wymienia); 5. przenieś automatyzacje i pulpity z czujnika i zdarzenia kotła VT; 6. włącz sterowanie — i dopiero teraz ustaw własny wyłącznik czasowy przekaźnika.",
         "data": {
           "relay_entity": "Przekaźnik",
           "relay_is_separate_contact": "Ten przekaźnik albo encja termostatu nie jest ustawieniem zapisywanym w pamięci kotła",
@@ -1137,7 +1156,7 @@
       },
       "control_relay_behaviour": {
         "title": "Przekaźnik: kiedy przełącza",
-        "description": "Przekaźnik włącza i wyłącza kocioł razem ze strefami Versatile Thermostat i ochroną przed zamarzaniem, od razu — przy starcie po opóźnieniu włączenia VT; nic, co wtyczka liczy lub odmierza, go nie wstrzymuje, tak jak we własnym kotle centralnym VT. Każda wartość domyślna jest ostrożna. Zapisanie przeładowuje integrację: gdy sterowanie trzyma kocioł, zostaje on oddany i przejęty ponownie (przekaźnik przechodzi w stan spoczynkowy i z powrotem).",
+        "description": "Przekaźnik włącza i wyłącza kocioł razem ze strefami Versatile Thermostat i ochroną przed zamarzaniem, od razu — przy starcie po opóźnieniu włączenia VT; nic, co wtyczka liczy lub odmierza, go nie wstrzymuje, tak jak we własnym kotle centralnym VT. Każda wartość domyślna jest ostrożna.",
         "data": {
           "activation_delay_s": "Opóźnienie włączenia",
           "count_threshold": "Strefy potrzebujące ciepła",
@@ -1441,6 +1460,15 @@
       "options": {
         "auto": "Auto (najcieplejszy pokój)",
         "manual": "Ręcznie (wpisana wartość)"
+      }
+    },
+    "menu_state": {
+      "options": {
+        "left": "Do zatwierdzenia:",
+        "fix": "Do poprawienia przed utworzeniem:",
+        "ready": "Wszystkie sekcje są zatwierdzone: wybierz „Utwórz”.",
+        "changed": "Niezapisane zmiany:",
+        "unchanged": "Brak niezapisanych zmian."
       }
     }
   },

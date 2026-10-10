@@ -93,3 +93,6 @@ Checks before control code: `docs/plan-0.2.md`, phase F (done 2026-09-24; answer
 - 0.2, step G11 — `docs/plan-0.2-g11.md`: the comfort correction on by default, the curve's
   room temperature Auto or Manual, the long-run rule and the window guard (the user's decisions
   of 2026-10-10)
+- 0.2, step I7 — `docs/plan-0.2-i7.md`: the setup and the options move through a menu of
+  sections, saved once at the end, as in Versatile Thermostat (the user's decisions of
+  2026-10-10)
