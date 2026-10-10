@@ -12,10 +12,11 @@ Scope: `SCOPE.md`; overview: `PLAN.md`.
 Phases run in order: F, G, H, I, J, K — the build first, then the test HA with the user (J2, J4),
 the review and the release. S3 can happen at any time.
 
-Status on 2026-10-09: built through 0.2.3 (`docs/plan-0.2.3.md`, done). The repository is public
+Status on 2026-10-10: built through 0.2.3 (`docs/plan-0.2.3.md`, done). The repository is public
 on GitHub since 2026-10-07 (K5's first half, below), with its checks green; J2 done (2026-10-08);
-I6 done (2026-10-09; `docs/plan-0.2-i6.md`); next J4 (running; the scenarios I6 touched run again,
-each pull request names them), the rest of K1, K4, then K5's
+I6 done (2026-10-09; `docs/plan-0.2-i6.md`); G11 planned (2026-10-10; `docs/plan-0.2-g11.md`) and
+being built; J4 running (the scenarios I6 and G11 touch run again, each pull request names them);
+then the rest of K1, K4, then K5's
 pre-release (provisionally 0.2.3b1, `docs/plan-0.2.2.md` decision 16), K6 and K7. S3 stays
 optional.
 
@@ -108,6 +109,7 @@ Flow-setpoint mode; 0.2 writes one circuit, a second circuit through the boiler 
 | G8 ✅ | ramp: the water temperature changes at a limited rate (option, cautious default); with a persistent write type, steps of at least the minimum change (0.2.1: K per minute at every step; nothing persistent is written) |
 | G9 ✅ | write guards for every write: rate limits; minimum on and off times and a cap on switchings per hour for CH on/off; for persistent writes (declared persistent or unknown) a minimum change (default 1 K) and a daily cap — once reached, the last value held and an alarm raised, or hand-back, the user's choice; a value changed from outside written again at most once, then an alarm, no fight (keep-alive repeats of an expiring override are not rewrites); a hand-back write held back by no guard and not bound by the hard limits (values are options, the guards are fixed; since 0.2.2 the hard limits bind the hand-back value, `docs/plan-0.2.2.md` V5, S-21). 0.2.1: a write-rate guard replaces the rate limits; the minimum on and off times, the switching cap, the minimum change and the daily cap go, as nothing is written to the boiler's persistent memory |
 | G10 ✅ | closed-loop tests against the simulator extended with a controllable boiler (an expiring setpoint override like OTGW's, CH enable, modulation cap, DHW-enable bit): rooms hold their setpoints, hard limits are never exceeded, starts stay within the budget (no budget from 0.2.1), after hand-back the boiler returns to its own control, no write without fresh data (0.2.2: starts under control compared with the boiler's own regulation, S-15, T-24 — `docs/plan-0.2.2.md` Z3) |
+| G11 | the corrections of 2026-10-10 (from J4 and the review of the "curve too low" case): the comfort correction on by default in full control, within the user's limit, with a warning repair issue when the curve is too low for a room; SmartPI's learning phase in "is the room short"; the curve's room temperature Auto or Manual; a long burn without warming and a window probably open told to the user; planned step by step in `docs/plan-0.2-g11.md` |
 
 Done when: every law has unit tests, including limits, stale data and sensor failure, and the
 closed-loop tests pass.
@@ -201,7 +203,8 @@ installation has monitored for 7 days and then run control without errors; the u
   - Near the daily cap of wearing writes "off" is no longer written, so the boiler may heat
     without demand until the day's window frees up. (Removed, 0.2.1 M0.)
   - Comfort correction is on by default (up to 10 K above the curve; +3 K, 0.2.1 N5; off by default
-    and at the advanced level only since K4.1); a session's first setpoint
+    and at the advanced level only since K4.1; on again by default in full control since G11, at
+    both levels, within the user's limit); a session's first setpoint
     is the curve's value, not ramped; Auto-TPI is not paused (a repair issue only); an OTGW
     read-back confirms what the gateway sent, not what the boiler took; the control switch comes
     back after a restart as it was.
