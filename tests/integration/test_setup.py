@@ -118,9 +118,6 @@ async def test_setup_creates_entities_and_reads_signals(
     factor = hass.states.get(factor_id)
     assert factor is not None
     assert float(factor.state) > 0
-    reference = hass.states.get(entity_id(hass, entry, "sensor", "reference_room_temperature"))
-    assert reference is not None
-    assert float(reference.state) == 20.0
     critical = hass.states.get(entity_id(hass, entry, "sensor", "critical_zone_main"))
     assert critical is not None
     assert critical.attributes["zone"] == living
@@ -574,7 +571,7 @@ async def test_a_renamed_entity_is_followed(
     assert flow.entity_id == boiler.entity(Signal.FLOW)
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
     living = zones.add("living")
-    entry = entry_for(boiler, zones, reference_room={"strategy": "chosen_zone", "zone": living})
+    entry = entry_for(boiler, zones)
     await setup(hass, entry)
     before = entity_id(hass, entry, "binary_sensor", "hot_water", living)
     setups = count_setups(monkeypatch)
@@ -583,7 +580,6 @@ async def test_a_renamed_entity_is_followed(
     await hass.async_block_till_done()
     assert entry.options["zones"] == [{"entity_id": "climate.lounge"}]
     assert entry.options["signals"]["flow"] == "sensor.boiler_flow"
-    assert entry.options["reference_room"]["zone"] == "climate.lounge"
     assert setups == [entry.entry_id]  # one reload
     assert entry.state is ConfigEntryState.LOADED
     assert entity_id(hass, entry, "binary_sensor", "hot_water", "climate.lounge") == before
@@ -734,7 +730,7 @@ async def test_a_removed_entity_raises_a_repair_issue(
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
     living = zones.add("living")
     bedroom = zones.add("bedroom")
-    entry = entry_for(boiler, zones, reference_room={"strategy": "chosen_zone", "zone": living})
+    entry = entry_for(boiler, zones)
     await setup(hass, entry)
     issue_id = f"entity_removed_{entry.entry_id}_{living}"
 
@@ -751,7 +747,7 @@ async def test_a_removed_entity_raises_a_repair_issue(
     assert not issue.is_fixable
     assert issue.is_persistent
     assert issue.translation_placeholders == {
-        "field": "zones, reference_room.zone",
+        "field": "zones",
         "entity": living,
     }
     assert entry.state is ConfigEntryState.LOADED  # goes on without it
@@ -896,7 +892,7 @@ async def test_an_entry_from_before_drops_the_options_that_are_gone(
     )
     await left_control_store(hass, entry)
     await setup(hass, entry)
-    assert entry.minor_version == 8
+    assert entry.minor_version == 9
     # Minor version 3 (X6): the lowest water temperature 0.2.1 used, kept.
     assert entry.options["control"] == {
         "write_path": "entity",
@@ -950,7 +946,7 @@ async def test_the_alarm_migration_moves_to_the_add_water_threshold(
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 8
+    assert entry.minor_version == 9
     stored = entry.options["monitor"]
     assert "pressure_low_warning" not in stored
     assert "pressure_low_alarm" not in stored
@@ -990,7 +986,7 @@ async def test_the_alarm_migration_keeps_an_offered_reaction_and_raises_no_issue
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 8
+    assert entry.minor_version == 9
     assert entry.options["control"]["alarm_reactions"] == {"write_ignored": "hand_back"}
     assert ir.async_get(hass).async_get_issue(DOMAIN, f"reactions_removed_{entry.entry_id}") is None
 
@@ -1026,7 +1022,7 @@ async def test_migration_keeps_the_floor_of_a_control_section_without_it(
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 8
+    assert entry.minor_version == 9
     stored = entry.options.get("control")
     if hard_min is None:
         assert stored == control
@@ -1106,7 +1102,8 @@ CURRENT_OPTIONS = {  # G11 D: the curve's room temperature it ran with, Manual, 
     "monitor": {"monitoring_days": 7, "add_water_below": 0.8},
     "parameters": {"boiler_min_power": 4.0, "boiler_max_power": 25.0, "design_outdoor": -18.0},
 }
-STORED_BY_MINOR[8] = CURRENT_OPTIONS
+STORED_BY_MINOR[8] = CURRENT_OPTIONS | {"reference_room": {"strategy": "average"}}
+STORED_BY_MINOR[9] = CURRENT_OPTIONS  # I8.1: the reference room gone
 
 
 @pytest.mark.parametrize(
@@ -1139,7 +1136,7 @@ async def test_an_entry_from_before_keeps_the_high_pressure_limits_it_ran_with(
         domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=minor
     )
     await setup(hass, entry)
-    assert entry.minor_version == 8
+    assert entry.minor_version == 9
     assert entry.options["monitor"] == {"monitoring_days": 7, **expected}
     key = f"{entry.entry_id}_alarm_pressure_high"
     found = er.async_get(hass).async_get_entity_id("binary_sensor", DOMAIN, key)
@@ -1211,7 +1208,7 @@ async def test_the_curves_design_outdoor_temperature_becomes_the_buildings(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 8
+    assert entry.minor_version == 9
     assert dict(entry.options) == expected
     assert ("replaces the building's -20.0 °C" in caplog.text) is replaced
 
@@ -1248,8 +1245,28 @@ async def test_an_upgraded_entry_keeps_the_comfort_correction_it_ran_with(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 8  # through the later steps too
+    assert entry.minor_version == 9  # through the later steps too
     assert entry.options.get("control") == expected
+
+
+async def test_an_upgraded_entry_drops_the_reference_room(hass: HomeAssistant) -> None:
+    """I8.1 (minor version 9): the reference room is gone; its stored settings go with it, and
+    nothing else changes."""
+    from custom_components.vtherm_smart_boiler import async_migrate_entry
+
+    kept = {"level": "simple", "signals": {"flow": "sensor.flow"}}
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=kept | {"reference_room": {"strategy": "chosen_zone", "zone": "climate.a"}},
+        version=1,
+        minor_version=8,
+    )
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry)
+    assert entry.minor_version == 9
+    assert dict(entry.options) == kept
 
 
 @pytest.mark.parametrize(
@@ -1294,7 +1311,7 @@ async def test_an_upgraded_entry_keeps_the_curves_room_it_ran_with(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 8
+    assert entry.minor_version == 9
     assert entry.options["control"] == expected
 
 
@@ -1302,14 +1319,15 @@ async def test_an_upgraded_entry_keeps_the_curves_room_it_ran_with(
 async def test_an_entry_of_any_earlier_minor_version_migrates_to_this_ones_options(
     hass: HomeAssistant, minor: int
 ) -> None:
-    """P-124: from minor version 1 through 2 to 7 to this one (8), each step applied once and in
+    """P-124: from minor version 1 through 2 to 8 to this one (9), each step applied once and in
     order from where the entry stands — ``boiler.shared_return`` and 0.2.1's removed control
     options go (2), the lowest water temperature 0.2.1 used is kept (3, X6), the low-pressure
     limits become the "add water" threshold and the reactions decision 7 no longer offers go,
     with their warning (4, Y1), the curve's design outdoor temperature becomes the building's
     (6, I6), the comfort correction it ran with, off, is stored (7, G11), and so is the curve's
-    room temperature it ran with, Manual (8, G11). Every starting point ends with the same
-    options; an entry already current is left as it is, and warns of nothing."""
+    room temperature it ran with, Manual (8, G11), and the reference room goes (9, I8). Every
+    starting point ends with the same options; an entry already current is left as it is, and
+    warns of nothing."""
     from homeassistant.helpers import issue_registry as ir
 
     from custom_components.vtherm_smart_boiler.config_flow import SmartBoilerConfigFlow

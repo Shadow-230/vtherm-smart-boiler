@@ -11,8 +11,6 @@
       "verdict": { "default": "mdi:scale-balance" },
       "signal_problems": { "default": "mdi:alert-circle-outline" },
       "features": { "default": "mdi:format-list-checks" },
-      "reference_room": { "default": "mdi:home-thermometer" },
-      "reference_room_setpoint": { "default": "mdi:thermostat" },
       "change_report": { "default": "mdi:chart-line" },
       "loss_coefficient": { "default": "mdi:home-export-outline" },
       "heating_threshold": { "default": "mdi:home-thermometer-outline" },

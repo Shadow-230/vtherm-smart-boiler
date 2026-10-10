@@ -84,7 +84,6 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "zones": flow.zones_schema(options),
         "zone": flow.zone_schema(options, {}),
         "building": flow.building_schema(options),
-        "reference": flow.reference_schema(options),
         "monitor": flow.monitor_schema(options),
     }
     options_only = {
@@ -137,7 +136,6 @@ def test_every_config_error_code_can_be_shown() -> None:
         "missing_signal",
         "implausible_parameter",
         "zone_without_circuit",
-        "reference_zone_unknown",
     } | {
         code.value
         for code in IssueCode
@@ -150,7 +148,6 @@ def test_every_config_error_code_can_be_shown() -> None:
         "invalid_boiler",
         "invalid_circuit",
         "invalid_zone",
-        "invalid_reference",
         "invalid_monitor",
         "invalid_building",
         "invalid_freshness",
@@ -259,8 +256,6 @@ def test_coded_states_and_attributes_are_translated() -> None:
     assert _values(factor, "reason") == {r.value for r in FactorReason}
     selection = {s.value for s in SelectionStatus}
     assert _values(sensors["critical_zone"], "status") == selection
-    assert _values(sensors["reference_room"], "status") == selection
-    assert set(sensors["reference_room"]["state"]) == (selection - {"ok"}) | {"average"}
     assert _values(binary["outdoor_sensor_problem"], "status") == {s.value for s in OutdoorStatus}
     for kind in AlarmKind:
         assert _values(binary[f"alarm_{kind.value}"], "level") == {lv.value for lv in Level}
@@ -711,7 +706,6 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                 "zones": flow.zones_schema(options),
                 "zone": flow.zone_schema(options, {}),
                 "building": flow.building_schema(options),
-                "reference": flow.reference_schema(options),
                 "monitor": flow.monitor_schema(options),
                 "control": flow.control_schema(options),
                 "control_entity": flow.control_entity_schema(options),
@@ -1227,8 +1221,6 @@ CELSIUS_ATTRIBUTES = (
     ("sensor", "control_setpoint", "requested"),
     ("sensor", "control_setpoint", "read_back"),
     ("sensor", "control_state", "target"),
-    ("sensor", "reference_room", "temperature"),
-    ("sensor", "reference_room", "setpoint"),
     ("sensor", "lowest_water_suggestion", "reference"),
     ("sensor", "lowest_water_suggestion", "estimate_from_power"),
     ("binary_sensor", "alarm_flue_gas_high", "limit"),

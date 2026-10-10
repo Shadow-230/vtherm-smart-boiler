@@ -66,7 +66,6 @@
           "circuit": "Obiegi grzewcze",
           "zones": "Strefy VT",
           "building": "Budynek",
-          "reference": "Pokój odniesienia",
           "monitor": "Progi monitora",
           "control": "Sterowanie (eksperymentalne)",
           "finish": "Utwórz",
@@ -223,20 +222,6 @@
           "loss_coefficient": "Strata ciepła na kelwin, w kW/K, jeśli ją znasz. Zawsze wygrywa, także ze zmierzoną: zapisane dni nigdy jej nie zastępują, pokazują tylko rozbieżność — zła wartość zostaje zła.",
           "heating_threshold": "Temperatura zewnętrzna, powyżej której dom nie potrzebuje ogrzewania, w °C; także podstawa stopniodni. Domyślnie 15 °C, dopóki nie zmierzą go zapisane dni z dość szerokiego zakresu temperatur zewnętrznych. Wpisany zawsze wygrywa; zmierzony jest pokazywany obok, z ewentualną rozbieżnością. Zły wypacza stopniodnie i gaz na stopniodzień.",
           "design_outdoor": "Najzimniejsza temperatura zewnętrzna, na którą zaprojektowano ogrzewanie, w °C. Domyślnie −15 °C. To ta sama wartość co projektowa temperatura zewnętrzna krzywej grzewczej: zmiana tutaj zmienia też krzywą. Zbyt zimna wartość daje za mało wody w mrozy; zła wypacza szacunek z obciążenia projektowego."
-        }
-      },
-      "reference": {
-        "title": "Pokój odniesienia",
-        "description": "Jedna temperatura i nastawa pokoju dla sterowników, które potrzebują jednego pomieszczenia.",
-        "data": {
-          "strategy": "Strategia",
-          "zone": "Wybrana strefa",
-          "switch_margin": "Margines przełączenia"
-        },
-        "data_description": {
-          "strategy": "Największy niedobór śledzi pokój najbardziej poniżej nastawy; wybrana strefa zawsze używa jednego pokoju; średnia używa każdego grzejącego pokoju. Jest tylko publikowany dla zewnętrznych sterowników; wybrana strefa niedostępna zostawia je bez odniesienia.",
-          "zone": "Używana przy strategii wybranej strefy. Pokój często wyłączony albo niedostępny zostawia odniesienie nieznane.",
-          "switch_margin": "Inny pokój musi być o tyle zimniejszy, zanim odniesienie się przełączy, w K. Mniejszy szybciej nadąża, ale częściej przełącza, co może zaburzać zewnętrzny sterownik."
         }
       },
       "monitor": {
@@ -519,7 +504,6 @@
       "fixed_temperature_missing": "Termostatyczny zawór mieszający (stały) wymaga swojej nastawy temperatury.",
       "foreign_heat_unsupported": "Źródłem ciepła mogą być tylko przełączniki, czujniki binarne oraz czujniki mocy lub temperatury.",
       "temperature_threshold_missing": "Źródło temperatury potrzebuje progu temperatury (poziom zaawansowany).",
-      "reference_zone_unknown": "Wybierz jedną ze skonfigurowanych stref.",
       "missing_signal": "Brakuje wymaganego sygnału.",
       "implausible_parameter": "Parametr jest poza wiarygodnym zakresem.",
       "unknown_circuit": "Strefa wskazuje obieg, który nie istnieje.",
@@ -539,7 +523,6 @@
       "invalid_boiler": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_circuit": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_zone": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
-      "invalid_reference": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_monitor": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_building": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_freshness": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
@@ -620,7 +603,6 @@
           "circuit": "Obiegi grzewcze",
           "zones": "Strefy VT",
           "building": "Budynek",
-          "reference": "Pokój odniesienia",
           "monitor": "Progi monitora",
           "level": "Poziom szczegółowości",
           "level_hidden": "Poziom szczegółowości (aktywne są ukryte ustawienia zaawansowane)",
@@ -679,7 +661,7 @@
         },
         "data_description": {
           "level": "Prosty pokazuje to, co najważniejsze; zaawansowany pokazuje każdy parametr.",
-          "restore_defaults": "Przy przejściu na prosty: zaznacz, aby przywrócić domyślne strojenie zaawansowane — kształt krzywej, limity i zachowanie sterowania, reakcje na alarmy, progi monitora, margines pokoju odniesienia. Fakty o instalacji zostają niezależnie od wyboru: zmapowane sygnały, kocioł, obiegi, wielkości grzejników i wpisane wartości — a także okres monitorowania i okno werdyktu. Niezaznaczone strojenie zostaje aktywne, ale ukryte, a opcje pokazują, że część ustawień zaawansowanych jest aktywna."
+          "restore_defaults": "Przy przejściu na prosty: zaznacz, aby przywrócić domyślne strojenie zaawansowane — kształt krzywej, limity i zachowanie sterowania, reakcje na alarmy, progi monitora. Fakty o instalacji zostają niezależnie od wyboru: zmapowane sygnały, kocioł, obiegi, wielkości grzejników i wpisane wartości — a także okres monitorowania i okno werdyktu. Niezaznaczone strojenie zostaje aktywne, ale ukryte, a opcje pokazują, że część ustawień zaawansowanych jest aktywna."
         }
       },
       "signals": {
@@ -878,20 +860,6 @@
           "loss_coefficient": "Strata ciepła na kelwin, w kW/K, jeśli ją znasz. Zawsze wygrywa, także ze zmierzoną: zapisane dni nigdy jej nie zastępują, pokazują tylko rozbieżność — zła wartość zostaje zła.",
           "heating_threshold": "Temperatura zewnętrzna, powyżej której dom nie potrzebuje ogrzewania, w °C; także podstawa stopniodni. Domyślnie 15 °C, dopóki nie zmierzą go zapisane dni z dość szerokiego zakresu temperatur zewnętrznych. Wpisany zawsze wygrywa; zmierzony jest pokazywany obok, z ewentualną rozbieżnością. Zły wypacza stopniodnie i gaz na stopniodzień.",
           "design_outdoor": "Najzimniejsza temperatura zewnętrzna, na którą zaprojektowano ogrzewanie, w °C. Domyślnie −15 °C. To ta sama wartość co projektowa temperatura zewnętrzna krzywej grzewczej: zmiana tutaj zmienia też krzywą. Zbyt zimna wartość daje za mało wody w mrozy; zła wypacza szacunek z obciążenia projektowego."
-        }
-      },
-      "reference": {
-        "title": "Pokój odniesienia",
-        "description": "Jedna temperatura i nastawa pokoju dla sterowników, które potrzebują jednego pomieszczenia.",
-        "data": {
-          "strategy": "Strategia",
-          "zone": "Wybrana strefa",
-          "switch_margin": "Margines przełączenia"
-        },
-        "data_description": {
-          "strategy": "Największy niedobór śledzi pokój najbardziej poniżej nastawy; wybrana strefa zawsze używa jednego pokoju; średnia używa każdego grzejącego pokoju. Jest tylko publikowany dla zewnętrznych sterowników; wybrana strefa niedostępna zostawia je bez odniesienia.",
-          "zone": "Używana przy strategii wybranej strefy. Pokój często wyłączony albo niedostępny zostawia odniesienie nieznane.",
-          "switch_margin": "Inny pokój musi być o tyle zimniejszy, zanim odniesienie się przełączy, w K. Mniejszy szybciej nadąża, ale częściej przełącza, co może zaburzać zewnętrzny sterownik."
         }
       },
       "monitor": {
@@ -1184,7 +1152,6 @@
       "fixed_temperature_missing": "Termostatyczny zawór mieszający (stały) wymaga swojej nastawy temperatury.",
       "foreign_heat_unsupported": "Źródłem ciepła mogą być tylko przełączniki, czujniki binarne oraz czujniki mocy lub temperatury.",
       "temperature_threshold_missing": "Źródło temperatury potrzebuje progu temperatury (poziom zaawansowany).",
-      "reference_zone_unknown": "Wybierz jedną ze skonfigurowanych stref.",
       "hand_back_value_missing": "Sposób „wartość” wymaga wartości oddania.",
       "hand_back_entity_missing": "Sposób „przełącznik” wymaga przełącznika sterowania zewnętrznego.",
       "hard_limits_out_of_order": "Najwyższa temperatura wody musi być wyższa od najniższej.",
@@ -1238,7 +1205,6 @@
       "invalid_boiler": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_circuit": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_zone": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
-      "invalid_reference": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_monitor": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_building": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_freshness": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
@@ -1313,13 +1279,6 @@
         "light": "Lekka",
         "medium": "Średnia",
         "heavy": "Ciężka"
-      }
-    },
-    "strategy": {
-      "options": {
-        "largest_deficit": "Największy deficyt",
-        "chosen_zone": "Wybrana strefa",
-        "average": "Średnia"
       }
     },
     "write_path": {
@@ -1572,45 +1531,6 @@
             "name": "Sygnały"
           }
         }
-      },
-      "reference_room": {
-        "name": "Pokój odniesienia",
-        "state_attributes": {
-          "status": {
-            "name": "Stan",
-            "state": {
-              "ok": "OK",
-              "no_active_zone": "Żadna strefa nie grzeje",
-              "no_valid_measurement": "Brak poprawnego pomiaru"
-            }
-          },
-          "zone": {
-            "name": "Strefa"
-          },
-          "zones": {
-            "name": "Strefy"
-          },
-          "temperature": {
-            "name": "Temperatura (°C)"
-          },
-          "setpoint": {
-            "name": "Nastawa (°C)"
-          },
-          "deficit": {
-            "name": "Poniżej nastawy (K)"
-          }
-        },
-        "state": {
-          "no_active_zone": "Żadna strefa nie grzeje",
-          "no_valid_measurement": "Brak poprawnego pomiaru",
-          "average": "Średnia stref"
-        }
-      },
-      "reference_room_temperature": {
-        "name": "Temperatura pokoju odniesienia"
-      },
-      "reference_room_setpoint": {
-        "name": "Nastawa pokoju odniesienia"
       },
       "change_report": {
         "name": "Zużycie wobec wczoraj"

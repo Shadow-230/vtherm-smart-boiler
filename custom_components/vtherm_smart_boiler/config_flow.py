@@ -55,7 +55,6 @@ from .config import (
     MONITOR_BOUNDS,
     MONITORING_DAYS_BOUNDS,
     SECTION_CODES,
-    SWITCH_MARGIN_BOUNDS,
     ZONE_BOUNDS,
     ConfigError,
     EntryConfig,
@@ -75,7 +74,6 @@ from .const import (
     MQTT_DOMAIN,
     OPENTHERM_GW_DOMAIN,
     PARAMETERS,
-    REFERENCE_ROOM,
     SIGNALS,
     VT_DOMAIN,
     WEATHER,
@@ -139,7 +137,6 @@ from .core.foreign_heat import SourceKind
 from .core.guards import WriteType
 from .core.installation import BoilerClass, BoilerType, CircuitControl, EmitterType, HeatSource
 from .core.metrics import ModulationScale
-from .core.reference_room import Strategy
 from .core.relay import TIMER_MIN_S, RelayPowerOn, RelayReports, RelayRest, RelayTimer
 from .transport.entities import read_bounds, read_grid, relay_hvac_modes, temperature_unit_of
 from .vtherm_link import (
@@ -828,27 +825,6 @@ def design_outdoor_of(options: Mapping[str, Any]) -> float:
         if isinstance(source, Mapping) and source.get("design_outdoor") not in (None, ""):
             return float(source["design_outdoor"])
     return CURVE_DEFAULTS["design_outdoor"]
-
-
-def reference_schema(options: dict[str, Any]) -> vol.Schema:
-    reference = options.get(REFERENCE_ROOM, {})
-    zones = [z["entity_id"] for z in options.get(ZONES, [])]
-    strategies = [Strategy.LARGEST_DEFICIT.value, Strategy.AVERAGE.value]
-    if zones:
-        strategies.insert(1, Strategy.CHOSEN_ZONE.value)
-    fields: dict[Any, Any] = {
-        vol.Required(
-            "strategy",
-            default=_choice(reference.get("strategy"), Strategy, Strategy.LARGEST_DEFICIT.value),
-        ): _select("strategy", strategies),
-    }
-    if zones:
-        fields[_optional("zone", reference)] = _entity(_ZONE_FILTER)
-    if _advanced(options):
-        fields[vol.Required("switch_margin", default=reference.get("switch_margin", 0.3))] = (
-            _number(*SWITCH_MARGIN_BOUNDS, 0.1, "K")
-        )
-    return vol.Schema(fields)
 
 
 def monitor_schema(options: dict[str, Any]) -> vol.Schema:
@@ -2093,7 +2069,6 @@ def restore_advanced_defaults(options: dict[str, Any]) -> None:
     """Drop every tuning value only the advanced level shows, so its default applies again.
     Facts about the installation — what is mapped, the boiler, circuits, emitter sizes, values
     the user entered — stay (``SCOPE.md`` principle 10), and so do the monitor's periods."""
-    options.get(REFERENCE_ROOM, {}).pop("switch_margin", None)
     monitor = options.get(MONITOR, {})
     kept = {key: monitor[key] for key in MONITOR_KEPT if key in monitor}
     if kept:
@@ -2165,11 +2140,6 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
         or any("reference_output_w" in z or "exponent" in z for z in zones)
         or any("threshold" in s for z in zones for s in z.get("foreign_heat", []))
         or _differ(
-            options.get(REFERENCE_ROOM, {}),
-            _schema_defaults(reference_schema(advanced)),
-            ("switch_margin",),
-        )
-        or _differ(
             monitor,
             _schema_defaults(monitor_schema({})),
             [key for key in monitor if key not in PRESSURE_KEYS],  # the boiler step's (I6)
@@ -2211,13 +2181,11 @@ _PROBLEM_STEPS = {
     "fixed_temperature_missing": "circuit",
     "duplicate_zone": "zones",
     "zone_without_circuit": "zones",
-    "reference_zone_unknown": "reference",
     "alarm_limits_out_of_order": "monitor",
     # A stored value this version does not know: its section's step (P-70).
     "invalid_boiler": "boiler",
     "invalid_circuit": "circuit",
     "invalid_zone": "zones",
-    "invalid_reference": "reference",
     "invalid_monitor": "monitor",
     "invalid_building": "building",
     "invalid_freshness": "freshness",
@@ -2299,10 +2267,8 @@ def control_offered(options: Mapping[str, Any]) -> bool:
 
 
 def section_shown(options: Mapping[str, Any], section: str) -> bool:
-    """A section that does not apply is not on the menu (decision 2): the reference room
-    without zones, the monitor's thresholds at the simple level, control as above."""
-    if section == "reference":
-        return bool(options.get(ZONES))
+    """A section that does not apply is not on the menu (decision 2): the monitor's thresholds
+    at the simple level, control as above."""
     if section == "monitor":
         return options.get(LEVEL) == LEVEL_ADVANCED
     if section == "control":
@@ -2644,32 +2610,6 @@ class _Steps:
                 return await self._after("building")
         return self._form(
             step_id="building", data_schema=building_schema(self.options), errors=errors
-        )
-
-    async def async_step_reference(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            reference = {k: v for k, v in user_input.items() if v not in (None, "")}
-            margin = self.options.get(REFERENCE_ROOM, {}).get("switch_margin")
-            if not _advanced(self.options) and margin is not None:
-                reference["switch_margin"] = margin  # not shown: kept
-            zones = [z["entity_id"] for z in self.options.get(ZONES, [])]
-            if reference.get("zone") and zones_not_vt(self.hass, [reference["zone"]]):  # type: ignore[attr-defined]
-                errors["zone"] = "zone_not_vt"
-            elif (
-                reference.get("strategy") == Strategy.CHOSEN_ZONE
-                and reference.get("zone") not in zones
-            ):
-                errors["zone"] = "reference_zone_unknown"
-            else:
-                if reference.get("strategy") != Strategy.CHOSEN_ZONE:
-                    reference.pop("zone", None)
-                self.options[REFERENCE_ROOM] = reference
-                return await self._after("reference")
-        return self._form(
-            step_id="reference", data_schema=reference_schema(self.options), errors=errors
         )
 
     async def async_step_monitor(
@@ -3224,8 +3164,9 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # entry from before keeps those it ran with; 6: the design outdoor temperature is one value,
     # the building's, the curve's moved there; 7: the comfort correction, now on by default, stays
     # off in a control section that never stored it; 8: the curve's room temperature, now Auto
-    # by default, stays Manual where a curve stored no mode (see async_migrate_entry).
-    MINOR_VERSION = 8
+    # by default, stays Manual where a curve stored no mode; 9: the reference room is gone, its
+    # settings with it (see async_migrate_entry).
+    MINOR_VERSION = 9
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}
@@ -3245,8 +3186,8 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # I7: the first panels, the name and the level come first — they decide what follows; then
     # the menu, in this order, each section shown where it applies.
     SECTIONS = (
-        "connection", "name", "signals", "boiler", "circuit", "zones", "building", "reference",
-        "monitor", "control",
+        "connection", "name", "signals", "boiler", "circuit", "zones", "building", "monitor",
+        "control",
     )  # fmt: skip
 
     def _next_after(self, step: str) -> str:
@@ -3415,7 +3356,7 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
             section
             for section in (
                 "connection", "signals", "freshness", "boiler", "circuit", "zones", "building",
-                "reference", "control", "monitor",
+                "control", "monitor",
             )
             if section_shown(self.options, section)
         ]  # fmt: skip

@@ -2,7 +2,7 @@
 plugin's entities publish.
 
 Two paths. The quick one runs on state changes (debounced) and every 30 s: current readings,
-signal check, hot water, emitter factors, foreign heat, reference room, critical zones, current
+signal check, hot water, emitter factors, foreign heat, critical zones, current
 alarms. The analysis runs every few minutes on a copy of the history, off the event loop:
 summaries, verdict, trend warnings, report, outdoor check and building fit. After a restart the
 history is rebuilt from the recorder, which keeps these states anyway; the entry's own store
@@ -160,7 +160,6 @@ from .core.lowest_water import (
 from .core.metrics import CH_KINDS
 from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
 from .core.readings import ZONE_OPEN, BoilerSnapshot, ZoneState
-from .core.reference_room import ReferenceRoom, select_reference
 from .core.series import Series, known_duration
 from .core.signal_check import (
     FAULT_SIGNALS,
@@ -322,7 +321,6 @@ class MonitorData:
     # with no link signal mapped and no relay (X8, R4).
     connected: bool | None
     zones: dict[str, ZoneView]
-    reference: ReferenceRoom
     critical: dict[str, CriticalZone]
     alarms: dict[AlarmKind, Alarm]
     central_mode: CentralMode | None
@@ -412,7 +410,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self.long_run = LongRun()
         self.long_run_totals: dict[str, float] = {}
         self._long_run_at: float | None = None
-        self._reference: ReferenceRoom | None = None
         self._critical: dict[str, CriticalZone] = {}
         self._alarms: dict[AlarmKind, Alarm] = {}
         self._circuit_alarms: dict[str, Alarm] = {}  # each circuit's too-hot alarm (decision 10)
@@ -1354,16 +1351,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 foreign,
             )
 
-        reference_config = config.reference_room
-        self._reference = select_reference(
-            list(zone_states.values()),
-            reference_config.strategy,
-            now,
-            ZONE_MAX_AGE_S,
-            self._reference,
-            reference_config.zone,
-            reference_config.switch_margin,
-        )
         for circuit in config.installation.circuits:
             members = [
                 zone_states[z.zone_id] for z in config.installation.zones_in(circuit.circuit_id)
@@ -1413,7 +1400,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             features=feature_states,
             connected=link_connected(health, self._relay_reachable()),
             zones=views,
-            reference=self._reference,
             critical=dict(self._critical),
             alarms=alarms,
             central_mode=self.link.central_mode(),

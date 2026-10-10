@@ -162,8 +162,6 @@ async def test_simple_flow_creates_an_entry(hass: HomeAssistant, entities: dict[
     result = await step(hass, result, {"emitter": "radiator", "foreign_heat": ["switch.fireplace"]})
     assert result["step_id"] == "building"
     result = await step(hass, result, {"floor_area": 120, "insulation": "average"})
-    assert result["step_id"] == "reference"
-    result = await step(hass, result, {"strategy": "largest_deficit"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "My boiler"
     options = result["options"]
@@ -264,11 +262,6 @@ async def test_advanced_flow_with_two_circuits(
     )
     assert result["step_id"] == "building"
     result = await step(hass, result, {"design_load_kw": 8.0, "heating_threshold": 16})
-    result = await step(hass, result, {"strategy": "chosen_zone", "switch_margin": 0.5})
-    assert result["errors"] == {"zone": "reference_zone_unknown"}
-    result = await step(
-        hass, result, {"strategy": "chosen_zone", "zone": entities["bedroom"], "switch_margin": 0.5}
-    )
     assert result["step_id"] == "monitor"
     result = await step(
         hass,
@@ -291,7 +284,6 @@ async def test_advanced_flow_with_two_circuits(
         {"entity_id": "sensor.heater_power", "kind": "power", "threshold": 300}
     ]
     assert options["zones"][1]["circuit"] == "circuit_2"
-    assert options["reference_room"]["zone"] == entities["bedroom"]
     assert options["monitor"]["monitoring_days"] == 10
     await hass.async_block_till_done()
 
@@ -319,8 +311,6 @@ async def create_entry(
         {"zones": [entities[zone] for zone in zones]},
         *({"emitter": "radiator"} for _zone in zones),
         {},
-        # I7: the reference room only with zones.
-        *([{"strategy": "average"}] if zones else []),
     ):
         result = await step(hass, result, data)
     if level == "advanced":
@@ -1178,7 +1168,6 @@ def _rich_options(entities: dict[str, str]) -> dict[str, Any]:
                  {"entity_id": "sensor.heater_power", "kind": "power", "threshold": 300}
              ]},
         ],
-        "reference_room": {"strategy": "largest_deficit", "switch_margin": 0.8},
         "monitor": {"monitoring_days": 14.0, "near_room_k": 4.0},
     }  # fmt: skip
 
@@ -1205,8 +1194,7 @@ async def test_the_simple_level_keeps_what_it_does_not_show(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
     """P38: at the simple level an edit changes only what its form shows — the second circuit,
-    a circuit's flow sensor, a zone's emitter size, a source's threshold and the reference
-    room's margin stay."""
+    a circuit's flow sensor, a zone's emitter size and a source's threshold stay."""
     entry_id = await _entry(hass, _rich_options(entities))
     options = await _section(hass, entry_id, "circuit", {"control": "unmixed_shared"})
     assert [c["id"] for c in options["circuits"]] == ["main", "circuit_2"]
@@ -1222,8 +1210,6 @@ async def test_the_simple_level_keeps_what_it_does_not_show(
     living, bedroom = options["zones"]
     assert living["reference_output_w"] == 1500
     assert bedroom["foreign_heat"][0]["threshold"] == 300
-    options = await _section(hass, entry_id, "reference", {"strategy": "largest_deficit"})
-    assert options["reference_room"]["switch_margin"] == 0.8
 
 
 async def test_restoring_defaults_keeps_the_installation(
@@ -1238,7 +1224,6 @@ async def test_restoring_defaults_keeps_the_installation(
     assert options["circuits"][0]["flow_entity"] == entities["return"]
     assert options["zones"][0]["reference_output_w"] == 1500
     assert options["zones"][1]["foreign_heat"][0]["threshold"] == 300
-    assert "switch_margin" not in options["reference_room"]  # tuning
     assert options["monitor"] == {"monitoring_days": 14.0}  # the period stays (P-65)
 
 
@@ -1250,7 +1235,6 @@ async def test_hidden_settings_are_those_that_differ_from_defaults(
     options["circuits"] = [{"id": "main", "control": "unmixed_shared"}]
     options["zones"] = [{"entity_id": entities["living"], "emitter": "radiator", "circuit": "main"}]
     options["boiler"]["modulation_scale"] = "range"
-    options["reference_room"] = {"strategy": "largest_deficit", "switch_margin": 0.3}
     options["monitor"] = {"monitoring_days": 7.0, "near_room_k": 3.0}
     entry_id = await _entry(hass, options)
     menu = await hass.config_entries.options.async_init(entry_id)
@@ -1897,26 +1881,26 @@ async def test_one_entity_for_two_signals_is_refused(
 async def test_options_save_problem_returns_to_its_step(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    """T-12: the reference room is zone A; zone A removed and saved — the reference form shows
-    ``reference_zone_unknown``; another strategy saves."""
-    options = _rich_options(entities) | {
-        "reference_room": {"strategy": "chosen_zone", "zone": entities["living"]}
-    }
-    entry_id = await _entry(hass, options)
+    """T-12: a problem only the whole check finds — a design load no house has — is found at
+    "Save and finish" (I7): its step shows again with it, nothing saved; corrected, it saves."""
+    entry_id = await _entry(hass, _rich_options(entities) | {"level": "advanced"})
+    configure = hass.config_entries.options.async_configure
     menu = await hass.config_entries.options.async_init(entry_id)
-    result = await options_step(hass, menu, {"next_step_id": "zones"})
-    result = await options_step(hass, result, {"zones": [entities["bedroom"]]})
-    result = await options_step(
-        hass, result, {"circuit": "circuit_2", "emitter": "radiator", "foreign_heat": []}
+    result = await configure(menu["flow_id"], {"next_step_id": "building"})
+    result = await configure(result["flow_id"], {"design_load_kw": 200.0})  # 5.7 kW/K
+    assert result["type"] is FlowResultType.MENU
+    result = await configure(result["flow_id"], {"next_step_id": "save"})
+    assert result["step_id"] == "building"
+    assert result["errors"] == {"base": "implausible_parameter"}
+    assert "design_load_kw" not in hass.config_entries.async_get_entry(entry_id).options.get(
+        "building", {}
     )
-    assert result["step_id"] == "reference"
-    assert result["errors"] == {"base": "reference_zone_unknown"}
-    result = await options_step(hass, result, {"strategy": "largest_deficit"})
+    result = await configure(result["flow_id"], {"design_load_kw": 12.0})
+    result = await configure(result["flow_id"], {"next_step_id": "save"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     saved = hass.config_entries.async_get_entry(entry_id).options
-    assert [zone["entity_id"] for zone in saved["zones"]] == [entities["bedroom"]]
-    assert saved["reference_room"]["strategy"] == "largest_deficit"
+    assert saved["building"]["design_load_kw"] == 12.0
 
 
 @pytest.mark.usefixtures("gateway")
@@ -2062,7 +2046,6 @@ async def test_an_unknown_stored_value_is_a_form_error(
         "level": "simple",
         "signals": {"flame": entities["flame"], "flow": entities["flow"]},
         "boiler": {"class": "steam", "dhw": "none", "condensing": True},
-        "reference_room": {"strategy": "average"},
     }
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
     entry.add_to_hass(hass)
@@ -2162,7 +2145,7 @@ async def test_entities_are_checked_on_the_server(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
     """P-79: what the selectors filter in the browser is checked again on submit — a sensor as
-    the flame, a climate of another integration as a zone, a switch as the reference room.
+    the flame, a climate of another integration as a zone.
     Negative: an entity of the right domain that has not reported yet is accepted."""
     from homeassistant.helpers import entity_registry as er
 
@@ -2191,10 +2174,6 @@ async def test_entities_are_checked_on_the_server(
     assert result["errors"] == {"foreign_heat": "foreign_heat_unsupported"}
     result = await step(hass, result, {"emitter": "radiator", "foreign_heat": []})
     result = await step(hass, result, {})
-    assert result["step_id"] == "reference"
-    result = await step(hass, result, {"strategy": "chosen_zone", "zone": other})
-    assert result["errors"] == {"zone": "zone_not_vt"}
-    result = await step(hass, result, {"strategy": "chosen_zone", "zone": entities["living"]})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["options"]["signals"]["flow"] == "sensor.not_reported_yet"
 
@@ -2284,7 +2263,6 @@ def controlled_options(entities: dict[str, str]) -> dict[str, Any]:
         "boiler": {"class": "flow_setpoint", "dhw": "none", "condensing": True},
         "circuits": [{"id": "main", "control": "unmixed_shared"}],
         "zones": [{"entity_id": entities["living"], "emitter": "radiator", "circuit": "main"}],
-        "reference_room": {"strategy": "average"},
         "control": {
             "write_path": "opentherm_gw",
             "gateway_id": "living_room_gw",
@@ -4092,7 +4070,7 @@ async def test_condensing_and_the_hot_water_priority_are_asked_where_they_apply(
         {},
         {"control": "unmixed_shared"},
         {"zones": []},
-        {},  # I7: no zones, no reference room
+        {},
         {"write_path": "none"},  # I6.6: the control step, set up later
     ):
         result = await step(hass, result, data)
@@ -4487,7 +4465,6 @@ async def test_the_gateways_own_entities_are_suggested(
         {"zones": [entities["living"]]},
         {"emitter": "radiator"},
         {},
-        {"strategy": "average"},
     ):
         result = await step(hass, result, data)
     # I6.6: full control is set up in the setup — with the gateway's read-backs suggested there.
@@ -4699,7 +4676,7 @@ async def test_an_mqtt_connection_asks_its_topics(
         {},
         {"control": "unmixed_shared"},
         {"zones": []},
-        {},  # I7: no zones, no reference room
+        {},
     ):
         result = await step(hass, result, data)
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -4753,7 +4730,7 @@ async def test_full_control_is_set_up_in_the_setup_and_starts_off(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
     """Decision 11: with full control chosen, the setup goes through the control steps after
-    the reference room; the entry is made with its control section, the control switch off, and
+    the building; the entry is made with its control section, the control switch off, and
     its first start writes nothing and raises no "state cannot be read" notice."""
     from homeassistant.helpers import entity_registry as er
     from homeassistant.helpers import issue_registry as ir
@@ -4774,7 +4751,6 @@ async def test_full_control_is_set_up_in_the_setup_and_starts_off(
         {"zones": [entities["living"]]},
         {"emitter": "radiator"},
         {},
-        {"strategy": "average"},
     ):
         result = await step(hass, result, data)
     assert result["step_id"] == "control"
@@ -4807,7 +4783,7 @@ async def test_full_control_is_set_up_in_the_setup_and_starts_off(
 
 async def test_monitoring_only_skips_the_control_steps(hass: HomeAssistant) -> None:
     """Decision 11's negative: monitoring only (or room values until 0.3) goes from the
-    reference room to the entry, with no control section."""
+    building to the entry, with no control section."""
     result = await start_setup(hass, "opentherm_gw", "monitor")
     for data in (
         {"name": "Boiler", "level": "simple"},
@@ -4815,7 +4791,7 @@ async def test_monitoring_only_skips_the_control_steps(hass: HomeAssistant) -> N
         {},
         {"control": "unmixed_shared"},
         {"zones": []},
-        {},  # I7: no zones, no reference room
+        {},
     ):
         result = await step(hass, result, data)
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -4952,8 +4928,8 @@ async def test_the_setup_menu_shows_what_applies_and_creates_once_all_is_confirm
 ) -> None:
     """I7, decisions 1 and 2: after the first panels, the name and the level, the menu — the
     sections that apply, in the wizard's order, then "Configuration incomplete" naming what is
-    left, which opens the first of it; the reference room once a zone is picked; "Create" once
-    every section shown has been confirmed, in any order."""
+    left, which opens the first of it; "Create" once every section shown has been confirmed, in
+    any order."""
     result = await start_setup(hass)  # read only, monitoring only: no control section
     result = await configure(hass, result, {"name": "My boiler", "level": "simple"})
     assert result["type"] is FlowResultType.MENU
@@ -4976,10 +4952,6 @@ async def test_the_setup_menu_shows_what_applies_and_creates_once_all_is_confirm
     result = await configure(hass, result, {"next_step_id": "zones"})
     result = await configure(hass, result, {"zones": [entities["living"]]})
     result = await configure(hass, result, {"emitter": "radiator"})
-    assert result["menu_options"][-2:] == ["reference", "incomplete"]  # a room to refer to
-    assert result["description_placeholders"] == {"state": "Still to confirm: Reference room."}
-    result = await configure(hass, result, {"next_step_id": "reference"})
-    result = await configure(hass, result, {"strategy": "average"})
     assert result["menu_options"][-1] == "finish"
     assert result["description_placeholders"] == {
         "state": "Every section is confirmed: choose “Create”."
@@ -4988,7 +4960,6 @@ async def test_the_setup_menu_shows_what_applies_and_creates_once_all_is_confirm
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "My boiler"
     assert result["options"]["signals"] == {"flame": entities["flame"], "flow": entities["flow"]}
-    assert result["options"]["reference_room"] == {"strategy": "average"}
     await hass.async_block_till_done()
 
 
@@ -5062,7 +5033,7 @@ async def test_the_options_menu_shows_what_applies_and_closing_keeps_nothing(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
     """I7, decisions 2 and 3: an entry from before the control mode offers control as before;
-    without zones no reference room; monitoring only chosen, no control set up — no control;
+    monitoring only chosen, no control set up — no control;
     the advanced level, the monitor's thresholds; the level and "Save and finish" last. The
     menu names what changed; closing the window saves nothing."""
     entry_id = await _entry(hass, _rich_options(entities))
@@ -5070,12 +5041,11 @@ async def test_the_options_menu_shows_what_applies_and_closing_keeps_nothing(
     menu = await hass.config_entries.options.async_init(entry_id)
     assert menu["menu_options"] == [
         "connection", "signals", "freshness", "boiler", "circuit", "zones", "building",
-        "reference", "control", "level_hidden", "save",
+        "control", "level_hidden", "save",
     ]  # fmt: skip
     configure = hass.config_entries.options.async_configure
     result = await configure(menu["flow_id"], {"next_step_id": "zones"})
     result = await configure(result["flow_id"], {"zones": []})
-    assert "reference" not in result["menu_options"]
     result = await configure(result["flow_id"], {"next_step_id": "connection"})
     answers = {"connection": "read_only", "heat_source": "gas", "type": "single"}
     result = await configure(result["flow_id"], answers)

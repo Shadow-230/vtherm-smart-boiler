@@ -487,16 +487,6 @@ takes the emitter types of its zones (S-33); the burner is shared.
 - By default the water temperature changes gradually (ramp, §7): each setpoint step stays small
   enough that the boiler does not overshoot it, and zone algorithms follow (S-47).
 
-### Reference room
-
-- External boiler controllers (DIYLess, ESPHome OpenTherm and similar) need one room temperature
-  and setpoint. The plugin publishes a reference room: selected zone, its temperature and
-  setpoint, the deficit and a status. Strategy: largest deficit (default), a chosen zone, or an
-  average. Only zones taking part in heating with valid readings count; temperature and setpoint
-  come from the same zone — for the average, from the same set of zones; the choice changes only
-  on a clear difference; no invented fallback —
-  "no active zone" and "no valid measurement" are explicit states.
-
 ### The thermostat-like mode (0.3)
 
 Decided by the user on 2026-10-10 (`docs/plan-0.2-i8.md` G; sources:
@@ -544,7 +534,7 @@ Decided by the user on 2026-10-10 (`docs/plan-0.2-i8.md` G; sources:
 
 | Stage | Delivers | Controls the boiler |
 |---|---|---|
-| **Monitor** | starts per hour, burn time, condensing share, gas per degree-day, connection state; alarms — information, with a hand-back reaction only where decision 7 allows one (§7); **early warning** (flue gas, ignitions, pressure, hysteresis); **a long burn without warming** — the flame on for 3 h with the rooms not rising: the water too cool for the rooms short, the boiler at its power limit (a warning), the water too hot (`docs/plan-0.2-g11.md` E); **a window probably open** in a room (F); **report explaining changes** (weather / DHW / settings); outdoor sensor check; DHW and foreign-heat detection; **forecast recording** (FC0); **reference room** (§5); **signal check** — which optional signals are present and fresh | no |
+| **Monitor** | starts per hour, burn time, condensing share, gas per degree-day, connection state; alarms — information, with a hand-back reaction only where decision 7 allows one (§7); **early warning** (flue gas, ignitions, pressure, hysteresis); **a long burn without warming** — the flame on for 3 h with the rooms not rising: the water too cool for the rooms short, the boiler at its power limit (a warning), the water too hot (`docs/plan-0.2-g11.md` E); **a window probably open** in a room (F); **report explaining changes** (weather / DHW / settings); outdoor sensor check; DHW and foreign-heat detection; **forecast recording** (FC0); **signal check** — which optional signals are present and fresh | no |
 | **Advisor** | curve and anti-cycling suggestions with rationale and an "apply" button | no |
 | **Curve (strategy A)** | replaces VT's on/off and user automations; curve per circuit; effective outdoor temperature; ramp; keep-alive; frost protection; learning pauses (DHW, foreign heat, large changes — under control only, S-61) | yes |
 | **Anti-cycling** (to be decided against principle 12, decision 13) | duty cycling at low load, starts-per-hour budget, modulation cap; **planning from the forecast** — mild hours ahead → long cycles from the start (FC2) | yes |

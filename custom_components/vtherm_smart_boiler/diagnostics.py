@@ -177,7 +177,6 @@ async def async_get_config_entry_diagnostics(
                 }
                 for zone_id, view in data.zones.items()
             },
-            "reference_room": asdict(data.reference),
             "critical": {cid: asdict(c) for cid, c in data.critical.items()},
             "alarms": {kind.value: asdict(alarm) for kind, alarm in data.alarms.items()},
             "analysis": summary,

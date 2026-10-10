@@ -66,7 +66,6 @@
           "circuit": "Heating circuits",
           "zones": "VT zones",
           "building": "Building",
-          "reference": "Reference room",
           "monitor": "Monitor thresholds",
           "control": "Control (experimental)",
           "finish": "Create",
@@ -223,20 +222,6 @@
           "loss_coefficient": "Heat loss per kelvin, in kW/K, if you know it. Always wins, measured values included: recorded days never replace it, they show a mismatch — a wrong value stays wrong.",
           "heating_threshold": "Outdoor temperature above which the house needs no heating, in °C; also the degree-day base. Default 15 °C, until recorded days over a wide enough range of outdoor temperatures measure it. Entered, it always wins; the measured value is shown beside it with any mismatch. Wrong, degree-days and gas per degree-day are skewed.",
           "design_outdoor": "The coldest outdoor temperature your heating is designed for, in °C. Default −15 °C. One value with the heating curve's design outdoor temperature: changing it here changes the curve too. Too cold a value gives too little water in frost; wrong, the estimate from your design load is skewed."
-        }
-      },
-      "reference": {
-        "title": "Reference room",
-        "description": "One room temperature and setpoint for controllers that need a single room.",
-        "data": {
-          "strategy": "Strategy",
-          "zone": "Chosen zone",
-          "switch_margin": "Switch margin"
-        },
-        "data_description": {
-          "strategy": "Largest deficit follows the room furthest below its setpoint; a chosen zone always uses one room; average uses every heating room. It is only published for external controllers; a chosen zone that is away leaves them without a reference.",
-          "zone": "Used with the chosen-zone strategy. A room that is often off or away leaves the reference unknown.",
-          "switch_margin": "Another room must be this much colder before the reference switches, in K. Smaller follows faster but switches more often, which can disturb an external controller."
         }
       },
       "monitor": {
@@ -519,7 +504,6 @@
       "fixed_temperature_missing": "A thermostatic mixing valve (fixed) needs its temperature setting.",
       "foreign_heat_unsupported": "Only switches, binary sensors and power or temperature sensors can be heat sources.",
       "temperature_threshold_missing": "A temperature source needs a temperature threshold (advanced level).",
-      "reference_zone_unknown": "Pick one of the configured zones.",
       "missing_signal": "A required signal is missing.",
       "implausible_parameter": "A parameter is outside its plausible range.",
       "unknown_circuit": "A zone refers to a circuit that does not exist.",
@@ -539,7 +523,6 @@
       "invalid_boiler": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_circuit": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_zone": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
-      "invalid_reference": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_monitor": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_building": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_freshness": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
@@ -620,7 +603,6 @@
           "circuit": "Heating circuits",
           "zones": "VT zones",
           "building": "Building",
-          "reference": "Reference room",
           "monitor": "Monitor thresholds",
           "level": "Level of detail",
           "level_hidden": "Level of detail (some hidden advanced settings are active)",
@@ -679,7 +661,7 @@
         },
         "data_description": {
           "level": "Simple shows the essentials; advanced shows every parameter.",
-          "restore_defaults": "When switching to simple: tick to reset the advanced tuning — control's curve shape, limits and behaviour, the alarm reactions, the monitor's thresholds, the reference room's margin — to its defaults. Facts about your installation stay whatever you choose: mapped signals, the boiler, circuits, emitter sizes and values you entered — and the monitoring period and verdict window. Left unticked, the tuning stays active but hidden, and the options show that some advanced settings are active."
+          "restore_defaults": "When switching to simple: tick to reset the advanced tuning — control's curve shape, limits and behaviour, the alarm reactions, the monitor's thresholds — to its defaults. Facts about your installation stay whatever you choose: mapped signals, the boiler, circuits, emitter sizes and values you entered — and the monitoring period and verdict window. Left unticked, the tuning stays active but hidden, and the options show that some advanced settings are active."
         }
       },
       "signals": {
@@ -878,20 +860,6 @@
           "loss_coefficient": "Heat loss per kelvin, in kW/K, if you know it. Always wins, measured values included: recorded days never replace it, they show a mismatch — a wrong value stays wrong.",
           "heating_threshold": "Outdoor temperature above which the house needs no heating, in °C; also the degree-day base. Default 15 °C, until recorded days over a wide enough range of outdoor temperatures measure it. Entered, it always wins; the measured value is shown beside it with any mismatch. Wrong, degree-days and gas per degree-day are skewed.",
           "design_outdoor": "The coldest outdoor temperature your heating is designed for, in °C. Default −15 °C. One value with the heating curve's design outdoor temperature: changing it here changes the curve too. Too cold a value gives too little water in frost; wrong, the estimate from your design load is skewed."
-        }
-      },
-      "reference": {
-        "title": "Reference room",
-        "description": "One room temperature and setpoint for controllers that need a single room.",
-        "data": {
-          "strategy": "Strategy",
-          "zone": "Chosen zone",
-          "switch_margin": "Switch margin"
-        },
-        "data_description": {
-          "strategy": "Largest deficit follows the room furthest below its setpoint; a chosen zone always uses one room; average uses every heating room. It is only published for external controllers; a chosen zone that is away leaves them without a reference.",
-          "zone": "Used with the chosen-zone strategy. A room that is often off or away leaves the reference unknown.",
-          "switch_margin": "Another room must be this much colder before the reference switches, in K. Smaller follows faster but switches more often, which can disturb an external controller."
         }
       },
       "monitor": {
@@ -1184,7 +1152,6 @@
       "fixed_temperature_missing": "A thermostatic mixing valve (fixed) needs its temperature setting.",
       "foreign_heat_unsupported": "Only switches, binary sensors and power or temperature sensors can be heat sources.",
       "temperature_threshold_missing": "A temperature source needs a temperature threshold (advanced level).",
-      "reference_zone_unknown": "Pick one of the configured zones.",
       "hand_back_value_missing": "The value method needs a hand-back value.",
       "hand_back_entity_missing": "The switch method needs the external control switch.",
       "hard_limits_out_of_order": "The highest water temperature must be above the lowest.",
@@ -1238,7 +1205,6 @@
       "invalid_boiler": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_circuit": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_zone": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
-      "invalid_reference": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_monitor": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_building": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_freshness": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
@@ -1313,13 +1279,6 @@
         "light": "Light",
         "medium": "Medium",
         "heavy": "Heavy"
-      }
-    },
-    "strategy": {
-      "options": {
-        "largest_deficit": "Largest deficit",
-        "chosen_zone": "Chosen zone",
-        "average": "Average"
       }
     },
     "write_path": {
@@ -1572,45 +1531,6 @@
             "name": "Signals"
           }
         }
-      },
-      "reference_room": {
-        "name": "Reference room",
-        "state_attributes": {
-          "status": {
-            "name": "Status",
-            "state": {
-              "ok": "OK",
-              "no_active_zone": "No zone is heating",
-              "no_valid_measurement": "No valid measurement"
-            }
-          },
-          "zone": {
-            "name": "Zone"
-          },
-          "zones": {
-            "name": "Zones"
-          },
-          "temperature": {
-            "name": "Temperature (°C)"
-          },
-          "setpoint": {
-            "name": "Setpoint (°C)"
-          },
-          "deficit": {
-            "name": "Below its setpoint (K)"
-          }
-        },
-        "state": {
-          "no_active_zone": "No zone is heating",
-          "no_valid_measurement": "No valid measurement",
-          "average": "Average of the zones"
-        }
-      },
-      "reference_room_temperature": {
-        "name": "Reference room temperature"
-      },
-      "reference_room_setpoint": {
-        "name": "Reference room setpoint"
       },
       "change_report": {
         "name": "Use against yesterday"

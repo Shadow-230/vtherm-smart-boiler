@@ -231,6 +231,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_comfort_correction(hass, entry)
     if entry.minor_version < 8:
         _migrate_room_mode(hass, entry)
+    if entry.minor_version < 9:
+        _migrate_reference_room(hass, entry)
     return True
 
 
@@ -257,6 +259,16 @@ def _migrate_room_mode(hass: HomeAssistant, entry: ConfigEntry) -> None:
     if has_control_section(options):
         options[CONTROL] = with_room_mode(options[CONTROL])
     hass.config_entries.async_update_entry(entry, options=options, minor_version=8)
+
+
+def _migrate_reference_room(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.1 (minor version 9): the reference room is gone (`docs/plan-0.2-i8.md` B1) — the plugin
+    is for the boiler; its stored settings go with it. Its three sensors leave the registry at
+    the next setup, as entities the options no longer create."""
+    from .const import REFERENCE_ROOM
+
+    options = {key: value for key, value in entry.options.items() if key != REFERENCE_ROOM}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=9)
 
 
 def control_as_run(options: Mapping[str, Any]) -> Any:

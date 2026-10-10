@@ -57,7 +57,8 @@ Status on 2026-10-10: I7.0 (this plan), I7.1 (the menus) and I7.2 (the limits wi
   control mode (it has none) as before; and also while the session's options still hold a write
   path, so control can be switched off after "monitoring only" is chosen — the control step then
   offers "no control" only. Reason: no dead end where a stored path could no longer be cleared.
-- **"Reference room"** only with zones: without a zone there is nothing to refer to.
+- **"Reference room"** only with zones: without a zone there is nothing to refer to. (I8.1a,
+  2026-10-10: the reference room removed — `docs/plan-0.2-i8.md` B1.)
 - **"Monitor thresholds"** at the advanced level only, as before.
 - **"Save and finish"** (the options' last item) runs the checks of the save before I7, in the
   same order: a stored section of another shape (PB-06), the whole configuration, the hand-back

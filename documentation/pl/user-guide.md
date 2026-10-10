@@ -94,8 +94,8 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    każde połączenie, opisuje [Podłączenie kotła](#5-podłączenie-kotła).
    Potem pojawia się **menu sekcji**, jak we własnym kreatorze VT: otwierasz sekcję, zatwierdzasz
    ją i wracasz do menu — nic jeszcze nie jest tworzone. Sekcja, która nie dotyczy Twojej
-   instalacji, nie jest pokazywana: pokój odniesienia bez stref, progi monitora na poziomie
-   prostym, sterowanie przy samym monitorowaniu. Menu mówi, które sekcje zostały do
+   instalacji, nie jest pokazywana: progi monitora na poziomie prostym, sterowanie przy samym
+   monitorowaniu. Menu mówi, które sekcje zostały do
    zatwierdzenia; **Konfiguracja niekompletna** otwiera pierwszą z nich albo krok z problemem do
    poprawienia, a **Utwórz** pojawia się, gdy każda pokazana sekcja jest zatwierdzona. Zamknięcie
    okna porzuca konfigurację.
@@ -105,8 +105,7 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    są wpisane za Ciebie do sprawdzenia. Przy firmware OTGW przez MQTT i przy EMS-ESP osobny krok
    pyta o tematy MQTT urządzenia (zobacz [Świeżość danych](#68-świeżość-danych)).
 4. **Opisz instalację.** Sekcje **Kocioł**, **Obiegi grzewcze**, **Strefy VT** (z jednym
-   krokiem **Strefa** dla każdej wybranej strefy), **Budynek** i **Pokój odniesienia** pytają o
-   to, co wiesz. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić.
+   krokiem **Strefa** dla każdej wybranej strefy) i **Budynek** pytają o to, co wiesz. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić.
    Sekcja **Kocioł** pyta też o limity ciśnienia wody z instrukcji kotła i z zaworu
    bezpieczeństwa — pojawiają się, gdy w **Sygnały kotła** zmapujesz czujnik ciśnienia, tak jak
    limity spalin w **Progi monitora** pojawiają się z czujnikiem spalin; sekcja **Budynek** pyta o
