@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import json
 import os
 import pathlib
 import sys
@@ -19,7 +20,7 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 import contextlib
 from itertools import pairwise
 
-from lib import HA, ROOT, SIGNALS
+from lib import CONTAINER, HA, ROOT, SIGNALS, ssh
 
 RESULTS = pathlib.Path(
     os.environ.get("J4_RESULTS")
@@ -114,7 +115,9 @@ class Run:
             if k.startswith("alarm_") and st.get(e, {}).get("state") == "on"
         )
 
-    async def options(self, control=None, curve=None, behaviour=None, alarms=None, gateway="sim"):
+    async def options(
+        self, control=None, curve=None, behaviour=None, alarms=None, gateway="sim", strict=True
+    ):
         entry = await self.ha.entry("vtherm_smart_boiler")
         _s, d = await self.ha.rest(
             "POST",
@@ -132,6 +135,8 @@ class Run:
             )
             if d.get("errors") or d.get("type") == "abort":
                 await self.ha.rest("DELETE", f"/api/config/config_entries/options/flow/{fid}")
+                if strict:
+                    raise RuntimeError(f"options not saved: {d.get('errors') or str(d)[:200]}")
                 return d
         while d.get("type") == "form":
             step = d["step_id"]
@@ -156,6 +161,9 @@ class Run:
                 "control_alarms": {**BASE_ALARMS, **(alarms or {})},
             }.get(step)
             if body is None:
+                await self.ha.rest("DELETE", f"/api/config/config_entries/options/flow/{fid}")
+                if strict:
+                    raise RuntimeError(f"options: a step the runner does not know: {step}")
                 return {"unexpected_step": step}
             # Each step starts from what the form shows now, so a field the runner does not set
             # keeps its value instead of falling back to the plugin's default (G11 made the
@@ -173,9 +181,13 @@ class Run:
             )
             if d.get("errors"):
                 await self.ha.rest("DELETE", f"/api/config/config_entries/options/flow/{fid}")
+                if strict:
+                    raise RuntimeError(f"options not saved: {d.get('errors') or str(d)[:200]}")
                 return d
         if d.get("type") != "create_entry":
             await self.ha.rest("DELETE", f"/api/config/config_entries/options/flow/{fid}")
+            if strict:
+                raise RuntimeError(f"options not saved: {str(d)[:200]}")
             return {"errors": {"not_saved": str(d)[:200]}}
         await asyncio.sleep(15)  # the entry reloads
         return d
@@ -648,20 +660,26 @@ async def _refused(r: Run, label: str, d: dict) -> None:
 
 async def G1(r: Run):
     """control refused without a confirmed-setpoint source"""
-    await _refused(r, "no confirmed setpoint", await r.options(control={"confirmed_entity": None}))
+    await _refused(
+        r,
+        "no confirmed setpoint",
+        await r.options(control={"confirmed_entity": None}, strict=False),
+    )
     await r.options()
 
 
 async def G2(r: Run):
     """control refused in monitor mode"""
-    await _refused(r, "monitor mode", await r.options(control={"topology": "monitor_mode"}))
+    await _refused(
+        r, "monitor mode", await r.options(control={"topology": "monitor_mode"}, strict=False)
+    )
     await r.options()
 
 
 async def G3(r: Run):
     """an on/off contact or "I don't know" on the terminals: refused, nothing written, the thermostat heats"""
     for kind in ("on_off", "unknown"):
-        await _refused(r, kind, await r.options(control={"thermostat_kind": kind}))
+        await _refused(r, kind, await r.options(control={"thermostat_kind": kind}, strict=False))
         chen = await r.s("binary_sensor.otgw_sim_boiler_master_ch_enabled")
         r.note(f"{kind}: CH enabled on the boiler (the thermostat's): {chen}")
     await r.options()
@@ -890,6 +908,96 @@ SCENARIOS = {
 }
 
 
+# --- the instance's base state, and the evidence of a failure ---------------------------------
+
+# What every scenario of a path expects to find, as each instance is set up (devenv/README.md):
+# keys of the plugin's stored control options ("curve.x" inside the curve). A key the entry does
+# not store yet takes the plugin's default for an entry made before it, which is what the base
+# means — so only a stored value is compared.
+BASE_EXPECT: dict[str, dict[str, object]] = {
+    "opentherm_gw": {
+        "hard_max": 70.0,
+        "activation_delay_s": 0,
+        "comfort_correction": False,
+        "curve.design_flow": 55.0,
+        "curve.room_mode": "manual",
+    },
+    "entity": {
+        "write_type": "held",
+        "ch_write_type": "held",
+        "hand_back": "value",
+        "hand_back_value": 0.0,
+        "own_room_controller": False,
+        "comfort_correction": False,
+        "curve.room_mode": "manual",
+    },
+    "relay": {
+        "relay_off_timer": "none",
+        "relay_power_on_state": "off",
+        "relay_rest_state": "off",
+        "relay_is_separate_contact": True,
+        "own_room_controller": False,
+        "activation_delay_s": 0,
+    },
+}
+
+
+def stored_control() -> dict[str, object]:
+    """The plugin entry's stored control options, flattened — read from the instance's own
+    .storage (read only)."""
+    raw = json.loads(ssh(f"docker exec {CONTAINER} cat /config/.storage/core.config_entries"))
+    entry = next(e for e in raw["data"]["entries"] if e["domain"] == "vtherm_smart_boiler")
+    flat: dict[str, object] = {}
+    for key, value in entry["options"].get("control", {}).items():
+        if isinstance(value, dict):
+            flat |= {f"{key}.{k}": v for k, v in value.items()}
+        else:
+            flat[key] = value
+    return flat
+
+
+def base_drift(control: dict[str, object]) -> list[str]:
+    expected = BASE_EXPECT.get(str(control.get("write_path")), {})
+    return [
+        f"{key}: {control[key]!r}, the base {value!r}"
+        for key, value in expected.items()
+        if key in control and control[key] != value
+    ]
+
+
+def base_line(control: dict[str, object]) -> str:
+    keys = ["write_path", "topology", *BASE_EXPECT.get(str(control.get("write_path")), {})]
+    return ", ".join(f"{k} {control[k]!r}" for k in dict.fromkeys(keys) if k in control)
+
+
+async def diagnosis(r: Run, since: dt.datetime) -> list[str]:
+    """The evidence of a failed scenario: the plugin's warnings and errors since it began, the
+    control state, the alarms on and the repair issues."""
+    out: list[str] = []
+    try:
+        logs = await asyncio.to_thread(
+            ssh,
+            f"docker logs --since {since:%Y-%m-%dT%H:%M:%SZ} {CONTAINER} 2>&1"
+            " | grep -a vtherm_smart_boiler | grep -a -E 'WARNING|ERROR' | cut -c1-240 | tail -12",
+        )
+        out += [f"log: {line.strip()}" for line in logs.splitlines() if line.strip()]
+    except Exception as err:
+        out.append(f"log: not read ({err})")
+    try:
+        st = await r.st("control_state")
+        a = st["attributes"]
+        out.append(
+            f"control state: {st['state']}, reasons {a.get('reasons')}, latched "
+            f"{a.get('latched_by')}, hand-back pending {a.get('hand_back_pending')}, "
+            f"confirmation {a.get('hand_back_confirmation')}"
+        )
+        out.append(f"alarms on: {await r.alarms_on()}")
+        out.append(f"issues: {[i['issue_id'] for i in await r.ha.issues()]}")
+    except Exception as err:
+        out.append(f"state: not read ({err})")
+    return out
+
+
 async def main(ids: list[str]) -> None:
     async with HA() as ha:
         for sid in ids:
@@ -898,19 +1006,39 @@ async def main(ids: list[str]) -> None:
             fn = SCENARIOS[sid]
             start = dt.datetime.now(dt.UTC)
             print(f"--- {sid} {start:%H:%M:%S} {fn.__doc__.strip()}", flush=True)
+            # The instance as the scenario finds it: a scenario never runs on an instance an
+            # earlier one left changed — its result would be another configuration's.
             try:
-                await r.reset()
-                await fn(r)
-            except Exception:
+                control = await asyncio.to_thread(stored_control)
+                drift = base_drift(control)
+                r.note(f"base: {base_line(control)}")
+            except Exception as err:
+                drift = []
+                r.note(f"base: not read ({err})")
+            if drift:
                 r.ok = False
-                r.notes.append("FAIL exception: " + traceback.format_exc().strip().splitlines()[-1])
-                traceback.print_exc()
-            finally:
+                r.notes.append(
+                    "NOT RUN — the instance is not in its base state (an earlier scenario left it "
+                    "changed; restore it first): " + "; ".join(drift)
+                )
+                verdict = "NOT RUN"
+            else:
                 try:
                     await r.reset()
+                    await fn(r)
                 except Exception:
+                    r.ok = False
+                    last = traceback.format_exc().strip().splitlines()[-1]
+                    r.notes.append(f"FAIL exception: {last}")
                     traceback.print_exc()
-            verdict = "PASS" if r.ok else "FAIL"
+                finally:
+                    try:
+                        await r.reset()
+                    except Exception:
+                        traceback.print_exc()
+                verdict = "PASS" if r.ok else "FAIL"
+                if not r.ok:
+                    r.notes += [f"diagnosis — {line}" for line in await diagnosis(r, start)]
             text = (
                 f"\n### {sid} — {verdict} ({start:%H:%M}–{dt.datetime.now(dt.UTC):%H:%M} UTC)\n{fn.__doc__.strip()}\n"
                 + "\n".join(f"- {n}" for n in r.notes)

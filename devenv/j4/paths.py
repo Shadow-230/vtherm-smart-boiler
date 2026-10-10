@@ -63,11 +63,16 @@ def entity_cmds(r: Run, since: float) -> list[tuple[str, object]]:
     return out
 
 
-async def options_walk(r: Run, answers: dict[str, Any], menu: str = "control") -> dict[str, Any]:
+async def options_walk(
+    r: Run, answers: dict[str, Any], menu: str = "control", strict: bool = True
+) -> dict[str, Any]:
     """A section of the plugin's options — control by default — saved again, each step with its
     current values and the given changes (a list for a step met more than once, such as each
     zone's: one change each, in order); the confirmation steps ticked. Returns the last answer
-    of the flow."""
+    of the flow. ``strict``: a form that refuses the answers, or a flow that does not save,
+    raises — so a restore that did not happen (a hand-back still owed blocks changing how it is
+    made) stops the scenario loudly instead of leaving the instance changed; a scenario whose
+    point is the refusal passes ``strict=False`` and reads ``errors``."""
     ha = r.ha
     entry = await ha.entry("vtherm_smart_boiler")
     _s, d = await ha.rest(
@@ -104,9 +109,13 @@ async def options_walk(r: Run, answers: dict[str, Any], menu: str = "control") -
         _s, d = await ha.rest("POST", path, body)
         if d.get("errors"):
             await ha.rest("DELETE", path)
+            if strict:
+                raise RuntimeError(f"options not saved ({menu}, step {step}): {d['errors']}")
             return d
     if d.get("type") != "create_entry":
         await ha.rest("DELETE", path)
+        if strict:
+            raise RuntimeError(f"options not saved ({menu}): {str(d)[:200]}")
         return {"errors": {"not_saved": str(d)[:200]}}
     await asyncio.sleep(15)  # the entry reloads
     r.ent.update(await ha.entities())
@@ -283,7 +292,7 @@ async def R7(r: Run):
 
 async def R8(r: Run):
     """the relay path without the separate-contact tick: control blocked, nothing reaches the relay"""
-    d = await options_walk(r, {"control_relay": {"relay_is_separate_contact": False}})
+    d = await options_walk(r, {"control_relay": {"relay_is_separate_contact": False}}, strict=False)
     if d.get("errors"):
         r.check(True, f"refused where it is entered: {d['errors']}")
     else:
@@ -841,6 +850,12 @@ async def N8(r: Run):
         if await r.s("control") == "on":
             await r.switch(False)
             await r.ha.wait(10)
+        # The second part leaves a hand-back owed (the device kept the value), and an owed
+        # hand-back blocks changing how it is made: the device lets the value lapse as declared,
+        # the plugin sees the release, and only then are the base options put back.
+        await r.sim("set_write_type", write_type="expiring")
+        settled = await r.ha.until(lambda: _is(r, "alarm_hand_back_failed", "off"), 420, 10)
+        r.note(f"the owed hand-back settled before the restore: {settled is not None}")
         await r.sim("set_write_type", write_type="held")
         await options_walk(
             r,
@@ -912,7 +927,7 @@ async def U2(r: Run):
 async def N3(r: Run):
     """a setpoint the boiler stores, or might (persistent, unknown): control never writes it"""
     for write_type in ("persistent", "unknown"):
-        d = await options_walk(r, {"control_entity": {"write_type": write_type}})
+        d = await options_walk(r, {"control_entity": {"write_type": write_type}}, strict=False)
         if d.get("errors"):
             r.check(True, f"{write_type}: refused where it is entered: {d['errors']}")
             continue
@@ -929,7 +944,9 @@ async def N3(r: Run):
 
 async def N4(r: Run):
     """without a heating switch control is refused (a low setpoint is not "off")"""
-    d = await options_walk(r, {"control_entity": {"ch_entity": None, "ch_write_type": "unknown"}})
+    d = await options_walk(
+        r, {"control_entity": {"ch_entity": None, "ch_write_type": "unknown"}}, strict=False
+    )
     if d.get("errors"):
         r.check(True, f"refused where it is entered: {d['errors']}")
     else:
