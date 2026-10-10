@@ -233,9 +233,13 @@ wersją zachowuje to, z czym działał). Gdy pomieszczenie nie dochodzi do swoje
 pełni otwartego zaworu, woda powoli rośnie ponad krzywą, do swojego limitu: domyślnie 3 K, na
 poziomie zaawansowanym do 10 K, nigdy więcej niż 3 K na dobę. Dla pomieszczenia, którego SmartPI
 jest w fazie nauki, „nie dochodzi” znaczy: poniżej nastawy + 0,5 K, gdzie SmartPI przestaje je
-grzać. Nie rośnie, gdy kocioł startuje częściej niż wcześniej. Po trzech godzinach na limicie,
-gdy pomieszczenie nadal nie dochodzi do nastawy, zgłoszenie w Naprawach podaje to pomieszczenie:
-krzywa jest tam za niska — podnieś krzywą. Koszt: więcej gazu i możliwie więcej startów palnika;
+grzać. Nie rośnie, gdy kocioł startuje częściej niż wcześniej. Jedno niedogrzane pomieszczenie
+liczy się jak każde inne, w tych granicach — woda nigdy nie idzie wyżej dla jednego pokoju. Po
+trzech godzinach na limicie, gdy pomieszczenie nadal nie dochodzi do nastawy, korekta tam stoi,
+a zgłoszenie w Naprawach podaje pomieszczenie i możliwe przyczyny: za niska krzywa grzewcza, za
+mały grzejnik w tym pomieszczeniu albo pomieszczenie tracące ciepło (okno, nieszczelności) —
+najpierw krzywą, gdy nie dochodzi większość pomieszczeń, najpierw grzejnik i straty ciepła, gdy
+jedno. Koszt: więcej gazu i możliwie więcej startów palnika;
 jej opis w formularzu wyjaśnia ryzyko przy strefach TPI w VT. Obserwuj starty i wyłącz ją, jeśli
 rosną. Przycisk „Wyzeruj korektę komfortu” cofa ją do zera.
 

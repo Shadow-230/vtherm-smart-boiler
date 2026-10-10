@@ -223,9 +223,12 @@ version keeps what it ran with). When a room stays short of its setpoint with it
 open, the water rises slowly above the curve, up to its limit: 3 K by default, up to 10 K at the
 advanced level, never more than 3 K a day. For a room whose SmartPI is in its learning phase,
 "short" means below its setpoint + 0.5 K, where SmartPI stops heating it. It does not rise when
-the boiler starts more often than before. After three hours at its limit with a room still
-short, a repair issue names the room: the curve is too low there — raise the curve. What it
-costs: more gas, and possibly more burner starts; its text in the form explains the risk with
+the boiler starts more often than before. One room short counts like any other, within these
+limits — the water never goes higher for one room's sake. After three hours at its limit with a
+room still short, the correction holds there, and a repair issue names the room and the possible
+causes: the heating curve too low, the room's radiator too small for it, or the room losing heat
+(a window, leaks) — the curve first when most rooms are short, the radiator and the heat loss
+first when one is. What it costs: more gas, and possibly more burner starts; its text in the form explains the risk with
 VT's TPI zones. Watch the starts, and switch it off if they climb. A "Reset comfort correction"
 button sets it back to zero.
 

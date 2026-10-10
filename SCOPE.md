@@ -527,7 +527,7 @@ takes the emitter types of its zones (S-33); the burner is shared.
 
 | Stage | Delivers | Controls the boiler |
 |---|---|---|
-| **Monitor** | starts per hour, burn time, condensing share, gas per degree-day, connection state; alarms — information, with a hand-back reaction only where decision 7 allows one (§7); **early warning** (flue gas, ignitions, pressure, hysteresis); **a long burn without warming** — the flame on for 3 h with the rooms not rising: the water too cool, one room to check, the boiler at its power limit (a warning), the water too hot (`docs/plan-0.2-g11.md` E); **a window probably open** in a room (F); **report explaining changes** (weather / DHW / settings); outdoor sensor check; DHW and foreign-heat detection; **forecast recording** (FC0); **reference room** (§5); **signal check** — which optional signals are present and fresh | no |
+| **Monitor** | starts per hour, burn time, condensing share, gas per degree-day, connection state; alarms — information, with a hand-back reaction only where decision 7 allows one (§7); **early warning** (flue gas, ignitions, pressure, hysteresis); **a long burn without warming** — the flame on for 3 h with the rooms not rising: the water too cool for the rooms short, the boiler at its power limit (a warning), the water too hot (`docs/plan-0.2-g11.md` E); **a window probably open** in a room (F); **report explaining changes** (weather / DHW / settings); outdoor sensor check; DHW and foreign-heat detection; **forecast recording** (FC0); **reference room** (§5); **signal check** — which optional signals are present and fresh | no |
 | **Advisor** | curve and anti-cycling suggestions with rationale and an "apply" button | no |
 | **Curve (strategy A)** | replaces VT's on/off and user automations; curve per circuit; effective outdoor temperature; **summer/winter switch from a multi-day forecast** (FC1 — to be decided against principle 12, decision 13); ramp; keep-alive; frost protection; learning pauses (DHW, foreign heat, large changes — under control only, S-61) | yes |
 | **Anti-cycling** (to be decided against principle 12, decision 13) | duty cycling at low load, starts-per-hour budget, modulation cap; **planning from the forecast** — mild hours ahead → long cycles from the start (FC2) | yes |
@@ -722,9 +722,13 @@ How control decides (principle 12):
   temperature is unknown and in
   the first hour after a start (principle 13's rules 3 and 5; decision 11 of `docs/plan-0.2.3.md`);
   it is reset at
-  hand-back and at the end of a session; at its limit for 3 h with a room still short, the
-  information alarm, and a warning repair issue naming the rooms: the heating curve is too low,
-  raise it — gone once the correction falls below the limit or no room is short. Its
+  hand-back and at the end of a session; one room short counts like any other — the curve must
+  hold every room — within these bounds, never higher for one room's sake (additions 2 and 3 of
+  2026-10-10); at its limit for 3 h with a room still short, it holds there, and the
+  information alarm and a warning repair issue name the room and the possible causes — the
+  heating curve too low, the room's radiator too small, the room losing heat; the curve first
+  when most rooms are short, the radiator and the heat loss first when one is — gone once the
+  correction falls below the limit or no room is short. Its
   value is published, and a "Reset comfort correction" button resets it (answer J). The zones'
   own PI integrators (SmartPI, TPI) act in
   series with it; the documentation describes the interaction and the VT settings recommended with

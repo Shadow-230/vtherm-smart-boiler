@@ -536,8 +536,16 @@ def test_the_decision_names_the_rooms_short() -> None:
 
     _state, decisions = run(minutes(0.0, 2, zones), WATER)
     assert decisions[-1].short_zones == ("a",)
+    assert not decisions[-1].most_short  # one of two: the room first, then the curve
     _state, decisions = run(minutes(0.0, 2, lambda t: (satisfied(t),)), WATER)
     assert decisions[-1].short_zones == ()
+    assert not decisions[-1].most_short
+
+    def most(t: float) -> tuple[ZoneState, ...]:
+        return (short(t, "a"), short(t, "b"), satisfied(t, "c"))
+
+    _state, decisions = run(minutes(0.0, 2, most), WATER)
+    assert decisions[-1].most_short  # two of three: the curve first (G11, addition 3)
 
 
 @pytest.mark.parametrize(("learning", "after"), [(True, 1.0), (None, 0.0)])
