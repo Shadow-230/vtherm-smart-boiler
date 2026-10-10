@@ -571,7 +571,11 @@ async def R15(r: Run):
             off_timer_min=2,
             timer_restarts_on_repeat=False,
         )
-        await relay_on_under_control(r)
+        # Not relay_on_under_control: this relay never stays on — it is the point.
+        await rooms_call(r, True)
+        await r.switch(True)
+        on = await r.ha.until(lambda: relay_is(r, True), 400, 1)
+        r.check(on is not None, f"the relay on under control ({on and round(on)} s)")
         aside = await r.ha.until(lambda: _control_state(r, "handed_back"), 1500, 5)
         r.check(
             aside is not None, f"stepped aside {aside and round(aside / 60, 1)} min into control"
