@@ -1,4 +1,4 @@
-"""Sensors: boiler metrics, verdict, reference room, critical zones, emitter power factors, the
+"""Sensors: boiler metrics, verdict, critical zones, emitter power factors, the
 building model's heat loss and heating threshold, the lowest water temperature's suggestion, the
 features and what each lacks (the missing-data rule), and the state and setpoint of control.
 
@@ -167,38 +167,6 @@ def _signal_attributes(data: MonitorData) -> dict[str, Any]:
     }
 
 
-def _reference_value(field: str) -> Callable[[MonitorData], Value]:
-    def value(data: MonitorData) -> Value:
-        if data.reference.status is not SelectionStatus.OK:
-            return None  # never frozen at the last value
-        return _round(getattr(data.reference, field), 2)
-
-    return value
-
-
-def _reference_state(data: MonitorData) -> Value:
-    reference = data.reference
-    if reference.status is not SelectionStatus.OK:
-        return reference.status.value
-    if reference.zone_id is None:
-        return "average"
-    return (
-        data.zones[reference.zone_id].name if reference.zone_id in data.zones else reference.zone_id
-    )
-
-
-def _reference_attributes(data: MonitorData) -> dict[str, Any]:
-    reference = data.reference
-    return {
-        "status": reference.status.value,
-        "zone": reference.zone_id,
-        "zones": list(reference.zones),
-        "temperature": reference.temperature,
-        "setpoint": reference.target,
-        "deficit": _round(reference.deficit, 2),
-    }
-
-
 def _report_value(data: MonitorData) -> Value:
     report = None if data.analysis is None else data.analysis.report
     return None if report is None else _percent(report.relative_change)
@@ -364,24 +332,6 @@ BOILER_SENSORS: tuple[BoilerSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=_signal_problems,
         attributes_fn=_signal_attributes,
-    ),
-    BoilerSensorDescription(
-        key="reference_room",
-        value_fn=_reference_state,
-        attributes_fn=_reference_attributes,
-    ),
-    BoilerSensorDescription(
-        key="reference_room_temperature",
-        device_class=SensorDeviceClass.TEMPERATURE,
-        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=_reference_value("temperature"),
-    ),
-    BoilerSensorDescription(
-        key="reference_room_setpoint",
-        device_class=SensorDeviceClass.TEMPERATURE,
-        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        value_fn=_reference_value("target"),
     ),
     BoilerSensorDescription(
         key="change_report",

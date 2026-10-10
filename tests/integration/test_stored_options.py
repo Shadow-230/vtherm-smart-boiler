@@ -72,7 +72,6 @@ def entry_with(
         ("circuits", {"id": "main"}, "invalid_circuit"),
         ("parameters", [], "invalid_parameters"),
         ("freshness", [60], "invalid_freshness"),
-        ("reference_room", "living", "invalid_reference"),
         ("building", [], "invalid_building"),
     ],
 )

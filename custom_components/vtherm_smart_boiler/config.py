@@ -32,7 +32,6 @@ from .const import (
     LEVEL_SIMPLE,
     MONITOR,
     PARAMETERS,
-    REFERENCE_ROOM,
     SIGNALS,
     WEATHER,
     ZONES,
@@ -84,7 +83,6 @@ from .core.installation import (
 from .core.metrics import DEFAULT_CONDENSING_RETURN, ModulationScale
 from .core.monitor import MonitorOptions
 from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
-from .core.reference_room import DEFAULT_SWITCH_MARGIN_K, Strategy
 from .core.signals import SIGNAL_PRECEDENCE, Signal
 from .core.verdict import VerdictOptions
 
@@ -123,7 +121,6 @@ ZONE_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
 FOREIGN_HEAT_THRESHOLDS: Mapping[SourceKind, tuple[float, float]] = MappingProxyType(
     {SourceKind.POWER: (1.0, 10000.0), SourceKind.TEMPERATURE: (20.0, 300.0)}
 )
-SWITCH_MARGIN_BOUNDS = (0.1, 3.0)
 # Shorter would let control start before the monitoring period (X5); the integration tests lift
 # it in their one place to start control at once.
 MONITORING_DAYS_BOUNDS = (7.0, 60.0)
@@ -156,7 +153,6 @@ SECTION_CODES: Mapping[str, str] = MappingProxyType(
         ZONES: "invalid_zone",
         PARAMETERS: "invalid_parameters",
         BUILDING: "invalid_building",
-        REFERENCE_ROOM: "invalid_reference",
         MONITOR: "invalid_monitor",
         FRESHNESS: "invalid_freshness",
         CONTROL: "invalid_control",
@@ -191,13 +187,6 @@ def _section(options: Mapping[str, Any], key: str) -> Any:
 class ZoneConfig:
     entity_id: str
     foreign_heat: tuple[ForeignHeatSource, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class ReferenceRoomConfig:
-    strategy: Strategy = Strategy.LARGEST_DEFICIT
-    zone: str | None = None
-    switch_margin: float = DEFAULT_SWITCH_MARGIN_K
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,7 +301,6 @@ class EntryConfig:
     parameters: ParameterSet
     zones: tuple[ZoneConfig, ...]
     circuit_flow_entities: dict[str, str]
-    reference_room: ReferenceRoomConfig
     monitor: MonitorConfig
     freshness: dict[Signal, float | None]
     control: ControlOptions = field(default_factory=ControlOptions)
@@ -383,7 +371,6 @@ class EntryConfig:
         if errors:
             raise ConfigError(errors[0].code.value, errors[0].subject)
         parameters = _parameters(_section(options, PARAMETERS), _section(options, BUILDING))
-        reference = _reference(_section(options, REFERENCE_ROOM), [z.zone_id for z in zones])
         freshness, weather_max_age = _freshness(_section(options, FRESHNESS))
         monitor = _monitor(
             _section(options, MONITOR),
@@ -407,7 +394,6 @@ class EntryConfig:
             parameters=parameters,
             zones=tuple(zone_configs),
             circuit_flow_entities=flow_entities,
-            reference_room=reference,
             monitor=monitor,
             freshness=freshness,
             control=control,
@@ -464,9 +450,6 @@ def _map_entities(options: Mapping[str, Any], visit: EntityVisit) -> dict[str, A
     zones = options.get(ZONES)
     if isinstance(zones, list):
         result[ZONES] = [_zone_entities(visit, item) for item in zones]
-    reference = options.get(REFERENCE_ROOM)
-    if isinstance(reference, Mapping):
-        result[REFERENCE_ROOM] = _visit_item(visit, reference, "zone", f"{REFERENCE_ROOM}.zone")
     control = options.get(CONTROL)
     if isinstance(control, Mapping):
         result[CONTROL] = map_control_entities(
@@ -725,17 +708,6 @@ def _parameters(data: Mapping[str, Any], building: Mapping[str, Any]) -> Paramet
             ParameterKey.THERMAL_TIME_CONSTANT, time_constant_from_mass(mass)
         )
     return parameters
-
-
-def _reference(data: Mapping[str, Any], zone_ids: list[str]) -> ReferenceRoomConfig:
-    strategy = _enum(Strategy, data, "strategy", Strategy.LARGEST_DEFICIT, "invalid_reference")
-    zone = data.get("zone") or None
-    if strategy is Strategy.CHOSEN_ZONE and zone not in zone_ids:
-        raise ConfigError("reference_zone_unknown", zone)
-    margin = _bounded("invalid_reference", data, "switch_margin", SWITCH_MARGIN_BOUNDS)
-    return ReferenceRoomConfig(
-        strategy, zone, DEFAULT_SWITCH_MARGIN_K if margin is None else margin
-    )
 
 
 def _monitor_value(data: Mapping[str, Any], key: str, default: float | None) -> float:

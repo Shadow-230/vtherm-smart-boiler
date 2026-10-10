@@ -89,8 +89,7 @@ Only one entry of the integration can exist: it runs one boiler.
    means is in [Connecting the boiler](#5-connecting-the-boiler).
    Then comes a **menu of sections**, as in VT's own setup: open a section, confirm it, and you
    are back at the menu — nothing is created yet. A section that does not apply is not shown:
-   the reference room without zones, the monitor's thresholds at the simple level, control with
-   monitoring only. The menu says which sections are still to confirm; **Configuration
+   the monitor's thresholds at the simple level, control with monitoring only. The menu says which sections are still to confirm; **Configuration
    incomplete** opens the first of them, or the step with a problem to fix, and **Create**
    appears once every section shown is confirmed. Closing the window discards the setup.
 3. **Pick the signals.** In the section **Boiler signals** pick the entity for each signal you have — at
@@ -99,8 +98,7 @@ Only one entry of the integration can exist: it runs one boiler.
    entities are filled in for you to check. On the OTGW firmware over MQTT and on EMS-ESP a step
    asks the device's MQTT topics (see [Fresh data](#68-fresh-data)).
 4. **Describe the installation.** The sections **Boiler**, **Heating circuits**, **VT zones**
-   (with one **Zone** step for each zone you pick), **Building** and **Reference room** ask what
-   you know. Leave unknown values empty: the plugin then says what it cannot judge. **Boiler** also
+   (with one **Zone** step for each zone you pick) and **Building** ask what you know. Leave unknown values empty: the plugin then says what it cannot judge. **Boiler** also
    takes the water-pressure limits from the boiler's manual and its safety valve — they appear
    once a pressure sensor is mapped in **Boiler signals**, as the flue-gas limits in **Monitor
    thresholds** appear with a flue-gas sensor; **Building** takes the design outdoor
