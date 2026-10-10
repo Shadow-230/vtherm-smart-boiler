@@ -1221,12 +1221,34 @@ GUARD_ALARMS = ("write_failed", "write_ignored", "outside_change", "commands_los
 
 
 async def L1(r: Run):
-    """hours of control (J4_HOURS, 12) at a steady outdoor temperature (J4_OUTDOOR, -2 °C),
-    VT's TPI zones pulsing: the setpoint within its limits and kept alive, heating following
-    VT's demand, no guard alarm, nothing latched, hot water never touched, the rooms held"""
+    """hours of control (J4_HOURS, 12) at a steady outdoor temperature (J4_OUTDOOR, -2 °C) on
+    the gateway, or on the entities with J4_WRITE_PATH=entity, VT's TPI zones pulsing: the
+    setpoint within its limits and kept alive (a held device needs no keep-alive), heating
+    following VT's demand, no guard alarm, nothing latched, hot water never touched, the rooms
+    held"""
     hours = float(os.environ.get("J4_HOURS", "12"))
     outdoor = float(os.environ.get("J4_OUTDOOR", "-2"))
     zones = [f"climate.{zone}" for zone, _t in ZONES]
+    entity = os.environ.get("J4_WRITE_PATH") == "entity"  # the entity path (instance 7)
+
+    def writes(since: float, kind: str) -> list[tuple[float, str, object]]:
+        if not entity:
+            return r.ha.since(since, kind)
+        target = {
+            "setpoint": "number.boiler_sim_flow_setpoint",
+            "ch": "switch.boiler_sim_ch_enable",
+        }[kind]
+        out: list[tuple[float, str, object]] = []
+        for at, domain, service, data in r.ha.calls:
+            ids = data.get("entity_id") or []
+            if at < since or target not in ([ids] if isinstance(ids, str) else ids):
+                continue
+            if domain == "number" and service == "set_value":
+                out.append((at, kind, data.get("value")))
+            elif domain == "switch" and service in ("turn_on", "turn_off"):
+                out.append((at, kind, service == "turn_on"))
+        return out
+
     await r.sim("set_outdoor", temperature=outdoor)
     await r.switch(True)
     t = time.time()
@@ -1243,7 +1265,7 @@ async def L1(r: Run):
             st.get(z, {}).get("attributes", {}).get("hvac_action") == "heating" for z in zones
         )
         samples.append((now, calling))
-        ch = r.ha.since(t, "ch")
+        ch = writes(t, "ch")
         if ch and bool(ch[-1][2]) is not calling:
             behind_since = behind_since or now
             if now - behind_since > 90 and (
@@ -1259,10 +1281,10 @@ async def L1(r: Run):
         latched |= set(cs.get("attributes", {}).get("latched_by") or [])
         states.add(cs.get("state"))
         await r.ha.wait(10)
-    sp = r.ha.since(t, "setpoint")
+    sp = writes(t, "setpoint")
     values = [float(v) for _t, _k, v in sp]
     gaps = [b[0] - a[0] for a, b in pairwise(sp)]
-    ch = r.ha.since(t, "ch")
+    ch = writes(t, "ch")
     toggles = sum(1 for a, b in pairwise(ch) if bool(a[2]) != bool(b[2]))
     # A heating write matches VT's demand as read within the 40 s before it (the plugin's step
     # and the gateway's 30-s repeat).
