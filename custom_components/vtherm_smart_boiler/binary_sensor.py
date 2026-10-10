@@ -64,8 +64,6 @@ async def async_setup_entry(
     entities += [AlarmSensor(coordinator, kind) for kind in _alarm_kinds(coordinator)]
     if feature_configured(coordinator, "outdoor_sensor_problem"):
         entities.append(OutdoorSensorProblem(coordinator))
-    if feature_configured(coordinator, "window_probably_open"):
-        entities.append(WindowSensor(coordinator))
     if feature_configured(coordinator, "long_burn"):
         entities.append(LongBurnSensor(coordinator))
     if coordinator.control is not None:
@@ -184,29 +182,6 @@ class AlarmSensor(SmartBoilerEntity, BinarySensorEntity):
             "level": None if alarm.level is None else alarm.level.value,
             "limit": alarm.limit,
             "reason": alarm.reason,
-        }
-
-
-class WindowSensor(SmartBoilerEntity, BinarySensorEntity):
-    """G11 F: a window probably open in a room — falling fast while it heats — seen without a
-    sensor. Information only: the room is left out of the comfort correction's rise and of the
-    long-run rule until it warms again; nothing else changes."""
-
-    _attr_device_class = BinarySensorDeviceClass.WINDOW
-
-    def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
-        super().__init__(coordinator, "window_probably_open")
-
-    @property
-    def is_on(self) -> bool:
-        return bool(self.coordinator.window_suspected)
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        zones = sorted(self.coordinator.window_suspected)
-        return {
-            "rooms": [self.coordinator.link.zone_name(zone) for zone in zones],
-            "zones": zones,
         }
 
 

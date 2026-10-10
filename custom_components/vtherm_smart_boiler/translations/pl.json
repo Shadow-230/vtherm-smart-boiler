@@ -2355,20 +2355,6 @@
               "fuel_burner": "Kocioł spalający paliwo (nie elektryczny)"
             }
           },
-          "window_guard": {
-            "name": "Wykrywanie otwartego okna",
-            "state": {
-              "available": "Dostępna",
-              "degraded": "Ograniczona: działa ze słabszych danych",
-              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
-            }
-          },
-          "window_guard_missing": {
-            "name": "Wykrywanie otwartego okna: brakuje"
-          },
-          "window_guard_missing_text": {
-            "name": "Wykrywanie otwartego okna: czego brakuje"
-          },
           "long_run": {
             "name": "Długie palenie bez nagrzewania",
             "state": {
@@ -2780,17 +2766,6 @@
       },
       "alarm_boiler_not_responding": {
         "name": "Sterowanie: brak oznak grzania kotła"
-      },
-      "window_probably_open": {
-        "name": "Prawdopodobnie otwarte okno",
-        "state_attributes": {
-          "rooms": {
-            "name": "Pomieszczenia"
-          },
-          "zones": {
-            "name": "Strefy"
-          }
-        }
       },
       "long_burn": {
         "name": "Długie palenie bez nagrzewania",

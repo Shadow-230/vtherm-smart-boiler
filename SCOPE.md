@@ -534,7 +534,7 @@ Decided by the user on 2026-10-10 (`docs/plan-0.2-i8.md` G; sources:
 
 | Stage | Delivers | Controls the boiler |
 |---|---|---|
-| **Monitor** | starts per hour, burn time, condensing share, gas per degree-day, connection state; alarms — information, with a hand-back reaction only where decision 7 allows one (§7); **early warning** (flue gas, ignitions, pressure, hysteresis); **a long burn without warming** — the flame on for 3 h with the rooms not rising: the water too cool for the rooms short, the boiler at its power limit (a warning), the water too hot (`docs/plan-0.2-g11.md` E); **a window probably open** in a room (F); **report explaining changes** (weather / DHW / settings); outdoor sensor check; DHW and foreign-heat detection; **forecast recording** (FC0); **signal check** — which optional signals are present and fresh | no |
+| **Monitor** | starts per hour, burn time, condensing share, gas per degree-day, connection state; alarms — information, with a hand-back reaction only where decision 7 allows one (§7); **early warning** (flue gas, ignitions, pressure, hysteresis); **a long burn without warming** — the flame on for 3 h with the rooms not rising: the water too cool for the rooms short, the boiler at its power limit (a warning), the water too hot (`docs/plan-0.2-g11.md` E); **report explaining changes** (weather / DHW / settings); outdoor sensor check; DHW and foreign-heat detection; **forecast recording** (FC0); **signal check** — which optional signals are present and fresh | no |
 | **Advisor** | curve and anti-cycling suggestions with rationale and an "apply" button | no |
 | **Curve (strategy A)** | replaces VT's on/off and user automations; curve per circuit; effective outdoor temperature; ramp; keep-alive; frost protection; learning pauses (DHW, foreign heat, large changes — under control only, S-61) | yes |
 | **Anti-cycling** (to be decided against principle 12, decision 13) | duty cycling at low load, starts-per-hour budget, modulation cap; **planning from the forecast** — mild hours ahead → long cycles from the start (FC2) | yes |
@@ -742,9 +742,8 @@ How control decides (principle 12):
   it. A zone whose SmartPI is in its learning phase (on/off, off only at its setpoint + 0.5 K)
   counts as short against VT's setpoint + 0.5 K — here, in the long-run rule and in the critical
   zone; in calibration, or with the phase unknown, against VT's setpoint (`docs/plan-0.2-g11.md`
-  C). A zone VT holds for a window, or one where the plugin sees a window probably open (its room
-  falling by 0.5 K within 10 min with its valve open and heat flowing; for at least 30 min, until
-  it warms again), is left out of the rise (F).
+  C). Windows are VT's to act on (I8.1b): a zone VT turns off or lowers for a window no longer
+  asks, nor looks short; the plugin has no window handling of its own.
 - **The curve's room temperature: Auto or Manual** (`docs/plan-0.2-g11.md` D). Auto, the default
   for new entries: the highest VT setpoint among the zones in heat mode, known and not left out by
   the user, at most 23 °C and within the curve's own checks; it follows VT's presets through the

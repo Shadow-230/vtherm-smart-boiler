@@ -1082,29 +1082,21 @@ def _saturated(zone: ZoneState) -> bool:
 
 
 def _counted(inputs: ControlInputs, config: ControlConfig) -> list[ZoneState]:
-    """The zones the correction judges: heating enabled, and known — not one VT holds for a
-    window (G11 F)."""
+    """The zones the correction judges: heating enabled, and known. A window is VT's to act on
+    (I8.1b): a zone it holds off or lowers for one no longer asks, nor looks short."""
     now = inputs.now
     return [
         z
         for z in inputs.zones
-        if z.heating_enabled is True
-        and z.is_known(now, config.zone_max_age_s)
-        and z.window_open is not True
+        if z.heating_enabled is True and z.is_known(now, config.zone_max_age_s)
     ]
 
 
 def is_short(zone: ZoneState) -> bool:
     """Fully open and short by at least ``SHORT_K`` of where its own controller stops heating —
-    VT's setpoint, or with SmartPI learning its upper hysteresis over it (G11 C); never with a
-    window probably open, which no water warms (G11 F)."""
+    VT's setpoint, or with SmartPI learning its upper hysteresis over it (G11 C)."""
     shortfall = zone.shortfall
-    return (
-        _saturated(zone)
-        and not zone.window_suspected
-        and shortfall is not None
-        and shortfall >= SHORT_K
-    )
+    return _saturated(zone) and shortfall is not None and shortfall >= SHORT_K
 
 
 def _curve_room(state: ControlState, inputs: ControlInputs, config: ControlConfig) -> float:

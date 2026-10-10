@@ -159,7 +159,7 @@ from .core.lowest_water import (
 )
 from .core.metrics import CH_KINDS
 from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
-from .core.readings import ZONE_OPEN, BoilerSnapshot, ZoneState
+from .core.readings import BoilerSnapshot, ZoneState
 from .core.series import Series, known_duration
 from .core.signal_check import (
     FAULT_SIGNALS,
@@ -175,7 +175,6 @@ from .core.signal_check import (
 )
 from .core.signals import GatewayOutdoor, Signal
 from .core.supply import circuit_return, circuit_supply
-from .core.window_guard import WindowWatch, follow_window
 from .core.zone_watch import every_zone_unknown_since, issue_due
 from .forecasts import ForecastRecorder
 from .transport.entities import (
@@ -405,7 +404,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # What each source has shown of its rhythm in this run, by signal and "weather" (I6).
         self._rhythms: dict[str, Rhythm] = {}
         self._foreign: dict[str, ForeignHeatState] = {}
-        self._windows: dict[str, WindowWatch] = {}  # G11 F: each room's window guard
         # G11 E: the flame's run, and the counts kept for 0.4's tuning (stored).
         self.long_run = LongRun()
         self.long_run_totals: dict[str, float] = {}
@@ -1162,28 +1160,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 weather.changed_at,
             )
 
-    @property
-    def window_suspected(self) -> frozenset[str]:
-        """The rooms with a window probably open (G11 F): left out of the comfort correction's
-        rise and of the long-run rule."""
-        return frozenset(zone for zone, watch in self._windows.items() if watch.suspected)
-
-    def _follow_windows(self, zones: Mapping[str, ZoneState], flame: bool, now: float) -> None:
-        """G11 F: each room's window guard, a look at every refresh — a fall counts while heat
-        flows (the flame known on) and the room takes it (its valve open or its device on).
-        Told once in the log as it starts and ends; the binary sensor shows it."""
-        for zone_id, zone in zones.items():
-            before = self._windows.get(zone_id, WindowWatch())
-            takes = zone.device_active is True or (zone.demand or 0.0) > ZONE_OPEN
-            watch = follow_window(before, now, zone.temperature, flame and takes)
-            self._windows[zone_id] = watch
-            if watch.suspected != before.suspected:
-                _LOGGER.info(
-                    "A window is %s in %s",
-                    "probably open" if watch.suspected else "no longer seen open",
-                    self.link.zone_name(zone_id),
-                )
-
     def _follow_long_run(
         self,
         snapshot: BoilerSnapshot,
@@ -1191,19 +1167,16 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         flame: bool | None,
         now: float,
     ) -> None:
-        """G11 E, a look at every refresh: the rooms counted — heating, known, neither held by VT
-        for a window nor with one probably open, nor warmed by foreign heat — against the flow,
+        """G11 E, a look at every refresh: the rooms counted — heating, known, not warmed by
+        foreign heat — against the flow,
         the setpoint (control's written one, else the boiler's CH setpoint) and the modulation.
         Information on its binary sensor; the power limit a warning repair issue too. The counts
         kept for 0.4's tuning, the correction's hours at its limit among them."""
-        suspected = self.window_suspected
         rooms = [
             RoomLook(zone.zone_id, zone.temperature, zone.target, is_short(zone))
             for zone in zones.values()
             if zone.heating_enabled is True
             and zone.is_known(now, ZONE_MAX_AGE_S)
-            and zone.window_open is not True
-            and zone.zone_id not in suspected
             and not self._warmed_by_foreign_heat(zone.zone_id)
         ]
         before = self.long_run
@@ -1294,7 +1267,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
 
         zone_states = {z.zone_id: self.link.zone(z.zone_id) for z in config.installation.zones}
         flame = snapshot.flag(Signal.FLAME, self._max_age(Signal.FLAME))
-        self._follow_windows(zone_states, flame is True, now)
         self._follow_long_run(snapshot, zone_states, flame, now)
         views: dict[str, ZoneView] = {}
         for zone_config, zone in zip(config.zones, config.installation.zones, strict=True):

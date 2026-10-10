@@ -130,6 +130,9 @@ Reverses K4.1 (`docs/plan-0.2.2.md`, open item 24; the user, 2026-10-03).
 
 ### E. "A long run that does not reach the rooms" — a monitor rule, information and warnings only
 
+(I8.1b: rooms held for a window or with one probably open are no longer left out; I8.1c removes
+the foreign-heat exclusion. `docs/plan-0.2-i8.md` B2, B3.)
+
 1. **Judged once the flame has been on continuously for 3 h** (the flame known throughout;
    without a flame signal the rule does not run), and only while the rooms' temperatures have
    not risen over those 3 h: each counted room rose less than 0.2 K (provisional, K4: a room
@@ -170,6 +173,9 @@ Reverses K4.1 (`docs/plan-0.2.2.md`, open item 24; the user, 2026-10-03).
    diagnostics.
 
 ### F. An open window without a sensor
+
+(I8.1b, 2026-10-10: withdrawn by the user — windows are VT's to act on; the plugin's window
+guard, its binary sensor and every exclusion for a window removed. `docs/plan-0.2-i8.md` B2.)
 
 1. **VT's own detection:** a zone VT holds for a window is left out of B, C and E. "Held" means
    `hvac_off_reason` reads `hvac_off_window_detection`, or VT's `window_manager` shows
