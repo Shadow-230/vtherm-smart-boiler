@@ -267,27 +267,31 @@ async def Q4(r: Run):
 
 
 async def Q5(r: Run):
-    """one room short while the others hold (its setpoint out of reach): "check room X", never
-    "raise the curve\""""
+    """one room short while the others hold (its setpoint out of reach): the curve must hold every
+    room — the correction raises the water for it, and at its limit for 3 h the warning names
+    that room"""
     try:
         await r.options(behaviour={"comfort_correction": True})
         before = await notices(r)
         await set_targets(r, {"zone_living": 28.0})
         await r.switch(True)
-        t = time.time()
-        await r.ha.wait(7 * 3600)
-        new = new_since(before, await notices(r))
-        r.note(f"after {round((time.time() - t) / 3600, 1)} h: new {new}")
-        named = [
-            v
-            for v in new.values()
-            if "zone_living" in str(v["placeholders"]) or "living" in str(v["placeholders"])
-        ]
-        r.check(bool(named), f"a notice naming the living room: {named}")
+        rose = await r.ha.until(lambda: correction_on(r), 7200, 60)
         r.check(
-            not any("curve" in str(v["key"]) for v in new.values()),
-            'never "raise the curve" for one room',
+            rose is not None, f"the correction rises for one room ({rose and round(rose / 60)} min)"
         )
+        t = time.time()
+        named: list[dict[str, Any]] = []
+        while time.time() - t < 6 * 3600 and not named:
+            await r.ha.wait(300)
+            named = [
+                v
+                for v in new_since(before, await notices(r)).values()
+                if v["severity"] == "warning" and "living" in str(v["placeholders"])
+            ]
+        r.note(
+            f"after {round((time.time() - t) / 3600, 1)} h: new {new_since(before, await notices(r))}"
+        )
+        r.check(bool(named), f"a warning naming the living room: {named}")
     finally:
         await r.switch(False)
         await r.ha.wait(10)
