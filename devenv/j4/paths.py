@@ -863,13 +863,22 @@ async def N8(r: Run):
         # hand-back blocks changing how it is made: the device lets the value lapse as declared,
         # the plugin sees the release, and only then are the base options put back.
         await r.sim("set_write_type", write_type="expiring")
-        settled = await r.ha.until(lambda: _is(r, "alarm_hand_back_failed", "off"), 420, 10)
-        r.note(f"the owed hand-back settled before the restore: {settled is not None}")
-        await r.sim("set_write_type", write_type="held")
-        await options_walk(
-            r,
-            {"control_entity": {"write_type": "held", "hand_back": "value", "hand_back_value": 0}},
+        restore = {
+            "control_entity": {"write_type": "held", "hand_back": "value", "hand_back_value": 0}
+        }
+        t = time.time()
+        while True:  # the owed hand-back settles within minutes; until then the form refuses
+            try:
+                await options_walk(r, restore)
+                break
+            except RuntimeError as err:
+                if "hand_back_pending" not in str(err) or time.time() - t > 1200:
+                    raise
+                await r.ha.wait(60)
+        r.note(
+            f"the base restored {round(time.time() - t)} s after the owed hand-back began to settle"
         )
+        await r.sim("set_write_type", write_type="held")
 
 
 async def U1(r: Run, outdoor: float = -5.0, emitters: tuple[str, ...] = ("underfloor",) * 3):
