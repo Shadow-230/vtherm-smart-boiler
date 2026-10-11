@@ -2342,8 +2342,9 @@ def test_what_the_form_refuses_blocks_options_that_bypass_it(
 def test_a_control_mode_without_control_is_its_own_reason(
     mode: ControlMode | None, section: dict, expected: list[str]
 ) -> None:
-    """I6.1 (decision 6): monitoring only keeps control off with that reason alone — a control section stored beside it is not run, and its lacks
-    are not listed; with full control, or no answer yet, the blockers are as before."""
+    """I6.1 (decision 6): monitoring only keeps control off with that reason alone — a control
+    section stored beside it is not run, and its lacks are not listed; with full control, or no
+    answer yet, the blockers are as before."""
     control = parse_control(section, RADIATORS, None, control_mode=mode)
     assert control.control_mode is mode
     signals = (Signal.FLAME, Signal.FLOW)
