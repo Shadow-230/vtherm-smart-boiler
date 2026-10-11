@@ -25,6 +25,7 @@ from typing import Any, SupportsFloat
 from .const import (
     BOILER,
     BUILDING,
+    CH_ENABLED,
     CIRCUITS,
     CONTROL,
     FRESHNESS,
@@ -47,7 +48,7 @@ from .control_config import (
     map_control_entities,
     mqtt_topic_valid,
     parse_control,
-    with_interface_topics,
+    with_boiler_inputs,
 )
 from .core.alarms import (
     ADD_WATER_RANGE_BAR,
@@ -360,7 +361,13 @@ class EntryConfig:
         )
         control_problem: str | None = None
         try:
-            control = _control(_section(options, CONTROL), installation, parameters, panel)
+            control = _control(
+                _section(options, CONTROL),
+                installation,
+                parameters,
+                panel,
+                _section(options, SIGNALS),
+            )
         except ConfigError as err:
             if strict_control:
                 raise
@@ -473,7 +480,7 @@ def _signals(data: Mapping[str, Any]) -> tuple[dict[Signal, str], dict[Signal, S
     left empty maps nothing."""
     given: dict[Signal, str] = {}
     for key, entity in data.items():
-        if not entity:
+        if not entity or key == CH_ENABLED:  # control's read-back only (I8.5b)
             continue
         try:
             signal = Signal(key)
@@ -818,14 +825,16 @@ def _control(
     installation: Installation,
     parameters: ParameterSet,
     panel: BoilerPanel | None = None,
+    signals: Mapping[str, Any] | None = None,
 ) -> ControlOptions:
     panel = BoilerPanel() if panel is None else panel
     entered = parameters.get(ParameterKey.DESIGN_OUTDOOR).estimate(Source.ENTERED)
-    # I8.4b: the firmware's topics are the connection's, stored once.
+    # I8.4b: the firmware's topics are the connection's, stored once; I8.5b: the read-backs are
+    # boiler signals.
     topics = {"mqtt_top": panel.mqtt_top, "mqtt_node": panel.mqtt_node}
     try:
         return parse_control(
-            with_interface_topics(data, topics),
+            with_boiler_inputs(data, topics, signals),
             installation,
             parameters.value(ParameterKey.MAX_CH_SETPOINT),
             connection=panel.connection,

@@ -108,7 +108,9 @@ Only one entry of the integration can exist: it runs one boiler.
    installation reads — flame, flow, return, the boiler's electric power, the gas meter, the
    outdoor temperature and the weather — and removes the other boiler signals at the save; Yes
    offers every signal. The outdoor temperature may come from any outdoor sensor, not only the
-   boiler's. **Boiler interface** asks what the plugin needs to
+   boiler's. With control of the water temperature the section also asks the read-backs:
+   **Heating setpoint the boiler received** — required, every write is checked against it —
+   and **Heating on/off read-back**. **Boiler interface** asks what the plugin needs to
    know about the device between it and the boiler, only where your connection and mode use
    it: the MQTT topics of the OTGW firmware or EMS-ESP (see [Fresh data](#68-fresh-data)), the
    gateway where more than one is set up, how a gateway sits between thermostat and boiler and
@@ -131,9 +133,9 @@ Only one entry of the integration can exist: it runs one boiler.
    whether control is worth enabling (see
    [Monitoring and the verdict](#41-monitoring-and-the-verdict)). You decide.
 7. **Set up control.** With full control or on/off chosen, the setup's menu also offers the
-   section **Control (experimental)**: the read-backs, then the steps that follow (for example
-   **Heating curve and limits** and **Control behaviour**); the connection decides the write
-   path. To change it later, open the same section in the integration's options. To set
+   section **Control (experimental)**: its steps (for example **Heating curve and limits** and
+   **Control behaviour**); the connection decides the write path, and the read-backs are boiler
+   signals (step 3). To change it later, open the same section in the integration's options. To set
    control up later, choose monitoring only as the control mode first.
 8. **Switch control on** with the switch **Control (experimental)** of the integration's device.
    If something is missing, the switch says what, and the monitor keeps running.
@@ -666,7 +668,9 @@ What the boiler does after a hand-back depends on your installation: see
 
 ### 6.2 Changes seen from outside
 
-Every write is read back. The plugin shows the value the boiler confirmed, or "unknown" — never
+Every write is read back — from the entities mapped in **Boiler signals** as **Heating setpoint
+the boiler received** and, if mapped, **Heating on/off read-back**. The plugin shows the value
+the boiler confirmed, or "unknown" — never
 the value it asked for. When the read-back shows something the plugin did not write, it sorts it
 into one of four kinds:
 

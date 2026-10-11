@@ -44,7 +44,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
-from .const import CONTROL, has_control_section
+from .const import CONTROL, READ_BACK_SIGNALS, has_control_section
 from .core.controller import OUTAGE_LOST_S, ControlConfig
 from .core.curve import (
     DESIGN_FLOW_OVER_ROOM_K,
@@ -792,6 +792,36 @@ def with_interface_topics(section: Any, boiler: Any) -> Any:
         return section
     found = {k: boiler[k] for k in MQTT_TOPIC_KEYS if boiler.get(k) and not section.get(k)}
     return {**section, **found} if found else section
+
+
+# The write paths that read their writes back from the boiler (the relay is its own read-back).
+READ_BACK_PATHS = frozenset(
+    {WritePath.ENTITY.value, WritePath.OPENTHERM_GW.value, WritePath.OTGW_MQTT.value}
+)
+
+
+def with_read_backs(section: Any, signals: Any) -> Any:
+    """I8.5b: the read-backs are boiler signals (``READ_BACK_SIGNALS``, decision D3); a control
+    section writing water temperatures reads them from there — read-backs of its own (a hand
+    edit) are taken first."""
+    if (
+        not isinstance(section, Mapping)
+        or section.get("write_path") not in READ_BACK_PATHS
+        or not isinstance(signals, Mapping)
+    ):
+        return section
+    found = {
+        key: signals[signal]
+        for signal, key in READ_BACK_SIGNALS.items()
+        if signals.get(signal) and not section.get(key)
+    }
+    return {**section, **found} if found else section
+
+
+def with_boiler_inputs(section: Any, boiler: Any, signals: Any) -> Any:
+    """A control section as control runs it: the connection's MQTT topics (I8.4b) and the
+    signals' read-backs (I8.5b) in it, each where the section has none of its own."""
+    return with_read_backs(with_interface_topics(section, boiler), signals)
 
 
 def section_as_migrated(section: Any) -> Any:

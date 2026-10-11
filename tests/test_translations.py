@@ -94,7 +94,8 @@ def test_every_form_field_and_select_option_is_translated() -> None:
             options
             | {"signals": dict.fromkeys(flow.SIGNAL_FIELDS, "sensor.x"), "weather": "weather.x"}
         ),
-        "control": flow.control_schema(options),
+        # I8 (decision B7): the write path, for an entry made before the connection question.
+        "control": flow.control_schema({"boiler": {"class": "flow_setpoint"}}),
         "control_entity": flow.control_entity_schema(
             options | {"control": {"write_path": "entity", "topology": "virtual"}}
         ),  # with the "own room controller" tick (answers F, M)
@@ -1116,12 +1117,13 @@ def test_the_relay_not_taking_texts_count_through_command_changes() -> None:
 def test_the_heating_read_back_says_how_soon_it_must_report() -> None:
     """K4.3 (decided by the user 2026-10-03; Z4R3-03): the heating read-back field says to pick an
     entity that reports a change within about a minute — a slower one delays noticing a change,
-    one slower than 5 min can make the plugin wrongly step aside — in every language."""
+    one slower than 5 min can make the plugin wrongly step aside — in every language. I8.5b:
+    a boiler signal now."""
     for language in ALL_LANGUAGES:
-        step = _texts(language)["options"]["step"]["control"]
-        text = step["data_description"]["ch_confirmed_entity"]
+        step = _texts(language)["options"]["step"]["signals"]
+        text = step["data_description"]["ch_enabled"]
         assert "5 min" in text, language
-    text = SOURCE["options"]["step"]["control"]["data_description"]["ch_confirmed_entity"]
+    text = SOURCE["options"]["step"]["signals"]["data_description"]["ch_enabled"]
     assert "reports a change within about a minute" in text
     assert "a slower one delays noticing a change" in text
     assert "one slower than 5 min can make the plugin wrongly step aside" in text

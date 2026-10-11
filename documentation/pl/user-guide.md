@@ -116,7 +116,9 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    z przekaźnikiem — płomień, zasilanie, powrót, moc elektryczną kotła, gazomierz, temperaturę
    zewnętrzną i pogodę — a inne sygnały kotła usuwa przy zapisie; Tak pokazuje wszystkie
    sygnały. Temperatura zewnętrzna może pochodzić z dowolnego czujnika zewnętrznego, nie tylko
-   z kotła. **Interfejs kotła** pyta o to, co wtyczka musi wiedzieć o
+   z kotła. Przy sterowaniu temperaturą wody sekcja pyta też o odczyty zwrotne: **Nastawa c.o.
+   odebrana przez kocioł** — wymagana, każdy zapis jest z nią porównywany — oraz **Odczyt
+   zwrotny włączenia ogrzewania**. **Interfejs kotła** pyta o to, co wtyczka musi wiedzieć o
    urządzeniu między nią a kotłem, tylko tam, gdzie używa tego Twoje połączenie i tryb: o tematy
    MQTT firmware'u OTGW albo EMS-ESP (zobacz [Świeżość danych](#68-świeżość-danych)), o bramkę,
    gdy skonfigurowano więcej niż jedną, o to, jak bramka stoi między termostatem a kotłem i co
@@ -139,9 +141,9 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    warto włączyć sterowanie (zobacz [Monitorowanie i werdykt](#41-monitorowanie-i-werdykt)).
    Decyzja należy do ciebie.
 7. **Ustaw sterowanie.** Przy pełnym sterowaniu albo wł./wył. menu kreatora pokazuje też sekcję
-   **Sterowanie (eksperymentalne)**: odczyty zwrotne, potem kolejne kroki (na przykład
-   **Krzywa grzewcza i limity** oraz **Zachowanie sterowania**); ścieżkę zapisu wyznacza
-   połączenie. Żeby zmienić je później, otwórz tę samą sekcję w opcjach integracji. Żeby ustawić
+   **Sterowanie (eksperymentalne)**: jej kroki (na przykład **Krzywa grzewcza i limity** oraz
+   **Zachowanie sterowania**); ścieżkę zapisu wyznacza połączenie, a odczyty zwrotne są
+   sygnałami kotła (krok 3). Żeby zmienić je później, otwórz tę samą sekcję w opcjach integracji. Żeby ustawić
    sterowanie później, wybierz najpierw tryb sterowania „tylko monitorowanie”.
 8. **Włącz sterowanie** przełącznikiem **Sterowanie (eksperymentalne)** na urządzeniu
    integracji. Jeśli czegoś brakuje, przełącznik mówi czego, a monitor dalej działa.
@@ -695,7 +697,9 @@ Co kocioł robi po oddaniu sterowania, zależy od twojej instalacji: zobacz
 
 ### 6.2 Zmiany z zewnątrz
 
-Każdy zapis jest odczytywany z powrotem. Wtyczka pokazuje wartość potwierdzoną przez kocioł albo
+Każdy zapis jest odczytywany z powrotem — z encji wskazanych w **Sygnałach kotła** jako **Nastawa
+c.o. odebrana przez kocioł** i, jeśli jest wskazany, **Odczyt zwrotny włączenia ogrzewania**.
+Wtyczka pokazuje wartość potwierdzoną przez kocioł albo
 „nieznana” — nigdy wartość, o którą prosiła. Gdy odczyt zwrotny pokazuje coś, czego wtyczka nie
 zapisała, przypisuje to do jednego z czterech rodzajów:
 

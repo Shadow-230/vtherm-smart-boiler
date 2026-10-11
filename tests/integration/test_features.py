@@ -126,6 +126,12 @@ def without(*signals: Signal) -> Change:
     return change
 
 
+def without_read_back(options: dict[str, Any]) -> None:
+    """The control section's setpoint read-back taken away: the CH setpoint signal it becomes
+    (I8.5b, decision D3)."""
+    options["control"].pop("confirmed_entity", None)
+
+
 def setting(*path: str, value: Any) -> Change:
     def change(options: dict[str, Any]) -> None:
         target = options
@@ -218,7 +224,13 @@ CASES: list[tuple[str, str, Change, str, str]] = [
     ),
     ("hysteresis_drift", "water", no_zones, "inactive", "zone_data"),
     ("unstable_ignition", "water", without(Signal.FLAME), "inactive", "flame"),
-    ("unstable_ignition", "water", without(Signal.CH_SETPOINT), "degraded", "ch_setpoint"),
+    (  # I8.5b: the control's read-back is the CH setpoint signal — taken away with it
+        "unstable_ignition",
+        "water",
+        both(without(Signal.CH_SETPOINT), without_read_back),
+        "degraded",
+        "ch_setpoint",
+    ),
     (
         "low_flow",
         "water",

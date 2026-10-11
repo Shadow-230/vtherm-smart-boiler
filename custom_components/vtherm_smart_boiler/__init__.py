@@ -248,6 +248,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_monitor_mode(hass, entry)
     if entry.minor_version < 17:
         _migrate_relay_reads(hass, entry)
+    if entry.minor_version < 18:
+        _migrate_read_backs(hass, entry)
     return True
 
 
@@ -496,6 +498,45 @@ def _migrate_relay_reads(hass: HomeAssistant, entry: ConfigEntry) -> None:
     hass.config_entries.async_update_entry(entry, options=options, minor_version=17)
 
 
+def _migrate_read_backs(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.5b (minor version 18): control's read-backs are boiler signals (`docs/plan-0.2-i8.md`
+    D3) — the setpoint read-back the "CH setpoint" signal, the heating on/off read-back a
+    signal field of its own; the control section keeps neither. Where the setpoint read-back
+    and the signal were set and differ, the read-back's entity, which control was judged with,
+    replaces the signal's — logged. Signals of another shape are left as stored, with the
+    read-backs where they were, for the options' check to report."""
+    import logging
+
+    from .const import READ_BACK_SIGNALS, SIGNALS
+
+    options = dict(entry.options)
+    control = options.get(CONTROL)
+    stored = options.get(SIGNALS)
+    if (
+        isinstance(control, Mapping)
+        and any(key in control for key in READ_BACK_SIGNALS.values())
+        and (stored is None or isinstance(stored, Mapping))  # another shape: left for the check
+    ):
+        signals = dict(stored or {})
+        for signal, key in READ_BACK_SIGNALS.items():
+            value = control.get(key)
+            if value in (None, ""):
+                continue
+            if signals.get(signal) not in (None, "", value):
+                logging.getLogger(__name__).info(
+                    "The signal %s %r is replaced by the control's read-back %r, which control "
+                    "was judged with",
+                    signal,
+                    signals[signal],
+                    value,
+                )
+            signals[signal] = value
+        options[SIGNALS] = signals
+        kept = READ_BACK_SIGNALS.values()
+        options[CONTROL] = {k: v for k, v in control.items() if k not in kept}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=18)
+
+
 def _stored_float(raw: Any, default: float) -> float:
     """A stored number, or ``default`` where none (or no finite number) is stored."""
     import math
@@ -508,13 +549,13 @@ def _stored_float(raw: Any, default: float) -> float:
 def control_as_run(options: Mapping[str, Any]) -> Any:
     """The control section as control runs it, kept with what took the boiler and compared with
     it at a restart: the building's design outdoor temperature in its curve, where the curve has
-    none of its own (I6), and the connection's MQTT topics where it writes over MQTT (I8.4b) — so
-    the section compares as before the values moved, and a change to them is a change to
-    control's options."""
-    from .const import BOILER, PARAMETERS
-    from .control_config import with_interface_topics
+    none of its own (I6), the connection's MQTT topics where it writes over MQTT (I8.4b) and the
+    signals' read-backs where it writes water temperatures (I8.5b) — so the section compares as
+    before the values moved, and a change to them is a change to control's options."""
+    from .const import BOILER, PARAMETERS, SIGNALS
+    from .control_config import with_boiler_inputs
 
-    section = with_interface_topics(options.get(CONTROL), options.get(BOILER))
+    section = with_boiler_inputs(options.get(CONTROL), options.get(BOILER), options.get(SIGNALS))
     params = options.get(PARAMETERS)
     if not isinstance(section, Mapping) or not isinstance(params, Mapping):
         return section
