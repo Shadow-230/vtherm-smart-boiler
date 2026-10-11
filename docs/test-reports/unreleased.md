@@ -1,5 +1,7 @@
 # Test report — unreleased (provisionally 0.2.3b1)
 
+A plain-language version of this report: [`2026-10-11-test-report.md`](2026-10-11-test-report.md).
+
 **Status: J4 on `dev` ended on 2026-10-11 in the morning.** The next run is on `qas`, after the
 fixes from this report's review (the user's rule: from now on J4 tests what is on `qas`). Over
 2026-10-08 to 2026-10-11, eight test Home Assistants ran some 120 scenario runs on three code

@@ -5,6 +5,10 @@ Every release carries a report of the tests its version passed: `docs/test-repor
 the report being written is `unreleased.md`; at the release it is renamed to the version and
 goes with the pull request from `dev` to `qas`.
 
+Each test run also gets a plain-language report beside it, `<date>-test-report.md`: what was
+tested, the results by area, the problems found and the decisions they need, in simple words for
+a reader who does not know the code (the user's request, 2026-10-11).
+
 ## What a report holds
 
 1. **Version and code** — the version, the commit tested, the dates.
