@@ -75,7 +75,7 @@ async def test_values_appear_on_the_thermostat_and_go_with_the_plugin(
     assert await manager.refresh_state() is False
     attributes: dict = {}
     manager.add_custom_attributes(attributes)
-    assert set(attributes["smart_boiler"]) == {"heat_available", "emitter_power_factor"}
+    assert attributes["smart_boiler"] == {"heat_available": True}
     other: dict = {}
     factory.create(Thermostat("climate.not_ours")).add_custom_attributes(other)
     assert other == {}
@@ -152,7 +152,7 @@ async def test_values_come_back_after_the_plugin_reloads(
     manager.add_custom_attributes(attributes)
     assert "smart_boiler" in attributes
     assert manager.heat_available is attributes["smart_boiler"]["heat_available"]  # P92
-    assert manager.emitter_power_factor == attributes["smart_boiler"]["emitter_power_factor"]
+    assert not hasattr(manager, "emitter_power_factor")  # I8.2: the factor left the manager
 
 
 async def test_registered_again_after_vt_recreates_its_api(
@@ -398,17 +398,56 @@ async def test_the_zone_value_is_named_heat_available(
     manager = api.get_feature_manager(DOMAIN).create(Thermostat(living))
     attributes: dict = {}
     manager.add_custom_attributes(attributes)
-    assert set(attributes["smart_boiler"]) == {"heat_available", "emitter_power_factor"}
+    assert set(attributes["smart_boiler"]) == {"heat_available"}
     assert manager.heat_available is attributes["smart_boiler"]["heat_available"]
     assert not hasattr(manager, "hot_water")
 
 
-def test_the_attribute_changes_only_on_a_real_change(hass: HomeAssistant) -> None:
-    """P-63: VT records its thermostats' attributes, so the plugin's are replaced only when
-    heat availability changes, the factor comes or goes, or it moves by 0.05 or more from what
-    was published (provisional, K4) — not at every small step of the factor. Negative: values
-    that go away take the attribute with them; back, they are published afresh."""
-    values: dict[str, Any] | None = {"heat_available": True, "emitter_power_factor": 0.812}
+@pytest.mark.parametrize(
+    ("flame", "flow", "returned", "expected"),
+    [
+        ("on", "45", "38", True),
+        ("on", "45", "44.5", False),  # the emitters take no heat: the return is as warm
+        ("off", "60", "40", False),  # the flame out: no heat from the boiler
+        ("unavailable", "45", "38", None),  # cannot be told
+        ("on", "45", "unavailable", True),  # no return known: against the room
+    ],
+    ids=["burning", "flow_near_return", "flame_off", "flame_unknown", "return_unknown"],
+)
+async def test_heat_available_is_the_flame_and_the_flow_against_the_return(
+    hass: HomeAssistant,
+    zones: FakeZones,
+    flame: str,
+    flow: str,
+    returned: str,
+    expected: bool | None,
+) -> None:
+    """I8 (decision C1): what VT's thermostat is shown — the flame burning and the flow clearly
+    above the return; against the room only where no return is known."""
+    api = vt_is_set_up(hass)
+    living = zones.add("living", current_temperature=20.0, hvac_action="heating")
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.RETURN))
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options={"signals": boiler.mapping(), "zones": [{"entity_id": living}]},
+    )
+    hass.states.async_set(boiler.entity(Signal.FLAME), flame)
+    for signal, value in ((Signal.FLOW, flow), (Signal.RETURN, returned)):
+        hass.states.async_set(boiler.entity(signal), value, {"unit_of_measurement": "°C"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    manager = api.get_feature_manager(DOMAIN).create(Thermostat(living))
+    assert manager.heat_available is expected
+
+
+def test_the_attribute_changes_only_when_the_value_changes(hass: HomeAssistant) -> None:
+    """P-63: VT records its thermostats' attributes, so the plugin's is replaced only when heat
+    availability changes. Negative: a value that goes away takes the attribute with it; back, it
+    is published afresh."""
+    values: dict[str, Any] | None = {"heat_available": True}
     manager = feature_manager.SmartBoilerFeatureManager(
         hass, Thermostat("climate.a"), lambda _entity: None if values is None else dict(values)
     )
@@ -419,27 +458,18 @@ def test_the_attribute_changes_only_on_a_real_change(hass: HomeAssistant) -> Non
         assert attributes.pop("other") == 1
         return attributes.get("smart_boiler")
 
-    assert shown() == {"heat_available": True, "emitter_power_factor": 0.812}
-    values = {"heat_available": True, "emitter_power_factor": 0.826}
-    assert shown() == {"heat_available": True, "emitter_power_factor": 0.812}  # nothing new
-    values = {"heat_available": True, "emitter_power_factor": 0.861}
-    assert shown() == {"heat_available": True, "emitter_power_factor": 0.812}  # 0.049: nothing
-    values = {"heat_available": True, "emitter_power_factor": 0.87}
-    assert shown() == {"heat_available": True, "emitter_power_factor": 0.87}  # 0.058: published
-    values = {"heat_available": True, "emitter_power_factor": 0.83}
-    assert shown() == {"heat_available": True, "emitter_power_factor": 0.87}  # from 0.87 now
-    values = {"heat_available": False, "emitter_power_factor": 0.915}
-    assert shown() == {"heat_available": False, "emitter_power_factor": 0.915}  # a flip
-    values = {"heat_available": None, "emitter_power_factor": 0.915}
-    assert shown() == {"heat_available": None, "emitter_power_factor": 0.915}  # unknown now
-    values = {"heat_available": None, "emitter_power_factor": None}
-    assert shown() == {"heat_available": None, "emitter_power_factor": None}  # the factor gone
-    values = {"heat_available": None, "emitter_power_factor": 0.5}
-    assert shown() == {"heat_available": None, "emitter_power_factor": 0.5}  # back
+    assert shown() == {"heat_available": True}
+    first = manager._published
+    assert shown() == {"heat_available": True}
+    assert manager._published is first  # nothing new: the same published value
+    values = {"heat_available": False}
+    assert shown() == {"heat_available": False}  # a flip
+    values = {"heat_available": None}
+    assert shown() == {"heat_available": None}  # unknown now
     values = None
     assert shown() is None  # not the plugin's zone any more: no attribute
-    values = {"heat_available": None, "emitter_power_factor": 0.51}
-    assert shown() == {"heat_available": None, "emitter_power_factor": 0.51}  # afresh
+    values = {"heat_available": None}
+    assert shown() == {"heat_available": None}  # afresh
 
 
 def test_the_manager_answers_vt_without_state_of_its_own(hass: HomeAssistant) -> None:

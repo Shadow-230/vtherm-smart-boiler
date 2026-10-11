@@ -1,4 +1,5 @@
-"""A VT feature manager that shows two of the plugin's zone values on each VT thermostat.
+"""A VT feature manager that shows on each VT thermostat whether the boiler's heat is reaching
+its zone now — the plugin's one zone value (I8, decision C1).
 
 VT picks up external feature managers from the ``vtherm_api`` registry when a thermostat starts
 (research F4): a thermostat already running sees the manager only after VT's next reload, which
@@ -10,8 +11,8 @@ plugin's ever reaches VT (T-53).
 
 The managers reach the plugin's data through a stable access point, not through the installation
 that created them: after the plugin reloads (an options change), the managers VT already holds
-show the values again at once; while no installation runs, they publish nothing. VT records its
-thermostats' attributes, so a manager replaces what it published only on a real change (P-63).
+show the value again at once; while no installation runs, they publish nothing. VT records its
+thermostats' attributes, so a manager replaces what it published only when it changes (P-63).
 Whether the manager works is shown: a repair issue when VT cannot load feature managers — an API
 without them, or a VT older than the first version that creates them, whatever its API offers
 (P-60) — and one listing the zones VT shows running whose thermostat started before the
@@ -41,14 +42,10 @@ MANAGER_NAME = DOMAIN
 ATTRIBUTE = "smart_boiler"
 DATA_KEY = f"{DOMAIN}_feature_manager"
 UNSUPPORTED_ISSUE = "vt_feature_manager_unsupported"
-RELOAD_GRACE_S = 15 * 60  # a started thermostat shows the values within this, else needs a reload
+RELOAD_GRACE_S = 15 * 60  # a started thermostat shows the value within this, else needs a reload
 # The public name of "heat reaches the zone now" (P-61; "hot water" is the boiler's domestic hot
-# water), and the zone's emitter power factor.
+# water).
 HEAT_AVAILABLE = "heat_available"
-EMITTER_POWER_FACTOR = "emitter_power_factor"
-# The factor published again only once it has moved this far from what VT shows (P-63;
-# provisional, K4).
-FACTOR_STEP = 0.05
 
 type Lookup = Callable[[str], dict[str, Any] | None]
 
@@ -62,8 +59,8 @@ class RegistrationState(StrEnum):
 def zone_values(
     coordinators: list[SmartBoilerCoordinator], entity_id: str
 ) -> dict[str, Any] | None:
-    """Whether heat reaches the zone now, and its emitter power factor, from the first
-    installation that has the zone and whose last refresh worked; ``None`` when none has it."""
+    """Whether heat reaches the zone now, from the first installation that has the zone and whose
+    last refresh worked; ``None`` when none has it."""
     for coordinator in coordinators:
         if not coordinator.last_update_success:
             continue  # its entities are unavailable: no stale values on VT's either (PB-48)
@@ -71,23 +68,8 @@ def zone_values(
         view = data.zones.get(entity_id) if data is not None else None
         if view is None:
             continue
-        factor = view.factor.value
-        return {
-            HEAT_AVAILABLE: view.hot_water.available,
-            EMITTER_POWER_FACTOR: None if factor is None else round(factor, 3),
-        }
+        return {HEAT_AVAILABLE: view.heat.available}
     return None
-
-
-def _real_change(published: dict[str, Any], values: dict[str, Any]) -> bool:
-    """P-63: heat availability changed, the factor came or went, or it moved by at least
-    ``FACTOR_STEP`` from what was published."""
-    if published.get(HEAT_AVAILABLE) != values.get(HEAT_AVAILABLE):
-        return True
-    before, now = published.get(EMITTER_POWER_FACTOR), values.get(EMITTER_POWER_FACTOR)
-    if before is None or now is None:
-        return (before is None) != (now is None)
-    return bool(abs(float(now) - float(before)) >= FACTOR_STEP)
 
 
 def _running(hass: HomeAssistant) -> list[SmartBoilerCoordinator]:
@@ -97,9 +79,9 @@ def _running(hass: HomeAssistant) -> list[SmartBoilerCoordinator]:
 
 
 class SmartBoilerFeatureManager:
-    """One per VT thermostat; publishes, never controls. Other plugins read the values as the
-    properties ``heat_available`` and ``emitter_power_factor``, as they are now; the attribute
-    on VT's thermostat keeps what was last published until a real change (P-63)."""
+    """One per VT thermostat; publishes, never controls. Other plugins read the value as the
+    property ``heat_available``, as it is now; the attribute on VT's thermostat keeps what was
+    last published until it changes (P-63)."""
 
     def __init__(self, hass: HomeAssistant, thermostat: Any, lookup: Lookup) -> None:
         self._hass = hass
@@ -118,7 +100,7 @@ class SmartBoilerFeatureManager:
         return None
 
     async def refresh_state(self) -> bool:
-        return False  # the values come from the plugin's own coordinator
+        return False  # the value comes from the plugin's own coordinator
 
     def restore_state(self, old_state: Any) -> None:
         return None
@@ -148,12 +130,6 @@ class SmartBoilerFeatureManager:
         values = self._values()
         return None if values is None else values[HEAT_AVAILABLE]
 
-    @property
-    def emitter_power_factor(self) -> float | None:
-        """The zone's emitter output now versus its reference; ``None`` when unknown."""
-        values = self._values()
-        return None if values is None else values[EMITTER_POWER_FACTOR]
-
     def _values(self) -> dict[str, Any] | None:
         entity_id = getattr(self._thermostat, "entity_id", None)
         return self._lookup(entity_id) if isinstance(entity_id, str) else None
@@ -165,14 +141,14 @@ class SmartBoilerFeatureManager:
                 self._published = None
                 attributes.pop(ATTRIBUTE, None)
             else:
-                if self._published is None or _real_change(self._published, values):
+                if self._published != values:
                     self._published = dict(values)
                 attributes[ATTRIBUTE] = dict(self._published)
         except Exception:  # VT's attribute update must never fail because of the plugin
             if self._failing:
-                _LOGGER.debug("Could not add the plugin's zone values", exc_info=True)
+                _LOGGER.debug("Could not add the plugin's zone value", exc_info=True)
             else:
-                _LOGGER.exception("Could not add the plugin's zone values to a VT thermostat")
+                _LOGGER.exception("Could not add the plugin's zone value to a VT thermostat")
                 self._failing = True
         else:
             self._failing = False
@@ -190,7 +166,7 @@ class SmartBoilerFeatureFactory:
         return MANAGER_NAME
 
     def supports(self, thermostat: Any) -> bool:
-        return True  # every thermostat; values appear only for the plugin's zones
+        return True  # every thermostat; the value appears only for the plugin's zones
 
     def create(self, thermostat: Any) -> SmartBoilerFeatureManager:
         return SmartBoilerFeatureManager(self._hass, thermostat, self._lookup)
@@ -384,7 +360,7 @@ def async_attach(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> No
 
 def async_check(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> None:
     """At each update: registered with VT's current API, and the zones whose thermostat still
-    shows none of the values some time after the registration reported — they started before
+    shows nothing of the plugin some time after the registration reported — they started before
     it and pick the manager up only at VT's next reload. Only a zone VT shows running is listed:
     reported and ready, its mode known (P-59); one away, unavailable or still starting would
     show nothing anyway."""

@@ -54,6 +54,13 @@ opisuje [dokumentacja techniczna](technical.md).
 SmartPI i Auto-TPI z VT (samouczący się algorytm VT, sterujący proporcjonalnie do czasu) są
 opcjonalne; wtyczka działa z każdym algorytmem stref VT.
 
+**Co pokazują termostaty VT.** Każdy termostat strefy obsługiwanej przez wtyczkę dostaje atrybut
+`smart_boiler` z jedną wartością, `heat_available`: czy ciepło z kotła dociera teraz do strefy.
+Jest „tak”, gdy pali się płomień, a zasilanie jest wyraźnie cieplejsze od powrotu (od
+pomieszczenia, gdy powrót nie jest znany), „nie”, gdy płomień zgasł albo ciepło zabiera ciepła
+woda z priorytetem, i puste, gdy nie da się tego ocenić. Nic w VT ani w sterowaniu od tego nie
+zależy.
+
 ## 2. Instalacja
 
 **Nie ma jeszcze wydania**, więc dziś nie da się zainstalować integracji przez HACS.
@@ -908,8 +915,8 @@ niepasujące do połączenia kotła, a przy ESPHome niepotwierdzony bezpieczny s
 | Auto-TPI nie może się uczyć w części stref | odznacz w VT „używany przez kocioł centralny” |
 | Wtyczka nie może wstrzymać nauki w części stref | informacja |
 | Wtyczka nie mogła ponownie włączyć nauki w części stref | włącz naukę SmartPI |
-| Termostaty VT nie mogą pokazać wartości stref wtyczki | zaktualizuj VT; nic innego od tego nie zależy |
-| Część termostatów VT wymaga przeładowania, żeby pokazać wartości wtyczki | przeładuj VT |
+| Termostaty VT nie mogą pokazać wartości strefy z wtyczki | zaktualizuj VT; nic innego od tego nie zależy |
+| Część termostatów VT wymaga przeładowania, żeby pokazać wartość z wtyczki | przeładuj VT |
 
 „3 warianty”: kocioł nie grzeje albo wrócił do swojego termostatu, albo wtyczka tylko
 monitoruje.

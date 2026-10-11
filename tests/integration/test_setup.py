@@ -262,12 +262,12 @@ def test_changing_attributes_stay_out_of_the_recorder() -> None:
     assert not AlarmSensor._unrecorded_attributes & {"excess", "value"}
 
 
-async def test_a_new_emitter_factor_is_saved_slowly_a_latch_soon(hass: HomeAssistant) -> None:
-    """P33: a factor recomputed at every update while a zone heats must not rewrite the store
-    every two minutes; what control needs kept is not held back by it."""
+async def test_what_changes_often_is_saved_slowly_a_latch_soon(hass: HomeAssistant) -> None:
+    """P33: what is recomputed at every update — the long-run counts, the day summaries — must
+    not rewrite the store every two minutes; what control needs kept is not held back by it."""
     from custom_components.vtherm_smart_boiler.coordinator import (
-        FACTOR_SAVE_DELAY_S,
         SAVE_DELAY_S,
+        SLOW_SAVE_DELAY_S,
     )
 
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
@@ -278,11 +278,11 @@ async def test_a_new_emitter_factor_is_saved_slowly_a_latch_soon(hass: HomeAssis
     delays: list[float] = []
     coordinator._store.async_delay_save = lambda _data, delay: delays.append(delay)
     coordinator._save_due = None
-    coordinator.schedule_save(FACTOR_SAVE_DELAY_S)
-    coordinator.schedule_save(FACTOR_SAVE_DELAY_S)  # one pending already
+    coordinator.schedule_save(SLOW_SAVE_DELAY_S)
+    coordinator.schedule_save(SLOW_SAVE_DELAY_S)  # one pending already
     coordinator.schedule_save()  # sooner: brought forward
-    coordinator.schedule_save(FACTOR_SAVE_DELAY_S)  # later than the pending one: nothing
-    assert delays == [FACTOR_SAVE_DELAY_S, SAVE_DELAY_S]
+    coordinator.schedule_save(SLOW_SAVE_DELAY_S)  # later than the pending one: nothing
+    assert delays == [SLOW_SAVE_DELAY_S, SAVE_DELAY_S]
 
 
 async def test_the_recorder_backfill_runs_after_setup_and_goes_before_live_samples(
@@ -772,7 +772,7 @@ async def test_a_store_with_broken_fields_still_loads(
         "key": f"{DOMAIN}.{entry.entry_id}",
         "data": {
             "monitoring_since": "long ago",
-            "factors": {living: {"value": "high"}, "climate.gone": 3},
+            "factors": {living: {"value": "high"}, "climate.gone": 3},  # before I8.2: ignored
             "measured": ["not", "a", "mapping"],
             "control": {},
         },
@@ -1821,8 +1821,8 @@ async def test_everything_stored_survives_a_restart(
     hass: HomeAssistant, hass_storage: dict[str, Any], zones: FakeZones
 ) -> None:
     """A restart loads what the last run stored and, stopped again, stores the same: the start
-    of monitoring (the entry's creation, V1), the zones' factors, the measured building values
-    and the day summaries."""
+    of monitoring (the entry's creation, V1), the measured building values and the day
+    summaries. The zones' emitter factors a build before I8.2 stored are no longer kept."""
     from custom_components.vtherm_smart_boiler.core.daily import DaySummary
     from custom_components.vtherm_smart_boiler.core.parameters import ParameterKey, Source
 
@@ -1858,7 +1858,7 @@ async def test_everything_stored_survives_a_restart(
     saved = hass_storage[key]["data"]
     for field_name in ("monitoring_since", "measured", "daily"):
         assert saved[field_name] == stored[field_name], field_name
-    assert saved["factors"][living]["value"] == 0.8
+    assert "factors" not in saved
 
 
 async def test_a_new_entry_without_control_owes_nothing(
@@ -2210,7 +2210,7 @@ async def test_a_control_save_writes_the_entry_store_slowly_unless_the_hold_chan
     once (negative)."""
     from homeassistant.util import dt as dt_util
 
-    from custom_components.vtherm_smart_boiler.coordinator import FACTOR_SAVE_DELAY_S
+    from custom_components.vtherm_smart_boiler.coordinator import SLOW_SAVE_DELAY_S
 
     freezer.move_to(datetime(2026, 2, 1, tzinfo=UTC))
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
@@ -2226,7 +2226,7 @@ async def test_a_control_save_writes_the_entry_store_slowly_unless_the_hold_chan
             coordinator.schedule_control_save()
         else:
             assert await coordinator.async_save_control_now()
-        assert coordinator._save_due == pytest.approx(now + FACTOR_SAVE_DELAY_S)
+        assert coordinator._save_due == pytest.approx(now + SLOW_SAVE_DELAY_S)
     await coordinator.async_save_now()
     coordinator._main_owed = (True, True)  # the copy says held: the hold changed
     coordinator.schedule_control_save()
@@ -2946,7 +2946,7 @@ async def test_the_continuous_values_stay_in_the_diagnostics(
     result = await async_get_config_entry_diagnostics(hass, entry)
     assert result["alarms"]["pressure_high"]["value"] == 1.5
     (zone,) = result["zones"].values()
-    assert zone["hot_water"]["excess"] is not None
+    assert zone["heat"]["excess"] is not None
 
 
 def test_text_attributes_stay_out_of_the_recorder() -> None:

@@ -932,7 +932,6 @@ def _follow_renames(
         logging.getLogger(__name__).info("%s is now %s: the plugin follows it", old, new)
         for unit in _units(coordinator):
             kept = unit.rename_entity(old, new) or kept
-        coordinator.rename_zone(old, new)
         options = rename_entity(options, old, new)
     if kept:
         coordinator.schedule_control_save()

@@ -1201,12 +1201,14 @@ async def test_hot_water_without_priority_takes_no_heat_from_the_rooms(
     }
     await set_up(rig, add_entry(rig, entry_options))
     await rig.switch(True)
+    rig.flame = True
     rig.dhw = True
     await rig.advance(30)
     assert learning == ([(zone, False)] if priority else [])
-    # What VT's thermostat is given (the feature manager's value; I8.1d: no zone entity).
+    # What VT's thermostat is given (the feature manager's value; I8.1d: no zone entity), the
+    # flame burning (I8, decision C1).
     view = rig.entry.runtime_data.data.zones[zone]
-    assert view.hot_water.available is not priority
+    assert view.heat.available is not priority
 
 
 async def test_a_cancel_inside_smartpi_does_not_break_the_stop(

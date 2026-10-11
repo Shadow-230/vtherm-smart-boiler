@@ -153,7 +153,7 @@ async def async_get_config_entry_diagnostics(
             "features": {f.value: asdict(state) for f, state in data.features.items()},
             "features_now": {f.value: asdict(state) for f, state in data.features_now.items()},
             "parameters": _parameters(coordinator),
-            # G11: the long burn now, the window guard, and the counts kept for 0.4's tuning.
+            # G11: the long burn now, and the counts kept for 0.4's tuning.
             "long_run": {
                 "found": None
                 if coordinator.long_run.found is None
@@ -168,8 +168,7 @@ async def async_get_config_entry_diagnostics(
                 zone_id: {
                     "circuit": view.circuit_id,
                     "state": asdict(view.state),
-                    "hot_water": asdict(view.hot_water),
-                    "factor": asdict(view.factor),
+                    "heat": asdict(view.heat),
                 }
                 for zone_id, view in data.zones.items()
             },

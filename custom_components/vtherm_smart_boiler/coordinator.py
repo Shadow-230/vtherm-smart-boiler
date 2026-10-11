@@ -2,11 +2,11 @@
 plugin's entities publish.
 
 Two paths. The quick one runs on state changes (debounced) and every 30 s: current readings,
-signal check, hot water, emitter factors, critical zones, current
-alarms. The analysis runs every few minutes on a copy of the history, off the event loop:
+signal check, hot water, the heat each zone gets, critical zones,
+current alarms. The analysis runs every few minutes on a copy of the history, off the event loop:
 summaries, verdict, trend warnings, report, outdoor check and building fit. After a restart the
 history is rebuilt from the recorder, which keeps these states anyway; the entry's own store
-holds only small things: the monitoring start, held emitter factors, measured parameters and when
+holds only small things: the monitoring start, measured parameters and when
 the user reset one, the day summaries, a copy of when the plugin was down and a copy of the
 control state (P-116). A small store of its own, the last-run record, keeps when the plugin last
 ran — written every ten minutes and at a clean stop, so the entry's store is written only when
@@ -134,10 +134,9 @@ from .core.daily import (
     settings_key,
     summarize_day,
 )
-from .core.emitters import FactorResult, FactorStatus, update_factor
 from .core.freshness import Rhythm, automatic_limit, observe
+from .core.heat import Heat, heat_available
 from .core.history import History, ZoneSeries, with_downtime
-from .core.hot_water import HotWater, hot_water_available
 from .core.installation import CircuitControl, IssueCode, Severity
 from .core.long_run import LongRun, LongRunClass, RoomLook, follow_long_run, tally
 from .core.lowest_water import (
@@ -284,10 +283,11 @@ def _degrees(value: float | None) -> str:
     return "-" if value is None else f"{value:.0f}"
 
 
-# An emitter factor is recomputed at every update while its zone heats: saved at this pace, so
-# the store is not rewritten every two minutes all winter. So is the entry store's copy of the
-# control state while the boiler's hold and an owed hand-back stay as they are (PB-60).
-FACTOR_SAVE_DELAY_S = 15 * 60
+# What changes often but matters little — the long-run counts, the day summaries — is saved at
+# this pace, so the store is not rewritten every two minutes all winter. So is the entry store's
+# copy of the control state while the boiler's hold and an owed hand-back stay as they are
+# (PB-60).
+SLOW_SAVE_DELAY_S = 15 * 60
 # The automatic freshness limits (I6, decision 9): five times a source's own rhythm, within these
 # bounds — 10 to 30 min for the boiler's signals (a hiccup is not a frozen source), 3 to 12 h for
 # a weather entity that updates hourly or so (provisional, K4).
@@ -303,8 +303,7 @@ class ZoneView:
     name: str
     circuit_id: str
     state: ZoneState
-    hot_water: HotWater
-    factor: FactorResult
+    heat: Heat
 
 
 @dataclass(frozen=True, slots=True)
@@ -396,8 +395,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # change of them is written there at once too.
         self._main_owed: tuple[bool, bool] | None = None
         self._unsubs: list[CALLBACK_TYPE] = []
-        self._factors: dict[str, FactorResult] = {}
-        self._hot_water: dict[str, bool | None] = {}
+        self._heat: dict[str, bool | None] = {}
         # What each source has shown of its rhythm in this run, by signal and "weather" (I6).
         self._rhythms: dict[str, Rhythm] = {}
         # G11 E: the flame's run, and the counts kept for 0.4's tuning (stored).
@@ -634,21 +632,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 severity=ir.IssueSeverity.ERROR,
                 translation_key=UNREADABLE_ISSUE,
             )
-        factors = stored.get("factors")
-        for zone_id, data in factors.items() if isinstance(factors, dict) else ():
-            if zone_id not in self.config.zone_entities or not isinstance(data, dict):
-                continue
-            try:
-                if data.get("value") is not None:
-                    self._factors[zone_id] = FactorResult(
-                        float(data["value"]),
-                        FactorStatus.HELD,
-                        None,
-                        _optional_float(data.get("at")),
-                        _optional_float(data.get("output_w")),
-                    )
-            except TypeError, ValueError:
-                _LOGGER.warning("Ignoring an unreadable stored emitter factor for %s", zone_id)
         daily = stored.get("daily")
         for data in daily.values() if isinstance(daily, dict) else ():
             try:
@@ -715,11 +698,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             # A copy of the downtimes (P-95), written only with this store's own saves: what is
             # left of them should the last-run record be lost.
             "down": [[since, until] for since, until in self.down],
-            "factors": {
-                zone: {"value": f.value, "at": f.at, "output_w": f.output_w}
-                for zone, f in self._factors.items()
-                if f.value is not None
-            },
             "measured": measured,
             "fit_since": {key.value: at for key, at in self.fit_since.items()},
             "daily": {str(int(start)): day.to_dict() for start, day in sorted(self.daily.items())},
@@ -758,7 +736,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         if _owed_flags(self._stored_control()) != self._main_owed:
             await self.async_save_now()
         else:
-            self.schedule_save(FACTOR_SAVE_DELAY_S)  # PB-60: not the year of days every change
+            self.schedule_save(SLOW_SAVE_DELAY_S)  # PB-60: not the year of days every change
         return not self.control_store_failing
 
     def _control_written(self, ok: bool) -> None:
@@ -783,7 +761,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             return
         self._control_store.async_delay_save(self._stored_control, 0)
         changed = _owed_flags(self._stored_control()) != self._main_owed
-        self.schedule_save(0 if changed else FACTOR_SAVE_DELAY_S)
+        self.schedule_save(0 if changed else SLOW_SAVE_DELAY_S)
 
     async def async_save_now(self) -> None:
         """Write the entry's store at once."""
@@ -806,13 +784,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         for start in dropped:
             del self.daily[start]
         if added or dropped:
-            self.schedule_save(FACTOR_SAVE_DELAY_S)
-
-    def rename_zone(self, old: str, new: str) -> None:
-        """P-19: a zone's VT climate renamed: the emitter factor learned for it follows, stored
-        under the new entity ID at the next save (the reload that follows makes one)."""
-        if old in self._factors:
-            self._factors[new] = self._factors.pop(old)
+            self.schedule_save(SLOW_SAVE_DELAY_S)
 
     def expect_entities(self, platform: str, entities: list[Any]) -> None:
         """A platform's entities for this run — none where it creates none."""
@@ -1191,7 +1163,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             totals[key] = totals.get(key, 0.0) + step / 3600.0
         if totals != self.long_run_totals:
             self.long_run_totals = totals
-            self.schedule_save(FACTOR_SAVE_DELAY_S)
+            self.schedule_save(SLOW_SAVE_DELAY_S)
         if found is not before.found:
             if found is None:
                 _LOGGER.info("The long burn without warming is over")
@@ -1269,33 +1241,22 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 if reading.is_fresh(now, self._max_age(Signal.FLOW)):
                     circuit_flow = reading.value
             supply = circuit_supply(circuit, flow, flow_fresh, circuit_flow)
-            hot = hot_water_available(
+            heat = heat_available(
                 supply,
+                flame,
+                circuit_return(circuit, return_temp),  # a mixed circuit's is not the boiler's
                 state.temperature,
                 dhw,
-                self._hot_water.get(zone.zone_id),
+                self._heat.get(zone.zone_id),
+                flame_mapped=Signal.FLAME in mapped,
             )
-            self._hot_water[zone.zone_id] = hot.available
-            factor = update_factor(
-                self._factors.get(zone.zone_id),
-                zone,
-                state,
-                supply,
-                circuit_return(circuit, return_temp),  # a mixed circuit's is not the boiler's
-                now,
-                dhw,
-            )
-            if factor.status is FactorStatus.COMPUTED:
-                self.schedule_save(FACTOR_SAVE_DELAY_S)
-            if factor.value is not None:
-                self._factors[zone.zone_id] = factor
+            self._heat[zone.zone_id] = heat.available
             views[zone.zone_id] = ZoneView(
                 zone.zone_id,
                 self.link.zone_name(zone.zone_id),
                 zone.circuit_id,
                 state,
-                hot,
-                factor,
+                heat,
             )
 
         for circuit in config.installation.circuits:
@@ -2468,9 +2429,9 @@ def _timestamp(raw: object) -> float | None:
 
 def _last_seen(stored: dict[str, Any], now: float) -> float | None:
     """The latest moment the entry's main store shows the plugin running: an ``alive_at`` a
-    build kept there, the end of a day it summarised, an emitter factor or a measured value it
-    computed, its monitoring start; ``None`` without any. A moment after ``now`` (a clock set
-    back) says nothing."""
+    build kept there, the end of a day it summarised, an emitter factor (a build before I8.2) or
+    a measured value it computed, its monitoring start; ``None`` without any. A moment after
+    ``now`` (a clock set back) says nothing."""
     moments = [stored.get("alive_at"), stored.get("monitoring_since")]
     for key, field_name in (("daily", "end"), ("factors", "at"), ("measured", "at")):
         section = stored.get(key)
@@ -2637,7 +2598,3 @@ def _significant_states() -> Any:
     from homeassistant.components.recorder import history as recorder_history
 
     return recorder_history.get_significant_states
-
-
-def _optional_float(raw: Any) -> float | None:
-    return None if raw is None else float(raw)
