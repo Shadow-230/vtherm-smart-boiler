@@ -47,6 +47,7 @@ from .control_config import (
     map_control_entities,
     mqtt_topic_valid,
     parse_control,
+    with_interface_topics,
 )
 from .core.alarms import (
     ADD_WATER_RANGE_BAR,
@@ -820,9 +821,11 @@ def _control(
 ) -> ControlOptions:
     panel = BoilerPanel() if panel is None else panel
     entered = parameters.get(ParameterKey.DESIGN_OUTDOOR).estimate(Source.ENTERED)
+    # I8.4b: the firmware's topics are the connection's, stored once.
+    topics = {"mqtt_top": panel.mqtt_top, "mqtt_node": panel.mqtt_node}
     try:
         return parse_control(
-            data,
+            with_interface_topics(data, topics),
             installation,
             parameters.value(ParameterKey.MAX_CH_SETPOINT),
             connection=panel.connection,

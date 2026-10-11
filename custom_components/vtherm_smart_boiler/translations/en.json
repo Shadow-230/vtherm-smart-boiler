@@ -15,20 +15,6 @@
           "type": "Single-function (heating only), with or without a hot-water tank, or combi (hot water heated as you draw it), with or without a built-in tank; required. Used to tell hot-water runs from heating: the wrong type counts hot water as heating or the reverse."
         }
       },
-      "mqtt_topics": {
-        "title": "MQTT topics",
-        "description": "The topics your boiler interface publishes under. Home Assistant writes an MQTT entity's value only when it changes, so a steady value looks as old as its last change; the interface itself repeats its values (the OTGW firmware at least every 60 s, EMS-ESP every 10 s by default), and the plugin listens to those repeats on these topics — reading only — to see that the boiler's data still flow. Only your interface's own MQTT entities are judged by them.",
-        "data": {
-          "mqtt_top": "OTGW top-level topic",
-          "mqtt_node": "OTGW node",
-          "ems_esp_base": "EMS-ESP base topic"
-        },
-        "data_description": {
-          "mqtt_top": "The firmware's \"MQTT top topic\" (OTGW by default); its values come under top/value/node/.",
-          "mqtt_node": "The firmware's node or unique ID, as in its MQTT settings. A wrong one means the plugin hears nothing and judges the signals by Home Assistant's own reports only.",
-          "ems_esp_base": "EMS-ESP's \"Base\" in its MQTT settings (ems-esp by default); its boiler data come under base/boiler_data. With its boiler publish time at 0 (on change only) it does not repeat its values, and the plugin then judges them by Home Assistant's own reports only."
-        }
-      },
       "mode": {
         "title": "Control mode",
         "description": "What the plugin should do with the boiler. Choosing a mode switches nothing on: control has its own switch, off until you turn it on.\n\n- **Full control** — the plugin sets the water temperature from its curve and switches heating on and off with VT's zones.\n- **On/off (relay)** — the plugin switches heating on and off with VT's zones; the boiler keeps its own water temperature.\n- **Monitoring only** — the plugin reads and reports, and writes nothing.\n\nOnly the modes your connection can do are offered.",
@@ -41,6 +27,30 @@
           "control_mode": "Chosen on purpose, with no default. Monitoring only keeps control off, and the control switch gives that reason.",
           "condensing": "Condensing boilers get flue gas limits for condensing appliances and are judged on how often they condense; for other boilers the absolute flue gas alarm is off and condensing plays no part in the verdict. The wrong choice warns too late or for nothing, and misjudges the verdict.",
           "dhw_priority": "On (default): while the boiler heats hot water, the rooms get no heat — usual for a combi and for a tank charged through a three-way valve. Off: hot water and heating run together (a buffer, a tank charged in parallel, a priority limited in time). Used to judge when the rooms get heat: the wrong choice pauses the zones' learning for nothing, or lets them learn while the rooms get no heat."
+        }
+      },
+      "interface": {
+        "title": "Boiler interface",
+        "description": "What the plugin needs to know about the device between it and the boiler: its MQTT topics, the gateway, how it sits between thermostat and boiler, and its restart indicator. Only what your connection and control mode use is asked.",
+        "data": {
+          "mqtt_top": "OTGW top-level topic",
+          "mqtt_node": "OTGW node",
+          "ems_esp_base": "EMS-ESP base topic",
+          "gateway_id": "Gateway ID",
+          "topology": "Gateway connection",
+          "thermostat_kind": "What is wired to the gateway's thermostat terminals",
+          "thermostat_setpoint_entity": "Thermostat's own water setpoint",
+          "restart_entity": "Restart indicator"
+        },
+        "data_description": {
+          "mqtt_top": "The firmware's \"MQTT top topic\" (OTGW by default): its values come under top/value/node/, and the plugin's commands go to top/set/node/. Heating on/off (CH=) is kept by the gateway until it changes or the gateway restarts; the plugin sends it again with the control setpoint, every 30 s, and when the gateway returns.",
+          "mqtt_node": "The firmware's node or unique ID, as in its MQTT settings. A wrong one means the plugin hears nothing, and its commands go nowhere — the read-back then reports them as ignored.",
+          "ems_esp_base": "EMS-ESP's \"Base\" in its MQTT settings (ems-esp by default); its boiler data come under base/boiler_data. With its boiler publish time at 0 (on change only) it does not repeat its values, and the plugin then judges them by Home Assistant's own reports only.",
+          "gateway_id": "The gateway set up in the OpenTherm Gateway integration; only gateways set up and enabled there are offered. The control setpoint is repeated every 30 s; on hand-back it is set to 0, which returns control to the thermostat, or ends heating without one. Heating on/off (CH=) is kept by the gateway until it changes or the gateway restarts; the plugin sends it again with the control setpoint, every 30 s, and when the gateway returns. Pick the gateway on this boiler: another one would get the plugin's commands, and this boiler none.",
+          "topology": "How the gateway sits between thermostat and boiler. With a thermostat: on hand-back the thermostat takes over. Stand-alone, without a thermostat: on hand-back, and whenever Home Assistant stops for more than about a minute, the boiler stops heating. Virtual: a controller on the Home Assistant side, e.g. ESPHome, drives the boiler. Required; declare it as it is — the plugin never changes the gateway's mode. A lost link to the boiler's data raises an alarm and hands back in every topology — stand-alone, heating stops until the data returns. With a thermostat: while the plugin controls, the wall thermostat's heating setting and its off switch do nothing — its hot-water settings still work; after a hand-back, or while Home Assistant is down, it heats by its own setting and program, so keep them at what the house should get. Not used with a relay: its state after hand-back is what a hand-back does. In every topology, after a hand-back or while Home Assistant is down, the water follows the boiler's or the wall thermostat's own maximum, not the plugin's: set an unmixed underfloor loop's maximum there too. ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: virtual.",
+          "thermostat_kind": "Only for a gateway, with a thermostat or stand-alone. OpenTherm thermostat: it talks to the boiler and may show the water temperature. On/off contact: a simple thermostat or switch on two wires — the gateway turns it into a heating request, and the plugin's \"heating off\" would block it after a Home Assistant crash, so control is not offered. Nothing: no thermostat at all. I don't know: control is not offered until you check. With a thermostat pick OpenTherm; stand-alone pick Nothing.",
+          "thermostat_setpoint_entity": "Optional, for a gateway with an OpenTherm thermostat: the water temperature the thermostat itself asks for (with opentherm_gw, the thermostat device's \"Control setpoint 1\"), not the boiler's read-back. When the boiler falls back to it after an outage, the plugin sends its command again instead of taking it for another controller. It also shows the hand-back as done when the gateway passes the thermostat's request on — the OTGW firmware over MQTT then never shows 0, so without this field a hand-back to a thermostat asking for the lowest water temperature or the plugin's last value is never confirmed. Empty (default): only the value from before the plugin counts.",
+          "restart_entity": "Optional: a sensor of the gateway or boiler interface that shows its restarts — an uptime that starts again from a low value, a restart counter that goes up, or a boot time (for example the OTGW firmware's reboot count, or an EMS-ESP or ESPHome uptime sensor). A restart it shows counts for 5 minutes as a trace of an outage: the boiler falling back to its own value then is taken as a lost command and simply sent again. Empty (default): a restart is seen only when the device's entities go unavailable, and a quick restart that shows nothing is judged as a fall-back without a trace — the first within an hour is still sent again, but a second may be taken for another controller, and the plugin steps aside."
         }
       },
       "name": {
@@ -61,6 +71,7 @@
         "menu_options": {
           "connection": "Connection and boiler type",
           "mode": "Control mode",
+          "interface": "Boiler interface",
           "name": "Name and level of detail",
           "signals": "Boiler signals",
           "boiler": "Boiler",
@@ -236,21 +247,13 @@
         "description": "How the plugin controls the boiler: the flow setpoint it writes, or on and off through a relay. Until you switch control on, nothing changes: the boiler runs as it does today — under Versatile Thermostat's central boiler, a wall thermostat or its own regulation — and the plugin only watches and reports. Switched on, it takes the place of VT's central boiler (remove that first and restart Home Assistant): heating goes on and off with VT's zones at once, and where the plugin writes the water temperature it follows your curve, never below your lowest or above your highest water temperature; the comfort correction, if you enable it, adds at most 3 K above the curve. You may switch control on from the first day, even without a verdict: the monitor's verdict comes once it has enough days of data, and the control switch shows it. Choose \"No control\" to keep monitoring only.",
         "data": {
           "write_path": "Write path",
-          "topology": "Gateway connection",
-          "thermostat_kind": "What is wired to the gateway's thermostat terminals",
           "confirmed_entity": "Setpoint read-back",
-          "ch_confirmed_entity": "Heating on/off read-back",
-          "thermostat_setpoint_entity": "Thermostat's own water setpoint",
-          "restart_entity": "Restart indicator"
+          "ch_confirmed_entity": "Heating on/off read-back"
         },
         "data_description": {
           "write_path": "No control (default); a writable entity you pick, e.g. an EMS-ESP or ESPHome OpenTherm number; the OpenTherm Gateway through Home Assistant's OpenTherm Gateway integration; or the OTGW firmware's MQTT commands. Pick the path your boiler interface really offers: a wrong one means writes that fail or go nowhere. A relay, for an on/off boiler: a switch on the boiler's room-thermostat terminals, or a boiler thermostat entity set to heat or off. Only the paths that suit the boiler's connection and control mode are offered.",
-          "topology": "How the gateway sits between thermostat and boiler. With a thermostat: on hand-back the thermostat takes over. Stand-alone, without a thermostat: on hand-back, and whenever Home Assistant stops for more than about a minute, the boiler stops heating. Monitor mode: the gateway only listens and control is not possible. Virtual: a controller on the Home Assistant side, e.g. ESPHome, drives the boiler. Required; declare it as it is — the plugin never changes the gateway's mode. A lost link to the boiler's data raises an alarm and hands back in every topology — stand-alone, heating stops until the data returns. With a thermostat: while the plugin controls, the wall thermostat's heating setting and its off switch do nothing — its hot-water settings still work; after a hand-back, or while Home Assistant is down, it heats by its own setting and program, so keep them at what the house should get. Not used with a relay: its state after hand-back is what a hand-back does. In every topology, after a hand-back or while Home Assistant is down, the water follows the boiler's or the wall thermostat's own maximum, not the plugin's: set an unmixed underfloor loop's maximum there too. ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: virtual.",
-          "thermostat_kind": "Only for a gateway, with a thermostat or stand-alone. OpenTherm thermostat: it talks to the boiler and may show the water temperature. On/off contact: a simple thermostat or switch on two wires — the gateway turns it into a heating request, and the plugin's \"heating off\" would block it after a Home Assistant crash, so control is not offered. Nothing: no thermostat at all. I don't know: control is not offered until you check. With a thermostat pick OpenTherm; stand-alone pick Nothing.",
           "confirmed_entity": "The entity that reports the setpoint the boiler received, e.g. the gateway's \"Control setpoint 1\" on its boiler device — it shows what the gateway sends, so the setpoint is shown as confirmed by the gateway, not by the boiler. Required: every write is checked against it, and a write the boiler ignores or another controller overwrites is reported. The plugin's setpoint entity shows only a confirmed value, otherwise unknown. Picking the entity you write confirms nothing: the setpoint is then shown as unverified. Not used with a relay: its own state confirms it. On EMS-ESP pick its selected flow temperature (selflowtemp), the entity you write: EMS-ESP fills it from the boiler's own report, but the plugin cannot tell that, so the setpoint shows as unverified.",
-          "ch_confirmed_entity": "Optional: an entity that reports whether the boiler receives heating enabled — e.g. the gateway's \"Central heating 1\" on its boiler device that reads On/Off: what the gateway sends. Not the one that reads Running/Not running: that is the boiler's own status, which goes off during hot water and would look like another controller. With it, heating on/off is checked like the setpoint: a switch the boiler ignores is reported, and one another controller changes is written again once, then every write stops. Without it, heating on/off is shown as unverified and another controller switching it goes unnoticed. Picking the entity you write, or the thermostat's request instead of what the boiler receives, confirms nothing or stops control. Pick an entity that reports a change within about a minute: a slower one delays noticing a change, and one slower than 5 min can make the plugin wrongly step aside.",
-          "thermostat_setpoint_entity": "Optional, for a gateway with an OpenTherm thermostat: the water temperature the thermostat itself asks for (with opentherm_gw, the thermostat device's \"Control setpoint 1\"), not the boiler's read-back. When the boiler falls back to it after an outage, the plugin sends its command again instead of taking it for another controller. It also shows the hand-back as done when the gateway passes the thermostat's request on — the OTGW firmware over MQTT then never shows 0, so without this field a hand-back to a thermostat asking for the lowest water temperature or the plugin's last value is never confirmed. Empty (default): only the value from before the plugin counts.",
-          "restart_entity": "Optional: a sensor of the gateway or boiler interface that shows its restarts — an uptime that starts again from a low value, a restart counter that goes up, or a boot time (for example the OTGW firmware's reboot count, or an EMS-ESP or ESPHome uptime sensor). A restart it shows counts for 5 minutes as a trace of an outage: the boiler falling back to its own value then is taken as a lost command and simply sent again. Empty (default): a restart is seen only when the device's entities go unavailable, and a quick restart that shows nothing is judged as a fall-back without a trace — the first within an hour is still sent again, but a second may be taken for another controller, and the plugin steps aside."
+          "ch_confirmed_entity": "Optional: an entity that reports whether the boiler receives heating enabled — e.g. the gateway's \"Central heating 1\" on its boiler device that reads On/Off: what the gateway sends. Not the one that reads Running/Not running: that is the boiler's own status, which goes off during hot water and would look like another controller. With it, heating on/off is checked like the setpoint: a switch the boiler ignores is reported, and one another controller changes is written again once, then every write stops. Without it, heating on/off is shown as unverified and another controller switching it goes unnoticed. Picking the entity you write, or the thermostat's request instead of what the boiler receives, confirms nothing or stops control. Pick an entity that reports a change within about a minute: a slower one delays noticing a change, and one slower than 5 min can make the plugin wrongly step aside."
         }
       },
       "control_entity": {
@@ -283,28 +286,6 @@
           "hand_back_timeout_min": "For the timeout method: how long, in minutes, the device keeps the last value it was given before it returns to its own control — take it from the device's documentation (1 to 60; default 1, EMS-ESP's flow setpoint lapses within about a minute). Every hand-back writes the lowest water temperature first, so the boiler stays at it for this long. The hand-back is judged only after it — back at the value from before control, or at a value of the device's own — and \"hand-back failed\" comes 3 minutes after it. Too short: a false alarm while the device still holds the lowest; too long: a device that never lets go is reported late. Not used with the other methods.",
           "own_room_controller": "Tick only if the boiler has a room controller of its own that asks for heat by itself once the plugin lets go — for example a room unit on the boiler's bus (EMS). If Versatile Thermostat gives no answer at all, the plugin then hands the boiler back to it; without the tick the boiler does not heat, and an alarm and a repair notice tell you why. Every other hand-back also goes to that controller. With a relay it counts only when the relay's state after hand-back is \"on\"; with \"off\", the boiler does not heat when Versatile Thermostat gives no answer. Off by default. Risk: without such a controller, the boiler would be left on its own dial, heating with no room in charge.",
           "esphome_safe_start": "Required for control on ESPHome; never ticked for you. The ESP keeps the last setpoint and heating on until it restarts — by default after 15 minutes without Home Assistant (its API reboot_timeout) — then takes its configured start values. Tick only once the ESP's configuration starts the setpoint and the heating switch at values that are safe with nobody controlling them (heating off, or a moderate water temperature), with restore_value off, and its reboot_timeout is a few minutes (the user guide has a sample). Unticked, control does not start."
-        }
-      },
-      "control_gateway": {
-        "title": "OpenTherm Gateway",
-        "description": "The gateway set up in Home Assistant's OpenTherm Gateway integration.",
-        "data": {
-          "gateway_id": "Gateway ID"
-        },
-        "data_description": {
-          "gateway_id": "The gateway set up in the OpenTherm Gateway integration; only gateways set up and enabled there are offered. The control setpoint is repeated every 30 s; on hand-back it is set to 0, which returns control to the thermostat, or ends heating without one. Heating on/off (CH=) is kept by the gateway until it changes or the gateway restarts; the plugin sends it again with the control setpoint, every 30 s, and when the gateway returns. Pick the gateway on this boiler: another one would get the plugin's commands, and this boiler none."
-        }
-      },
-      "control_mqtt": {
-        "title": "OTGW firmware over MQTT",
-        "description": "Commands are published on the topic prefix/set/node/command, with the prefix and node name given below. Heating on/off (CH=) is kept by the gateway until it changes or the gateway restarts; the plugin sends it again with the control setpoint, every 30 s, and when the gateway returns.",
-        "data": {
-          "mqtt_top": "Topic prefix",
-          "mqtt_node": "Node name"
-        },
-        "data_description": {
-          "mqtt_top": "The MQTT topic prefix set in the OTGW firmware. Default OTGW.",
-          "mqtt_node": "The node name set in the OTGW firmware. A wrong prefix or node name sends commands nowhere; the read-back then reports them as ignored."
         }
       },
       "control_relay": {
@@ -562,7 +543,9 @@
       "vt_commands_not_supported": "Versatile Thermostat's boiler commands name no switch turned on and off and no boiler thermostat set to heat and off: pick the relay.",
       "path_not_for_control_mode": "Monitoring only is chosen: only \"No control\" fits. Change the control mode under \"Control mode\" first.",
       "path_not_for_connection": "The write path does not fit how the boiler is connected. Change the connection under \"Connection and boiler type\" first.",
-      "topology_not_for_connection": "ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: choose the virtual topology."
+      "topology_not_for_connection": "ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: choose the virtual topology.",
+      "interface_not_answered": "Answer \"Boiler interface\" first: how the gateway sits between thermostat and boiler, and what is on its thermostat terminals, must suit this write path.",
+      "connection_not_answered": "Answer \"Connection and boiler type\" first, then \"Boiler interface\": the interface's questions follow the connection."
     }
   },
   "options": {
@@ -573,6 +556,7 @@
         "menu_options": {
           "connection": "Connection and boiler type",
           "mode": "Control mode",
+          "interface": "Boiler interface",
           "signals": "Boiler signals",
           "freshness": "Freshness limits",
           "boiler": "Boiler",
@@ -600,20 +584,6 @@
           "type": "Single-function (heating only), with or without a hot-water tank, or combi (hot water heated as you draw it), with or without a built-in tank; required. Used to tell hot-water runs from heating: the wrong type counts hot water as heating or the reverse."
         }
       },
-      "mqtt_topics": {
-        "title": "MQTT topics",
-        "description": "The topics your boiler interface publishes under. Home Assistant writes an MQTT entity's value only when it changes, so a steady value looks as old as its last change; the interface itself repeats its values (the OTGW firmware at least every 60 s, EMS-ESP every 10 s by default), and the plugin listens to those repeats on these topics — reading only — to see that the boiler's data still flow. Only your interface's own MQTT entities are judged by them.",
-        "data": {
-          "mqtt_top": "OTGW top-level topic",
-          "mqtt_node": "OTGW node",
-          "ems_esp_base": "EMS-ESP base topic"
-        },
-        "data_description": {
-          "mqtt_top": "The firmware's \"MQTT top topic\" (OTGW by default); its values come under top/value/node/.",
-          "mqtt_node": "The firmware's node or unique ID, as in its MQTT settings. A wrong one means the plugin hears nothing and judges the signals by Home Assistant's own reports only.",
-          "ems_esp_base": "EMS-ESP's \"Base\" in its MQTT settings (ems-esp by default); its boiler data come under base/boiler_data. With its boiler publish time at 0 (on change only) it does not repeat its values, and the plugin then judges them by Home Assistant's own reports only."
-        }
-      },
       "mode": {
         "title": "Control mode",
         "description": "What the plugin should do with the boiler. Choosing a mode switches nothing on: control has its own switch, off until you turn it on.\n\n- **Full control** — the plugin sets the water temperature from its curve and switches heating on and off with VT's zones.\n- **On/off (relay)** — the plugin switches heating on and off with VT's zones; the boiler keeps its own water temperature.\n- **Monitoring only** — the plugin reads and reports, and writes nothing.\n\nOnly the modes your connection can do are offered.",
@@ -626,6 +596,30 @@
           "control_mode": "Chosen on purpose, with no default. Monitoring only keeps control off, and the control switch gives that reason.",
           "condensing": "Condensing boilers get flue gas limits for condensing appliances and are judged on how often they condense; for other boilers the absolute flue gas alarm is off and condensing plays no part in the verdict. The wrong choice warns too late or for nothing, and misjudges the verdict.",
           "dhw_priority": "On (default): while the boiler heats hot water, the rooms get no heat — usual for a combi and for a tank charged through a three-way valve. Off: hot water and heating run together (a buffer, a tank charged in parallel, a priority limited in time). Used to judge when the rooms get heat: the wrong choice pauses the zones' learning for nothing, or lets them learn while the rooms get no heat."
+        }
+      },
+      "interface": {
+        "title": "Boiler interface",
+        "description": "What the plugin needs to know about the device between it and the boiler: its MQTT topics, the gateway, how it sits between thermostat and boiler, and its restart indicator. Only what your connection and control mode use is asked.",
+        "data": {
+          "mqtt_top": "OTGW top-level topic",
+          "mqtt_node": "OTGW node",
+          "ems_esp_base": "EMS-ESP base topic",
+          "gateway_id": "Gateway ID",
+          "topology": "Gateway connection",
+          "thermostat_kind": "What is wired to the gateway's thermostat terminals",
+          "thermostat_setpoint_entity": "Thermostat's own water setpoint",
+          "restart_entity": "Restart indicator"
+        },
+        "data_description": {
+          "mqtt_top": "The firmware's \"MQTT top topic\" (OTGW by default): its values come under top/value/node/, and the plugin's commands go to top/set/node/. Heating on/off (CH=) is kept by the gateway until it changes or the gateway restarts; the plugin sends it again with the control setpoint, every 30 s, and when the gateway returns.",
+          "mqtt_node": "The firmware's node or unique ID, as in its MQTT settings. A wrong one means the plugin hears nothing, and its commands go nowhere — the read-back then reports them as ignored.",
+          "ems_esp_base": "EMS-ESP's \"Base\" in its MQTT settings (ems-esp by default); its boiler data come under base/boiler_data. With its boiler publish time at 0 (on change only) it does not repeat its values, and the plugin then judges them by Home Assistant's own reports only.",
+          "gateway_id": "The gateway set up in the OpenTherm Gateway integration; only gateways set up and enabled there are offered. The control setpoint is repeated every 30 s; on hand-back it is set to 0, which returns control to the thermostat, or ends heating without one. Heating on/off (CH=) is kept by the gateway until it changes or the gateway restarts; the plugin sends it again with the control setpoint, every 30 s, and when the gateway returns. Pick the gateway on this boiler: another one would get the plugin's commands, and this boiler none.",
+          "topology": "How the gateway sits between thermostat and boiler. With a thermostat: on hand-back the thermostat takes over. Stand-alone, without a thermostat: on hand-back, and whenever Home Assistant stops for more than about a minute, the boiler stops heating. Virtual: a controller on the Home Assistant side, e.g. ESPHome, drives the boiler. Required; declare it as it is — the plugin never changes the gateway's mode. A lost link to the boiler's data raises an alarm and hands back in every topology — stand-alone, heating stops until the data returns. With a thermostat: while the plugin controls, the wall thermostat's heating setting and its off switch do nothing — its hot-water settings still work; after a hand-back, or while Home Assistant is down, it heats by its own setting and program, so keep them at what the house should get. Not used with a relay: its state after hand-back is what a hand-back does. In every topology, after a hand-back or while Home Assistant is down, the water follows the boiler's or the wall thermostat's own maximum, not the plugin's: set an unmixed underfloor loop's maximum there too. ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: virtual.",
+          "thermostat_kind": "Only for a gateway, with a thermostat or stand-alone. OpenTherm thermostat: it talks to the boiler and may show the water temperature. On/off contact: a simple thermostat or switch on two wires — the gateway turns it into a heating request, and the plugin's \"heating off\" would block it after a Home Assistant crash, so control is not offered. Nothing: no thermostat at all. I don't know: control is not offered until you check. With a thermostat pick OpenTherm; stand-alone pick Nothing.",
+          "thermostat_setpoint_entity": "Optional, for a gateway with an OpenTherm thermostat: the water temperature the thermostat itself asks for (with opentherm_gw, the thermostat device's \"Control setpoint 1\"), not the boiler's read-back. When the boiler falls back to it after an outage, the plugin sends its command again instead of taking it for another controller. It also shows the hand-back as done when the gateway passes the thermostat's request on — the OTGW firmware over MQTT then never shows 0, so without this field a hand-back to a thermostat asking for the lowest water temperature or the plugin's last value is never confirmed. Empty (default): only the value from before the plugin counts.",
+          "restart_entity": "Optional: a sensor of the gateway or boiler interface that shows its restarts — an uptime that starts again from a low value, a restart counter that goes up, or a boot time (for example the OTGW firmware's reboot count, or an EMS-ESP or ESPHome uptime sensor). A restart it shows counts for 5 minutes as a trace of an outage: the boiler falling back to its own value then is taken as a lost command and simply sent again. Empty (default): a restart is seen only when the device's entities go unavailable, and a quick restart that shows nothing is judged as a fall-back without a trace — the first within an hour is still sent again, but a second may be taken for another controller, and the plugin steps aside."
         }
       },
       "level": {
@@ -688,7 +682,7 @@
       },
       "freshness": {
         "title": "Freshness limits",
-        "description": "An age limit per signal, in minutes: a value not reported for longer counts as stale, for the monitor and for control alike — without a fresh flame and flow, control writes nothing and hands back after five minutes. Empty (default): automatic — no limit until the source is seen repeating an unchanged value; then five times its own rhythm, 10 to 30 minutes (the weather entity 3 to 12 hours). A source that reports only changes (MQTT, ESPHome without force_update) never gets one, as a steady value is not a stale one. 0: no limit, only whether the entity is available counts. A number: that limit. On the OTGW firmware over MQTT and on EMS-ESP the plugin hears the device's own repeats on its MQTT topics, given under \"Connection and boiler type\". Risk: without a limit, a source that freezes without going unavailable is not caught; a limit shorter than a source's reporting interval stops control in steady weather. Control reads the flame and the flow each by its own limit; a link that keeps dropping in and out counts as lost once it has been stale for five minutes within ten. On an OpenTherm Gateway over MQTT, the gateway dropping off shows within about 90 s (its entities turn unavailable), but a broken link inside it, between its ESP and its PIC, shows only as its repeats stopping.",
+        "description": "An age limit per signal, in minutes: a value not reported for longer counts as stale, for the monitor and for control alike — without a fresh flame and flow, control writes nothing and hands back after five minutes. Empty (default): automatic — no limit until the source is seen repeating an unchanged value; then five times its own rhythm, 10 to 30 minutes (the weather entity 3 to 12 hours). A source that reports only changes (MQTT, ESPHome without force_update) never gets one, as a steady value is not a stale one. 0: no limit, only whether the entity is available counts. A number: that limit. On the OTGW firmware over MQTT and on EMS-ESP the plugin hears the device's own repeats on its MQTT topics, given under \"Boiler interface\". Risk: without a limit, a source that freezes without going unavailable is not caught; a limit shorter than a source's reporting interval stops control in steady weather. Control reads the flame and the flow each by its own limit; a link that keeps dropping in and out counts as lost once it has been stale for five minutes within ten. On an OpenTherm Gateway over MQTT, the gateway dropping off shows within about 90 s (its entities turn unavailable), but a broken link inside it, between its ESP and its PIC, shows only as its repeats stopping.",
         "data": {
           "flame": "Flame",
           "flow": "Flow temperature",
@@ -849,21 +843,13 @@
         "description": "How the plugin controls the boiler: the flow setpoint it writes, or on and off through a relay. Until you switch control on, nothing changes: the boiler runs as it does today — under Versatile Thermostat's central boiler, a wall thermostat or its own regulation — and the plugin only watches and reports. Switched on, it takes the place of VT's central boiler (remove that first and restart Home Assistant): heating goes on and off with VT's zones at once, and where the plugin writes the water temperature it follows your curve, never below your lowest or above your highest water temperature; the comfort correction, if you enable it, adds at most 3 K above the curve. You may switch control on from the first day, even without a verdict: the monitor's verdict comes once it has enough days of data, and the control switch shows it. Choose \"No control\" to keep monitoring only.",
         "data": {
           "write_path": "Write path",
-          "topology": "Gateway connection",
-          "thermostat_kind": "What is wired to the gateway's thermostat terminals",
           "confirmed_entity": "Setpoint read-back",
-          "ch_confirmed_entity": "Heating on/off read-back",
-          "thermostat_setpoint_entity": "Thermostat's own water setpoint",
-          "restart_entity": "Restart indicator"
+          "ch_confirmed_entity": "Heating on/off read-back"
         },
         "data_description": {
           "write_path": "No control (default); a writable entity you pick, e.g. an EMS-ESP or ESPHome OpenTherm number; the OpenTherm Gateway through Home Assistant's OpenTherm Gateway integration; or the OTGW firmware's MQTT commands. Pick the path your boiler interface really offers: a wrong one means writes that fail or go nowhere. A relay, for an on/off boiler: a switch on the boiler's room-thermostat terminals, or a boiler thermostat entity set to heat or off. Only the paths that suit the boiler's connection and control mode are offered.",
-          "topology": "How the gateway sits between thermostat and boiler. With a thermostat: on hand-back the thermostat takes over. Stand-alone, without a thermostat: on hand-back, and whenever Home Assistant stops for more than about a minute, the boiler stops heating. Monitor mode: the gateway only listens and control is not possible. Virtual: a controller on the Home Assistant side, e.g. ESPHome, drives the boiler. Required; declare it as it is — the plugin never changes the gateway's mode. A lost link to the boiler's data raises an alarm and hands back in every topology — stand-alone, heating stops until the data returns. With a thermostat: while the plugin controls, the wall thermostat's heating setting and its off switch do nothing — its hot-water settings still work; after a hand-back, or while Home Assistant is down, it heats by its own setting and program, so keep them at what the house should get. Not used with a relay: its state after hand-back is what a hand-back does. In every topology, after a hand-back or while Home Assistant is down, the water follows the boiler's or the wall thermostat's own maximum, not the plugin's: set an unmixed underfloor loop's maximum there too. ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: virtual.",
-          "thermostat_kind": "Only for a gateway, with a thermostat or stand-alone. OpenTherm thermostat: it talks to the boiler and may show the water temperature. On/off contact: a simple thermostat or switch on two wires — the gateway turns it into a heating request, and the plugin's \"heating off\" would block it after a Home Assistant crash, so control is not offered. Nothing: no thermostat at all. I don't know: control is not offered until you check. With a thermostat pick OpenTherm; stand-alone pick Nothing.",
           "confirmed_entity": "The entity that reports the setpoint the boiler received, e.g. the gateway's \"Control setpoint 1\" on its boiler device — it shows what the gateway sends, so the setpoint is shown as confirmed by the gateway, not by the boiler. Required: every write is checked against it, and a write the boiler ignores or another controller overwrites is reported. The plugin's setpoint entity shows only a confirmed value, otherwise unknown. Picking the entity you write confirms nothing: the setpoint is then shown as unverified. Not used with a relay: its own state confirms it. On EMS-ESP pick its selected flow temperature (selflowtemp), the entity you write: EMS-ESP fills it from the boiler's own report, but the plugin cannot tell that, so the setpoint shows as unverified.",
-          "ch_confirmed_entity": "Optional: an entity that reports whether the boiler receives heating enabled — e.g. the gateway's \"Central heating 1\" on its boiler device that reads On/Off: what the gateway sends. Not the one that reads Running/Not running: that is the boiler's own status, which goes off during hot water and would look like another controller. With it, heating on/off is checked like the setpoint: a switch the boiler ignores is reported, and one another controller changes is written again once, then every write stops. Without it, heating on/off is shown as unverified and another controller switching it goes unnoticed. Picking the entity you write, or the thermostat's request instead of what the boiler receives, confirms nothing or stops control. Pick an entity that reports a change within about a minute: a slower one delays noticing a change, and one slower than 5 min can make the plugin wrongly step aside.",
-          "thermostat_setpoint_entity": "Optional, for a gateway with an OpenTherm thermostat: the water temperature the thermostat itself asks for (with opentherm_gw, the thermostat device's \"Control setpoint 1\"), not the boiler's read-back. When the boiler falls back to it after an outage, the plugin sends its command again instead of taking it for another controller. It also shows the hand-back as done when the gateway passes the thermostat's request on — the OTGW firmware over MQTT then never shows 0, so without this field a hand-back to a thermostat asking for the lowest water temperature or the plugin's last value is never confirmed. Empty (default): only the value from before the plugin counts.",
-          "restart_entity": "Optional: a sensor of the gateway or boiler interface that shows its restarts — an uptime that starts again from a low value, a restart counter that goes up, or a boot time (for example the OTGW firmware's reboot count, or an EMS-ESP or ESPHome uptime sensor). A restart it shows counts for 5 minutes as a trace of an outage: the boiler falling back to its own value then is taken as a lost command and simply sent again. Empty (default): a restart is seen only when the device's entities go unavailable, and a quick restart that shows nothing is judged as a fall-back without a trace — the first within an hour is still sent again, but a second may be taken for another controller, and the plugin steps aside."
+          "ch_confirmed_entity": "Optional: an entity that reports whether the boiler receives heating enabled — e.g. the gateway's \"Central heating 1\" on its boiler device that reads On/Off: what the gateway sends. Not the one that reads Running/Not running: that is the boiler's own status, which goes off during hot water and would look like another controller. With it, heating on/off is checked like the setpoint: a switch the boiler ignores is reported, and one another controller changes is written again once, then every write stops. Without it, heating on/off is shown as unverified and another controller switching it goes unnoticed. Picking the entity you write, or the thermostat's request instead of what the boiler receives, confirms nothing or stops control. Pick an entity that reports a change within about a minute: a slower one delays noticing a change, and one slower than 5 min can make the plugin wrongly step aside."
         }
       },
       "control_entity": {
@@ -896,28 +882,6 @@
           "hand_back_timeout_min": "For the timeout method: how long, in minutes, the device keeps the last value it was given before it returns to its own control — take it from the device's documentation (1 to 60; default 1, EMS-ESP's flow setpoint lapses within about a minute). Every hand-back writes the lowest water temperature first, so the boiler stays at it for this long. The hand-back is judged only after it — back at the value from before control, or at a value of the device's own — and \"hand-back failed\" comes 3 minutes after it. Too short: a false alarm while the device still holds the lowest; too long: a device that never lets go is reported late. Not used with the other methods.",
           "own_room_controller": "Tick only if the boiler has a room controller of its own that asks for heat by itself once the plugin lets go — for example a room unit on the boiler's bus (EMS). If Versatile Thermostat gives no answer at all, the plugin then hands the boiler back to it; without the tick the boiler does not heat, and an alarm and a repair notice tell you why. Every other hand-back also goes to that controller. With a relay it counts only when the relay's state after hand-back is \"on\"; with \"off\", the boiler does not heat when Versatile Thermostat gives no answer. Off by default. Risk: without such a controller, the boiler would be left on its own dial, heating with no room in charge.",
           "esphome_safe_start": "Required for control on ESPHome; never ticked for you. The ESP keeps the last setpoint and heating on until it restarts — by default after 15 minutes without Home Assistant (its API reboot_timeout) — then takes its configured start values. Tick only once the ESP's configuration starts the setpoint and the heating switch at values that are safe with nobody controlling them (heating off, or a moderate water temperature), with restore_value off, and its reboot_timeout is a few minutes (the user guide has a sample). Unticked, control does not start."
-        }
-      },
-      "control_gateway": {
-        "title": "OpenTherm Gateway",
-        "description": "The gateway set up in Home Assistant's OpenTherm Gateway integration.",
-        "data": {
-          "gateway_id": "Gateway ID"
-        },
-        "data_description": {
-          "gateway_id": "The gateway set up in the OpenTherm Gateway integration; only gateways set up and enabled there are offered. The control setpoint is repeated every 30 s; on hand-back it is set to 0, which returns control to the thermostat, or ends heating without one. Heating on/off (CH=) is kept by the gateway until it changes or the gateway restarts; the plugin sends it again with the control setpoint, every 30 s, and when the gateway returns. Pick the gateway on this boiler: another one would get the plugin's commands, and this boiler none."
-        }
-      },
-      "control_mqtt": {
-        "title": "OTGW firmware over MQTT",
-        "description": "Commands are published on the topic prefix/set/node/command, with the prefix and node name given below. Heating on/off (CH=) is kept by the gateway until it changes or the gateway restarts; the plugin sends it again with the control setpoint, every 30 s, and when the gateway returns.",
-        "data": {
-          "mqtt_top": "Topic prefix",
-          "mqtt_node": "Node name"
-        },
-        "data_description": {
-          "mqtt_top": "The MQTT topic prefix set in the OTGW firmware. Default OTGW.",
-          "mqtt_node": "The node name set in the OTGW firmware. A wrong prefix or node name sends commands nowhere; the read-back then reports them as ignored."
         }
       },
       "control_curve": {
@@ -1185,7 +1149,9 @@
       "invalid_connection": "This version cannot read an answer about the boiler's connection, heat source, type or control mode: choose it again.",
       "path_not_for_control_mode": "Monitoring only is chosen: only \"No control\" fits. Change the control mode under \"Control mode\" first.",
       "path_not_for_connection": "The write path does not fit how the boiler is connected. Change the connection under \"Connection and boiler type\" first.",
-      "topology_not_for_connection": "ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: choose the virtual topology."
+      "topology_not_for_connection": "ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: choose the virtual topology.",
+      "interface_not_answered": "Answer \"Boiler interface\" first: how the gateway sits between thermostat and boiler, and what is on its thermostat terminals, must suit this write path.",
+      "connection_not_answered": "Answer \"Connection and boiler type\" first, then \"Boiler interface\": the interface's questions follow the connection."
     }
   },
   "selector": {
@@ -1229,7 +1195,6 @@
       "options": {
         "gateway_with_thermostat": "Gateway with a thermostat",
         "gateway_standalone": "Gateway without a thermostat (stand-alone)",
-        "monitor_mode": "Gateway in monitor mode",
         "virtual": "Virtual: a controller on the Home Assistant side"
       }
     },
@@ -2837,10 +2802,10 @@
       "message": "Choose how control is handed back to the boiler: a value, the device's own timeout or a switch. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_gateway": {
-      "message": "Enter the OpenTherm Gateway ID. Other reasons: {count} (all are listed on the control state)."
+      "message": "Pick the OpenTherm Gateway under \"Boiler interface\". Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_mqtt_topic": {
-      "message": "Enter the gateway's MQTT topic prefix and node name. Other reasons: {count} (all are listed on the control state)."
+      "message": "Enter the gateway's MQTT topic prefix and node name under \"Boiler interface\". Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_mqtt_topic_invalid": {
       "message": "Enter the gateway's MQTT topic prefix and node name as its firmware uses them, without spaces or the wildcards + and #. Other reasons: {count} (all are listed on the control state)."
@@ -2933,7 +2898,7 @@
       "message": "One entity feeds two signals, so the later one is not used. Pick another entity for it in the signals options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_topology_not_for_path": {
-      "message": "The gateway connection does not suit the write path: choose another in the options. Other reasons: {count} (all are listed on the control state)."
+      "message": "The gateway connection does not suit the write path: choose another under \"Boiler interface\". Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_heating_switch": {
       "message": "Control needs a heating switch that the boiler does not store in its memory. Without one, \"off\" would be a low setpoint, and whether that stops the boiler and its pump is not known yet — except on EMS-ESP, whose own setpoint 0 switches heating off. The monitor keeps running. Other reasons: {count} (all are listed on the control state)."
@@ -2969,10 +2934,10 @@
       "message": "An on/off contact is wired to the gateway's thermostat terminals: the gateway's \"heating off\" would block it after a Home Assistant crash, so control is not offered. The monitor keeps running. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_thermostat_kind_unknown": {
-      "message": "Control waits until you say, in the control options, what is wired to the gateway's thermostat terminals. Other reasons: {count} (all are listed on the control state)."
+      "message": "Control waits until you say, under \"Boiler interface\", what is wired to the gateway's thermostat terminals. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_thermostat_kind_dont_know": {
-      "message": "Control waits: the control options say \"I don't know\" about what is wired to the gateway's thermostat terminals. Check the wiring and give the answer there. Other reasons: {count} (all are listed on the control state)."
+      "message": "Control waits: \"Boiler interface\" says \"I don't know\" about what is wired to the gateway's thermostat terminals. Check the wiring and give the answer there. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_thermostat_kind_contradicts_topology": {
       "message": "This answer does not fit the gateway connection: an OpenTherm thermostat means \"Gateway with a thermostat\", nothing means stand-alone. Pick the other connection. Other reasons: {count} (all are listed on the control state)."
@@ -3020,7 +2985,7 @@
       "message": "The control set up writes through another path than the boiler's connection now: answer the control steps again for the connection chosen under \"Connection and boiler type\". Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_topology_not_for_connection": {
-      "message": "ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: the control step's topology must be virtual. Other reasons: {count} (all are listed on the control state)."
+      "message": "ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: the topology under \"Boiler interface\" must be virtual. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_esphome_start_not_confirmed": {
       "message": "Not confirmed that the ESP starts at safe values with a short API reboot_timeout: the ESP would keep the last setpoint and heating on for up to its reboot_timeout (15 minutes by default) if Home Assistant stopped. Tick it in the control step once the ESP is set up so. Other reasons: {count} (all are listed on the control state)."
@@ -3187,7 +3152,7 @@
     },
     "thermostat_kind_missing": {
       "title": "Say what is wired to the gateway's thermostat terminals",
-      "description": "Control of the boiler waits for the answer to a new question in the control options: what is wired to the gateway's thermostat terminals. Without a thermostat (stand-alone) the boiler does not heat meanwhile."
+      "description": "Control of the boiler waits for the answer to a question under \"Boiler interface\": what is wired to the gateway's thermostat terminals. Without a thermostat (stand-alone) the boiler does not heat meanwhile."
     },
     "wall_thermostat_fallback": {
       "title": "The wall thermostat would keep the house cool after a hand-back",

@@ -75,12 +75,39 @@ async def step(hass: HomeAssistant, result: dict[str, Any], data: dict[str, Any]
 
 
 async def through_menu(hass: HomeAssistant, result: dict[str, Any]) -> dict[str, Any]:
-    if result["type"] is not FlowResultType.MENU:
-        return result
-    choice = "finish" if "finish" in result["menu_options"] else "incomplete"
-    return await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"next_step_id": choice}
-    )
+    """The menu passed as the wizard went; the "Boiler interface" item (I8, decision D2), which
+    the steps before it did not have, answered on the way (``answer_interface``)."""
+    while result["type"] is FlowResultType.MENU:
+        choice = "finish" if "finish" in result["menu_options"] else "incomplete"
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"next_step_id": choice}
+        )
+        if result.get("step_id") != "interface" or result.get("errors"):
+            break
+        result = await answer_interface(hass.config_entries.flow, result)
+    return result
+
+
+async def answer_interface(flow: Any, result: dict[str, Any]) -> dict[str, Any]:
+    """The "Boiler interface" answered as the tests before it had the control step's: virtual
+    where the connection allows it, else a gateway with an OpenTherm thermostat; the first
+    gateway offered; the firmware's node ``n1``."""
+    schema = {str(marker): validator for marker, validator in result["data_schema"].schema.items()}
+    answer: dict[str, Any] = {}
+    if "topology" in schema:
+        offered = schema["topology"].config["options"]
+        answer["topology"] = "virtual" if "virtual" in offered else "gateway_with_thermostat"
+    if "gateway_id" in schema:
+        options = getattr(schema["gateway_id"], "config", {}).get("options") or ["gw"]
+        answer["gateway_id"] = options[0]
+    if "mqtt_node" in schema:
+        answer["mqtt_node"] = "n1"
+    result = await flow.async_configure(result["flow_id"], answer)
+    if result.get("step_id") == "interface" and not result.get("errors"):
+        result = await flow.async_configure(
+            result["flow_id"], answer | {"thermostat_kind": "opentherm"}
+        )
+    return result
 
 
 # The setup's first panels (I6.1) answered for an installation as the tests before them had it.
@@ -380,16 +407,95 @@ def control_switch(hass: HomeAssistant, entry_id: str) -> str | None:
     return er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{entry_id}_control")
 
 
+# I8 (decision D2): what the control step's answer held before the "Boiler interface" item, and
+# the steps after it that asked the gateway and the firmware's topics.
+INTERFACE_ANSWER_KEYS = (
+    "topology",
+    "thermostat_kind",
+    "thermostat_setpoint_entity",
+    "restart_entity",
+)
+LATER_INTERFACE_KEYS = {"gateway_id", "mqtt_top", "mqtt_node"}
+CONNECTION_FOR_PATH = {
+    "opentherm_gw": "opentherm_gw",
+    "otgw_mqtt": "otgw_mqtt",
+    "entity": "other_entity",
+    "relay": "relay",
+}
+
+
 async def options_step(hass: HomeAssistant, result: dict[str, Any], data: dict[str, Any]):
     """One answer in the options. I7: an answer that ends a section returns the menu, where
     "Save and finish" is chosen at once — each test edits one section, as each section was saved
-    before the menu. A menu choice (``next_step_id``) goes as given."""
+    before the menu. A menu choice (``next_step_id``) goes as given.
+
+    I8 (decision D2): a control-step answer written before the "Boiler interface" item — with
+    its topology, thermostat answers or restart indicator — has them answered in that item and
+    saved first (``interface_first``), then goes on in a new flow without them; the gateway's
+    or the firmware's topics' answer of the step that followed is the interface's now, and
+    passes."""
+    if (
+        result.get("step_id") == "control"
+        and data.get("write_path") not in (None, "none")
+        and any(key in data for key in INTERFACE_ANSWER_KEYS)
+    ):
+        result = await interface_first(hass, result, data)
+        data = {k: v for k, v in data.items() if k not in INTERFACE_ANSWER_KEYS}
+    elif result.get("step_id") != "interface" and data and set(data) <= LATER_INTERFACE_KEYS:
+        return result
     result = await hass.config_entries.options.async_configure(result["flow_id"], data)
     if "next_step_id" in data or result["type"] is not FlowResultType.MENU:
         return result
     return await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "save"}
     )
+
+
+async def interface_first(
+    hass: HomeAssistant, result: dict[str, Any], data: dict[str, Any]
+) -> dict[str, Any]:
+    """The control-step answer's interface part answered in the "Boiler interface" item and
+    saved — the connection the path stands for first, where the entry was made before the
+    question (full control, or on/off for the relay); the one gateway set up, or the first; the
+    firmware's topics ``OTGW``/``otgw-1``. The control step opened again in a new flow."""
+    entry_id = result["handler"]
+    hass.config_entries.options.async_abort(result["flow_id"])
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    from custom_components.vtherm_smart_boiler.control_config import CONNECTION_PATH, Connection
+
+    path = data["write_path"]
+    stored = entry.options.get("boiler", {}).get("connection")
+    if stored is None or CONNECTION_PATH[Connection(stored)] != path:
+        # Made before the question, or another path picked: the connection that writes it.
+        await answer_panels(
+            hass,
+            entry_id,
+            CONNECTION_FOR_PATH[path],
+            "on_off" if path == "relay" else "full",
+            confirm=True,
+        )
+    configure = hass.config_entries.options.async_configure
+    menu = await hass.config_entries.options.async_init(entry_id)
+    if "interface" in menu["menu_options"]:
+        form = await configure(menu["flow_id"], {"next_step_id": "interface"})
+        answers = {k: data[k] for k in INTERFACE_ANSWER_KEYS if k in data}
+        answers |= {"mqtt_top": "OTGW", "mqtt_node": "otgw-1"}
+        for _ in range(3):  # shown again with the fields an answer reveals (A2)
+            if form["type"] is not FlowResultType.FORM or form.get("errors"):
+                break
+            shown = {str(m): v for m, v in form["data_schema"].schema.items()}
+            given = {k: v for k, v in answers.items() if k in shown}
+            if "gateway_id" in shown:
+                given["gateway_id"] = (shown["gateway_id"].config.get("options") or ["gw"])[0]
+            form = await configure(form["flow_id"], given)
+        assert form["type"] is FlowResultType.MENU, form
+        saved = await configure(form["flow_id"], {"next_step_id": "save"})
+        assert saved["type"] is FlowResultType.CREATE_ENTRY, saved
+        await hass.async_block_till_done()
+    else:
+        hass.config_entries.options.async_abort(menu["flow_id"])
+    return await open_control(hass, entry_id)
 
 
 async def open_control(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
@@ -418,7 +524,7 @@ async def test_control_through_the_gateway_at_the_simple_level(
             "ch_confirmed_entity": "binary_sensor.gw_central_heating",
         },
     )
-    assert result["step_id"] == "control_gateway"
+    assert result["step_id"] == "control_curve"  # the gateway is the interface's (I8, D2)
     result = await options_step(hass, result, {"gateway_id": "living_room_gw"})
     assert result["step_id"] == "control_curve"
     assert "exponent" not in result["data_schema"].schema  # advanced only
@@ -536,7 +642,7 @@ async def test_control_at_the_advanced_level_and_back(
             "confirmed_entity": "sensor.fake_boiler_ch_setpoint",
         },
     )
-    assert result["step_id"] == "control_mqtt"
+    assert result["step_id"] == "control_curve"  # the topics are the interface's (I8, D2)
     result = await options_step(hass, result, {"mqtt_top": "OTGW", "mqtt_node": "otgw-1"})
     assert result["step_id"] == "control_curve"
     result = await options_step(
@@ -595,12 +701,13 @@ async def test_control_at_the_advanced_level_and_back(
     assert "alarm_reactions" not in control
     assert control["curve"] == {"design_flow": 55}
 
-    # "No control" removes the section.
+    # "No control" removes control; the interface's answers stay (I8, decision D2).
     result = await open_control(hass, entry_id)
     result = await options_step(hass, result, {"write_path": "none"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
-    assert "control" not in hass.config_entries.async_get_entry(entry_id).options
+    kept = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert set(kept) <= {"topology", "thermostat_kind", "thermostat_setpoint_entity"}
     assert control_switch(hass, entry_id) is None  # its entities are removed too
 
 
@@ -839,18 +946,32 @@ async def test_the_switch_hand_backs_return_is_its_own_opt_in(
 async def test_the_thermostats_own_setpoint_is_not_the_read_back(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    """The optional field for an OpenTherm thermostat's own request is refused where it is the
-    setpoint read-back; the optional restart indicator is kept (Q3.7)."""
+    """The optional field for an OpenTherm thermostat's own request, in the "Boiler interface"
+    item (I8, decision D2), is refused where it is the setpoint read-back — and the read-back
+    where it is the thermostat's request; the optional restart indicator is kept (Q3.7)."""
     hass.states.async_set("sensor.thermostat_ch_setpoint", "40", {"device_class": "temperature"})
     hass.states.async_set("sensor.gateway_reboot_count", "3")
     entry_id = await create_entry(hass, entities, "simple", ("living",))
     result = await open_control(hass, entry_id)
-    control = MQTT_CONTROL | {
+    control = MQTT_CONTROL | {"topology": "gateway_with_thermostat", "thermostat_kind": "opentherm"}
+    result = await options_step(hass, result, control)  # the interface answered first
+    result = await options_step(
+        hass, result, {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_max": 70}
+    )
+    if result.get("step_id") == "control_alarms":
+        result = await options_step(hass, result, {"write_ignored": "info"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    result = await open_interface(hass, entry_id)
+    interface = {
+        "mqtt_top": "OTGW",
+        "mqtt_node": "otgw-1",
         "topology": "gateway_with_thermostat",
         "thermostat_kind": "opentherm",
     }
+    stored = hass.config_entries.async_get_entry(entry_id).options["control"]
     result = await options_step(
-        hass, result, control | {"thermostat_setpoint_entity": control["confirmed_entity"]}
+        hass, result, interface | {"thermostat_setpoint_entity": stored["confirmed_entity"]}
     )
     assert result["errors"] == {
         "thermostat_setpoint_entity": "thermostat_setpoint_same_as_read_back"
@@ -858,24 +979,24 @@ async def test_the_thermostats_own_setpoint_is_not_the_read_back(
     result = await options_step(
         hass,
         result,
-        control
+        interface
         | {
             "thermostat_setpoint_entity": "sensor.thermostat_ch_setpoint",
             "restart_entity": "sensor.gateway_reboot_count",
         },
     )
-    assert result["step_id"] == "control_mqtt"
-    result = await options_step(hass, result, {"mqtt_top": "OTGW", "mqtt_node": "otgw-1"})
-    result = await options_step(
-        hass, result, {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_max": 70}
-    )
-    assert result["step_id"] == "control_alarms"  # a thermostat takes over (Y1)
-    result = await options_step(hass, result, {"write_ignored": "info"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     options = hass.config_entries.async_get_entry(entry_id).options["control"]
     assert options["thermostat_setpoint_entity"] == "sensor.thermostat_ch_setpoint"
     assert options["restart_entity"] == "sensor.gateway_reboot_count"
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {"write_path": "otgw_mqtt", "confirmed_entity": "sensor.thermostat_ch_setpoint"},
+    )
+    assert result["errors"] == {"confirmed_entity": "thermostat_setpoint_same_as_read_back"}
 
 
 @pytest.mark.parametrize(
@@ -1206,63 +1327,92 @@ async def test_hidden_settings_are_those_that_differ_from_defaults(
 async def test_control_needs_a_read_back_and_a_topology_that_suits_the_path(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    """P74, P85: an incomplete control configuration is refused where it is entered."""
+    """P74, P85: an incomplete control configuration is refused where it is entered — the
+    read-back on the control step; the topology in the "Boiler interface" item, which offers
+    only those the path can control through (I8, decision D2) — and the control step says when
+    the interface is not answered for its path."""
+    from custom_components.vtherm_smart_boiler.config_flow import interface_answers_problem
+    from custom_components.vtherm_smart_boiler.control_config import Connection, WritePath
+
     hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
     entry_id = await create_entry(hass, entities, "simple", ("living",))
+    await answer_panels(hass, entry_id, "opentherm_gw")
+    result = await open_control(hass, entry_id)
+    result = await options_step(hass, result, {"write_path": "opentherm_gw"})
+    assert result["errors"] == {"confirmed_entity": "confirmed_entity_missing"}
     read_back = {"confirmed_entity": "sensor.gw_control_setpoint"}
-    for answer, error in (
-        ({"write_path": "opentherm_gw", "topology": "gateway_with_thermostat"},
-         {"confirmed_entity": "confirmed_entity_missing"}),
-        ({"write_path": "opentherm_gw"} | read_back, {"topology": "topology_missing"}),
-        ({"write_path": "opentherm_gw", "topology": "virtual"} | read_back,
-         {"topology": "topology_not_for_path"}),
-        ({"write_path": "entity", "topology": "monitor_mode"} | read_back,
-         {"topology": "topology_no_control"}),
-    ):  # fmt: skip
-        result = await open_control(hass, entry_id)
-        result = await options_step(hass, result, answer)
-        assert result["step_id"] == "control"
-        assert result["errors"] == error, answer
+    result = await options_step(hass, result, {"write_path": "opentherm_gw"} | read_back)
+    assert result["errors"] == {"base": "interface_not_answered"}
+    result = await open_interface(hass, entry_id)
+    assert select_options(result, "topology") == ["gateway_standalone", "gateway_with_thermostat"]
+    gateway, entity = WritePath.OPENTHERM_GW, WritePath.ENTITY
+    assert interface_answers_problem({}, gateway, None) == "topology_missing"
+    assert interface_answers_problem({"topology": "virtual"}, gateway, None) == (
+        "topology_not_for_path"
+    )
+    assert interface_answers_problem({"topology": "monitor_mode"}, entity, None) == (
+        "topology_no_control"
+    )
+    standalone = {"topology": "gateway_standalone", "thermostat_kind": "none"}
+    assert interface_answers_problem(standalone, entity, Connection.ESPHOME) == (
+        "topology_not_for_connection"
+    )
+    assert interface_answers_problem({"topology": "gateway_standalone"}, gateway, None) == (
+        "thermostat_kind_missing"
+    )
+    contradicting = {"topology": "gateway_standalone", "thermostat_kind": "opentherm"}
+    assert interface_answers_problem(contradicting, gateway, None) == (
+        "thermostat_kind_contradicts_topology"
+    )
+    assert interface_answers_problem(standalone, gateway, None) is None
 
 
 async def test_the_gateway_and_the_mqtt_topics_are_checked(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    """P79: a gateway ID no OpenTherm Gateway has, or an MQTT topic with wildcards or spaces,
-    would make every write fail. The gateway field offers the gateways set up, and takes no
-    other value (P-106)."""
+    """P79, in the "Boiler interface" item (I8, decision D2): a gateway ID no OpenTherm Gateway
+    has, or an MQTT topic with wildcards or spaces, would make every write fail. With two
+    gateways set up the field offers them and takes no other value (P-106); spaces around a
+    valid topic are dropped, not published to (H10), and the topics are stored once, with the
+    connection."""
     from homeassistant.data_entry_flow import InvalidData
 
     loaded_gateway(hass, "living_room_gw")
-    hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
+    loaded_gateway(hass, "other_gw")
     entry_id = await create_entry(hass, entities, "simple", ("living",))
-    base = {
-        "topology": "gateway_with_thermostat",
-        "thermostat_kind": "opentherm",
-        "confirmed_entity": "sensor.gw_control_setpoint",
-    }
-    result = await open_control(hass, entry_id)
-    result = await options_step(hass, result, {"write_path": "opentherm_gw"} | base)
+    await answer_panels(hass, entry_id, "opentherm_gw")
+    result = await open_interface(hass, entry_id)
     with pytest.raises(InvalidData):
-        await options_step(hass, result, {"gateway_id": "no_such_gateway"})
-    result = await open_control(hass, entry_id)
-    result = await options_step(hass, result, {"write_path": "otgw_mqtt"} | base)
+        await options_step(
+            hass, result, {"gateway_id": "no_such_gateway", "topology": "gateway_standalone"}
+        )
+    await answer_panels(hass, entry_id, "otgw_mqtt")
+    result = await open_interface(hass, entry_id)
+    standalone = {"topology": "gateway_standalone"}
+    result = await options_step(hass, result, {"mqtt_top": "OTGW", "mqtt_node": "x"} | standalone)
+    assert result["step_id"] == "interface"  # shown again with the terminals' question (A2)
+    standalone["thermostat_kind"] = "none"
     for answer, error in (
         ({"mqtt_top": "OTGW/#", "mqtt_node": "otgw-1"}, {"mqtt_top": "mqtt_topic_invalid"}),
         ({"mqtt_top": "OTGW", "mqtt_node": "otgw 1"}, {"mqtt_node": "mqtt_topic_invalid"}),
         ({"mqtt_top": "OTGW", "mqtt_node": " "}, {"mqtt_node": "mqtt_topic_invalid"}),
     ):
-        result = await options_step(hass, result, answer)
+        result = await options_step(hass, result, answer | standalone)
         assert result["errors"] == error, answer
-    # H10: spaces around a valid topic are dropped, not published to.
-    result = await options_step(hass, result, {"mqtt_top": " OTGW ", "mqtt_node": "otgw-1 "})
-    assert result["step_id"] == "control_curve"
-    result = await options_step(hass, result, {"design_outdoor": -15, "design_flow": 55})
-    while result["type"] == "form":
-        result = await options_step(hass, result, {})
+    answer = {"mqtt_top": " OTGW ", "mqtt_node": "otgw-1 "} | standalone
+    result = await options_step(hass, result, answer)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done(wait_background_tasks=True)  # the reload it causes
-    control = hass.config_entries.async_get_entry(entry_id).options["control"]
-    assert (control["mqtt_top"], control["mqtt_node"]) == ("OTGW", "otgw-1")
+    options = hass.config_entries.async_get_entry(entry_id).options
+    assert (options["boiler"]["mqtt_top"], options["boiler"]["mqtt_node"]) == ("OTGW", "otgw-1")
+    assert "mqtt_top" not in options.get("control", {})
+
+
+async def open_interface(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
+    """I8 (decision D2): the "Boiler interface" item opened in the options."""
+    menu = await hass.config_entries.options.async_init(entry_id)
+    assert "interface" in menu["menu_options"]
+    return await options_step(hass, menu, {"next_step_id": "interface"})
 
 
 def test_editing_a_circuit_offers_the_next_one() -> None:
@@ -1409,7 +1559,7 @@ async def test_the_own_room_controller_tick_is_offered_on_the_entity_and_relay_p
 ) -> None:
     """Answers F and M: shown on the entity path with the virtual topology (X8 adds the relay
     path); not on either gateway path, nor on the entity path with a gateway topology."""
-    MockConfigEntry(domain="opentherm_gw", data={"id": "gw"}).add_to_hass(hass)
+    loaded_gateway(hass, "gw")
     hass.states.async_set("number.boiler_flow", "45", {"unit_of_measurement": "°C"})
     entry_id = await create_entry(hass, entities, "simple", ("living",))
 
@@ -1937,9 +2087,10 @@ async def test_off_must_stay_below_the_lowest_water_temperature_at_every_level(
 async def test_a_disabled_gateway_is_not_offered_and_mqtt_must_be_set_up(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    """P-69: a disabled ``opentherm_gw`` entry is not offered, and its ID typed gives
-    ``gateway_unknown``; one not running gives ``gateway_not_set_up``; the MQTT path needs the
-    MQTT integration running."""
+    """P-69, in the "Boiler interface" item (I8, decision D2): a disabled ``opentherm_gw`` entry
+    is not offered, and its ID typed gives ``gateway_unknown``; one not running gives
+    ``gateway_not_set_up``; the MQTT path needs the MQTT integration running — checked on the
+    control step, which writes through it."""
     from homeassistant.config_entries import ConfigEntryDisabler
 
     MockConfigEntry(
@@ -1947,35 +2098,34 @@ async def test_a_disabled_gateway_is_not_offered_and_mqtt_must_be_set_up(
     ).add_to_hass(hass)
     hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
     entry_id = await create_entry(hass, entities, "simple", ("living",))
-    base = {
-        "topology": "gateway_with_thermostat",
-        "thermostat_kind": "opentherm",
-        "confirmed_entity": "sensor.gw_control_setpoint",
-    }
-    result = await open_control(hass, entry_id)
-    result = await options_step(hass, result, {"write_path": "opentherm_gw"} | base)
-    assert result["step_id"] == "control_gateway"
+    await answer_panels(hass, entry_id, "opentherm_gw")
+    gateway = {"topology": "gateway_with_thermostat", "thermostat_kind": "opentherm"}
+    result = await open_interface(hass, entry_id)
     offered = next(v for m, v in result["data_schema"].schema.items() if str(m) == "gateway_id")
     assert offered is str  # nothing offered: the disabled gateway is not
-    result = await options_step(hass, result, {"gateway_id": "disabled_gw"})
+    topology = {"topology": "gateway_with_thermostat"}
+    result = await options_step(hass, result, {"gateway_id": "disabled_gw"} | topology)
+    assert result["step_id"] == "interface"  # shown again with the terminals' question
+    result = await options_step(hass, result, {"gateway_id": "disabled_gw"} | gateway)
     assert result["errors"] == {"gateway_id": "gateway_unknown"}
     idle = MockConfigEntry(domain="opentherm_gw", data={"id": "idle_gw"})  # not loaded
     idle.add_to_hass(hass)
-    result = await open_control(hass, entry_id)
-    result = await options_step(hass, result, {"write_path": "opentherm_gw"} | base)
+    loaded_gateway(hass, "other_gw")  # two: the field is asked
+    result = await open_interface(hass, entry_id)
     offered = next(v for m, v in result["data_schema"].schema.items() if str(m) == "gateway_id")
-    assert offered.config["options"] == ["idle_gw"]
-    result = await options_step(hass, result, {"gateway_id": "idle_gw"})
+    assert offered.config["options"] == ["idle_gw", "other_gw"]
+    result = await options_step(hass, result, {"gateway_id": "idle_gw"} | topology)
+    result = await options_step(hass, result, {"gateway_id": "idle_gw"} | gateway)
     assert result["errors"] == {"gateway_id": "gateway_not_set_up"}
     idle.mock_state(hass, ConfigEntryState.LOADED)
-    result = await options_step(hass, result, {"gateway_id": "idle_gw"})
-    assert result["step_id"] == "control_curve"
+    result = await options_step(hass, result, {"gateway_id": "idle_gw"} | gateway)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
     mqtt = hass.config_entries.async_entries("mqtt")[0]
     mqtt.mock_state(hass, ConfigEntryState.NOT_LOADED)
     result = await open_control(hass, entry_id)
-    result = await options_step(hass, result, {"write_path": "otgw_mqtt"} | base)
-    answer = {"mqtt_top": "OTGW", "mqtt_node": "otgw-1"}
-    result = await options_step(hass, result, answer)
+    answer = {"write_path": "otgw_mqtt", "confirmed_entity": "sensor.gw_control_setpoint"}
+    result = await options_step(hass, result, answer | gateway)
     assert result["errors"] == {"base": "mqtt_not_set_up"}
     mqtt.mock_state(hass, ConfigEntryState.LOADED)
     result = await options_step(hass, result, answer)
@@ -2153,14 +2303,93 @@ async def test_curve_cross_field_checks(
         assert result["errors"] == errors
 
 
-def test_the_gateway_field_takes_no_custom_value() -> None:
-    """P-106: a gateway the integration does not know was always refused: none can be typed."""
-    from custom_components.vtherm_smart_boiler.config_flow import control_gateway_schema
+@pytest.mark.parametrize(
+    ("boiler", "control", "fields"),
+    [
+        # Monitoring only: the topics, which the plugin listens to, and nothing else.
+        ({"connection": "otgw_mqtt", "control_mode": "monitor"}, {}, ["mqtt_top", "mqtt_node"]),
+        ({"connection": "opentherm_gw", "control_mode": "monitor"}, {}, []),
+        ({"connection": "read_only", "control_mode": "monitor"}, {}, []),
+        # Control wanted: the topology where the connection does not decide it, and what a
+        # gateway topology reveals; the restart indicator.
+        (
+            {"connection": "opentherm_gw", "control_mode": "full"},
+            {},
+            ["topology", "restart_entity"],
+        ),
+        (
+            {"connection": "otgw_mqtt", "control_mode": "full"},
+            {"topology": "gateway_with_thermostat"},
+            ["mqtt_top", "mqtt_node", "topology", "thermostat_kind",
+             "thermostat_setpoint_entity", "restart_entity"],
+        ),
+        (
+            {"connection": "other_entity", "control_mode": "full"},
+            {"topology": "gateway_standalone"},
+            ["topology", "thermostat_kind", "restart_entity"],
+        ),
+        ({"connection": "esphome", "control_mode": "full"}, {}, ["restart_entity"]),
+        ({"connection": "ems_esp", "control_mode": "full"}, {}, ["ems_esp_base", "restart_entity"]),
+        ({"connection": "relay", "control_mode": "on_off"}, {}, ["restart_entity"]),
+        # An entry made before the question: its write path stands for the connection.
+        ({}, {"write_path": "entity"}, ["topology", "restart_entity"]),
+        ({}, {}, []),
+    ],
+)  # fmt: skip
+def test_the_interface_asks_what_the_connection_and_mode_use(
+    boiler: dict[str, Any], control: dict[str, Any], fields: list[str]
+) -> None:
+    """I8 (decision D2, A3): the "Boiler interface" item asks only what can work for the
+    connection and the control mode; with nothing to ask it is not on the menu."""
+    from custom_components.vtherm_smart_boiler.config_flow import interface_fields, section_shown
 
-    schema = control_gateway_schema({}, ["gw"])
+    options = {"boiler": boiler, "control": control}
+    assert interface_fields(options) == fields
+    assert section_shown(options, "interface") is bool(fields)
+
+
+def test_the_interface_answers_at_their_edges() -> None:
+    """I8 (decision D2): the one gateway set up but not running is named on the item; nothing to
+    store for an entry with neither connection nor control; topics not answered stay; an entry
+    whose boiler section holds nothing keeps none; a topology this version cannot read is no
+    answer."""
+    from custom_components.vtherm_smart_boiler.config_flow import (
+        apply_interface,
+        interface_answers_problem,
+        interface_error,
+    )
+    from custom_components.vtherm_smart_boiler.control_config import WritePath
+
+    gateway = {"boiler": {"connection": "opentherm_gw", "control_mode": "full"}}
+    answer = {"topology": "gateway_standalone", "thermostat_kind": "none"}
+    assert interface_error(gateway, answer, ["gw"], set()) == {"base": "gateway_not_set_up"}
+    assert interface_error(gateway, answer, ["gw"], {"gw"}) == {}
+    nothing: dict[str, Any] = {}
+    apply_interface(nothing, {"restart_entity": "sensor.x"}, [])
+    assert nothing == {}
+    mqtt: dict[str, Any] = {"boiler": {"connection": "otgw_mqtt", "mqtt_top": "GW"}}
+    apply_interface(mqtt, {}, [])
+    assert mqtt["boiler"] == {"connection": "otgw_mqtt", "mqtt_top": "GW"}
+    before: dict[str, Any] = {"control": {"write_path": "entity"}}
+    apply_interface(before, {"topology": "virtual"}, [])
+    assert "boiler" not in before
+    assert before["control"]["topology"] == "virtual"
+    unknown = {"topology": "a newer one"}
+    assert interface_answers_problem(unknown, WritePath.ENTITY, None) == "topology_missing"
+
+
+def test_the_gateway_field_takes_no_custom_value() -> None:
+    """P-106: a gateway the integration does not know was always refused: none can be typed —
+    in the "Boiler interface" item, which asks only where not exactly one is set up (I8, D2)."""
+    from custom_components.vtherm_smart_boiler.config_flow import interface_schema
+
+    options = {"boiler": {"connection": "opentherm_gw", "control_mode": "full"}}
+    schema = interface_schema(options, None, ["gw", "gw2"])
     field = next(v for m, v in schema.schema.items() if str(m) == "gateway_id")
     assert field.config["custom_value"] is False
-    assert field.config["options"] == ["gw"]
+    assert field.config["options"] == ["gw", "gw2"]
+    one = {str(m) for m in interface_schema(options, None, ["gw"]).schema}
+    assert "gateway_id" not in one
 
 
 async def test_a_circuit_with_zones_cannot_be_removed(
@@ -2530,24 +2759,20 @@ async def test_a_circuits_flow_sensor_is_checked_on_the_server(
 
 # --- X6: what is wired to the gateway's thermostat terminals (decision 1) ------------------------
 
-NEXT_STEP = {
-    "opentherm_gw": "control_gateway",
-    "otgw_mqtt": "control_mqtt",
-    "entity": "control_entity",
-}
 
-
-@pytest.mark.parametrize("path", sorted(NEXT_STEP))
+@pytest.mark.parametrize("connection", ["opentherm_gw", "otgw_mqtt", "other_entity"])
 async def test_the_thermostat_kind_is_asked_for_a_gateway(
-    hass: HomeAssistant, entities: dict[str, str], path: str
+    hass: HomeAssistant, entities: dict[str, str], connection: str
 ) -> None:
-    """Decision 1: both gateway topologies ask what is wired to the gateway's thermostat
-    terminals, on every write path that takes them — no answer is a form error, an answer that
-    contradicts the topology is refused with the hint to pick the other connection. An on/off
-    contact and "I don't know" are taken: control is then blocked, the monitor runs."""
-    hass.states.async_set("sensor.gw_control_setpoint", "40", {"unit_of_measurement": "°C"})
+    """Decision 1, in the "Boiler interface" item (I8, decision D2): both gateway topologies ask
+    what is wired to the gateway's thermostat terminals, on every connection that takes them —
+    the form shows itself again with the question (A2); no answer is a form error, an answer
+    that contradicts the topology is refused with the hint to pick the other connection. An
+    on/off contact and "I don't know" are taken: control is then blocked, the monitor runs."""
+    loaded_gateway(hass, "gw")  # the one gateway: taken without asking
     entry_id = await create_entry(hass, entities, "simple", ("living",))
-    first = {"write_path": path, "confirmed_entity": "sensor.gw_control_setpoint"}
+    await answer_panels(hass, entry_id, connection)
+    topics = {"mqtt_top": "OTGW", "mqtt_node": "otgw-1"} if connection == "otgw_mqtt" else {}
     missing = {"thermostat_kind": "thermostat_kind_missing"}
     contradicts = {"thermostat_kind": "thermostat_kind_contradicts_topology"}
     for answer, error in (
@@ -2556,9 +2781,10 @@ async def test_the_thermostat_kind_is_asked_for_a_gateway(
         ({"topology": "gateway_standalone", "thermostat_kind": "opentherm"}, contradicts),
         ({"topology": "gateway_with_thermostat", "thermostat_kind": "none"}, contradicts),
     ):
-        result = await open_control(hass, entry_id)
-        result = await options_step(hass, result, first | answer)
-        assert result["step_id"] == "control", answer
+        result = await open_interface(hass, entry_id)
+        result = await options_step(hass, result, topics | {"topology": answer["topology"]})
+        assert result["step_id"] == "interface", answer  # the question revealed
+        result = await options_step(hass, result, topics | answer)
         assert result["errors"] == error, answer
     for topology, kind in (
         ("gateway_with_thermostat", "opentherm"),
@@ -2566,18 +2792,30 @@ async def test_the_thermostat_kind_is_asked_for_a_gateway(
         ("gateway_with_thermostat", "on_off"),
         ("gateway_standalone", "unknown"),
     ):
-        result = await open_control(hass, entry_id)
-        answer = first | {"topology": topology, "thermostat_kind": kind}
+        result = await open_interface(hass, entry_id)
+        answer = topics | {"topology": topology}
         result = await options_step(hass, result, answer)
-        assert result["step_id"] == NEXT_STEP[path], answer
+        if result.get("step_id") == "interface":  # not stored yet: revealed
+            result = await options_step(hass, result, answer | {"thermostat_kind": kind})
+        else:
+            assert result["type"] is FlowResultType.CREATE_ENTRY
+            result = await open_interface(hass, entry_id)
+            result = await options_step(hass, result, answer | {"thermostat_kind": kind})
+        assert result["type"] is FlowResultType.CREATE_ENTRY, answer
+        await hass.async_block_till_done()
+        stored = hass.config_entries.async_get_entry(entry_id).options["control"]
+        assert stored["thermostat_kind"] == kind
 
 
 @pytest.mark.usefixtures("gateway")
 async def test_the_thermostat_kind_is_stored_with_a_gateway_and_offered_again(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    """The answer is stored in the control section and offered again as it was; one this version
-    cannot read is not offered (it must be answered again)."""
+    """The answer is stored in the control section and offered again as it was, in the "Boiler
+    interface" item (I8, decision D2); one this version cannot read is not offered (it must be
+    answered again)."""
+    from custom_components.vtherm_smart_boiler.config_flow import interface_schema
+
     entry_id = await create_entry(hass, entities, "simple", ("living",))
     result = await open_control(hass, entry_id)
     first = {
@@ -2587,7 +2825,6 @@ async def test_the_thermostat_kind_is_stored_with_a_gateway_and_offered_again(
         "confirmed_entity": "sensor.gw_control_setpoint",
     }
     result = await options_step(hass, result, first)
-    result = await options_step(hass, result, {"gateway_id": "living_room_gw"})
     result = await options_step(hass, result, CURVE_ANSWERS)
     assert result["step_id"] == "control_alarms"  # Y1: offered with a thermostat, at both levels
     result = await options_step(hass, result, {"write_ignored": "info"})
@@ -2596,12 +2833,12 @@ async def test_the_thermostat_kind_is_stored_with_a_gateway_and_offered_again(
     entry = hass.config_entries.async_get_entry(entry_id)
     assert entry is not None
     assert entry.options["control"]["thermostat_kind"] == "opentherm"
-    result = await open_control(hass, entry_id)
+    result = await open_interface(hass, entry_id)
     assert form_default(result, "thermostat_kind") == "opentherm"
-    from custom_components.vtherm_smart_boiler.config_flow import control_schema
-
-    garbled = {"control": {**entry.options["control"], "thermostat_kind": "a newer answer"}}
-    marker = next(m for m in control_schema(garbled).schema if str(m) == "thermostat_kind")
+    garbled = {**entry.options, "control": {**entry.options["control"], "thermostat_kind": "new"}}
+    marker = next(
+        m for m in interface_schema(garbled, None, ["gw"]).schema if str(m) == "thermostat_kind"
+    )
     assert not (marker.description or {}).get("suggested_value")
 
 
@@ -2620,25 +2857,19 @@ def test_a_topology_without_thermostat_terminals_drops_the_kind(
     topology: str | None, kept: bool
 ) -> None:
     """The virtual topology (and X8's relay path) has no thermostat terminals: an answer left
-    from a gateway topology is dropped when the step is saved."""
-    from custom_components.vtherm_smart_boiler.config_flow import apply_control
+    from a gateway topology is dropped when the "Boiler interface" item is saved (I8, D2)."""
+    from custom_components.vtherm_smart_boiler.config_flow import apply_interface
 
     options: dict[str, Any] = {
+        "boiler": {"connection": "other_entity", "control_mode": "full"},
         "control": {
             "write_path": "entity",
             "topology": "gateway_standalone",
             "thermostat_kind": "none",
-        }
-    }
-    apply_control(
-        options,
-        {
-            "write_path": "entity",
-            "topology": topology,
-            "thermostat_kind": "none",
-            "confirmed_entity": "sensor.x",
         },
-    )
+    }
+    answer = {"thermostat_kind": "none"} | ({"topology": topology} if topology else {})
+    apply_interface(options, answer, [])
     assert ("thermostat_kind" in options["control"]) is kept
 
 
@@ -4241,16 +4472,24 @@ async def answer_mode(
 
 
 async def answer_panels(
-    hass: HomeAssistant, entry_id: str, connection: str, mode: str = "full"
+    hass: HomeAssistant,
+    entry_id: str,
+    connection: str,
+    mode: str = "full",
+    *,
+    confirm: bool = False,
 ) -> None:
+    """The connection and the mode answered in the options; ``confirm``: an edit that would
+    keep the stored control from running is saved anyway (the other path picked next)."""
     menu = await hass.config_entries.options.async_init(entry_id)
     result = await options_step(hass, menu, {"next_step_id": "connection"})
     answers = {"connection": connection, "heat_source": "gas", "type": "single"}
     result = await options_step(hass, result, answers)
-    if result.get("step_id") == "mqtt_topics":  # I6.5: the MQTT connections' topics
-        topics = {"ems_esp_base": "ems-esp"} if connection == "ems_esp" else {"mqtt_node": "n1"}
-        result = await options_step(hass, result, topics)
+    if confirm and result.get("step_id") == "confirm_blocking":
+        result = await options_step(hass, result, {"save_anyway": True})
     result = await answer_mode(hass, entry_id, result, mode)
+    if confirm and result.get("step_id") == "confirm_blocking":
+        result = await options_step(hass, result, {"save_anyway": True})
     assert result["type"] is FlowResultType.CREATE_ENTRY, result
     await hass.async_block_till_done()
 
@@ -4293,21 +4532,29 @@ async def test_a_path_the_connection_does_not_take_is_refused() -> None:
 async def test_esphome_and_ems_esp_take_the_virtual_topology(
     hass: HomeAssistant, entities: dict[str, str], connection: str
 ) -> None:
-    """Decision 2: the virtual topology is suggested for a controller on Home Assistant's side,
-    and a gateway topology refused with the reason."""
+    """Decision 2, in the "Boiler interface" item (I8, decision D2): a controller on Home
+    Assistant's side is virtual — the item does not ask it, and its save stores it; a gateway
+    topology left from before is refused on the control step until the item is saved."""
     hass.states.async_set("sensor.read_back", "40", {"unit_of_measurement": "°C"})
     entry_id = await create_entry(hass, entities, "simple", ("living",), panels=True)
     await answer_panels(hass, entry_id, connection)
-    result = await open_control(hass, entry_id)
-    assert suggested(result, "topology") == "virtual"
+    entry = hass.config_entries.async_get_entry(entry_id)
+    left = {"topology": "gateway_with_thermostat", "thermostat_kind": "opentherm"}
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "control": left})
+    await hass.async_block_till_done()
     answer = {"write_path": "entity", "confirmed_entity": "sensor.read_back"}
-    refused = await options_step(
-        hass,
-        result,
-        answer | {"topology": "gateway_with_thermostat", "thermostat_kind": "opentherm"},
-    )
-    assert refused["errors"] == {"topology": "topology_not_for_connection"}
-    result = await options_step(hass, refused, answer | {"topology": "virtual"})
+    result = await open_control(hass, entry_id)
+    refused = await options_step(hass, result, answer)
+    assert refused["errors"] == {"base": "interface_not_answered"}
+    result = await open_interface(hass, entry_id)
+    assert "topology" not in {str(m) for m in result["data_schema"].schema}
+    result = await options_step(hass, result, {})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert control == {"topology": "virtual"}  # no terminals: the old answer dropped
+    result = await open_control(hass, entry_id)
+    result = await options_step(hass, result, answer)
     assert result["step_id"] == "control_entity"
 
 
@@ -4641,32 +4888,31 @@ async def test_an_electric_boiler_gets_no_unstable_ignition_alarm(
 async def test_an_mqtt_connection_asks_its_topics(
     hass: HomeAssistant, connection: str, answers: dict[str, str], stored: dict[str, str]
 ) -> None:
-    """Decision 9: after the OTGW firmware over MQTT or EMS-ESP, the topics it publishes under —
-    EMS-ESP's base "ems-esp" unless given; one with a wildcard is refused; spaces around a
-    level go."""
+    """Decision 9, in the "Boiler interface" item of the setup (I8, decision D2): with the OTGW
+    firmware over MQTT or EMS-ESP, the topics it publishes under — EMS-ESP's base "ems-esp"
+    unless given — asked with monitoring only too; one with a wildcard is refused; spaces
+    around a level go. Stored once, with the connection."""
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
     answer = {"connection": connection, "heat_source": "gas", "type": "single"}
     result = await step(hass, result, answer)
-    assert result["step_id"] == "mqtt_topics"
+    assert result["step_id"] == "mode"
+    result = await step(hass, result, {"control_mode": "monitor", "condensing": True})
+    result = await configure(hass, result, {"name": "Boiler", "level": "simple"})
+    assert "interface" in result["menu_options"]
+    result = await configure(hass, result, {"next_step_id": "interface"})
     if connection == "ems_esp":
         assert form_default(result, "ems_esp_base") == "ems-esp"
     else:
         assert form_default(result, "mqtt_top") == "OTGW"
         assert form_default(result, "mqtt_node") is None
+    assert "topology" not in {str(m) for m in result["data_schema"].schema}  # monitoring only
     key = next(iter(answers))
-    refused = await step(hass, result, answers | {key: "OTGW/#"})
+    refused = await configure(hass, result, answers | {key: "OTGW/#"})
     assert refused["errors"] == {key: "mqtt_topic_invalid"}
-    result = await step(hass, refused, answers)
-    assert result["step_id"] == "mode"
-    result = await step(hass, result, {"control_mode": "monitor", "condensing": True})
-    for data in (
-        {"name": "Boiler", "level": "simple"},
-        {},
-        {},
-        {"control": "unmixed_shared"},
-        {"zones": []},
-    ):
-        result = await step(hass, result, data)
+    result = await configure(hass, refused, answers)
+    assert result["type"] is FlowResultType.MENU
+    for data in ({}, {}, {"control": "unmixed_shared"}, {"zones": []}):
+        result = await step(hass, await through_menu(hass, result), data)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     boiler = result["options"]["boiler"]
     assert {k: boiler[k] for k in stored} == stored
@@ -4674,22 +4920,30 @@ async def test_an_mqtt_connection_asks_its_topics(
 
 
 def test_the_topics_of_a_connection_no_longer_chosen_go() -> None:
-    """A connection changed away from MQTT keeps no topics of it; the control step's own topics
-    are offered from the panel's where it has none."""
+    """A connection changed away from MQTT keeps no topics of it; the interface offers the
+    topics the writes use — a control section's own (a hand edit) first, then the
+    connection's — and its save leaves one copy, with the connection (I8.4b)."""
     from custom_components.vtherm_smart_boiler.config_flow import (
         apply_connection,
-        control_mqtt_schema,
-        mqtt_topics_schema,
+        apply_interface,
+        interface_schema,
     )
 
     options: dict[str, Any] = {
         "boiler": {"connection": "otgw_mqtt", "mqtt_top": "GW", "mqtt_node": "n1"},
-        "control": {"mqtt_node": "from-control"},
+        "control": {"write_path": "otgw_mqtt", "mqtt_node": "from-control"},
     }
-    defaults = {str(m): m.default() for m in control_mqtt_schema(options).schema}
-    assert defaults == {"mqtt_top": "GW", "mqtt_node": "from-control"}
-    shown = {str(m): m.default() for m in mqtt_topics_schema(options).schema}
-    assert shown == {"mqtt_top": "GW", "mqtt_node": "n1"}
+    shown = {
+        str(m): m.default()
+        for m in interface_schema(options).schema
+        if str(m) in ("mqtt_top", "mqtt_node")
+    }
+    assert shown == {"mqtt_top": "GW", "mqtt_node": "from-control"}  # what the writes use
+    apply_interface(
+        options, {"mqtt_top": "GW", "mqtt_node": "n2", "topology": "gateway_standalone"}, []
+    )
+    assert options["boiler"]["mqtt_node"] == "n2"
+    assert "mqtt_node" not in options["control"]
     apply_connection(options, {"connection": "esphome", "heat_source": "gas", "type": "single"})
     assert "mqtt_top" not in options["boiler"]
     assert "mqtt_node" not in options["boiler"]
@@ -4717,9 +4971,9 @@ async def test_a_freshness_limit_of_zero_is_saved_as_none(
 async def test_full_control_is_set_up_in_the_setup_and_starts_off(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    """Decision 11: with full control chosen, the setup goes through the control steps after
-    the building; the entry is made with its control section, the control switch off, and
-    its first start writes nothing and raises no "state cannot be read" notice."""
+    """Decision 11: with full control chosen, the setup goes through the "Boiler interface"
+    item and the control steps; the entry is made with its control section, the control switch
+    off, and its first start writes nothing and raises no "state cannot be read" notice."""
     from homeassistant.helpers import entity_registry as er
     from homeassistant.helpers import issue_registry as ir
 
@@ -4743,13 +4997,9 @@ async def test_full_control_is_set_up_in_the_setup_and_starts_off(
     assert result["step_id"] == "control"
     assert path_options(result) == ["none", "opentherm_gw"]
     for data in (
-        {
-            "write_path": "opentherm_gw",
-            "topology": "gateway_with_thermostat",
-            "thermostat_kind": "opentherm",
-            "confirmed_entity": "sensor.gw_control_setpoint",
-        },
-        {"gateway_id": "living_room_gw"},
+        # The topology and the terminals: the "Boiler interface" item, answered on the way
+        # (``through_menu``); the one gateway taken without asking (I8, decision D2).
+        {"write_path": "opentherm_gw", "confirmed_entity": "sensor.gw_control_setpoint"},
         {"design_outdoor": -18, "design_flow": 52, "hard_min": 25, "hard_max": 65},
         {"write_ignored": "info"},
     ):
@@ -4758,6 +5008,8 @@ async def test_full_control_is_set_up_in_the_setup_and_starts_off(
     await hass.async_block_till_done()
     entry = result["result"]
     assert entry.options["control"]["write_path"] == "opentherm_gw"
+    assert entry.options["control"]["gateway_id"] == "living_room_gw"
+    assert entry.options["control"]["topology"] == "gateway_with_thermostat"
     assert entry.options["control"]["curve"] == {"design_flow": 52}
     assert entry.options["parameters"]["design_outdoor"] == -18  # the building's (I6)
     switch = er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_control")

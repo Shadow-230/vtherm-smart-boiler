@@ -15,20 +15,6 @@
           "type": "Jednofunkcyjny (tylko ogrzewanie), z zasobnikiem ciepłej wody albo bez, lub dwufunkcyjny (ciepła woda grzana w trakcie poboru), z wbudowanym zasobnikiem albo bez; wymagane. Służy do odróżniania grzania ciepłej wody od ogrzewania: zły rodzaj liczy ciepłą wodę jako ogrzewanie albo odwrotnie."
         }
       },
-      "mqtt_topics": {
-        "title": "Tematy MQTT",
-        "description": "Tematy, pod którymi publikuje Twój interfejs kotła. Home Assistant zapisuje wartość encji MQTT tylko wtedy, gdy się zmienia, więc stała wartość wygląda na tak starą jak jej ostatnia zmiana; sam interfejs powtarza swoje wartości (firmware OTGW co najmniej co 60 s, EMS-ESP domyślnie co 10 s), a wtyczka słucha tych powtórzeń na tych tematach — tylko czyta — żeby widzieć, że dane kotła wciąż płyną. Według nich oceniane są tylko własne encje MQTT Twojego interfejsu.",
-        "data": {
-          "mqtt_top": "Główny temat OTGW",
-          "mqtt_node": "Węzeł OTGW",
-          "ems_esp_base": "Temat bazowy EMS-ESP"
-        },
-        "data_description": {
-          "mqtt_top": "„MQTT top topic” firmware'u (domyślnie OTGW); jego wartości są pod top/value/node/.",
-          "mqtt_node": "Węzeł albo unikalny identyfikator firmware'u, jak w jego ustawieniach MQTT. Zły oznacza, że wtyczka nic nie usłyszy i oceni sygnały tylko według zgłoszeń samego Home Assistant.",
-          "ems_esp_base": "„Base” w ustawieniach MQTT EMS-ESP (domyślnie ems-esp); dane kotła są pod base/boiler_data. Przy czasie publikacji kotła ustawionym na 0 (tylko przy zmianie) EMS-ESP nie powtarza wartości, a wtyczka ocenia je wtedy tylko według zgłoszeń samego Home Assistant."
-        }
-      },
       "mode": {
         "title": "Tryb sterowania",
         "description": "Co wtyczka ma robić z kotłem. Wybór trybu niczego nie włącza: sterowanie ma własny przełącznik, wyłączony, dopóki go nie włączysz.\n\n- **Pełne sterowanie** — wtyczka ustawia temperaturę wody według swojej krzywej i włącza oraz wyłącza grzanie razem ze strefami VT.\n- **Wł./wył. (przekaźnik)** — wtyczka włącza i wyłącza grzanie razem ze strefami VT; temperaturę wody kocioł ustawia sam.\n- **Tylko monitorowanie** — wtyczka odczytuje i raportuje, niczego nie zapisuje.\n\nPokazane są tylko tryby, na które pozwala Twoje połączenie.",
@@ -41,6 +27,30 @@
           "control_mode": "Wybierany świadomie, bez wartości domyślnej. Tylko monitorowanie zostawia sterowanie wyłączone, a przełącznik sterowania podaje ten powód.",
           "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych i są oceniane po tym, jak często kondensują; dla innych kotłów bezwzględny alarm spalin jest wyłączony, a kondensacja nie wpływa na werdykt. Zły wybór ostrzega za późno albo bez powodu i myli werdykt.",
           "dhw_priority": "Włączone (domyślnie): gdy kocioł grzeje ciepłą wodę, pomieszczenia nie dostają ciepła — tak jest zwykle w kotle dwufunkcyjnym i przy zasobniku ładowanym przez zawór trójdrożny. Wyłączone: ciepła woda i ogrzewanie działają równocześnie (bufor, zasobnik ładowany równolegle, priorytet ograniczony w czasie). Służy do oceny, kiedy pomieszczenia dostają ciepło: zły wybór wstrzymuje naukę stref bez potrzeby albo pozwala im się uczyć, gdy pomieszczenia nie dostają ciepła."
+        }
+      },
+      "interface": {
+        "title": "Interfejs kotła",
+        "description": "Co wtyczka musi wiedzieć o urządzeniu między nią a kotłem: jego tematy MQTT, bramkę, jak stoi między termostatem a kotłem i wskaźnik restartu. Pytamy tylko o to, czego używa Twoje połączenie i tryb sterowania.",
+        "data": {
+          "mqtt_top": "Główny temat OTGW",
+          "mqtt_node": "Węzeł OTGW",
+          "ems_esp_base": "Temat bazowy EMS-ESP",
+          "gateway_id": "Identyfikator bramki",
+          "topology": "Podłączenie bramki",
+          "thermostat_kind": "Co jest podłączone do zacisków termostatu bramki",
+          "thermostat_setpoint_entity": "Nastawa wody zadana przez termostat",
+          "restart_entity": "Wskaźnik restartu"
+        },
+        "data_description": {
+          "mqtt_top": "„MQTT top topic” firmware'u (domyślnie OTGW): jego wartości są pod top/value/node/, a polecenia wtyczki idą do top/set/node/. Włączenie/wyłączenie grzania (CH=) bramka trzyma do zmiany albo do swojego restartu; wtyczka wysyła je ponownie z nastawą sterującą co 30 s i po powrocie bramki.",
+          "mqtt_node": "Węzeł albo unikalny identyfikator firmware'u, jak w jego ustawieniach MQTT. Zły oznacza, że wtyczka nic nie słyszy, a jej polecenia nigdzie nie trafiają — odczyt zwrotny pokazuje je wtedy jako zignorowane.",
+          "ems_esp_base": "„Base” w ustawieniach MQTT EMS-ESP (domyślnie ems-esp); dane kotła są pod base/boiler_data. Przy czasie publikacji kotła ustawionym na 0 (tylko przy zmianie) EMS-ESP nie powtarza wartości, a wtyczka ocenia je wtedy tylko według zgłoszeń samego Home Assistant.",
+          "gateway_id": "Bramka skonfigurowana w integracji OpenTherm Gateway; proponowane są tylko bramki tam skonfigurowane i włączone. Nastawa sterowania jest powtarzana co 30 s; przy oddaniu sterowania ustawiana na 0, co oddaje sterowanie termostatowi, a bez termostatu kończy grzanie. Włączenie ogrzewania (CH=) bramka trzyma, dopóki się nie zmieni albo bramka nie uruchomi się ponownie; wtyczka wysyła je znowu razem z nastawą sterowania, co 30 s, i po powrocie bramki. Wybierz bramkę przy tym kotle: inna dostawałaby polecenia wtyczki, a ten kocioł żadnych.",
+          "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki. Utrata danych kotła podnosi alarm i oddaje sterowanie w każdej topologii — bez termostatu grzanie ustaje, dopóki dane nie wrócą. Z termostatem: gdy steruje wtyczka, nastawa ogrzewania termostatu ściennego i jego wyłącznik nic nie robią — ustawienia ciepłej wody nadal działają; po oddaniu sterowania albo gdy Home Assistant nie działa, termostat grzeje według własnej nastawy i programu, więc ustaw je tak, jak ma być w domu. Nieużywane przy przekaźniku: to, co robi oddanie sterowania, określa jego stan po oddaniu sterowania. W każdej topologii po oddaniu sterowania albo gdy Home Assistant nie działa, woda idzie za własnym maksimum kotła albo termostatu ściennego, a nie wtyczki: ustaw tam też maksimum podłogówki bez mieszacza. ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: wirtualna.",
+          "thermostat_kind": "Tylko dla bramki, z termostatem albo samodzielnej. Termostat OpenTherm: rozmawia z kotłem i może pokazywać temperaturę wody. Styk wł./wył.: prosty termostat lub włącznik na dwóch przewodach — bramka zamienia go w żądanie grzania, a „wyłączone ogrzewanie” wtyczki blokowałoby go po awarii Home Assistant, więc sterowanie nie jest dostępne. Nic: brak termostatu. Nie wiem: sterowanie nie jest dostępne, dopóki tego nie sprawdzisz. Z termostatem wybierz OpenTherm; bez termostatu wybierz Nic.",
+          "thermostat_setpoint_entity": "Opcjonalnie, dla bramki z termostatem OpenTherm: temperatura wody, o którą prosi sam termostat (w opentherm_gw „Control setpoint 1” urządzenia termostatu), nie odczyt zwrotny kotła. Gdy kocioł wróci do niej po przerwie, wtyczka wyśle swoje polecenie ponownie, zamiast uznać to za inny sterownik. Pokazuje też oddanie jako wykonane, gdy bramka przekazuje prośbę termostatu — oprogramowanie OTGW przez MQTT nigdy wtedy nie pokazuje 0, więc bez tego pola oddanie do termostatu proszącego o najniższą temperaturę wody albo o ostatnią wartość wtyczki nigdy nie zostanie potwierdzone. Puste (domyślnie): liczy się tylko wartość sprzed wtyczki.",
+          "restart_entity": "Opcjonalnie: czujnik bramki lub interfejsu kotła, który pokazuje jego restarty — czas pracy liczony od nowa, licznik restartów, który rośnie, albo czas uruchomienia (na przykład licznik restartów firmware OTGW albo czujnik czasu pracy EMS-ESP lub ESPHome). Pokazany przez niego restart liczy się przez 5 minut jako ślad przerwy: jeśli kocioł wróci wtedy do własnej wartości, wtyczka uzna to za utracone polecenie i po prostu wyśle je ponownie. Puste (domyślnie): restart widać tylko wtedy, gdy encje urządzenia stają się niedostępne, a szybki restart, który niczego nie pokazuje, jest oceniany jak powrót bez śladu przerwy — pierwszy w ciągu godziny wtyczka wyśle ponownie, ale drugi może zostać uznany za inny sterownik i wtyczka ustąpi."
         }
       },
       "name": {
@@ -61,6 +71,7 @@
         "menu_options": {
           "connection": "Połączenie i typ kotła",
           "mode": "Tryb sterowania",
+          "interface": "Interfejs kotła",
           "name": "Nazwa i poziom szczegółowości",
           "signals": "Sygnały kotła",
           "boiler": "Kocioł",
@@ -236,21 +247,13 @@
         "description": "Jak wtyczka steruje kotłem: zapisując nastawę zasilania albo włączając i wyłączając go przekaźnikiem. Dopóki nie włączysz sterowania, nic się nie zmienia: kocioł pracuje jak dotąd — pod kotłem centralnym Versatile Thermostat, termostatem ściennym albo własną automatyką — a wtyczka tylko obserwuje i raportuje. Po włączeniu zajmuje miejsce kotła centralnego VT (najpierw go usuń i uruchom ponownie Home Assistant): grzanie włącza się i wyłącza od razu razem ze strefami VT, a tam, gdzie wtyczka zapisuje temperaturę wody, idzie ona za Twoją krzywą, nigdy poniżej najniższej ani powyżej najwyższej temperatury wody; korekta komfortu, jeśli ją włączysz, dodaje najwyżej 3 K ponad krzywą. Sterowanie możesz włączyć od pierwszego dnia, nawet bez werdyktu: werdykt monitora pojawi się, gdy zbierze dość dni danych, a przełącznik sterowania go pokaże. Wybierz „Bez sterowania”, żeby tylko monitorować.",
         "data": {
           "write_path": "Ścieżka zapisu",
-          "topology": "Podłączenie bramki",
-          "thermostat_kind": "Co jest podłączone do zacisków termostatu bramki",
           "confirmed_entity": "Odczyt zwrotny nastawy",
-          "ch_confirmed_entity": "Odczyt zwrotny włączenia ogrzewania",
-          "thermostat_setpoint_entity": "Nastawa wody zadana przez termostat",
-          "restart_entity": "Wskaźnik restartu"
+          "ch_confirmed_entity": "Odczyt zwrotny włączenia ogrzewania"
         },
         "data_description": {
           "write_path": "Bez sterowania (domyślnie); wybrana przez ciebie encja do zapisu, np. liczba EMS-ESP albo ESPHome OpenTherm; bramka OpenTherm Gateway przez integrację OpenTherm Gateway w Home Assistant; albo polecenia MQTT firmware OTGW. Wybierz ścieżkę, którą naprawdę oferuje twój interfejs kotła: zła oznacza zapisy, które się nie udają albo trafiają donikąd. Przekaźnik, dla kotła wł./wył.: przełącznik na zaciskach termostatu pokojowego kotła albo encja termostatu kotła ustawiana na grzanie lub wyłączenie. Oferowane są tylko ścieżki pasujące do połączenia kotła i trybu sterowania.",
-          "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Tryb monitora: bramka tylko słucha i sterowanie jest niemożliwe. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki. Utrata danych kotła podnosi alarm i oddaje sterowanie w każdej topologii — bez termostatu grzanie ustaje, dopóki dane nie wrócą. Z termostatem: gdy steruje wtyczka, nastawa ogrzewania termostatu ściennego i jego wyłącznik nic nie robią — ustawienia ciepłej wody nadal działają; po oddaniu sterowania albo gdy Home Assistant nie działa, termostat grzeje według własnej nastawy i programu, więc ustaw je tak, jak ma być w domu. Nieużywane przy przekaźniku: to, co robi oddanie sterowania, określa jego stan po oddaniu sterowania. W każdej topologii po oddaniu sterowania albo gdy Home Assistant nie działa, woda idzie za własnym maksimum kotła albo termostatu ściennego, a nie wtyczki: ustaw tam też maksimum podłogówki bez mieszacza. ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: wirtualna.",
-          "thermostat_kind": "Tylko dla bramki, z termostatem albo samodzielnej. Termostat OpenTherm: rozmawia z kotłem i może pokazywać temperaturę wody. Styk wł./wył.: prosty termostat lub włącznik na dwóch przewodach — bramka zamienia go w żądanie grzania, a „wyłączone ogrzewanie” wtyczki blokowałoby go po awarii Home Assistant, więc sterowanie nie jest dostępne. Nic: brak termostatu. Nie wiem: sterowanie nie jest dostępne, dopóki tego nie sprawdzisz. Z termostatem wybierz OpenTherm; bez termostatu wybierz Nic.",
           "confirmed_entity": "Encja, która pokazuje nastawę odebraną przez kocioł, np. „Control setpoint 1” urządzenia kotła w bramce — pokazuje ona, co bramka wysyła, więc nastawa jest pokazywana jako potwierdzona przez bramkę, nie przez kocioł. Wymagana: każdy zapis jest z nią porównywany, a zapis zignorowany przez kocioł albo nadpisany przez inny sterownik zostaje zgłoszony. Encja nastawy wtyczki pokazuje tylko potwierdzoną wartość, w przeciwnym razie stan nieznany. Wybranie encji, do której się pisze, niczego nie potwierdza: nastawa jest wtedy pokazywana jako niezweryfikowana. Nieużywane przy przekaźniku: potwierdza go jego własny stan. Przy EMS-ESP wybierz jego wybraną temperaturę zasilania (selflowtemp), czyli encję, do której się pisze: EMS-ESP wypełnia ją na podstawie raportu samego kotła, ale wtyczka nie może tego sprawdzić, więc nastawa jest pokazywana jako niezweryfikowana.",
-          "ch_confirmed_entity": "Opcjonalnie: encja, która pokazuje, czy kocioł dostaje włączone grzanie — np. „Central heating 1” na urządzeniu kotła w bramce, ta ze stanem On/Off (Wł./Wył.): to, co wysyła bramka. Nie ta ze stanem Running/Not running (Działa/Nie działa): to własny stan kotła, który gaśnie podczas grzania wody użytkowej i wyglądałby jak inny sterownik. Z nią włączenie i wyłączenie grzania jest sprawdzane jak nastawa: zignorowane przez kocioł jest zgłaszane, a zmienione przez inny sterownik jest raz zapisane ponownie, po czym wszystkie zapisy ustają. Bez niej włączenie grzania jest pokazywane jako niepotwierdzone, a przełączenie go przez inny sterownik przejdzie niezauważone. Wybranie encji, do której zapisujesz, albo żądania termostatu zamiast tego, co dostaje kocioł, niczego nie potwierdza albo zatrzymuje sterowanie. Wybierz encję, która zgłasza zmianę mniej więcej w ciągu minuty: wolniejsza opóźnia zauważenie zmiany, a wolniejsza niż 5 min może sprawić, że wtyczka niesłusznie się wycofa.",
-          "thermostat_setpoint_entity": "Opcjonalnie, dla bramki z termostatem OpenTherm: temperatura wody, o którą prosi sam termostat (w opentherm_gw „Control setpoint 1” urządzenia termostatu), nie odczyt zwrotny kotła. Gdy kocioł wróci do niej po przerwie, wtyczka wyśle swoje polecenie ponownie, zamiast uznać to za inny sterownik. Pokazuje też oddanie jako wykonane, gdy bramka przekazuje prośbę termostatu — oprogramowanie OTGW przez MQTT nigdy wtedy nie pokazuje 0, więc bez tego pola oddanie do termostatu proszącego o najniższą temperaturę wody albo o ostatnią wartość wtyczki nigdy nie zostanie potwierdzone. Puste (domyślnie): liczy się tylko wartość sprzed wtyczki.",
-          "restart_entity": "Opcjonalnie: czujnik bramki lub interfejsu kotła, który pokazuje jego restarty — czas pracy liczony od nowa, licznik restartów, który rośnie, albo czas uruchomienia (na przykład licznik restartów firmware OTGW albo czujnik czasu pracy EMS-ESP lub ESPHome). Pokazany przez niego restart liczy się przez 5 minut jako ślad przerwy: jeśli kocioł wróci wtedy do własnej wartości, wtyczka uzna to za utracone polecenie i po prostu wyśle je ponownie. Puste (domyślnie): restart widać tylko wtedy, gdy encje urządzenia stają się niedostępne, a szybki restart, który niczego nie pokazuje, jest oceniany jak powrót bez śladu przerwy — pierwszy w ciągu godziny wtyczka wyśle ponownie, ale drugi może zostać uznany za inny sterownik i wtyczka ustąpi."
+          "ch_confirmed_entity": "Opcjonalnie: encja, która pokazuje, czy kocioł dostaje włączone grzanie — np. „Central heating 1” na urządzeniu kotła w bramce, ta ze stanem On/Off (Wł./Wył.): to, co wysyła bramka. Nie ta ze stanem Running/Not running (Działa/Nie działa): to własny stan kotła, który gaśnie podczas grzania wody użytkowej i wyglądałby jak inny sterownik. Z nią włączenie i wyłączenie grzania jest sprawdzane jak nastawa: zignorowane przez kocioł jest zgłaszane, a zmienione przez inny sterownik jest raz zapisane ponownie, po czym wszystkie zapisy ustają. Bez niej włączenie grzania jest pokazywane jako niepotwierdzone, a przełączenie go przez inny sterownik przejdzie niezauważone. Wybranie encji, do której zapisujesz, albo żądania termostatu zamiast tego, co dostaje kocioł, niczego nie potwierdza albo zatrzymuje sterowanie. Wybierz encję, która zgłasza zmianę mniej więcej w ciągu minuty: wolniejsza opóźnia zauważenie zmiany, a wolniejsza niż 5 min może sprawić, że wtyczka niesłusznie się wycofa."
         }
       },
       "control_entity": {
@@ -283,28 +286,6 @@
           "hand_back_timeout_min": "Dla metody limitu czasu: jak długo, w minutach, urządzenie trzyma ostatnią podaną wartość, zanim wróci do własnego sterowania — z dokumentacji urządzenia (od 1 do 60; domyślnie 1, nastawa przepływu EMS-ESP wygasa po około minucie). Każde oddanie najpierw zapisuje najniższą temperaturę wody, więc kocioł zostaje na niej przez ten czas. Oddanie jest oceniane dopiero po nim — powrót do wartości sprzed sterowania albo własna wartość urządzenia — a „oddanie nieudane” pojawia się 3 minuty po nim. Za krótki: fałszywy alarm, gdy urządzenie wciąż trzyma najniższą; za długi: urządzenie, które nigdy nie puszcza, zostanie zgłoszone późno. Nieużywany przy innych metodach.",
           "own_room_controller": "Zaznacz tylko wtedy, gdy kocioł ma własny regulator pokojowy, który sam prosi o ciepło, gdy wtyczka odda sterowanie — na przykład panel pokojowy na magistrali kotła (EMS). Jeśli Versatile Thermostat w ogóle nie odpowiada, wtyczka odda mu wtedy kocioł; bez zaznaczenia kocioł nie grzeje, a alarm i zgłoszenie do naprawy powiedzą dlaczego. Każde inne oddanie sterowania też trafia do tego regulatora. Przy przekaźniku liczy się to tylko wtedy, gdy stan przekaźnika po oddaniu sterowania to „włączony”; przy „wyłączony” kocioł nie grzeje, gdy Versatile Thermostat nie odpowiada. Domyślnie wyłączone. Ryzyko: bez takiego regulatora kocioł zostałby na własnym pokrętle i grzałby bez kontroli temperatury w pokojach.",
           "esphome_safe_start": "Wymagane do sterowania przez ESPHome; nigdy nie zaznaczane za Ciebie. ESP trzyma ostatnią nastawę i włączone grzanie aż do restartu — domyślnie po 15 minutach bez Home Assistant (reboot_timeout jego API) — potem przyjmuje skonfigurowane wartości startowe. Zaznacz dopiero, gdy konfiguracja ESP uruchamia nastawę i przełącznik grzania z wartościami bezpiecznymi bez żadnego sterowania (grzanie wyłączone albo umiarkowana temperatura wody), z wyłączonym restore_value, a jego reboot_timeout wynosi kilka minut (przykład jest w instrukcji użytkownika). Bez zaznaczenia sterowanie nie wystartuje."
-        }
-      },
-      "control_gateway": {
-        "title": "OpenTherm Gateway",
-        "description": "Bramka skonfigurowana w integracji OpenTherm Gateway w Home Assistant.",
-        "data": {
-          "gateway_id": "Identyfikator bramki"
-        },
-        "data_description": {
-          "gateway_id": "Bramka skonfigurowana w integracji OpenTherm Gateway; proponowane są tylko bramki tam skonfigurowane i włączone. Nastawa sterowania jest powtarzana co 30 s; przy oddaniu sterowania ustawiana na 0, co oddaje sterowanie termostatowi, a bez termostatu kończy grzanie. Włączenie ogrzewania (CH=) bramka trzyma, dopóki się nie zmieni albo bramka nie uruchomi się ponownie; wtyczka wysyła je znowu razem z nastawą sterowania, co 30 s, i po powrocie bramki. Wybierz bramkę przy tym kotle: inna dostawałaby polecenia wtyczki, a ten kocioł żadnych."
-        }
-      },
-      "control_mqtt": {
-        "title": "Firmware OTGW przez MQTT",
-        "description": "Polecenia są publikowane w temacie prefiks/set/węzeł/polecenie, z prefiksem i nazwą węzła podanymi niżej. Włączenie ogrzewania (CH=) bramka trzyma, dopóki się nie zmieni albo bramka nie uruchomi się ponownie; wtyczka wysyła je znowu razem z nastawą sterowania, co 30 s, i po powrocie bramki.",
-        "data": {
-          "mqtt_top": "Prefiks tematu",
-          "mqtt_node": "Nazwa węzła"
-        },
-        "data_description": {
-          "mqtt_top": "Prefiks tematów MQTT ustawiony w firmware OTGW. Domyślnie OTGW.",
-          "mqtt_node": "Nazwa węzła ustawiona w firmware OTGW. Zły prefiks albo nazwa węzła wysyła polecenia donikąd; odczyt zwrotny zgłosi je wtedy jako zignorowane."
         }
       },
       "control_relay": {
@@ -562,7 +543,9 @@
       "vt_commands_not_supported": "Polecenia kotła w Versatile Thermostat nie wskazują przełącznika włączanego i wyłączanego ani termostatu kotła ustawianego na grzanie i wyłączenie: wybierz przekaźnik.",
       "path_not_for_control_mode": "Wybrano tylko monitorowanie: pasuje tylko „Bez sterowania”. Najpierw zmień tryb sterowania w „Tryb sterowania”.",
       "path_not_for_connection": "Ścieżka zapisu nie pasuje do sposobu podłączenia kotła. Najpierw zmień połączenie w „Połączenie i typ kotła”.",
-      "topology_not_for_connection": "ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: wybierz topologię wirtualną."
+      "topology_not_for_connection": "ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: wybierz topologię wirtualną.",
+      "interface_not_answered": "Najpierw odpowiedz w „Interfejs kotła”: to, jak bramka stoi między termostatem a kotłem, i co jest na jej zaciskach termostatu, musi pasować do tej ścieżki zapisu.",
+      "connection_not_answered": "Najpierw odpowiedz w „Połączenie i typ kotła”, potem w „Interfejs kotła”: pytania interfejsu wynikają z połączenia."
     }
   },
   "options": {
@@ -573,6 +556,7 @@
         "menu_options": {
           "connection": "Połączenie i typ kotła",
           "mode": "Tryb sterowania",
+          "interface": "Interfejs kotła",
           "signals": "Sygnały kotła",
           "freshness": "Limity świeżości",
           "boiler": "Kocioł",
@@ -600,20 +584,6 @@
           "type": "Jednofunkcyjny (tylko ogrzewanie), z zasobnikiem ciepłej wody albo bez, lub dwufunkcyjny (ciepła woda grzana w trakcie poboru), z wbudowanym zasobnikiem albo bez; wymagane. Służy do odróżniania grzania ciepłej wody od ogrzewania: zły rodzaj liczy ciepłą wodę jako ogrzewanie albo odwrotnie."
         }
       },
-      "mqtt_topics": {
-        "title": "Tematy MQTT",
-        "description": "Tematy, pod którymi publikuje Twój interfejs kotła. Home Assistant zapisuje wartość encji MQTT tylko wtedy, gdy się zmienia, więc stała wartość wygląda na tak starą jak jej ostatnia zmiana; sam interfejs powtarza swoje wartości (firmware OTGW co najmniej co 60 s, EMS-ESP domyślnie co 10 s), a wtyczka słucha tych powtórzeń na tych tematach — tylko czyta — żeby widzieć, że dane kotła wciąż płyną. Według nich oceniane są tylko własne encje MQTT Twojego interfejsu.",
-        "data": {
-          "mqtt_top": "Główny temat OTGW",
-          "mqtt_node": "Węzeł OTGW",
-          "ems_esp_base": "Temat bazowy EMS-ESP"
-        },
-        "data_description": {
-          "mqtt_top": "„MQTT top topic” firmware'u (domyślnie OTGW); jego wartości są pod top/value/node/.",
-          "mqtt_node": "Węzeł albo unikalny identyfikator firmware'u, jak w jego ustawieniach MQTT. Zły oznacza, że wtyczka nic nie usłyszy i oceni sygnały tylko według zgłoszeń samego Home Assistant.",
-          "ems_esp_base": "„Base” w ustawieniach MQTT EMS-ESP (domyślnie ems-esp); dane kotła są pod base/boiler_data. Przy czasie publikacji kotła ustawionym na 0 (tylko przy zmianie) EMS-ESP nie powtarza wartości, a wtyczka ocenia je wtedy tylko według zgłoszeń samego Home Assistant."
-        }
-      },
       "mode": {
         "title": "Tryb sterowania",
         "description": "Co wtyczka ma robić z kotłem. Wybór trybu niczego nie włącza: sterowanie ma własny przełącznik, wyłączony, dopóki go nie włączysz.\n\n- **Pełne sterowanie** — wtyczka ustawia temperaturę wody według swojej krzywej i włącza oraz wyłącza grzanie razem ze strefami VT.\n- **Wł./wył. (przekaźnik)** — wtyczka włącza i wyłącza grzanie razem ze strefami VT; temperaturę wody kocioł ustawia sam.\n- **Tylko monitorowanie** — wtyczka odczytuje i raportuje, niczego nie zapisuje.\n\nPokazane są tylko tryby, na które pozwala Twoje połączenie.",
@@ -626,6 +596,30 @@
           "control_mode": "Wybierany świadomie, bez wartości domyślnej. Tylko monitorowanie zostawia sterowanie wyłączone, a przełącznik sterowania podaje ten powód.",
           "condensing": "Kotły kondensacyjne dostają limity spalin dla urządzeń kondensacyjnych i są oceniane po tym, jak często kondensują; dla innych kotłów bezwzględny alarm spalin jest wyłączony, a kondensacja nie wpływa na werdykt. Zły wybór ostrzega za późno albo bez powodu i myli werdykt.",
           "dhw_priority": "Włączone (domyślnie): gdy kocioł grzeje ciepłą wodę, pomieszczenia nie dostają ciepła — tak jest zwykle w kotle dwufunkcyjnym i przy zasobniku ładowanym przez zawór trójdrożny. Wyłączone: ciepła woda i ogrzewanie działają równocześnie (bufor, zasobnik ładowany równolegle, priorytet ograniczony w czasie). Służy do oceny, kiedy pomieszczenia dostają ciepło: zły wybór wstrzymuje naukę stref bez potrzeby albo pozwala im się uczyć, gdy pomieszczenia nie dostają ciepła."
+        }
+      },
+      "interface": {
+        "title": "Interfejs kotła",
+        "description": "Co wtyczka musi wiedzieć o urządzeniu między nią a kotłem: jego tematy MQTT, bramkę, jak stoi między termostatem a kotłem i wskaźnik restartu. Pytamy tylko o to, czego używa Twoje połączenie i tryb sterowania.",
+        "data": {
+          "mqtt_top": "Główny temat OTGW",
+          "mqtt_node": "Węzeł OTGW",
+          "ems_esp_base": "Temat bazowy EMS-ESP",
+          "gateway_id": "Identyfikator bramki",
+          "topology": "Podłączenie bramki",
+          "thermostat_kind": "Co jest podłączone do zacisków termostatu bramki",
+          "thermostat_setpoint_entity": "Nastawa wody zadana przez termostat",
+          "restart_entity": "Wskaźnik restartu"
+        },
+        "data_description": {
+          "mqtt_top": "„MQTT top topic” firmware'u (domyślnie OTGW): jego wartości są pod top/value/node/, a polecenia wtyczki idą do top/set/node/. Włączenie/wyłączenie grzania (CH=) bramka trzyma do zmiany albo do swojego restartu; wtyczka wysyła je ponownie z nastawą sterującą co 30 s i po powrocie bramki.",
+          "mqtt_node": "Węzeł albo unikalny identyfikator firmware'u, jak w jego ustawieniach MQTT. Zły oznacza, że wtyczka nic nie słyszy, a jej polecenia nigdzie nie trafiają — odczyt zwrotny pokazuje je wtedy jako zignorowane.",
+          "ems_esp_base": "„Base” w ustawieniach MQTT EMS-ESP (domyślnie ems-esp); dane kotła są pod base/boiler_data. Przy czasie publikacji kotła ustawionym na 0 (tylko przy zmianie) EMS-ESP nie powtarza wartości, a wtyczka ocenia je wtedy tylko według zgłoszeń samego Home Assistant.",
+          "gateway_id": "Bramka skonfigurowana w integracji OpenTherm Gateway; proponowane są tylko bramki tam skonfigurowane i włączone. Nastawa sterowania jest powtarzana co 30 s; przy oddaniu sterowania ustawiana na 0, co oddaje sterowanie termostatowi, a bez termostatu kończy grzanie. Włączenie ogrzewania (CH=) bramka trzyma, dopóki się nie zmieni albo bramka nie uruchomi się ponownie; wtyczka wysyła je znowu razem z nastawą sterowania, co 30 s, i po powrocie bramki. Wybierz bramkę przy tym kotle: inna dostawałaby polecenia wtyczki, a ten kocioł żadnych.",
+          "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki. Utrata danych kotła podnosi alarm i oddaje sterowanie w każdej topologii — bez termostatu grzanie ustaje, dopóki dane nie wrócą. Z termostatem: gdy steruje wtyczka, nastawa ogrzewania termostatu ściennego i jego wyłącznik nic nie robią — ustawienia ciepłej wody nadal działają; po oddaniu sterowania albo gdy Home Assistant nie działa, termostat grzeje według własnej nastawy i programu, więc ustaw je tak, jak ma być w domu. Nieużywane przy przekaźniku: to, co robi oddanie sterowania, określa jego stan po oddaniu sterowania. W każdej topologii po oddaniu sterowania albo gdy Home Assistant nie działa, woda idzie za własnym maksimum kotła albo termostatu ściennego, a nie wtyczki: ustaw tam też maksimum podłogówki bez mieszacza. ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: wirtualna.",
+          "thermostat_kind": "Tylko dla bramki, z termostatem albo samodzielnej. Termostat OpenTherm: rozmawia z kotłem i może pokazywać temperaturę wody. Styk wł./wył.: prosty termostat lub włącznik na dwóch przewodach — bramka zamienia go w żądanie grzania, a „wyłączone ogrzewanie” wtyczki blokowałoby go po awarii Home Assistant, więc sterowanie nie jest dostępne. Nic: brak termostatu. Nie wiem: sterowanie nie jest dostępne, dopóki tego nie sprawdzisz. Z termostatem wybierz OpenTherm; bez termostatu wybierz Nic.",
+          "thermostat_setpoint_entity": "Opcjonalnie, dla bramki z termostatem OpenTherm: temperatura wody, o którą prosi sam termostat (w opentherm_gw „Control setpoint 1” urządzenia termostatu), nie odczyt zwrotny kotła. Gdy kocioł wróci do niej po przerwie, wtyczka wyśle swoje polecenie ponownie, zamiast uznać to za inny sterownik. Pokazuje też oddanie jako wykonane, gdy bramka przekazuje prośbę termostatu — oprogramowanie OTGW przez MQTT nigdy wtedy nie pokazuje 0, więc bez tego pola oddanie do termostatu proszącego o najniższą temperaturę wody albo o ostatnią wartość wtyczki nigdy nie zostanie potwierdzone. Puste (domyślnie): liczy się tylko wartość sprzed wtyczki.",
+          "restart_entity": "Opcjonalnie: czujnik bramki lub interfejsu kotła, który pokazuje jego restarty — czas pracy liczony od nowa, licznik restartów, który rośnie, albo czas uruchomienia (na przykład licznik restartów firmware OTGW albo czujnik czasu pracy EMS-ESP lub ESPHome). Pokazany przez niego restart liczy się przez 5 minut jako ślad przerwy: jeśli kocioł wróci wtedy do własnej wartości, wtyczka uzna to za utracone polecenie i po prostu wyśle je ponownie. Puste (domyślnie): restart widać tylko wtedy, gdy encje urządzenia stają się niedostępne, a szybki restart, który niczego nie pokazuje, jest oceniany jak powrót bez śladu przerwy — pierwszy w ciągu godziny wtyczka wyśle ponownie, ale drugi może zostać uznany za inny sterownik i wtyczka ustąpi."
         }
       },
       "level": {
@@ -688,7 +682,7 @@
       },
       "freshness": {
         "title": "Limity świeżości",
-        "description": "Limit wieku dla każdego sygnału, w minutach: wartość niezgłoszona dłużej liczy się jako nieświeża, dla monitora i dla sterowania tak samo — bez świeżego płomienia i zasilania sterowanie nic nie zapisuje i po pięciu minutach oddaje kocioł. Puste (domyślnie): automatyczny — brak limitu, dopóki źródło nie zostanie zauważone przy powtarzaniu niezmienionej wartości; wtedy pięciokrotność jego własnego rytmu, od 10 do 30 minut (encja pogody od 3 do 12 godzin). Źródło, które zgłasza tylko zmiany (MQTT, ESPHome bez force_update), nigdy go nie dostaje, bo stała wartość nie jest nieświeża. 0: brak limitu, liczy się tylko dostępność encji. Liczba: ten limit. Przy firmware OTGW przez MQTT i przy EMS-ESP wtyczka słyszy powtórzenia samego urządzenia na jego tematach MQTT, podanych w „Połączenie i typ kotła”. Ryzyko: bez limitu źródło, które przestaje się zmieniać, nie stając się niedostępne, nie zostanie wykryte; limit krótszy niż odstęp zgłoszeń źródła zatrzyma sterowanie przy stałej pogodzie. Sterowanie sprawdza płomień i temperaturę zasilania, każde według jego limitu; połączenie, które co chwilę znika, uznaje się za utracone, gdy przez pięć minut w ciągu dziesięciu nie ma świeżych danych. Przy bramce OpenTherm Gateway połączonej przez MQTT jej rozłączenie widać w ciągu około 90 s (encje stają się niedostępne), a zerwane połączenie wewnątrz niej, między modułem ESP a układem PIC, widać tylko po tym, że ustają jej powtórzenia.",
+        "description": "Limit wieku dla każdego sygnału, w minutach: wartość niezgłoszona dłużej liczy się jako nieświeża, dla monitora i dla sterowania tak samo — bez świeżego płomienia i zasilania sterowanie nic nie zapisuje i po pięciu minutach oddaje kocioł. Puste (domyślnie): automatyczny — brak limitu, dopóki źródło nie zostanie zauważone przy powtarzaniu niezmienionej wartości; wtedy pięciokrotność jego własnego rytmu, od 10 do 30 minut (encja pogody od 3 do 12 godzin). Źródło, które zgłasza tylko zmiany (MQTT, ESPHome bez force_update), nigdy go nie dostaje, bo stała wartość nie jest nieświeża. 0: brak limitu, liczy się tylko dostępność encji. Liczba: ten limit. Przy firmware OTGW przez MQTT i przy EMS-ESP wtyczka słyszy powtórzenia samego urządzenia na jego tematach MQTT, podanych w „Interfejs kotła”. Ryzyko: bez limitu źródło, które przestaje się zmieniać, nie stając się niedostępne, nie zostanie wykryte; limit krótszy niż odstęp zgłoszeń źródła zatrzyma sterowanie przy stałej pogodzie. Sterowanie sprawdza płomień i temperaturę zasilania, każde według jego limitu; połączenie, które co chwilę znika, uznaje się za utracone, gdy przez pięć minut w ciągu dziesięciu nie ma świeżych danych. Przy bramce OpenTherm Gateway połączonej przez MQTT jej rozłączenie widać w ciągu około 90 s (encje stają się niedostępne), a zerwane połączenie wewnątrz niej, między modułem ESP a układem PIC, widać tylko po tym, że ustają jej powtórzenia.",
         "data": {
           "flame": "Płomień",
           "flow": "Temperatura zasilania",
@@ -849,21 +843,13 @@
         "description": "Jak wtyczka steruje kotłem: zapisując nastawę zasilania albo włączając i wyłączając go przekaźnikiem. Dopóki nie włączysz sterowania, nic się nie zmienia: kocioł pracuje jak dotąd — pod kotłem centralnym Versatile Thermostat, termostatem ściennym albo własną automatyką — a wtyczka tylko obserwuje i raportuje. Po włączeniu zajmuje miejsce kotła centralnego VT (najpierw go usuń i uruchom ponownie Home Assistant): grzanie włącza się i wyłącza od razu razem ze strefami VT, a tam, gdzie wtyczka zapisuje temperaturę wody, idzie ona za Twoją krzywą, nigdy poniżej najniższej ani powyżej najwyższej temperatury wody; korekta komfortu, jeśli ją włączysz, dodaje najwyżej 3 K ponad krzywą. Sterowanie możesz włączyć od pierwszego dnia, nawet bez werdyktu: werdykt monitora pojawi się, gdy zbierze dość dni danych, a przełącznik sterowania go pokaże. Wybierz „Bez sterowania”, żeby tylko monitorować.",
         "data": {
           "write_path": "Ścieżka zapisu",
-          "topology": "Podłączenie bramki",
-          "thermostat_kind": "Co jest podłączone do zacisków termostatu bramki",
           "confirmed_entity": "Odczyt zwrotny nastawy",
-          "ch_confirmed_entity": "Odczyt zwrotny włączenia ogrzewania",
-          "thermostat_setpoint_entity": "Nastawa wody zadana przez termostat",
-          "restart_entity": "Wskaźnik restartu"
+          "ch_confirmed_entity": "Odczyt zwrotny włączenia ogrzewania"
         },
         "data_description": {
           "write_path": "Bez sterowania (domyślnie); wybrana przez ciebie encja do zapisu, np. liczba EMS-ESP albo ESPHome OpenTherm; bramka OpenTherm Gateway przez integrację OpenTherm Gateway w Home Assistant; albo polecenia MQTT firmware OTGW. Wybierz ścieżkę, którą naprawdę oferuje twój interfejs kotła: zła oznacza zapisy, które się nie udają albo trafiają donikąd. Przekaźnik, dla kotła wł./wył.: przełącznik na zaciskach termostatu pokojowego kotła albo encja termostatu kotła ustawiana na grzanie lub wyłączenie. Oferowane są tylko ścieżki pasujące do połączenia kotła i trybu sterowania.",
-          "topology": "Jak bramka jest włączona między termostat a kocioł. Z termostatem: po oddaniu sterowania przejmuje je termostat. Samodzielnie, bez termostatu: po oddaniu sterowania, a także gdy Home Assistant stanie na dłużej niż około minutę, kocioł przestaje grzać. Tryb monitora: bramka tylko słucha i sterowanie jest niemożliwe. Wirtualnie: kotłem steruje sterownik po stronie Home Assistant, np. ESPHome. Wymagane; podaj stan faktyczny — wtyczka nigdy sama nie zmienia trybu bramki. Utrata danych kotła podnosi alarm i oddaje sterowanie w każdej topologii — bez termostatu grzanie ustaje, dopóki dane nie wrócą. Z termostatem: gdy steruje wtyczka, nastawa ogrzewania termostatu ściennego i jego wyłącznik nic nie robią — ustawienia ciepłej wody nadal działają; po oddaniu sterowania albo gdy Home Assistant nie działa, termostat grzeje według własnej nastawy i programu, więc ustaw je tak, jak ma być w domu. Nieużywane przy przekaźniku: to, co robi oddanie sterowania, określa jego stan po oddaniu sterowania. W każdej topologii po oddaniu sterowania albo gdy Home Assistant nie działa, woda idzie za własnym maksimum kotła albo termostatu ściennego, a nie wtyczki: ustaw tam też maksimum podłogówki bez mieszacza. ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: wirtualna.",
-          "thermostat_kind": "Tylko dla bramki, z termostatem albo samodzielnej. Termostat OpenTherm: rozmawia z kotłem i może pokazywać temperaturę wody. Styk wł./wył.: prosty termostat lub włącznik na dwóch przewodach — bramka zamienia go w żądanie grzania, a „wyłączone ogrzewanie” wtyczki blokowałoby go po awarii Home Assistant, więc sterowanie nie jest dostępne. Nic: brak termostatu. Nie wiem: sterowanie nie jest dostępne, dopóki tego nie sprawdzisz. Z termostatem wybierz OpenTherm; bez termostatu wybierz Nic.",
           "confirmed_entity": "Encja, która pokazuje nastawę odebraną przez kocioł, np. „Control setpoint 1” urządzenia kotła w bramce — pokazuje ona, co bramka wysyła, więc nastawa jest pokazywana jako potwierdzona przez bramkę, nie przez kocioł. Wymagana: każdy zapis jest z nią porównywany, a zapis zignorowany przez kocioł albo nadpisany przez inny sterownik zostaje zgłoszony. Encja nastawy wtyczki pokazuje tylko potwierdzoną wartość, w przeciwnym razie stan nieznany. Wybranie encji, do której się pisze, niczego nie potwierdza: nastawa jest wtedy pokazywana jako niezweryfikowana. Nieużywane przy przekaźniku: potwierdza go jego własny stan. Przy EMS-ESP wybierz jego wybraną temperaturę zasilania (selflowtemp), czyli encję, do której się pisze: EMS-ESP wypełnia ją na podstawie raportu samego kotła, ale wtyczka nie może tego sprawdzić, więc nastawa jest pokazywana jako niezweryfikowana.",
-          "ch_confirmed_entity": "Opcjonalnie: encja, która pokazuje, czy kocioł dostaje włączone grzanie — np. „Central heating 1” na urządzeniu kotła w bramce, ta ze stanem On/Off (Wł./Wył.): to, co wysyła bramka. Nie ta ze stanem Running/Not running (Działa/Nie działa): to własny stan kotła, który gaśnie podczas grzania wody użytkowej i wyglądałby jak inny sterownik. Z nią włączenie i wyłączenie grzania jest sprawdzane jak nastawa: zignorowane przez kocioł jest zgłaszane, a zmienione przez inny sterownik jest raz zapisane ponownie, po czym wszystkie zapisy ustają. Bez niej włączenie grzania jest pokazywane jako niepotwierdzone, a przełączenie go przez inny sterownik przejdzie niezauważone. Wybranie encji, do której zapisujesz, albo żądania termostatu zamiast tego, co dostaje kocioł, niczego nie potwierdza albo zatrzymuje sterowanie. Wybierz encję, która zgłasza zmianę mniej więcej w ciągu minuty: wolniejsza opóźnia zauważenie zmiany, a wolniejsza niż 5 min może sprawić, że wtyczka niesłusznie się wycofa.",
-          "thermostat_setpoint_entity": "Opcjonalnie, dla bramki z termostatem OpenTherm: temperatura wody, o którą prosi sam termostat (w opentherm_gw „Control setpoint 1” urządzenia termostatu), nie odczyt zwrotny kotła. Gdy kocioł wróci do niej po przerwie, wtyczka wyśle swoje polecenie ponownie, zamiast uznać to za inny sterownik. Pokazuje też oddanie jako wykonane, gdy bramka przekazuje prośbę termostatu — oprogramowanie OTGW przez MQTT nigdy wtedy nie pokazuje 0, więc bez tego pola oddanie do termostatu proszącego o najniższą temperaturę wody albo o ostatnią wartość wtyczki nigdy nie zostanie potwierdzone. Puste (domyślnie): liczy się tylko wartość sprzed wtyczki.",
-          "restart_entity": "Opcjonalnie: czujnik bramki lub interfejsu kotła, który pokazuje jego restarty — czas pracy liczony od nowa, licznik restartów, który rośnie, albo czas uruchomienia (na przykład licznik restartów firmware OTGW albo czujnik czasu pracy EMS-ESP lub ESPHome). Pokazany przez niego restart liczy się przez 5 minut jako ślad przerwy: jeśli kocioł wróci wtedy do własnej wartości, wtyczka uzna to za utracone polecenie i po prostu wyśle je ponownie. Puste (domyślnie): restart widać tylko wtedy, gdy encje urządzenia stają się niedostępne, a szybki restart, który niczego nie pokazuje, jest oceniany jak powrót bez śladu przerwy — pierwszy w ciągu godziny wtyczka wyśle ponownie, ale drugi może zostać uznany za inny sterownik i wtyczka ustąpi."
+          "ch_confirmed_entity": "Opcjonalnie: encja, która pokazuje, czy kocioł dostaje włączone grzanie — np. „Central heating 1” na urządzeniu kotła w bramce, ta ze stanem On/Off (Wł./Wył.): to, co wysyła bramka. Nie ta ze stanem Running/Not running (Działa/Nie działa): to własny stan kotła, który gaśnie podczas grzania wody użytkowej i wyglądałby jak inny sterownik. Z nią włączenie i wyłączenie grzania jest sprawdzane jak nastawa: zignorowane przez kocioł jest zgłaszane, a zmienione przez inny sterownik jest raz zapisane ponownie, po czym wszystkie zapisy ustają. Bez niej włączenie grzania jest pokazywane jako niepotwierdzone, a przełączenie go przez inny sterownik przejdzie niezauważone. Wybranie encji, do której zapisujesz, albo żądania termostatu zamiast tego, co dostaje kocioł, niczego nie potwierdza albo zatrzymuje sterowanie. Wybierz encję, która zgłasza zmianę mniej więcej w ciągu minuty: wolniejsza opóźnia zauważenie zmiany, a wolniejsza niż 5 min może sprawić, że wtyczka niesłusznie się wycofa."
         }
       },
       "control_entity": {
@@ -896,28 +882,6 @@
           "hand_back_timeout_min": "Dla metody limitu czasu: jak długo, w minutach, urządzenie trzyma ostatnią podaną wartość, zanim wróci do własnego sterowania — z dokumentacji urządzenia (od 1 do 60; domyślnie 1, nastawa przepływu EMS-ESP wygasa po około minucie). Każde oddanie najpierw zapisuje najniższą temperaturę wody, więc kocioł zostaje na niej przez ten czas. Oddanie jest oceniane dopiero po nim — powrót do wartości sprzed sterowania albo własna wartość urządzenia — a „oddanie nieudane” pojawia się 3 minuty po nim. Za krótki: fałszywy alarm, gdy urządzenie wciąż trzyma najniższą; za długi: urządzenie, które nigdy nie puszcza, zostanie zgłoszone późno. Nieużywany przy innych metodach.",
           "own_room_controller": "Zaznacz tylko wtedy, gdy kocioł ma własny regulator pokojowy, który sam prosi o ciepło, gdy wtyczka odda sterowanie — na przykład panel pokojowy na magistrali kotła (EMS). Jeśli Versatile Thermostat w ogóle nie odpowiada, wtyczka odda mu wtedy kocioł; bez zaznaczenia kocioł nie grzeje, a alarm i zgłoszenie do naprawy powiedzą dlaczego. Każde inne oddanie sterowania też trafia do tego regulatora. Przy przekaźniku liczy się to tylko wtedy, gdy stan przekaźnika po oddaniu sterowania to „włączony”; przy „wyłączony” kocioł nie grzeje, gdy Versatile Thermostat nie odpowiada. Domyślnie wyłączone. Ryzyko: bez takiego regulatora kocioł zostałby na własnym pokrętle i grzałby bez kontroli temperatury w pokojach.",
           "esphome_safe_start": "Wymagane do sterowania przez ESPHome; nigdy nie zaznaczane za Ciebie. ESP trzyma ostatnią nastawę i włączone grzanie aż do restartu — domyślnie po 15 minutach bez Home Assistant (reboot_timeout jego API) — potem przyjmuje skonfigurowane wartości startowe. Zaznacz dopiero, gdy konfiguracja ESP uruchamia nastawę i przełącznik grzania z wartościami bezpiecznymi bez żadnego sterowania (grzanie wyłączone albo umiarkowana temperatura wody), z wyłączonym restore_value, a jego reboot_timeout wynosi kilka minut (przykład jest w instrukcji użytkownika). Bez zaznaczenia sterowanie nie wystartuje."
-        }
-      },
-      "control_gateway": {
-        "title": "OpenTherm Gateway",
-        "description": "Bramka skonfigurowana w integracji OpenTherm Gateway w Home Assistant.",
-        "data": {
-          "gateway_id": "Identyfikator bramki"
-        },
-        "data_description": {
-          "gateway_id": "Bramka skonfigurowana w integracji OpenTherm Gateway; proponowane są tylko bramki tam skonfigurowane i włączone. Nastawa sterowania jest powtarzana co 30 s; przy oddaniu sterowania ustawiana na 0, co oddaje sterowanie termostatowi, a bez termostatu kończy grzanie. Włączenie ogrzewania (CH=) bramka trzyma, dopóki się nie zmieni albo bramka nie uruchomi się ponownie; wtyczka wysyła je znowu razem z nastawą sterowania, co 30 s, i po powrocie bramki. Wybierz bramkę przy tym kotle: inna dostawałaby polecenia wtyczki, a ten kocioł żadnych."
-        }
-      },
-      "control_mqtt": {
-        "title": "Firmware OTGW przez MQTT",
-        "description": "Polecenia są publikowane w temacie prefiks/set/węzeł/polecenie, z prefiksem i nazwą węzła podanymi niżej. Włączenie ogrzewania (CH=) bramka trzyma, dopóki się nie zmieni albo bramka nie uruchomi się ponownie; wtyczka wysyła je znowu razem z nastawą sterowania, co 30 s, i po powrocie bramki.",
-        "data": {
-          "mqtt_top": "Prefiks tematu",
-          "mqtt_node": "Nazwa węzła"
-        },
-        "data_description": {
-          "mqtt_top": "Prefiks tematów MQTT ustawiony w firmware OTGW. Domyślnie OTGW.",
-          "mqtt_node": "Nazwa węzła ustawiona w firmware OTGW. Zły prefiks albo nazwa węzła wysyła polecenia donikąd; odczyt zwrotny zgłosi je wtedy jako zignorowane."
         }
       },
       "control_curve": {
@@ -1185,7 +1149,9 @@
       "invalid_connection": "Ta wersja nie potrafi odczytać jednej z odpowiedzi o połączeniu kotła, źródle ciepła, rodzaju kotła albo trybie sterowania: wybierz ją ponownie.",
       "path_not_for_control_mode": "Wybrano tylko monitorowanie: pasuje tylko „Bez sterowania”. Najpierw zmień tryb sterowania w „Tryb sterowania”.",
       "path_not_for_connection": "Ścieżka zapisu nie pasuje do sposobu podłączenia kotła. Najpierw zmień połączenie w „Połączenie i typ kotła”.",
-      "topology_not_for_connection": "ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: wybierz topologię wirtualną."
+      "topology_not_for_connection": "ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: wybierz topologię wirtualną.",
+      "interface_not_answered": "Najpierw odpowiedz w „Interfejs kotła”: to, jak bramka stoi między termostatem a kotłem, i co jest na jej zaciskach termostatu, musi pasować do tej ścieżki zapisu.",
+      "connection_not_answered": "Najpierw odpowiedz w „Połączenie i typ kotła”, potem w „Interfejs kotła”: pytania interfejsu wynikają z połączenia."
     }
   },
   "selector": {
@@ -1229,7 +1195,6 @@
       "options": {
         "gateway_with_thermostat": "Bramka z termostatem",
         "gateway_standalone": "Bramka bez termostatu (samodzielna)",
-        "monitor_mode": "Bramka w trybie monitora",
         "virtual": "Wirtualnie: sterownik po stronie Home Assistant"
       }
     },
@@ -2837,10 +2802,10 @@
       "message": "Wybierz, jak sterowanie wraca do kotła: wartość, własny limit czasu urządzenia albo przełącznik. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_gateway": {
-      "message": "Podaj identyfikator bramki OpenTherm Gateway. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Wybierz bramkę OpenTherm Gateway w „Interfejs kotła”. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_mqtt_topic": {
-      "message": "Podaj prefiks tematu MQTT bramki i nazwę węzła. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Podaj prefiks tematu MQTT bramki i nazwę węzła w „Interfejs kotła”. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_mqtt_topic_invalid": {
       "message": "Podaj prefiks tematu MQTT bramki i nazwę węzła tak, jak używa ich jej firmware, bez spacji i symboli wieloznacznych + oraz #. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
@@ -2933,7 +2898,7 @@
       "message": "Jedna encja zasila dwa sygnały, więc późniejszy nie jest używany. Wybierz dla niego inną encję w opcjach sygnałów. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_topology_not_for_path": {
-      "message": "Podłączenie bramki nie pasuje do ścieżki zapisu: wybierz inne w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Podłączenie bramki nie pasuje do ścieżki zapisu: wybierz inne w „Interfejs kotła”. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_heating_switch": {
       "message": "Sterowanie wymaga przełącznika ogrzewania, którego kocioł nie zapisuje w pamięci. Bez niego „wyłączone” byłoby niską nastawą, a nie wiadomo jeszcze, czy to zatrzymuje kocioł i jego pompę — poza EMS-ESP, którego własna nastawa 0 wyłącza grzanie. Monitor działa dalej. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
@@ -2969,10 +2934,10 @@
       "message": "Do zacisków termostatu bramki podłączony jest styk wł./wył.: „wyłączone ogrzewanie” bramki blokowałoby go po awarii Home Assistant, więc sterowanie nie jest dostępne. Monitor działa dalej. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_thermostat_kind_unknown": {
-      "message": "Sterowanie czeka, aż w opcjach sterowania podasz, co jest podłączone do zacisków termostatu bramki. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Sterowanie czeka, aż w „Interfejs kotła” podasz, co jest podłączone do zacisków termostatu bramki. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_thermostat_kind_dont_know": {
-      "message": "Sterowanie czeka: w opcjach sterowania zaznaczono „Nie wiem” przy pytaniu, co jest podłączone do zacisków termostatu bramki. Sprawdź okablowanie i podaj tam odpowiedź. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Sterowanie czeka: w „Interfejs kotła” zaznaczono „Nie wiem” przy pytaniu, co jest podłączone do zacisków termostatu bramki. Sprawdź okablowanie i podaj tam odpowiedź. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_thermostat_kind_contradicts_topology": {
       "message": "Ta odpowiedź nie pasuje do podłączenia bramki: termostat OpenTherm oznacza „Bramka z termostatem”, brak termostatu oznacza pracę samodzielną. Wybierz drugie podłączenie. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
@@ -3020,7 +2985,7 @@
       "message": "Ustawione sterowanie pisze inną ścieżką, niż teraz wynika z połączenia kotła: odpowiedz ponownie na kroki sterowania dla połączenia wybranego w „Połączenie i typ kotła”. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_topology_not_for_connection": {
-      "message": "ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: topologia w kroku sterowania musi być wirtualna. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: topologia w „Interfejs kotła” musi być wirtualna. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_esphome_start_not_confirmed": {
       "message": "Nie potwierdzono, że ESP startuje z bezpiecznymi wartościami i krótkim reboot_timeout API: gdyby Home Assistant przestał działać, ESP trzymałby ostatnią nastawę i włączone grzanie aż do upływu reboot_timeout (domyślnie 15 minut). Zaznacz to w kroku sterowania, gdy ESP będzie tak skonfigurowany. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
@@ -3187,7 +3152,7 @@
     },
     "thermostat_kind_missing": {
       "title": "Podaj, co jest podłączone do zacisków termostatu bramki",
-      "description": "Sterowanie kotłem czeka na odpowiedź na nowe pytanie w opcjach sterowania: co jest podłączone do zacisków termostatu bramki. Bez termostatu (praca samodzielna) kocioł do tego czasu nie grzeje."
+      "description": "Sterowanie kotłem czeka na odpowiedź na pytanie w „Interfejs kotła”: co jest podłączone do zacisków termostatu bramki. Bez termostatu (praca samodzielna) kocioł do tego czasu nie grzeje."
     },
     "wall_thermostat_fallback": {
       "title": "Termostat ścienny utrzymałby w domu chłód po oddaniu sterowania",
