@@ -149,8 +149,9 @@ flowchart TD
     H --> F2
 ```
 
-- **Freshness:** nothing is written without fresh boiler data. The link is judged over a window
-  (lost once stale steps cover 5 minutes within 10; back after 60 seconds fresh).
+- **Freshness:** nothing is written without fresh boiler data — on a relay, the relay's own
+  state; the user's age limits belong to mapped signals and go with them. The link is judged
+  over a window (lost once stale steps cover 5 minutes within 10; back after 60 seconds fresh).
 - **Blockers and latches** come before demand: a latch, or an alarm set to hand back, hands
   back whatever the zones ask.
 - **Decide:** heating on or off is decided at every step; the water temperature every decision

@@ -747,6 +747,8 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     from custom_components.vtherm_smart_boiler.control_config import Connection
 
     selectors.setdefault(flow.SIGNAL_HINT, set()).update(c.value for c in Connection)
+    # I8 (decision D7): the freshness step reads what its limits judge, by the connection.
+    selectors.setdefault(flow.FRESHNESS_NOTE, set()).update(("water", "relay"))
     # I6.3: and the heat source's, where it changes what to pick.
     selectors.setdefault(flow.SOURCE_HINT, set()).update(("electric", "oil"))
     # I7: the menus read what is left, what to fix and what changed into their descriptions.

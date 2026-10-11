@@ -1156,11 +1156,27 @@ async def test_freshness_limits_are_set_per_signal(
     result = await options_step(hass, menu, {"next_step_id": "freshness"})
     assert result["step_id"] == "freshness"
     assert set(result["data_schema"].schema) == {"flame", "flow"}  # the mapped signals
+    assert "control alike" in result["description_placeholders"]["judged"]  # I8, D7
     result = await options_step(hass, result, {"flow": 15})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     entry = hass.config_entries.async_get_entry(entry_id)
     assert entry.options["freshness"] == {"flow": 900.0}
+
+
+async def test_a_relay_entry_from_before_the_question_reads_the_relays_freshness_text(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision D7: the freshness text follows the connection; an entry made before the
+    connection question follows its write path — a relay's limits judge the monitor only."""
+    entry_id = await create_entry(hass, entities, "simple", boiler_class="on_off")
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    options = {**entry.options, "control": {"write_path": "relay"}}
+    hass.config_entries.async_update_entry(entry, options=options)
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "freshness"})
+    assert "monitor only" in result["description_placeholders"]["judged"]
 
 
 async def test_the_weather_entity_gets_a_freshness_limit_of_its_own(
@@ -4850,6 +4866,80 @@ def test_the_signals_step_shows_what_the_heat_source_has(
     boiler = {} if source is None else {"heat_source": source}
     shown = {str(m) for m in signals_schema({"level": "advanced", "boiler": boiler}).schema}
     assert set(SIGNAL_FIELDS) - shown == hidden
+
+
+# --- I8.5a: the relay's question, the limits with their signals (decisions D4, D7) ------------
+
+
+async def test_a_relay_asks_whether_the_boiler_is_read_through_another_integration(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """Decision D4: a relay asks first whether the boiler is read through another integration
+    too — No by default: only what a relay reads is offered. Yes shows the form again with every
+    boiler signal (A2). No again removes the other signals at the save, and their age limits
+    with them (D7); the freshness step says its limits judge the monitor only."""
+    from custom_components.vtherm_smart_boiler.config_flow import SIGNAL_FIELDS
+    from custom_components.vtherm_smart_boiler.const import RELAY_SIGNALS
+
+    entry_id = await create_entry(hass, entities, "simple", boiler_class="on_off", panels=True)
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    assert entry.options["boiler"]["relay_reads_boiler"] is False  # the default, saved
+    simple = {key for key, (_f, shown) in SIGNAL_FIELDS.items() if shown}
+    signals = {"flame": entities["flame"], "flow": entities["flow"]}
+
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "signals"})
+    fields = {str(m) for m in result["data_schema"].schema}
+    assert fields == (simple & set(RELAY_SIGNALS)) | {"relay_reads_boiler", "weather"}
+    result = await options_step(hass, result, signals | {"relay_reads_boiler": True})
+    assert result["step_id"] == "signals"  # shown again, with what Yes reveals
+    assert {str(m) for m in result["data_schema"].schema} == simple | {
+        "relay_reads_boiler",
+        "weather",
+    }
+    answers = signals | {"relay_reads_boiler": True, "pressure": entities["pressure"]}
+    result = await options_step(hass, result, answers)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert entry.options["boiler"]["relay_reads_boiler"] is True
+    assert entry.options["signals"] == signals | {"pressure": entities["pressure"]}
+
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "freshness"})
+    assert "monitor only" in result["description_placeholders"]["judged"]
+    result = await options_step(hass, result, {"flame": 10, "pressure": 30})
+    assert entry.options["freshness"] == {"flame": 600.0, "pressure": 1800.0}
+
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "signals"})
+    result = await options_step(hass, result, signals | {"relay_reads_boiler": False})
+    assert result["type"] is FlowResultType.CREATE_ENTRY  # nothing revealed: saved at once
+    await hass.async_block_till_done()
+    assert entry.options["boiler"]["relay_reads_boiler"] is False
+    assert entry.options["signals"] == signals
+    assert entry.options["freshness"] == {"flame": 600.0}
+
+
+def test_the_relay_answer_without_a_stored_one_follows_the_signals() -> None:
+    """Decision D4: Yes by default where a boiler signal beyond a relay's own is mapped — an
+    entry edited by hand; a connection other than the relay is never asked."""
+    from custom_components.vtherm_smart_boiler.config_flow import (
+        apply_signals,
+        relay_reads_boiler,
+        signals_schema,
+    )
+
+    relay = {"boiler": {"connection": "relay"}, "signals": {"pressure": "sensor.p"}}
+    assert relay_reads_boiler(relay)
+    assert relay_reads_boiler(relay, {"flame": "binary_sensor.f"})  # no answer in the form
+    assert not relay_reads_boiler(relay, {"relay_reads_boiler": False})
+    assert not relay_reads_boiler({"boiler": {"connection": "relay"}})
+    gateway = {"boiler": {"connection": "opentherm_gw"}, "signals": {"pressure": "sensor.p"}}
+    assert "relay_reads_boiler" not in {str(m) for m in signals_schema(gateway).schema}
+    apply_signals(gateway, {"flame": "binary_sensor.f"})
+    assert "relay_reads_boiler" not in gateway["boiler"]
+    assert gateway["signals"] == {"flame": "binary_sensor.f"}
 
 
 def test_a_signal_the_heat_source_hides_keeps_what_is_stored() -> None:

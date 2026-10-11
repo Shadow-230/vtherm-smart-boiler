@@ -246,6 +246,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_topics(hass, entry)
     if entry.minor_version < 16:
         _migrate_monitor_mode(hass, entry)
+    if entry.minor_version < 17:
+        _migrate_relay_reads(hass, entry)
     return True
 
 
@@ -466,6 +468,32 @@ def _migrate_monitor_mode(hass: HomeAssistant, entry: ConfigEntry) -> None:
             boiler["class"] = boiler_class_for(connection, ControlMode.MONITOR).value
         options[BOILER] = boiler
     hass.config_entries.async_update_entry(entry, options=options, minor_version=16)
+
+
+def _migrate_relay_reads(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.5a (minor version 17): a relay asks whether the boiler is read through another
+    integration too (`docs/plan-0.2-i8.md` D4); an entry with a boiler signal mapped beyond what
+    a relay reads answers Yes, so none of them goes at the next save. An age limit stored for a
+    signal not mapped (or for a weather entity not set) judged nothing and goes (D7)."""
+    from .const import BOILER, FRESHNESS, RELAY_READS, RELAY_SIGNALS, SIGNALS, WEATHER
+    from .control_config import Connection
+
+    options = dict(entry.options)
+    stored = options.get(SIGNALS)
+    signals = stored if isinstance(stored, Mapping) else {}
+    stored = options.get(BOILER)
+    boiler = dict(stored) if isinstance(stored, Mapping) else {}
+    if (
+        boiler.get("connection") == Connection.RELAY.value
+        and not isinstance(boiler.get(RELAY_READS), bool)
+        and any(key not in RELAY_SIGNALS for key in signals)
+    ):
+        options[BOILER] = {**boiler, RELAY_READS: True}
+    freshness = options.get(FRESHNESS)
+    if isinstance(freshness, Mapping):
+        mapped = set(signals) | ({WEATHER} if options.get(WEATHER) else set())
+        options[FRESHNESS] = {k: v for k, v in freshness.items() if k in mapped}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=17)
 
 
 def _stored_float(raw: Any, default: float) -> float:

@@ -88,13 +88,14 @@
         "title": "Boiler signals",
         "description": "Pick the entity that provides each signal. None is required: flame and flow temperature enable the burner's metrics, the boiler link and control of the water temperature, which needs both; every other signal enables more of the monitor. A home with only a relay is monitored too. The plugin only reads these entities. One entity feeds one signal only.\n\n{hint}",
         "data": {
+          "relay_reads_boiler": "Do you also read the boiler through another integration?",
           "flame": "Flame",
           "flow": "Flow temperature",
           "return": "Return temperature",
           "modulation": "Modulation",
           "dhw_active": "Hot water (DHW) active",
           "pressure": "Water pressure",
-          "outdoor": "Outdoor temperature (boiler sensor)",
+          "outdoor": "Outdoor temperature sensor",
           "ch_setpoint": "Heating setpoint",
           "ch_active": "Heating active",
           "pump_running": "Pump running",
@@ -109,20 +110,21 @@
           "fault_indication": "Boiler fault indication"
         },
         "data_description": {
+          "relay_reads_boiler": "No (default): only what a relay can read is asked — flame, flow, return, the boiler's electric power, the gas meter, the outdoor temperature and the weather; other boiler signals mapped before are removed at the save. Yes: every boiler signal — the form shows itself again with them once you submit this answer.",
           "flame": "On while the burner burns. Every burner-cycle metric comes from it: the wrong entity gives wrong starts and burn times.",
           "flow": "Water leaving the boiler. Used to tell whether heat reaches the zones and DHW runs from heating; with control, it is part of the boiler link. The wrong entity misleads all of them.",
           "return": "Water coming back to the boiler. Enables the condensing share, and tells against the flow whether heat reaches the zones; without it condensing cannot be judged. The wrong entity gives a wrong condensing share.",
           "modulation": "Burner modulation in percent. With the boiler's power range it estimates heat output and gas use. A sensor in another unit is refused.",
           "dhw_active": "On while the boiler heats domestic hot water. Without it DHW runs are inferred with less certainty and some may count as heating; with control, hot-water charging is then less sure to pause learning.",
           "pressure": "Enables the high-pressure and \"add water\" notifications and the falling-pressure warning. From an OpenTherm Gateway a reading of 0 bar counts as unknown (the gateway shows 0 after a restart); from any other sensor it is a reading. The wrong entity gives false alarms or none.",
-          "outdoor": "The boiler's own outdoor sensor. Used for degree-days, for control's curve, and checked against the weather entity: one found stuck or far off is left out of the curve. A wrong sensor bends the curve until the check catches it.",
+          "outdoor": "Any sensor of the outdoor temperature — the boiler's own, a weather station's or another in Home Assistant. Used for degree-days, for control's curve, and checked against the weather entity: one found stuck or far off is left out of the curve. A wrong sensor bends the curve until the check catches it.",
           "ch_setpoint": "The flow setpoint the boiler works to, a temperature. Helps tell DHW runs from heating.",
           "ch_active": "On while the boiler heats the rooms. Helps tell DHW from heating when there is no DHW signal.",
           "pump_running": "On while the heating pump runs. Enables the low-flow warning: every valve closed while the pump runs.",
           "flue_gas": "Enables the flue gas alarm and the early warning of a fouling heat exchanger.",
           "gas_meter": "A cumulative gas or energy meter. Gives measured gas per degree-day instead of an estimate. Gas the meter counts while the burner is off (a cooker, another appliance) is shown apart; gas they use while the burner runs cannot be told apart and counts as heating.",
-          "room_setpoint": "The room setpoint of a wall thermostat on the gateway, from the thermostat's side — e.g. \"Room setpoint 1\" on the gateway's thermostat device, or the firmware's TrSet_thermostat with separate sources on; not the gateway's climate target. Shown as the temperature the wall thermostat keeps after a hand-back.",
-          "room_temperature": "The room temperature a wired thermostat sends to the boiler, if there is one. Recorded for the assessment.",
+          "room_setpoint": "The room setpoint of a thermostat connected to the boiler or its interface, from the thermostat's side — e.g. \"Room setpoint 1\" on the gateway's thermostat device, or the firmware's TrSet_thermostat with separate sources on; not the gateway's climate target. Shown as the temperature the wall thermostat keeps after a hand-back.",
+          "room_temperature": "The room temperature a thermostat connected to the boiler or its interface sends to the boiler, if there is one. Recorded for the assessment.",
           "weather": "Its forecasts are recorded for later forecast features, and its temperature stands in for a missing or suspect outdoor sensor — for degree-days and control's curve. No data leaves your Home Assistant.",
           "boiler_power": "Optional: the boiler's electric power, e.g. from a plug that measures it; used only as proof that a relay-driven boiler heats.",
           "low_pressure_fault": "Optional: the boiler's own low-water-pressure fault, e.g. the gateway's \"Low water pressure\" on its boiler device. While it reads on for 5 minutes, control switches heating off — without handing the boiler back — and on again when it clears, as the boiler itself does. Unknown or unavailable counts as no fault. Pick only the boiler's own report: a wrong pick stops heating while the boiler could heat. On an OpenTherm Gateway it counts only while the boiler's fault indication (below) is on: the gateway reads the fault details only when a fault appears, and shows them unknown after a restart until the next fault.",
@@ -637,13 +639,14 @@
         "title": "Boiler signals",
         "description": "Pick the entity that provides each signal. None is required: flame and flow temperature enable the burner's metrics, the boiler link and control of the water temperature, which needs both; every other signal enables more of the monitor. A home with only a relay is monitored too. The plugin only reads these entities. One entity feeds one signal only.\n\n{hint}",
         "data": {
+          "relay_reads_boiler": "Do you also read the boiler through another integration?",
           "flame": "Flame",
           "flow": "Flow temperature",
           "return": "Return temperature",
           "modulation": "Modulation",
           "dhw_active": "Hot water (DHW) active",
           "pressure": "Water pressure",
-          "outdoor": "Outdoor temperature (boiler sensor)",
+          "outdoor": "Outdoor temperature sensor",
           "ch_setpoint": "Heating setpoint",
           "ch_active": "Heating active",
           "pump_running": "Pump running",
@@ -658,20 +661,21 @@
           "fault_indication": "Boiler fault indication"
         },
         "data_description": {
+          "relay_reads_boiler": "No (default): only what a relay can read is asked — flame, flow, return, the boiler's electric power, the gas meter, the outdoor temperature and the weather; other boiler signals mapped before are removed at the save. Yes: every boiler signal — the form shows itself again with them once you submit this answer.",
           "flame": "On while the burner burns. Every burner-cycle metric comes from it: the wrong entity gives wrong starts and burn times.",
           "flow": "Water leaving the boiler. Used to tell whether heat reaches the zones and DHW runs from heating; with control, it is part of the boiler link. The wrong entity misleads all of them.",
           "return": "Water coming back to the boiler. Enables the condensing share, and tells against the flow whether heat reaches the zones; without it condensing cannot be judged. The wrong entity gives a wrong condensing share.",
           "modulation": "Burner modulation in percent. With the boiler's power range it estimates heat output and gas use. A sensor in another unit is refused.",
           "dhw_active": "On while the boiler heats domestic hot water. Without it DHW runs are inferred with less certainty and some may count as heating; with control, hot-water charging is then less sure to pause learning.",
           "pressure": "Enables the high-pressure and \"add water\" notifications and the falling-pressure warning. From an OpenTherm Gateway a reading of 0 bar counts as unknown (the gateway shows 0 after a restart); from any other sensor it is a reading. The wrong entity gives false alarms or none.",
-          "outdoor": "The boiler's own outdoor sensor. Used for degree-days, for control's curve, and checked against the weather entity: one found stuck or far off is left out of the curve. A wrong sensor bends the curve until the check catches it.",
+          "outdoor": "Any sensor of the outdoor temperature — the boiler's own, a weather station's or another in Home Assistant. Used for degree-days, for control's curve, and checked against the weather entity: one found stuck or far off is left out of the curve. A wrong sensor bends the curve until the check catches it.",
           "ch_setpoint": "The flow setpoint the boiler works to, a temperature. Helps tell DHW runs from heating.",
           "ch_active": "On while the boiler heats the rooms. Helps tell DHW from heating when there is no DHW signal.",
           "pump_running": "On while the heating pump runs. Enables the low-flow warning: every valve closed while the pump runs.",
           "flue_gas": "Enables the flue gas alarm and the early warning of a fouling heat exchanger.",
           "gas_meter": "A cumulative gas or energy meter. Gives measured gas per degree-day instead of an estimate. Gas the meter counts while the burner is off (a cooker, another appliance) is shown apart; gas they use while the burner runs cannot be told apart and counts as heating.",
-          "room_setpoint": "The room setpoint of a wall thermostat on the gateway, from the thermostat's side — e.g. \"Room setpoint 1\" on the gateway's thermostat device, or the firmware's TrSet_thermostat with separate sources on; not the gateway's climate target. Shown as the temperature the wall thermostat keeps after a hand-back.",
-          "room_temperature": "The room temperature a wired thermostat sends to the boiler, if there is one. Recorded for the assessment.",
+          "room_setpoint": "The room setpoint of a thermostat connected to the boiler or its interface, from the thermostat's side — e.g. \"Room setpoint 1\" on the gateway's thermostat device, or the firmware's TrSet_thermostat with separate sources on; not the gateway's climate target. Shown as the temperature the wall thermostat keeps after a hand-back.",
+          "room_temperature": "The room temperature a thermostat connected to the boiler or its interface sends to the boiler, if there is one. Recorded for the assessment.",
           "weather": "Its forecasts are recorded for later forecast features, and its temperature stands in for a missing or suspect outdoor sensor — for degree-days and control's curve. No data leaves your Home Assistant.",
           "boiler_power": "Optional: the boiler's electric power, e.g. from a plug that measures it; used only as proof that a relay-driven boiler heats.",
           "low_pressure_fault": "Optional: the boiler's own low-water-pressure fault, e.g. the gateway's \"Low water pressure\" on its boiler device. While it reads on for 5 minutes, control switches heating off — without handing the boiler back — and on again when it clears, as the boiler itself does. Unknown or unavailable counts as no fault. Pick only the boiler's own report: a wrong pick stops heating while the boiler could heat. On an OpenTherm Gateway it counts only while the boiler's fault indication (below) is on: the gateway reads the fault details only when a fault appears, and shows them unknown after a restart until the next fault.",
@@ -681,7 +685,7 @@
       },
       "freshness": {
         "title": "Freshness limits",
-        "description": "An age limit per signal, in minutes: a value not reported for longer counts as stale, for the monitor and for control alike — without a fresh flame and flow, control writes nothing and hands back after five minutes. Empty (default): automatic — no limit until the source is seen repeating an unchanged value; then five times its own rhythm, 10 to 30 minutes (the weather entity 3 to 12 hours). A source that reports only changes (MQTT, ESPHome without force_update) never gets one, as a steady value is not a stale one. 0: no limit, only whether the entity is available counts. A number: that limit. On the OTGW firmware over MQTT and on EMS-ESP the plugin hears the device's own repeats on its MQTT topics, given under \"Boiler interface\". Risk: without a limit, a source that freezes without going unavailable is not caught; a limit shorter than a source's reporting interval stops control in steady weather. Control reads the flame and the flow each by its own limit; a link that keeps dropping in and out counts as lost once it has been stale for five minutes within ten. On an OpenTherm Gateway over MQTT, the gateway dropping off shows within about 90 s (its entities turn unavailable), but a broken link inside it, between its ESP and its PIC, shows only as its repeats stopping.",
+        "description": "An age limit per signal, in minutes: a value not reported for longer counts as stale. {judged} Empty (default): automatic — no limit until the source is seen repeating an unchanged value; then five times its own rhythm, 10 to 30 minutes (the weather entity 3 to 12 hours). A source that reports only changes (MQTT, ESPHome without force_update) never gets one, as a steady value is not a stale one. 0: no limit, only whether the entity is available counts. A number: that limit. On the OTGW firmware over MQTT and on EMS-ESP the plugin hears the device's own repeats on its MQTT topics, given under \"Boiler interface\". Risk: without a limit, a source that freezes without going unavailable is not caught; a limit shorter than a source's reporting interval stops control in steady weather. Control reads the flame and the flow each by its own limit; a link that keeps dropping in and out counts as lost once it has been stale for five minutes within ten. On an OpenTherm Gateway over MQTT, the gateway dropping off shows within about 90 s (its entities turn unavailable), but a broken link inside it, between its ESP and its PIC, shows only as its repeats stopping.",
         "data": {
           "flame": "Flame",
           "flow": "Flow temperature",
@@ -1325,6 +1329,12 @@
         "ready": "Every section is confirmed: choose “Create”.",
         "changed": "Unsaved changes:",
         "unchanged": "No unsaved changes."
+      }
+    },
+    "freshness_note": {
+      "options": {
+        "water": "It counts for the monitor and for control alike — without a fresh flame and flow, control writes nothing and hands back after five minutes.",
+        "relay": "On a relay the limits judge the monitor only: control switches the relay by the relay's own state."
       }
     }
   },

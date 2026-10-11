@@ -8,7 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-11: the plan approved by the user; I8.0 to I8.4 done; I8.5 next.
+Status on 2026-10-11: the plan approved by the user; I8.0 to I8.4 and I8.5a done; I8.5b next.
 
 ## How to read this plan
 
@@ -447,6 +447,23 @@ write path and the "monitor mode" topology.
   gateway or MQTT control step).
 
 ### I8.5 Signals and freshness (D3–D7)
+
+Claude's call: two pull requests — I8.5a the relay's question, the thermostat's and the outdoor
+fields and the freshness limits, I8.5b the read-backs in the signals.
+
+- I8.5a ✅ (2026-10-11): a relay asks first "Do you also read the boiler through another
+  integration?" (stored with the connection) — No by default, Yes where a boiler signal beyond
+  a relay's own is mapped; No offers flame, flow, return, the boiler's electric power, the gas
+  meter, the outdoor sensor and the weather, and the other boiler signals go at the save; Yes
+  shows the form again with every signal (A2). The thermostat's setpoint and room temperature are
+  "a thermostat connected to the boiler or its interface"'s, hidden with the relay's No; the
+  outdoor field takes any outdoor sensor. An age limit is asked for a mapped signal only, and
+  goes with it at the signals' save; the freshness text follows the connection (Claude's call:
+  for an entry made before the connection question, the one its write path stands for). Minor version
+  17 stores Yes for a relay entry with such a signal mapped, and drops the limits of signals
+  not mapped (Claude's call: they judged nothing, and one out of range could fail the entry
+  where the form no longer shows it). `SCOPE.md` §6 and the freshness default, both user guides
+  (the setup, 6.8), both technical documents (freshness).
 
 - Code: the read-backs in the signals; the relay's question and its short list; the wired
   thermostat's fields; the outdoor sensor; freshness limits only for mapped signals, removed

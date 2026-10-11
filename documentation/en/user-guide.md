@@ -103,7 +103,12 @@ Only one entry of the integration can exist: it runs one boiler.
 3. **Pick the signals.** In the section **Boiler signals** pick the entity for each signal you have — at
    least flame and flow temperature if you plan to control the boiler. The plugin only reads
    these entities. With the OpenTherm Gateway integration and exactly one gateway, its boiler
-   entities are filled in for you to check. **Boiler interface** asks what the plugin needs to
+   entities are filled in for you to check. With a relay the section asks first whether you
+   also read the boiler through another integration: No (the default) offers only what a relay
+   installation reads — flame, flow, return, the boiler's electric power, the gas meter, the
+   outdoor temperature and the weather — and removes the other boiler signals at the save; Yes
+   offers every signal. The outdoor temperature may come from any outdoor sensor, not only the
+   boiler's. **Boiler interface** asks what the plugin needs to
    know about the device between it and the boiler, only where your connection and mode use
    it: the MQTT topics of the OTGW firmware or EMS-ESP (see [Fresh data](#68-fresh-data)), the
    gateway where more than one is set up, how a gateway sits between thermostat and boiler and
@@ -759,8 +764,10 @@ that is already active when you switch control on blocks control at once.
 
 A signal is fresh while its entity is available and, where it has an age limit, while its last
 report is within that limit. Without a fresh flame and flow, control writes nothing and hands
-back after five minutes ([A lost boiler link](#63-a-lost-boiler-link)). The limits are set in the
-options under **Freshness limits**, in minutes, one per signal and one for the weather entity:
+back after five minutes ([A lost boiler link](#63-a-lost-boiler-link)); on a relay the limits
+judge the monitor only, as control switches the relay by the relay's own state. The limits are
+set in the options under **Freshness limits**, in minutes, one per mapped signal and one for the
+weather entity; a signal removed from **Boiler signals** takes its limit with it:
 
 - **Empty (default): automatic.** No limit until the source is seen repeating an unchanged value
   at least twice in the run; then five times its own rhythm, 10 to 30 minutes for the boiler's

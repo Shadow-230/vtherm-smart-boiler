@@ -540,6 +540,16 @@ entry that chose "room temperature only" before reads as monitoring only (I8.4a,
   recorded heating days measure it; an estimate from gas bills comes later.
 - The building model is the whole house in kW — the boiler's load. It does not duplicate the
   zone algorithms' room models.
+- The boiler's signals are picked on one step (I8 D3–D7). A relay asks first "Do you also read
+  the boiler through another integration?" — No by default, Yes where such a signal is already
+  mapped: No offers what a relay installation reads — flame, flow, return, the boiler's electric
+  power, the gas meter, the outdoor sensor and the weather — and the other boiler signals mapped
+  before go at the save; Yes offers every signal. The outdoor temperature comes from any outdoor
+  sensor (the boiler's own, a weather station's or another). The setpoint and the room
+  temperature of a thermostat connected to the boiler or its interface are recorded for the
+  assessment, for every connection but a relay read through nothing else. An age limit belongs
+  to a mapped signal only and goes with it; on a relay the limits judge the monitor only —
+  control switches the relay by the relay's own state.
 
 ## 7. Features by stage
 
@@ -1095,7 +1105,8 @@ in K):
   another controller switching it goes unnoticed). With "gateway with thermostat", the optional
   field "the OpenTherm thermostat's requested control setpoint" tells a lost command from another
   controller; it is refused as the setpoint read-back.
-- An age limit per signal (freshness), the weather entity's included: empty by default —
+- An age limit per mapped signal (freshness; it goes with its signal), the weather entity's
+  included: empty by default —
   automatic, earned by a source seen repeating an unchanged value; 0 none (risk: without a limit
   a frozen source is not caught; with one shorter than the source's reporting interval, control
   stops in steady weather).
