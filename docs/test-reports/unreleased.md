@@ -181,7 +181,7 @@ the boiler's own control setpoint; the hand-back value 0 "own control".
 | ID | Scenario | Result | Evidence |
 |---|---|---|---|
 | N1 | control and the safe hand-back | pass | |
-| N2 | the device restarting during a hand-back | code b: FAIL (F7); code c: the hand-back made | code b: only the heating switch written once back — the setpoint judged "held by another controller" before the plugin ever wrote it (twice); code c: [20, CH on, 0] written once back. NEW-N2 below |
+| N2 | the device restarting during a hand-back | code b: FAIL (F7); code c: pass | code b: only the heating switch written once back — the setpoint judged "held by another controller" before the plugin ever wrote it (twice); code c: [20, CH on, 0] written once back, the alarm cleared after the retry checks (`taken_by_other`) |
 | N3 | a setpoint the boiler stores, or might | pass | refused where it is entered (`write_type_not_supported`) |
 | N4 | without a heating switch | pass | "this change stops control", then the switch refused |
 | N5 | every zone unknown, with and without the own-room tick | pass | with: handed back to the boiler's own controller; without: idle, no hand-back |
@@ -194,7 +194,7 @@ the boiler's own control setpoint; the hand-back value 0 "own control".
 
 NEW-N2: the run after #51 checked the alarm 50 s after the device's return, before the two retry
 checks a minute apart that judge a held device's own-control read-back; the runner now waits for
-them (morning rerun: see the status line of section 7). The runs of N2 and N6 on 2026-10-10 at
+them, and N2 passed on 2026-10-11 at 07:26 UTC. The runs of N2 and N6 on 2026-10-10 at
 16:46 were on a wrong configuration and are void: N8 had left the instance on the timeout
 hand-back (its restore refused while a hand-back was owed, unnoticed by the runner) — not a
 regression of #51, as first reported; the runner now refuses to run a scenario on an instance not
@@ -268,7 +268,7 @@ its 3 K limit with `curve_too_low` raised — F8.
 
 ## 7. Findings and known limits
 
-Status on the morning of 2026-10-11: N2 and N8 running again on instance 7 with the runner's fixes.
+Status on the morning of 2026-10-11: N2 passed again (code c); N8 running again on instance 7 to check its restore after an owed hand-back.
 
 | # | Finding | Weight | Follow-up |
 |---|---|---|---|
@@ -281,7 +281,7 @@ Status on the morning of 2026-10-11: N2 and N8 running again on instance 7 with 
 | L1 | VT's activation delay checks the demand again at its end: a TPI pulse shorter than the delay never starts the boiler | by design | said in the option's description |
 | L2 | "return by itself" counts its quiet hour from the other controller's last write, the wall thermostat's own program changes included | by design | said in the option's confirmation |
 | L3 | behind an OpenTherm Gateway a boiler that ignores the setpoint is not seen: the gateway echoes what it sends | the real path's limit | known (PB-91) |
-| F7 | a held device restarting during a hand-back never got the setpoint's hand-back value: a third value on the read-back after the outage was judged another controller's before the plugin wrote it, and the "hand-back failed" alarm cleared | high, entity path | fixed (#51, #58); J4 N2 writes [20, CH on, 0] once back |
+| F7 | a held device restarting during a hand-back never got the setpoint's hand-back value: a third value on the read-back after the outage was judged another controller's before the plugin wrote it, and the "hand-back failed" alarm cleared | high, entity path | fixed (#51, #58); J4 N2 passes: [20, CH on, 0] written once back |
 | F8 | the comfort correction on: at night ×1.30 (+8 °C) and ×4.42 (−5 °C) the boiler's own starts, for 0.00–0.07 K of comfort — the rooms stay about 1 K short through VT's TPI offset, which the correction cannot remove, and the water at the limit makes every TPI cycle stop the burner | medium | G11 made it on by default in full control: to decide at K4 (the simulation in the tests says ×1.39 and ×6.28) |
 | F9 | the starts criterion fails at −5 °C over a full day with the correction off (×1.72; ×0.93 at night) | medium | K4: heating follows VT at once by the user's rule |
 | F10 | the long-burn rule runs only after 3 h of flame without a break; a boiler cycling at its minimum while the rooms stay short never triggers it, so with the correction off nothing tells the user (Q2) | medium | to decide: count the burner's share of the time, not one unbroken burn |
