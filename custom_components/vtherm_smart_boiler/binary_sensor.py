@@ -53,10 +53,6 @@ async def async_setup_entry(
 ) -> None:
     coordinator = entry.runtime_data
     entities: list[BinarySensorEntity] = [ConnectionSensor(coordinator)]
-    hot_water = feature_configured(coordinator, "hot_water")
-    for zone in coordinator.config.installation.zones:
-        if hot_water:
-            entities.append(HotWaterSensor(coordinator, zone.zone_id))
     entities += [AlarmSensor(coordinator, kind) for kind in _alarm_kinds(coordinator)]
     if feature_configured(coordinator, "outdoor_sensor_problem"):
         entities.append(OutdoorSensorProblem(coordinator))
@@ -104,25 +100,6 @@ class ConnectionSensor(SmartBoilerEntity, BinarySensorEntity):
                 self.coordinator, "binary_sensor", "connection", "problems", problems
             ),
         }
-
-
-class HotWaterSensor(SmartBoilerEntity, BinarySensorEntity):
-    """Heat is reaching the zone's emitters; unknown when it cannot be told, with its reason.
-    How far the flow stands above the room is left to the diagnostics (P-72)."""
-
-    _attr_device_class = BinarySensorDeviceClass.HEAT
-
-    def __init__(self, coordinator: SmartBoilerCoordinator, zone: str) -> None:
-        super().__init__(coordinator, "hot_water", zone=zone)
-
-    @property
-    def is_on(self) -> bool | None:
-        return self.coordinator.data.zones[self.zone or ""].hot_water.available
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        hot = self.coordinator.data.zones[self.zone or ""].hot_water
-        return {"reason": None if hot.reason is None else hot.reason.value}
 
 
 class AlarmSensor(SmartBoilerEntity, BinarySensorEntity):

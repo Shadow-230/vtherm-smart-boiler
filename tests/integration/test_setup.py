@@ -16,6 +16,7 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.vtherm_smart_boiler.const import DOMAIN
+from custom_components.vtherm_smart_boiler.coordinator import SmartBoilerCoordinator
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 from sim.simulator import DAY, Scenario, daily_cycle, simulate
 
@@ -62,15 +63,9 @@ async def setup(hass: HomeAssistant, entry: MockConfigEntry, *, background: bool
     await hass.async_block_till_done(wait_background_tasks=background)
 
 
-def entity_id(
-    hass: HomeAssistant, entry: MockConfigEntry, domain: str, key: str, zone: str | None = None
-) -> str:
-    """One of the plugin's entities; a zone's are keyed on the thermostat's registry entry."""
+def entity_id(hass: HomeAssistant, entry: MockConfigEntry, domain: str, key: str) -> str:
+    """One of the plugin's entities."""
     registry = er.async_get(hass)
-    if zone is not None:
-        zone_entry = registry.async_get(zone)
-        assert zone_entry is not None, zone
-        key = f"{key}_{zone_entry.id}"
     found = registry.async_get_entity_id(domain, DOMAIN, f"{entry.entry_id}_{key}")
     assert found is not None, key
     return found
@@ -105,19 +100,7 @@ async def test_setup_creates_entities_and_reads_signals(
     connection = hass.states.get(entity_id(hass, entry, "binary_sensor", "connection"))
     assert connection is not None
     assert connection.state == "on"
-    hot = hass.states.get(entity_id(hass, entry, "binary_sensor", "hot_water", living))
-    assert hot is not None
-    assert hot.state == "on"
-    # A power user's diagnostic: registered, hidden until enabled (P104).
-    factor_id = entity_id(hass, entry, "sensor", "emitter_power_factor", living)
     registry = er.async_get(hass)
-    assert registry.async_get(factor_id).disabled_by is er.RegistryEntryDisabler.INTEGRATION
-    registry.async_update_entity(factor_id, disabled_by=None)
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
-    factor = hass.states.get(factor_id)
-    assert factor is not None
-    assert float(factor.state) > 0
     critical = hass.states.get(entity_id(hass, entry, "sensor", "critical_zone_main"))
     assert critical is not None
     assert critical.attributes["zone"] == living
@@ -248,7 +231,6 @@ def test_changing_attributes_stay_out_of_the_recorder() -> None:
     """P33: attributes that change with every update would fill the database."""
     from custom_components.vtherm_smart_boiler.binary_sensor import (
         AlarmSensor,
-        HotWaterSensor,
         OutdoorSensorProblem,
     )
     from custom_components.vtherm_smart_boiler.sensor import (
@@ -256,7 +238,6 @@ def test_changing_attributes_stay_out_of_the_recorder() -> None:
         ControlSetpointSensor,
         ControlStateSensor,
         CriticalZoneSensor,
-        EmitterFactorSensor,
     )
 
     for cls, changing in (
@@ -272,15 +253,13 @@ def test_changing_attributes_stay_out_of_the_recorder() -> None:
             },
         ),
         (ControlSetpointSensor, {"requested", "read_back", "last_change"}),
-        (EmitterFactorSensor, {"computed_at", "output_w"}),
         (CriticalZoneSensor, {"demand", "deficit"}),
         (BoilerSensor, {"reasons", "temperature", "deficit", "contributions"}),
         (OutdoorSensorProblem, {"mean_difference"}),
     ):
         assert changing <= cls._unrecorded_attributes, cls.__name__
     # P-72: the continuous values are no attributes at all any more; the diagnostics keep them.
-    for cls in (HotWaterSensor, AlarmSensor):
-        assert not cls._unrecorded_attributes & {"excess", "value"}, cls.__name__
+    assert not AlarmSensor._unrecorded_attributes & {"excess", "value"}
 
 
 async def test_a_new_emitter_factor_is_saved_slowly_a_latch_soon(hass: HomeAssistant) -> None:
@@ -472,12 +451,13 @@ async def test_a_slow_analysis_does_not_set_the_quick_path_back(
     freezer.move_to(datetime(2026, 1, 10, 12, tzinfo=UTC))
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0})
-    living = zones.add("living", hvac_action="heating", valve_open_percent=50)
+    zones.add("living", hvac_action="heating", valve_open_percent=50)
     entry = entry_for(boiler, zones, freshness={"flow": 1800.0})
     await setup(hass, entry)
     await hass.async_block_till_done(wait_background_tasks=True)
     coordinator = entry.runtime_data
-    hot_id = entity_id(hass, entry, "binary_sensor", "hot_water", living)
+    connection_id = entity_id(hass, entry, "binary_sensor", "connection")
+    assert hass.states.get(connection_id).state == "on"
     release = threading.Event()
     real = coordinator_module.analyse
 
@@ -491,54 +471,39 @@ async def test_a_slow_analysis_does_not_set_the_quick_path_back(
     freezer.tick(timedelta(hours=1))
     zones.set("living", hvac_action="heating", valve_open_percent=50)
     await coordinator.async_refresh()
-    assert hass.states.get(hot_id).state == "unknown"  # the flow is stale now
+    assert hass.states.get(connection_id).state == "off"  # the flow is stale now
     release.set()
     await task
     await hass.async_block_till_done()
-    assert hass.states.get(hot_id).state == "unknown"
+    assert hass.states.get(connection_id).state == "off"
+    assert hass.states.get(connection_id).attributes["problems"] == ["flow"]
 
 
 async def test_entities_the_options_no_longer_create_are_removed(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:
-    """P39: a zone taken out of the options takes its entities with it; an entity the user
+    """P39: a circuit taken out of the options takes its entities with it; an entity the user
     disabled stays disabled, not removed."""
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
-    living = zones.add("living")
-    bedroom = zones.add("bedroom")
-    entry = entry_for(boiler, zones)
+    zones.add("living")
+    entry = entry_for(
+        boiler, zones, circuits=[{"id": "main"}, {"id": "circuit_2", "control": "separate"}]
+    )
+    options = dict(entry.options)
+    options["zones"] = [{"entity_id": zones.entities["living"], "circuit": "main"}]
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
     await setup(hass, entry)
     registry = er.async_get(hass)
-    gone = entity_id(hass, entry, "binary_sensor", "hot_water", bedroom)
-    disabled = entity_id(hass, entry, "sensor", "emitter_power_factor", living)
+    gone = entity_id(hass, entry, "sensor", "critical_zone_circuit_2")
+    disabled = entity_id(hass, entry, "sensor", "critical_zone_main")
     registry.async_update_entity(disabled, disabled_by=er.RegistryEntryDisabler.USER)
     hass.config_entries.async_update_entry(
-        entry, options={**entry.options, "zones": [{"entity_id": living}]}
+        entry, options={**entry.options, "circuits": [entry.options["circuits"][0]]}
     )
     await hass.async_block_till_done()
     assert registry.async_get(gone) is None
     assert registry.async_get(disabled) is not None
-
-
-async def test_zone_entities_keep_their_identity_when_the_thermostat_is_renamed(
-    hass: HomeAssistant, zones: FakeZones
-) -> None:
-    """P39: keyed on the thermostat's registry entry, not its entity ID."""
-    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
-    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
-    living = zones.add("living")
-    entry = entry_for(boiler, zones)
-    await setup(hass, entry)
-    before = entity_id(hass, entry, "binary_sensor", "hot_water", living)
-    registry = er.async_get(hass)
-    registry.async_update_entity(living, new_entity_id="climate.lounge")
-    hass.states.async_set("climate.lounge", "heat", {"current_temperature": 20.0})
-    hass.config_entries.async_update_entry(
-        entry, options={**entry.options, "zones": [{"entity_id": "climate.lounge"}]}
-    )
-    await hass.async_block_till_done()
-    assert entity_id(hass, entry, "binary_sensor", "hot_water", "climate.lounge") == before
 
 
 def count_setups(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -561,8 +526,7 @@ async def test_a_renamed_entity_is_followed(
 ) -> None:
     """P-19 (follow, provisional, K4): a VT climate and a boiler signal renamed in Home
     Assistant at once — as renaming their device does: the options hold the new entity IDs
-    after one reload, as any options save; the zone's entities keep their identity; and the new
-    IDs are followed from then on."""
+    after one reload, as any options save; and the new IDs are followed from then on."""
     registry = er.async_get(hass)
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     flow = registry.async_get_or_create(
@@ -573,7 +537,6 @@ async def test_a_renamed_entity_is_followed(
     living = zones.add("living")
     entry = entry_for(boiler, zones)
     await setup(hass, entry)
-    before = entity_id(hass, entry, "binary_sensor", "hot_water", living)
     setups = count_setups(monkeypatch)
     registry.async_update_entity(living, new_entity_id="climate.lounge")
     registry.async_update_entity(flow.entity_id, new_entity_id="sensor.boiler_flow")
@@ -582,7 +545,6 @@ async def test_a_renamed_entity_is_followed(
     assert entry.options["signals"]["flow"] == "sensor.boiler_flow"
     assert setups == [entry.entry_id]  # one reload
     assert entry.state is ConfigEntryState.LOADED
-    assert entity_id(hass, entry, "binary_sensor", "hot_water", "climate.lounge") == before
     registry.async_update_entity("climate.lounge", new_entity_id="climate.salon")
     await hass.async_block_till_done()
     assert entry.options["zones"] == [{"entity_id": "climate.salon"}]
@@ -600,8 +562,6 @@ async def test_a_registry_change_during_setup_is_followed(
     signal's plain state) changes nothing."""
     from homeassistant.helpers import issue_registry as ir
 
-    import custom_components.vtherm_smart_boiler as plugin
-
     registry = er.async_get(hass)
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     flow = registry.async_get_or_create(
@@ -609,19 +569,19 @@ async def test_a_registry_change_during_setup_is_followed(
     )
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
     entry = entry_for(boiler)
-    real = plugin._async_migrate_zone_unique_ids
+    real = SmartBoilerCoordinator.async_load_texts
     done: list[bool] = []
 
-    async def meanwhile(*args: Any) -> None:
+    async def meanwhile(self: Any) -> None:
         if not done:  # the first setup only
             done.append(True)
             if change == "rename":
                 registry.async_update_entity(flow.entity_id, new_entity_id="sensor.boiler_flow")
             else:
                 registry.async_remove(flow.entity_id)
-        await real(*args)
+        await real(self)
 
-    monkeypatch.setattr(plugin, "_async_migrate_zone_unique_ids", meanwhile)
+    monkeypatch.setattr(SmartBoilerCoordinator, "async_load_texts", meanwhile)
     setups = count_setups(monkeypatch)
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -659,8 +619,6 @@ async def test_a_rename_during_a_reload_is_followed_once_it_has_returned(
     is then the last step waited for."""
     import homeassistant.setup as ha_setup
 
-    import custom_components.vtherm_smart_boiler as plugin
-
     registry = er.async_get(hass)
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     flow = registry.async_get_or_create(
@@ -669,16 +627,16 @@ async def test_a_rename_during_a_reload_is_followed_once_it_has_returned(
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
     entry = entry_for(boiler)
     await setup(hass, entry)
-    real = plugin._async_migrate_zone_unique_ids
+    real = SmartBoilerCoordinator.async_load_texts
     done: list[bool] = []
 
-    async def meanwhile(*args: Any) -> None:
+    async def meanwhile(self: Any) -> None:
         if not done:
             done.append(True)
             registry.async_update_entity(flow.entity_id, new_entity_id="sensor.boiler_flow")
-        await real(*args)
+        await real(self)
 
-    monkeypatch.setattr(plugin, "_async_migrate_zone_unique_ids", meanwhile)
+    monkeypatch.setattr(SmartBoilerCoordinator, "async_load_texts", meanwhile)
     if not record:
         monkeypatch.delattr(ha_setup, "_DATA_SETUP")
     setups = count_setups(monkeypatch)
@@ -771,26 +729,32 @@ async def test_a_removed_entity_raises_a_repair_issue(
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None  # with the entry
 
 
-async def test_zone_entities_from_before_move_to_the_stable_key(
+async def test_the_zones_entities_from_before_leave_the_registry(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:
-    """An entity keyed on the thermostat's entity ID (up to 0.2) keeps its entity and history."""
+    """I8.1d: the per-zone entities up to 0.2 — heat reaching the zone, the emitter power factor,
+    under either key — are no longer created and go at the next setup."""
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
     living = zones.add("living")
     entry = entry_for(boiler, zones)
     entry.add_to_hass(hass)
     registry = er.async_get(hass)
-    old = registry.async_get_or_create(
-        "binary_sensor",
-        DOMAIN,
-        f"{entry.entry_id}_hot_water_{living}",
-        config_entry=entry,
-        suggested_object_id="living_hot_water",
-    )
+    key = registry.async_get(living).id
+    old = [
+        registry.async_get_or_create(
+            domain, DOMAIN, f"{entry.entry_id}_{name}_{zone}", config_entry=entry
+        ).entity_id
+        for domain, name, zone in (
+            ("binary_sensor", "hot_water", living),
+            ("binary_sensor", "hot_water", key),
+            ("sensor", "emitter_power_factor", key),
+        )
+    ]
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entity_id(hass, entry, "binary_sensor", "hot_water", living) == old.entity_id
+    assert all(registry.async_get(entity) is None for entity in old)
+    assert entity_id(hass, entry, "binary_sensor", "connection")
 
 
 async def test_a_store_with_broken_fields_still_loads(
@@ -892,7 +856,7 @@ async def test_an_entry_from_before_drops_the_options_that_are_gone(
     )
     await left_control_store(hass, entry)
     await setup(hass, entry)
-    assert entry.minor_version == 10
+    assert entry.minor_version == 11
     # Minor version 3 (X6): the lowest water temperature 0.2.1 used, kept.
     assert entry.options["control"] == {
         "write_path": "entity",
@@ -946,7 +910,7 @@ async def test_the_alarm_migration_moves_to_the_add_water_threshold(
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 10
+    assert entry.minor_version == 11
     stored = entry.options["monitor"]
     assert "pressure_low_warning" not in stored
     assert "pressure_low_alarm" not in stored
@@ -986,7 +950,7 @@ async def test_the_alarm_migration_keeps_an_offered_reaction_and_raises_no_issue
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 10
+    assert entry.minor_version == 11
     assert entry.options["control"]["alarm_reactions"] == {"write_ignored": "hand_back"}
     assert ir.async_get(hass).async_get_issue(DOMAIN, f"reactions_removed_{entry.entry_id}") is None
 
@@ -1022,7 +986,7 @@ async def test_migration_keeps_the_floor_of_a_control_section_without_it(
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 10
+    assert entry.minor_version == 11
     stored = entry.options.get("control")
     if hard_min is None:
         assert stored == control
@@ -1106,7 +1070,10 @@ STORED_BY_MINOR[8] = CURRENT_OPTIONS | {"reference_room": {"strategy": "average"
 STORED_BY_MINOR[9] = CURRENT_OPTIONS | {
     "monitor": {**CURRENT_OPTIONS["monitor"], "foreign_heat_hold_min": 30}
 }
-STORED_BY_MINOR[10] = CURRENT_OPTIONS  # I8.1a, I8.1c: the reference room and foreign heat gone
+STORED_BY_MINOR[10] = CURRENT_OPTIONS | {  # I8.1a, I8.1c: reference room, foreign heat gone
+    "monitor": {**CURRENT_OPTIONS["monitor"], "near_room_k": 3.0}
+}
+STORED_BY_MINOR[11] = CURRENT_OPTIONS  # I8.1d: the per-zone values gone
 
 
 @pytest.mark.parametrize(
@@ -1139,7 +1106,7 @@ async def test_an_entry_from_before_keeps_the_high_pressure_limits_it_ran_with(
         domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=minor
     )
     await setup(hass, entry)
-    assert entry.minor_version == 10
+    assert entry.minor_version == 11
     assert entry.options["monitor"] == {"monitoring_days": 7, **expected}
     key = f"{entry.entry_id}_alarm_pressure_high"
     found = er.async_get(hass).async_get_entity_id("binary_sensor", DOMAIN, key)
@@ -1211,7 +1178,7 @@ async def test_the_curves_design_outdoor_temperature_becomes_the_buildings(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 10
+    assert entry.minor_version == 11
     assert dict(entry.options) == expected
     assert ("replaces the building's -20.0 °C" in caplog.text) is replaced
 
@@ -1248,7 +1215,7 @@ async def test_an_upgraded_entry_keeps_the_comfort_correction_it_ran_with(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 10  # through the later steps too
+    assert entry.minor_version == 11  # through the later steps too
     assert entry.options.get("control") == expected
 
 
@@ -1271,8 +1238,35 @@ async def test_an_upgraded_entry_drops_foreign_heat(hass: HomeAssistant) -> None
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 10
+    assert entry.minor_version == 11
     assert dict(entry.options) == {"zones": [zone], "monitor": {"monitoring_days": 7}}
+
+
+async def test_an_upgraded_entry_drops_the_zone_values(hass: HomeAssistant) -> None:
+    """I8.1d (minor version 11): the zones' emitter output and exponent and the monitor's "near
+    room temperature" go, and nothing else changes; a zone that is not a mapping is left as
+    stored, for the options' check to report."""
+    from custom_components.vtherm_smart_boiler import async_migrate_entry
+
+    zone = {"entity_id": "climate.a", "emitter": "radiator"}
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options={
+            "zones": [zone | {"reference_output_w": 1500.0, "exponent": 1.3}, "climate.b"],
+            "monitor": {"monitoring_days": 7, "near_room_k": 3.0},
+        },
+        version=1,
+        minor_version=10,
+    )
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry)
+    assert entry.minor_version == 11
+    assert dict(entry.options) == {
+        "zones": [zone, "climate.b"],
+        "monitor": {"monitoring_days": 7},
+    }
 
 
 async def test_an_upgraded_entry_drops_the_reference_room(hass: HomeAssistant) -> None:
@@ -1291,7 +1285,7 @@ async def test_an_upgraded_entry_drops_the_reference_room(hass: HomeAssistant) -
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 10
+    assert entry.minor_version == 11
     assert dict(entry.options) == kept
 
 
@@ -1337,7 +1331,7 @@ async def test_an_upgraded_entry_keeps_the_curves_room_it_ran_with(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 10
+    assert entry.minor_version == 11
     assert entry.options["control"] == expected
 
 
@@ -1345,16 +1339,15 @@ async def test_an_upgraded_entry_keeps_the_curves_room_it_ran_with(
 async def test_an_entry_of_any_earlier_minor_version_migrates_to_this_ones_options(
     hass: HomeAssistant, minor: int
 ) -> None:
-    """P-124: from minor version 1 through 2 to 9 to this one (10), each step applied once and in
+    """P-124: from minor version 1 through 2 to 10 to this one (11), each step applied once and in
     order from where the entry stands — ``boiler.shared_return`` and 0.2.1's removed control
     options go (2), the lowest water temperature 0.2.1 used is kept (3, X6), the low-pressure
     limits become the "add water" threshold and the reactions decision 7 no longer offers go,
     with their warning (4, Y1), the curve's design outdoor temperature becomes the building's
     (6, I6), the comfort correction it ran with, off, is stored (7, G11), and so is the curve's
-    room temperature it ran with, Manual (8, G11), the reference room goes (9, I8) and foreign
-    heat (10, I8). Every
-    starting point ends with the same options; an entry already current is left as it is, and
-    warns of nothing."""
+    room temperature it ran with, Manual (8, G11), the reference room goes (9, I8), foreign heat
+    (10, I8) and the per-zone values (11, I8). Every starting point ends with the same options;
+    an entry already current is left as it is, and warns of nothing."""
     from homeassistant.helpers import issue_registry as ir
 
     from custom_components.vtherm_smart_boiler.config_flow import SmartBoilerConfigFlow
@@ -1748,22 +1741,21 @@ async def test_a_steady_flow_is_stale_only_past_a_user_limit(
     freezer.move_to(datetime(2026, 1, 10, 12, tzinfo=UTC))
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0})
-    living = zones.add("living", hvac_action="heating", valve_open_percent=50)
+    zones.add("living", hvac_action="heating", valve_open_percent=50)
     extra = {} if limit is None else {"freshness": {"flow": limit}}
     entry = entry_for(boiler, zones, **extra)
     await setup(hass, entry)
-    hot_id = entity_id(hass, entry, "binary_sensor", "hot_water", living)
-    assert hass.states.get(hot_id).state == "on"
+    connection_id = entity_id(hass, entry, "binary_sensor", "connection")
+    assert hass.states.get(connection_id).state == "on"
     freezer.tick(timedelta(hours=1))
     zones.set("living", hvac_action="heating", valve_open_percent=50)  # the zone stays fresh
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
     await entry.runtime_data.async_refresh()  # whatever the timers did under load
     await hass.async_block_till_done()
-    state = hass.states.get(hot_id)
-    assert (state.state == "unknown") is stale  # unknown, not "no" (the user's decision)
-    if stale:
-        assert state.attributes["reason"] == "flow_stale"
+    state = hass.states.get(connection_id)
+    assert (state.state == "off") is stale
+    assert state.attributes["problems"] == (["flow"] if stale else [])
 
 
 async def test_replayed_history_reaches_the_verdict(
@@ -2812,18 +2804,14 @@ async def test_gas_per_degree_day_has_no_unit_until_the_meter_has_one(
 
 
 async def test_timestamps_are_iso(hass: HomeAssistant, zones: FakeZones) -> None:
-    """P-78: every moment an attribute shows is ISO 8601 — the monitoring start, when an
-    emitter factor was computed — never seconds since the epoch."""
+    """P-78: every moment an attribute shows is ISO 8601 — the monitoring start — never seconds
+    since the epoch."""
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0})
-    living = zones.add("living", hvac_action="heating", valve_open_percent=70, on_percent=0.7)
+    zones.add("living", hvac_action="heating", valve_open_percent=70, on_percent=0.7)
     entry = entry_for(boiler, zones)
     await setup(hass, entry)
     registry = er.async_get(hass)
-    factor_id = entity_id(hass, entry, "sensor", "emitter_power_factor", living)
-    registry.async_update_entity(factor_id, disabled_by=None)
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
     checked = 0
     for registered in er.async_entries_for_config_entry(registry, entry.entry_id):
         state = hass.states.get(registered.entity_id)
@@ -2836,13 +2824,10 @@ async def test_timestamps_are_iso(hass: HomeAssistant, zones: FakeZones) -> None
             assert value is None or isinstance(value, str), (registered.entity_id, name)
             if value is not None:
                 assert datetime.fromisoformat(value).tzinfo is not None, (name, value)
-    assert checked >= 2
+    assert checked >= 1
     verdict = hass.states.get(entity_id(hass, entry, "sensor", "verdict"))
     assert verdict is not None
     assert isinstance(verdict.attributes["monitoring_since"], str)
-    factor = hass.states.get(factor_id)
-    assert factor is not None
-    assert isinstance(factor.attributes["computed_at"], str)
 
 
 async def test_change_report_and_forecast_snapshots_need_their_data(
@@ -2876,9 +2861,6 @@ def test_percent_sensors_use_unit_of_ratio() -> None:
     ]
     assert {d.key for d in percents} == {"short_burn_share", "condensing_share", "change_report"}
     assert all(type(d.native_unit_of_measurement) is UnitOfRatio for d in percents)
-    # Home Assistant keeps an ``_attr_`` class value under ``__attr_``.
-    unit = getattr(sensor.EmitterFactorSensor, "__attr_native_unit_of_measurement")
-    assert unit is UnitOfRatio.PERCENTAGE
     source = (Path(sensor.__file__)).read_text(encoding="utf-8")
     assert "PERCENTAGE," not in source.replace("UnitOfRatio.PERCENTAGE,", "")
 
@@ -2936,7 +2918,6 @@ def test_entity_classes_have_their_docstrings() -> None:
     from custom_components.vtherm_smart_boiler import binary_sensor
 
     for cls in (
-        binary_sensor.HotWaterSensor,
         binary_sensor.AlarmSensor,
         binary_sensor.OutdoorSensorProblem,
         binary_sensor.ConnectionSensor,
@@ -2948,23 +2929,20 @@ def test_entity_classes_have_their_docstrings() -> None:
 async def test_the_continuous_values_stay_in_the_diagnostics(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:
-    """P-72: an alarm's value and a zone's flow excess leave the attributes — a state row per
-    change — and stay in the diagnostics."""
+    """P-72: an alarm's value leaves the attributes — a state row per change — and stays in the
+    diagnostics, with a zone's flow excess."""
     from custom_components.vtherm_smart_boiler.diagnostics import (
         async_get_config_entry_diagnostics,
     )
 
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.PRESSURE))
     boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0, Signal.PRESSURE: 1.5})
-    living = zones.add("living", hvac_action="heating", valve_open_percent=70, on_percent=0.7)
+    zones.add("living", hvac_action="heating", valve_open_percent=70, on_percent=0.7)
     entry = entry_for(boiler, zones)
     await setup(hass, entry)
     alarm = hass.states.get(entity_id(hass, entry, "binary_sensor", "alarm_pressure_high"))
-    hot = hass.states.get(entity_id(hass, entry, "binary_sensor", "hot_water", living))
     assert alarm is not None
-    assert hot is not None
     assert "value" not in alarm.attributes
-    assert "excess" not in hot.attributes
     result = await async_get_config_entry_diagnostics(hass, entry)
     assert result["alarms"]["pressure_high"]["value"] == 1.5
     (zone,) = result["zones"].values()

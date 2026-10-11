@@ -464,15 +464,19 @@ takes the emitter types of its zones (S-33); the burner is shared.
   §9); Auto-TPI — detected, not paused, with a repair issue (§11; S-29).
 - A learning algorithm without a pause service gets an explicit warning, which states what its
   advice costs.
-- Per zone the plugin publishes two values, as entities and feature-manager properties
-  (feature manager from 0.2): **heat available** (`heat_available`; named "hot water available"
-  before 0.2.2, P-61) (heat is reaching the zone — no while DHW is active on a boiler where hot
-  water has priority, or while the flow has
-  fallen near room temperature; unknown while the flow signal is unknown or stale)
-  and **emitter power factor** (emitter output now versus reference, from emitter type and size,
-  valve opening, water and room temperature). The factor is computed only for zones that are
-  heating; otherwise the last value is held; it is unavailable, with a reason, when data is
-  missing. Zone algorithms do not read these values today (§9).
+- Per zone the plugin gives VT's thermostat two values as feature-manager properties (feature
+  manager from 0.2): **heat available** (`heat_available`; named "hot water available" before
+  0.2.2, P-61) (heat is reaching the zone — no while DHW is active on a boiler where hot water
+  has priority, or while the flow has fallen near room temperature; unknown while the flow
+  signal is unknown or stale) and **emitter power factor** (emitter output now versus
+  reference, from emitter type, valve opening, water and room temperature). The factor is
+  computed only for zones that are heating; otherwise the last value is held; it is
+  unavailable, with a reason, when data is missing. Zone algorithms do not read these values
+  today (§9). No entity of the plugin is a zone's, and a zone is no more than its thermostat,
+  its circuit, its emitter type and whether it closes when off: the zones' emitter output and
+  exponent and the monitor's "near room temperature" were removed with the per-zone entities
+  (I8.1d, `docs/plan-0.2-i8.md`); I8.2 redefines "heat available" and takes the factor out of
+  the manager.
 - DHW charging pauses learning only where hot water has priority (I6, decision 8), and only in
   zones calling for heat (valve open); zones with a closed
   valve keep learning how the room cools. Every hot-water draw pauses it, however short, on a

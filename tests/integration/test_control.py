@@ -1175,8 +1175,6 @@ async def test_hot_water_without_priority_takes_no_heat_from_the_rooms(
     takes the heat from the rooms: SmartPI's learning pauses and heat is not available to the
     zone. Without priority — a buffer, a tank charged in parallel — the rooms keep their heat:
     no pause, heat available."""
-    from homeassistant.helpers import entity_registry as er
-
     hass = rig.hass
     learning: list[tuple[str, bool]] = []
 
@@ -1206,10 +1204,9 @@ async def test_hot_water_without_priority_takes_no_heat_from_the_rooms(
     rig.dhw = True
     await rig.advance(30)
     assert learning == ([(zone, False)] if priority else [])
-    zone_entry = er.async_get(hass).async_get(zone)
-    assert zone_entry is not None
-    available = rig.state("binary_sensor", f"hot_water_{zone_entry.id}")
-    assert available.state == ("off" if priority else "on")
+    # What VT's thermostat is given (the feature manager's value; I8.1d: no zone entity).
+    view = rig.entry.runtime_data.data.zones[zone]
+    assert view.hot_water.available is not priority
 
 
 async def test_a_cancel_inside_smartpi_does_not_break_the_stop(

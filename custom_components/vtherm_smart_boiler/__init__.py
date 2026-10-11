@@ -109,7 +109,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
             await unit.async_start()
         entry.runtime_data = coordinator
         await coordinator.async_load_texts()  # the coded lists' texts (P-39)
-        await _async_migrate_zone_unique_ids(hass, entry, config)
         forwarded = True  # before: a forward that fails part-way leaves platforms set up
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         feature_manager.async_attach(hass, coordinator)
@@ -235,6 +234,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_reference_room(hass, entry)
     if entry.minor_version < 10:
         _migrate_foreign_heat(hass, entry)
+    if entry.minor_version < 11:
+        _migrate_zone_values(hass, entry)
     return True
 
 
@@ -292,6 +293,27 @@ def _migrate_foreign_heat(hass: HomeAssistant, entry: ConfigEntry) -> None:
     if isinstance(monitor, Mapping) and "foreign_heat_hold_min" in monitor:
         options[MONITOR] = {k: v for k, v in monitor.items() if k != "foreign_heat_hold_min"}
     hass.config_entries.async_update_entry(entry, options=options, minor_version=10)
+
+
+def _migrate_zone_values(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.1d (minor version 11): the per-zone values are gone (`docs/plan-0.2-i8.md` B4) — the
+    zones' emitter output and exponent, which only a per-zone sensor used, and the monitor's
+    "near room temperature". Their entities leave the registry at the next setup."""
+    from .const import MONITOR, ZONES
+
+    options = dict(entry.options)
+    zones = options.get(ZONES)
+    if isinstance(zones, list):
+        options[ZONES] = [
+            {k: v for k, v in zone.items() if k not in ("reference_output_w", "exponent")}
+            if isinstance(zone, Mapping)
+            else zone
+            for zone in zones
+        ]
+    monitor = options.get(MONITOR)
+    if isinstance(monitor, Mapping) and "near_room_k" in monitor:
+        options[MONITOR] = {k: v for k, v in monitor.items() if k != "near_room_k"}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=11)
 
 
 def control_as_run(options: Mapping[str, Any]) -> Any:
@@ -718,7 +740,7 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
 def _remove_stale_entities(
     hass: HomeAssistant, entry: ConfigEntry, coordinator: SmartBoilerCoordinator
 ) -> None:
-    """Entities the options no longer create — a zone or circuit taken out, a signal unmapped,
+    """Entities the options no longer create — a circuit taken out, a signal unmapped,
     control removed — go from the registry. Disabled ones the platforms still create stay. Only
     a platform that set itself up in this setup says what is stale: one that failed or did not
     run keeps its registry entries — names, areas, disabled flags (PB-07)."""
@@ -731,29 +753,6 @@ def _remove_stale_entities(
             registered.unique_id not in expected
         ):
             registry.async_remove(registered.entity_id)
-
-
-async def _async_migrate_zone_unique_ids(
-    hass: HomeAssistant, entry: ConfigEntry, config: EntryConfig
-) -> None:
-    """Up to 0.2 a zone's entities were keyed on the thermostat's entity ID; they move to its
-    registry entry, keeping their entity and history."""
-    from homeassistant.core import callback
-    from homeassistant.helpers import entity_registry as er
-
-    from .entity import zone_key
-
-    old_keys = {zone: zone_key(hass, zone) for zone in config.zone_entities}
-
-    @callback
-    def migrate(registered: er.RegistryEntry) -> dict[str, str] | None:
-        for zone, key in old_keys.items():
-            suffix = f"_{zone}"
-            if zone != key and registered.unique_id.endswith(suffix):
-                return {"new_unique_id": registered.unique_id[: -len(suffix)] + f"_{key}"}
-        return None
-
-    await er.async_migrate_entries(hass, entry.entry_id, migrate)
 
 
 def _registry_ids(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, str]:

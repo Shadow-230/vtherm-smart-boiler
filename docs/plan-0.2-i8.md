@@ -8,7 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-10: the plan approved by the user; I8.0, I8.1a, I8.1b and I8.1c done; I8.1d next.
+Status on 2026-10-10: the plan approved by the user; I8.0 and I8.1 (a to d) done; I8.2 next.
 
 ## How to read this plan
 
@@ -302,6 +302,13 @@ impact below.
   correction's freeze, the long-run exclusion; minor version 10 drops the stored sources and hold
   time; `SCOPE.md` §3 and §7, `docs/plan-0.2.md` H5, `docs/plan-0.2-g11.md` B and E; the
   learning-pause and comfort-correction texts). Done on 2026-10-10.
+- I8.1d ✅ the per-zone entities and fields (the "heat reaches the zone" binary sensor and the
+  emitter power factor sensor, both one per zone; the zones' emitter output and exponent; the
+  monitor's "near room temperature", its default kept by the rule; minor version 11 drops them,
+  and the entities leave the registry at the next setup as entities the options no longer
+  create; with no zone entity left, the entities' zone key and the move of the zones' unique IDs
+  from 0.2 go too; `SCOPE.md` §5). The coordinator still computes both values for the feature
+  manager until I8.2. Done on 2026-10-10.
 
 - Code: remove the reference room (section, `core/reference_room.py`, sensors, diagnostics,
   options key), the window guard and every use of windows (`core/window_guard.py`, the window

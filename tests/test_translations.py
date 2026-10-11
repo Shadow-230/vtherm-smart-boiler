@@ -51,11 +51,11 @@ def test_every_entity_key_has_a_name() -> None:
     binary = SOURCE["entity"]["binary_sensor"]
     for description in BOILER_SENSORS:
         assert "name" in sensors[description.key], description.key
-    for key in ("critical_zone", "emitter_power_factor", "features"):
+    for key in ("critical_zone", "features"):
         assert "name" in sensors[key]
     for kind in AlarmKind:
         assert "name" in binary[f"alarm_{kind.value}"], kind
-    for key in ("connection", "hot_water", "outdoor_sensor_problem"):
+    for key in ("connection", "outdoor_sensor_problem"):
         assert "name" in binary[key]
 
 
@@ -240,20 +240,14 @@ def test_coded_states_and_attributes_are_translated() -> None:
     """P50: no raw code reaches the user where Home Assistant can translate it."""
     from custom_components.vtherm_smart_boiler.control import CONFIRMED_BY_GATEWAY
     from custom_components.vtherm_smart_boiler.core.alarms import AlarmKind, Level
-    from custom_components.vtherm_smart_boiler.core.emitters import FactorReason, FactorStatus
     from custom_components.vtherm_smart_boiler.core.guards import Confirmation
     from custom_components.vtherm_smart_boiler.core.hand_back import HandBackConfirmation
-    from custom_components.vtherm_smart_boiler.core.hot_water import HotWaterReason
     from custom_components.vtherm_smart_boiler.core.signal_check import OutdoorStatus
     from custom_components.vtherm_smart_boiler.core.zones import SelectionStatus
 
     sensors = SOURCE["entity"]["sensor"]
     binary = SOURCE["entity"]["binary_sensor"]
     confirmations = {c.value for c in Confirmation} | {CONFIRMED_BY_GATEWAY}
-    assert _values(binary["hot_water"], "reason") == {r.value for r in HotWaterReason}
-    factor = sensors["emitter_power_factor"]
-    assert _values(factor, "status") == {s.value for s in FactorStatus}
-    assert _values(factor, "reason") == {r.value for r in FactorReason}
     selection = {s.value for s in SelectionStatus}
     assert _values(sensors["critical_zone"], "status") == selection
     assert _values(binary["outdoor_sensor_problem"], "status") == {s.value for s in OutdoorStatus}
@@ -369,7 +363,6 @@ def test_x7_texts_are_translated() -> None:
     assert "even without a central boiler" in active
     state = SOURCE["entity"]["sensor"]["control_state"]["state_attributes"]["blockers"]["state"]
     assert "one restart of Home Assistant" in state["vt_central_boiler_active"]
-    assert SOURCE["entity"]["binary_sensor"]["hot_water"]["name"] == "{zone} heat available"
     flat = flatten(SOURCE)
     assert not [key for key, text in flat.items() if "hot-water and emitter" in text]
 
