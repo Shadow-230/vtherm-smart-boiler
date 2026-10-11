@@ -554,7 +554,6 @@ async def test_control_at_the_advanced_level_and_back(
             "room": 21,
             "exponent": 1.25,
             "offset": 1,
-            "ceiling_band": 8,
             "frost_limit": 5,
             "frost_release": 7,
         },
@@ -687,7 +686,6 @@ ADVANCED_CURVE = {
     "room": 20,
     "exponent": 1.3,
     "offset": 0,
-    "ceiling_band": 10,
     "frost_limit": 5,
     "frost_release": 7,
 }
@@ -951,7 +949,6 @@ async def test_control_limits_must_suit_the_setpoint_entity(
         "design_flow": 50,
         "room": 20,
         "offset": 0,
-        "ceiling_band": 10,
         "frost_limit": 5,
         "frost_release": 7,
     }
@@ -999,7 +996,6 @@ async def test_off_is_not_checked_as_a_setpoint_with_a_heating_switch(
         "design_flow": 50,
         "room": 20,
         "offset": 0,
-        "ceiling_band": 10,
         "frost_limit": 5,
         "frost_release": 7,
     }
@@ -4347,7 +4343,7 @@ async def test_the_behaviour_step_does_not_check_a_fixed_off(
             "hand_back_entity_write_type": "unknown",
         },
         {"design_outdoor": -15, "design_flow": 55, "hard_min": 10, "hard_max": 70,
-         "activation_delay_s": 0, "room": 20, "offset": 0, "ceiling_band": 10,
+         "activation_delay_s": 0, "room": 20, "offset": 0,
          "frost_limit": 5, "frost_release": 7},
     ):  # fmt: skip
         result = await options_step(hass, result, answer)

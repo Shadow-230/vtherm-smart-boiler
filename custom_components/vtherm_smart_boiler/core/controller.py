@@ -69,8 +69,8 @@ rules of bounded learning (principle 13), each mapped:
    (S-08); cycling not rising: the rise only while the boiler's heating starts since it began
    are no more than in the same hours before it began, stepping back (the fall) while they are
    more, no rise with the starts unknown (``core.comfort_rules``, decision 11 of 0.2.3); every
-   limit kept: no rise while an upper cap (the hard maximum, the circuit's, the boiler's, the
-   weather ceiling) or a clip holds the setpoint, the "at limit" timer paused meanwhile (S-25,
+   limit kept: no rise while an upper cap (the hard maximum, the circuit's, the boiler's) or a
+   clip holds the setpoint, the "at limit" timer paused meanwhile (S-25,
    T-48); stepping back: the fall.
 4. Good enough: the rise stops once no zone is 0.3 K short.
 5. Freezes: hot water — neither rise nor fall; data gaps — held while the link is stale or no
@@ -192,7 +192,6 @@ class Reason(StrEnum):
     LIMIT_HARD_MAX = "limit_hard_max"
     LIMIT_CIRCUIT_MAX = "limit_circuit_max"
     LIMIT_BOILER_MAX = "limit_boiler_max"
-    LIMIT_CEILING = "limit_ceiling"
     LIMIT_FIXED_CIRCUIT = "limit_fixed_circuit"
     COMFORT_CORRECTION = "comfort_correction"
     ACTIVATION_DELAY = "activation_delay"  # heating waits VT's activation delay (decision 5)
@@ -210,7 +209,6 @@ _LIMIT_REASON = {
     LimitCode.HARD_MAX: Reason.LIMIT_HARD_MAX,
     LimitCode.CIRCUIT_MAX: Reason.LIMIT_CIRCUIT_MAX,
     LimitCode.BOILER_MAX: Reason.LIMIT_BOILER_MAX,
-    LimitCode.CEILING: Reason.LIMIT_CEILING,
     LimitCode.FIXED_CIRCUIT: Reason.LIMIT_FIXED_CIRCUIT,
 }
 
@@ -889,11 +887,10 @@ def _heating_decision(
         else:
             curve_value = fallback_setpoint(config)
         upper = limit_flow(
-            1e6, curve_value, config.limits, config.circuit_max, config.boiler_max,
-            config.circuit_floor,
-        ).value  # fmt: skip
-        # An upper cap — the hard maximum, the circuit's, the boiler's, the weather ceiling — or
-        # a clip holds the setpoint: a rise could not show, so it is not learned (S-25).
+            1e6, config.limits, config.circuit_max, config.boiler_max, config.circuit_floor
+        ).value
+        # An upper cap — the hard maximum, the circuit's, the boiler's — or a clip holds the
+        # setpoint: a rise could not show, so it is not learned (S-25).
         held = inputs.clipped or curve_value + state.correction >= upper - _EPSILON
         correction, rises, baseline = _correction(state, inputs, config, held)
         state = replace(
@@ -907,8 +904,8 @@ def _heating_decision(
         if correction > 0:
             water.append(Reason.COMFORT_CORRECTION)
         limited = limit_flow(
-            curve_value + correction, curve_value, config.limits, config.circuit_max,
-            config.boiler_max, config.circuit_floor,
+            curve_value + correction, config.limits, config.circuit_max, config.boiler_max,
+            config.circuit_floor,
         )  # fmt: skip
         water.extend(_LIMIT_REASON[code] for code in limited.applied)
         target: float = limited.value
@@ -1209,8 +1206,8 @@ def _ramp(
     """The setpoint for this step: towards ``target`` at ``rate`` K per minute, at every step.
     The first setpoint of a session is the target itself; an installation cap (``cap``: the
     hard maximum, the circuit's, the boiler's) that fell below the last setpoint applies at
-    once, while a falling weather ceiling is followed at the ramp's rate (S-23). Whether the
-    ramp held the setpoint back."""
+    once, while a falling curve is followed at the ramp's rate (S-23). Whether the ramp held the
+    setpoint back."""
     if previous is None or previous > cap or rate is None:
         return target, False
     delta = target - previous

@@ -138,10 +138,6 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ("highest water temperature", lambda: CONTROL_DEFAULTS["hard_max"], 70.0),
     ("highest water temperature (form)", lambda: CURVE_FORM["hard_max"], 70.0),
     ("highest water temperature (parser)", lambda: BARE.loop.control.limits.hard_max, 70.0),
-    # Weather ceiling | the curve + 10 K
-    ("weather ceiling", lambda: CONTROL_DEFAULTS["ceiling_band"], 10.0),
-    ("weather ceiling (form)", lambda: CURVE_FORM["ceiling_band"], 10.0),
-    ("weather ceiling (parser)", lambda: BARE.loop.control.limits.ceiling_band, 10.0),
     # Ramp | 1 K per minute
     ("ramp", lambda: CONTROL_DEFAULTS["ramp_k_per_min"], 1.0),
     ("ramp (form)", lambda: BEHAVIOUR_FORM["ramp_k_per_min"], 1.0),

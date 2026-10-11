@@ -225,10 +225,9 @@ While heating is on, the plugin sets the boiler's water (flow) temperature:
    Too low, and the boiler may stop by itself again and again in mild weather; a boiler that does
    not condense may condense in its flue. Take the value from the boiler's manual. The monitor
    may suggest a higher value if it sees many short burns; nothing changes by itself.
-3. **Highest water temperature** — never above it. Default 70 °C.
-4. **Weather ceiling** (shown as "Room for correction") — how far anything may raise the water
-   above the curve. Default 10 K (kelvin, a temperature difference).
-5. **Circuit maximum** — each circuit's "Maximum flow temperature", for example for underfloor
+3. **Highest water temperature** — never above it. Default 70 °C. Above the curve only the
+   comfort correction raises the water, up to its own limit (default 3 K).
+4. **Circuit maximum** — each circuit's "Maximum flow temperature", for example for underfloor
    heating. The plugin never asks for more. The boiler itself may overshoot it a little; an
    optional alarm tells you when the measured flow stays too high.
 

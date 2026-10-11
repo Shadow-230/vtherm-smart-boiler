@@ -47,8 +47,8 @@ a heat pump controller (excluded), or anything that sends data outside.
    by a relay (class 3) gets only heating on and off: its water temperature stays the boiler's.
 4. **Do not damage other models** — pause zone-algorithm learning through their public services
    (SmartPI; Auto-TPI only once its service can pause without losing what it learned, §11).
-5. **Safe** — the fixed safeguards of principle 11 always apply; limits and the weather-dependent
-   ceiling are set by the user, with cautious defaults.
+5. **Safe** — the fixed safeguards of principle 11 always apply; the limits are set by the user,
+   with cautious defaults.
 6. **Local** — nothing is sent outside.
 7. **English with HA translations** — nothing user-facing hard-coded.
 8. **Suggest by default** — automatic changes only within the tuning band.
@@ -454,7 +454,7 @@ takes the emitter types of its zones (S-33); the burner is shared.
 - Each VT zone is assigned to a circuit in the wizard; zone arbitration (the critical zone) runs
   per circuit.
 - Anti-cycling, DHW and the modulation cap act on the boiler (shared burner); curve tuning, the
-  weather-dependent ceiling and the seasonal tune-up act per circuit.
+  comfort correction and the seasonal tune-up act per circuit.
 - Condensing depends on the combined return of all circuits.
 
 ### Zone algorithms — any
@@ -694,7 +694,7 @@ How control decides (principle 12):
 - The water temperature follows the curve on the effective outdoor temperature, within the
   limits, and changes at the ramp's rate, in K per minute, at every step. The ramp is skipped
   only for installation limits — the highest water temperature, a circuit, the boiler — not for
-  a falling weather ceiling (S-23).
+  a falling curve (S-23).
 - **The lowest water temperature** (decision 2; the key `hard_min`) bounds the curve from below,
   10–50 °C, default 20 °C (provisional, K4), set by the user like a curve setting. Its text names
   both risks: too low — the boiler stops by itself again and again in mild weather, and a
@@ -723,8 +723,8 @@ How control decides (principle 12):
   2026-10-10, reversing that of 2026-10-03; an upgraded entry keeps what it ran with, "off" where it
   never stored an answer; not with on/off control; `docs/plan-0.2-g11.md` B): while a
   zone's valve is fully open and its room is still short of its setpoint, the water rises above the
-  curve — at most the user's limit (default 3 K, up to 10 K; the weather ceiling's band caps it
-  too), never more than 3 K a day, by 1 K per 30 min and only while heat flows: the flame when it is known,
+  curve — at most the user's limit (default 3 K, up to 10 K; the only bound above the curve
+  since the "correction range" went, I8 B6), never more than 3 K a day, by 1 K per 30 min and only while heat flows: the flame when it is known,
   else the command (S-24); it falls twice as fast, and a zone without opening data does not block
   the fall; it counts only zones taking heat, and does not rise while another zone taking heat is
   more than 1 K over its setpoint (S-08); it freezes while a cap holds the setpoint, and does not
@@ -833,7 +833,7 @@ the thermostat-like mode's values (0.3) and a relay:
   8 °C as a setpoint, as lower values do not lapse (`CS=0` at hand-back cancels the override and
   is not a setpoint, S-59) — and the hand-back value (§5, the safe hand-back). "Off" is refused
   within 0.5 K of a hand-back value declared "the device's own control resumes" (S-49). The
-  weather ceiling never falls below the lowest water temperature. The thermostat-like mode's
+  thermostat-like mode's
   values (0.3) stay within plausible room bounds.
 - Nothing is written to the boiler's persistent memory: control writes only to targets declared
   expiring (repeated every 30 s) or held (the device keeps the value; the plugin sends it on a
@@ -1121,7 +1121,6 @@ Defaults of the safety options and why (the user reviews them at K4):
 | Heating curve | none — the design flow is entered | a wrong curve under-heats or wastes gas; no silent default |
 | Emitter type | none — the user chooses | underfloor needs its own maximum flow; a wrong type hides that |
 | Lowest / highest water temperature | 20 °C (provisional, K4) / 70 °C | the lowest bounds the curve from below — too low, the boiler stops by itself again and again in mild weather and a non-condensing boiler condenses in its flue (take the value from its manual); too high, warmer water than the rooms need (decision 2); 70 °C covers the usual radiator design points and stays under boilers' maximum |
-| Weather ceiling | the curve + 10 K | bounds how far anything may raise the water above the curve |
 | Ramp | 1 K per minute | a setpoint step small enough that the boiler does not overshoot it; zone algorithms follow, and larger swings pause SmartPI's learning (S-47) |
 | Decision interval | 5 min | VT's default cycle |
 | Activation delay | 0 s | as in VT 10.4.0; a delay is for slow valves (decision 5) |

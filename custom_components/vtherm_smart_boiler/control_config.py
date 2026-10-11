@@ -90,7 +90,6 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         # control section had none keeps 25 °C, written by the entry migration.
         "hard_min": 20.0,
         "hard_max": 70.0,
-        "ceiling_band": 10.0,
         "frost_limit": 5.0,
         "frost_release": 7.0,
         "count_threshold": 1,
@@ -102,7 +101,8 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         # cannot heat on the curve gets warmer water, within the limit below. An entry from
         # before keeps what it ran with — the migration writes "off" where it stored no answer.
         "comfort_correction": True,
-        # The correction's limit, the user's (G11 B); the weather ceiling still caps it.
+        # The correction's limit, the user's (G11 B): the only bound above the curve since the
+        # "correction range" went (I8, decision B6).
         "comfort_correction_max_k": 3.0,
         # Without the tick, VT giving no answer at all means no heating and an alarm (answer F).
         "own_room_controller": False,
@@ -120,7 +120,6 @@ CONTROL_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
     {
         "hard_min": (10.0, 50.0),
         "hard_max": (30.0, 90.0),
-        "ceiling_band": (0.0, 20.0),
         "comfort_correction_max_k": (0.5, 10.0),
         "frost_limit": (3.0, 10.0),
         "frost_release": (4.0, 12.0),
@@ -737,12 +736,47 @@ def with_room_mode(section: Any) -> Any:
     return {**section, "curve": {**curve, ROOM_MODE: RoomMode.MANUAL.value}}
 
 
+def without_correction_range(section: Any) -> Any:
+    """I8 (decision B6, minor version 12): the curve's "correction range" is gone; the comfort
+    correction's own limit is the only bound above the curve. A stored range narrower than that
+    limit bound the correction before, so it becomes the limit — of two values, the cautious
+    one; a range below the limit's smallest value let no correction through, so the correction
+    is switched off. A range that is no number is dropped; a limit that is none stays for the
+    parser to refuse."""
+    if not isinstance(section, Mapping) or "ceiling_band" not in section:
+        return section
+    result = {key: value for key, value in section.items() if key != "ceiling_band"}
+    band = _plain_number(section["ceiling_band"])
+    if band is None:
+        return result
+    stored = section.get("comfort_correction_max_k")
+    limit = (
+        CONTROL_DEFAULTS["comfort_correction_max_k"]
+        if stored in (None, "")
+        else _plain_number(stored)
+    )
+    if limit is None:
+        return result
+    if band < CONTROL_BOUNDS["comfort_correction_max_k"][0]:
+        result["comfort_correction"] = False
+    elif band < limit:
+        result["comfort_correction_max_k"] = band
+    return result
+
+
+def _plain_number(value: Any) -> float | None:
+    """A finite number as stored by a form; anything else ``None``."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
 def section_as_migrated(section: Any) -> Any:
-    """A control section as this version's entry migrations leave one (G11 B and D). The entry
-    migration writes each into the options; the options a stored session took the boiler with
-    (``taken_with``), which no migration reaches, are read through them, so a restart after the
-    update compares like with like."""
-    return with_room_mode(with_correction_answer(section))
+    """A control section as this version's entry migrations leave one (G11 B and D, I8 B6). The
+    entry migration writes each into the options; the options a stored session took the boiler
+    with (``taken_with``), which no migration reaches, are read through them, so a restart after
+    the update compares like with like."""
+    return without_correction_range(with_room_mode(with_correction_answer(section)))
 
 
 class RoomMode(StrEnum):
@@ -872,7 +906,6 @@ def parse_control(
         limits=FlowLimits(
             hard_min=_required(value, "hard_min"),
             hard_max=_required(value, "hard_max"),
-            ceiling_band=_required(value, "ceiling_band"),
         ),
         circuit_max=circuit_max,
         boiler_max=boiler_max,

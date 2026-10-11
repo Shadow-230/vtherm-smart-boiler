@@ -236,6 +236,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_foreign_heat(hass, entry)
     if entry.minor_version < 11:
         _migrate_zone_values(hass, entry)
+    if entry.minor_version < 12:
+        _migrate_correction_range(hass, entry)
     return True
 
 
@@ -314,6 +316,19 @@ def _migrate_zone_values(hass: HomeAssistant, entry: ConfigEntry) -> None:
     if isinstance(monitor, Mapping) and "near_room_k" in monitor:
         options[MONITOR] = {k: v for k, v in monitor.items() if k != "near_room_k"}
     hass.config_entries.async_update_entry(entry, options=options, minor_version=11)
+
+
+def _migrate_correction_range(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.3 (minor version 12): the curve's "correction range" is gone (`docs/plan-0.2-i8.md`
+    B6); the comfort correction's own limit is the only bound above the curve. A narrower
+    stored range becomes that limit, and one too small to let any correction through switches
+    the correction off — control runs as it did."""
+    from .control_config import without_correction_range
+
+    options = dict(entry.options)
+    if CONTROL in options:  # any section, set up or not: the key goes everywhere
+        options[CONTROL] = without_correction_range(options[CONTROL])
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=12)
 
 
 def control_as_run(options: Mapping[str, Any]) -> Any:

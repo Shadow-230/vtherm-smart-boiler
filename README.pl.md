@@ -42,7 +42,7 @@ steruje zaworami ani pompami ciepła i nie wysyła żadnych danych poza twój Ho
   7 dniach danych daje werdykt, czy sterowanie się opłaca. Dopóki nie włączysz sterowania, kocioł
   pracuje jak dotąd; włączyć je możesz od pierwszego dnia.
 - **Temperatura wody zależna od pogody** według krzywej, którą wpisujesz, ograniczona najniższą
-  i najwyższą temperaturą wody, pułapem pogodowym i maksimum każdego obiegu.
+  i najwyższą temperaturą wody oraz maksimum każdego obiegu.
 - **Włączanie i wyłączanie grzania idzie za strefami VT** — według liczby stref potrzebujących
   ciepła, łącznej mocy albo otwarcia zaworów, tak jak w kotle centralnym VT — a tryby centralne
   VT działają przez strefy.

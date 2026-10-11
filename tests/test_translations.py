@@ -937,16 +937,20 @@ def test_entity_names_do_not_repeat_the_device(language: str) -> None:
 
 
 def test_y4_texts_are_translated() -> None:
-    """Y4: the room for correction says the correction's real bound (P-66); every freshness
+    """Y4: the correction's limit says it is the only bound above the curve (P-66; I8 B6, the
+    "correction range" gone); every freshness
     field has its own description (P-103); the resumes given up have their issue, naming the
     zones, and the control state its attribute; the verdict's low condensing through a relay
     says why it is not changed — in every language."""
     from custom_components.vtherm_smart_boiler.control import LEARNING_NOT_RESUMED_ISSUE
     from custom_components.vtherm_smart_boiler.core.controller import CORRECTION_MAX_K
 
-    band = SOURCE["options"]["step"]["control_curve"]["data_description"]["ceiling_band"]
-    assert f"stops at {CORRECTION_MAX_K:g} K" in band
-    assert "10 K" in band
+    behaviour = SOURCE["options"]["step"]["control_behaviour"]
+    limit = behaviour["data_description"]["comfort_correction_max_k"]
+    assert f"Default {CORRECTION_MAX_K:g} K" in limit
+    assert "the only bound above the curve" in limit
+    assert "ceiling" not in limit
+    assert "ceiling_band" not in SOURCE["options"]["step"]["control_curve"]["data"]
     for language in ALL_LANGUAGES:
         texts = _texts(language)
         freshness = texts["options"]["step"]["freshness"]
