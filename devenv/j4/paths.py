@@ -863,6 +863,9 @@ async def N8(r: Run):
         # hand-back blocks changing how it is made: the device lets the value lapse as declared,
         # the plugin sees the release, and only then are the base options put back.
         await r.sim("set_write_type", write_type="expiring")
+        # The value the device holds was taken as held: the new write type does not make it
+        # lapse. The boiler drops the override, as an expiring device would at its timeout.
+        await r.sim("drop_override")
         restore = {
             "control_entity": {"write_type": "held", "hand_back": "value", "hand_back_value": 0}
         }
