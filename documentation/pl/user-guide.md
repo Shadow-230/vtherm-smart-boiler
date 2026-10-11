@@ -93,11 +93,13 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    moduł Wi-Fi kotła lub integracja producenta, inna encja do zapisu albo inna integracja, która
    tylko czyta), o **źródło ciepła** i **rodzaj kotła** (jednofunkcyjny albo dwufunkcyjny, z
    zasobnikiem ciepłej wody albo bez). Drugi pyta o **tryb sterowania** — pełne sterowanie,
-   wł./wył., tylko temperatura pokoju (od wersji 0.3; do tego czasu monitorowanie) albo tylko
-   monitorowanie — oraz, gdzie to ma sens, o kondensację i priorytet ciepłej wody. Żadna z tych
+   wł./wył. albo tylko monitorowanie — oraz, gdzie to ma sens, o kondensację i priorytet ciepłej
+   wody. Żadna z tych
    odpowiedzi nie jest wybrana za Ciebie i żadna niczego nie włącza. Potem wybierz nazwę i poziom
    szczegółowości (poziom zmienia tylko to, co widzisz, nigdy działanie wtyczki). Te same ekrany
-   otwierają opcje integracji, w pozycji **Kocioł, połączenie i tryb sterowania**. Co oznacza
+   otwierają opcje integracji, jako dwie pozycje: **Połączenie i typ kotła** oraz **Tryb
+   sterowania** — połączenie, które nie pozwala na zapisany tryb, albo zmienione źródło ciepła
+   lub rodzaj kotła otwierają tryb od razu. Co oznacza
    każde połączenie, opisuje [Podłączenie kotła](#5-podłączenie-kotła).
    Potem pojawia się **menu sekcji**, jak we własnym kreatorze VT: otwierasz sekcję, zatwierdzasz
    ją i wracasz do menu — nic jeszcze nie jest tworzone. Sekcja, która nie dotyczy Twojej
@@ -899,7 +901,7 @@ Zgłoszenia w Naprawach dotyczące sterowania:
 | … nie dochodzi do nastawy | korekta 3 h na limicie, jedno pomieszczenie niedogrzane: najpierw sprawdź jego grzejnik, zawór i okno, potem krzywą |
 
 Przełącznik sterowania podaje też odpowiedzi z kreatora, które zostawiają sterowanie wyłączone:
-tylko monitorowanie, tylko temperatura pokoju (od wersji 0.3), sterowanie albo topologia
+tylko monitorowanie, sterowanie albo topologia
 niepasujące do połączenia kotła, a przy ESPHome niepotwierdzony bezpieczny start.
 
 ### 7.3 Strefy

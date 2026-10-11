@@ -87,11 +87,13 @@ Only one entry of the integration can exist: it runs one boiler.
    relay, the boiler's own Wi-Fi module or the manufacturer's integration, another writable
    entity, or another integration that only reads), its **heat source** and its **type**
    (single-function or combi, with or without a hot-water tank). The second asks the **control
-   mode** — full control, on/off, room temperature only (from version 0.3; monitoring until then)
-   or monitoring only — with condensing and the hot-water priority where they apply. None of these
+   mode** — full control, on/off or monitoring only — with condensing and the hot-water priority
+   where they apply. None of these
    is chosen for you, and none switches anything on. Then pick a name and the level of detail (the
    level changes only what you see, never how the plugin behaves). The same panels open the
-   integration's options, under **Boiler, connection and control mode**. What each connection
+   integration's options, as two items: **Connection and boiler type** and **Control mode** — a
+   connection that cannot keep the mode, or a changed heat source or boiler type, opens the mode
+   at once. What each connection
    means is in [Connecting the boiler](#5-connecting-the-boiler).
    Then comes a **menu of sections**, as in VT's own setup: open a section, confirm it, and you
    are back at the menu — nothing is created yet. A section that does not apply is not shown:
@@ -172,8 +174,8 @@ pass without enough data, the control switch says that control starts without a 
 Control is **off by default**. It is the switch **Control (experimental)**. You can switch it on
 from the first day, once every required setting is filled in, for example:
 
-- the control mode "full control" or "on/off" (monitoring only and room temperature only keep
-  control off, and the switch says so);
+- the control mode "full control" or "on/off" (monitoring only keeps control off, and the
+  switch says so);
 - a way to write to the boiler and a way to hand it back (see
   [Connecting the boiler](#5-connecting-the-boiler)), fitting the boiler's connection;
 - the heating curve's design flow temperature (it has no default);

@@ -79,7 +79,9 @@ that the user put first (F1, F2, F5) are done as pull requests #32, #34 and #35.
 6. **The control mode, on the second panel, with no default** — it is one of the first choices and
    is made on purpose: full control (the curve, the water temperature); on/off (the relay); room
    temperature only — "from version 0.3", the monitor only until then, with the reason shown;
-   monitoring only. Only the modes the connection allows are offered.
+   monitoring only. Only the modes the connection allows are offered. (I8.4a, 2026-10-11: "room
+   temperature only" left the panel until it works — an entry with it reads as monitoring only;
+   the connection and the mode are two menu items, `docs/plan-0.2-i8.md` C2, D1.)
 7. **The heat source:** gas (natural or LPG), oil, electric, other. Pellet and biomass are left out
    for now. The source decides which fields, signals and alarms are shown: electric — no flame,
    flue gas, condensing or gas: the flame signal reads "heating on", the gas meter an energy meter;

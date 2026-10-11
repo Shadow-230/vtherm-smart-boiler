@@ -175,11 +175,13 @@ class ControlMode(StrEnum):
 
     FULL = "full"  # the curve: the plugin sets the water temperature
     ON_OFF = "on_off"  # the relay: heating on and off
-    ROOM_VALUES = "room_values"  # room temperature only: from 0.3, monitoring until then
     MONITOR = "monitor"  # monitoring only
+    # "Room temperature only" left the panel until it works (I8, decision C2): the 0.3
+    # thermostat-like mode; an entry with it reads as monitoring only (minor version 14).
 
 
-_WATER_MODES = (ControlMode.FULL, ControlMode.ROOM_VALUES, ControlMode.MONITOR)
+ROOM_VALUES_FROM_BEFORE = "room_values"
+_WATER_MODES = (ControlMode.FULL, ControlMode.MONITOR)
 # The modes each connection can do (decision 6): monitoring always.
 CONNECTION_MODES: Mapping[Connection, tuple[ControlMode, ...]] = MappingProxyType(
     {
@@ -194,7 +196,7 @@ CONNECTION_MODES: Mapping[Connection, tuple[ControlMode, ...]] = MappingProxyTyp
     }
 )
 # The modes that keep control off, each its own reason (decision 6).
-NO_CONTROL_MODES = frozenset({ControlMode.MONITOR, ControlMode.ROOM_VALUES})
+NO_CONTROL_MODES = frozenset({ControlMode.MONITOR})
 
 
 def boiler_class_for(connection: Connection, mode: ControlMode) -> BoilerClass:
@@ -291,9 +293,8 @@ class AlarmReaction(StrEnum):
 
 # Everything ``config_blockers`` may report (translation keys).
 CONFIG_BLOCKERS = (
-    # I6 (decision 6): monitoring only, or room values until 0.3 — chosen on purpose.
+    # I6 (decision 6): monitoring only — chosen on purpose.
     "control_mode_monitor",
-    "control_mode_room_values",
     "no_write_path",
     # I6 (decisions 2, 3): the control section suits the connection; ESPHome's safe start.
     "connection_not_for_path",
