@@ -72,6 +72,8 @@ from .const import (
     MQTT_DOMAIN,
     OPENTHERM_GW_DOMAIN,
     PARAMETERS,
+    RELAY_READS,
+    RELAY_SIGNALS,
     SIGNALS,
     VT_DOMAIN,
     WEATHER,
@@ -710,6 +712,7 @@ GATEWAY_READ_BACKS: Mapping[str, tuple[str, str]] = {
 }
 # The texts the signals step reads into its description, one per connection (I6, decision 2).
 SIGNAL_HINT = "signal_hint"
+FRESHNESS_NOTE = "freshness_note"  # what the age limits judge, by the connection (I8, D7)
 SOURCE_HINT = "source_hint"  # and one per heat source that changes what to pick (I6)
 
 
@@ -761,15 +764,22 @@ def _stored_signals(options: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def signals_schema(
-    options: dict[str, Any], suggested: Mapping[str, str] | None = None
+    options: dict[str, Any],
+    suggested: Mapping[str, str] | None = None,
+    answers: Mapping[str, Any] | None = None,
 ) -> vol.Schema:
     """Every signal optional (X8): a home with only a relay is monitored too; water-temperature
     control gets a blocker without flame and flow. ``suggested``: entities the connection names
     for signals not mapped yet (I6, decision 2), shown for the user to check."""
     current = {**(suggested or {}), **_stored_signals(options), WEATHER: options.get(WEATHER)}
+    current |= {k: v for k, v in (answers or {}).items() if v not in (None, "")}
     fields: dict[Any, Any] = {}
+    if stored_connection(options) is Connection.RELAY:
+        fields[vol.Required(RELAY_READS, default=relay_reads_boiler(options, answers))] = (
+            selector.BooleanSelector()
+        )
     for key, (filter_, simple) in SIGNAL_FIELDS.items():
-        if not signal_shown(options, key, simple):
+        if not signal_shown(options, key, simple, answers):
             continue
         fields[_optional(key, current)] = _entity(filter_)
     fields[_optional(WEATHER, current)] = _entity({"domain": "weather"})
@@ -1186,10 +1196,36 @@ _GAS_RATES = ("gas_at_min_power", "gas_at_max_power")
 FLUE_GAS_LIMITS = ("flue_gas_warning", "flue_gas_alarm")
 
 
-def signal_shown(options: Mapping[str, Any], key: str, simple: bool) -> bool:
-    """Whether the signals step shows a signal: by the level, and by the heat source."""
+def relay_reads_boiler(
+    options: Mapping[str, Any], answers: Mapping[str, Any] | None = None
+) -> bool:
+    """The relay's answer to "Do you also read the boiler through another integration?": as
+    given in the form, as stored, else Yes where a boiler signal beyond the relay's is mapped."""
+    if answers is not None and RELAY_READS in answers:
+        return answers[RELAY_READS] is True
+    stored = _stored_boiler(options).get(RELAY_READS)
+    if isinstance(stored, bool):
+        return stored
+    return any(key not in RELAY_SIGNALS for key in _stored_signals(options))
+
+
+def signal_shown(
+    options: Mapping[str, Any],
+    key: str,
+    simple: bool,
+    answers: Mapping[str, Any] | None = None,
+) -> bool:
+    """Whether the signals step shows a signal: by the level, by the heat source, and for a
+    relay read through nothing else, only what it can read (I8, decision D4). ``answers``: the
+    form's answers so far."""
     source = stored_heat_source(options)
     if source is not None and key in _SIGNALS_NOT_FOR.get(source, ()):
+        return False
+    if (
+        stored_connection(options) is Connection.RELAY
+        and not relay_reads_boiler(options, answers)
+        and key not in RELAY_SIGNALS
+    ):
         return False
     return simple or options.get(LEVEL) == LEVEL_ADVANCED
 
@@ -2041,23 +2077,38 @@ SIMPLE_PARAMETERS = ("boiler_min_power", "boiler_max_power", "design_outdoor")
 
 
 def apply_signals(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    """The signals step's answers. A relay read through nothing else keeps only what it can read
+    (I8, decision D4): the other boiler signals go. A signal no longer mapped takes its age limit
+    with it (D7)."""
     signals = _stored_signals(options)
+    relay = stored_connection(options) is Connection.RELAY
+    reads = relay_reads_boiler(options, user_input)
     for key, (_filter, simple) in SIGNAL_FIELDS.items():
-        if signal_shown(options, key, simple):  # one not shown keeps what is stored
+        if signal_shown(options, key, simple, user_input):  # one not shown keeps what is stored
             if user_input.get(key):
                 signals[key] = user_input[key]
             else:
                 signals.pop(key, None)
+        elif relay and not reads and key not in RELAY_SIGNALS:
+            signals.pop(key, None)
     options[SIGNALS] = signals
     options[WEATHER] = user_input.get(WEATHER) or None
+    if relay:
+        options[BOILER] = {**_stored_boiler(options), RELAY_READS: reads}
+    freshness = options.get(FRESHNESS)
+    if isinstance(freshness, Mapping):
+        kept = set(_freshness_keys(options))
+        options[FRESHNESS] = {k: v for k, v in freshness.items() if k in kept}
 
 
-def signal_fields(options: dict[str, Any]) -> dict[str, EntityFilter]:
+def signal_fields(
+    options: dict[str, Any], answers: Mapping[str, Any] | None = None
+) -> dict[str, EntityFilter]:
     """The signals step's entity fields at the options' level, and what each takes."""
     fields: dict[str, EntityFilter] = {
         key: filter_
         for key, (filter_, simple) in SIGNAL_FIELDS.items()
-        if signal_shown(options, key, simple)
+        if signal_shown(options, key, simple, answers)
     }
     fields[WEATHER] = {"domain": "weather"}  # no signal: it may be any weather entity
     return fields
@@ -2070,7 +2121,7 @@ def shared_signal_error(options: dict[str, Any], user_input: dict[str, Any]) -> 
     empty is never a duplicate."""
     candidate = copy.deepcopy(options)
     apply_signals(candidate, user_input)
-    shown = set(signal_fields(options))
+    shown = set(signal_fields(options, user_input))
     owner: dict[str, str] = {}
     for key in SIGNAL_FIELDS:
         entity = candidate[SIGNALS].get(key)
@@ -2437,6 +2488,7 @@ class _Steps:
     _confirmed: set[str]  # the sections confirmed in this flow
     _mode_due = False  # the mode must be answered again after the connection (I8, D1)
     _interface_draft: dict[str, Any] | None = None  # the interface form's answers so far (A2)
+    _signals_draft: dict[str, Any] | None = None  # the signals form's answers so far (A2)
     _changed: list[str]  # the sections whose answers changed the options, in that order
     _at_menu: dict[str, Any] | None  # the options as the menu last showed them
 
@@ -2529,10 +2581,20 @@ class _Steps:
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
+        draft = self._signals_draft
         if user_input is not None:
+            shown = set(signal_fields(self.options, draft))
+            self._signals_draft = dict(user_input)
+            if set(signal_fields(self.options, user_input)) - shown:
+                # The relay's answer revealed fields: shown again with them (I8, A2, D4).
+                return self._form(
+                    step_id="signals",
+                    data_schema=signals_schema(self.options, None, user_input),
+                    description_placeholders={"hint": await self._async_signal_hint()},
+                )
             modulation = user_input.get("modulation")
             state = self.hass.states.get(modulation) if modulation else None  # type: ignore[attr-defined]
-            errors = entity_errors(self.hass, user_input, signal_fields(self.options))  # type: ignore[attr-defined]
+            errors = entity_errors(self.hass, user_input, signal_fields(self.options, user_input))  # type: ignore[attr-defined]
             unit = None if state is None else state.attributes.get("unit_of_measurement")
             if not errors and unit not in (None, "%"):
                 errors = {"modulation": "modulation_not_percent"}  # e.g. a power sensor
@@ -2540,6 +2602,7 @@ class _Steps:
                 errors = shared_signal_error(self.options, user_input)
             if not errors:
                 apply_signals(self.options, user_input)
+                self._signals_draft = None
                 return await self._after("signals")
         connection = stored_connection(self.options)
         suggested: dict[str, str] = {}
@@ -2548,7 +2611,7 @@ class _Steps:
             suggested = gateway_entities(self.hass, GATEWAY_SIGNALS)  # type: ignore[attr-defined]
         return self._form(
             step_id="signals",
-            data_schema=signals_schema(self.options, suggested),
+            data_schema=signals_schema(self.options, suggested, user_input or draft),
             errors=errors,
             description_placeholders={"hint": await self._async_signal_hint()},
         )
@@ -3246,7 +3309,7 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # it gives; 14: "room temperature only" reads as monitoring only; 15: the OTGW firmware's
     # topics are stored once, with the connection; 16: a gateway's "monitor mode" topology is
     # the control mode monitoring only (see async_migrate_entry).
-    MINOR_VERSION = 16
+    MINOR_VERSION = 17
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}
@@ -3494,7 +3557,17 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
         if user_input is not None:
             apply_freshness(self.options, user_input)
             return await self._after("freshness")
-        return self._form(step_id="freshness", data_schema=freshness_schema(self.options))
+        hass: HomeAssistant = self.hass
+        texts = await async_get_translations(hass, hass.config.language, "selector", [DOMAIN])
+        # I8 (decision D7): what the limits judge follows the connection — for an entry made
+        # before the question, the one its write path stands for.
+        kind = "relay" if interface_connection(self.options) is Connection.RELAY else "water"
+        note = texts.get(f"component.{DOMAIN}.selector.{FRESHNESS_NOTE}.options.{kind}", "")
+        return self._form(
+            step_id="freshness",
+            data_schema=freshness_schema(self.options),
+            description_placeholders={"judged": note},
+        )
 
     async def async_step_save(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         # A confirmation holds for the save right after it only: any way back to a step asks

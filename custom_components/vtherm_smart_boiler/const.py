@@ -52,6 +52,12 @@ REFERENCE_ROOM = "reference_room"  # removed in I8.1; the migration drops what i
 MONITOR = "monitor"
 FRESHNESS = "freshness"
 CONTROL = "control"
+# I8 (decision D4): a relay asks whether the boiler is read through another integration too;
+# the answer is stored with the connection.
+RELAY_READS = "relay_reads_boiler"
+# What a relay without another integration can read: the boiler's water through sensors of its
+# own, its electric power, the gas meter and the outdoor temperature (the weather apart).
+RELAY_SIGNALS = ("flame", "flow", "return", "boiler_power", "gas_meter", "outdoor")
 
 # Clocks.
 TICK_SECONDS = 30

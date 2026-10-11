@@ -88,13 +88,14 @@
         "title": "Sygnały kotła",
         "description": "Wskaż encję, która podaje każdy sygnał. Żaden nie jest wymagany: płomień i temperatura zasilania włączają metryki palnika, łącze z kotłem i sterowanie temperaturą wody, które wymaga obu; każdy kolejny sygnał rozszerza monitor. Dom z samym przekaźnikiem też jest monitorowany. Wtyczka tylko czyta te encje. Jedna encja zasila tylko jeden sygnał.\n\n{hint}",
         "data": {
+          "relay_reads_boiler": "Czy odczytujesz kocioł także przez inną integrację?",
           "flame": "Płomień",
           "flow": "Temperatura zasilania",
           "return": "Temperatura powrotu",
           "modulation": "Modulacja",
           "dhw_active": "Ciepła woda użytkowa (c.w.u.) aktywna",
           "pressure": "Ciśnienie wody",
-          "outdoor": "Temperatura zewnętrzna (czujnik kotła)",
+          "outdoor": "Czujnik temperatury zewnętrznej",
           "ch_setpoint": "Nastawa c.o.",
           "ch_active": "C.o. aktywne",
           "pump_running": "Pompa pracuje",
@@ -109,20 +110,21 @@
           "fault_indication": "Sygnalizacja usterki kotła"
         },
         "data_description": {
+          "relay_reads_boiler": "Nie (domyślnie): pytamy tylko o to, co odczyta przekaźnik — płomień, zasilanie, powrót, moc elektryczną kotła, gazomierz, temperaturę zewnętrzną i pogodę; inne sygnały kotła wskazane wcześniej są usuwane przy zapisie. Tak: wszystkie sygnały kotła — formularz pokaże się ponownie z nimi po zatwierdzeniu tej odpowiedzi.",
           "flame": "Włączony, gdy palnik pali. Z niego pochodzi każda metryka cykli: zła encja da złe starty i czasy palenia.",
           "flow": "Woda wypływająca z kotła. Służy do oceny, czy ciepło dociera do stref, i do odróżniania grzania c.w.u. od c.o.; przy sterowaniu jest częścią łącza z kotłem. Zła encja wprowadza w błąd je wszystkie.",
           "return": "Woda wracająca do kotła. Umożliwia udział kondensacji, a w porównaniu z zasilaniem mówi, czy ciepło dociera do stref; bez niej kondensacji nie da się ocenić. Zła encja daje zły udział kondensacji.",
           "modulation": "Modulacja palnika w procentach. Razem z zakresem mocy kotła szacuje moc cieplną i zużycie gazu. Czujnik w innej jednostce jest odrzucany.",
           "dhw_active": "Włączony, gdy kocioł grzeje ciepłą wodę użytkową. Bez niego grzanie c.w.u. jest wnioskowane mniej pewnie i część może liczyć się jako c.o.; przy sterowaniu ładowanie c.w.u. mniej pewnie wstrzymuje naukę.",
           "pressure": "Włącza powiadomienia o wysokim ciśnieniu i „uzupełnij wodę” oraz ostrzeżenie o spadającym ciśnieniu. Z bramki OpenTherm odczyt 0 bar liczy się jako nieznany (bramka pokazuje 0 po restarcie); z każdego innego czujnika jest to odczyt. Zła encja daje fałszywe alarmy albo żadnych.",
-          "outdoor": "Własny czujnik zewnętrzny kotła. Służy do stopniodni, krzywej sterowania i jest porównywany z encją pogody: czujnik zablokowany albo odbiegający jest pomijany w krzywej. Zły czujnik wygina krzywą, dopóki sprawdzenie tego nie wykryje.",
+          "outdoor": "Dowolny czujnik temperatury zewnętrznej — własny czujnik kotła, stacji pogodowej albo inny w Home Assistant. Służy do stopniodni, krzywej sterowania i jest porównywany z encją pogody: czujnik zablokowany albo odbiegający jest pomijany w krzywej. Zły czujnik wygina krzywą, dopóki sprawdzenie tego nie wykryje.",
           "ch_setpoint": "Nastawa zasilania, do której pracuje kocioł — temperatura. Pomaga odróżnić grzanie c.w.u. od c.o.",
           "ch_active": "Włączone, gdy kocioł grzeje pomieszczenia. Pomaga odróżnić c.w.u. od c.o., gdy nie ma sygnału c.w.u.",
           "pump_running": "Włączony, gdy pracuje pompa c.o. Umożliwia ostrzeżenie o małym przepływie: wszystkie zawory zamknięte przy pracującej pompie.",
           "flue_gas": "Włącza alarm spalin i wczesne ostrzeżenie o zabrudzonym wymienniku.",
           "gas_meter": "Licznik narastający gazu lub energii. Daje zmierzony gaz na stopniodzień zamiast szacunku. Gaz naliczony przez licznik, gdy palnik nie pracuje (kuchenka, inne urządzenie), jest pokazywany osobno; gazu zużytego przez nie w czasie pracy palnika nie da się oddzielić i liczy się go jako ogrzewanie.",
-          "room_setpoint": "Nastawa pokojowa termostatu ściennego przy bramce, od strony termostatu — np. „Room setpoint 1” na urządzeniu termostatu bramki albo TrSet_thermostat firmware'u z włączonymi osobnymi źródłami; nie cel encji climate bramki. Pokazywana jako temperatura, którą termostat ścienny utrzyma po oddaniu sterowania.",
-          "room_temperature": "Temperatura pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
+          "room_setpoint": "Nastawa pokojowa termostatu podłączonego do kotła albo jego interfejsu, od strony termostatu — np. „Room setpoint 1” na urządzeniu termostatu bramki albo TrSet_thermostat firmware'u z włączonymi osobnymi źródłami; nie cel encji climate bramki. Pokazywana jako temperatura, którą termostat ścienny utrzyma po oddaniu sterowania.",
+          "room_temperature": "Temperatura pokojowa, którą termostat podłączony do kotła albo jego interfejsu wysyła do kotła, jeśli jest. Zapisywana do oceny.",
           "weather": "Jej prognozy są zapisywane na potrzeby przyszłych funkcji prognoz, a jej temperatura zastępuje brakujący albo podejrzany czujnik zewnętrzny — w stopniodniach i krzywej sterowania. Żadne dane nie opuszczają Home Assistant.",
           "boiler_power": "Opcjonalnie: moc elektryczna kotła, np. z gniazdka z pomiarem; służy tylko jako dowód, że kocioł sterowany przekaźnikiem grzeje.",
           "low_pressure_fault": "Opcjonalnie: własna usterka kotła „niskie ciśnienie wody”, np. „Low water pressure” na urządzeniu kotła w bramce. Gdy przez 5 minut wskazuje „włączone”, sterowanie wyłącza grzanie — bez oddawania kotła — i włącza je ponownie, gdy usterka zniknie, tak jak robi to sam kocioł. Stan nieznany lub niedostępny liczy się jako brak usterki. Wybierz wyłącznie zgłoszenie samego kotła: zły wybór wyłączy grzanie, choć kocioł mógłby grzać. Na bramce OpenTherm liczy się tylko wtedy, gdy sygnalizacja usterki kotła (niżej) jest włączona: bramka odczytuje szczegóły usterki tylko wtedy, gdy usterka się pojawia, a po restarcie pokazuje je jako nieznane aż do następnej usterki.",
@@ -637,13 +639,14 @@
         "title": "Sygnały kotła",
         "description": "Wskaż encję, która podaje każdy sygnał. Żaden nie jest wymagany: płomień i temperatura zasilania włączają metryki palnika, łącze z kotłem i sterowanie temperaturą wody, które wymaga obu; każdy kolejny sygnał rozszerza monitor. Dom z samym przekaźnikiem też jest monitorowany. Wtyczka tylko czyta te encje. Jedna encja zasila tylko jeden sygnał.\n\n{hint}",
         "data": {
+          "relay_reads_boiler": "Czy odczytujesz kocioł także przez inną integrację?",
           "flame": "Płomień",
           "flow": "Temperatura zasilania",
           "return": "Temperatura powrotu",
           "modulation": "Modulacja",
           "dhw_active": "Ciepła woda użytkowa (c.w.u.) aktywna",
           "pressure": "Ciśnienie wody",
-          "outdoor": "Temperatura zewnętrzna (czujnik kotła)",
+          "outdoor": "Czujnik temperatury zewnętrznej",
           "ch_setpoint": "Nastawa c.o.",
           "ch_active": "C.o. aktywne",
           "pump_running": "Pompa pracuje",
@@ -658,20 +661,21 @@
           "fault_indication": "Sygnalizacja usterki kotła"
         },
         "data_description": {
+          "relay_reads_boiler": "Nie (domyślnie): pytamy tylko o to, co odczyta przekaźnik — płomień, zasilanie, powrót, moc elektryczną kotła, gazomierz, temperaturę zewnętrzną i pogodę; inne sygnały kotła wskazane wcześniej są usuwane przy zapisie. Tak: wszystkie sygnały kotła — formularz pokaże się ponownie z nimi po zatwierdzeniu tej odpowiedzi.",
           "flame": "Włączony, gdy palnik pali. Z niego pochodzi każda metryka cykli: zła encja da złe starty i czasy palenia.",
           "flow": "Woda wypływająca z kotła. Służy do oceny, czy ciepło dociera do stref, i do odróżniania grzania c.w.u. od c.o.; przy sterowaniu jest częścią łącza z kotłem. Zła encja wprowadza w błąd je wszystkie.",
           "return": "Woda wracająca do kotła. Umożliwia udział kondensacji, a w porównaniu z zasilaniem mówi, czy ciepło dociera do stref; bez niej kondensacji nie da się ocenić. Zła encja daje zły udział kondensacji.",
           "modulation": "Modulacja palnika w procentach. Razem z zakresem mocy kotła szacuje moc cieplną i zużycie gazu. Czujnik w innej jednostce jest odrzucany.",
           "dhw_active": "Włączony, gdy kocioł grzeje ciepłą wodę użytkową. Bez niego grzanie c.w.u. jest wnioskowane mniej pewnie i część może liczyć się jako c.o.; przy sterowaniu ładowanie c.w.u. mniej pewnie wstrzymuje naukę.",
           "pressure": "Włącza powiadomienia o wysokim ciśnieniu i „uzupełnij wodę” oraz ostrzeżenie o spadającym ciśnieniu. Z bramki OpenTherm odczyt 0 bar liczy się jako nieznany (bramka pokazuje 0 po restarcie); z każdego innego czujnika jest to odczyt. Zła encja daje fałszywe alarmy albo żadnych.",
-          "outdoor": "Własny czujnik zewnętrzny kotła. Służy do stopniodni, krzywej sterowania i jest porównywany z encją pogody: czujnik zablokowany albo odbiegający jest pomijany w krzywej. Zły czujnik wygina krzywą, dopóki sprawdzenie tego nie wykryje.",
+          "outdoor": "Dowolny czujnik temperatury zewnętrznej — własny czujnik kotła, stacji pogodowej albo inny w Home Assistant. Służy do stopniodni, krzywej sterowania i jest porównywany z encją pogody: czujnik zablokowany albo odbiegający jest pomijany w krzywej. Zły czujnik wygina krzywą, dopóki sprawdzenie tego nie wykryje.",
           "ch_setpoint": "Nastawa zasilania, do której pracuje kocioł — temperatura. Pomaga odróżnić grzanie c.w.u. od c.o.",
           "ch_active": "Włączone, gdy kocioł grzeje pomieszczenia. Pomaga odróżnić c.w.u. od c.o., gdy nie ma sygnału c.w.u.",
           "pump_running": "Włączony, gdy pracuje pompa c.o. Umożliwia ostrzeżenie o małym przepływie: wszystkie zawory zamknięte przy pracującej pompie.",
           "flue_gas": "Włącza alarm spalin i wczesne ostrzeżenie o zabrudzonym wymienniku.",
           "gas_meter": "Licznik narastający gazu lub energii. Daje zmierzony gaz na stopniodzień zamiast szacunku. Gaz naliczony przez licznik, gdy palnik nie pracuje (kuchenka, inne urządzenie), jest pokazywany osobno; gazu zużytego przez nie w czasie pracy palnika nie da się oddzielić i liczy się go jako ogrzewanie.",
-          "room_setpoint": "Nastawa pokojowa termostatu ściennego przy bramce, od strony termostatu — np. „Room setpoint 1” na urządzeniu termostatu bramki albo TrSet_thermostat firmware'u z włączonymi osobnymi źródłami; nie cel encji climate bramki. Pokazywana jako temperatura, którą termostat ścienny utrzyma po oddaniu sterowania.",
-          "room_temperature": "Temperatura pokojowa, którą termostat przewodowy wysyła do kotła, jeśli jest. Zapisywana do oceny.",
+          "room_setpoint": "Nastawa pokojowa termostatu podłączonego do kotła albo jego interfejsu, od strony termostatu — np. „Room setpoint 1” na urządzeniu termostatu bramki albo TrSet_thermostat firmware'u z włączonymi osobnymi źródłami; nie cel encji climate bramki. Pokazywana jako temperatura, którą termostat ścienny utrzyma po oddaniu sterowania.",
+          "room_temperature": "Temperatura pokojowa, którą termostat podłączony do kotła albo jego interfejsu wysyła do kotła, jeśli jest. Zapisywana do oceny.",
           "weather": "Jej prognozy są zapisywane na potrzeby przyszłych funkcji prognoz, a jej temperatura zastępuje brakujący albo podejrzany czujnik zewnętrzny — w stopniodniach i krzywej sterowania. Żadne dane nie opuszczają Home Assistant.",
           "boiler_power": "Opcjonalnie: moc elektryczna kotła, np. z gniazdka z pomiarem; służy tylko jako dowód, że kocioł sterowany przekaźnikiem grzeje.",
           "low_pressure_fault": "Opcjonalnie: własna usterka kotła „niskie ciśnienie wody”, np. „Low water pressure” na urządzeniu kotła w bramce. Gdy przez 5 minut wskazuje „włączone”, sterowanie wyłącza grzanie — bez oddawania kotła — i włącza je ponownie, gdy usterka zniknie, tak jak robi to sam kocioł. Stan nieznany lub niedostępny liczy się jako brak usterki. Wybierz wyłącznie zgłoszenie samego kotła: zły wybór wyłączy grzanie, choć kocioł mógłby grzać. Na bramce OpenTherm liczy się tylko wtedy, gdy sygnalizacja usterki kotła (niżej) jest włączona: bramka odczytuje szczegóły usterki tylko wtedy, gdy usterka się pojawia, a po restarcie pokazuje je jako nieznane aż do następnej usterki.",
@@ -681,7 +685,7 @@
       },
       "freshness": {
         "title": "Limity świeżości",
-        "description": "Limit wieku dla każdego sygnału, w minutach: wartość niezgłoszona dłużej liczy się jako nieświeża, dla monitora i dla sterowania tak samo — bez świeżego płomienia i zasilania sterowanie nic nie zapisuje i po pięciu minutach oddaje kocioł. Puste (domyślnie): automatyczny — brak limitu, dopóki źródło nie zostanie zauważone przy powtarzaniu niezmienionej wartości; wtedy pięciokrotność jego własnego rytmu, od 10 do 30 minut (encja pogody od 3 do 12 godzin). Źródło, które zgłasza tylko zmiany (MQTT, ESPHome bez force_update), nigdy go nie dostaje, bo stała wartość nie jest nieświeża. 0: brak limitu, liczy się tylko dostępność encji. Liczba: ten limit. Przy firmware OTGW przez MQTT i przy EMS-ESP wtyczka słyszy powtórzenia samego urządzenia na jego tematach MQTT, podanych w „Interfejs kotła”. Ryzyko: bez limitu źródło, które przestaje się zmieniać, nie stając się niedostępne, nie zostanie wykryte; limit krótszy niż odstęp zgłoszeń źródła zatrzyma sterowanie przy stałej pogodzie. Sterowanie sprawdza płomień i temperaturę zasilania, każde według jego limitu; połączenie, które co chwilę znika, uznaje się za utracone, gdy przez pięć minut w ciągu dziesięciu nie ma świeżych danych. Przy bramce OpenTherm Gateway połączonej przez MQTT jej rozłączenie widać w ciągu około 90 s (encje stają się niedostępne), a zerwane połączenie wewnątrz niej, między modułem ESP a układem PIC, widać tylko po tym, że ustają jej powtórzenia.",
+        "description": "Limit wieku dla każdego sygnału, w minutach: wartość niezgłoszona dłużej liczy się jako nieświeża. {judged} Puste (domyślnie): automatyczny — brak limitu, dopóki źródło nie zostanie zauważone przy powtarzaniu niezmienionej wartości; wtedy pięciokrotność jego własnego rytmu, od 10 do 30 minut (encja pogody od 3 do 12 godzin). Źródło, które zgłasza tylko zmiany (MQTT, ESPHome bez force_update), nigdy go nie dostaje, bo stała wartość nie jest nieświeża. 0: brak limitu, liczy się tylko dostępność encji. Liczba: ten limit. Przy firmware OTGW przez MQTT i przy EMS-ESP wtyczka słyszy powtórzenia samego urządzenia na jego tematach MQTT, podanych w „Interfejs kotła”. Ryzyko: bez limitu źródło, które przestaje się zmieniać, nie stając się niedostępne, nie zostanie wykryte; limit krótszy niż odstęp zgłoszeń źródła zatrzyma sterowanie przy stałej pogodzie. Sterowanie sprawdza płomień i temperaturę zasilania, każde według jego limitu; połączenie, które co chwilę znika, uznaje się za utracone, gdy przez pięć minut w ciągu dziesięciu nie ma świeżych danych. Przy bramce OpenTherm Gateway połączonej przez MQTT jej rozłączenie widać w ciągu około 90 s (encje stają się niedostępne), a zerwane połączenie wewnątrz niej, między modułem ESP a układem PIC, widać tylko po tym, że ustają jej powtórzenia.",
         "data": {
           "flame": "Płomień",
           "flow": "Temperatura zasilania",
@@ -1325,6 +1329,12 @@
         "ready": "Wszystkie sekcje są zatwierdzone: wybierz „Utwórz”.",
         "changed": "Niezapisane zmiany:",
         "unchanged": "Brak niezapisanych zmian."
+      }
+    },
+    "freshness_note": {
+      "options": {
+        "water": "Liczy się to dla monitora i dla sterowania tak samo — bez świeżego płomienia i zasilania sterowanie nic nie zapisuje i po pięciu minutach oddaje kocioł.",
+        "relay": "Przy przekaźniku limity oceniają tylko monitor: sterowanie przełącza przekaźnik według jego własnego stanu."
       }
     }
   },

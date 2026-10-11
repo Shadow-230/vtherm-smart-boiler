@@ -156,9 +156,10 @@ flowchart TD
     H --> F2
 ```
 
-- **Świeżość:** nic nie jest zapisywane bez świeżych danych kotła. Łączność jest oceniana w
-  oknie (utracona, gdy nieświeże kroki pokryją 5 minut w ciągu 10; wraca po 60 sekundach
-  świeżych danych).
+- **Świeżość:** nic nie jest zapisywane bez świeżych danych kotła — przy przekaźniku bez
+  świeżego stanu samego przekaźnika; limity wieku ustawione przez użytkownika należą do
+  wskazanych sygnałów i odchodzą razem z nimi. Łączność jest oceniana w oknie (utracona, gdy
+  nieświeże kroki pokryją 5 minut w ciągu 10; wraca po 60 sekundach świeżych danych).
 - **Blokady i zatrzaski** idą przed zapotrzebowaniem: zatrzask albo alarm ustawiony na oddanie
   kotła oddaje kocioł, o cokolwiek proszą strefy.
 - **Decyzja:** włączenie lub wyłączenie grzania jest ustalane w każdym kroku; temperatura wody

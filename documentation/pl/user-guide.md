@@ -111,7 +111,12 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
 3. **Wybierz sygnały.** W sekcji **Sygnały kotła** wybierz encję dla każdego sygnału, który masz —
    co najmniej płomień i temperaturę zasilania, jeśli chcesz sterować kotłem. Wtyczka tylko
    czyta te encje. Przy integracji OpenTherm Gateway i dokładnie jednej bramce jej encje kotła
-   są wpisane za Ciebie do sprawdzenia. **Interfejs kotła** pyta o to, co wtyczka musi wiedzieć o
+   są wpisane za Ciebie do sprawdzenia. Przy przekaźniku sekcja pyta najpierw, czy odczytujesz
+   kocioł także przez inną integrację: Nie (domyślnie) pokazuje tylko to, co odczyta instalacja
+   z przekaźnikiem — płomień, zasilanie, powrót, moc elektryczną kotła, gazomierz, temperaturę
+   zewnętrzną i pogodę — a inne sygnały kotła usuwa przy zapisie; Tak pokazuje wszystkie
+   sygnały. Temperatura zewnętrzna może pochodzić z dowolnego czujnika zewnętrznego, nie tylko
+   z kotła. **Interfejs kotła** pyta o to, co wtyczka musi wiedzieć o
    urządzeniu między nią a kotłem, tylko tam, gdzie używa tego Twoje połączenie i tryb: o tematy
    MQTT firmware'u OTGW albo EMS-ESP (zobacz [Świeżość danych](#68-świeżość-danych)), o bramkę,
    gdy skonfigurowano więcej niż jedną, o to, jak bramka stoi między termostatem a kotłem i co
@@ -794,8 +799,10 @@ sterowanie.
 Sygnał jest świeży, gdy jego encja jest dostępna i — jeśli ma limit wieku — gdy jego ostatnie
 zgłoszenie mieści się w tym limicie. Bez świeżego płomienia i temperatury zasilania sterowanie nic
 nie zapisuje i po pięciu minutach oddaje kocioł
-([Utrata łączności z kotłem](#63-utrata-łączności-z-kotłem)). Limity ustawia się w opcjach,
-w **Limity świeżości**, w minutach, osobno dla każdego sygnału i dla encji pogody:
+([Utrata łączności z kotłem](#63-utrata-łączności-z-kotłem)); przy przekaźniku limity oceniają
+tylko monitor, bo sterowanie przełącza przekaźnik według jego własnego stanu. Limity ustawia się
+w opcjach, w **Limity świeżości**, w minutach, osobno dla każdego wskazanego sygnału i dla encji
+pogody; sygnał usunięty z **Sygnałów kotła** zabiera swój limit ze sobą:
 
 - **Puste (domyślnie): automatycznie.** Bez limitu, dopóki źródło nie powtórzy niezmienionej
   wartości co najmniej dwa razy w tym uruchomieniu; potem pięciokrotność jego własnego rytmu,

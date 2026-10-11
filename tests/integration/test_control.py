@@ -9868,7 +9868,10 @@ async def test_hot_water_flags_count_by_their_own_limits(rig: Rig, limits: bool)
     from custom_components.vtherm_smart_boiler.core.readings import BoilerSnapshot, Reading
 
     freshness = {"dhw_active": 600.0, "flame": 600.0, "ch_active": 600.0} if limits else {}
-    entry = add_entry(rig, options(rig.zones) | {"freshness": freshness})
+    base = options(rig.zones)
+    # I8 (decision D7): a limit belongs to a mapped signal — heating active mapped too.
+    signals = base["signals"] | {"ch_active": BOILER_ENTITIES[Signal.CH_ACTIVE]}
+    entry = add_entry(rig, base | {"signals": signals, "freshness": freshness})
     await set_up(rig, entry)
     coordinator = entry.runtime_data
     now = START.timestamp()
