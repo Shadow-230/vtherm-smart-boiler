@@ -134,9 +134,10 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    warto włączyć sterowanie (zobacz [Monitorowanie i werdykt](#41-monitorowanie-i-werdykt)).
    Decyzja należy do ciebie.
 7. **Ustaw sterowanie.** Przy pełnym sterowaniu albo wł./wył. menu kreatora pokazuje też sekcję
-   **Sterowanie (eksperymentalne)**: ścieżka zapisu, potem kolejne kroki (na przykład **Krzywa
-   grzewcza i limity** oraz **Zachowanie sterowania**). Żeby ustawić je później albo zmienić,
-   otwórz tę samą sekcję w opcjach integracji. „Bez sterowania” zostawia samo monitorowanie.
+   **Sterowanie (eksperymentalne)**: odczyty zwrotne, potem kolejne kroki (na przykład
+   **Krzywa grzewcza i limity** oraz **Zachowanie sterowania**); ścieżkę zapisu wyznacza
+   połączenie. Żeby zmienić je później, otwórz tę samą sekcję w opcjach integracji. Żeby ustawić
+   sterowanie później, wybierz najpierw tryb sterowania „tylko monitorowanie”.
 8. **Włącz sterowanie** przełącznikiem **Sterowanie (eksperymentalne)** na urządzeniu
    integracji. Jeśli czegoś brakuje, przełącznik mówi czego, a monitor dalej działa.
 
@@ -398,8 +399,8 @@ sterowanie jest proponowane tylko z typem zapisu, który jest znany i nie jest t
 
 ### 5.1 Ścieżki zapisu
 
-Wybierasz jedną w kroku sterowania („Ścieżka zapisu”), spośród pasujących do połączenia kotła.
-Domyślnie jest „Bez sterowania”: wtyczka tylko monitoruje.
+Wyznacza ją połączenie kotła; instalacja skonfigurowana przed pytaniem o połączenie nadal
+wybiera ją w kroku sterowania („Ścieżka zapisu”). Samo monitorowanie to tryb sterowania.
 
 - **Encja do zapisu** — interfejs kotła, który udostępnia encje z możliwością zapisu, na
   przykład EMS-ESP albo sterownik OpenTherm na ESPHome. Wtyczka zapisuje nastawę zasilania, a

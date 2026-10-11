@@ -228,7 +228,7 @@ async def test_simple_flow_creates_an_entry(hass: HomeAssistant, entities: dict[
 async def test_advanced_flow_with_two_circuits(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    result = await start_setup(hass, "other_entity", "full", kind="combi")
+    result = await start_setup(hass, "other_entity", "monitor", kind="combi")
     result = await step(hass, result, {"name": "Boiler", "level": "advanced"})
     assert "flue_gas" in result["data_schema"].schema
     result = await step(
@@ -277,9 +277,7 @@ async def test_advanced_flow_with_two_circuits(
             "monitoring_days": 10,
         },
     )
-    assert result["step_id"] == "control"  # I6.6: full control is set up in the setup
-    result = await step(hass, result, {"write_path": "none"})
-    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["type"] is FlowResultType.CREATE_ENTRY  # monitoring only: no control steps
     options = result["options"]
     assert [c["id"] for c in options["circuits"]] == ["main", "circuit_2"]
     assert options["circuits"][1]["flow_entity"] == entities["return"]
@@ -301,8 +299,10 @@ async def create_entry(
     options offer (X8): the setpoint paths for a flow-setpoint boiler, the relay for on/off.
     ``panels``: keep the first panels' answers (I6.1); without, they are taken out afterwards,
     so the entry is one made before them — its control step offering the paths by class."""
-    connection, mode = PANEL_FOR_CLASS[boiler_class]
-    result = await start_setup(hass, connection, mode)
+    connection, _mode = PANEL_FOR_CLASS[boiler_class]
+    # Monitoring only in the setup: with full control or on/off the setup sets control up in
+    # full (I6 decision 11; I8 B7: "no control" is the mode now); the options do it here.
+    result = await start_setup(hass, connection, "monitor")
     for data in (
         {"name": "Boiler", "level": level},
         {"flame": entities["flame"], "flow": entities["flow"]},
@@ -323,8 +323,6 @@ async def create_entry(
                 "monitoring_days": 7,
             },
         )
-    if result.get("step_id") == "control":  # I6.6: full control or on/off asks it in the setup
-        result = await step(hass, result, {"write_path": "none"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     entry = result["result"]
@@ -437,10 +435,17 @@ async def options_step(hass: HomeAssistant, result: dict[str, Any], data: dict[s
     if (
         result.get("step_id") == "control"
         and data.get("write_path") not in (None, "none")
-        and any(key in data for key in INTERFACE_ANSWER_KEYS)
+        and (
+            any(key in data for key in INTERFACE_ANSWER_KEYS)
+            or _path_differs(hass, result, data["write_path"])
+        )
     ):
         result = await interface_first(hass, result, data)
         data = {k: v for k, v in data.items() if k not in INTERFACE_ANSWER_KEYS}
+    if result.get("step_id") == "control" and "write_path" in data and not _asks_path(result):
+        # I8 (decision B7): the connection decides the path; only an entry made before the
+        # question picks it.
+        data = {k: v for k, v in data.items() if k != "write_path"}
     elif result.get("step_id") != "interface" and data and set(data) <= LATER_INTERFACE_KEYS:
         return result
     result = await hass.config_entries.options.async_configure(result["flow_id"], data)
@@ -449,6 +454,19 @@ async def options_step(hass: HomeAssistant, result: dict[str, Any], data: dict[s
     return await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "save"}
     )
+
+
+def _asks_path(result: dict[str, Any]) -> bool:
+    return "write_path" in {str(m) for m in result["data_schema"].schema}
+
+
+def _path_differs(hass: HomeAssistant, result: dict[str, Any], path: str) -> bool:
+    """A path other than the one the stored connection decides (I8, decision B7)."""
+    from custom_components.vtherm_smart_boiler.config_flow import connection_path
+
+    entry = hass.config_entries.async_get_entry(result["handler"])
+    fixed = connection_path(dict(entry.options)) if entry is not None else None
+    return fixed is not None and fixed != path
 
 
 async def interface_first(
@@ -701,14 +719,19 @@ async def test_control_at_the_advanced_level_and_back(
     assert "alarm_reactions" not in control
     assert control["curve"] == {"design_flow": 55}
 
-    # "No control" removes control; the interface's answers stay (I8, decision D2).
-    result = await open_control(hass, entry_id)
-    result = await options_step(hass, result, {"write_path": "none"})
+    # Monitoring only is "no control" (I8, decision B7): the control item goes from the menu,
+    # its section kept, unused — the control switch says why.
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "mode"})
+    result = await options_step(hass, result, {"control_mode": "monitor"})
+    if result.get("step_id") == "confirm_blocking":
+        result = await options_step(hass, result, {"save_anyway": True})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
-    kept = hass.config_entries.async_get_entry(entry_id).options["control"]
-    assert set(kept) <= {"topology", "thermostat_kind", "thermostat_setpoint_entity"}
-    assert control_switch(hass, entry_id) is None  # its entities are removed too
+    assert hass.config_entries.async_get_entry(entry_id).options["control"]["write_path"]
+    menu = await hass.config_entries.options.async_init(entry_id)
+    assert "control" not in menu["menu_options"]
+    hass.config_entries.options.async_abort(menu["flow_id"])
 
 
 async def test_the_form_no_longer_offers_a_reaction_to_outside_changes(
@@ -1350,8 +1373,9 @@ async def test_control_needs_a_read_back_and_a_topology_that_suits_the_path(
     assert interface_answers_problem({"topology": "virtual"}, gateway, None) == (
         "topology_not_for_path"
     )
+    # A gateway's monitor mode is the control mode monitoring only (B7): no topology.
     assert interface_answers_problem({"topology": "monitor_mode"}, entity, None) == (
-        "topology_no_control"
+        "topology_missing"
     )
     standalone = {"topology": "gateway_standalone", "thermostat_kind": "none"}
     assert interface_answers_problem(standalone, entity, Connection.ESPHOME) == (
@@ -1464,12 +1488,18 @@ async def test_control_needs_at_least_one_zone(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
     """S-04: without a VT zone nothing can ask for heat — the control form refuses; "no
-    control" stays possible."""
+    control" stays possible (I8, decision B7: for an entry made before the connection question
+    — otherwise the mode monitoring only)."""
     entry_id = await create_entry(hass, entities, "simple")
     result = await open_control(hass, entry_id)
     answer = {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.flow"}
     result = await options_step(hass, result, answer)
     assert result["errors"] == {"base": "no_zones"}
+    entry = hass.config_entries.async_get_entry(entry_id)
+    boiler = {k: v for k, v in entry.options["boiler"].items() if k not in PANEL_KEYS}
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "boiler": boiler})
+    hass.config_entries.options.async_abort(result["flow_id"])
+    result = await open_control(hass, entry_id)  # made before the question: the path asked
     result = await options_step(hass, result, {"write_path": "none"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
@@ -2376,6 +2406,34 @@ def test_the_interface_answers_at_their_edges() -> None:
     assert before["control"]["topology"] == "virtual"
     unknown = {"topology": "a newer one"}
     assert interface_answers_problem(unknown, WritePath.ENTITY, None) == "topology_missing"
+
+
+def test_the_relay_keeps_no_gateway_answers_and_no_control_keeps_the_interfaces() -> None:
+    """I8 (decisions D2, B7): the relay has no topology, terminals or thermostat request — left
+    from another connection, they go at the interface's save; "No control" (an entry made
+    before the connection question) keeps the interface's answers, and with none takes the
+    section out."""
+    from custom_components.vtherm_smart_boiler.config_flow import apply_control, apply_interface
+
+    relay: dict[str, Any] = {
+        "boiler": {"connection": "relay", "control_mode": "on_off"},
+        "control": {
+            "write_path": "relay",
+            "topology": "gateway_standalone",
+            "thermostat_kind": "none",
+        },
+    }
+    apply_interface(relay, {"restart_entity": "sensor.relay_uptime"}, [])
+    assert relay["control"] == {"write_path": "relay", "restart_entity": "sensor.relay_uptime"}
+    fresh: dict[str, Any] = {"boiler": {"connection": "relay", "control_mode": "on_off"}}
+    apply_interface(fresh, {}, [])
+    assert "control" not in fresh  # nothing answered: no section made
+    bare: dict[str, Any] = {"control": {"write_path": "entity"}}
+    apply_control(bare, {"write_path": "none"})
+    assert "control" not in bare
+    kept: dict[str, Any] = {"control": {"write_path": "entity", "topology": "virtual"}}
+    apply_control(kept, {"write_path": "none"})
+    assert kept["control"] == {"topology": "virtual"}
 
 
 def test_the_gateway_field_takes_no_custom_value() -> None:
@@ -4215,14 +4273,13 @@ async def test_condensing_and_the_hot_water_priority_are_asked_where_they_apply(
     result = await step(hass, result, answers)
     asked = {str(marker) for marker in result["data_schema"].schema} - {"control_mode"}
     assert asked == shown
-    result = await step(hass, result, {"control_mode": "full"})
+    result = await step(hass, result, {"control_mode": "monitor"})
     for data in (
         {"name": "Boiler", "level": "simple"},
         {},
         {},
         {"control": "unmixed_shared"},
         {"zones": []},
-        {"write_path": "none"},  # I6.6: the control step, set up later
     ):
         result = await step(hass, result, data)
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -4387,15 +4444,14 @@ async def test_monitoring_only_offers_no_control(
         assert control_error({"write_path": "opentherm_gw"}, dict(entry.options)) == {
             "write_path": "path_not_for_control_mode"
         }
-        # A path still set (control chosen before the mode changed): offered, to switch it off.
+        # A path still set (control chosen before the mode changed): kept, unused and not
+        # shown — monitoring only is "no control" (I8, decision B7).
         control = {"write_path": "opentherm_gw"}
         hass.config_entries.async_update_entry(entry, options={**entry.options, "control": control})
         await hass.async_block_till_done()
-        result = await open_control(hass, entry_id)
-        assert path_options(result) == ["none"]
-        await options_step(hass, result, {"write_path": "none"})
-        await hass.async_block_till_done()
-        assert "control" not in hass.config_entries.async_get_entry(entry_id).options
+        menu = await hass.config_entries.options.async_init(entry_id)
+        assert "control" not in menu["menu_options"]
+        hass.config_entries.options.async_abort(menu["flow_id"])
 
 
 async def test_an_answer_this_version_cannot_read_is_shown_on_the_first_panel(
@@ -4508,12 +4564,27 @@ async def answer_panels(
 async def test_the_control_step_offers_the_connections_path(
     hass: HomeAssistant, entities: dict[str, str], connection: str, offered: list[str]
 ) -> None:
-    """Decision 2: where the connection is answered, the control step offers its path and "no
-    control" — not every path the class could take."""
+    """Decision 2, I8 (decision B7): where the connection is answered, it decides the path —
+    the control step no longer asks it, and "no control" is the mode monitoring only."""
+    from custom_components.vtherm_smart_boiler.config_flow import connection_path
+
     entry_id = await create_entry(hass, entities, "simple", ("living",), panels=True)
     await answer_panels(hass, entry_id, connection)
     result = await open_control(hass, entry_id)
-    assert path_options(result) == offered
+    assert "write_path" not in {str(m) for m in result["data_schema"].schema}
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert connection_path(dict(entry.options)) == offered[1]
+
+
+async def test_the_relay_asks_nothing_on_the_first_control_step(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """I8 (decision B7): the relay connection's path is the relay, its own read-back — the
+    control item opens on the relay's own step."""
+    entry_id = await create_entry(hass, entities, "simple", ("living",), "on_off", panels=True)
+    await answer_panels(hass, entry_id, "relay", "on_off")
+    result = await open_control(hass, entry_id)
+    assert result["step_id"] in ("control_relay", "control_relay_from_vt")
 
 
 async def test_a_path_the_connection_does_not_take_is_refused() -> None:
@@ -4707,7 +4778,11 @@ async def test_the_gateways_own_entities_are_suggested(
     assert result["step_id"] == "control"
     assert suggested(result, "confirmed_entity") == read_back
     assert suggested(result, "ch_confirmed_entity") == echo
-    result = await step(hass, result, {"write_path": "none"})
+    result = await step(hass, result, {"confirmed_entity": read_back, "ch_confirmed_entity": echo})
+    curve = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_max": 70}
+    result = await step(hass, result, curve)
+    if result.get("step_id") == "control_alarms":
+        result = await step(hass, result, {"write_ignored": "info"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     entry_id = result["result"].entry_id
@@ -4995,11 +5070,12 @@ async def test_full_control_is_set_up_in_the_setup_and_starts_off(
     ):
         result = await step(hass, result, data)
     assert result["step_id"] == "control"
-    assert path_options(result) == ["none", "opentherm_gw"]
+    assert "write_path" not in {str(m) for m in result["data_schema"].schema}  # the connection's
     for data in (
         # The topology and the terminals: the "Boiler interface" item, answered on the way
-        # (``through_menu``); the one gateway taken without asking (I8, decision D2).
-        {"write_path": "opentherm_gw", "confirmed_entity": "sensor.gw_control_setpoint"},
+        # (``through_menu``); the one gateway taken without asking (I8, decision D2); the path
+        # the connection's (B7).
+        {"confirmed_entity": "sensor.gw_control_setpoint"},
         {"design_outdoor": -18, "design_flow": 52, "hard_min": 25, "hard_max": 65},
         {"write_ignored": "info"},
     ):

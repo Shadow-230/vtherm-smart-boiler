@@ -731,6 +731,15 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                         offered = config["options"]
                         values = {o["value"] if isinstance(o, dict) else o for o in offered}
                         selectors.setdefault(key, set()).update(values)
+    # I8 (decision B7): the write path, asked only for an entry made before the connection
+    # question — the paths of a flow-setpoint boiler, and the relay of an on/off one.
+    for boiler_class in ("flow_setpoint", "on_off"):
+        schema = flow.control_schema({"boiler": {"class": boiler_class}})
+        for marker, validator in schema.schema.items():
+            fields.setdefault("control", set()).add(str(marker))
+            config = getattr(validator, "config", {})
+            if config.get("translation_key"):
+                selectors.setdefault(config["translation_key"], set()).update(config["options"])
     # I6.2: ESPHome's safe-start tick, asked on the writable-entity step for ESPHome only.
     esphome = {"boiler": {"connection": "esphome"}, "control": {"write_path": "entity"}}
     fields["control_entity"] |= {str(m) for m in flow.control_entity_schema(esphome).schema}

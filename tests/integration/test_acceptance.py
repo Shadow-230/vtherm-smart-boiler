@@ -669,7 +669,8 @@ async def test_frost_protection_heats_while_vt_is_off(rig: Rig) -> None:
     ("changes", "blocker"),
     [
         ({"confirmed_entity": ""}, "blocked_no_confirmed_setpoint"),
-        ({"topology": "monitor_mode"}, "blocked_topology_no_control"),
+        # A gateway's monitor mode from before: monitoring only now (I8.4c, minor version 16).
+        ({"topology": "monitor_mode"}, "blocked_control_mode_monitor"),
     ],
 )
 async def test_control_is_refused_where_it_may_not_run(
@@ -1510,14 +1511,10 @@ async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> Non
     result = await options_step(rig, result, interface)
     assert result["type"] == "menu"
     result = await options_step(rig, result, {"next_step_id": "control"})
+    # The write path follows the connection (I8, decision B7): the read-backs alone.
+    assert "write_path" not in {str(m) for m in result["data_schema"].schema}
     result = await options_step(
-        rig,
-        result,
-        {
-            "write_path": "opentherm_gw",
-            "confirmed_entity": CONFIRMED,
-            "ch_confirmed_entity": CH_ENABLED,
-        },
+        rig, result, {"confirmed_entity": CONFIRMED, "ch_confirmed_entity": CH_ENABLED}
     )
     assert result["step_id"] == "control_curve"
     curve = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_max": 70}

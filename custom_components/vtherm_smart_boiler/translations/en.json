@@ -244,14 +244,14 @@
       },
       "control": {
         "title": "Control (experimental)",
-        "description": "How the plugin controls the boiler: the flow setpoint it writes, or on and off through a relay. Until you switch control on, nothing changes: the boiler runs as it does today — under Versatile Thermostat's central boiler, a wall thermostat or its own regulation — and the plugin only watches and reports. Switched on, it takes the place of VT's central boiler (remove that first and restart Home Assistant): heating goes on and off with VT's zones at once, and where the plugin writes the water temperature it follows your curve, never below your lowest or above your highest water temperature; the comfort correction, if you enable it, adds at most 3 K above the curve. You may switch control on from the first day, even without a verdict: the monitor's verdict comes once it has enough days of data, and the control switch shows it. Choose \"No control\" to keep monitoring only.",
+        "description": "How the plugin controls the boiler: the flow setpoint it writes, or on and off through a relay. Until you switch control on, nothing changes: the boiler runs as it does today — under Versatile Thermostat's central boiler, a wall thermostat or its own regulation — and the plugin only watches and reports. Switched on, it takes the place of VT's central boiler (remove that first and restart Home Assistant): heating goes on and off with VT's zones at once, and where the plugin writes the water temperature it follows your curve, never below your lowest or above your highest water temperature; the comfort correction, if you enable it, adds at most 3 K above the curve. You may switch control on from the first day, even without a verdict: the monitor's verdict comes once it has enough days of data, and the control switch shows it. The write path follows the boiler's connection; to keep monitoring only, choose that control mode.",
         "data": {
           "write_path": "Write path",
           "confirmed_entity": "Setpoint read-back",
           "ch_confirmed_entity": "Heating on/off read-back"
         },
         "data_description": {
-          "write_path": "No control (default); a writable entity you pick, e.g. an EMS-ESP or ESPHome OpenTherm number; the OpenTherm Gateway through Home Assistant's OpenTherm Gateway integration; or the OTGW firmware's MQTT commands. Pick the path your boiler interface really offers: a wrong one means writes that fail or go nowhere. A relay, for an on/off boiler: a switch on the boiler's room-thermostat terminals, or a boiler thermostat entity set to heat or off. Only the paths that suit the boiler's connection and control mode are offered.",
+          "write_path": "No control (default); a writable entity you pick, e.g. an EMS-ESP or ESPHome OpenTherm number; the OpenTherm Gateway through Home Assistant's OpenTherm Gateway integration; or the OTGW firmware's MQTT commands. Pick the path your boiler interface really offers: a wrong one means writes that fail or go nowhere. A relay, for an on/off boiler: a switch on the boiler's room-thermostat terminals, or a boiler thermostat entity set to heat or off. Asked only for an installation set up before the connection question; otherwise the connection decides it, and monitoring only is a control mode.",
           "confirmed_entity": "The entity that reports the setpoint the boiler received, e.g. the gateway's \"Control setpoint 1\" on its boiler device — it shows what the gateway sends, so the setpoint is shown as confirmed by the gateway, not by the boiler. Required: every write is checked against it, and a write the boiler ignores or another controller overwrites is reported. The plugin's setpoint entity shows only a confirmed value, otherwise unknown. Picking the entity you write confirms nothing: the setpoint is then shown as unverified. Not used with a relay: its own state confirms it. On EMS-ESP pick its selected flow temperature (selflowtemp), the entity you write: EMS-ESP fills it from the boiler's own report, but the plugin cannot tell that, so the setpoint shows as unverified.",
           "ch_confirmed_entity": "Optional: an entity that reports whether the boiler receives heating enabled — e.g. the gateway's \"Central heating 1\" on its boiler device that reads On/Off: what the gateway sends. Not the one that reads Running/Not running: that is the boiler's own status, which goes off during hot water and would look like another controller. With it, heating on/off is checked like the setpoint: a switch the boiler ignores is reported, and one another controller changes is written again once, then every write stops. Without it, heating on/off is shown as unverified and another controller switching it goes unnoticed. Picking the entity you write, or the thermostat's request instead of what the boiler receives, confirms nothing or stops control. Pick an entity that reports a change within about a minute: a slower one delays noticing a change, and one slower than 5 min can make the plugin wrongly step aside."
         }
@@ -511,7 +511,6 @@
       "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit (°C, °F or K): a value written would mean something else to it. Pick the boiler's flow setpoint entity.",
       "confirmed_entity_missing": "Pick the entity that reports the setpoint the boiler received: every write is checked against it.",
       "topology_missing": "Declare how the gateway sits between thermostat and boiler: it decides what a hand-back does.",
-      "topology_no_control": "In monitor mode the gateway only listens: control is not possible.",
       "topology_not_for_path": "This write path goes through a built-in OpenTherm Gateway: pick one of the gateway topologies.",
       "gateway_unknown": "No OpenTherm Gateway set up in Home Assistant has this ID: every write would fail.",
       "hand_back_entity_write_type_not_supported": "Declare the external control switch expiring or held: the plugin never writes to the boiler's persistent memory.",
@@ -840,14 +839,14 @@
       },
       "control": {
         "title": "Control (experimental)",
-        "description": "How the plugin controls the boiler: the flow setpoint it writes, or on and off through a relay. Until you switch control on, nothing changes: the boiler runs as it does today — under Versatile Thermostat's central boiler, a wall thermostat or its own regulation — and the plugin only watches and reports. Switched on, it takes the place of VT's central boiler (remove that first and restart Home Assistant): heating goes on and off with VT's zones at once, and where the plugin writes the water temperature it follows your curve, never below your lowest or above your highest water temperature; the comfort correction, if you enable it, adds at most 3 K above the curve. You may switch control on from the first day, even without a verdict: the monitor's verdict comes once it has enough days of data, and the control switch shows it. Choose \"No control\" to keep monitoring only.",
+        "description": "How the plugin controls the boiler: the flow setpoint it writes, or on and off through a relay. Until you switch control on, nothing changes: the boiler runs as it does today — under Versatile Thermostat's central boiler, a wall thermostat or its own regulation — and the plugin only watches and reports. Switched on, it takes the place of VT's central boiler (remove that first and restart Home Assistant): heating goes on and off with VT's zones at once, and where the plugin writes the water temperature it follows your curve, never below your lowest or above your highest water temperature; the comfort correction, if you enable it, adds at most 3 K above the curve. You may switch control on from the first day, even without a verdict: the monitor's verdict comes once it has enough days of data, and the control switch shows it. The write path follows the boiler's connection; to keep monitoring only, choose that control mode.",
         "data": {
           "write_path": "Write path",
           "confirmed_entity": "Setpoint read-back",
           "ch_confirmed_entity": "Heating on/off read-back"
         },
         "data_description": {
-          "write_path": "No control (default); a writable entity you pick, e.g. an EMS-ESP or ESPHome OpenTherm number; the OpenTherm Gateway through Home Assistant's OpenTherm Gateway integration; or the OTGW firmware's MQTT commands. Pick the path your boiler interface really offers: a wrong one means writes that fail or go nowhere. A relay, for an on/off boiler: a switch on the boiler's room-thermostat terminals, or a boiler thermostat entity set to heat or off. Only the paths that suit the boiler's connection and control mode are offered.",
+          "write_path": "No control (default); a writable entity you pick, e.g. an EMS-ESP or ESPHome OpenTherm number; the OpenTherm Gateway through Home Assistant's OpenTherm Gateway integration; or the OTGW firmware's MQTT commands. Pick the path your boiler interface really offers: a wrong one means writes that fail or go nowhere. A relay, for an on/off boiler: a switch on the boiler's room-thermostat terminals, or a boiler thermostat entity set to heat or off. Asked only for an installation set up before the connection question; otherwise the connection decides it, and monitoring only is a control mode.",
           "confirmed_entity": "The entity that reports the setpoint the boiler received, e.g. the gateway's \"Control setpoint 1\" on its boiler device — it shows what the gateway sends, so the setpoint is shown as confirmed by the gateway, not by the boiler. Required: every write is checked against it, and a write the boiler ignores or another controller overwrites is reported. The plugin's setpoint entity shows only a confirmed value, otherwise unknown. Picking the entity you write confirms nothing: the setpoint is then shown as unverified. Not used with a relay: its own state confirms it. On EMS-ESP pick its selected flow temperature (selflowtemp), the entity you write: EMS-ESP fills it from the boiler's own report, but the plugin cannot tell that, so the setpoint shows as unverified.",
           "ch_confirmed_entity": "Optional: an entity that reports whether the boiler receives heating enabled — e.g. the gateway's \"Central heating 1\" on its boiler device that reads On/Off: what the gateway sends. Not the one that reads Running/Not running: that is the boiler's own status, which goes off during hot water and would look like another controller. With it, heating on/off is checked like the setpoint: a switch the boiler ignores is reported, and one another controller changes is written again once, then every write stops. Without it, heating on/off is shown as unverified and another controller switching it goes unnoticed. Picking the entity you write, or the thermostat's request instead of what the boiler receives, confirms nothing or stops control. Pick an entity that reports a change within about a minute: a slower one delays noticing a change, and one slower than 5 min can make the plugin wrongly step aside."
         }
@@ -1099,7 +1098,6 @@
       "alarm_limits_out_of_order": "An alarm limit must lie beyond its warning limit.",
       "confirmed_entity_missing": "Pick the entity that reports the setpoint the boiler received: every write is checked against it.",
       "topology_missing": "Declare how the gateway sits between thermostat and boiler: it decides what a hand-back does.",
-      "topology_no_control": "In monitor mode the gateway only listens: control is not possible.",
       "topology_not_for_path": "This write path goes through a built-in OpenTherm Gateway: pick one of the gateway topologies.",
       "gateway_unknown": "No OpenTherm Gateway set up in Home Assistant has this ID: every write would fail.",
       "mqtt_topic_invalid": "Enter the topic level as the gateway's firmware uses it, without spaces or the wildcards + and #.",
@@ -1703,7 +1701,6 @@
               "no_confirmed_setpoint": "No setpoint read-back picked",
               "thermostat_setpoint_same_as_read_back": "The thermostat's own setpoint is the setpoint read-back",
               "no_topology": "The gateway's connection is not declared",
-              "topology_no_control": "The gateway runs in monitor mode",
               "curve_not_entered": "The heating curve is not entered",
               "one_direct_circuit_only": "Only one circuit fed straight from the boiler can be controlled",
               "underfloor_without_max_flow": "Underfloor heating on an unmixed circuit without its maximum",
@@ -2700,7 +2697,6 @@
               "no_confirmed_setpoint": "No setpoint read-back picked",
               "thermostat_setpoint_same_as_read_back": "The thermostat's own setpoint is the setpoint read-back",
               "no_topology": "The gateway's connection is not declared",
-              "topology_no_control": "The gateway runs in monitor mode",
               "curve_not_entered": "The heating curve is not entered",
               "one_direct_circuit_only": "Only one circuit fed straight from the boiler can be controlled",
               "underfloor_without_max_flow": "Underfloor heating on an unmixed circuit without its maximum",
@@ -2818,9 +2814,6 @@
     },
     "blocked_no_topology": {
       "message": "Declare how the gateway is connected. Other reasons: {count} (all are listed on the control state)."
-    },
-    "blocked_topology_no_control": {
-      "message": "The gateway runs in monitor mode and cannot control the boiler. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_curve_not_entered": {
       "message": "Enter the heating curve, at least the design flow temperature. Other reasons: {count} (all are listed on the control state)."

@@ -126,9 +126,10 @@ Only one entry of the integration can exist: it runs one boiler.
    whether control is worth enabling (see
    [Monitoring and the verdict](#41-monitoring-and-the-verdict)). You decide.
 7. **Set up control.** With full control or on/off chosen, the setup's menu also offers the
-   section **Control (experimental)**: the write path, then the steps that follow (for example
-   **Heating curve and limits** and **Control behaviour**). To set it up later, or change it,
-   open the same section in the integration's options. "No control" keeps monitoring only.
+   section **Control (experimental)**: the read-backs, then the steps that follow (for example
+   **Heating curve and limits** and **Control behaviour**); the connection decides the write
+   path. To change it later, open the same section in the integration's options. To set
+   control up later, choose monitoring only as the control mode first.
 8. **Switch control on** with the switch **Control (experimental)** of the integration's device.
    If something is missing, the switch says what, and the monitor keeps running.
 
@@ -378,8 +379,8 @@ persistent.
 
 ### 5.1 The write paths
 
-You choose one in the control step ("Write path"), among those that fit the boiler's connection.
-The default is "No control": the plugin only monitors.
+The boiler's connection decides it; an installation set up before the connection question
+still picks it in the control step ("Write path"). Monitoring only is a control mode.
 
 - **Writable entity** — a boiler interface that offers writable entities, for example EMS-ESP
   or an ESPHome OpenTherm controller. The plugin writes the flow setpoint, and heating on and off

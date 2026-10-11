@@ -244,6 +244,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_room_values(hass, entry)
     if entry.minor_version < 15:
         _migrate_topics(hass, entry)
+    if entry.minor_version < 16:
+        _migrate_monitor_mode(hass, entry)
     return True
 
 
@@ -434,6 +436,36 @@ def _migrate_topics(hass: HomeAssistant, entry: ConfigEntry) -> None:
         options[BOILER] = boiler
         options[CONTROL] = {k: v for k, v in control.items() if k not in MQTT_TOPIC_KEYS}
     hass.config_entries.async_update_entry(entry, options=options, minor_version=15)
+
+
+def _migrate_monitor_mode(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.4c (minor version 16): a gateway that only listens ("monitor mode") was a topology;
+    it is the control mode "monitoring only" now (`docs/plan-0.2-i8.md` B7, Claude's call). The
+    control section is kept, without the topology, which allowed no control; the class follows
+    the connection where one is stored."""
+    from .const import BOILER
+    from .control_config import (
+        MONITOR_MODE_FROM_BEFORE,
+        Connection,
+        ControlMode,
+        boiler_class_for,
+    )
+
+    options = dict(entry.options)
+    control = options.get(CONTROL)
+    if isinstance(control, Mapping) and control.get("topology") == MONITOR_MODE_FROM_BEFORE:
+        options[CONTROL] = {k: v for k, v in control.items() if k != "topology"}
+        stored = options.get(BOILER)
+        boiler = dict(stored) if isinstance(stored, Mapping) else {}
+        boiler["control_mode"] = ControlMode.MONITOR.value
+        try:
+            connection = Connection(str(boiler.get("connection")))
+        except ValueError:
+            connection = None  # made before the question: its class stays
+        if connection is not None:
+            boiler["class"] = boiler_class_for(connection, ControlMode.MONITOR).value
+        options[BOILER] = boiler
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=16)
 
 
 def _stored_float(raw: Any, default: float) -> float:

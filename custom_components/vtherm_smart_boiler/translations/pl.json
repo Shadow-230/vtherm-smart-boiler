@@ -244,14 +244,14 @@
       },
       "control": {
         "title": "Sterowanie (eksperymentalne)",
-        "description": "Jak wtyczka steruje kotłem: zapisując nastawę zasilania albo włączając i wyłączając go przekaźnikiem. Dopóki nie włączysz sterowania, nic się nie zmienia: kocioł pracuje jak dotąd — pod kotłem centralnym Versatile Thermostat, termostatem ściennym albo własną automatyką — a wtyczka tylko obserwuje i raportuje. Po włączeniu zajmuje miejsce kotła centralnego VT (najpierw go usuń i uruchom ponownie Home Assistant): grzanie włącza się i wyłącza od razu razem ze strefami VT, a tam, gdzie wtyczka zapisuje temperaturę wody, idzie ona za Twoją krzywą, nigdy poniżej najniższej ani powyżej najwyższej temperatury wody; korekta komfortu, jeśli ją włączysz, dodaje najwyżej 3 K ponad krzywą. Sterowanie możesz włączyć od pierwszego dnia, nawet bez werdyktu: werdykt monitora pojawi się, gdy zbierze dość dni danych, a przełącznik sterowania go pokaże. Wybierz „Bez sterowania”, żeby tylko monitorować.",
+        "description": "Jak wtyczka steruje kotłem: zapisując nastawę zasilania albo włączając i wyłączając go przekaźnikiem. Dopóki nie włączysz sterowania, nic się nie zmienia: kocioł pracuje jak dotąd — pod kotłem centralnym Versatile Thermostat, termostatem ściennym albo własną automatyką — a wtyczka tylko obserwuje i raportuje. Po włączeniu zajmuje miejsce kotła centralnego VT (najpierw go usuń i uruchom ponownie Home Assistant): grzanie włącza się i wyłącza od razu razem ze strefami VT, a tam, gdzie wtyczka zapisuje temperaturę wody, idzie ona za Twoją krzywą, nigdy poniżej najniższej ani powyżej najwyższej temperatury wody; korekta komfortu, jeśli ją włączysz, dodaje najwyżej 3 K ponad krzywą. Sterowanie możesz włączyć od pierwszego dnia, nawet bez werdyktu: werdykt monitora pojawi się, gdy zbierze dość dni danych, a przełącznik sterowania go pokaże. Ścieżka zapisu wynika z połączenia kotła; żeby tylko monitorować, wybierz taki tryb sterowania.",
         "data": {
           "write_path": "Ścieżka zapisu",
           "confirmed_entity": "Odczyt zwrotny nastawy",
           "ch_confirmed_entity": "Odczyt zwrotny włączenia ogrzewania"
         },
         "data_description": {
-          "write_path": "Bez sterowania (domyślnie); wybrana przez ciebie encja do zapisu, np. liczba EMS-ESP albo ESPHome OpenTherm; bramka OpenTherm Gateway przez integrację OpenTherm Gateway w Home Assistant; albo polecenia MQTT firmware OTGW. Wybierz ścieżkę, którą naprawdę oferuje twój interfejs kotła: zła oznacza zapisy, które się nie udają albo trafiają donikąd. Przekaźnik, dla kotła wł./wył.: przełącznik na zaciskach termostatu pokojowego kotła albo encja termostatu kotła ustawiana na grzanie lub wyłączenie. Oferowane są tylko ścieżki pasujące do połączenia kotła i trybu sterowania.",
+          "write_path": "Bez sterowania (domyślnie); wybrana przez ciebie encja do zapisu, np. liczba EMS-ESP albo ESPHome OpenTherm; bramka OpenTherm Gateway przez integrację OpenTherm Gateway w Home Assistant; albo polecenia MQTT firmware OTGW. Wybierz ścieżkę, którą naprawdę oferuje twój interfejs kotła: zła oznacza zapisy, które się nie udają albo trafiają donikąd. Przekaźnik, dla kotła wł./wył.: przełącznik na zaciskach termostatu pokojowego kotła albo encja termostatu kotła ustawiana na grzanie lub wyłączenie. Pytane tylko w instalacji skonfigurowanej przed pytaniem o połączenie; w innych ścieżkę wyznacza połączenie, a samo monitorowanie to tryb sterowania.",
           "confirmed_entity": "Encja, która pokazuje nastawę odebraną przez kocioł, np. „Control setpoint 1” urządzenia kotła w bramce — pokazuje ona, co bramka wysyła, więc nastawa jest pokazywana jako potwierdzona przez bramkę, nie przez kocioł. Wymagana: każdy zapis jest z nią porównywany, a zapis zignorowany przez kocioł albo nadpisany przez inny sterownik zostaje zgłoszony. Encja nastawy wtyczki pokazuje tylko potwierdzoną wartość, w przeciwnym razie stan nieznany. Wybranie encji, do której się pisze, niczego nie potwierdza: nastawa jest wtedy pokazywana jako niezweryfikowana. Nieużywane przy przekaźniku: potwierdza go jego własny stan. Przy EMS-ESP wybierz jego wybraną temperaturę zasilania (selflowtemp), czyli encję, do której się pisze: EMS-ESP wypełnia ją na podstawie raportu samego kotła, ale wtyczka nie może tego sprawdzić, więc nastawa jest pokazywana jako niezweryfikowana.",
           "ch_confirmed_entity": "Opcjonalnie: encja, która pokazuje, czy kocioł dostaje włączone grzanie — np. „Central heating 1” na urządzeniu kotła w bramce, ta ze stanem On/Off (Wł./Wył.): to, co wysyła bramka. Nie ta ze stanem Running/Not running (Działa/Nie działa): to własny stan kotła, który gaśnie podczas grzania wody użytkowej i wyglądałby jak inny sterownik. Z nią włączenie i wyłączenie grzania jest sprawdzane jak nastawa: zignorowane przez kocioł jest zgłaszane, a zmienione przez inny sterownik jest raz zapisane ponownie, po czym wszystkie zapisy ustają. Bez niej włączenie grzania jest pokazywane jako niepotwierdzone, a przełączenie go przez inny sterownik przejdzie niezauważone. Wybranie encji, do której zapisujesz, albo żądania termostatu zamiast tego, co dostaje kocioł, niczego nie potwierdza albo zatrzymuje sterowanie. Wybierz encję, która zgłasza zmianę mniej więcej w ciągu minuty: wolniejsza opóźnia zauważenie zmiany, a wolniejsza niż 5 min może sprawić, że wtyczka niesłusznie się wycofa."
         }
@@ -511,7 +511,6 @@
       "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury (°C, °F lub K): zapisana wartość znaczyłaby dla niej coś innego. Wybierz encję nastawy temperatury zasilania kotła.",
       "confirmed_entity_missing": "Wybierz encję, która pokazuje nastawę odebraną przez kocioł: każdy zapis jest z nią porównywany.",
       "topology_missing": "Określ, jak bramka jest podłączona między termostatem a kotłem: od tego zależy, co robi oddanie sterowania.",
-      "topology_no_control": "W trybie monitorowania bramka tylko nasłuchuje: sterowanie nie jest możliwe.",
       "topology_not_for_path": "Ta ścieżka zapisu prowadzi przez wbudowaną bramkę OpenTherm: wybierz jedno z podłączeń bramki.",
       "gateway_unknown": "Żadna bramka OpenTherm skonfigurowana w Home Assistant nie ma tego identyfikatora: każdy zapis by się nie udał.",
       "hand_back_entity_write_type_not_supported": "Zadeklaruj przełącznik sterowania zewnętrznego jako wygasający albo trzymany: wtyczka nigdy nie zapisuje do trwałej pamięci kotła.",
@@ -840,14 +839,14 @@
       },
       "control": {
         "title": "Sterowanie (eksperymentalne)",
-        "description": "Jak wtyczka steruje kotłem: zapisując nastawę zasilania albo włączając i wyłączając go przekaźnikiem. Dopóki nie włączysz sterowania, nic się nie zmienia: kocioł pracuje jak dotąd — pod kotłem centralnym Versatile Thermostat, termostatem ściennym albo własną automatyką — a wtyczka tylko obserwuje i raportuje. Po włączeniu zajmuje miejsce kotła centralnego VT (najpierw go usuń i uruchom ponownie Home Assistant): grzanie włącza się i wyłącza od razu razem ze strefami VT, a tam, gdzie wtyczka zapisuje temperaturę wody, idzie ona za Twoją krzywą, nigdy poniżej najniższej ani powyżej najwyższej temperatury wody; korekta komfortu, jeśli ją włączysz, dodaje najwyżej 3 K ponad krzywą. Sterowanie możesz włączyć od pierwszego dnia, nawet bez werdyktu: werdykt monitora pojawi się, gdy zbierze dość dni danych, a przełącznik sterowania go pokaże. Wybierz „Bez sterowania”, żeby tylko monitorować.",
+        "description": "Jak wtyczka steruje kotłem: zapisując nastawę zasilania albo włączając i wyłączając go przekaźnikiem. Dopóki nie włączysz sterowania, nic się nie zmienia: kocioł pracuje jak dotąd — pod kotłem centralnym Versatile Thermostat, termostatem ściennym albo własną automatyką — a wtyczka tylko obserwuje i raportuje. Po włączeniu zajmuje miejsce kotła centralnego VT (najpierw go usuń i uruchom ponownie Home Assistant): grzanie włącza się i wyłącza od razu razem ze strefami VT, a tam, gdzie wtyczka zapisuje temperaturę wody, idzie ona za Twoją krzywą, nigdy poniżej najniższej ani powyżej najwyższej temperatury wody; korekta komfortu, jeśli ją włączysz, dodaje najwyżej 3 K ponad krzywą. Sterowanie możesz włączyć od pierwszego dnia, nawet bez werdyktu: werdykt monitora pojawi się, gdy zbierze dość dni danych, a przełącznik sterowania go pokaże. Ścieżka zapisu wynika z połączenia kotła; żeby tylko monitorować, wybierz taki tryb sterowania.",
         "data": {
           "write_path": "Ścieżka zapisu",
           "confirmed_entity": "Odczyt zwrotny nastawy",
           "ch_confirmed_entity": "Odczyt zwrotny włączenia ogrzewania"
         },
         "data_description": {
-          "write_path": "Bez sterowania (domyślnie); wybrana przez ciebie encja do zapisu, np. liczba EMS-ESP albo ESPHome OpenTherm; bramka OpenTherm Gateway przez integrację OpenTherm Gateway w Home Assistant; albo polecenia MQTT firmware OTGW. Wybierz ścieżkę, którą naprawdę oferuje twój interfejs kotła: zła oznacza zapisy, które się nie udają albo trafiają donikąd. Przekaźnik, dla kotła wł./wył.: przełącznik na zaciskach termostatu pokojowego kotła albo encja termostatu kotła ustawiana na grzanie lub wyłączenie. Oferowane są tylko ścieżki pasujące do połączenia kotła i trybu sterowania.",
+          "write_path": "Bez sterowania (domyślnie); wybrana przez ciebie encja do zapisu, np. liczba EMS-ESP albo ESPHome OpenTherm; bramka OpenTherm Gateway przez integrację OpenTherm Gateway w Home Assistant; albo polecenia MQTT firmware OTGW. Wybierz ścieżkę, którą naprawdę oferuje twój interfejs kotła: zła oznacza zapisy, które się nie udają albo trafiają donikąd. Przekaźnik, dla kotła wł./wył.: przełącznik na zaciskach termostatu pokojowego kotła albo encja termostatu kotła ustawiana na grzanie lub wyłączenie. Pytane tylko w instalacji skonfigurowanej przed pytaniem o połączenie; w innych ścieżkę wyznacza połączenie, a samo monitorowanie to tryb sterowania.",
           "confirmed_entity": "Encja, która pokazuje nastawę odebraną przez kocioł, np. „Control setpoint 1” urządzenia kotła w bramce — pokazuje ona, co bramka wysyła, więc nastawa jest pokazywana jako potwierdzona przez bramkę, nie przez kocioł. Wymagana: każdy zapis jest z nią porównywany, a zapis zignorowany przez kocioł albo nadpisany przez inny sterownik zostaje zgłoszony. Encja nastawy wtyczki pokazuje tylko potwierdzoną wartość, w przeciwnym razie stan nieznany. Wybranie encji, do której się pisze, niczego nie potwierdza: nastawa jest wtedy pokazywana jako niezweryfikowana. Nieużywane przy przekaźniku: potwierdza go jego własny stan. Przy EMS-ESP wybierz jego wybraną temperaturę zasilania (selflowtemp), czyli encję, do której się pisze: EMS-ESP wypełnia ją na podstawie raportu samego kotła, ale wtyczka nie może tego sprawdzić, więc nastawa jest pokazywana jako niezweryfikowana.",
           "ch_confirmed_entity": "Opcjonalnie: encja, która pokazuje, czy kocioł dostaje włączone grzanie — np. „Central heating 1” na urządzeniu kotła w bramce, ta ze stanem On/Off (Wł./Wył.): to, co wysyła bramka. Nie ta ze stanem Running/Not running (Działa/Nie działa): to własny stan kotła, który gaśnie podczas grzania wody użytkowej i wyglądałby jak inny sterownik. Z nią włączenie i wyłączenie grzania jest sprawdzane jak nastawa: zignorowane przez kocioł jest zgłaszane, a zmienione przez inny sterownik jest raz zapisane ponownie, po czym wszystkie zapisy ustają. Bez niej włączenie grzania jest pokazywane jako niepotwierdzone, a przełączenie go przez inny sterownik przejdzie niezauważone. Wybranie encji, do której zapisujesz, albo żądania termostatu zamiast tego, co dostaje kocioł, niczego nie potwierdza albo zatrzymuje sterowanie. Wybierz encję, która zgłasza zmianę mniej więcej w ciągu minuty: wolniejsza opóźnia zauważenie zmiany, a wolniejsza niż 5 min może sprawić, że wtyczka niesłusznie się wycofa."
         }
@@ -1099,7 +1098,6 @@
       "alarm_limits_out_of_order": "Próg alarmu musi leżeć za progiem ostrzeżenia.",
       "confirmed_entity_missing": "Wybierz encję, która pokazuje nastawę odebraną przez kocioł: każdy zapis jest z nią porównywany.",
       "topology_missing": "Określ, jak bramka jest podłączona między termostatem a kotłem: od tego zależy, co robi oddanie sterowania.",
-      "topology_no_control": "W trybie monitorowania bramka tylko nasłuchuje: sterowanie nie jest możliwe.",
       "topology_not_for_path": "Ta ścieżka zapisu prowadzi przez wbudowaną bramkę OpenTherm: wybierz jedno z podłączeń bramki.",
       "gateway_unknown": "Żadna bramka OpenTherm skonfigurowana w Home Assistant nie ma tego identyfikatora: każdy zapis by się nie udał.",
       "mqtt_topic_invalid": "Wpisz poziom tematu tak, jak używa go firmware bramki, bez spacji i symboli wieloznacznych + i #.",
@@ -1703,7 +1701,6 @@
               "no_confirmed_setpoint": "Nie wybrano odczytu zwrotnego nastawy",
               "thermostat_setpoint_same_as_read_back": "Własna nastawa termostatu to odczyt zwrotny nastawy",
               "no_topology": "Nie zadeklarowano podłączenia bramki",
-              "topology_no_control": "Bramka działa w trybie monitora",
               "curve_not_entered": "Nie wpisano krzywej grzewczej",
               "one_direct_circuit_only": "Sterować można tylko jednym obiegiem zasilanym wprost z kotła",
               "underfloor_without_max_flow": "Ogrzewanie podłogowe na obiegu bez mieszania nie ma ustawionego maksimum",
@@ -2700,7 +2697,6 @@
               "no_confirmed_setpoint": "Nie wybrano odczytu zwrotnego nastawy",
               "thermostat_setpoint_same_as_read_back": "Własna nastawa termostatu to odczyt zwrotny nastawy",
               "no_topology": "Nie zadeklarowano podłączenia bramki",
-              "topology_no_control": "Bramka działa w trybie monitora",
               "curve_not_entered": "Nie wpisano krzywej grzewczej",
               "one_direct_circuit_only": "Sterować można tylko jednym obiegiem zasilanym wprost z kotła",
               "underfloor_without_max_flow": "Ogrzewanie podłogowe na obiegu bez mieszania nie ma ustawionego maksimum",
@@ -2818,9 +2814,6 @@
     },
     "blocked_no_topology": {
       "message": "Określ, jak podłączona jest bramka. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
-    },
-    "blocked_topology_no_control": {
-      "message": "Bramka pracuje w trybie monitora i nie może sterować kotłem. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_curve_not_entered": {
       "message": "Wpisz krzywą grzewczą, co najmniej projektową temperaturę zasilania. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
