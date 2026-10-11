@@ -1435,7 +1435,8 @@ Starts per hour count the hours with heating.
 - OTGW (research F3, F5–F7): the topology is declared in the config flow — the gateway's mode
   and a connected thermostat cannot be read reliably through Home Assistant. With a thermostat,
   every fallback (`CS=0`, expiry, Home Assistant stopping) returns control to the thermostat;
-  stand-alone, every fallback ends heating; monitor mode allows no control. "Every fallback
+  stand-alone, every fallback ends heating; a gateway in monitor mode allows no control — the
+  control mode monitoring only (I8 B7: no longer a topology; minor version 16). "Every fallback
   returns control to the thermostat" holds for an OpenTherm thermostat only; an on/off contact on
   the terminals blocks control (decision 1, S-01). `CS` of 8 °C or more lapses unless repeated
   within a minute; below 8 °C it never lapses, so the plugin never writes it as a setpoint and

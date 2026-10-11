@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from custom_components.vtherm_smart_boiler.control_config import (
@@ -137,7 +139,6 @@ def test_underfloor_exponent_and_circuit_cap() -> None:
         ({"write_path": "otgw_mqtt"}, "no_mqtt_topic"),
         ({"confirmed_entity": ""}, "no_confirmed_setpoint"),
         ({"topology": ""}, "no_topology"),
-        ({"topology": "monitor_mode"}, "topology_no_control"),
         ({"curve": {}}, "curve_not_entered"),
     ],
 )
@@ -165,10 +166,16 @@ def test_one_direct_circuit_only_and_underfloor_needs_a_cap() -> None:
 
 
 def test_topologies() -> None:
+    """I8 (decision B7): every topology allows control — a gateway that only listens is the
+    control mode "monitoring only", no topology."""
+    assert {topology.value for topology in Topology} == {
+        "gateway_standalone",
+        "gateway_with_thermostat",
+        "virtual",
+    }
     for topology in Topology:
         options = parse_control(OTGW | {"topology": topology.value}, RADIATORS, None)
-        blocked = "topology_no_control" in config_blockers(options, RADIATORS)
-        assert blocked is (topology is Topology.MONITOR_MODE)
+        assert "no_topology" not in config_blockers(options, RADIATORS)
 
 
 def test_control_needs_a_boiler_it_can_control() -> None:
@@ -190,7 +197,7 @@ def test_every_blocker_is_listed() -> None:
     cases = [
         ({}, RADIATORS),
         (OTGW | {"write_path": "entity", "curve": {}, "topology": ""}, RADIATORS),
-        (OTGW | {"gateway_id": "", "confirmed_entity": "", "topology": "monitor_mode"}, RADIATORS),
+        (OTGW | {"gateway_id": "", "confirmed_entity": ""}, RADIATORS),
         (OTGW | {"write_path": "otgw_mqtt"}, RADIATORS),
         (
             OTGW | {"write_path": "entity", "setpoint_entity": "number.x", "hand_back": "timeout"},
@@ -275,7 +282,6 @@ def test_every_blocker_is_listed() -> None:
         ({"topology": "gateway_with_thermostat"}, "thermostat_takes_over"),
         ({"topology": "gateway_standalone"}, "heating_stops"),
         ({"topology": "virtual"}, "device_decides"),
-        ({"topology": "monitor_mode"}, None),
         ({"topology": ""}, None),
     ],
 )
@@ -899,7 +905,6 @@ def test_the_offered_reaction_is_read_from_raw_options() -> None:
         (ENTITY | {"hand_back_value_effect": "heating_stops"}, "boiler"),
         (ENTITY | {"hand_back_value_effect": "own_control"}, "device"),
         (ENTITY | {"hand_back": "timeout", "write_type": "expiring"}, "device"),  # virtual
-        (OTGW | {"topology": "monitor_mode"}, None),  # control cannot run: nothing to say
         (OTGW | {"topology": ""}, None),  # the effect unknown
     ],
 )
@@ -1156,7 +1161,6 @@ def test_a_hand_back_switch_that_is_the_heating_switch_blocks(data: dict, blocke
         ("entity", "virtual", False),
         ("entity", "gateway_standalone", False),
         ("entity", "gateway_with_thermostat", False),
-        ("opentherm_gw", "monitor_mode", False),  # "topology_no_control" says it
         ("opentherm_gw", "", False),  # "no_topology" says it
     ],
 )
@@ -1423,7 +1427,7 @@ def test_no_kind_is_needed_without_a_gateway_topology(kind: str | None) -> None:
         data["thermostat_kind"] = kind
     assert _kind_blockers(data) == []
     assert config_blockers(parse_control(data, RADIATORS, None), RADIATORS) == []
-    for topology, own in (("monitor_mode", "topology_no_control"), ("", "no_topology")):
+    for topology, own in (("", "no_topology"),):
         blockers = config_blockers(
             parse_control(OTGW | {"topology": topology, "thermostat_kind": kind}, RADIATORS, None),
             RADIATORS,
@@ -1993,17 +1997,16 @@ BLOCKER_PRECEDENCE = [
         ["no_gateway", "no_confirmed_setpoint", "no_topology", "curve_not_entered"],
     ),
     (
-        "the firmware's topics missing, a monitor-mode topology",
+        "the firmware's topics missing, no topology",
         {
             "write_path": "otgw_mqtt",
-            "topology": "monitor_mode",
             "confirmed_entity": "sensor.x",
             "curve": CURVE,
         },
         RADIATORS,
         None,
         _ALL_SIGNALS,
-        ["no_mqtt_topic", "topology_no_control"],
+        ["no_mqtt_topic", "no_topology"],
     ),
     (
         "a topology the path does not suit",
@@ -2152,7 +2155,9 @@ def test_the_precedence_of_the_configuration_blockers(
 # A control section this version cannot read: a write path it does not know.
 UNREADABLE_SECTION = {"write_path": "carrier_pigeon"}
 NOT_HEATED, MAY_NOT_BE_HEATED = "setup_failed_not_heated", "setup_failed_may_not_be_heated"
-MONITOR = OTGW | {"topology": "monitor_mode"}
+# A gateway's monitor mode from before, migrated (I8.4c): monitoring only, the section kept
+# without its topology.
+MONITOR = {k: v for k, v in OTGW.items() if k != "topology"}
 
 
 @pytest.mark.parametrize(
@@ -2182,10 +2187,11 @@ MONITOR = OTGW | {"topology": "monitor_mode"}
         (UNREADABLE_SECTION, {"taken_with": UNREADABLE_SECTION}, MAY_NOT_BE_HEATED),
         (UNREADABLE_SECTION, {"enabled": True, "taken_with": "damaged"}, MAY_NOT_BE_HEATED),
         (UNREADABLE_SECTION, None, MAY_NOT_BE_HEATED),
-        # A stored monitor-only topology (refused by today's form): the plugin never takes the
-        # boiler with it, so nothing where the stored state shows no earlier session holding
-        # it (finding 6 of the part-1 check D); one taken with other options decides; a state
-        # not read, or options taken with that cannot be read, tell nothing — the cautious side.
+        # Monitoring only chosen, the section without its topology (a gateway's monitor mode
+        # from before, I8.4c): the plugin never takes the boiler with it, so nothing where the
+        # stored state shows no earlier session holding it (finding 6 of the part-1 check D);
+        # one taken with other options decides; a state not read, or options taken with that
+        # cannot be read, tell nothing — the cautious side.
         (MONITOR, {"enabled": True}, None),
         (MONITOR, {"enabled": True, "taken_with": None}, None),
         (MONITOR, {"enabled": True, "taken_with": OTGW}, NOT_HEATED),
@@ -2203,7 +2209,11 @@ def test_a_failed_setup_tells_of_a_house_not_heated(
 ) -> None:
     from custom_components.vtherm_smart_boiler.control_config import failed_setup_report
 
-    options = {"signals": {}} if section is None else {"signals": {}, "control": section}
+    options: dict[str, Any] = {"signals": {}}
+    if section is not None:
+        options["control"] = section
+    if section is MONITOR:
+        options["boiler"] = {"control_mode": "monitor"}
     found = failed_setup_report(options, state)
     assert (None if found is None else found.value) == report
 

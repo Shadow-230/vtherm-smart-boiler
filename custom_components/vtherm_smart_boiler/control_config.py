@@ -226,8 +226,12 @@ def connection_suggested_by(path: object) -> Connection | None:
 class Topology(StrEnum):
     GATEWAY_STANDALONE = "gateway_standalone"  # the gateway is master: hand-back stops heating
     GATEWAY_WITH_THERMOSTAT = "gateway_with_thermostat"  # hand-back: the thermostat takes over
-    MONITOR_MODE = "monitor_mode"  # the gateway only listens: no control
     VIRTUAL = "virtual"  # a controller on the HA side (e.g. an ESPHome OpenTherm master)
+
+
+# A gateway that only listens is monitoring only, a control mode (I8, decision B7): the stored
+# topology reads so (minor version 16).
+MONITOR_MODE_FROM_BEFORE = "monitor_mode"
 
 
 # The write path each connection writes through (I6, decision 2).
@@ -314,7 +318,6 @@ CONFIG_BLOCKERS = (
     "no_confirmed_setpoint",
     "thermostat_setpoint_same_as_read_back",  # PB-70
     "no_topology",
-    "topology_no_control",
     "curve_not_entered",
     "one_direct_circuit_only",
     "underfloor_without_max_flow",
@@ -352,9 +355,7 @@ CONFIG_BLOCKERS = (
 OTGW_PATHS = frozenset({WritePath.OPENTHERM_GW, WritePath.OTGW_MQTT})
 # Write types control may use: nothing the boiler stores in its memory.
 WRITABLE_TYPES = frozenset({WriteType.EXPIRING, WriteType.HELD})
-CONTROLLABLE_TOPOLOGIES = frozenset(
-    {Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT, Topology.VIRTUAL}
-)
+CONTROLLABLE_TOPOLOGIES = frozenset(Topology)
 # The topologies with thermostat terminals: each asks what is wired to them (decision 1).
 GATEWAY_TOPOLOGIES = frozenset({Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT})
 # The kind each gateway topology cannot have: an OpenTherm thermostat means "with a thermostat",
@@ -1276,11 +1277,9 @@ def section_stops_heating(data: object) -> bool | None:
     return hand_back_stops_heating(control)
 
 
-def section_monitors_only(data: object) -> bool:
-    """A stored control section whose topology allows no control — ``monitor_mode``, refused by
-    today's form, so old data only: the plugin never takes the boiler with it."""
-    control = _stored_section(data)
-    return control is not None and control.topology is Topology.MONITOR_MODE
+def _monitoring_only(options: Mapping[str, Any]) -> bool:
+    boiler = options.get("boiler")
+    return isinstance(boiler, Mapping) and boiler.get("control_mode") == ControlMode.MONITOR.value
 
 
 class FailedSetupReport(StrEnum):
@@ -1300,9 +1299,10 @@ def failed_setup_report(
     not heated. A wish never stored or unreadable counts as "on" (the cautious side). Where
     neither section tells what a hand-back does, the house may not be heated. Nothing where the
     options hold no control section — a setup that worked would not heat either — or the
-    hand-back leaves heating to a thermostat or the boiler's own control; nor where the options'
-    section only monitors and the stored state shows no session holding the boiler: the plugin
-    never takes it there (finding 6 of the part-1 check D)."""
+    hand-back leaves heating to a thermostat or the boiler's own control; nor where monitoring
+    only is chosen and the stored state shows no session holding the boiler: the plugin never
+    takes it there (finding 6 of the part-1 check D; I8 B7: the gateway's "monitor mode" is
+    monitoring only)."""
     if not isinstance(options, Mapping) or not has_control_section(options):
         return None
     if state is not None and state.get("enabled") is False:
@@ -1312,7 +1312,7 @@ def failed_setup_report(
     if stops is None and state is not None:
         taken_with = state.get("taken_with")
         stops = section_stops_heating(taken_with)
-        if stops is None and taken_with is None and section_monitors_only(section):
+        if stops is None and taken_with is None and _monitoring_only(options):
             return None
     if stops is False:
         return None
@@ -1707,8 +1707,6 @@ def _topology_blockers(control: ControlOptions) -> list[str]:
     path = control.write_path
     if control.topology is None:
         found.append("no_topology")
-    elif control.topology not in CONTROLLABLE_TOPOLOGIES:
-        found.append("topology_no_control")
     elif path is not None and control.topology not in PATH_TOPOLOGIES[path]:
         found.append("topology_not_for_path")
     if (kind := thermostat_kind_blocker(control)) is not None:

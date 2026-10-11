@@ -8,8 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-11: the plan approved by the user; I8.0 to I8.3, I8.4a and I8.4b done; I8.4c
-next.
+Status on 2026-10-11: the plan approved by the user; I8.0 to I8.4 done; I8.5 next.
 
 ## How to read this plan
 
@@ -424,6 +423,16 @@ write path and the "monitor mode" topology.
   thermostat's request while a hand-back is owed or control holds the boiler apply in the item
   and at the save, which goes back to it. `SCOPE.md` (the setup, the gateway topology), both
   user guides (the setup, 5.3, the issue table).
+- I8.4c ✅ (2026-10-11): the control step no longer asks the write path — the connection decides
+  it; an entry made before the connection question still picks it (with "No control"). The
+  relay connection, its own read-back, opens the control item on the relay's step. Monitoring
+  only is "no control": the control item is offered with full control or on/off (or for an
+  entry made before the mode), and a section stored beside monitoring only is kept, unused and
+  not shown; in the setup, full control or on/off sets control up in full (set it up later by
+  choosing monitoring only). The gateway topology "monitor mode" goes: minor version 16 makes
+  such an entry monitoring only — its section kept without the topology, its class following
+  the connection where one is stored — and the failed-setup report reads monitoring only as it
+  read that topology (SB-10). `SCOPE.md` (OTGW facts), both user guides (the setup, 5.1).
 
 - Code: two menu items for connection and mode; the mode step opened after a connection change
   that leaves the mode impossible; "room temperature only" hidden; the "Boiler interface" item

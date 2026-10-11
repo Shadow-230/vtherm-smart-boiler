@@ -1162,9 +1162,7 @@ def control_mode_off(options: Mapping[str, Any]) -> bool:
 
 def paths_for_class(options: Mapping[str, Any]) -> list[str]:
     """The write paths the form offers for the boiler class: "no control" and those that suit
-    it; "no control" alone where the control mode keeps control off."""
-    if control_mode_off(options):
-        return [NO_CONTROL]
+    it — for an entry made before the connection question (I8, decision B7)."""
     connection = stored_connection(options)
     if connection is not None:
         path = CONNECTION_PATH[connection]  # I6, decision 2
@@ -1216,22 +1214,33 @@ def stored_connection(options: Mapping[str, Any]) -> Connection | None:
 def control_schema(
     options: dict[str, Any], suggested: Mapping[str, Any] | None = None
 ) -> vol.Schema:
-    """The first control step: the write path and the read-backs (the interface's questions
-    are an item of their own, I8 D2). ``suggested``: what the connection suggests where nothing
-    is stored (I6, decision 2) — the gateway's own read-backs."""
+    """The first control step: the read-backs (the interface's questions are an item of their
+    own, I8 D2); the write path only for an entry made before the connection question — the
+    connection decides it otherwise (I8, decision B7). ``suggested``: what the connection
+    suggests where nothing is stored (I6, decision 2) — the gateway's own read-backs."""
     control = _mapping(options.get(CONTROL))
     shown = {**(suggested or {}), **{k: v for k, v in control.items() if v not in (None, "")}}
-    paths = paths_for_class(options)
-    stored = control.get("write_path", NO_CONTROL)
-    # A stored path the class no longer suits is not offered: the user chooses again.
-    default = stored if stored in paths else vol.UNDEFINED
-    return vol.Schema(
-        {
-            vol.Required("write_path", default=default): _select("write_path", paths),
-            _optional("confirmed_entity", shown): _entity(_READ_BACK_ENTITY),
-            _optional("ch_confirmed_entity", shown): _entity(_ECHO_ENTITY),
-        }
-    )
+    fixed = connection_path(options)
+    fields: dict[Any, Any] = {}
+    if fixed is None:
+        paths = paths_for_class(options)
+        stored = control.get("write_path", NO_CONTROL)
+        # A stored path the class no longer suits is not offered: the user chooses again.
+        default = stored if stored in paths else vol.UNDEFINED
+        fields[vol.Required("write_path", default=default)] = _select("write_path", paths)
+    if fixed != WritePath.RELAY.value:  # the relay is its own read-back (X8)
+        fields[_optional("confirmed_entity", shown)] = _entity(_READ_BACK_ENTITY)
+        fields[_optional("ch_confirmed_entity", shown)] = _entity(_ECHO_ENTITY)
+    return vol.Schema(fields)
+
+
+def connection_path(options: Mapping[str, Any]) -> str | None:
+    """The write path the stored connection decides (I6, decision 2), no longer asked (I8,
+    decision B7); ``None`` for an entry made before the question — which still picks it — or a
+    connection that writes nothing."""
+    connection = stored_connection(options)
+    path = CONNECTION_PATH[connection] if connection is not None else None
+    return None if path is None else path.value
 
 
 # What a connection with writable entities offers where nothing is stored (I6, decision 2): the
@@ -1864,8 +1873,6 @@ def interface_answers_problem(
         topology = None
     if topology is None:
         return "topology_missing"
-    if topology is Topology.MONITOR_MODE:
-        return "topology_no_control"
     if topology not in PATH_TOPOLOGIES[path]:
         return "topology_not_for_path"
     if connection in VIRTUAL_CONNECTIONS and topology is not Topology.VIRTUAL:
@@ -2391,13 +2398,11 @@ def section_of(step: str) -> str:
 
 def control_offered(options: Mapping[str, Any]) -> bool:
     """Whether the menu offers the control section: with full control or on/off; for an entry
-    made before the control mode, as before; and while a write path is still set, so control
-    can be switched off once monitoring only is chosen — its step then offers "no control"
-    alone."""
-    if wants_control(options) or _stored_boiler(options).get(CONTROL_MODE) is None:
+    made before the control mode, as before. Monitoring only is itself "no control" (I8,
+    decision B7): a control section stored beside it is kept, unused and not shown (A3)."""
+    if _stored_boiler(options).get(CONTROL_MODE) is None:
         return True
-    control = options.get(CONTROL)
-    return isinstance(control, Mapping) and control.get("write_path") not in (None, NO_CONTROL)
+    return wants_control(options)
 
 
 def section_shown(options: Mapping[str, Any], section: str) -> bool:
@@ -2797,7 +2802,15 @@ class _ControlSteps(_Steps):
     async def async_step_control(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """The first control step. The connection decides the write path (I8, decision B7):
+        only an entry made before the question picks it; the relay, its own read-back, asks
+        nothing here and goes on to its own steps."""
+        fixed = connection_path(self.options)
+        if user_input is None and fixed == WritePath.RELAY.value:
+            user_input = {}
         if user_input is not None:
+            if fixed is not None:
+                user_input = {**user_input, "write_path": fixed}
             path = user_input["write_path"]
             current = self._stored_control().get("write_path")
             blocker = await self._async_hand_back_blocker()
@@ -3231,8 +3244,9 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # "correction range" goes, a narrower one becoming the correction's limit; 13: the floor
     # area, insulation and thermal mass go, an entered loss coefficient becoming the design load
     # it gives; 14: "room temperature only" reads as monitoring only; 15: the OTGW firmware's
-    # topics are stored once, with the connection (see async_migrate_entry).
-    MINOR_VERSION = 15
+    # topics are stored once, with the connection; 16: a gateway's "monitor mode" topology is
+    # the control mode monitoring only (see async_migrate_entry).
+    MINOR_VERSION = 16
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}
