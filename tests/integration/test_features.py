@@ -189,8 +189,7 @@ CASES: list[tuple[str, str, Change, str, str]] = [
         "inactive",
         "weather_entity",
     ),
-    ("hot_water", "water", without(Signal.FLOW), "inactive", "flow"),
-    ("emitter_factor", "water", without(Signal.FLOW), "inactive", "flow"),
+    ("heat_available", "water", without(Signal.FLOW), "inactive", "flow"),
     ("flue_gas_warning", "water", without(Signal.FLUE_GAS), "inactive", "flue_gas"),
     (
         "flue_gas_warning",
@@ -466,11 +465,11 @@ async def test_an_input_unavailable_now_shows_its_feature_inactive(
     await hass.async_block_till_done()
     state = features_state(hass, entry)
     attributes = state.attributes
-    assert attributes["hot_water"] == "inactive"
-    assert attributes["hot_water_missing"] == ["flow"]
+    assert attributes["heat_available"] == "inactive"
+    assert attributes["heat_available_missing"] == ["flow"]
     flow = TEXTS["en"]["options"]["step"]["freshness"]["data"]["flow"]
     now = missing_text("unavailable_now", "en")
-    assert attributes["hot_water_missing_text"] == f"{flow} ({now})"
+    assert attributes["heat_available_missing_text"] == f"{flow} ({now})"
     assert attributes["forecasts"] == "inactive"
     assert int(state.state) >= 2
     unknown = hass.states.get(snapshots)
@@ -479,7 +478,7 @@ async def test_an_input_unavailable_now_shows_its_feature_inactive(
     hass.states.async_set(ENTITIES[Signal.FLOW], "45", {"unit_of_measurement": "°C"})
     await coordinator.async_refresh()
     await hass.async_block_till_done()
-    assert features_state(hass, entry).attributes["hot_water"] == "available"
+    assert features_state(hass, entry).attributes["heat_available"] == "available"
 
 
 async def test_the_texts_follow_home_assistants_language(

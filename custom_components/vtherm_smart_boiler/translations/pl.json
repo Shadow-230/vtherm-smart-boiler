@@ -98,8 +98,8 @@
         },
         "data_description": {
           "flame": "Włączony, gdy palnik pali. Z niego pochodzi każda metryka cykli: zła encja da złe starty i czasy palenia.",
-          "flow": "Woda wypływająca z kotła. Służy do dostępności ciepłej wody, mocy grzejników i odróżniania grzania c.w.u. od c.o.; przy sterowaniu jest częścią łącza z kotłem. Zła encja wprowadza w błąd je wszystkie.",
-          "return": "Woda wracająca do kotła. Umożliwia udział kondensacji; bez niej kondensacji nie da się ocenić. Zła encja daje zły udział kondensacji.",
+          "flow": "Woda wypływająca z kotła. Służy do oceny, czy ciepło dociera do stref, i do odróżniania grzania c.w.u. od c.o.; przy sterowaniu jest częścią łącza z kotłem. Zła encja wprowadza w błąd je wszystkie.",
+          "return": "Woda wracająca do kotła. Umożliwia udział kondensacji, a w porównaniu z zasilaniem mówi, czy ciepło dociera do stref; bez niej kondensacji nie da się ocenić. Zła encja daje zły udział kondensacji.",
           "modulation": "Modulacja palnika w procentach. Razem z zakresem mocy kotła szacuje moc cieplną i zużycie gazu. Czujnik w innej jednostce jest odrzucany.",
           "dhw_active": "Włączony, gdy kocioł grzeje ciepłą wodę użytkową. Bez niego grzanie c.w.u. jest wnioskowane mniej pewnie i część może liczyć się jako c.o.; przy sterowaniu ładowanie c.w.u. mniej pewnie wstrzymuje naukę.",
           "pressure": "Włącza powiadomienia o wysokim ciśnieniu i „uzupełnij wodę” oraz ostrzeżenie o spadającym ciśnieniu. Z bramki OpenTherm odczyt 0 bar liczy się jako nieznany (bramka pokazuje 0 po restarcie); z każdego innego czujnika jest to odczyt. Zła encja daje fałszywe alarmy albo żadnych.",
@@ -188,7 +188,7 @@
         },
         "data_description": {
           "circuit": "Obieg grzewczy tej strefy. Zły obieg przypisuje ciepło strefy niewłaściwej wodzie.",
-          "emitter": "Grzejniki, podłogówka albo konwektory. Ustala wykładnik EN 442 mocy grzejnika i domyślny kształt krzywej; zły typ wypacza oba.",
+          "emitter": "Grzejniki, podłogówka albo konwektory. Ustala domyślny kształt krzywej; zły typ go wypacza.",
           "closes_when_off": "Zaznacz, jeśli zawór lub grzejnik tej strefy zamyka się zawsze, gdy Versatile Thermostat wyłącza strefę, choć VT nie podaje jej otwarcia (np. głowica, którą VT wyłącza). Ochrona przed mrozem nie grzeje wtedy dla tej strefy, dopóki VT trzyma ją wyłączoną, i zamiast tego zgłasza problem do naprawy. Wyłączone (domyślnie): strefa jest grzana w mróz jak dotąd, przez co kocioł może pracować na zamknięty zawór."
         }
       },
@@ -674,8 +674,8 @@
         },
         "data_description": {
           "flame": "Włączony, gdy palnik pali. Z niego pochodzi każda metryka cykli: zła encja da złe starty i czasy palenia.",
-          "flow": "Woda wypływająca z kotła. Służy do dostępności ciepłej wody, mocy grzejników i odróżniania grzania c.w.u. od c.o.; przy sterowaniu jest częścią łącza z kotłem. Zła encja wprowadza w błąd je wszystkie.",
-          "return": "Woda wracająca do kotła. Umożliwia udział kondensacji; bez niej kondensacji nie da się ocenić. Zła encja daje zły udział kondensacji.",
+          "flow": "Woda wypływająca z kotła. Służy do oceny, czy ciepło dociera do stref, i do odróżniania grzania c.w.u. od c.o.; przy sterowaniu jest częścią łącza z kotłem. Zła encja wprowadza w błąd je wszystkie.",
+          "return": "Woda wracająca do kotła. Umożliwia udział kondensacji, a w porównaniu z zasilaniem mówi, czy ciepło dociera do stref; bez niej kondensacji nie da się ocenić. Zła encja daje zły udział kondensacji.",
           "modulation": "Modulacja palnika w procentach. Razem z zakresem mocy kotła szacuje moc cieplną i zużycie gazu. Czujnik w innej jednostce jest odrzucany.",
           "dhw_active": "Włączony, gdy kocioł grzeje ciepłą wodę użytkową. Bez niego grzanie c.w.u. jest wnioskowane mniej pewnie i część może liczyć się jako c.o.; przy sterowaniu ładowanie c.w.u. mniej pewnie wstrzymuje naukę.",
           "pressure": "Włącza powiadomienia o wysokim ciśnieniu i „uzupełnij wodę” oraz ostrzeżenie o spadającym ciśnieniu. Z bramki OpenTherm odczyt 0 bar liczy się jako nieznany (bramka pokazuje 0 po restarcie); z każdego innego czujnika jest to odczyt. Zła encja daje fałszywe alarmy albo żadnych.",
@@ -810,7 +810,7 @@
         },
         "data_description": {
           "circuit": "Obieg grzewczy tej strefy. Zły obieg przypisuje ciepło strefy niewłaściwej wodzie.",
-          "emitter": "Grzejniki, podłogówka albo konwektory. Ustala wykładnik EN 442 mocy grzejnika i domyślny kształt krzywej; zły typ wypacza oba.",
+          "emitter": "Grzejniki, podłogówka albo konwektory. Ustala domyślny kształt krzywej; zły typ go wypacza.",
           "closes_when_off": "Zaznacz, jeśli zawór lub grzejnik tej strefy zamyka się zawsze, gdy Versatile Thermostat wyłącza strefę, choć VT nie podaje jej otwarcia (np. głowica, którą VT wyłącza). Ochrona przed mrozem nie grzeje wtedy dla tej strefy, dopóki VT trzyma ją wyłączoną, i zamiast tego zgłasza problem do naprawy. Wyłączone (domyślnie): strefa jest grzana w mróz jak dotąd, przez co kocioł może pracować na zamknięty zawór."
         }
       },
@@ -1982,7 +1982,7 @@
           "degree_days_missing_text": {
             "name": "Stopniodni: czego brakuje"
           },
-          "hot_water": {
+          "heat_available": {
             "name": "Ciepło dostępne w strefach",
             "state": {
               "available": "Dostępna",
@@ -1990,25 +1990,11 @@
               "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
             }
           },
-          "hot_water_missing": {
+          "heat_available_missing": {
             "name": "Ciepło dostępne w strefach: brakuje"
           },
-          "hot_water_missing_text": {
+          "heat_available_missing_text": {
             "name": "Ciepło dostępne w strefach: czego brakuje"
-          },
-          "emitter_factor": {
-            "name": "Moc grzejników",
-            "state": {
-              "available": "Dostępna",
-              "degraded": "Ograniczona: działa ze słabszych danych",
-              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
-            }
-          },
-          "emitter_factor_missing": {
-            "name": "Moc grzejników: brakuje"
-          },
-          "emitter_factor_missing_text": {
-            "name": "Moc grzejników: czego brakuje"
           },
           "flue_gas_warning": {
             "name": "Ostrzeżenia o spalinach",
@@ -3132,12 +3118,12 @@
       "description": "Sterowanie wstrzymuje naukę stref podczas grzania ciepłej wody i przy wahaniach temperatury wody, ale tych stref wstrzymać nie może: {zones}. Auto-TPI dałoby się wstrzymać tylko przez skasowanie tego, czego się nauczyło, więc wtyczka go nie rusza; SmartPI, które nie publikuje flagi nauki, też nie może być wstrzymane. Uczą się one także w tych chwilach, co może zafałszować to, czego się uczą. Żeby tego uniknąć, zatrzymaj naukę Auto-TPI w VT, gdy już się nauczyło, albo zaktualizuj SmartPI — do tego czasu strefa zostaje bez ochrony wtyczki."
     },
     "vt_feature_manager_unsupported": {
-      "title": "Termostaty VT nie mogą pokazać wartości stref wtyczki",
-      "description": "Zainstalowany tu Versatile Thermostat nie może załadować menedżera funkcji wtyczki (menedżery funkcji wymagają VT {version} lub nowszego z vtherm_api 0.5 lub nowszym; wtyczkę testowano z VT 10.4.0), więc jego termostaty nie mogą pokazać wartości dostępności ciepła i grzejników wtyczki. Do tego czasu pokazują je encje stref samej wtyczki. Zaktualizuj Versatile Thermostat, żeby pokazać je także na termostatach."
+      "title": "Termostaty VT nie mogą pokazać wartości strefy z wtyczki",
+      "description": "Zainstalowany tu Versatile Thermostat nie może załadować menedżera funkcji wtyczki (menedżery funkcji wymagają VT {version} lub nowszego z vtherm_api 0.5 lub nowszym; wtyczkę testowano z VT 10.4.0), więc jego termostaty nie mogą pokazać, czy ciepło dociera do ich stref. Zaktualizuj Versatile Thermostat, żeby to pokazać."
     },
     "vt_reload_needed": {
-      "title": "Część termostatów VT wymaga przeładowania, żeby pokazać wartości wtyczki",
-      "description": "Te termostaty działały już, gdy wtyczka zarejestrowała się w Versatile Thermostat, i przejmą ją dopiero po przeładowaniu VT: {zones}. Przeładuj Versatile Thermostat, żeby pokazać na nich wartości dostępności ciepła i grzejników wtyczki; do tego czasu pokazują je encje stref samej wtyczki. Nic innego od tego nie zależy."
+      "title": "Część termostatów VT wymaga przeładowania, żeby pokazać wartość z wtyczki",
+      "description": "Te termostaty działały już, gdy wtyczka zarejestrowała się w Versatile Thermostat, i przejmą ją dopiero po przeładowaniu VT: {zones}. Przeładuj Versatile Thermostat, żeby pokazać na nich, czy ciepło dociera do ich stref. Nic innego od tego nie zależy."
     },
     "vt_central_entry_not_running": {
       "title": "Centralna konfiguracja Versatile Thermostat nie działa",

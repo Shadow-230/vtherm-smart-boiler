@@ -80,8 +80,7 @@ class Feature(StrEnum):
     DHW_DETECTION = "dhw_detection"
     GAS = "gas"
     DEGREE_DAYS = "degree_days"
-    HOT_WATER = "hot_water"
-    EMITTER_FACTOR = "emitter_factor"
+    HEAT_AVAILABLE = "heat_available"
     FLUE_GAS_WARNING = "flue_gas_warning"
     PRESSURE_WARNING = "pressure_warning"
     OUTDOOR_CHECK = "outdoor_check"
@@ -232,10 +231,12 @@ def features(
         Feature.PRESSURE_TREND: _state(lacking(Signal.PRESSURE, Signal.FLAME, Signal.FLOW)),
         Feature.VERDICT: _state(lacking(Signal.FLAME)),
     }
-    # The heat reaching a zone: the boiler's flow, or a circuit's own sensor for its zones.
-    for feature in (Feature.HOT_WATER, Feature.EMITTER_FACTOR):
-        flow = lacking(Signal.FLOW)
-        result[feature] = _state(flow if not circuit_flow else [], flow)
+    # The heat reaching a zone (I8, decision C1): the boiler's flow, or a circuit's own sensor
+    # for its zones; whole with the flame, and the return to judge the flow against.
+    flow = lacking(Signal.FLOW)
+    result[Feature.HEAT_AVAILABLE] = _state(
+        flow if not circuit_flow else [], flow + lacking(Signal.FLAME, Signal.RETURN)
+    )
     if Signal.DHW_ACTIVE in mapped:
         result[Feature.DHW_DETECTION] = _state([])
     elif Signal.CH_ACTIVE in mapped or Signal.FLOW in mapped:

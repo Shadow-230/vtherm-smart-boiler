@@ -8,7 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-10: the plan approved by the user; I8.0 and I8.1 (a to d) done; I8.2 next.
+Status on 2026-10-11: the plan approved by the user; I8.0 to I8.2 done; I8.3 next.
 
 ## How to read this plan
 
@@ -330,7 +330,17 @@ impact below.
 - J4 impact: the scenarios that look at the comfort correction, the long-run rule, windows or
   foreign heat, and every scenario reading the removed entities; the runner's entity names.
 
-### I8.2 The feature manager's one value (C1)
+### I8.2 ✅ The feature manager's one value (C1)
+
+Done on 2026-10-11: `core/heat.py` replaces `core/hot_water.py` and `core/emitters.py`. Claude's
+calls, provisional (K4, in `SCOPE.md`'s fixed values): "clearly above" is 2 K over the return
+and 3 K over the room, with 1 K hysteresis, as the old "near room temperature" had; hot water
+with priority still makes it "no" (I6, decision 8); without a flame signal the water alone
+decides and the feature is degraded, naming the flame (the missing-data rule), as it is without
+a return, naming the return; the feature on the "Features" sensor is renamed `heat_available`
+(it was `hot_water`), and `emitter_factor` goes; the stored emitter factors are no longer
+loaded or written; the boiler simulator keeps its own EN 442 table. `CLAUDE.md`'s facts name no
+zone value, so they stay.
 
 - "Heat available" redefined (the flame and the flow against the return; against the room
   without a return); the emitter power factor leaves the manager; tests with an unknown, missing

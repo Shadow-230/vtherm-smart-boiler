@@ -113,20 +113,13 @@ class Circuit:
 
 @dataclass(frozen=True, slots=True)
 class Zone:
-    """A VT thermostat assigned to a circuit.
-
-    ``reference_output_w`` is the emitter size: its output at the emitter type's reference
-    condition, when the user knows it. ``exponent`` overrides the emitter type's EN 442 exponent
-    (advanced). ``closes_when_off``: the user's declaration that the zone's emitter closes while
-    VT has it off, for a zone whose valve state VT does not publish (decision 4; off by
-    default).
-    """
+    """A VT thermostat assigned to a circuit. ``closes_when_off``: the user's declaration that
+    the zone's emitter closes while VT has it off, for a zone whose valve state VT does not
+    publish (decision 4; off by default)."""
 
     zone_id: str
     circuit_id: str
     emitter: EmitterType = EmitterType.RADIATOR
-    reference_output_w: float | None = None
-    exponent: float | None = None
     closes_when_off: bool = False
 
 

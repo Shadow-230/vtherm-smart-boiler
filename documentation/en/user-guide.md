@@ -50,6 +50,12 @@ the [technical documentation](technical.md).
 SmartPI and VT's Auto-TPI (VT's self-learning time-proportional algorithm) are optional; the
 plugin works with any VT zone algorithm.
 
+**What VT's thermostats show.** Each thermostat of a zone the plugin serves gets the attribute
+`smart_boiler` with one value, `heat_available`: whether the boiler's heat reaches the zone now.
+It is "yes" while the flame burns and the flow is clearly warmer than the return (than the room,
+where no return is known), "no" while the flame is out or hot water with priority takes the
+heat, and empty when it cannot be told. Nothing in VT or in control depends on it.
+
 ## 2. Installation
 
 There is **no release yet**, so the integration cannot be installed through HACS today.
@@ -870,8 +876,8 @@ connection, and on ESPHome the safe start not confirmed.
 | Auto-TPI cannot learn in some zones | clear "used by the central boiler" in VT |
 | The plugin cannot pause learning in some zones | information |
 | The plugin could not switch learning back on in some zones | switch SmartPI learning on |
-| VT's thermostats cannot show the plugin's zone values | update VT; nothing else depends on it |
-| Some VT thermostats need a reload to show the plugin's values | reload VT |
+| VT's thermostats cannot show the plugin's zone value | update VT; nothing else depends on it |
+| Some VT thermostats need a reload to show the plugin's value | reload VT |
 
 "3 variants": the boiler is not heating, or it is back on its thermostat, or the plugin only
 monitors.

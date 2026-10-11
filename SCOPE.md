@@ -149,7 +149,7 @@ a heat pump controller (excluded), or anything that sends data outside.
 | Assessment | a verdict: control is worth enabling or not, and why | all metrics, per outdoor-temperature range, raw cycle data |
 | Control | off by default; once enabled, control runs automatically in the chosen mode; curve changes: suggestions (default) or automatic within a preset band (Low / Medium / High) | Custom band, per-parameter overrides, manual edits of learned values, reset to profile |
 | Alarms | sensible default reactions | thresholds per alarm; a reaction only where decision 7 allows one (§7) |
-| Diagnostics | hidden | model parameters, confidence, sample rejection reasons, emitter power factor |
+| Diagnostics | hidden | model parameters, confidence, sample rejection reasons |
 | Learning | the comfort correction, so far the only learning under control, is on by default in full control and shown at both levels (the user, 2026-10-10, reversing K4.1 — an upgraded entry keeps what it ran with; `docs/plan-0.2-g11.md`); its limit the user's, at the advanced level; later learning on within safe bounds | pause and resume, the comfort correction, the tuning band (principle 13), learning windows, zone-algorithm protection settings |
 
 Switching advanced → simple offers "restore advanced settings to defaults" (unchecked by
@@ -464,19 +464,19 @@ takes the emitter types of its zones (S-33); the burner is shared.
   §9); Auto-TPI — detected, not paused, with a repair issue (§11; S-29).
 - A learning algorithm without a pause service gets an explicit warning, which states what its
   advice costs.
-- Per zone the plugin gives VT's thermostat two values as feature-manager properties (feature
+- Per zone the plugin gives VT's thermostat one value as a feature-manager property (feature
   manager from 0.2): **heat available** (`heat_available`; named "hot water available" before
-  0.2.2, P-61) (heat is reaching the zone — no while DHW is active on a boiler where hot water
-  has priority, or while the flow has fallen near room temperature; unknown while the flow
-  signal is unknown or stale) and **emitter power factor** (emitter output now versus
-  reference, from emitter type, valve opening, water and room temperature). The factor is
-  computed only for zones that are heating; otherwise the last value is held; it is
-  unavailable, with a reason, when data is missing. Zone algorithms do not read these values
-  today (§9). No entity of the plugin is a zone's, and a zone is no more than its thermostat,
-  its circuit, its emitter type and whether it closes when off: the zones' emitter output and
-  exponent and the monitor's "near room temperature" were removed with the per-zone entities
-  (I8.1d, `docs/plan-0.2-i8.md`); I8.2 redefines "heat available" and takes the factor out of
-  the manager.
+  0.2.2, P-61) — the boiler's heat is reaching the zone: yes while the flame burns and the flow
+  is clearly above the return (above the room, by a wider margin, only where no return is
+  known: a mixed circuit's water goes back through its own mixing, and an installation may map
+  no return); no while the flame is out or DHW is active on a boiler where hot water has
+  priority; unknown while a mapped flame, the flow or what it is judged against is unknown or
+  stale. Without a flame signal the water alone decides (I8, decision C1). Zone algorithms do
+  not read this value today (§9). No entity of the plugin is a zone's, and a zone is no more
+  than its thermostat, its circuit, its emitter type and whether it closes when off: the
+  per-zone entities, the zones' emitter output and exponent, the monitor's "near room
+  temperature" (I8.1d) and the emitter power factor (I8.2) were removed
+  (`docs/plan-0.2-i8.md`).
 - DHW charging pauses learning only where hot water has priority (I6, decision 8), and only in
   zones calling for heat (valve open); zones with a closed
   valve keep learning how the room cools. Every hot-water draw pauses it, however short, on a
@@ -1176,6 +1176,7 @@ reviews every provisional value at K4.
 | Comfort correction +3 K (the default of its limit, an option from 0.5 to 10 K since G11), 30 min per K, 3 h at the edge, 1 K over stops the rise; satisfied below 70 %, short by 0.3 K | `core/controller.py` | decided 2026-09-25 |
 | Frost not warming: 2 h, 0.5 K | `core/controller.py` | provisional, K4 (reason to confirm) |
 | A zone takes heat above 5 % open, saturated at 95 % | `core/readings.py` | existing |
+| Heat available: the flow 2 K above the return, or 3 K above the room without a return; 1 K hysteresis | `core/heat.py` | provisional, K4 (I8, decision C1) |
 | Plausible room reading −30 to 45 °C, one rule for every room reading | `core/limits.py` | a narrower range would hide a cold room from frost protection (S-06; provisional, K4) |
 | Learning pauses: a swing of 5 K in 30 min, a pause of at least 10 min (a draw or a boiler-fault "off" pauses even within 10 min of a resume), resume within 3 K, longest pause 60 min from its start, read back after 1 min | `core/learning.py` | existing; the draw and fault rules and the cap's start: decision 14 of `docs/plan-0.2.3.md` |
 | Low-flow warning after 15 min | `core/alarms.py` | existing |
@@ -1219,7 +1220,7 @@ reviews every provisional value at K4.
 | Extreme weather (principle 13's rule 5): the outdoor temperature below the design outdoor temperature, or changing faster than 2 K per hour | the comfort correction (decision 11 of `docs/plan-0.2.3.md`) | provisional, K4: a ±3 K daily swing changes about 0.8 K per hour at most; a passing front changes faster |
 | Design flow at least the room + 5 K; design outdoor at most the room − 10 K | form (X5) | provisional, K4 (reason to confirm) |
 | The suggestion's evidence: 7 days, 20 burns, a share of 0.5, 1 K bands, 50 % opening, +2 K, 2 K under the caps; the wall-thermostat issue after 30 min; the 25 °C migration floor | monitor (X6) | provisional, K4 (reason to confirm) |
-| VT's setup-error issue after 10 min; a 0.05 factor change | `control.py` (X7) | provisional, K4 (reason to confirm) |
+| VT's setup-error issue after 10 min | `control.py` (X7) | provisional, K4 (reason to confirm) |
 | Relay timer tolerance 60 s; a flow rise of 5 K as proof of heat; 20 remembered contexts | control (X8) | provisional, K4 (reason to confirm) |
 | Alarm holds 5 min; an unknown input held 1 h; 50 % known flame; the limit − 2; 2 K; a 10-K slope span; 0.05 bar/K; 40 °C; 0.1 bar; a pressure sample every 10 min, taken after 10 min without a flame | `core/alarms.py` (Y1) | provisional, K4 (reason to confirm) |
 | Hot-water inference 0.35–0.65; 12 h; 6 h; 10 min; 1 h | monitor (Y2) | provisional, K4 (reason to confirm) |

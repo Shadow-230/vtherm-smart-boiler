@@ -36,7 +36,8 @@ writes that to the boiler and hands the boiler back on every exit.
   central configuration, and detects what is installed (VT and its version, `vtherm_api`,
   SmartPI) instead of assuming it. No other module looks up a zone's state by entity name.
 - **A feature manager registered with VT** (`feature_manager.py`, through `vtherm_api`'s
-  `register_feature_manager`) shows two of the plugin's zone values on each VT thermostat. It is
+  `register_feature_manager`) shows on each VT thermostat whether the boiler's heat reaches its
+  zone now — one value, `heat_available`, from `core/heat.py` (I8, decision C1). It is
   registered only once VT is loaded; a thermostat already running sees it only after VT's next
   reload, which the plugin never triggers itself. Nothing in control depends on it.
 

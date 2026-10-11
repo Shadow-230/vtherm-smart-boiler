@@ -98,8 +98,8 @@
         },
         "data_description": {
           "flame": "On while the burner burns. Every burner-cycle metric comes from it: the wrong entity gives wrong starts and burn times.",
-          "flow": "Water leaving the boiler. Used for hot water availability, emitter power and telling DHW runs from heating; with control, it is part of the boiler link. The wrong entity misleads all of them.",
-          "return": "Water coming back to the boiler. Enables the condensing share; without it condensing cannot be judged. The wrong entity gives a wrong condensing share.",
+          "flow": "Water leaving the boiler. Used to tell whether heat reaches the zones and DHW runs from heating; with control, it is part of the boiler link. The wrong entity misleads all of them.",
+          "return": "Water coming back to the boiler. Enables the condensing share, and tells against the flow whether heat reaches the zones; without it condensing cannot be judged. The wrong entity gives a wrong condensing share.",
           "modulation": "Burner modulation in percent. With the boiler's power range it estimates heat output and gas use. A sensor in another unit is refused.",
           "dhw_active": "On while the boiler heats domestic hot water. Without it DHW runs are inferred with less certainty and some may count as heating; with control, hot-water charging is then less sure to pause learning.",
           "pressure": "Enables the high-pressure and \"add water\" notifications and the falling-pressure warning. From an OpenTherm Gateway a reading of 0 bar counts as unknown (the gateway shows 0 after a restart); from any other sensor it is a reading. The wrong entity gives false alarms or none.",
@@ -188,7 +188,7 @@
         },
         "data_description": {
           "circuit": "The heating circuit this zone is on. The wrong circuit attributes the zone's heat to the wrong water.",
-          "emitter": "Radiators, underfloor or convectors. Sets the EN 442 exponent of the emitter power and the curve's default shape; the wrong type skews both.",
+          "emitter": "Radiators, underfloor or convectors. Sets the curve's default shape; the wrong type skews it.",
           "closes_when_off": "Tick if this zone's valve or emitter closes whenever Versatile Thermostat switches the zone off, although VT does not report its opening (e.g. a radiator thermostat VT turns off). Frost protection then does not heat for this zone while VT keeps it off, and raises a repair issue instead. Off (default): the zone is heated in frost as before, which may run the boiler against a closed valve."
         }
       },
@@ -674,8 +674,8 @@
         },
         "data_description": {
           "flame": "On while the burner burns. Every burner-cycle metric comes from it: the wrong entity gives wrong starts and burn times.",
-          "flow": "Water leaving the boiler. Used for hot water availability, emitter power and telling DHW runs from heating; with control, it is part of the boiler link. The wrong entity misleads all of them.",
-          "return": "Water coming back to the boiler. Enables the condensing share; without it condensing cannot be judged. The wrong entity gives a wrong condensing share.",
+          "flow": "Water leaving the boiler. Used to tell whether heat reaches the zones and DHW runs from heating; with control, it is part of the boiler link. The wrong entity misleads all of them.",
+          "return": "Water coming back to the boiler. Enables the condensing share, and tells against the flow whether heat reaches the zones; without it condensing cannot be judged. The wrong entity gives a wrong condensing share.",
           "modulation": "Burner modulation in percent. With the boiler's power range it estimates heat output and gas use. A sensor in another unit is refused.",
           "dhw_active": "On while the boiler heats domestic hot water. Without it DHW runs are inferred with less certainty and some may count as heating; with control, hot-water charging is then less sure to pause learning.",
           "pressure": "Enables the high-pressure and \"add water\" notifications and the falling-pressure warning. From an OpenTherm Gateway a reading of 0 bar counts as unknown (the gateway shows 0 after a restart); from any other sensor it is a reading. The wrong entity gives false alarms or none.",
@@ -810,7 +810,7 @@
         },
         "data_description": {
           "circuit": "The heating circuit this zone is on. The wrong circuit attributes the zone's heat to the wrong water.",
-          "emitter": "Radiators, underfloor or convectors. Sets the EN 442 exponent of the emitter power and the curve's default shape; the wrong type skews both.",
+          "emitter": "Radiators, underfloor or convectors. Sets the curve's default shape; the wrong type skews it.",
           "closes_when_off": "Tick if this zone's valve or emitter closes whenever Versatile Thermostat switches the zone off, although VT does not report its opening (e.g. a radiator thermostat VT turns off). Frost protection then does not heat for this zone while VT keeps it off, and raises a repair issue instead. Off (default): the zone is heated in frost as before, which may run the boiler against a closed valve."
         }
       },
@@ -1982,7 +1982,7 @@
           "degree_days_missing_text": {
             "name": "Degree-days: what is missing"
           },
-          "hot_water": {
+          "heat_available": {
             "name": "Heat available in the zones",
             "state": {
               "available": "Available",
@@ -1990,25 +1990,11 @@
               "inactive": "Inactive: an input it needs is missing or unavailable"
             }
           },
-          "hot_water_missing": {
+          "heat_available_missing": {
             "name": "Heat available in the zones: missing"
           },
-          "hot_water_missing_text": {
+          "heat_available_missing_text": {
             "name": "Heat available in the zones: what is missing"
-          },
-          "emitter_factor": {
-            "name": "Emitter power",
-            "state": {
-              "available": "Available",
-              "degraded": "Degraded: works from weaker inputs",
-              "inactive": "Inactive: an input it needs is missing or unavailable"
-            }
-          },
-          "emitter_factor_missing": {
-            "name": "Emitter power: missing"
-          },
-          "emitter_factor_missing_text": {
-            "name": "Emitter power: what is missing"
           },
           "flue_gas_warning": {
             "name": "Flue gas warnings",
@@ -3132,12 +3118,12 @@
       "description": "Control pauses zone learning while hot water charges and while the water temperature swings, but it cannot pause these zones: {zones}. Auto-TPI could only be paused by resetting what it learned, so the plugin leaves it alone; a SmartPI that does not publish its learning flag cannot be paused either. They keep learning through those moments, which can skew what they learn. To avoid it, stop Auto-TPI's learning in VT once it has learned, or update SmartPI — either leaves the zone without the plugin's protection until then."
     },
     "vt_feature_manager_unsupported": {
-      "title": "VT's thermostats cannot show the plugin's zone values",
-      "description": "The Versatile Thermostat installed here cannot load the plugin's feature manager (feature managers need VT {version} or newer, with vtherm_api 0.5 or newer; the plugin is tested with VT 10.4.0), so its thermostats cannot show the plugin's heat-available and emitter values. The plugin's own zone entities show them meanwhile. Update Versatile Thermostat to show them on the thermostats too."
+      "title": "VT's thermostats cannot show the plugin's zone value",
+      "description": "The Versatile Thermostat installed here cannot load the plugin's feature manager (feature managers need VT {version} or newer, with vtherm_api 0.5 or newer; the plugin is tested with VT 10.4.0), so its thermostats cannot show whether heat reaches their zones. Update Versatile Thermostat to show it."
     },
     "vt_reload_needed": {
-      "title": "Some VT thermostats need a reload to show the plugin's values",
-      "description": "These thermostats were already running when the plugin registered with Versatile Thermostat, and pick it up only when VT reloads: {zones}. Reload Versatile Thermostat to show the plugin's heat-available and emitter values on them; the plugin's own zone entities show them meanwhile. Nothing else depends on it."
+      "title": "Some VT thermostats need a reload to show the plugin's value",
+      "description": "These thermostats were already running when the plugin registered with Versatile Thermostat, and pick it up only when VT reloads: {zones}. Reload Versatile Thermostat to show on them whether heat reaches their zones. Nothing else depends on it."
     },
     "vt_central_entry_not_running": {
       "title": "Versatile Thermostat's central configuration is not running",

@@ -36,8 +36,9 @@ jego woda, zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
   konfigurację VT oraz wykrywa, co jest zainstalowane (VT i jego wersję, `vtherm_api`,
   SmartPI), zamiast to zakładać. Żaden inny moduł nie odczytuje stanu strefy po nazwie encji.
 - **Moduł funkcji (feature manager) zarejestrowany w VT** (`feature_manager.py`, przez
-  `register_feature_manager` z `vtherm_api`) pokazuje dwie wartości stref wtyczki na każdym
-  termostacie VT. Jest rejestrowany dopiero po wczytaniu VT; termostat, który już działa, widzi
+  `register_feature_manager` z `vtherm_api`) pokazuje na każdym termostacie VT, czy ciepło z
+  kotła dociera teraz do jego strefy — jedną wartość, `heat_available`, z `core/heat.py` (I8,
+  decyzja C1). Jest rejestrowany dopiero po wczytaniu VT; termostat, który już działa, widzi
   go dopiero po następnym przeładowaniu VT, którego wtyczka nigdy sama nie wywołuje. Nic w
   sterowaniu od niego nie zależy.
 

@@ -94,7 +94,9 @@ def test_minimal_mapping_enables_the_basics() -> None:
         frozenset({Signal.FLAME, Signal.FLOW}), has_weather=False, has_gas_rates=False
     )
     assert result[Feature.CYCLES].status is FeatureStatus.AVAILABLE
-    assert result[Feature.HOT_WATER].status is FeatureStatus.AVAILABLE
+    # Judged against the room without a return (I8, decision C1).
+    assert result[Feature.HEAT_AVAILABLE].status is FeatureStatus.DEGRADED
+    assert result[Feature.HEAT_AVAILABLE].missing == ("return",)
     assert result[Feature.CONDENSING].missing == (Signal.RETURN,)
     assert result[Feature.DHW_DETECTION].status is FeatureStatus.DEGRADED
     assert result[Feature.GAS].status is FeatureStatus.INACTIVE
@@ -169,14 +171,17 @@ CASES: list[tuple[Feature, dict[str, Any], FeatureStatus, tuple[str, ...]]] = [
         FeatureStatus.INACTIVE,
         ("outdoor", "weather_entity"),
     ),
-    (Feature.HOT_WATER, {"without": {Signal.FLOW}}, FeatureStatus.INACTIVE, ("flow",)),
+    (Feature.HEAT_AVAILABLE, {"without": {Signal.FLOW}}, FeatureStatus.INACTIVE, ("flow",)),
     (
-        Feature.HOT_WATER,
+        Feature.HEAT_AVAILABLE,
         {"without": {Signal.FLOW}, "circuit_flow": True},
         FeatureStatus.DEGRADED,
         ("flow",),
     ),
-    (Feature.EMITTER_FACTOR, {"without": {Signal.FLOW}}, FeatureStatus.INACTIVE, ("flow",)),
+    # I8 (decision C1): judged on the water alone without a flame, against the room without a
+    # return.
+    (Feature.HEAT_AVAILABLE, {"without": {Signal.FLAME}}, FeatureStatus.DEGRADED, ("flame",)),
+    (Feature.HEAT_AVAILABLE, {"without": {Signal.RETURN}}, FeatureStatus.DEGRADED, ("return",)),
     (
         Feature.FLUE_GAS_WARNING,
         {"without": {Signal.FLUE_GAS}},
