@@ -25,46 +25,43 @@ from custom_components.vtherm_smart_boiler.core.limits import (
 )
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 
-LIMITS = FlowLimits(hard_min=25.0, hard_max=70.0, ceiling_band=10.0)
+LIMITS = FlowLimits(hard_min=25.0, hard_max=70.0)
 
 
 def test_within_limits_is_unchanged() -> None:
-    assert limit_flow(45.0, 45.0, LIMITS) == Limited(45.0)
+    assert limit_flow(45.0, LIMITS) == Limited(45.0)
 
 
 def test_hard_minimum_and_maximum() -> None:
-    assert limit_flow(20.0, 20.0, LIMITS) == Limited(25.0, (LimitCode.HARD_MIN,))
-    assert limit_flow(90.0, 85.0, LIMITS) == Limited(70.0, (LimitCode.HARD_MAX,))
+    assert limit_flow(20.0, LIMITS) == Limited(25.0, (LimitCode.HARD_MIN,))
+    assert limit_flow(90.0, LIMITS) == Limited(70.0, (LimitCode.HARD_MAX,))
 
 
-def test_weather_ceiling_caps_anything_far_above_the_curve() -> None:
-    assert limit_flow(60.0, 40.0, LIMITS) == Limited(50.0, (LimitCode.CEILING,))
+def test_no_weather_ceiling_of_its_own() -> None:
+    """I8 (decision B6): the "correction range" is gone — above the curve only the comfort
+    correction goes, bounded by its own limit; here the installation's caps alone hold."""
+    assert limit_flow(60.0, LIMITS) == Limited(60.0)  # 20 K above a 40 °C curve: not held
+    assert not hasattr(FlowLimits(), "ceiling_band")
+    assert "CEILING" not in LimitCode.__members__
 
 
 def test_the_lowest_cap_wins() -> None:
-    result = limit_flow(60.0, 60.0, LIMITS, circuit_max=45.0, boiler_max=65.0)
+    result = limit_flow(60.0, LIMITS, circuit_max=45.0, boiler_max=65.0)
     assert result == Limited(45.0, (LimitCode.CIRCUIT_MAX,))
-    boiler = limit_flow(60.0, 60.0, LIMITS, circuit_max=None, boiler_max=55.0)
+    boiler = limit_flow(60.0, LIMITS, circuit_max=None, boiler_max=55.0)
     assert boiler == Limited(55.0, (LimitCode.BOILER_MAX,))
 
 
 def test_caps_that_protect_the_installation_win_over_the_hard_minimum() -> None:
     limits = FlowLimits(hard_min=30.0, hard_max=70.0)
-    result = limit_flow(20.0, 20.0, limits, circuit_max=28.0)
+    result = limit_flow(20.0, limits, circuit_max=28.0)
     assert result == Limited(28.0, (LimitCode.HARD_MIN, LimitCode.CIRCUIT_MAX))
-
-
-def test_the_weather_ceiling_never_falls_below_the_hard_minimum() -> None:
-    """The ceiling protects nothing but gas: it gives way to the hard minimum."""
-    limits = FlowLimits(hard_min=30.0, hard_max=70.0, ceiling_band=5.0)
-    assert limit_flow(40.0, 20.0, limits) == Limited(30.0, (LimitCode.CEILING,))
-    assert limit_flow(20.0, 20.0, limits) == Limited(30.0, (LimitCode.HARD_MIN,))
 
 
 def test_a_fixed_temperature_circuit_keeps_the_boiler_flow_above_it() -> None:
     """A thermostatic mixing valve set to 40 °C needs at least that from the boiler."""
-    assert limit_flow(32.0, 32.0, LIMITS, floor=40.0) == Limited(40.0, (LimitCode.FIXED_CIRCUIT,))
-    assert limit_flow(32.0, 32.0, LIMITS, floor=40.0, circuit_max=38.0) == Limited(
+    assert limit_flow(32.0, LIMITS, floor=40.0) == Limited(40.0, (LimitCode.FIXED_CIRCUIT,))
+    assert limit_flow(32.0, LIMITS, floor=40.0, circuit_max=38.0) == Limited(
         38.0, (LimitCode.FIXED_CIRCUIT, LimitCode.CIRCUIT_MAX)
     )
 
@@ -129,7 +126,7 @@ def test_a_value_is_moved_inside_the_bounds_a_written_value_keeps(
 
 @pytest.mark.parametrize(
     "kwargs",
-    [{"hard_min": 50.0, "hard_max": 40.0}, {"hard_max": 99.0}, {"ceiling_band": -1.0}],
+    [{"hard_min": 50.0, "hard_max": 40.0}, {"hard_max": 99.0}],
 )
 def test_invalid_limits(kwargs: dict) -> None:
     with pytest.raises(ValueError, match="must"):

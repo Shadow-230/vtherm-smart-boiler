@@ -61,7 +61,8 @@ Reverses K4.1 (`docs/plan-0.2.2.md`, open item 24; the user, 2026-10-03).
      once, and the J4 runner's answers (the behaviour step) keep working.
 4. **The limit is the user's:** a new option, "Highest comfort correction", default 3 K, from
    0.5 to 10 K in steps of 0.5, at the advanced level. The weather ceiling's band (default 10 K)
-   still caps everything above the curve, so the lower of the two applies. The rise stays at
+   still caps everything above the curve, so the lower of the two applies (I8.3, 2026-10-11: the
+   band withdrawn — the limit is the only bound; a narrower stored band became the limit). The rise stays at
    most 3 K a day whatever the limit. (Claude's call: a clearer option rather than the band. Every
    saved entry stores the band, 10 K by default, so making the band carry the limit would turn
    it into a 10 K correction on upgrade.)

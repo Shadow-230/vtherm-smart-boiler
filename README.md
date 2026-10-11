@@ -41,7 +41,7 @@ valves or heat pumps, and it sends no data outside your Home Assistant.
   gives a verdict on whether control is worth it. Until you switch control on, the boiler runs as
   before; you may switch it on from the first day.
 - **Weather-compensated water temperature** on a curve you enter, bounded by the lowest and
-  highest water temperature, a weather ceiling and each circuit's maximum.
+  highest water temperature and each circuit's maximum.
 - **Heating on and off follow VT's zones** — by zones calling, total power or valve opening, as
   VT's central boiler does — and VT's central modes act through the zones.
 - **Writes through what you have:** an entity you pick, the OpenTherm Gateway (Home Assistant's

@@ -8,7 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-11: the plan approved by the user; I8.0 to I8.2 done; I8.3 next.
+Status on 2026-10-11: the plan approved by the user; I8.0 to I8.2 and I8.3a done; I8.3b next.
 
 ## How to read this plan
 
@@ -350,6 +350,18 @@ zone value, so they stay.
 - J4 impact: the scenarios that check VT's thermostat attributes.
 
 ### I8.3 Building, curve point, correction range (B5, B6, E2, E3)
+
+Claude's call: two pull requests — I8.3a the correction range, I8.3b the building and the curve
+point.
+
+- I8.3a ✅ the correction range (2026-10-11): `limit_flow` has no weather ceiling of its own and
+  no curve argument; the field, its defaults, bounds and texts, the "held at the curve plus its
+  room for correction" reason go; minor version 12 drops the stored range — one narrower than
+  the correction's limit becomes the limit, one under 0.5 K (no correction could pass) switches
+  the correction off, so control runs as it did; a session taken with a range compares as
+  migrated after the update (`section_as_migrated`); `SCOPE.md` (§3, §5, §7 and the defaults
+  table), the user guides' limits, the READMEs, notes on `docs/plan-0.2.md` G2 and
+  `docs/plan-0.2-g11.md` B.
 
 - Code: the building fields go (the loss coefficient converted); the heating threshold renamed;
   the design outdoor temperature in the curve only (in the building only without a curve),

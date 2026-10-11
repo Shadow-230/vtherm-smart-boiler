@@ -865,7 +865,6 @@ CONTROL_ADVANCED_KEYS = (
     "room",
     "exponent",
     "offset",
-    "ceiling_band",
     "fallback_setpoint",
     "frost_limit",
     "frost_release",
@@ -1207,9 +1206,6 @@ def control_curve_schema(options: dict[str, Any], vt_delay: float | None = None)
             _optional("exponent", curve): _number(*CURVE_BOUNDS["exponent"], 0.05),
             vol.Required("offset", default=curve.get("offset", CURVE_DEFAULTS["offset"])): (
                 _number(*CURVE_BOUNDS["offset"], 0.5, "K")
-            ),
-            vol.Required("ceiling_band", default=default("ceiling_band")): _number(
-                *CONTROL_BOUNDS["ceiling_band"], 0.5, "K"
             ),
             _optional("fallback_setpoint", control): _number(
                 *CONTROL_BOUNDS["fallback_setpoint"], 0.5, "°C"
@@ -1585,7 +1581,7 @@ def apply_control_curve(options: dict[str, Any], user_input: dict[str, Any]) -> 
     control["curve"] = curve
     keys = ["hard_min", "hard_max", ACTIVATION_DELAY]
     if _advanced(options):
-        keys += ["ceiling_band", "fallback_setpoint", "frost_limit", "frost_release", "frost_zone"]
+        keys += ["fallback_setpoint", "frost_limit", "frost_release", "frost_zone"]
     else:
         keys.append("comfort_correction")  # G11 B: the simple level's place for it
     _set_or_drop(control, user_input, tuple(keys))
@@ -3070,9 +3066,10 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # off in a control section that never stored it; 8: the curve's room temperature, now Auto
     # by default, stays Manual where a curve stored no mode; 9: the reference room is gone, its
     # settings with it; 10: foreign heat is gone, the zones' sources and the hold time with it;
-    # 11: the zones' emitter output and exponent and "near room temperature" go (see
+    # 11: the zones' emitter output and exponent and "near room temperature" go; 12: the curve's
+    # "correction range" goes, a narrower one becoming the correction's limit (see
     # async_migrate_entry).
-    MINOR_VERSION = 11
+    MINOR_VERSION = 12
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}

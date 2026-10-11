@@ -238,10 +238,10 @@ Gdy grzanie jest włączone, wtyczka ustawia temperaturę wody w kotle (temperat
    wyłączać; w kotle niekondensacyjnym może dojść do kondensacji w przewodzie spalinowym. Weź tę
    wartość z instrukcji kotła. Monitor może zaproponować wyższą wartość, jeśli widzi wiele
    krótkich cykli pracy palnika; nic nie zmienia się samo.
-3. **Najwyższa temperatura wody** — nigdy powyżej niej. Domyślnie 70 °C.
-4. **Pułap pogodowy** (pokazywany jako „Zakres korekty”) — o ile cokolwiek może podnieść wodę
-   ponad krzywą. Domyślnie 10 K (kelwinów, czyli różnicy temperatur).
-5. **Maksimum obiegu** — „Maksymalna temperatura zasilania” każdego obiegu, na przykład dla
+3. **Najwyższa temperatura wody** — nigdy powyżej niej. Domyślnie 70 °C. Ponad krzywą wodę
+   podnosi tylko korekta komfortu, do własnego limitu (domyślnie 3 K, czyli kelwiny — różnica
+   temperatur).
+4. **Maksimum obiegu** — „Maksymalna temperatura zasilania” każdego obiegu, na przykład dla
    ogrzewania podłogowego. Wtyczka nigdy nie prosi o więcej. Sam kocioł może ją nieco
    przekroczyć; opcjonalny alarm informuje, gdy zmierzone zasilanie długo jest za wysokie.
 

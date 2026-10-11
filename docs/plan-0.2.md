@@ -102,7 +102,7 @@ Flow-setpoint mode; 0.2 writes one circuit, a second circuit through the boiler 
 |---|---|
 | G0 ✅ | control model: a state machine — monitor, heating, idle, summer, frost protection, fallback setpoint, handed back — every decision with its reason (0.2.1: no summer state; summer and winter come from VT) |
 | G1 ✅ | heating curve (one for the written circuit; per circuit with CH2, `SCOPE.md` §5) (entered; taking it from the boiler's parameters is left for later); effective outdoor temperature, smoothed, with the weather entity as the fallback source |
-| G2 ✅ | limits: hard minimum and maximum, weather-dependent ceiling, underfloor maximum capping a shared unmixed circuit, frost protection |
+| G2 ✅ | limits: hard minimum and maximum, weather-dependent ceiling, underfloor maximum capping a shared unmixed circuit, frost protection (I8.3, 2026-10-11: the weather ceiling withdrawn — the comfort correction's limit is the only bound above the curve) |
 | G3 ✅ | summer/winter threshold with hysteresis (0.2.1: summer and winter come from VT; the threshold stays in the monitor only) |
 | G4 ✅ | boiler demand from device count, total power or valve opening |
 | G5 ✅ | basic anti-cycling: minimum burn, minimum pause, starts per hour (removed in 0.2.1: VT decides whether to heat, and nothing counted or timed holds heating against it) |
