@@ -8,7 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-11: the plan approved by the user; I8.0 to I8.4 and I8.5a done; I8.5b next.
+Status on 2026-10-11: the plan approved by the user; I8.0 to I8.5 done; I8.6 next.
 
 ## How to read this plan
 
@@ -264,7 +264,8 @@ step, as earlier plans did ("(0.2.1: …)"), in the I8 step that changes it.
 | `CLAUDE.md` | "Where to continue" and the plan list (I8.0); the verified facts touched by I8.2 (the manager's one value) | I8.0, I8.2 |
 
 Found while collating, outside I8: `docs/plan-0.2.1.md` R2 🔒 (the integration's icon) is still
-open though K1 records the brand as done on 2026-10-07 — for the user to close.
+open though K1 records the brand as done on 2026-10-07 — for the user to close. The user's
+decision of 2026-10-11: icons and logos are left for the very end, after the code and the logic.
 
 ## Steps
 
@@ -280,7 +281,7 @@ plan parts (the room-values texts rewritten as decision G, the forecast roadmap,
 §11); `docs/plan-0.2.md`'s "Moved to 0.3" and K1's README list; `docs/plan-0.2.2.md`'s decision 13
 and "Open after 0.2.2" item 11. J4 impact: none.
 
-### I8.1 Out of scope: rooms, windows, foreign heat (B1–B4)
+### I8.1 ✅ Out of scope: rooms, windows, foreign heat (B1–B4)
 
 Claude's call: built as four pull requests, each easy to review and to undo — I8.1a the
 reference room, I8.1b windows, I8.1c foreign heat, I8.1d the per-zone entities and fields with
@@ -349,7 +350,7 @@ zone value, so they stay.
   user guides (what VT's thermostats show), `CLAUDE.md`'s fact about the manager.
 - J4 impact: the scenarios that check VT's thermostat attributes.
 
-### I8.3 Building, curve point, correction range (B5, B6, E2, E3)
+### I8.3 ✅ Building, curve point, correction range (B5, B6, E2, E3)
 
 Claude's call: two pull requests — I8.3a the correction range, I8.3b the building and the curve
 point.
@@ -387,7 +388,7 @@ point.
 - J4 impact: the scenarios that set the curve or the correction's limit; the runner's curve
   answers (`design_outdoor` leaves the building step's answers, `ceiling_band` goes).
 
-### I8.4 Connection, mode, interface (B7, C2, D1, D2)
+### I8.4 ✅ Connection, mode, interface (B7, C2, D1, D2)
 
 Claude's call: three pull requests — I8.4a the connection and the mode as two items with
 "room temperature only" hidden, I8.4b the "Boiler interface" item, I8.4c the control step's
@@ -446,7 +447,7 @@ write path and the "monitor mode" topology.
   (`connection`, `mode`, the new interface item) and its control walk (no `write_path` answer, no
   gateway or MQTT control step).
 
-### I8.5 Signals and freshness (D3–D7)
+### I8.5 ✅ Signals and freshness (D3–D7)
 
 Claude's call: two pull requests — I8.5a the relay's question, the thermostat's and the outdoor
 fields and the freshness limits, I8.5b the read-backs in the signals.
@@ -464,6 +465,22 @@ fields and the freshness limits, I8.5b the read-backs in the signals.
   not mapped (Claude's call: they judged nothing, and one out of range could fail the entry
   where the form no longer shows it). `SCOPE.md` §6 and the freshness default, both user guides
   (the setup, 6.8), both technical documents (freshness).
+- I8.5b ✅ (2026-10-11): the read-backs are boiler signals — the setpoint read-back is the
+  "CH setpoint" signal ("Heating setpoint the boiler received"), the heating on/off read-back a
+  signal field of its own (`ch_enabled`, which no monitor feature reads and no age limit
+  judges); both shown at any level where control writes the water temperature, and the
+  gateway's suggested there. The control step no longer asks them: where the connection
+  decides the path it asks nothing and goes on at once, a problem it finds shown where it is
+  fixed (the read-back on the signals step, the interface's answers on that item, no zones on
+  the zones step; Claude's call), and a save-time hand-back problem on the first control form.
+  The hand-back guards on the read-backs move with them: refused on the signals step, and at
+  the save, which goes back to it. Control reads them from the signals, a control section's
+  own (a hand edit) first. Claude's calls: the CH setpoint field takes what the read-back took
+  (any sensor or number, no device class), so a migrated read-back stays valid; the
+  thermostat's own request is refused as the CH setpoint too. Minor version 18 moves the
+  read-backs into the signals — where the read-back and the signal differ, the read-back's
+  entity, logged — and leaves signals of another shape as stored. `SCOPE.md` (§6, the wizard),
+  both user guides (the setup, 6.2), both technical documents (configuration).
 
 - Code: the read-backs in the signals; the relay's question and its short list; the wired
   thermostat's fields; the outdoor sensor; freshness limits only for mapped signals, removed

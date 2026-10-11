@@ -128,7 +128,8 @@ zapisuje.
 
 **Konfiguracja (`config_flow.py`, `config.py`, `control_config.py`).** Formularze konfiguracji
 i opcji oraz opcje sterowania jako obiekty rdzenia, z blokadami, które nie pozwalają ruszyć
-sterowaniu. `repairs.py` zawiera przepływy napraw (na przykład potwierdzenie oddania kotła
+sterowaniu. Sterowanie czyta swoją sekcję z dołożonymi tematami MQTT połączenia i odczytami
+zwrotnymi z sygnałów (`with_boiler_inputs`): każda wartość jest zapisana raz. `repairs.py` zawiera przepływy napraw (na przykład potwierdzenie oddania kotła
 zrobionego ręcznie).
 
 ## 4. Jeden krok sterowania

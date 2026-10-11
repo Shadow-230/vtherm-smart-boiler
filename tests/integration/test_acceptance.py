@@ -668,7 +668,15 @@ async def test_frost_protection_heats_while_vt_is_off(rig: Rig) -> None:
 @pytest.mark.parametrize(
     ("changes", "blocker"),
     [
-        ({"confirmed_entity": ""}, "blocked_no_confirmed_setpoint"),
+        (  # no read-back: neither the control's own nor the CH setpoint signal (I8.5b)
+            {
+                "confirmed_entity": "",
+                "entry_options": {
+                    "signals": {k: v for k, v in SIGNALS.items() if k != "ch_setpoint"}
+                },
+            },
+            "blocked_no_confirmed_setpoint",
+        ),
         # A gateway's monitor mode from before: monitoring only now (I8.4c, minor version 16).
         ({"topology": "monitor_mode"}, "blocked_control_mode_monitor"),
     ],
@@ -1490,9 +1498,7 @@ async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> Non
     assert "control" in menu["menu_options"]
     assert "interface" not in menu["menu_options"]  # nothing to follow yet
     result = await options_step(rig, menu, {"next_step_id": "control"})
-    result = await options_step(
-        rig, result, {"write_path": "opentherm_gw", "confirmed_entity": CONFIRMED}
-    )
+    result = await options_step(rig, result, {"write_path": "opentherm_gw"})
     assert result["errors"] == {"base": "connection_not_answered"}
     hass.config_entries.options.async_abort(result["flow_id"])
     menu = await hass.config_entries.options.async_init(rig.entry.entry_id)
@@ -1510,12 +1516,16 @@ async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> Non
     interface = {"topology": "gateway_with_thermostat", "thermostat_kind": "opentherm"}
     result = await options_step(rig, result, interface)
     assert result["type"] == "menu"
+    # The read-backs are boiler signals (I8.5b, decision D3): the gateway's, in place of the
+    # boiler's own CH setpoint.
+    result = await options_step(rig, result, {"next_step_id": "signals"})
+    shown = {str(m) for m in result["data_schema"].schema}
+    signals = {k: v for k, v in SIGNALS.items() if k in shown}
+    read_backs = {"ch_setpoint": CONFIRMED, "ch_enabled": CH_ENABLED}
+    result = await options_step(rig, result, signals | read_backs)
+    assert result["type"] == "menu"
     result = await options_step(rig, result, {"next_step_id": "control"})
-    # The write path follows the connection (I8, decision B7): the read-backs alone.
-    assert "write_path" not in {str(m) for m in result["data_schema"].schema}
-    result = await options_step(
-        rig, result, {"confirmed_entity": CONFIRMED, "ch_confirmed_entity": CH_ENABLED}
-    )
+    # The write path follows the connection (I8, decision B7): the step asks nothing.
     assert result["step_id"] == "control_curve"
     curve = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_max": 70}
     result = await options_step(rig, result, curve)

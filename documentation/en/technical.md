@@ -122,7 +122,8 @@ never assumed applied. Reading the boiler is in `transport/entities.py`, which w
 
 **Configuration (`config_flow.py`, `config.py`, `control_config.py`).** The setup and options
 forms, and the control options as core objects with the blockers that keep control from
-starting. `repairs.py` holds the repair flows (for example confirming a hand-back done by hand).
+starting. Control reads its section with the connection's MQTT topics and the signals'
+read-backs put in (`with_boiler_inputs`): each value is stored once. `repairs.py` holds the repair flows (for example confirming a hand-back done by hand).
 
 ## 4. One control step
 

@@ -61,6 +61,7 @@ from .config import (
 from .const import (
     BOILER,
     BUILDING,
+    CH_ENABLED,
     CIRCUITS,
     CONTROL,
     DOMAIN,
@@ -72,6 +73,7 @@ from .const import (
     MQTT_DOMAIN,
     OPENTHERM_GW_DOMAIN,
     PARAMETERS,
+    READ_BACK_SIGNALS,
     RELAY_READS,
     RELAY_SIGNALS,
     SIGNALS,
@@ -93,6 +95,7 @@ from .control_config import (
     INTERFACE_CONTROL_KEYS,
     MQTT_TOPIC_KEYS,
     PATH_TOPOLOGIES,
+    READ_BACK_PATHS,
     RELAY_DEFAULTS,
     RELAY_DOMAINS,
     RELAY_KEYS,
@@ -123,7 +126,7 @@ from .control_config import (
     off_too_close_to_lowest,
     own_room_controller_offered,
     parse_thermostat_kind,
-    with_interface_topics,
+    with_boiler_inputs,
     write_ignored_offered,
 )
 from .core.alarms import (
@@ -167,7 +170,11 @@ SIGNAL_FIELDS: dict[str, tuple[dict[str, Any], bool]] = {
     "dhw_active": (_BINARY, True),
     "pressure": ({"domain": "sensor", "device_class": "pressure"}, True),
     "outdoor": (_TEMPERATURE, True),
-    "ch_setpoint": ({"domain": ["sensor", "number"], "device_class": "temperature"}, False),
+    # I8.5b (decision D3): the setpoint the boiler received — control's setpoint read-back,
+    # taken as the read-back was (no device class asked) — and heating on/off as the boiler gets
+    # it, control's read-back only: both shown at any level where control reads them back.
+    "ch_setpoint": ({"domain": ["sensor", "number", "input_number"]}, False),
+    CH_ENABLED: ({"domain": ["binary_sensor", "switch", "input_boolean"]}, False),
     "ch_active": (_BINARY, False),
     "pump_running": (_BINARY, False),
     "flue_gas": (_TEMPERATURE, False),
@@ -634,7 +641,7 @@ def interface_error(
         if kind_contradicts_topology(Topology(topology), kind):
             return {THERMOSTAT_KIND: "thermostat_kind_contradicts_topology"}
     thermostat = user_input.get("thermostat_setpoint_entity")
-    if thermostat and thermostat == _mapping(options.get(CONTROL)).get("confirmed_entity"):
+    if thermostat and thermostat == setpoint_read_back(options):
         return {"thermostat_setpoint_entity": "thermostat_setpoint_same_as_read_back"}
     return {}
 
@@ -705,10 +712,9 @@ GATEWAY_SIGNALS: Mapping[str, tuple[str, str]] = {
     "low_pressure_fault": ("binary_sensor", "slave_low_water_pressure"),
     "fault_indication": ("binary_sensor", "slave_fault_indication"),
     "ch_active": ("binary_sensor", "slave_ch_active"),
-}
-GATEWAY_READ_BACKS: Mapping[str, tuple[str, str]] = {
-    "confirmed_entity": ("sensor", "control_setpoint"),
-    "ch_confirmed_entity": ("binary_sensor", "master_ch_enabled"),
+    # The read-backs (I8.5b): what the gateway sends the boiler, on its boiler device.
+    "ch_setpoint": ("sensor", "control_setpoint"),
+    CH_ENABLED: ("binary_sensor", "master_ch_enabled"),
 }
 # The texts the signals step reads into its description, one per connection (I6, decision 2).
 SIGNAL_HINT = "signal_hint"
@@ -789,7 +795,7 @@ def signals_schema(
 def _freshness_keys(options: dict[str, Any]) -> list[str]:
     """What may have an age limit: each mapped signal, and the weather entity when one is set —
     its own limit, never the outdoor sensor's (X2)."""
-    keys = list(options.get(SIGNALS, {}))
+    keys = [key for key in options.get(SIGNALS, {}) if key != CH_ENABLED]  # control's own (I8.5b)
     if options.get(WEATHER):
         keys.append(WEATHER)
     return keys
@@ -1075,8 +1081,6 @@ NO_CONTROL = "none"
 _RELAY_ENTITY = {"domain": list(RELAY_DOMAINS)}  # a switch, or a boiler thermostat entity
 _SETPOINT_ENTITY = {"domain": ["number", "input_number"]}
 _ON_OFF_ENTITY = {"domain": ["switch", "input_boolean"]}
-_READ_BACK_ENTITY = {"domain": ["sensor", "number", "input_number"]}
-_ECHO_ENTITY = {"domain": ["binary_sensor", "switch", "input_boolean"]}
 _THERMOSTAT_SETPOINT_ENTITY = {"domain": ["sensor", "number"], "device_class": "temperature"}
 _RESTART_ENTITY = {"domain": "sensor"}
 # The one alarm whose reaction the user may choose (decision 7, Y1): a write the boiler ignores,
@@ -1227,7 +1231,30 @@ def signal_shown(
         and key not in RELAY_SIGNALS
     ):
         return False
+    if key in READ_BACK_SIGNALS and read_backs_asked(options):
+        return True  # control checks its writes against them, at any level (I8.5b)
+    if key == CH_ENABLED:
+        return False  # control's read-back only: a value kept where it is not asked (A3)
     return simple or options.get(LEVEL) == LEVEL_ADVANCED
+
+
+def read_backs_asked(options: Mapping[str, Any]) -> bool:
+    """Whether the signals step asks control's read-backs (I8.5b): with control wanted on a
+    path that reads its writes back — the connection's, or for an entry made before the
+    question, its control section's."""
+    if not control_wanted(options):
+        return False
+    if stored_connection(options) is not None:
+        return connection_path(options) in READ_BACK_PATHS
+    return _mapping(options.get(CONTROL)).get("write_path") in READ_BACK_PATHS
+
+
+def setpoint_read_back(options: Mapping[str, Any]) -> str | None:
+    """The setpoint read-back control is judged with: the control section's own (a hand edit),
+    else the "CH setpoint" signal (I8.5b)."""
+    found = _given(_mapping(options.get(CONTROL)), "confirmed_entity")
+    found = found or _given(_stored_signals(options), "ch_setpoint")
+    return None if found is None else str(found)
 
 
 def gas_rates_shown(options: Mapping[str, Any]) -> bool:
@@ -1247,27 +1274,26 @@ def stored_connection(options: Mapping[str, Any]) -> Connection | None:
     return _known(Connection, _stored_boiler(options).get(CONNECTION))
 
 
-def control_schema(
-    options: dict[str, Any], suggested: Mapping[str, Any] | None = None
-) -> vol.Schema:
-    """The first control step: the read-backs (the interface's questions are an item of their
-    own, I8 D2); the write path only for an entry made before the connection question — the
-    connection decides it otherwise (I8, decision B7). ``suggested``: what the connection
-    suggests where nothing is stored (I6, decision 2) — the gateway's own read-backs."""
+def control_schema(options: dict[str, Any]) -> vol.Schema:
+    """The first control step: the write path, only for an entry made before the connection
+    question — the connection decides it otherwise (I8, decision B7), and the step asks nothing:
+    the interface's questions are an item of their own (D2), the read-backs boiler signals
+    (D3)."""
     control = _mapping(options.get(CONTROL))
-    shown = {**(suggested or {}), **{k: v for k, v in control.items() if v not in (None, "")}}
-    fixed = connection_path(options)
     fields: dict[Any, Any] = {}
-    if fixed is None:
+    if connection_path(options) is None:
         paths = paths_for_class(options)
         stored = control.get("write_path", NO_CONTROL)
         # A stored path the class no longer suits is not offered: the user chooses again.
         default = stored if stored in paths else vol.UNDEFINED
         fields[vol.Required("write_path", default=default)] = _select("write_path", paths)
-    if fixed != WritePath.RELAY.value:  # the relay is its own read-back (X8)
-        fields[_optional("confirmed_entity", shown)] = _entity(_READ_BACK_ENTITY)
-        fields[_optional("ch_confirmed_entity", shown)] = _entity(_ECHO_ENTITY)
     return vol.Schema(fields)
+
+
+def control_with_inputs(options: Mapping[str, Any]) -> Any:
+    """The control section as control runs it: the connection's MQTT topics (I8.4b) and the
+    signals' read-backs (I8.5b) in it, where it has none of its own."""
+    return with_boiler_inputs(options.get(CONTROL), options.get(BOILER), options.get(SIGNALS))
 
 
 def connection_path(options: Mapping[str, Any]) -> str | None:
@@ -1701,11 +1727,14 @@ def confirm_blocking_schema() -> vol.Schema:
     return vol.Schema({vol.Required("save_anyway", default=False): selector.BooleanSelector()})
 
 
-CONTROL_STEP_KEYS = (
-    "write_path",
-    "confirmed_entity",
-    "ch_confirmed_entity",
-)
+CONTROL_STEP_KEYS = ("write_path",)
+# Where a problem the first control step finds is fixed, when it asks nothing (I8.5b).
+_CONTROL_PROBLEM_STEPS = {
+    "confirmed_entity_missing": "signals",
+    "thermostat_setpoint_same_as_read_back": "signals",
+    "interface_not_answered": INTERFACE,
+    "no_zones": "zones",
+}
 
 
 # What the relay path does not read (X8): it has no topology, no thermostat terminals and no
@@ -1720,7 +1749,7 @@ _NOT_FOR_RELAY = (
 
 
 def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    """The first control step: the write path and the read-backs; "none" removes control but
+    """The first control step: the write path; "none" removes control but
     keeps the "Boiler interface" answers, which are the interface's (I8, decision D2). The relay
     path keeps no topology, thermostat answers or read-backs: it reads none of them."""
     control = dict(_mapping(options.get(CONTROL)))
@@ -1837,11 +1866,6 @@ def _set_or_drop(target: dict[str, Any], user_input: dict[str, Any], keys: tuple
             target[key] = value
 
 
-# The first control step's entity fields and what each takes (checked again on submit, P-79).
-CONTROL_ENTITY_FIELDS: Mapping[str, EntityFilter] = {
-    "confirmed_entity": _READ_BACK_ENTITY,
-    "ch_confirmed_entity": _ECHO_ENTITY,
-}
 # The "Boiler interface" item's entity fields (I8, decision D2).
 INTERFACE_ENTITY_FIELDS: Mapping[str, EntityFilter] = {
     "thermostat_setpoint_entity": _THERMOSTAT_SETPOINT_ENTITY,
@@ -1877,8 +1901,12 @@ def control_error(
         }
     if path == WritePath.RELAY:
         return {}
-    if not user_input.get("confirmed_entity"):
-        return {"confirmed_entity": "confirmed_entity_missing"}
+    # The read-back is a boiler signal (I8.5b); given here only by an older caller.
+    read_back = _given(user_input, "confirmed_entity") or (
+        None if options is None else setpoint_read_back(options)
+    )
+    if read_back is None:
+        return {"base": "confirmed_entity_missing"}
     # The interface's answers (I8, decision D2): stored by its own item; given here only by an
     # older caller.
     given = {**(_mapping(options.get(CONTROL)) if options is not None else {}), **user_input}
@@ -1889,9 +1917,9 @@ def control_error(
             return {"base": "connection_not_answered"}
         return {"base": "interface_not_answered"}
     thermostat = given.get("thermostat_setpoint_entity")
-    if thermostat and thermostat == user_input.get("confirmed_entity"):
+    if thermostat and thermostat == read_back:
         # The boiler's read-back shows the plugin's value, not the thermostat's own request.
-        return {"confirmed_entity": "thermostat_setpoint_same_as_read_back"}
+        return {"base": "thermostat_setpoint_same_as_read_back"}
     return {}
 
 
@@ -2099,6 +2127,15 @@ def apply_signals(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     if isinstance(freshness, Mapping):
         kept = set(_freshness_keys(options))
         options[FRESHNESS] = {k: v for k, v in freshness.items() if k in kept}
+
+
+def read_back_error(options: Mapping[str, Any], user_input: Mapping[str, Any]) -> dict[str, str]:
+    """The setpoint the boiler received is not the thermostat's own request (PB-70): with a
+    gateway's thermostat, its own entity is the "Boiler interface"'s (I8.5b)."""
+    thermostat = _given(_mapping(options.get(CONTROL)), "thermostat_setpoint_entity")
+    if thermostat and thermostat == _given(user_input, "ch_setpoint"):
+        return {"ch_setpoint": "thermostat_setpoint_same_as_read_back"}
+    return {}
 
 
 def signal_fields(
@@ -2472,6 +2509,13 @@ def section_shown(options: Mapping[str, Any], section: str) -> bool:
 # --- flows ------------------------------------------------------------------------------------
 
 
+def _problem_shown_on(target: str, step_id: str) -> bool:
+    """Whether a problem meant for ``target`` shows on the form ``step_id``: its own, or — for
+    the first control step, which asks nothing where the connection decides the path (I8.5b) —
+    the first control form after it."""
+    return step_id == target or (target == "control" and section_of(step_id) == "control")
+
+
 class _Steps:
     """Steps shared by the config flow and the options flow."""
 
@@ -2492,6 +2536,34 @@ class _Steps:
     _changed: list[str]  # the sections whose answers changed the options, in that order
     _at_menu: dict[str, Any] | None  # the options as the menu last showed them
 
+    def _stored_control(self) -> Mapping[str, Any]:
+        """The control section as stored before this flow; the setup has none."""
+        return {}
+
+    async def _async_hand_back_blocker(self) -> str | None:
+        """Why what the hand-back goes through must not change now; the setup has none."""
+        return None
+
+    def _changed_read_back(self, candidate: Mapping[str, Any], blocker: str) -> str | None:
+        """The read-back signal ``candidate`` (the options as the answer would leave them)
+        re-picks on the path kept, where it judges a hand-back's release: a gateway's (R6, H2
+        with C1), the setpoint's and the heating switch's on the entity path (PB-09; I8.5b:
+        boiler signals); ``None`` where none is."""
+        current = self._stored_control()
+        new = _mapping(control_with_inputs(candidate))
+        path = current.get("write_path")
+        if new.get("write_path") != path:
+            return None
+        fixed = fixed_keys(path, owed=blocker == HAND_BACK_PENDING)
+        return next(
+            (
+                signal
+                for signal, key in READ_BACK_SIGNALS.items()
+                if key in fixed and _given(new, key) != _given(current, key)
+            ),
+            None,
+        )
+
     def _form(
         self,
         step_id: str,
@@ -2499,8 +2571,9 @@ class _Steps:
         errors: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> ConfigFlowResult:
-        if not errors and self._problem is not None and self._problem[0] == step_id:
-            errors = self._problem[1]
+        problem = self._problem
+        if not errors and problem is not None and _problem_shown_on(problem[0], step_id):
+            errors = problem[1]
             self._problem = None
         result: ConfigFlowResult = self.async_show_form(  # type: ignore[attr-defined]
             step_id=step_id, data_schema=data_schema, errors=errors or {}, **kwargs
@@ -2599,7 +2672,15 @@ class _Steps:
             if not errors and unit not in (None, "%"):
                 errors = {"modulation": "modulation_not_percent"}  # e.g. a power sensor
             if not errors:
-                errors = shared_signal_error(self.options, user_input)
+                errors = shared_signal_error(self.options, user_input) or read_back_error(
+                    self.options, user_input
+                )
+            if not errors and (blocker := await self._async_hand_back_blocker()):
+                # What judges a hand-back's release cannot change now (PB-09, I8.5b).
+                candidate = copy.deepcopy(self.options)
+                apply_signals(candidate, user_input)
+                if key := self._changed_read_back(candidate, blocker):
+                    errors = {key: blocker}
             if not errors:
                 apply_signals(self.options, user_input)
                 self._signals_draft = None
@@ -2779,32 +2860,6 @@ class _ControlSteps(_Steps):
     _contact_asked_for: str | None = None  # the new relay whose tick was asked again (PB-45)
     _alarms_answer: dict[str, Any] | None = None  # awaiting the return's confirmation
 
-    def _stored_control(self) -> Mapping[str, Any]:
-        """The control section as stored before this flow; the setup has none."""
-        return {}
-
-    async def _async_hand_back_blocker(self) -> str | None:
-        """Why what the hand-back goes through must not change now; the setup has none."""
-        return None
-
-    def _changed_read_back(self, user_input: dict[str, Any], blocker: str) -> str | None:
-        """The read-back the answer re-picks on the path kept, where it judges a hand-back's
-        release: a gateway's (R6, H2 with C1), the setpoint's and the heating switch's on the
-        entity path (PB-09); ``None`` where none is."""
-        current = self._stored_control()
-        path = current.get("write_path")
-        if user_input.get("write_path") != path:
-            return None
-        fixed = fixed_keys(path, owed=blocker == HAND_BACK_PENDING)
-        return next(
-            (
-                key
-                for key in ("confirmed_entity", "ch_confirmed_entity")
-                if key in fixed and _given(user_input, key) != _given(current, key)
-            ),
-            None,
-        )
-
     async def async_step_interface(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -2866,10 +2921,11 @@ class _ControlSteps(_Steps):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """The first control step. The connection decides the write path (I8, decision B7):
-        only an entry made before the question picks it; the relay, its own read-back, asks
-        nothing here and goes on to its own steps."""
+        only an entry made before the question picks it. Otherwise the step asks nothing — the
+        read-backs are boiler signals (I8.5b) — and goes on to the path's own steps; a problem
+        is shown where it can be fixed."""
         fixed = connection_path(self.options)
-        if user_input is None and fixed == WritePath.RELAY.value:
+        if user_input is None and fixed is not None:
             user_input = {}
         if user_input is not None:
             if fixed is not None:
@@ -2886,8 +2942,6 @@ class _ControlSteps(_Steps):
                 # What the hand-back goes through cannot change now: said first, before what the
                 # new path would still need (I8, decision D2).
                 errors = {"write_path": blocker}
-            if not errors and path != NO_CONTROL:
-                errors = entity_errors(self.hass, user_input, CONTROL_ENTITY_FIELDS)
             if not errors and path != NO_CONTROL and not _zone_entities(self.options):
                 errors = {"base": "no_zones"}  # nothing could ever ask for heat (S-04)
             if not errors and path == WritePath.OTGW_MQTT and not mqtt_set_up(self.hass):
@@ -2896,13 +2950,17 @@ class _ControlSteps(_Steps):
                 # "No control" stays possible: the hand-back goes through the old path, retried
                 # by a unit that only hands back.
                 errors = {"write_path": blocker}
-            elif not errors and blocker and (key := self._changed_read_back(user_input, blocker)):
-                errors = {key: blocker}
+            if errors and fixed is not None:
+                # Nothing asked here: the problem goes where it can be fixed, else it is said.
+                code = next(iter(errors.values()))
+                target = _CONTROL_PROBLEM_STEPS.get(code)
+                if target is not None and hasattr(self, f"async_step_{target}"):
+                    self._problem = (target, {"base": code})
+                    return await self._goto(target)
+                errors = {"base": code}
             if errors:
                 return self._form(
-                    step_id="control",
-                    data_schema=control_schema(self.options, self._control_suggestions()),
-                    errors=errors,
+                    step_id="control", data_schema=control_schema(self.options), errors=errors
                 )
             apply_control(self.options, user_input)
             if path == NO_CONTROL:
@@ -2917,17 +2975,7 @@ class _ControlSteps(_Steps):
                 return await self._goto("control_entity")
             # The gateway and the firmware's topics are the interface's (I8, decision D2).
             return await self._goto("control_curve")
-        return self._form(
-            step_id="control", data_schema=control_schema(self.options, self._control_suggestions())
-        )
-
-    def _control_suggestions(self) -> dict[str, str]:
-        """What the connection suggests on the first control step (I6, decision 2): the one
-        gateway's read-backs."""
-        connection = stored_connection(self.options)
-        if connection is Connection.OPENTHERM_GW:
-            return gateway_entities(self.hass, GATEWAY_READ_BACKS)
-        return {}
+        return self._form(step_id="control", data_schema=control_schema(self.options))
 
     async def async_step_control_entity(
         self, user_input: dict[str, Any] | None = None
@@ -3309,7 +3357,7 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # it gives; 14: "room temperature only" reads as monitoring only; 15: the OTGW firmware's
     # topics are stored once, with the connection; 16: a gateway's "monitor mode" topology is
     # the control mode monitoring only (see async_migrate_entry).
-    MINOR_VERSION = 17
+    MINOR_VERSION = 18
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}
@@ -3445,10 +3493,9 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
         return self._unreadable.pop(0) if self._unreadable else None
 
     def _stored_control(self) -> Mapping[str, Any]:
-        """The stored control section, with the connection's MQTT topics where it writes over
-        MQTT (I8.4b: stored once); one of another shape reads as none (PB-06)."""
-        stored = self.config_entry.options
-        current = with_interface_topics(stored.get(CONTROL), stored.get(BOILER))
+        """The stored control section as control runs it — the connection's MQTT topics (I8.4b)
+        and the signals' read-backs (I8.5b) in it; one of another shape reads as none (PB-06)."""
+        current = control_with_inputs(self.config_entry.options)
         return current if isinstance(current, Mapping) else {}
 
     def _next_after(self, step: str) -> str:
@@ -3495,8 +3542,9 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
 
     def _hand_back_change(self, *, owed: bool) -> str | None:
         """The first answer ``_saves_another_hand_back`` finds changed; ``None`` where none is.
-        The MQTT topics are the connection's (I8.4b), read with the section as control runs it."""
-        new = with_interface_topics(self.options.get(CONTROL), self.options.get(BOILER))
+        The MQTT topics are the connection's (I8.4b) and the read-backs the signals' (I8.5b),
+        read with the section as control runs it."""
+        new = control_with_inputs(self.options)
         if not isinstance(new, Mapping) or not new.get("write_path"):
             return None  # control taken out (its interface answers may stay): nothing changes
         current = self._stored_control()
@@ -3599,6 +3647,10 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
                     # The interface's answer is what changed: its own item says why (I8, D2).
                     self._problem = (INTERFACE, {"base": blocker})
                     return await self._goto(INTERFACE)
+                if changed in READ_BACK_SIGNALS.values():
+                    # A read-back is a boiler signal (I8.5b): that step says why.
+                    self._problem = ("signals", {"base": blocker})
+                    return await self._goto("signals")
                 return await self._back_to_problem(blocker, None)
         if not confirmed and (blocking := self._new_blockers()):
             # Open after R6 #3: an edit that would keep control from running is confirmed first.

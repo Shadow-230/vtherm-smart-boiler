@@ -431,11 +431,14 @@ def test_different_or_empty_signal_entities_are_kept(extra: dict) -> None:
 
 
 def test_the_form_lists_the_signals_in_their_precedence() -> None:
-    """The form's order and the parser's precedence are one list."""
+    """The form's order and the parser's precedence are one list — but for control's heating
+    on/off read-back, which no monitor feature reads (I8.5b)."""
     from custom_components.vtherm_smart_boiler.config_flow import SIGNAL_FIELDS
+    from custom_components.vtherm_smart_boiler.const import CH_ENABLED
     from custom_components.vtherm_smart_boiler.core.signals import SIGNAL_PRECEDENCE
 
-    assert tuple(SIGNAL_FIELDS) == tuple(signal.value for signal in SIGNAL_PRECEDENCE)
+    fields = tuple(key for key in SIGNAL_FIELDS if key != CH_ENABLED)
+    assert fields == tuple(signal.value for signal in SIGNAL_PRECEDENCE)
     assert set(SIGNAL_PRECEDENCE) == set(Signal)
 
 
