@@ -240,6 +240,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_correction_range(hass, entry)
     if entry.minor_version < 13:
         _migrate_building(hass, entry)
+    if entry.minor_version < 14:
+        _migrate_room_values(hass, entry)
     return True
 
 
@@ -384,6 +386,20 @@ def _migrate_building(hass: HomeAssistant, entry: ConfigEntry) -> None:
             target["design_load_kw"] = load
             options[BUILDING] = target
     hass.config_entries.async_update_entry(entry, options=options, minor_version=13)
+
+
+def _migrate_room_values(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.4 (minor version 14): "room temperature only" left the mode panel until it works
+    (`docs/plan-0.2-i8.md` C2); an entry with it reads as monitoring only — what it did. The
+    boiler class stays: both keep control off, and the class follows the connection alike."""
+    from .const import BOILER
+    from .control_config import ROOM_VALUES_FROM_BEFORE, ControlMode
+
+    options = dict(entry.options)
+    boiler = options.get(BOILER)
+    if isinstance(boiler, Mapping) and boiler.get("control_mode") == ROOM_VALUES_FROM_BEFORE:
+        options[BOILER] = {**boiler, "control_mode": ControlMode.MONITOR.value}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=14)
 
 
 def _stored_float(raw: Any, default: float) -> float:

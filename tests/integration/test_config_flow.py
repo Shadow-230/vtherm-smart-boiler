@@ -2243,8 +2243,8 @@ async def test_an_edit_that_would_block_control_is_confirmed_first(
     assert result["step_id"] == "confirm_blocking"
     shown = result["description_placeholders"]
     assert shown["first"] == (
-        'Monitoring only is chosen under "Boiler, connection and control mode": the plugin '
-        "writes nothing to the boiler. Choose a control mode there to set up control."
+        'Monitoring only is chosen under "Control mode": the plugin writes nothing to the '
+        "boiler. Choose a control mode there to set up control."
     )
     assert shown["more"] == "0"
     assert form_default(result, "save_anyway") is False
@@ -2255,12 +2255,12 @@ async def test_an_edit_that_would_block_control_is_confirmed_first(
     assert entry.options["boiler"]["class"] == "flow_setpoint"  # nothing saved
     assert "connection" not in entry.options["boiler"]
     assert result["description_placeholders"]["changes"] == (
-        "Unsaved changes: Boiler, connection and control mode."
+        "Unsaved changes: Connection and boiler type, Control mode."
     )
     result = await options_step(hass, result, {"next_step_id": "connection"})
     assert form_default(result, "connection") == "read_only"  # I7: the edit stayed
+    # The mode kept is one the connection can do: the menu, then the save (I8, D1).
     result = await options_step(hass, result, read_only)
-    result = await options_step(hass, result, {"control_mode": "monitor"})
     assert result["step_id"] == "confirm_blocking"  # asked again at the next save
     result = await options_step(hass, result, {"save_anyway": True})
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -3936,8 +3936,8 @@ async def test_the_setup_opens_with_the_connection_and_asks_it_on_purpose(
     [
         ("relay", ["on_off", "monitor"]),
         ("read_only", ["monitor"]),
-        ("esphome", ["full", "room_values", "monitor"]),
-        ("opentherm_gw", ["full", "room_values", "monitor"]),
+        ("esphome", ["full", "monitor"]),  # I8 (C2): room temperature only waits for 0.3
+        ("opentherm_gw", ["full", "monitor"]),
     ],
 )
 async def test_the_second_panel_offers_the_modes_the_connection_can_do(
@@ -4021,13 +4021,70 @@ async def test_the_class_follows_the_connection(
     result = await options_step(hass, menu, {"next_step_id": "connection"})
     answers = {"connection": connection, "heat_source": "gas", "type": "single"}
     result = await options_step(hass, result, answers)
-    result = await options_step(hass, result, {"control_mode": mode})
+    result = await answer_mode(hass, entry_id, result, mode)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     entry = hass.config_entries.async_get_entry(entry_id)
     assert entry is not None
     assert entry.options["boiler"]["class"] == expected
     assert "class" not in {str(m) for m in boiler_form(hass, entry)}
     await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize(
+    ("answers", "mode_asked", "expected_class"),
+    [
+        # The mode kept is one the connection can do: the menu; the class follows at once.
+        ({"connection": "relay", "heat_source": "gas", "type": "single"}, False, "on_off"),
+        ({"connection": "boiler_module", "heat_source": "gas", "type": "single"}, False,
+         "read_only"),
+        # The heat source or the type changed: the mode panel's questions change with them.
+        ({"connection": "other_entity", "heat_source": "electric", "type": "single"}, True,
+         "flow_setpoint"),
+        ({"connection": "other_entity", "heat_source": "gas", "type": "combi"}, True,
+         "flow_setpoint"),
+    ],
+    ids=["relay_keeps_monitor", "module_keeps_monitor", "heat_source", "boiler_type"],
+)  # fmt: skip
+async def test_the_mode_is_asked_at_once_only_where_it_must_be(
+    hass: HomeAssistant,
+    entities: dict[str, str],
+    answers: dict[str, str],
+    mode_asked: bool,
+    expected_class: str,
+) -> None:
+    """I8 (decision D1): the connection and the mode are items of their own. A connection that
+    keeps the stored mode one it can do returns to the menu, the class following the connection
+    at once; where the heat source or the boiler type changed, the mode panel opens at once — it
+    asks condensing and the hot-water priority by them. (A mode the connection cannot do: the
+    mode at once too, in ``test_an_edit_that_would_block_control_is_confirmed_first``.)"""
+    from custom_components.vtherm_smart_boiler.config_flow import problem_step
+
+    entry_id = await create_entry(hass, entities, "simple", panels=True)
+    await answer_panels(hass, entry_id, "other_entity", "monitor")
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await hass.config_entries.options.async_configure(
+        menu["flow_id"], {"next_step_id": "connection"}
+    )
+    result = await hass.config_entries.options.async_configure(result["flow_id"], answers)
+    if mode_asked:
+        assert result["step_id"] == "mode"
+        assert form_default(result, "control_mode") == "monitor"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"control_mode": "monitor"}
+        )
+    assert result["type"] is FlowResultType.MENU
+    result = await options_step(hass, result, {"next_step_id": "save"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    boiler = hass.config_entries.async_get_entry(entry_id).options["boiler"]
+    assert boiler["class"] == expected_class
+    assert boiler["control_mode"] == "monitor"
+    if answers["heat_source"] == "electric":
+        assert boiler["condensing"] is False  # not asked: it burns nothing
+    for subject in ("control_mode", "condensing", "dhw_priority"):
+        assert problem_step("invalid_connection", subject) == "mode"
+    assert problem_step("invalid_boiler", "condensing") == "mode"
+    assert problem_step("invalid_boiler", "class") == "connection"
 
 
 def boiler_form(hass: HomeAssistant, entry: Any) -> Any:
@@ -4077,17 +4134,17 @@ async def test_an_entry_from_before_the_panels_is_offered_its_answers(
 async def test_monitoring_only_offers_no_control(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    """Decision 6: with monitoring only, or room values until 0.3, the control step offers
-    "no control" alone; a path given anyway is refused with the reason."""
+    """Decision 6: with monitoring only the control step offers "no control" alone; a path
+    given anyway is refused with the reason."""
     from custom_components.vtherm_smart_boiler.config_flow import control_error
 
     entry_id = await create_entry(hass, entities, "simple", ("living",), panels=True)
-    for mode in ("monitor", "room_values"):
+    for mode in ("monitor",):
         menu = await hass.config_entries.options.async_init(entry_id)
         result = await options_step(hass, menu, {"next_step_id": "connection"})
         answers = {"connection": "opentherm_gw", "heat_source": "gas", "type": "single"}
         result = await options_step(hass, result, answers)
-        result = await options_step(hass, result, {"control_mode": mode})
+        result = await answer_mode(hass, entry_id, result, mode)
         assert result["type"] is FlowResultType.CREATE_ENTRY
         await hass.async_block_till_done()
         # I7: no control section on the menu — none was set up.
@@ -4148,7 +4205,7 @@ def test_a_stored_answer_this_version_cannot_read_offers_everything_and_blocks_n
     )
 
     assert modes_offered({"boiler": {"connection": "carrier_pigeon"}}) == [
-        "full", "on_off", "room_values", "monitor",
+        "full", "on_off", "monitor",
     ]  # fmt: skip
     assert not control_mode_off({"boiler": {"control_mode": "telepathy"}})
     unknown = {"boiler": {"heat_source": "peat", "type": "triple"}}
@@ -4170,6 +4227,19 @@ def gateway_entity(hass: HomeAssistant, gateway: str, domain: str, key: str, **k
     )
 
 
+async def answer_mode(
+    hass: HomeAssistant, entry_id: str, result: dict[str, Any], mode: str
+) -> dict[str, Any]:
+    """I8 (decision D1): the mode — asked at once after a connection that needs it, else its
+    own menu item, opened in a new options flow once the connection is saved."""
+    if result["type"] is FlowResultType.FORM and result["step_id"] == "mode":
+        return await options_step(hass, result, {"control_mode": mode})
+    await hass.async_block_till_done()
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "mode"})
+    return await options_step(hass, result, {"control_mode": mode})
+
+
 async def answer_panels(
     hass: HomeAssistant, entry_id: str, connection: str, mode: str = "full"
 ) -> None:
@@ -4177,10 +4247,10 @@ async def answer_panels(
     result = await options_step(hass, menu, {"next_step_id": "connection"})
     answers = {"connection": connection, "heat_source": "gas", "type": "single"}
     result = await options_step(hass, result, answers)
-    if result["step_id"] == "mqtt_topics":  # I6.5: the MQTT connections' topics
+    if result.get("step_id") == "mqtt_topics":  # I6.5: the MQTT connections' topics
         topics = {"ems_esp_base": "ems-esp"} if connection == "ems_esp" else {"mqtt_node": "n1"}
         result = await options_step(hass, result, topics)
-    result = await options_step(hass, result, {"control_mode": mode})
+    result = await answer_mode(hass, entry_id, result, mode)
     assert result["type"] is FlowResultType.CREATE_ENTRY, result
     await hass.async_block_till_done()
 
@@ -4871,7 +4941,7 @@ async def test_the_setup_menu_shows_what_applies_and_creates_once_all_is_confirm
     assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == "menu"
     assert result["menu_options"] == [
-        "connection", "name", "signals", "boiler", "circuit", "zones", "incomplete",
+        "connection", "mode", "name", "signals", "boiler", "circuit", "zones", "incomplete",
     ]  # fmt: skip
     assert result["description_placeholders"] == {
         "state": "Still to confirm: Boiler signals, Boiler, Heating circuits, VT zones."
@@ -4901,8 +4971,9 @@ async def test_the_setup_menu_follows_the_mode_and_keeps_the_answers(
     hass: HomeAssistant,
 ) -> None:
     """I7: the connection and the name, opened again from the menu, show their answers; the
-    connection's panels return to the menu, not to the name. Full control chosen there adds the
-    control section at once, left to confirm; the advanced level adds the monitor's."""
+    connection returns to the menu — the mode it keeps is one it can do (I8, decision D1). Full
+    control chosen in the mode's own item adds the control section at once, left to confirm;
+    the advanced level adds the monitor's."""
     result = await start_setup(hass, "other_entity", "monitor")
     result = await configure(hass, result, {"name": "My boiler", "level": "simple"})
     assert "control" not in result["menu_options"]
@@ -4910,7 +4981,9 @@ async def test_the_setup_menu_follows_the_mode_and_keeps_the_answers(
     assert form_default(result, "connection") == "other_entity"
     answers = {"connection": "other_entity", "heat_source": "gas", "type": "single"}
     result = await configure(hass, result, answers)
-    assert result["step_id"] == "mode"
+    assert result["step_id"] == "menu"
+    result = await configure(hass, result, {"next_step_id": "mode"})
+    assert form_default(result, "control_mode") == "monitor"
     result = await configure(hass, result, {"control_mode": "full", "condensing": True})
     assert result["type"] is FlowResultType.MENU
     assert result["menu_options"][-2:] == ["control", "incomplete"]
@@ -4969,13 +5042,14 @@ async def test_the_options_menu_shows_what_applies_and_closing_keeps_nothing(
     """I7, decisions 2 and 3: an entry from before the control mode offers control as before;
     monitoring only chosen, no control set up — no control;
     the advanced level, the building and the monitor's thresholds (I8, E2); the level and "Save
-    and finish" last. The
-    menu names what changed; closing the window saves nothing."""
+    and finish" last. The connection and the mode are items of their own; a connection whose
+    entry stored no mode asks it at once (I8, D1). The menu names what changed; closing the
+    window saves nothing."""
     entry_id = await _entry(hass, _rich_options(entities))
     before = copy.deepcopy(dict(hass.config_entries.async_get_entry(entry_id).options))
     menu = await hass.config_entries.options.async_init(entry_id)
     assert menu["menu_options"] == [
-        "connection", "signals", "freshness", "boiler", "circuit", "zones", "control",
+        "connection", "mode", "signals", "freshness", "boiler", "circuit", "zones", "control",
         "level_hidden", "save",
     ]  # fmt: skip
     configure = hass.config_entries.options.async_configure
@@ -4990,8 +5064,8 @@ async def test_the_options_menu_shows_what_applies_and_closing_keeps_nothing(
     result = await configure(result["flow_id"], {"level": "advanced"})
     assert result["menu_options"][-4:] == ["building", "monitor", "level", "save"]
     assert result["description_placeholders"] == {
-        "changes": "Unsaved changes: VT zones, Boiler, connection and control mode, Level of "
-        "detail."
+        "changes": "Unsaved changes: VT zones, Connection and boiler type, Control mode, Level "
+        "of detail."
     }
     hass.config_entries.options.async_abort(result["flow_id"])
     await hass.async_block_till_done()

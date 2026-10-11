@@ -8,7 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-11: the plan approved by the user; I8.0 to I8.3 done; I8.4 next.
+Status on 2026-10-11: the plan approved by the user; I8.0 to I8.3 and I8.4a done; I8.4b next.
 
 ## How to read this plan
 
@@ -388,6 +388,22 @@ point.
   answers (`design_outdoor` leaves the building step's answers, `ceiling_band` goes).
 
 ### I8.4 Connection, mode, interface (B7, C2, D1, D2)
+
+Claude's call: three pull requests — I8.4a the connection and the mode as two items with
+"room temperature only" hidden, I8.4b the "Boiler interface" item, I8.4c the control step's
+write path and the "monitor mode" topology.
+
+- I8.4a ✅ (2026-10-11): "Connection and boiler type" and "Control mode" are menu items of their
+  own, in the setup and the options. The mode opens at once after the connection where none is
+  stored, the stored one is not one the connection can do, or (Claude's call) the heat source or
+  the boiler type changed — the mode panel asks condensing and the hot-water priority by them;
+  otherwise the class follows the connection at once. A stored mode, condensing or priority this
+  version cannot read is fixed on the mode item. "Room temperature only" leaves the enum, the
+  panel, the blockers and the texts; minor version 14 reads it as monitoring only. Texts naming
+  "Boiler, connection and control mode" name the item that applies. `SCOPE.md` (the
+  thermostat-like mode), the user guides (the setup and the options), notes on
+  `docs/plan-0.2.md` I6 and `docs/plan-0.2-i6.md` decision 6; the technical documents describe
+  no menu, so they stay.
 
 - Code: two menu items for connection and mode; the mode step opened after a connection change
   that leaves the mode impossible; "room temperature only" hidden; the "Boiler interface" item

@@ -494,7 +494,9 @@ takes the emitter types of its zones (S-33); the burner is shared.
 ### The thermostat-like mode (0.3)
 
 Decided by the user on 2026-10-10 (`docs/plan-0.2-i8.md` G; sources:
-`research/2026-10-10-room-values-mode-sources.md`). Hidden in the options until it works.
+`research/2026-10-10-room-values-mode-sources.md`). Hidden in the options until it works: an
+entry that chose "room temperature only" before reads as monitoring only (I8.4a, minor version
+14), which is what it did.
 
 - Heating on and off follow the zones' demand, as in the other modes; never a comparison of
   temperatures.

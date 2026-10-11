@@ -329,6 +329,8 @@ CONNECTION_STEP_KEYS = (CONNECTION, HEAT_SOURCE, BOILER_TYPE)
 # The boiler's keys the panels write: a stored value of them this version cannot read is fixed
 # there (P-70).
 PANEL_BOILER_KEYS = ("class", "dhw", "condensing")
+# What the mode panel asks (I8, decision D1): a stored value of it is fixed there.
+MODE_STEP_SUBJECTS = (CONTROL_MODE, "condensing", DHW_PRIORITY)
 
 
 def _stored_boiler(options: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -404,6 +406,16 @@ def _suggested_mode(options: Mapping[str, Any], modes: list[str]) -> Any:
     return suggested.value if suggested.value in modes else vol.UNDEFINED
 
 
+def mode_due(options: Mapping[str, Any], asked_before: Mapping[str, Any]) -> bool:
+    """Whether the mode is asked at once after the connection (I8, decision D1): none stored,
+    or one the connection cannot do; or the heat source or the boiler type changed, which
+    decide what the mode panel asks (condensing, the hot-water priority)."""
+    boiler = _stored_boiler(options)
+    if boiler.get(CONTROL_MODE) not in modes_offered(options):
+        return True
+    return any(boiler.get(key) != value for key, value in asked_before.items())
+
+
 def mode_schema(options: dict[str, Any]) -> vol.Schema:
     """The second panel (decisions 6, 7, 8): the control mode the connection can do, with no
     default; condensing for a boiler that burns fuel; the hot-water priority for one that heats
@@ -430,11 +442,17 @@ def mode_schema(options: dict[str, Any]) -> vol.Schema:
 
 def apply_connection(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     """The first panel's answers; the hot-water kind follows the boiler type, so a version
-    without the type reads the entry the same. Topics of a connection no longer chosen go."""
+    without the type reads the entry the same. Topics of a connection no longer chosen go. The
+    class follows the connection where the stored mode stays one it can do (I8, decision D1);
+    otherwise the mode, asked at once, sets it."""
     boiler = dict(_stored_boiler(options))
     for key in CONNECTION_STEP_KEYS:
         boiler[key] = user_input[key]
     boiler["dhw"] = BoilerType(user_input[BOILER_TYPE]).dhw.value
+    connection = Connection(user_input[CONNECTION])
+    mode = _known(ControlMode, boiler.get(CONTROL_MODE))
+    if mode is not None and mode in CONNECTION_MODES[connection]:
+        boiler["class"] = boiler_class_for(connection, mode).value
     kept = TOPIC_KEYS.get(Connection(user_input[CONNECTION]), ())
     for keys in TOPIC_KEYS.values():
         for key in keys:
@@ -938,9 +956,9 @@ def wants_control(options: Mapping[str, Any]) -> bool:
 
 
 def control_mode_off(options: Mapping[str, Any]) -> bool:
-    """Monitoring only, or room values until 0.3, chosen on the second panel (decision 6)."""
+    """Monitoring only chosen on the mode panel (decision 6)."""
     mode = _known(ControlMode, _stored_boiler(options).get(CONTROL_MODE))
-    return mode in (ControlMode.MONITOR, ControlMode.ROOM_VALUES)
+    return mode is ControlMode.MONITOR
 
 
 def paths_for_class(options: Mapping[str, Any]) -> list[str]:
@@ -2160,8 +2178,10 @@ def problem_step(code: str, subject: str | None) -> str:
     """The step where the user can fix a problem the last check found."""
     if code == "implausible_parameter":
         return "boiler" if subject in BOILER_PARAMETER_KEYS else "building"
+    if subject in MODE_STEP_SUBJECTS and code in ("invalid_boiler", "invalid_connection"):
+        return "mode"  # I8 (decision D1): the mode panel is a menu item of its own
     if code == "invalid_boiler" and subject in PANEL_BOILER_KEYS:
-        return "connection"  # I6: the class, the hot water and condensing are the panels'
+        return "connection"  # I6: the class and the hot water follow the connection's panel
     if code in ("invalid_monitor", "alarm_limits_out_of_order") and subject in (
         *PRESSURE_KEYS,
         "pressure_high",
@@ -2175,7 +2195,6 @@ def problem_step(code: str, subject: str | None) -> str:
 # The texts the menu reads into its description: what is left, what to fix, what changed.
 MENU_STATE = "menu_state"
 _SECTION_OF_STEP = {
-    "mode": "connection",
     "mqtt_topics": "connection",
     "zone": "zones",
     "level_hidden": "level",
@@ -2228,6 +2247,7 @@ class _Steps:
     _MENU = "menu"
     _CATEGORY = "config"
     _confirmed: set[str]  # the sections confirmed in this flow
+    _mode_due = False  # the mode must be answered again after the connection (I8, D1)
     _changed: list[str]  # the sections whose answers changed the options, in that order
     _at_menu: dict[str, Any] | None  # the options as the menu last showed them
 
@@ -2297,12 +2317,16 @@ class _Steps:
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """The first panel (I6): how the boiler is connected, the heat source, the boiler type;
-        then the MQTT topics for a connection over MQTT."""
+        then the MQTT topics for a connection over MQTT. The mode follows at once where it must
+        be answered again (I8, decision D1; ``mode_due``)."""
         if user_input is not None:
+            before = _stored_boiler(self.options)
+            asked_before = {key: before.get(key) for key in (HEAT_SOURCE, BOILER_TYPE)}
             apply_connection(self.options, user_input)
+            self._mode_due = mode_due(self.options, asked_before)
             if Connection(user_input[CONNECTION]) in TOPIC_KEYS:
                 return await self.async_step_mqtt_topics()
-            return await self.async_step_mode()
+            return await self._after("connection")
         return self._form(step_id="connection", data_schema=connection_schema(self.options))
 
     async def async_step_mqtt_topics(
@@ -2320,16 +2344,17 @@ class _Steps:
                 boiler = dict(_stored_boiler(self.options))
                 boiler.update({key: str(value).strip() for key, value in user_input.items()})
                 self.options[BOILER] = boiler
-                return await self.async_step_mode()
+                return await self._after("mqtt_topics")
         return self._form(
             step_id="mqtt_topics", data_schema=mqtt_topics_schema(self.options), errors=errors
         )
 
     async def async_step_mode(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """The second panel (I6): the control mode the connection can do, condensing and the
-        hot-water priority where they apply."""
+        """The second panel (I6), a menu item of its own (I8, decision D1): the control mode the
+        connection can do, condensing and the hot-water priority where they apply."""
         if user_input is not None:
             apply_mode(self.options, user_input)
+            self._mode_due = False
             return await self._after("mode")
         return self._form(step_id="mode", data_schema=mode_schema(self.options))
 
@@ -3063,8 +3088,8 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # 11: the zones' emitter output and exponent and "near room temperature" go; 12: the curve's
     # "correction range" goes, a narrower one becoming the correction's limit; 13: the floor
     # area, insulation and thermal mass go, an entered loss coefficient becoming the design load
-    # it gives (see async_migrate_entry).
-    MINOR_VERSION = 13
+    # it gives; 14: "room temperature only" reads as monitoring only (see async_migrate_entry).
+    MINOR_VERSION = 14
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}
@@ -3084,11 +3109,13 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # I7: the first panels, the name and the level come first — they decide what follows; then
     # the menu, in this order, each section shown where it applies.
     SECTIONS = (
-        "connection", "name", "signals", "boiler", "circuit", "zones", "building", "monitor",
-        "control",
+        "connection", "mode", "name", "signals", "boiler", "circuit", "zones", "building",
+        "monitor", "control",
     )  # fmt: skip
 
     def _next_after(self, step: str) -> str:
+        if step in ("connection", "mqtt_topics") and self._mode_due:
+            return "mode"
         if step == "mode" and "name" not in self._confirmed:
             return "name"
         return "menu"
@@ -3203,6 +3230,8 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
         return current if isinstance(current, Mapping) else {}
 
     def _next_after(self, step: str) -> str:
+        if step in ("connection", "mqtt_topics") and self._mode_due:
+            return "mode"
         return "init"
 
     async def _async_hand_back_blocker(self) -> str | None:
@@ -3253,8 +3282,8 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
         menu = [
             section
             for section in (
-                "connection", "signals", "freshness", "boiler", "circuit", "zones", "building",
-                "control", "monitor",
+                "connection", "mode", "signals", "freshness", "boiler", "circuit", "zones",
+                "building", "control", "monitor",
             )
             if section_shown(self.options, section)
         ]  # fmt: skip

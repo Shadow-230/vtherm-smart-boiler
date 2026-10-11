@@ -254,8 +254,8 @@ def test_every_blocker_is_listed() -> None:
         (RELAY, Installation(Boiler(BoilerClass.READ_ONLY), (Circuit("main"),))),
     ):
         found |= set(config_blockers(parse_control(data, installation, None), installation))
-    # I6.1 (decision 6): monitoring only, or room values until 0.3.
-    for mode in (ControlMode.MONITOR, ControlMode.ROOM_VALUES):
+    # I6.1 (decision 6): monitoring only.
+    for mode in (ControlMode.MONITOR,):
         control = parse_control(OTGW, RADIATORS, None, control_mode=mode)
         found |= set(config_blockers(control, RADIATORS))
     # I6.2 (decisions 2, 3): what the connection asks of the control section.
@@ -2327,12 +2327,10 @@ def test_what_the_form_refuses_blocks_options_that_bypass_it(
 @pytest.mark.parametrize(
     ("mode", "section", "expected"),
     [
-        # Chosen on purpose: monitoring only, or room values (0.3) — the one reason, whatever
-        # else the control section lacks or has.
+        # Chosen on purpose: monitoring only — the one reason, whatever else the control
+        # section lacks or has.
         (ControlMode.MONITOR, {}, ["control_mode_monitor"]),
         (ControlMode.MONITOR, OTGW, ["control_mode_monitor"]),
-        (ControlMode.ROOM_VALUES, {}, ["control_mode_room_values"]),
-        (ControlMode.ROOM_VALUES, OTGW, ["control_mode_room_values"]),
         # Full control: judged as before.
         (ControlMode.FULL, {}, ["no_write_path"]),
         (ControlMode.FULL, OTGW, []),
@@ -2344,9 +2342,9 @@ def test_what_the_form_refuses_blocks_options_that_bypass_it(
 def test_a_control_mode_without_control_is_its_own_reason(
     mode: ControlMode | None, section: dict, expected: list[str]
 ) -> None:
-    """I6.1 (decision 6): monitoring only, or room-temperature mode until 0.3, keeps control
-    off with that reason alone — a control section stored beside it is not run, and its lacks
-    are not listed; with full control, or no answer yet, the blockers are as before."""
+    """I6.1 (decision 6): monitoring only keeps control off with that reason alone — a control
+    section stored beside it is not run, and its lacks are not listed; with full control, or no
+    answer yet, the blockers are as before."""
     control = parse_control(section, RADIATORS, None, control_mode=mode)
     assert control.control_mode is mode
     signals = (Signal.FLAME, Signal.FLOW)
@@ -2365,9 +2363,11 @@ def test_the_connection_is_carried_without_a_control_section() -> None:
 
 def test_each_connection_offers_the_modes_it_can_do() -> None:
     """I6.1 (decisions 1, 6): a relay switches on and off; a read-only integration only
-    monitors; every connection that can set a water temperature offers full control, room
-    values (0.3) and monitoring. Monitoring is always offered."""
-    water = (ControlMode.FULL, ControlMode.ROOM_VALUES, ControlMode.MONITOR)
+    monitors; every connection that can set a water temperature offers full control and
+    monitoring — "room temperature only" waits for 0.3 (I8, decision C2). Monitoring is always
+    offered."""
+    assert {mode.value for mode in ControlMode} == {"full", "on_off", "monitor"}
+    water = (ControlMode.FULL, ControlMode.MONITOR)
     assert dict(CONNECTION_MODES) == {
         Connection.OPENTHERM_GW: water,
         Connection.OTGW_MQTT: water,
@@ -2387,7 +2387,7 @@ def test_each_connection_offers_the_modes_it_can_do() -> None:
         # "worth enabling" for a gateway that only monitors.
         (Connection.OPENTHERM_GW, ControlMode.FULL, BoilerClass.FLOW_SETPOINT),
         (Connection.OPENTHERM_GW, ControlMode.MONITOR, BoilerClass.FLOW_SETPOINT),
-        (Connection.OTGW_MQTT, ControlMode.ROOM_VALUES, BoilerClass.FLOW_SETPOINT),
+        (Connection.OTGW_MQTT, ControlMode.MONITOR, BoilerClass.FLOW_SETPOINT),
         (Connection.ESPHOME, ControlMode.FULL, BoilerClass.FLOW_SETPOINT),
         (Connection.EMS_ESP, ControlMode.MONITOR, BoilerClass.FLOW_SETPOINT),
         (Connection.OTHER_ENTITY, ControlMode.FULL, BoilerClass.FLOW_SETPOINT),
@@ -2397,7 +2397,6 @@ def test_each_connection_offers_the_modes_it_can_do() -> None:
         # Decision 5: the boiler's own module monitors by default; control only on purpose.
         (Connection.BOILER_MODULE, ControlMode.FULL, BoilerClass.FLOW_SETPOINT),
         (Connection.BOILER_MODULE, ControlMode.MONITOR, BoilerClass.READ_ONLY),
-        (Connection.BOILER_MODULE, ControlMode.ROOM_VALUES, BoilerClass.READ_ONLY),
     ],
 )
 def test_the_boiler_class_follows_the_connection(
