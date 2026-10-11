@@ -141,6 +141,7 @@ from .core.demand import feeds_opening, feeds_power
 from .core.guards import WriteType
 from .core.installation import BoilerClass, BoilerType, CircuitControl, EmitterType, HeatSource
 from .core.metrics import ModulationScale
+from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
 from .core.relay import TIMER_MIN_S, RelayPowerOn, RelayReports, RelayRest, RelayTimer
 from .transport.entities import read_bounds, read_grid, relay_hvac_modes, temperature_unit_of
 from .vtherm_link import (
@@ -225,7 +226,7 @@ def _optional(key: str, current: dict[str, Any]) -> vol.Optional:
     return vol.Optional(key, description={"suggested_value": value} if value is not None else None)
 
 
-def _advanced(options: dict[str, Any]) -> bool:
+def _advanced(options: Mapping[str, Any]) -> bool:
     return options.get(LEVEL) == LEVEL_ADVANCED
 
 
@@ -826,35 +827,78 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
     boiler = options.get(BOILER, {})
     params = options.get(PARAMETERS, {})
     current = {**boiler, **params}
-    # The class, the hot water and condensing are the first panels' (I6).
+    # The class, the hot water and condensing are the first panels' (I6). I8 (decision E1): a
+    # field shows only where it can work, and a hidden value is kept (A3) — unless it is one the
+    # options cannot read, shown so it can be fixed.
+    shown = boiler_parameters_shown(options)
     fields: dict[Any, Any] = {
         _optional("boiler_min_power", current): _number(0.3, 200, 0.1, "kW"),
-        _optional("boiler_max_power", current): _number(1, 500, 0.1, "kW"),
     }
-    if _advanced(options):
+    if "boiler_max_power" in shown:
+        fields[_optional("boiler_max_power", current)] = _number(1, 500, 0.1, "kW")
+    if "max_ch_setpoint" in shown:
         fields[_optional("max_ch_setpoint", current)] = _number(20, 95, 1, "°C")
-        if gas_rates_shown(options):  # I6, decision 7: a gas boiler's, or one not said
-            fields[_optional("gas_at_min_power", current)] = _number(0, 200, 0.01)
-            fields[_optional("gas_at_max_power", current)] = _number(0, 500, 0.01)
+    if "gas_at_min_power" in shown:
+        fields[_optional("gas_at_min_power", current)] = _number(0, 200, 0.01, "m³/h")
+        fields[_optional("gas_at_max_power", current)] = _number(0, 500, 0.01, "m³/h")
     if pressure_limits_shown(options):
         fields |= pressure_fields(options)
-    if _advanced(options):
-        fields.update(
-            {
-                vol.Required(
-                    "modulation_scale",
-                    default=_choice(
-                        boiler.get("modulation_scale"),
-                        ModulationScale,
-                        ModulationScale.RANGE.value,
-                    ),
-                ): _select("modulation_scale", [m.value for m in ModulationScale]),
-                vol.Required("bypass", default=boiler.get("bypass", False)): (
-                    selector.BooleanSelector()
-                ),
-            }
+    if _advanced(options) and _modulation_mapped(options):
+        default = _choice(
+            boiler.get("modulation_scale"), ModulationScale, ModulationScale.RANGE.value
+        )
+        fields[vol.Required("modulation_scale", default=default)] = _select(
+            "modulation_scale", [m.value for m in ModulationScale]
+        )
+    if _advanced(options) and bypass_shown(options):
+        fields[vol.Required("bypass", default=boiler.get("bypass", False))] = (
+            selector.BooleanSelector()
         )
     return vol.Schema(fields)
+
+
+def boiler_parameters_shown(options: Mapping[str, Any]) -> set[str]:
+    """The boiler step's parameters where they can work (I8, decision E1): the minimum power
+    always; the maximum with a modulation signal, which it scales; at the advanced level the
+    highest heating setpoint but for a relay, and the gas rates with the modulation and no gas
+    meter — a gas boiler's, or one whose fuel is not said (I6). A stored value the options
+    cannot read is shown wherever it is, to be fixed."""
+    modulation = _modulation_mapped(options)
+    advanced = _advanced(options)
+    shown = {"boiler_min_power"}
+    if modulation:
+        shown.add("boiler_max_power")
+    if advanced and interface_connection(options) is not Connection.RELAY:
+        shown.add("max_ch_setpoint")
+    if advanced and gas_rates_shown(options):
+        shown |= set(_GAS_RATES)
+    broken = {key for key in BOILER_PARAMETER_KEYS if _parameter_unreadable(options, key)}
+    if broken & set(_GAS_RATES):
+        broken |= set(_GAS_RATES)  # the pair goes together
+    return shown | broken
+
+
+def _modulation_mapped(options: Mapping[str, Any]) -> bool:
+    return "modulation" in _stored_signals(options)
+
+
+def _parameter_unreadable(options: Mapping[str, Any], key: str) -> bool:
+    """A stored parameter the options cannot take (``implausible_parameter``): a hand edit."""
+    raw = _mapping(options.get(PARAMETERS)).get(key)
+    if raw in (None, ""):
+        return False
+    try:
+        ParameterSet().with_estimate(ParameterKey(key), Estimate(float(raw), Source.ENTERED))
+    except TypeError, ValueError:
+        return True
+    return False
+
+
+def bypass_shown(options: Mapping[str, Any]) -> bool:
+    """I8 (decision E1): the bypass turns the low-flow warning off, which works from a pump or
+    a heating-active signal."""
+    signals = _stored_signals(options)
+    return "pump_running" in signals or "ch_active" in signals
 
 
 # The water pressure's limits, from the boiler's manual and the safety valve's rating: facts about
@@ -1022,14 +1066,33 @@ def design_outdoor_of(options: Mapping[str, Any]) -> float:
 
 
 def monitor_schema(options: dict[str, Any]) -> vol.Schema:
+    """The analysis's thresholds where they can work (I8, decision E4): the condensing return
+    for a condensing boiler with a return signal, the burn and start thresholds with a flame
+    signal, the flue-gas limits as I7 has them; the monitoring days and the verdict window
+    always. A hidden value is kept (A3)."""
     monitor = options.get(MONITOR, {})
+    signals = _stored_signals(options)
+    flame = "flame" in signals
+    condensing = _stored_boiler(options).get("condensing") is not False
     return vol.Schema(
         {
-            vol.Required("condensing_return", default=monitor.get("condensing_return", 55.0)): (
-                _number(*MONITOR_BOUNDS["condensing_return"], 0.5, "°C")
+            **(
+                {
+                    vol.Required(
+                        "condensing_return", default=monitor.get("condensing_return", 55.0)
+                    ): _number(*MONITOR_BOUNDS["condensing_return"], 0.5, "°C")
+                }
+                if condensing and "return" in signals
+                else {}
             ),
-            vol.Required("short_burn_min", default=monitor.get("short_burn_min", 10.0)): _number(
-                *MONITOR_BOUNDS["short_burn_min"], 1, "min"
+            **(
+                {
+                    vol.Required(
+                        "short_burn_min", default=monitor.get("short_burn_min", 10.0)
+                    ): _number(*MONITOR_BOUNDS["short_burn_min"], 1, "min")
+                }
+                if flame
+                else {}
             ),
             vol.Required("monitoring_days", default=monitor.get("monitoring_days", 7.0)): _number(
                 *MONITORING_DAYS_BOUNDS, 1, "d"
@@ -1056,14 +1119,22 @@ def monitor_schema(options: dict[str, Any]) -> vol.Schema:
                 if flue_gas_limits_shown(options)
                 else {}
             ),
-            vol.Required(
-                "starts_per_hour_limit",
-                default=monitor.get("starts_per_hour_limit", DEFAULT_FREQUENT_STARTS_PER_HOUR),
-            ): _number(*MONITOR_BOUNDS["starts_per_hour_limit"], 1),
-            vol.Required(
-                "unstable_burns_limit",
-                default=monitor.get("unstable_burns_limit", DEFAULT_UNSTABLE_BURNS_PER_DAY),
-            ): _number(*MONITOR_BOUNDS["unstable_burns_limit"], 1),
+            **(
+                {
+                    vol.Required(
+                        "starts_per_hour_limit",
+                        default=monitor.get(
+                            "starts_per_hour_limit", DEFAULT_FREQUENT_STARTS_PER_HOUR
+                        ),
+                    ): _number(*MONITOR_BOUNDS["starts_per_hour_limit"], 1),
+                    vol.Required(
+                        "unstable_burns_limit",
+                        default=monitor.get("unstable_burns_limit", DEFAULT_UNSTABLE_BURNS_PER_DAY),
+                    ): _number(*MONITOR_BOUNDS["unstable_burns_limit"], 1),
+                }
+                if flame
+                else {}
+            ),
         }
     )
 
@@ -1258,7 +1329,14 @@ def setpoint_read_back(options: Mapping[str, Any]) -> str | None:
 
 
 def gas_rates_shown(options: Mapping[str, Any]) -> bool:
-    return stored_heat_source(options) not in (HeatSource.ELECTRIC, HeatSource.OIL)
+    """A gas boiler's, or one whose fuel is not said (I6); with the modulation they scale, and
+    without a gas meter, which measures the gas then (I8, decision E1)."""
+    signals = _stored_signals(options)
+    return (
+        stored_heat_source(options) not in (HeatSource.ELECTRIC, HeatSource.OIL)
+        and "modulation" in signals
+        and "gas_meter" not in signals
+    )
 
 
 def flue_gas_limits_shown(options: Mapping[str, Any]) -> bool:
@@ -2100,8 +2178,6 @@ BOILER_PARAMETER_KEYS = (
 )
 BUILDING_KEYS = ("design_load_kw",)
 ADVANCED_BUILDING_PARAMETERS = ("heating_threshold",)
-# Parameters shown at both levels: emptied in the form, they go.
-SIMPLE_PARAMETERS = ("boiler_min_power", "boiler_max_power", "design_outdoor")
 
 
 def apply_signals(options: dict[str, Any], user_input: dict[str, Any]) -> None:
@@ -2172,10 +2248,15 @@ def shared_signal_error(options: dict[str, Any], user_input: dict[str, Any]) -> 
 
 
 def apply_boiler(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    """The boiler step's answers: each parameter it shows set, or dropped where left empty; a
+    hidden one kept (I8, decision A3)."""
+    shown = boiler_parameters_shown(options)
     boiler = dict(options.get(BOILER, {}))
     boiler.update({k: user_input[k] for k in BOILER_KEYS if k in user_input})
     options[BOILER] = boiler
-    _apply_parameters(options, user_input, BOILER_PARAMETER_KEYS)
+    params = dict(options.get(PARAMETERS, {}))
+    _set_or_drop(params, user_input, tuple(k for k in BOILER_PARAMETER_KEYS if k in shown))
+    options[PARAMETERS] = params
     monitor = dict(options.get(MONITOR, {}))
     if pressure_limits_shown(options):  # not shown: kept (I7)
         _set_or_drop(monitor, user_input, PRESSURE_KEYS)
@@ -2193,19 +2274,6 @@ def apply_building(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     options[BUILDING] = building
     params = dict(options.get(PARAMETERS, {}))
     _set_or_drop(params, user_input, building_parameter_keys(options))
-    options[PARAMETERS] = params
-
-
-def _apply_parameters(
-    options: dict[str, Any], user_input: dict[str, Any], keys: tuple[str, ...]
-) -> None:
-    params = dict(options.get(PARAMETERS, {}))
-    shown_advanced = _advanced(options)
-    for key in keys:
-        if key in user_input and user_input[key] not in (None, ""):
-            params[key] = user_input[key]
-        elif key in SIMPLE_PARAMETERS or shown_advanced:
-            params.pop(key, None)
     options[PARAMETERS] = params
 
 
@@ -2280,14 +2348,15 @@ def _circuit_alarm_hidden(circuit: Mapping[str, Any]) -> bool:
 
 
 def apply_monitor(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    """The monitor step's answers; the flue-gas limits it does not show, and the pressure limits
-    the boiler step asks, are kept (I6)."""
+    """The monitor step's answers; what it does not show is kept — the thresholds that cannot
+    work now (I8, A3), and the pressure limits the boiler step asks (I6)."""
     stored = options.get(MONITOR)
-    kept = {
-        key: stored[key]
-        for key in (*FLUE_GAS_LIMITS, *PRESSURE_KEYS)
-        if isinstance(stored, Mapping) and key in stored and key not in user_input
-    }
+    shown = {str(marker) for marker in monitor_schema(options).schema}
+    kept = (
+        {key: value for key, value in stored.items() if key not in shown}
+        if isinstance(stored, Mapping)
+        else {}
+    )
     options[MONITOR] = {**kept, **user_input}
 
 
@@ -2331,6 +2400,11 @@ def _differ(values: dict[str, Any], defaults: dict[str, Any], keys: Any) -> bool
     return any(key in values and values[key] != defaults.get(key, _MISSING) for key in keys)
 
 
+# The signals that show every boiler and monitor field but the flue-gas limits, whose stored
+# values count as set (I8, decisions E1 and E4).
+_SHOWING_EVERY_FIELD = dict.fromkeys(("flame", "return", "modulation", "pump_running"), "-")
+
+
 def has_hidden_advanced(options: dict[str, Any]) -> bool:
     """At the simple level: whether anything only the advanced level shows is active — a fact
     the user gave, or a setting that differs from its default."""
@@ -2352,7 +2426,8 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
         any(key in options.get(SIGNALS, {}) for key in ADVANCED_SIGNALS)
         or _differ(
             options.get(BOILER, {}),
-            _schema_defaults(boiler_schema(advanced)),
+            # Every field's default: with the signals that show them (I8, decision E1).
+            _schema_defaults(boiler_schema(advanced | {SIGNALS: _SHOWING_EVERY_FIELD})),
             ("modulation_scale", "bypass"),
         )
         or any(
@@ -2370,7 +2445,7 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
         or any(_circuit_alarm_hidden(c) for c in circuits)
         or _differ(
             monitor,
-            _schema_defaults(monitor_schema({})),
+            _schema_defaults(monitor_schema({SIGNALS: _SHOWING_EVERY_FIELD})),
             [key for key in monitor if key not in PRESSURE_KEYS],  # the boiler step's (I6)
         )
         or _differ(

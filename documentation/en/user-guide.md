@@ -118,10 +118,16 @@ Only one entry of the integration can exist: it runs one boiler.
    indicator.
 4. **Describe the installation.** The sections **Boiler**, **Heating circuits** and **VT zones**
    (with one **Zone** step for each zone you pick) ask what you know. Leave unknown values
-   empty: the plugin then says what it cannot judge. **Boiler** also takes the water-pressure
-   limits from the boiler's manual and its safety valve — they appear once a pressure sensor is
-   mapped in **Boiler signals**, as the flue-gas limits in **Monitor thresholds** appear with a
-   flue-gas sensor. At the advanced level, **Building** takes the design heat load and the
+   empty: the plugin then says what it cannot judge. A field shows only where it can work, by
+   what is mapped in **Boiler signals**: in **Boiler** the minimum power always; the maximum
+   power and the modulation's meaning with a modulation signal; the gas per hour at minimum and
+   maximum power — from the technical data in the boiler's manual, in m³/h (kg/h for LPG) —
+   with it and without a gas meter; the water-pressure limits from the boiler's manual and its
+   safety valve with a pressure sensor; the bypass with a pump or heating-active signal; the
+   highest heating setpoint but for a relay. In **Monitor thresholds** the condensing return
+   for a condensing boiler with a return signal, the burn and start thresholds with a flame
+   signal, the flue-gas limits for a condensing boiler with a flue-gas sensor. A value already
+   set stays when its field is hidden, and judges nothing. At the advanced level, **Building** takes the design heat load and the
    heating threshold, for the monitor's statistics only — nothing there switches heating —
    and, without a heating curve, the outdoor temperature at the hardest frost the design load
    is given for.

@@ -531,6 +531,13 @@ entry that chose "room temperature only" before reads as monitoring only (I8.4a,
   user-entered → measured → learned. The user's entry always wins over measured and learned
   values; learning ("apply", 0.3) moves only within the band around it (principle 13, S-58). A
   mismatch between declared and measured values is a diagnostic finding.
+- A field shows only where it can work, and a value already set stays when its field is hidden
+  (I8 A3, E1, E4): the boiler's maximum power and modulation meaning with a modulation signal;
+  its gas per hour at minimum and maximum power (m³/h, kg/h for LPG, from the manual's technical
+  data) with it and without a gas meter; the pressure limits with a pressure sensor; the bypass
+  with a pump or heating-active signal; the highest heating setpoint but for a relay; the
+  condensing return for a condensing boiler with a return signal; the burn and start thresholds
+  with a flame signal. A stored value the options cannot take is shown, to be fixed.
 - Regular users answer what their installation needs; power users can fill every field (§4).
   Manual entry always wins; boiler data read from the integration only suggests and waits for
   confirmation.

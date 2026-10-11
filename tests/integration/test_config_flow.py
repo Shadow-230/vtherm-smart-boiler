@@ -45,6 +45,7 @@ def entities(hass: HomeAssistant, zones: FakeZones) -> dict[str, str]:
             Signal.RETURN: 28.0,
             Signal.PRESSURE: 1.5,
             Signal.FLUE_GAS: 30.0,
+            Signal.MODULATION: 0.0,
         }
     )
     hass.states.async_set(WEATHER_ENTITY, "cloudy", {"temperature": 5.0})
@@ -63,6 +64,7 @@ def entities(hass: HomeAssistant, zones: FakeZones) -> dict[str, str]:
         "return": boiler.entity(Signal.RETURN),
         "pressure": boiler.entity(Signal.PRESSURE),
         "flue_gas": boiler.entity(Signal.FLUE_GAS),
+        "modulation": boiler.entity(Signal.MODULATION),
     }
 
 
@@ -172,6 +174,7 @@ async def test_simple_flow_creates_an_entry(hass: HomeAssistant, entities: dict[
             "flame": entities["flame"],
             "flow": entities["flow"],
             "return": entities["return"],
+            "modulation": entities["modulation"],  # the maximum power is asked with it (E1)
             "weather": WEATHER_ENTITY,
         },
     )
@@ -197,6 +200,7 @@ async def test_simple_flow_creates_an_entry(hass: HomeAssistant, entities: dict[
         "flame": entities["flame"],
         "flow": entities["flow"],
         "return": entities["return"],
+        "modulation": entities["modulation"],
     }
     assert options["weather"] == WEATHER_ENTITY
     # I8 (decision E3): without a curve and a design load, no design outdoor temperature.
@@ -234,7 +238,12 @@ async def test_advanced_flow_with_two_circuits(
     result = await step(
         hass,
         result,
-        {"flame": entities["flame"], "flow": entities["flow"], "flue_gas": entities["flue_gas"]},
+        {
+            "flame": entities["flame"],
+            "flow": entities["flow"],
+            "flue_gas": entities["flue_gas"],
+            "modulation": entities["modulation"],  # the maximum and its meaning with it (E1)
+        },
     )
     result = await step(
         hass,
@@ -272,8 +281,7 @@ async def test_advanced_flow_with_two_circuits(
         hass,
         result,
         {
-            "condensing_return": 52,
-            "short_burn_min": 8,
+            "short_burn_min": 8,  # no condensing return: no return signal (I8, E4)
             "monitoring_days": 10,
         },
     )
@@ -284,6 +292,15 @@ async def test_advanced_flow_with_two_circuits(
     assert options["zones"][1]["circuit"] == "circuit_2"
     assert options["monitor"]["monitoring_days"] == 10
     await hass.async_block_till_done()
+
+
+def shown_only(result: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+    """An answer without the fields its form does not show (I8, decision A3: a field shows only
+    where it can work) — a relay's signals, the boiler's and the monitor's by what is mapped."""
+    if result.get("type") is not FlowResultType.FORM:
+        return data
+    shown = {str(marker) for marker in result["data_schema"].schema}
+    return {key: value for key, value in data.items() if key in shown}
 
 
 async def create_entry(
@@ -305,24 +322,20 @@ async def create_entry(
     result = await start_setup(hass, connection, "monitor")
     for data in (
         {"name": "Boiler", "level": level},
-        {"flame": entities["flame"], "flow": entities["flow"]},
+        # I8 (decision E1): the modulation's meaning is asked with a modulation signal.
+        {"flame": entities["flame"], "flow": entities["flow"]}
+        | ({"modulation": entities["modulation"]} if level == "advanced" else {}),
         {"modulation_scale": "capacity"} if level == "advanced" else {},
         {"control": "unmixed_shared"} | ({"add_another": False} if level == "advanced" else {}),
         {"zones": [entities[zone] for zone in zones]},
         *({"emitter": "radiator"} for _zone in zones),
         *(({},) if level == "advanced" else ()),  # the building: advanced only (I8, E2)
     ):
-        result = await step(hass, result, data)
+        result = await step(hass, result, shown_only(result, data))
     if level == "advanced":
-        result = await step(
-            hass,
-            result,
-            {
-                "condensing_return": 55,
-                "short_burn_min": 10,
-                "monitoring_days": 7,
-            },
-        )
+        # I8 (decision E4): the condensing return with a return signal, which is not mapped.
+        monitor = {"condensing_return": 55, "short_burn_min": 10, "monitoring_days": 7}
+        result = await step(hass, result, shown_only(result, monitor))
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     entry = result["result"]
@@ -1307,7 +1320,7 @@ async def test_a_problem_found_at_the_end_is_shown_on_its_step(
     result = await start_setup(hass)
     for data in (
         {"name": "Boiler", "level": "advanced"},
-        {"flame": entities["flame"], "flow": entities["flow"]},
+        {k: entities[k] for k in ("flame", "flow", "modulation")},
         {"modulation_scale": "range"},
         {"control": "unmixed_shared", "add_another": False},
         {"zones": []},
@@ -5029,18 +5042,124 @@ def test_a_signal_the_heat_source_hides_keeps_what_is_stored() -> None:
 
 
 @pytest.mark.parametrize(
-    ("source", "rates"),
-    [("gas", True), ("other", True), (None, True), ("oil", False), ("electric", False)],
+    ("source", "signals", "rates"),
+    [
+        ("gas", ("modulation",), True),
+        ("other", ("modulation",), True),
+        (None, ("modulation",), True),
+        ("oil", ("modulation",), False),
+        ("electric", ("modulation",), False),
+        ("gas", (), False),  # I8 (E1): nothing to scale them
+        ("gas", ("modulation", "gas_meter"), False),  # the meter measures the gas
+    ],
 )
-def test_the_gas_rates_are_asked_for_a_gas_boiler_only(source: str | None, rates: bool) -> None:
+def test_the_gas_rates_are_asked_for_a_gas_boiler_only(
+    source: str | None, signals: tuple[str, ...], rates: bool
+) -> None:
     """Decision 7: gas per hour at minimum and maximum power — a gas boiler's, or one whose fuel
-    is not said."""
+    is not said; I8 (decision E1): with the modulation they scale, and without a gas meter, in
+    m³/h."""
     from custom_components.vtherm_smart_boiler.config_flow import boiler_schema
 
     boiler = {} if source is None else {"heat_source": source}
-    shown = {str(m) for m in boiler_schema({"level": "advanced", "boiler": boiler}).schema}
+    options = {"level": "advanced", "boiler": boiler, "signals": dict.fromkeys(signals, "x")}
+    schema = boiler_schema(options).schema
+    shown = {str(m) for m in schema}
     assert ({"gas_at_min_power", "gas_at_max_power"} <= shown) is rates
     assert "max_ch_setpoint" in shown
+    if rates:
+        rate = next(v for m, v in schema.items() if str(m) == "gas_at_min_power")
+        assert rate.config["unit_of_measurement"] == "m³/h"
+
+
+# --- I8.6: the boiler's and the monitor's fields where they can work (decisions E1, E4) -------
+
+
+@pytest.mark.parametrize(
+    ("options", "shown", "hidden"),
+    [
+        ({}, {"boiler_min_power"}, {"boiler_max_power", "modulation_scale", "bypass"}),
+        (
+            {"signals": {"modulation": "s.m"}},
+            {"boiler_max_power", "modulation_scale", "max_ch_setpoint"},
+            {"bypass"},
+        ),
+        ({"signals": {"pump_running": "b.p"}}, {"bypass"}, {"boiler_max_power"}),
+        ({"signals": {"ch_active": "b.c"}}, {"bypass"}, set()),
+        ({"boiler": {"connection": "relay"}}, set(), {"max_ch_setpoint"}),
+        ({"control": {"write_path": "relay"}}, set(), {"max_ch_setpoint"}),  # before the question
+    ],
+    ids=["nothing", "modulation", "pump", "heating_active", "relay", "relay_path"],
+)
+def test_the_boiler_step_shows_a_field_where_it_can_work(
+    options: dict[str, Any], shown: set[str], hidden: set[str]
+) -> None:
+    """Decision E1: the minimum power always; the maximum and the modulation's meaning with a
+    modulation signal; the highest heating setpoint but for a relay; the bypass with a pump or
+    heating-active signal, which the low-flow warning reads."""
+    from custom_components.vtherm_smart_boiler.config_flow import boiler_schema
+
+    fields = {str(m) for m in boiler_schema({"level": "advanced"} | options).schema}
+    assert "boiler_min_power" in fields
+    assert shown <= fields
+    assert not hidden & fields
+
+
+def test_a_hidden_boiler_value_is_kept_and_an_unreadable_one_shown() -> None:
+    """Decision A3: a value whose field is hidden is kept at the save — the maximum power and
+    the gas rates without a modulation signal; an emptied shown field goes. A stored value the
+    options cannot take is shown, hidden or not, to be fixed — the gas rates as a pair."""
+    from custom_components.vtherm_smart_boiler.config_flow import apply_boiler, boiler_schema
+
+    params = {
+        "boiler_min_power": 4.0,
+        "boiler_max_power": 24.0,
+        "gas_at_min_power": 0.4,
+        "gas_at_max_power": 2.5,
+        "max_ch_setpoint": 80,
+    }
+    options: dict[str, Any] = {
+        "level": "advanced",
+        "boiler": {"modulation_scale": "capacity"},
+        "parameters": dict(params),
+    }
+    apply_boiler(options, {"boiler_min_power": 5.0})  # the highest setpoint shown, emptied
+    kept = {k: v for k, v in params.items() if k != "max_ch_setpoint"}
+    assert options["parameters"] == kept | {"boiler_min_power": 5.0}
+    assert options["boiler"] == {"modulation_scale": "capacity"}
+    broken = {"level": "simple", "parameters": {"gas_at_max_power": 9999.0}}
+    fields = {str(m) for m in boiler_schema(broken).schema}
+    assert {"gas_at_min_power", "gas_at_max_power"} <= fields
+    assert "boiler_max_power" not in fields
+
+
+@pytest.mark.parametrize(
+    ("options", "shown"),
+    [
+        ({}, {"monitoring_days", "verdict_window_days"}),
+        (
+            {"signals": {"flame": "b.f"}},
+            {"short_burn_min", "starts_per_hour_limit", "unstable_burns_limit"},
+        ),
+        ({"signals": {"return": "s.r"}}, {"condensing_return"}),
+        ({"signals": {"return": "s.r"}, "boiler": {"condensing": False}}, set()),
+    ],
+    ids=["nothing", "flame", "return", "not_condensing"],
+)
+def test_the_monitor_step_shows_a_threshold_where_it_can_work(
+    options: dict[str, Any], shown: set[str]
+) -> None:
+    """Decision E4: the condensing return for a condensing boiler with a return signal, the
+    burn and start thresholds with a flame signal; the monitoring days and the verdict window
+    always. A hidden threshold is kept at the save."""
+    from custom_components.vtherm_smart_boiler.config_flow import apply_monitor, monitor_schema
+
+    fields = {str(m) for m in monitor_schema(options).schema}
+    assert fields == {"monitoring_days", "verdict_window_days"} | shown
+    stored = options | {"monitor": {"short_burn_min": 8.0, "condensing_return": 50.0}}
+    apply_monitor(stored, {"monitoring_days": 7.0})
+    for key, value in (("short_burn_min", 8.0), ("condensing_return", 50.0)):
+        assert (stored["monitor"].get(key) == value) is (key not in fields)
 
 
 def test_the_flue_gas_limits_are_asked_for_a_condensing_boiler_only() -> None:
@@ -5499,7 +5618,7 @@ async def test_the_setup_menu_names_a_problem_to_fix(
     result = await configure(hass, result, {"name": "Boiler", "level": "advanced"})
     for section, answer in (
         ("signals", {}),
-        ("boiler", {"modulation_scale": "range"}),
+        ("boiler", {}),  # no modulation: nothing it asks (I8, E1)
         ("circuit", {"control": "unmixed_shared", "add_another": False}),
         ("zones", {"zones": []}),
         ("building", {"design_load_kw": 200.0, "design_outdoor": -15.0}),  # 5.7 kW/K
@@ -5622,7 +5741,7 @@ async def test_the_limits_come_with_their_sensor_in_the_same_session(
     result = await configure(result["flow_id"], {"next_step_id": "monitor"})
     assert "flue_gas_warning" not in result["data_schema"].schema
     result = await configure(result["flow_id"], {})
-    signals = {"flame": entities["flame"], "flow": entities["flow"]}
+    signals = {k: entities[k] for k in ("flame", "flow", "modulation")}
     result = await configure(result["flow_id"], {"next_step_id": "signals"})
     sensors = {"pressure": entities["pressure"], "flue_gas": entities["flue_gas"]}
     result = await configure(result["flow_id"], signals | sensors)

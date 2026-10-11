@@ -741,6 +741,10 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
             config = getattr(validator, "config", {})
             if config.get("translation_key"):
                 selectors.setdefault(config["translation_key"], set()).update(config["options"])
+    # I8 (decision E1): the gas rates, asked with the modulation and no gas meter.
+    no_meter = {k: v for k, v in signals["signals"].items() if k != "gas_meter"}
+    rates = {"level": "advanced", "signals": no_meter}
+    fields["boiler"] |= {str(m) for m in flow.boiler_schema(rates).schema}
     # I6.2: ESPHome's safe-start tick, asked on the writable-entity step for ESPHome only.
     esphome = {"boiler": {"connection": "esphome"}, "control": {"write_path": "entity"}}
     fields["control_entity"] |= {str(m) for m in flow.control_entity_schema(esphome).schema}
