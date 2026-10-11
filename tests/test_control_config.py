@@ -1298,11 +1298,18 @@ def test_one_entity_for_two_signals_is_a_blocker() -> None:
 
 def test_the_option_key_lists_are_one_each() -> None:
     """P-71: the writable-entity step's answers and what a hand-back goes through are listed
-    once, in the control options — with what judges it (PB-09)."""
+    once, in the control options — with what judges it (PB-09); the gateway and the MQTT topics
+    among them are the "Boiler interface" item's (I8, decision D2)."""
     from custom_components.vtherm_smart_boiler import config_flow
-    from custom_components.vtherm_smart_boiler.control_config import HAND_BACK_KEYS, TARGET_KEYS
+    from custom_components.vtherm_smart_boiler.control_config import (
+        HAND_BACK_KEYS,
+        INTERFACE_CONTROL_KEYS,
+        MQTT_TOPIC_KEYS,
+        TARGET_KEYS,
+    )
 
-    assert set(HAND_BACK_KEYS) <= set(TARGET_KEYS)
+    assert set(HAND_BACK_KEYS) <= {*TARGET_KEYS, *INTERFACE_CONTROL_KEYS, *MQTT_TOPIC_KEYS}
+    assert not set(TARGET_KEYS) & {*INTERFACE_CONTROL_KEYS, *MQTT_TOPIC_KEYS}
     assert config_flow.fixed_keys is fixed_keys
     assert config_flow.TARGET_KEYS is TARGET_KEYS
     assert not hasattr(config_flow, "ENTITY_STEP_KEYS")

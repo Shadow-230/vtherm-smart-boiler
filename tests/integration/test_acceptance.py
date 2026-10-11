@@ -1476,31 +1476,49 @@ async def options_step(rig: Rig, result: dict[str, Any], data: dict[str, Any]) -
 
 async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> None:
     """T-23 (P-37): the plugin past its monitoring and no control yet; the simulated gateway set
-    up through the stub's config flow, as at J4 — options → Control → OpenTherm Gateway →
-    gateway ID ``sim`` → "Save and finish" (I7): the flow completes; the plugin then controls
-    the simulated boiler through it, its setpoint confirmed by the gateway's read-back and its
-    heating switch by the boiler's "Central heating 1"."""
+    up through the stub's config flow, as at J4 — options → the connection (an entry made before
+    the question answers it first, then the mode) → "Boiler interface" (I8, decision D2: the one
+    gateway ``sim`` taken without asking, the topology and the thermostat terminals) → Control →
+    "Save and finish" (I7): the flow completes; the plugin then controls the simulated boiler
+    through it, its setpoint confirmed by the gateway's read-back and its heating switch by the
+    boiler's "Central heating 1"."""
     await start(rig, with_control=False)
     assert rig.entry is not None
     hass = rig.hass
     menu = await hass.config_entries.options.async_init(rig.entry.entry_id)
     assert "control" in menu["menu_options"]
+    assert "interface" not in menu["menu_options"]  # nothing to follow yet
     result = await options_step(rig, menu, {"next_step_id": "control"})
+    result = await options_step(
+        rig, result, {"write_path": "opentherm_gw", "confirmed_entity": CONFIRMED}
+    )
+    assert result["errors"] == {"base": "connection_not_answered"}
+    hass.config_entries.options.async_abort(result["flow_id"])
+    menu = await hass.config_entries.options.async_init(rig.entry.entry_id)
+    result = await options_step(rig, menu, {"next_step_id": "connection"})
+    answers = {"connection": "opentherm_gw", "heat_source": "gas", "type": "combi"}
+    result = await options_step(rig, result, answers)
+    assert result["step_id"] == "mode"  # none stored: asked at once (I8, D1)
+    result = await options_step(rig, result, {"control_mode": "full"})
+    assert "interface" in result["menu_options"]
+    result = await options_step(rig, result, {"next_step_id": "interface"})
+    assert "gateway_id" not in {str(m) for m in result["data_schema"].schema}  # the one: sim
+    result = await options_step(rig, result, {"topology": "gateway_with_thermostat"})
+    assert result["step_id"] == "interface"  # shown again with the terminals' question (A2)
+    assert "thermostat_kind" in {str(m) for m in result["data_schema"].schema}
+    interface = {"topology": "gateway_with_thermostat", "thermostat_kind": "opentherm"}
+    result = await options_step(rig, result, interface)
+    assert result["type"] == "menu"
+    result = await options_step(rig, result, {"next_step_id": "control"})
     result = await options_step(
         rig,
         result,
         {
             "write_path": "opentherm_gw",
-            "topology": "gateway_with_thermostat",
-            "thermostat_kind": "opentherm",
             "confirmed_entity": CONFIRMED,
             "ch_confirmed_entity": CH_ENABLED,
         },
     )
-    assert result["step_id"] == "control_gateway"
-    offered = next(v for m, v in result["data_schema"].schema.items() if str(m) == "gateway_id")
-    assert offered.config["options"] == ["sim"]
-    result = await options_step(rig, result, {"gateway_id": "sim"})
     assert result["step_id"] == "control_curve"
     curve = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_max": 70}
     result = await options_step(rig, result, curve)

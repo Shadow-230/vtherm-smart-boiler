@@ -111,8 +111,12 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
 3. **Wybierz sygnały.** W sekcji **Sygnały kotła** wybierz encję dla każdego sygnału, który masz —
    co najmniej płomień i temperaturę zasilania, jeśli chcesz sterować kotłem. Wtyczka tylko
    czyta te encje. Przy integracji OpenTherm Gateway i dokładnie jednej bramce jej encje kotła
-   są wpisane za Ciebie do sprawdzenia. Przy firmware OTGW przez MQTT i przy EMS-ESP osobny krok
-   pyta o tematy MQTT urządzenia (zobacz [Świeżość danych](#68-świeżość-danych)).
+   są wpisane za Ciebie do sprawdzenia. **Interfejs kotła** pyta o to, co wtyczka musi wiedzieć o
+   urządzeniu między nią a kotłem, tylko tam, gdzie używa tego Twoje połączenie i tryb: o tematy
+   MQTT firmware'u OTGW albo EMS-ESP (zobacz [Świeżość danych](#68-świeżość-danych)), o bramkę,
+   gdy skonfigurowano więcej niż jedną, o to, jak bramka stoi między termostatem a kotłem i co
+   jest podłączone do jej zacisków termostatu ([5.3](#53-sposób-podłączenia-bramki)), oraz o
+   wskaźnik restartu.
 4. **Opisz instalację.** Sekcje **Kocioł**, **Obiegi grzewcze** i **Strefy VT** (z jednym
    krokiem **Strefa** dla każdej wybranej strefy) pytają o to, co wiesz. Nieznane wartości
    zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Sekcja **Kocioł** pyta też o limity
@@ -464,17 +468,18 @@ sterowania”).
 
 ### 5.3 Sposób podłączenia bramki
 
-Podajesz, jak bramka jest podłączona („Podłączenie bramki”); Home Assistant nie potrafi tego
-odczytać.
+Podajesz, jak bramka jest podłączona („Podłączenie bramki”, w **Interfejs kotła**); Home
+Assistant nie potrafi tego odczytać. Pokazane są tylko podłączenia pasujące do ścieżki zapisu;
+ESPHome i EMS-ESP są wirtualne bez pytania.
 
 | Podłączenie bramki | Co wtyczka może robić |
 |---|---|
 | Bramka z termostatem | sterować; oddanie sterowania zwraca kocioł termostatowi |
 | Bramka bez termostatu (samodzielna) | sterować; oddanie sterowania zatrzymuje grzanie |
-| Bramka w trybie monitora | tylko monitorować |
 | Wirtualnie: sterownik po stronie Home Assistant | sterować przez encje tego sterownika |
 
-Dla bramki formularz pyta też, **co jest podłączone do zacisków termostatu bramki**:
+Przy podłączeniu bramki pozycja pokazuje się ponownie i pyta, **co jest podłączone do zacisków
+termostatu bramki**:
 
 | Odpowiedź | Sterowanie |
 |---|---|
@@ -954,7 +959,7 @@ Gdy „Sygnały” są wyłączone, ich atrybuty wskazują sygnał, z którym je
 | Sterowanie zatrzymane: przekaźnik przestał przyjmować „wyłącz” | sprawdź go, potem wyłącz i włącz |
 | Przekaźnik raz po raz wyłącza się po stałym czasie od „włącz” | podaj jego wyłącznik czasowy |
 | Kocioł nie grzeje, gdy sterowanie jest wyłączone | przekaźnik spoczywa wyłączony, gdy pomieszczenia potrzebują ciepła |
-| Podaj, co jest podłączone do zacisków termostatu bramki | odpowiedz w opcjach sterowania |
+| Podaj, co jest podłączone do zacisków termostatu bramki | odpowiedz w „Interfejs kotła” |
 | Termostat ścienny utrzymałby w domu chłód po oddaniu sterowania | podnieś jego ustawienie |
 | Termostat ścienny nie podaje nastawy | sprawdź jego ustawienie i sygnał |
 | Encja używana przez wtyczkę zniknęła | wybierz inną w opcjach |

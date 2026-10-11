@@ -103,8 +103,12 @@ Only one entry of the integration can exist: it runs one boiler.
 3. **Pick the signals.** In the section **Boiler signals** pick the entity for each signal you have — at
    least flame and flow temperature if you plan to control the boiler. The plugin only reads
    these entities. With the OpenTherm Gateway integration and exactly one gateway, its boiler
-   entities are filled in for you to check. On the OTGW firmware over MQTT and on EMS-ESP a step
-   asks the device's MQTT topics (see [Fresh data](#68-fresh-data)).
+   entities are filled in for you to check. **Boiler interface** asks what the plugin needs to
+   know about the device between it and the boiler, only where your connection and mode use
+   it: the MQTT topics of the OTGW firmware or EMS-ESP (see [Fresh data](#68-fresh-data)), the
+   gateway where more than one is set up, how a gateway sits between thermostat and boiler and
+   what is wired to its thermostat terminals ([5.3](#53-the-gateway-topology)), and the restart
+   indicator.
 4. **Describe the installation.** The sections **Boiler**, **Heating circuits** and **VT zones**
    (with one **Zone** step for each zone you pick) ask what you know. Leave unknown values
    empty: the plugin then says what it cannot judge. **Boiler** also takes the water-pressure
@@ -442,16 +446,18 @@ The control switch shows what a hand-back does in your installation ("On hand-ba
 
 ### 5.3 The gateway topology
 
-You declare how the gateway is wired ("Gateway connection"); Home Assistant cannot read it.
+You declare how the gateway is wired ("Gateway connection", in **Boiler interface**); Home
+Assistant cannot read it. Only the connections that fit the write path are offered; ESPHome and
+EMS-ESP are virtual without asking.
 
 | Gateway connection | What the plugin may do |
 |---|---|
 | Gateway with a thermostat | control; hand-back returns the boiler to the thermostat |
 | Gateway without a thermostat (stand-alone) | control; hand-back stops heating |
-| Gateway in monitor mode | monitor only |
 | Virtual: a controller on the Home Assistant side | control through that controller's entities |
 
-For a gateway, the form also asks **what is wired to the gateway's thermostat terminals**:
+With a gateway connection the item shows itself again and asks **what is wired to the gateway's
+thermostat terminals**:
 
 | Answer | Control |
 |---|---|
@@ -859,9 +865,9 @@ Repair issues about control:
 | The heating curve looks too low for … | the correction at its limit for 3 h, most rooms short: raise the curve first, then check radiators and heat loss |
 | … stays short of its setpoint | the correction at its limit for 3 h, one room short: check its radiator, valve and window first, then the curve |
 
-The control switch also names the setup answers that keep control off: monitoring only, room
-temperature only (from version 0.3), a control or a topology that does not fit the boiler's
-connection, and on ESPHome the safe start not confirmed.
+The control switch also names the setup answers that keep control off: monitoring only, a
+control or a topology that does not fit the boiler's connection, and on ESPHome the safe start
+not confirmed.
 
 ### 7.3 Zones
 
@@ -913,7 +919,7 @@ When "Signals" is off, its attributes name the signal with the problem.
 | Control stopped: the relay stopped taking "off" | check it, then switch off and on |
 | The relay keeps switching off a fixed time after "on" | declare its timer |
 | The boiler does not heat while control is off | the relay rests off while rooms call |
-| Say what is wired to the gateway's thermostat terminals | answer it in the control options |
+| Say what is wired to the gateway's thermostat terminals | answer it under Boiler interface |
 | The wall thermostat would keep the house cool after a hand-back | raise its setting |
 | The wall thermostat reports no setpoint | check its setting and the signal |
 | An entity the plugin uses is gone | pick another one in the options |

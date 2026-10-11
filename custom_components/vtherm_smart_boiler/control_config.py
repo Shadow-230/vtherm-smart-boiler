@@ -392,9 +392,16 @@ RELAY_KEYS = (
 TARGET_KEYS = (
     "setpoint_entity", "write_type", "ch_entity", "ch_write_type", "hand_back",
     "hand_back_value", "hand_back_value_effect", "hand_back_entity", "hand_back_entity_write_type",
-    "hand_back_timeout_min", "gateway_id", "mqtt_top", "mqtt_node", "own_room_controller",
-    ESPHOME_SAFE_START, *RELAY_KEYS,
+    "hand_back_timeout_min", "own_room_controller", ESPHOME_SAFE_START, *RELAY_KEYS,
 )  # fmt: skip
+# The "Boiler interface" item's answers kept in the control section, where they were stored
+# before the item (I8, decision D2; Claude's call: the storage stays): the gateway, how it sits
+# between thermostat and boiler, what is on its thermostat terminals, the thermostat's own
+# request, the restart indicator. The firmware's MQTT topics are the connection's (one copy).
+INTERFACE_CONTROL_KEYS = (
+    "gateway_id", "topology", "thermostat_kind", "thermostat_setpoint_entity", "restart_entity",
+)  # fmt: skip
+MQTT_TOPIC_KEYS = ("mqtt_top", "mqtt_node")
 # The control section's keys that name an entity (P-19: a rename is followed there, a removal
 # told).
 ENTITY_KEYS = (
@@ -770,6 +777,20 @@ def _plain_number(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return float(value) if math.isfinite(value) else None
+
+
+def with_interface_topics(section: Any, boiler: Any) -> Any:
+    """I8.4b: the OTGW firmware's topics are stored once, with the connection (the boiler
+    section), for the repeats and the writes alike; a control section writing over MQTT reads
+    them from there — topics of its own (a hand edit) are taken first."""
+    if (
+        not isinstance(section, Mapping)
+        or section.get("write_path") != WritePath.OTGW_MQTT.value
+        or not isinstance(boiler, Mapping)
+    ):
+        return section
+    found = {k: boiler[k] for k in MQTT_TOPIC_KEYS if boiler.get(k) and not section.get(k)}
+    return {**section, **found} if found else section
 
 
 def section_as_migrated(section: Any) -> Any:

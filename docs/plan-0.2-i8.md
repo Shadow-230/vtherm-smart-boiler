@@ -8,7 +8,8 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-11: the plan approved by the user; I8.0 to I8.3 and I8.4a done; I8.4b next.
+Status on 2026-10-11: the plan approved by the user; I8.0 to I8.3, I8.4a and I8.4b done; I8.4c
+next.
 
 ## How to read this plan
 
@@ -404,6 +405,25 @@ write path and the "monitor mode" topology.
   thermostat-like mode), the user guides (the setup and the options), notes on
   `docs/plan-0.2.md` I6 and `docs/plan-0.2-i6.md` decision 6; the technical documents describe
   no menu, so they stay.
+- I8.4b ✅ (2026-10-11): the "Boiler interface" item, in the setup and the options, where it
+  has something to ask (A3): the MQTT topics of the OTGW firmware or EMS-ESP always — the
+  plugin hears the repeats with monitoring only too; with control wanted, the gateway where
+  not exactly one is set up (Claude's call: the one is taken without asking), the topology
+  among those the path can control through (a controller on Home Assistant's side virtual
+  without asking), what is wired to a gateway's thermostat terminals and the thermostat's own
+  request where the topology has them — the form shows itself again with what an answer
+  reveals (A2) — and the restart indicator. Claude's calls: the answers stay where they were
+  stored (the control section), and "No control" keeps them; the topics are stored once, with
+  the connection — minor version 15 moves the control section's copy there (where they
+  differ, the control's, which the writes used), and control reads them from there (a
+  section's own, a hand edit, first; a session taken with them compares as it ran); an entry
+  made before the connection question follows its write path, and one without control
+  answers the connection first. The control step keeps the write path and the read-backs (its
+  gateway and MQTT steps went); it refuses a path the interface's answers do not suit, the
+  hand-back guard said first. The hand-back guards that fix the gateway, the topics and the
+  thermostat's request while a hand-back is owed or control holds the boiler apply in the item
+  and at the save, which goes back to it. `SCOPE.md` (the setup, the gateway topology), both
+  user guides (the setup, 5.3, the issue table).
 
 - Code: two menu items for connection and mode; the mode step opened after a connection change
   that leaves the mode impossible; "room temperature only" hidden; the "Boiler interface" item

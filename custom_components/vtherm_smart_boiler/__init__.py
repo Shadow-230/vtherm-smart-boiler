@@ -242,6 +242,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_building(hass, entry)
     if entry.minor_version < 14:
         _migrate_room_values(hass, entry)
+    if entry.minor_version < 15:
+        _migrate_topics(hass, entry)
     return True
 
 
@@ -402,6 +404,38 @@ def _migrate_room_values(hass: HomeAssistant, entry: ConfigEntry) -> None:
     hass.config_entries.async_update_entry(entry, options=options, minor_version=14)
 
 
+def _migrate_topics(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.4b (minor version 15): the OTGW firmware's MQTT topics were stored twice — with the
+    connection, for the repeats, and in the control section, for the writes; they are stored
+    once now, with the connection (`docs/plan-0.2-i8.md` D2). Where the two differ, the control
+    section's go there — what the writes used (Claude's call), logged."""
+    import logging
+
+    from .const import BOILER
+    from .control_config import MQTT_TOPIC_KEYS
+
+    options = dict(entry.options)
+    control = options.get(CONTROL)
+    if isinstance(control, Mapping) and any(key in control for key in MQTT_TOPIC_KEYS):
+        boiler = dict(options.get(BOILER) or {}) if isinstance(options.get(BOILER), Mapping) else {}
+        for key in MQTT_TOPIC_KEYS:
+            value = control.get(key)
+            if value in (None, ""):
+                continue
+            if boiler.get(key) not in (None, "", value):
+                logging.getLogger(__name__).info(
+                    "The connection's MQTT %s %r is replaced by the control's %r, which the "
+                    "writes used",
+                    key,
+                    boiler[key],
+                    value,
+                )
+            boiler[key] = value
+        options[BOILER] = boiler
+        options[CONTROL] = {k: v for k, v in control.items() if k not in MQTT_TOPIC_KEYS}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=15)
+
+
 def _stored_float(raw: Any, default: float) -> float:
     """A stored number, or ``default`` where none (or no finite number) is stored."""
     import math
@@ -414,11 +448,13 @@ def _stored_float(raw: Any, default: float) -> float:
 def control_as_run(options: Mapping[str, Any]) -> Any:
     """The control section as control runs it, kept with what took the boiler and compared with
     it at a restart: the building's design outdoor temperature in its curve, where the curve has
-    none of its own (I6) — so the section compares as before the value moved, and a change to it
-    is a change to control's options."""
-    from .const import PARAMETERS
+    none of its own (I6), and the connection's MQTT topics where it writes over MQTT (I8.4b) — so
+    the section compares as before the values moved, and a change to them is a change to
+    control's options."""
+    from .const import BOILER, PARAMETERS
+    from .control_config import with_interface_topics
 
-    section = options.get(CONTROL)
+    section = with_interface_topics(options.get(CONTROL), options.get(BOILER))
     params = options.get(PARAMETERS)
     if not isinstance(section, Mapping) or not isinstance(params, Mapping):
         return section

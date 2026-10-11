@@ -6,8 +6,10 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
+import voluptuous as vol
 
 TRANSLATIONS = (
     Path(__file__).resolve().parents[1] / "custom_components/vtherm_smart_boiler/translations"
@@ -96,8 +98,8 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "control_entity": flow.control_entity_schema(
             options | {"control": {"write_path": "entity", "topology": "virtual"}}
         ),  # with the "own room controller" tick (answers F, M)
-        "control_gateway": flow.control_gateway_schema(options, ["gw"]),
-        "control_mqtt": flow.control_mqtt_schema(options),
+        # I8 (decision D2): the interface's form at its fullest — a gateway's, and MQTT's topics.
+        "interface": _interface_schemas(flow),
         "control_curve": flow.control_curve_schema(options),
         "control_behaviour": flow.control_behaviour_schema(options),
         "control_alarms": flow.control_alarms_schema(options),
@@ -327,8 +329,9 @@ def test_x6_texts_are_translated() -> None:
         assert issue["title"], key
         assert set(PLACEHOLDER.findall(issue["description"])) == placeholders, key
     held = "the plugin sends it again with the control setpoint, every 30 s"  # the follow-up
-    assert held in SOURCE["options"]["step"]["control_gateway"]["data_description"]["gateway_id"]
-    assert held in SOURCE["options"]["step"]["control_mqtt"]["description"]
+    interface = SOURCE["options"]["step"]["interface"]["data_description"]  # I8 (decision D2)
+    assert held in interface["gateway_id"]
+    assert held in interface["mqtt_top"]
     labels = SOURCE["options"]["step"]["control_curve"]["data"]
     assert labels["hard_min"] == "Lowest water temperature"  # the carry-over from X5
     assert labels["hard_max"] == "Highest water temperature"
@@ -709,8 +712,7 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                 "monitor": flow.monitor_schema(options),
                 "control": flow.control_schema(options),
                 "control_entity": flow.control_entity_schema(options),
-                "control_gateway": flow.control_gateway_schema(options, ["gw"]),
-                "control_mqtt": flow.control_mqtt_schema(options),
+                "interface": _interface_schemas(flow),
                 "control_curve": flow.control_curve_schema(options, 120.0),
                 "control_behaviour": flow.control_behaviour_schema(options),
                 "control_alarms": flow.control_alarms_schema(options),
@@ -729,10 +731,6 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                         offered = config["options"]
                         values = {o["value"] if isinstance(o, dict) else o for o in offered}
                         selectors.setdefault(key, set()).update(values)
-    # I6.5: the MQTT topics step, for the OTGW firmware and for EMS-ESP.
-    for connection in ("otgw_mqtt", "ems_esp"):
-        schema = flow.mqtt_topics_schema({"boiler": {"connection": connection}})
-        fields.setdefault("mqtt_topics", set()).update(str(m) for m in schema.schema)
     # I6.2: ESPHome's safe-start tick, asked on the writable-entity step for ESPHome only.
     esphome = {"boiler": {"connection": "esphome"}, "control": {"write_path": "entity"}}
     fields["control_entity"] |= {str(m) for m in flow.control_entity_schema(esphome).schema}
@@ -747,6 +745,24 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
         ("left", "fix", "ready", "changed", "unchanged")
     )
     return fields, selectors
+
+
+def _interface_schemas(flow: Any) -> Any:
+    """I8 (decision D2): the "Boiler interface" form at its fullest — a gateway with a
+    thermostat among two gateways set up, and both MQTT connections' topics."""
+    gateway = {
+        "boiler": {"connection": "opentherm_gw", "control_mode": "full"},
+        "control": {"topology": "gateway_with_thermostat"},
+    }
+    fields: dict[Any, Any] = {}
+    for options, gateways in (
+        (gateway, ["gw1", "gw2"]),
+        ({"boiler": {"connection": "other_entity", "control_mode": "full"}}, []),  # virtual too
+        ({"boiler": {"connection": "otgw_mqtt"}}, []),
+        ({"boiler": {"connection": "ems_esp"}}, []),
+    ):
+        fields.update(flow.interface_schema(options, None, gateways).schema)
+    return vol.Schema(fields)
 
 
 def _unused_keys(texts: dict) -> list[str]:

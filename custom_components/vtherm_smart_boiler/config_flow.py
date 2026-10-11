@@ -88,6 +88,8 @@ from .control_config import (
     GATEWAY_TOPOLOGIES,
     HAND_BACK_TIMEOUT_DEFAULT_MIN,
     HAND_BACK_TIMEOUT_MIN,
+    INTERFACE_CONTROL_KEYS,
+    MQTT_TOPIC_KEYS,
     PATH_TOPOLOGIES,
     RELAY_DEFAULTS,
     RELAY_DOMAINS,
@@ -119,6 +121,7 @@ from .control_config import (
     off_too_close_to_lowest,
     own_room_controller_offered,
     parse_thermostat_kind,
+    with_interface_topics,
     write_ignored_offered,
 )
 from .core.alarms import (
@@ -461,33 +464,214 @@ def apply_connection(options: dict[str, Any], user_input: dict[str, Any]) -> Non
     options[BOILER] = boiler
 
 
-# The MQTT topics each MQTT connection publishes under (I6, decision 9): asked with the
-# connection, so the plugin can hear its repeats whether or not control is set up.
+# The MQTT topics each MQTT connection publishes under (I6, decision 9): asked in the "Boiler
+# interface" item (I8, D2), so the plugin hears the repeats whether or not control is set up —
+# and the OTGW firmware's are the ones its writes go to (one copy, minor version 15).
 EMS_ESP_BASE = "ems_esp_base"
 TOPIC_KEYS: Mapping[Connection, tuple[str, ...]] = {
     Connection.OTGW_MQTT: ("mqtt_top", "mqtt_node"),
     Connection.EMS_ESP: (EMS_ESP_BASE,),
 }
+ALL_TOPIC_KEYS = ("mqtt_top", "mqtt_node", EMS_ESP_BASE)
 
 
-def mqtt_topics_schema(options: dict[str, Any]) -> vol.Schema:
-    """The OTGW firmware's top level and node — taken from the control options where they are
-    there — or EMS-ESP's base topic, ``ems-esp`` unless stored."""
-    boiler = _stored_boiler(options)
+INTERFACE = "interface"
+
+
+# For an entry made before the connection question: the connection its write path stands for in
+# the "Boiler interface" item — a writable entity of any kind asks what any of them may.
+_INTERFACE_BY_PATH: Mapping[str, Connection] = {
+    WritePath.OPENTHERM_GW.value: Connection.OPENTHERM_GW,
+    WritePath.OTGW_MQTT.value: Connection.OTGW_MQTT,
+    WritePath.ENTITY.value: Connection.OTHER_ENTITY,
+    WritePath.RELAY.value: Connection.RELAY,
+}
+
+
+def interface_connection(options: Mapping[str, Any]) -> Connection | None:
+    """The connection the "Boiler interface" item follows: the stored one; for an entry made
+    before the question, the one its control section's write path stands for."""
+    connection = stored_connection(options)
+    if connection is not None:
+        return connection
+    return _INTERFACE_BY_PATH.get(str(_mapping(options.get(CONTROL)).get("write_path")))
+
+
+def control_wanted(options: Mapping[str, Any]) -> bool:
+    """Full control or on/off chosen; for an entry made before the mode, a control section that
+    writes."""
+    if _stored_boiler(options).get(CONTROL_MODE) is not None:
+        return wants_control(options)
     control = options.get(CONTROL)
-    control = control if isinstance(control, Mapping) else {}
-    if stored_connection(options) is Connection.EMS_ESP:
-        return vol.Schema(
-            {vol.Required(EMS_ESP_BASE, default=boiler.get(EMS_ESP_BASE, "ems-esp")): str}
-        )
-    top = boiler.get("mqtt_top") or control.get("mqtt_top") or "OTGW"
-    node = boiler.get("mqtt_node") or control.get("mqtt_node") or vol.UNDEFINED
-    return vol.Schema(
-        {
-            vol.Required("mqtt_top", default=top): str,
-            vol.Required("mqtt_node", default=node): str,
-        }
-    )
+    return isinstance(control, Mapping) and control.get("write_path") not in (None, "", NO_CONTROL)
+
+
+def interface_fields(
+    options: Mapping[str, Any], answers: Mapping[str, Any] | None = None, *, gateways: int = 1
+) -> list[str]:
+    """What the "Boiler interface" item asks (I8, decision D2), its form following the
+    connection: the MQTT topics of a connection over MQTT always — the plugin hears the device's
+    repeats on them, with control or without; with control wanted, the gateway where not exactly
+    one is set up (the one is taken without asking), the topology where the connection does not
+    decide it (a controller on Home Assistant's side is virtual), what is wired to a gateway's
+    thermostat terminals and the thermostat's own request where its topology has them, and the
+    restart indicator. ``answers``: the form's answers so far, which may reveal fields."""
+    connection = interface_connection(options)
+    if connection is None:
+        return []
+    fields = list(TOPIC_KEYS.get(connection, ()))
+    if not control_wanted(options) or connection is Connection.READ_ONLY:
+        return fields
+    control = {**_mapping(options.get(CONTROL)), **(answers or {})}
+    if connection is Connection.OPENTHERM_GW and gateways != 1:
+        fields.append("gateway_id")
+    if connection is not Connection.RELAY and connection not in VIRTUAL_CONNECTIONS:
+        fields.append("topology")
+        if _gateway_topology(control.get("topology")):
+            fields.append(THERMOSTAT_KIND)
+        if control.get("topology") == Topology.GATEWAY_WITH_THERMOSTAT.value:
+            fields.append("thermostat_setpoint_entity")
+    fields.append("restart_entity")
+    return fields
+
+
+def _mapping(raw: object) -> Mapping[str, Any]:
+    return raw if isinstance(raw, Mapping) else {}
+
+
+def interface_topologies(options: Mapping[str, Any]) -> list[str]:
+    """The topologies the connection's write path can control through (P-44's table)."""
+    connection = interface_connection(options)
+    path = CONNECTION_PATH.get(connection) if connection is not None else None
+    allowed = PATH_TOPOLOGIES.get(path, frozenset()) if path is not None else frozenset()
+    return [topology.value for topology in Topology if topology in allowed]
+
+
+def interface_schema(
+    options: Mapping[str, Any],
+    answers: Mapping[str, Any] | None = None,
+    gateways: Sequence[str] = (),
+) -> vol.Schema:
+    """The "Boiler interface" form: the fields ``interface_fields`` names, each with its stored
+    answer — the topics where the connection keeps them, EMS-ESP's ``ems-esp`` and the
+    firmware's ``OTGW`` unless stored."""
+    boiler = _stored_boiler(options)
+    topics = {k: boiler[k] for k in ALL_TOPIC_KEYS if k in boiler}
+    # A control section's own topics (a hand edit) are what the writes use: shown first.
+    stored = {**topics, **_mapping(options.get(CONTROL))}
+    current = {**stored, **{k: v for k, v in (answers or {}).items() if v not in (None, "")}}
+    topologies = interface_topologies(options)
+    fields: dict[Any, Any] = {}
+    for key in interface_fields(options, answers, gateways=len(gateways)):
+        if key == "mqtt_top":
+            fields[vol.Required(key, default=current.get(key) or "OTGW")] = str
+        elif key == "mqtt_node":
+            fields[vol.Required(key, default=current.get(key) or vol.UNDEFINED)] = str
+        elif key == EMS_ESP_BASE:
+            fields[vol.Required(key, default=current.get(key) or "ems-esp")] = str
+        elif key == "gateway_id":
+            field: Any = (
+                selector.SelectSelector(
+                    # Only a gateway set up and enabled in Home Assistant can take a write (P-106).
+                    selector.SelectSelectorConfig(
+                        options=list(gateways),
+                        custom_value=False,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                )
+                if gateways
+                else str
+            )
+            fields[vol.Required(key, default=current.get(key) or vol.UNDEFINED)] = field
+        elif key == "topology":
+            chosen = current.get(key)
+            default = chosen if chosen in topologies else vol.UNDEFINED
+            fields[vol.Required(key, default=default)] = _select("topology", topologies)
+        elif key == THERMOSTAT_KIND:
+            fields[_thermostat_kind_field(current)] = _select(
+                THERMOSTAT_KIND, [kind.value for kind in ThermostatKind]
+            )
+        elif key == "thermostat_setpoint_entity":
+            fields[_optional(key, dict(current))] = _entity(_THERMOSTAT_SETPOINT_ENTITY)
+        else:  # the restart indicator
+            fields[_optional(key, dict(current))] = _entity(_RESTART_ENTITY)
+    return vol.Schema(fields)
+
+
+def interface_error(
+    options: Mapping[str, Any],
+    user_input: Mapping[str, Any],
+    gateways: Sequence[str],
+    loaded: Collection[str],
+) -> dict[str, str]:
+    """What the "Boiler interface" item needs: valid MQTT topics; a gateway set up and running
+    (P-69); the answer about a gateway's thermostat terminals, one that fits its topology
+    (decision 1); the thermostat's own request not the boiler's read-back (PB-70)."""
+    for key in ALL_TOPIC_KEYS:
+        if key in user_input and not mqtt_topic_valid(user_input[key]):
+            return {key: "mqtt_topic_invalid"}
+    fields = interface_fields(options, user_input, gateways=len(gateways))
+    if "gateway_id" in fields:
+        picked = str(user_input.get("gateway_id") or "")
+        if picked not in gateways:
+            return {"gateway_id": "gateway_unknown"}  # every write would fail
+        if picked not in loaded:
+            return {"gateway_id": "gateway_not_set_up"}  # not running: nothing arrives
+    elif (
+        interface_connection(options) is Connection.OPENTHERM_GW
+        and control_wanted(options)
+        and len(gateways) == 1
+        and gateways[0] not in loaded
+    ):
+        return {"base": "gateway_not_set_up"}
+    topology = user_input.get("topology")
+    if THERMOSTAT_KIND in fields and topology:
+        kind = parse_thermostat_kind(user_input.get(THERMOSTAT_KIND))
+        if kind is None:
+            return {THERMOSTAT_KIND: "thermostat_kind_missing"}
+        if kind_contradicts_topology(Topology(topology), kind):
+            return {THERMOSTAT_KIND: "thermostat_kind_contradicts_topology"}
+    thermostat = user_input.get("thermostat_setpoint_entity")
+    if thermostat and thermostat == _mapping(options.get(CONTROL)).get("confirmed_entity"):
+        return {"thermostat_setpoint_entity": "thermostat_setpoint_same_as_read_back"}
+    return {}
+
+
+def apply_interface(
+    options: dict[str, Any], user_input: Mapping[str, Any], gateways: Sequence[str]
+) -> None:
+    """The "Boiler interface" answers: the topics with the connection (one copy), the rest in
+    the control section where they were stored before the item — each field shown set, or
+    dropped where left empty; the one gateway set up taken, a controller on Home Assistant's
+    side virtual; no thermostat answers where the topology has no terminals, none for a relay."""
+    connection = interface_connection(options)
+    boiler = dict(_stored_boiler(options))
+    for key in TOPIC_KEYS.get(connection, ()) if connection is not None else ():
+        if key in user_input:
+            boiler[key] = str(user_input[key]).strip()
+    if boiler:
+        options[BOILER] = boiler
+    if connection is Connection.OTGW_MQTT and isinstance(options.get(CONTROL), Mapping):
+        # One copy (minor version 15): a control section's own topics would be read first.
+        options[CONTROL] = {k: v for k, v in options[CONTROL].items() if k not in MQTT_TOPIC_KEYS}
+    if not control_wanted(options) or connection in (None, Connection.READ_ONLY):
+        return
+    fields = interface_fields(options, user_input, gateways=len(gateways))
+    control = dict(_mapping(options.get(CONTROL)))
+    _set_or_drop(control, dict(user_input), tuple(k for k in fields if k in INTERFACE_CONTROL_KEYS))
+    if connection is Connection.OPENTHERM_GW and len(gateways) == 1:
+        control["gateway_id"] = gateways[0]
+    if connection in VIRTUAL_CONNECTIONS:
+        control["topology"] = Topology.VIRTUAL.value
+    if not _gateway_topology(control.get("topology")):
+        control.pop(THERMOSTAT_KIND, None)
+    if control.get("topology") != Topology.GATEWAY_WITH_THERMOSTAT.value:
+        control.pop("thermostat_setpoint_entity", None)
+    if connection is Connection.RELAY:
+        for key in ("topology", THERMOSTAT_KIND, "thermostat_setpoint_entity"):
+            control.pop(key, None)
+    if control:
+        options[CONTROL] = control
 
 
 def apply_mode(options: dict[str, Any], user_input: dict[str, Any]) -> None:
@@ -527,6 +711,21 @@ GATEWAY_READ_BACKS: Mapping[str, tuple[str, str]] = {
 # The texts the signals step reads into its description, one per connection (I6, decision 2).
 SIGNAL_HINT = "signal_hint"
 SOURCE_HINT = "source_hint"  # and one per heat source that changes what to pick (I6)
+
+
+def gateways_set_up(hass: HomeAssistant) -> tuple[list[str], set[str]]:
+    """The gateways set up and enabled in the OpenTherm Gateway integration (P-69), by ID, and
+    those of them running."""
+    entries = [
+        entry
+        for entry in hass.config_entries.async_entries(
+            OPENTHERM_GW_DOMAIN, include_ignore=False, include_disabled=False
+        )
+        if entry.data.get("id")
+    ]
+    ids = sorted({str(entry.data["id"]) for entry in entries})
+    loaded = {str(entry.data["id"]) for entry in entries if entry.state is ConfigEntryState.LOADED}
+    return ids, loaded
 
 
 def gateway_entities(hass: HomeAssistant, wanted: Mapping[str, tuple[str, str]]) -> dict[str, str]:
@@ -1017,10 +1216,10 @@ def stored_connection(options: Mapping[str, Any]) -> Connection | None:
 def control_schema(
     options: dict[str, Any], suggested: Mapping[str, Any] | None = None
 ) -> vol.Schema:
-    """The first control step. ``suggested``: what the connection suggests where nothing is
-    stored (I6, decision 2) — the virtual topology for a controller on Home Assistant's side, the
-    gateway's own read-backs."""
-    control = options.get(CONTROL, {})
+    """The first control step: the write path and the read-backs (the interface's questions
+    are an item of their own, I8 D2). ``suggested``: what the connection suggests where nothing
+    is stored (I6, decision 2) — the gateway's own read-backs."""
+    control = _mapping(options.get(CONTROL))
     shown = {**(suggested or {}), **{k: v for k, v in control.items() if v not in (None, "")}}
     paths = paths_for_class(options)
     stored = control.get("write_path", NO_CONTROL)
@@ -1029,19 +1228,8 @@ def control_schema(
     return vol.Schema(
         {
             vol.Required("write_path", default=default): _select("write_path", paths),
-            _optional("topology", shown): _select("topology", [t.value for t in Topology]),
-            # Asked with a gateway topology only; the form cannot hide it for the others, chosen
-            # on this same page (its text says so), and the save drops it for them.
-            _thermostat_kind_field(control): _select(
-                THERMOSTAT_KIND, [kind.value for kind in ThermostatKind]
-            ),
             _optional("confirmed_entity", shown): _entity(_READ_BACK_ENTITY),
             _optional("ch_confirmed_entity", shown): _entity(_ECHO_ENTITY),
-            # With an OpenTherm thermostat on a gateway (its text says so): its own request,
-            # which a fall-back after an outage shows. The form cannot show it only for that
-            # topology, chosen on this same page; the plugin reads it only with it.
-            _optional("thermostat_setpoint_entity", control): _entity(_THERMOSTAT_SETPOINT_ENTITY),
-            _optional("restart_entity", control): _entity(_RESTART_ENTITY),
         }
     )
 
@@ -1122,36 +1310,6 @@ def _offers_own_room_controller(control: Mapping[str, Any]) -> bool:
     except ValueError:
         return False
     return own_room_controller_offered(path, topology)
-
-
-def control_gateway_schema(options: dict[str, Any], gateways: list[str]) -> vol.Schema:
-    control = options.get(CONTROL, {})
-    current = control.get("gateway_id") or (gateways[0] if len(gateways) == 1 else vol.UNDEFINED)
-    field: Any = (
-        selector.SelectSelector(
-            # Only a gateway set up and enabled in Home Assistant can take a write (P-106).
-            selector.SelectSelectorConfig(
-                options=gateways, custom_value=False, mode=selector.SelectSelectorMode.DROPDOWN
-            )
-        )
-        if gateways
-        else str
-    )
-    return vol.Schema({vol.Required("gateway_id", default=current): field})
-
-
-def control_mqtt_schema(options: dict[str, Any]) -> vol.Schema:
-    """The firmware's topics; where the control options have none, the first panel's (I6)."""
-    control = options.get(CONTROL, {})
-    boiler = _stored_boiler(options)
-    top = control.get("mqtt_top", boiler.get("mqtt_top", "OTGW"))
-    node = control.get("mqtt_node", boiler.get("mqtt_node", vol.UNDEFINED))
-    return vol.Schema(
-        {
-            vol.Required("mqtt_top", default=top): str,
-            vol.Required("mqtt_node", default=node): str,
-        }
-    )
 
 
 ACTIVATION_DELAY = "activation_delay_s"
@@ -1500,12 +1658,8 @@ def confirm_blocking_schema() -> vol.Schema:
 
 CONTROL_STEP_KEYS = (
     "write_path",
-    "topology",
-    THERMOSTAT_KIND,
     "confirmed_entity",
     "ch_confirmed_entity",
-    "thermostat_setpoint_entity",
-    "restart_entity",
 )
 
 
@@ -1521,20 +1675,21 @@ _NOT_FOR_RELAY = (
 
 
 def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    """The first control step: the write path, topology, what is wired to the gateway's
-    thermostat terminals and read-backs; "none" removes control. A topology without thermostat
-    terminals keeps no answer about them; the relay path keeps none of them but the restart
-    indicator."""
+    """The first control step: the write path and the read-backs; "none" removes control but
+    keeps the "Boiler interface" answers, which are the interface's (I8, decision D2). The relay
+    path keeps no topology, thermostat answers or read-backs: it reads none of them."""
+    control = dict(_mapping(options.get(CONTROL)))
     if user_input["write_path"] == NO_CONTROL:
-        options.pop(CONTROL, None)
+        kept = {k: v for k, v in control.items() if k in INTERFACE_CONTROL_KEYS}
+        if kept:
+            options[CONTROL] = kept
+        else:
+            options.pop(CONTROL, None)
         return
-    control = dict(options.get(CONTROL, {}))
     if control.get("write_path") != user_input["write_path"]:
         for key in TARGET_KEYS:
             control.pop(key, None)
     _set_or_drop(control, user_input, CONTROL_STEP_KEYS)
-    if not _gateway_topology(control.get("topology")):
-        control.pop(THERMOSTAT_KIND, None)
     if user_input["write_path"] == WritePath.RELAY:
         for key in _NOT_FOR_RELAY:
             control.pop(key, None)
@@ -1641,6 +1796,9 @@ def _set_or_drop(target: dict[str, Any], user_input: dict[str, Any], keys: tuple
 CONTROL_ENTITY_FIELDS: Mapping[str, EntityFilter] = {
     "confirmed_entity": _READ_BACK_ENTITY,
     "ch_confirmed_entity": _ECHO_ENTITY,
+}
+# The "Boiler interface" item's entity fields (I8, decision D2).
+INTERFACE_ENTITY_FIELDS: Mapping[str, EntityFilter] = {
     "thermostat_setpoint_entity": _THERMOSTAT_SETPOINT_ENTITY,
     "restart_entity": _RESTART_ENTITY,
 }
@@ -1676,26 +1834,49 @@ def control_error(
         return {}
     if not user_input.get("confirmed_entity"):
         return {"confirmed_entity": "confirmed_entity_missing"}
-    topology = user_input.get("topology")
-    if not topology:
-        return {"topology": "topology_missing"}
-    if Topology(topology) is Topology.MONITOR_MODE:
-        return {"topology": "topology_no_control"}
-    if Topology(topology) not in PATH_TOPOLOGIES[WritePath(path)]:
-        return {"topology": "topology_not_for_path"}
-    if connection in VIRTUAL_CONNECTIONS and Topology(topology) is not Topology.VIRTUAL:
-        return {"topology": "topology_not_for_connection"}  # a controller on HA's side
-    if Topology(topology) in GATEWAY_TOPOLOGIES:
-        kind = parse_thermostat_kind(user_input.get(THERMOSTAT_KIND))
-        if kind is None:
-            return {THERMOSTAT_KIND: "thermostat_kind_missing"}
-        if kind_contradicts_topology(Topology(topology), kind):
-            return {THERMOSTAT_KIND: "thermostat_kind_contradicts_topology"}
-    thermostat = user_input.get("thermostat_setpoint_entity")
+    # The interface's answers (I8, decision D2): stored by its own item; given here only by an
+    # older caller.
+    given = {**(_mapping(options.get(CONTROL)) if options is not None else {}), **user_input}
+    if interface_answers_problem(given, WritePath(path), connection):
+        if options is not None and interface_connection(options) is None:
+            # An entry made before the connection question, without control: the interface
+            # item follows the connection, so that comes first.
+            return {"base": "connection_not_answered"}
+        return {"base": "interface_not_answered"}
+    thermostat = given.get("thermostat_setpoint_entity")
     if thermostat and thermostat == user_input.get("confirmed_entity"):
         # The boiler's read-back shows the plugin's value, not the thermostat's own request.
-        return {"thermostat_setpoint_entity": "thermostat_setpoint_same_as_read_back"}
+        return {"confirmed_entity": "thermostat_setpoint_same_as_read_back"}
     return {}
+
+
+def interface_answers_problem(
+    given: Mapping[str, Any], path: WritePath, connection: Connection | None
+) -> str | None:
+    """What the "Boiler interface" answers lack for a water path (one table with the blockers,
+    P-44): the topology, one the path can control through and the connection suits — a
+    controller on Home Assistant's side is virtual — and, with a gateway topology, the answer
+    about its thermostat terminals, one that fits it (decision 1). ``None`` where they do."""
+    raw = given.get("topology")
+    try:
+        topology = Topology(str(raw)) if raw else None
+    except ValueError:
+        topology = None
+    if topology is None:
+        return "topology_missing"
+    if topology is Topology.MONITOR_MODE:
+        return "topology_no_control"
+    if topology not in PATH_TOPOLOGIES[path]:
+        return "topology_not_for_path"
+    if connection in VIRTUAL_CONNECTIONS and topology is not Topology.VIRTUAL:
+        return "topology_not_for_connection"
+    if topology in GATEWAY_TOPOLOGIES:
+        kind = parse_thermostat_kind(given.get(THERMOSTAT_KIND))
+        if kind is None:
+            return "thermostat_kind_missing"
+        if kind_contradicts_topology(topology, kind):
+            return "thermostat_kind_contradicts_topology"
+    return None
 
 
 def mqtt_set_up(hass: HomeAssistant) -> bool:
@@ -2195,7 +2376,6 @@ def problem_step(code: str, subject: str | None) -> str:
 # The texts the menu reads into its description: what is left, what to fix, what changed.
 MENU_STATE = "menu_state"
 _SECTION_OF_STEP = {
-    "mqtt_topics": "connection",
     "zone": "zones",
     "level_hidden": "level",
 }
@@ -2222,9 +2402,12 @@ def control_offered(options: Mapping[str, Any]) -> bool:
 
 def section_shown(options: Mapping[str, Any], section: str) -> bool:
     """A section that does not apply is not on the menu (decision 2): the monitor's thresholds
-    and the building (I8, decision E2) at the simple level, control as above."""
+    and the building (I8, decision E2) at the simple level, the interface where it asks
+    nothing, control as above."""
     if section in ("monitor", "building"):
         return options.get(LEVEL) == LEVEL_ADVANCED
+    if section == INTERFACE:
+        return bool(interface_fields(options))  # where there is something to ask (I8, D2)
     if section == "control":
         return control_offered(options)
     return True
@@ -2248,6 +2431,7 @@ class _Steps:
     _CATEGORY = "config"
     _confirmed: set[str]  # the sections confirmed in this flow
     _mode_due = False  # the mode must be answered again after the connection (I8, D1)
+    _interface_draft: dict[str, Any] | None = None  # the interface form's answers so far (A2)
     _changed: list[str]  # the sections whose answers changed the options, in that order
     _at_menu: dict[str, Any] | None  # the options as the menu last showed them
 
@@ -2316,38 +2500,16 @@ class _Steps:
     async def async_step_connection(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """The first panel (I6): how the boiler is connected, the heat source, the boiler type;
-        then the MQTT topics for a connection over MQTT. The mode follows at once where it must
-        be answered again (I8, decision D1; ``mode_due``)."""
+        """The first panel (I6): how the boiler is connected, the heat source, the boiler type.
+        The mode follows at once where it must be answered again (I8, decision D1;
+        ``mode_due``); the interface's own questions are an item of their own (D2)."""
         if user_input is not None:
             before = _stored_boiler(self.options)
             asked_before = {key: before.get(key) for key in (HEAT_SOURCE, BOILER_TYPE)}
             apply_connection(self.options, user_input)
             self._mode_due = mode_due(self.options, asked_before)
-            if Connection(user_input[CONNECTION]) in TOPIC_KEYS:
-                return await self.async_step_mqtt_topics()
             return await self._after("connection")
         return self._form(step_id="connection", data_schema=connection_schema(self.options))
-
-    async def async_step_mqtt_topics(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """The topics the interface publishes under (I6, decision 9)."""
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            errors = {
-                key: "mqtt_topic_invalid"
-                for key, value in user_input.items()
-                if not mqtt_topic_valid(value)
-            }
-            if not errors:
-                boiler = dict(_stored_boiler(self.options))
-                boiler.update({key: str(value).strip() for key, value in user_input.items()})
-                self.options[BOILER] = boiler
-                return await self._after("mqtt_topics")
-        return self._form(
-            step_id="mqtt_topics", data_schema=mqtt_topics_schema(self.options), errors=errors
-        )
 
     async def async_step_mode(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """The second panel (I6), a menu item of its own (I8, decision D1): the control mode the
@@ -2575,6 +2737,45 @@ class _ControlSteps(_Steps):
             None,
         )
 
+    async def async_step_interface(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The "Boiler interface" item (I8, decision D2): its form follows the connection, and
+        shows itself again with the fields an answer revealed (decision A2) — a gateway topology
+        reveals what is wired to its thermostat terminals. While a hand-back is owed, or control
+        holds the boiler, what the hand-back goes through cannot change (PB-09)."""
+        gateways, loaded = gateways_set_up(self.hass)
+        errors: dict[str, str] = {}
+        draft = self._interface_draft or {}
+        if user_input is not None:
+            user_input = {
+                key: value.strip() if key in ALL_TOPIC_KEYS and isinstance(value, str) else value
+                for key, value in user_input.items()
+            }
+            shown = interface_fields(self.options, draft, gateways=len(gateways))
+            revealed = set(interface_fields(self.options, user_input, gateways=len(gateways)))
+            self._interface_draft = dict(user_input)
+            if revealed - set(shown):
+                return self._form(
+                    step_id=INTERFACE,
+                    data_schema=interface_schema(self.options, user_input, gateways),
+                )
+            errors = interface_error(self.options, user_input, gateways, loaded) or (
+                entity_errors(self.hass, user_input, INTERFACE_ENTITY_FIELDS)
+            )
+            blocker = await self._async_hand_back_blocker()
+            if not errors and blocker and self._changes_hand_back(user_input, shown, blocker):
+                errors = {"base": blocker}
+            if not errors:
+                apply_interface(self.options, user_input, gateways)
+                self._interface_draft = None
+                return await self._after(INTERFACE)
+        return self._form(
+            step_id=INTERFACE,
+            data_schema=interface_schema(self.options, user_input or draft, gateways),
+            errors=errors,
+        )
+
     def _changes_hand_back(
         self, user_input: dict[str, Any], shown: vol.Schema | Collection[str], blocker: str
     ) -> bool:
@@ -2599,12 +2800,22 @@ class _ControlSteps(_Steps):
         if user_input is not None:
             path = user_input["write_path"]
             current = self._stored_control().get("write_path")
+            blocker = await self._async_hand_back_blocker()
             errors = control_error(user_input, self.options)
+            if (
+                path not in (NO_CONTROL, current)
+                and blocker
+                and errors.get("base") == ("interface_not_answered")
+            ):
+                # What the hand-back goes through cannot change now: said first, before what the
+                # new path would still need (I8, decision D2).
+                errors = {"write_path": blocker}
             if not errors and path != NO_CONTROL:
                 errors = entity_errors(self.hass, user_input, CONTROL_ENTITY_FIELDS)
             if not errors and path != NO_CONTROL and not _zone_entities(self.options):
                 errors = {"base": "no_zones"}  # nothing could ever ask for heat (S-04)
-            blocker = await self._async_hand_back_blocker()
+            if not errors and path == WritePath.OTGW_MQTT and not mqtt_set_up(self.hass):
+                errors = {"base": "mqtt_not_set_up"}  # the commands would go nowhere (P-69)
             if not errors and path not in (NO_CONTROL, current) and blocker:
                 # "No control" stays possible: the hand-back goes through the old path, retried
                 # by a unit that only hands back.
@@ -2626,22 +2837,18 @@ class _ControlSteps(_Steps):
                 prefill = self._vt_prefill()
                 moving = prefill is not None and prefill.exists
                 return await self._goto("control_relay_from_vt" if moving else "control_relay")
-            step = {
-                WritePath.ENTITY: "control_entity",
-                WritePath.OPENTHERM_GW: "control_gateway",
-                WritePath.OTGW_MQTT: "control_mqtt",
-            }[WritePath(path)]
-            return await self._goto(step)
+            if path == WritePath.ENTITY:
+                return await self._goto("control_entity")
+            # The gateway and the firmware's topics are the interface's (I8, decision D2).
+            return await self._goto("control_curve")
         return self._form(
             step_id="control", data_schema=control_schema(self.options, self._control_suggestions())
         )
 
     def _control_suggestions(self) -> dict[str, str]:
-        """What the connection suggests on the first control step (I6, decision 2): the virtual
-        topology for ESPHome and EMS-ESP; the one gateway's read-backs."""
+        """What the connection suggests on the first control step (I6, decision 2): the one
+        gateway's read-backs."""
         connection = stored_connection(self.options)
-        if connection in VIRTUAL_CONNECTIONS:
-            return {"topology": Topology.VIRTUAL.value}
         if connection is Connection.OPENTHERM_GW:
             return gateway_entities(self.hass, GATEWAY_READ_BACKS)
         return {}
@@ -2688,71 +2895,6 @@ class _ControlSteps(_Steps):
             step_id="control_entity",
             data_schema=control_entity_schema(self.options),
             errors=errors,
-        )
-
-    async def async_step_control_gateway(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        errors: dict[str, str] = {}
-        # Only gateways enabled in Home Assistant are offered (P-69).
-        entries = self.hass.config_entries.async_entries(
-            OPENTHERM_GW_DOMAIN, include_ignore=False, include_disabled=False
-        )
-        gateways = sorted({str(entry.data["id"]) for entry in entries if entry.data.get("id")})
-        if user_input is not None:
-            picked = str(user_input["gateway_id"])
-            if picked not in gateways:
-                errors = {"gateway_id": "gateway_unknown"}  # every write would fail
-            elif not any(
-                entry.state is ConfigEntryState.LOADED
-                for entry in entries
-                if str(entry.data.get("id")) == picked
-            ):
-                errors = {"gateway_id": "gateway_not_set_up"}  # not running: nothing arrives
-            elif (blocker := await self._async_hand_back_blocker()) and self._changes_hand_back(
-                user_input, control_gateway_schema(self.options, gateways), blocker
-            ):
-                errors = {"base": blocker}
-            else:
-                apply_control_details(self.options, user_input)
-                return await self.async_step_control_curve()
-        return self._form(
-            step_id="control_gateway",
-            data_schema=control_gateway_schema(self.options, gateways),
-            errors=errors,
-        )
-
-    async def async_step_control_mqtt(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            errors = {
-                key: "mqtt_topic_invalid"
-                for key in ("mqtt_top", "mqtt_node")
-                if not mqtt_topic_valid(user_input.get(key))
-            }
-            if not mqtt_set_up(self.hass):
-                errors = {"base": "mqtt_not_set_up"}  # the commands would go nowhere (P-69)
-            blocker = await self._async_hand_back_blocker()
-            # Spaces around a valid topic level are dropped, not published to.
-            user_input = {
-                key: value.strip()
-                if key in ("mqtt_top", "mqtt_node") and isinstance(value, str)
-                else value
-                for key, value in user_input.items()
-            }
-            if (
-                not errors
-                and blocker
-                and self._changes_hand_back(user_input, control_mqtt_schema(self.options), blocker)
-            ):
-                errors = {"base": blocker}
-            if not errors:
-                apply_control_details(self.options, user_input)
-                return await self.async_step_control_curve()
-        return self._form(
-            step_id="control_mqtt", data_schema=control_mqtt_schema(self.options), errors=errors
         )
 
     def _vt_prefill(self) -> VtCentralBoiler | None:
@@ -3088,8 +3230,9 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # 11: the zones' emitter output and exponent and "near room temperature" go; 12: the curve's
     # "correction range" goes, a narrower one becoming the correction's limit; 13: the floor
     # area, insulation and thermal mass go, an entered loss coefficient becoming the design load
-    # it gives; 14: "room temperature only" reads as monitoring only (see async_migrate_entry).
-    MINOR_VERSION = 14
+    # it gives; 14: "room temperature only" reads as monitoring only; 15: the OTGW firmware's
+    # topics are stored once, with the connection (see async_migrate_entry).
+    MINOR_VERSION = 15
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}
@@ -3109,12 +3252,12 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # I7: the first panels, the name and the level come first — they decide what follows; then
     # the menu, in this order, each section shown where it applies.
     SECTIONS = (
-        "connection", "mode", "name", "signals", "boiler", "circuit", "zones", "building",
-        "monitor", "control",
+        "connection", "mode", "name", INTERFACE, "signals", "boiler", "circuit", "zones",
+        "building", "monitor", "control",
     )  # fmt: skip
 
     def _next_after(self, step: str) -> str:
-        if step in ("connection", "mqtt_topics") and self._mode_due:
+        if step == "connection" and self._mode_due:
             return "mode"
         if step == "mode" and "name" not in self._confirmed:
             return "name"
@@ -3225,12 +3368,14 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
         return self._unreadable.pop(0) if self._unreadable else None
 
     def _stored_control(self) -> Mapping[str, Any]:
-        """The stored control section; one of another shape reads as none (PB-06)."""
-        current = self.config_entry.options.get(CONTROL)
+        """The stored control section, with the connection's MQTT topics where it writes over
+        MQTT (I8.4b: stored once); one of another shape reads as none (PB-06)."""
+        stored = self.config_entry.options
+        current = with_interface_topics(stored.get(CONTROL), stored.get(BOILER))
         return current if isinstance(current, Mapping) else {}
 
     def _next_after(self, step: str) -> str:
-        if step in ("connection", "mqtt_topics") and self._mode_due:
+        if step == "connection" and self._mode_due:
             return "mode"
         return "init"
 
@@ -3269,12 +3414,19 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
         types, the device's timeout, and with a hand-back owed the lowest water temperature
         (P-12, PB-09). Taking control out changes nothing: the options that took the boiler
         still hand it back, through a unit that only does that."""
-        new = self.options.get(CONTROL)
-        if not isinstance(new, Mapping):
-            return False
+        return self._hand_back_change(owed=owed) is not None
+
+    def _hand_back_change(self, *, owed: bool) -> str | None:
+        """The first answer ``_saves_another_hand_back`` finds changed; ``None`` where none is.
+        The MQTT topics are the connection's (I8.4b), read with the section as control runs it."""
+        new = with_interface_topics(self.options.get(CONTROL), self.options.get(BOILER))
+        if not isinstance(new, Mapping) or not new.get("write_path"):
+            return None  # control taken out (its interface answers may stay): nothing changes
         current = self._stored_control()
         keys = ["write_path", *fixed_keys(new.get("write_path"), owed=owed)]
-        return any(_hand_back_answer(new, key) != _hand_back_answer(current, key) for key in keys)
+        return next(
+            (k for k in keys if _hand_back_answer(new, k) != _hand_back_answer(current, k)), None
+        )
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """The menu (I7): the sections that apply, then "Save and finish"; the description names
@@ -3282,8 +3434,8 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
         menu = [
             section
             for section in (
-                "connection", "mode", "signals", "freshness", "boiler", "circuit", "zones",
-                "building", "control", "monitor",
+                "connection", "mode", INTERFACE, "signals", "freshness", "boiler", "circuit",
+                "zones", "building", "control", "monitor",
             )
             if section_shown(self.options, section)
         ]  # fmt: skip
@@ -3350,9 +3502,16 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
             # boiler, or begun to owe it a hand-back, since they were answered (P-12). Nothing
             # is saved; the control step says why.
             blocker = await self._async_hand_back_blocker()
-            if blocker is not None and self._saves_another_hand_back(
-                owed=blocker == HAND_BACK_PENDING
-            ):
+            changed = (
+                None
+                if blocker is None
+                else self._hand_back_change(owed=blocker == HAND_BACK_PENDING)
+            )
+            if blocker is not None and changed is not None:
+                if changed in (*INTERFACE_CONTROL_KEYS, *MQTT_TOPIC_KEYS):
+                    # The interface's answer is what changed: its own item says why (I8, D2).
+                    self._problem = (INTERFACE, {"base": blocker})
+                    return await self._goto(INTERFACE)
                 return await self._back_to_problem(blocker, None)
         if not confirmed and (blocking := self._new_blockers()):
             # Open after R6 #3: an edit that would keep control from running is confirmed first.

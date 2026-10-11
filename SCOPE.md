@@ -145,7 +145,7 @@ a heat pump controller (excluded), or anything that sends data outside.
 
 | Area | Regular user | Power user |
 |---|---|---|
-| Wizard | first, how the boiler is connected (the boiler class follows from it), the control mode (no default), the heat source and the boiler type with condensing and the hot-water priority (I6, `docs/plan-0.2-i6.md`); with full or on/off control the control steps in the setup too, the control switch still off (decision 11 of I6); gateway topology and what is wired to the gateway's thermostat terminals (decision 1), circuits and zones, the outdoor temperature at the hardest frost (the curve's point with a curve; with the design load otherwise, I8 E3) and the water-pressure limits from the boiler's manual, the emitter type; on the entity and relay paths the tick "the boiler has its own room controller" (answers F, M); on the relay path the relay's own settings and the tick "this is a separate relay contact, not a setting stored in the boiler's memory" (answer G); on ESPHome the tick "safe start values and a short API `reboot_timeout`" (decision 3 of I6) | every profile field, measured values, building load from own calculation |
+| Wizard | first, how the boiler is connected (the boiler class follows from it), the control mode (no default), the heat source and the boiler type with condensing and the hot-water priority (I6, `docs/plan-0.2-i6.md`); with full or on/off control the control steps in the setup too, the control switch still off (decision 11 of I6); the "Boiler interface" item — the MQTT topics, the gateway where more than one is set up, the gateway topology and what is wired to the gateway's thermostat terminals (decision 1), the restart indicator, only what the connection and the mode use (I8 D2) —; circuits and zones, the outdoor temperature at the hardest frost (the curve's point with a curve; with the design load otherwise, I8 E3) and the water-pressure limits from the boiler's manual, the emitter type; on the entity and relay paths the tick "the boiler has its own room controller" (answers F, M); on the relay path the relay's own settings and the tick "this is a separate relay contact, not a setting stored in the boiler's memory" (answer G); on ESPHome the tick "safe start values and a short API `reboot_timeout`" (decision 3 of I6) | every profile field, measured values, building load from own calculation |
 | Assessment | a verdict: control is worth enabling or not, and why | all metrics, per outdoor-temperature range, raw cycle data |
 | Control | off by default; once enabled, control runs automatically in the chosen mode; curve changes: suggestions (default) or automatic within a preset band (Low / Medium / High) | Custom band, per-parameter overrides, manual edits of learned values, reset to profile |
 | Alarms | sensible default reactions | thresholds per alarm; a reaction only where decision 7 allows one (§7) |
@@ -395,8 +395,11 @@ no presence entity).
 | — | virtual — a controller on the HA side (e.g. DIYLess or ESPHome as master) | that controller | through its entities: flow setpoint if it exposes one, from 0.3 the thermostat-like mode's values if it runs its own regulator | the user's chosen method for its entities |
 | — | relay (class 3), an optional old thermostat in parallel | the plugin, through the relay | heating on and off only | the declared rest state: "off" — heating stops unless an old thermostat in parallel heats; "on" — the boiler heats on its own dial or thermostat |
 
-- The topology is part of the configuration, declared by the user in the config flow (F3: it
-  cannot be read through Home Assistant).
+- The topology is part of the configuration, declared by the user in the "Boiler interface"
+  item (F3: it cannot be read through Home Assistant; I8 D2), which offers only the topologies
+  the connection's write path can control through — a controller on Home Assistant's side
+  (ESPHome, EMS-ESP) is virtual without asking — and shows itself again with the thermostat
+  terminals' question where a gateway topology has them.
 - In every topology, after a hand-back or while Home Assistant is down, the water follows the
   boiler's or the wall thermostat's own maximum, not the plugin's circuit maximum: an unmixed
   underfloor loop then rests on that maximum alone, so it is set there too (§5, the safe hand-back).
