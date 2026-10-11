@@ -129,7 +129,6 @@ from .core.alarms import (
     DEFAULT_UNSTABLE_BURNS_PER_DAY,
     FLUE_GAS_CONDENSING_BAND,
 )
-from .core.building import InsulationClass, ThermalMass
 from .core.demand import feeds_opening, feeds_power
 from .core.guards import WriteType
 from .core.installation import BoilerClass, BoilerType, CircuitControl, EmitterType, HeatSource
@@ -737,44 +736,43 @@ def zone_schema(options: dict[str, Any], current: dict[str, Any]) -> vol.Schema:
     return vol.Schema(fields)
 
 
+def has_curve(options: Mapping[str, Any]) -> bool:
+    """Whether control runs on a heating curve, which holds the design outdoor temperature (I8,
+    decision E3): full control chosen on the second panel; for an entry from before the control
+    mode, a control section that writes the water temperature."""
+    mode = _known(ControlMode, _stored_boiler(options).get(CONTROL_MODE))
+    if mode is not None:
+        return mode is ControlMode.FULL
+    control = options.get(CONTROL)
+    return isinstance(control, Mapping) and control.get("write_path") not in (
+        None,
+        "",
+        NO_CONTROL,
+        WritePath.RELAY.value,
+    )
+
+
+def building_parameter_keys(options: Mapping[str, Any]) -> tuple[str, ...]:
+    """The parameters the building step asks: the heating threshold; the design outdoor
+    temperature only where no curve holds it (I8, decision E2)."""
+    return ("heating_threshold",) if has_curve(options) else ("heating_threshold", "design_outdoor")
+
+
 def building_schema(options: dict[str, Any]) -> vol.Schema:
+    """The building (I8, decision E2): the design load and the heating threshold, at the
+    advanced level only; the design outdoor temperature where no curve holds it — then never
+    empty, so the design load is never read against a default unseen."""
     building = options.get(BUILDING, {})
     params = options.get(PARAMETERS, {})
     fields: dict[Any, Any] = {
-        _optional("floor_area", building): _number(10, 5000, 1, "m²"),
-        _optional("insulation", building): _select(
-            "insulation", [i.value for i in InsulationClass]
-        ),
-        _optional("thermal_mass", building): _select(
-            "thermal_mass", [m.value for m in ThermalMass]
-        ),
-        # I6: one value with the heating curve's, at both levels; never empty, so the curve
-        # never falls back to a default unseen.
-        vol.Required("design_outdoor", default=design_outdoor_of(options)): _number(
-            *CURVE_BOUNDS["design_outdoor"], 0.5, "°C"
-        ),
+        _optional("design_load_kw", building): _number(0.5, 200, 0.1, "kW"),
+        _optional("heating_threshold", params): _number(5, 22, 0.5, "°C"),
     }
-    if _advanced(options):
-        fields.update(
-            {
-                _optional("design_load_kw", building): _number(0.5, 200, 0.1, "kW"),
-                _optional("loss_coefficient", params): _number(0.01, 5, 0.001, "kW/K"),
-                _optional("heating_threshold", params): _number(5, 22, 0.5, "°C"),
-            }
+    if "design_outdoor" in building_parameter_keys(options):
+        fields[vol.Required("design_outdoor", default=design_outdoor_of(options))] = _number(
+            *CURVE_BOUNDS["design_outdoor"], 0.5, "°C"
         )
     return vol.Schema(fields)
-
-
-def design_outdoor_too_warm(options: Mapping[str, Any], design_outdoor: float) -> bool:
-    """The building's design outdoor temperature too warm for the curve entered (X5.8, P-68): the
-    curve step's check, made where the same value is entered too (I6)."""
-    control = options.get(CONTROL)
-    curve = control.get("curve") if isinstance(control, Mapping) else None
-    if not isinstance(curve, Mapping) or curve.get("design_flow") in (None, ""):
-        return False
-    room = float(curve.get("room", CURVE_DEFAULTS["room"]))
-    problems = curve_problems(float(curve["design_flow"]), design_outdoor, room, 0.0, 100.0)
-    return ("design_outdoor", "design_outdoor_too_warm") in problems
 
 
 def design_outdoor_of(options: Mapping[str, Any]) -> float:
@@ -1830,9 +1828,8 @@ BOILER_PARAMETER_KEYS = (
     "gas_at_min_power",
     "gas_at_max_power",
 )
-BUILDING_KEYS = ("floor_area", "insulation", "thermal_mass", "design_load_kw")
-BUILDING_PARAMETER_KEYS = ("loss_coefficient", "heating_threshold", "design_outdoor")
-ADVANCED_BUILDING_PARAMETERS = ("loss_coefficient", "heating_threshold")
+BUILDING_KEYS = ("design_load_kw",)
+ADVANCED_BUILDING_PARAMETERS = ("heating_threshold",)
 # Parameters shown at both levels: emptied in the form, they go.
 SIMPLE_PARAMETERS = ("boiler_min_power", "boiler_max_power", "design_outdoor")
 
@@ -1895,14 +1892,14 @@ def apply_boiler(options: dict[str, Any], user_input: dict[str, Any]) -> None:
 
 
 def apply_building(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    """The building step's answers: each field it shows set, or dropped where left empty; the
+    design outdoor temperature kept where the curve holds it."""
     building = dict(options.get(BUILDING, {}))
-    for key in BUILDING_KEYS:
-        if key in user_input and user_input[key] not in (None, ""):
-            building[key] = user_input[key]
-        elif _advanced(options) or key != "design_load_kw":
-            building.pop(key, None)
+    _set_or_drop(building, user_input, BUILDING_KEYS)
     options[BUILDING] = building
-    _apply_parameters(options, user_input, BUILDING_PARAMETER_KEYS)
+    params = dict(options.get(PARAMETERS, {}))
+    _set_or_drop(params, user_input, building_parameter_keys(options))
+    options[PARAMETERS] = params
 
 
 def _apply_parameters(
@@ -2206,8 +2203,8 @@ def control_offered(options: Mapping[str, Any]) -> bool:
 
 def section_shown(options: Mapping[str, Any], section: str) -> bool:
     """A section that does not apply is not on the menu (decision 2): the monitor's thresholds
-    at the simple level, control as above."""
-    if section == "monitor":
+    and the building (I8, decision E2) at the simple level, control as above."""
+    if section in ("monitor", "building"):
         return options.get(LEVEL) == LEVEL_ADVANCED
     if section == "control":
         return control_offered(options)
@@ -2503,11 +2500,8 @@ class _Steps:
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            if design_outdoor_too_warm(self.options, user_input["design_outdoor"]):
-                errors["design_outdoor"] = "design_outdoor_too_warm"
-            else:
-                apply_building(self.options, user_input)
-                return await self._after("building")
+            apply_building(self.options, user_input)
+            return await self._after("building")
         return self._form(
             step_id="building", data_schema=building_schema(self.options), errors=errors
         )
@@ -3067,9 +3061,10 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # by default, stays Manual where a curve stored no mode; 9: the reference room is gone, its
     # settings with it; 10: foreign heat is gone, the zones' sources and the hold time with it;
     # 11: the zones' emitter output and exponent and "near room temperature" go; 12: the curve's
-    # "correction range" goes, a narrower one becoming the correction's limit (see
-    # async_migrate_entry).
-    MINOR_VERSION = 12
+    # "correction range" goes, a narrower one becoming the correction's limit; 13: the floor
+    # area, insulation and thermal mass go, an entered loss coefficient becoming the design load
+    # it gives (see async_migrate_entry).
+    MINOR_VERSION = 13
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}

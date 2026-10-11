@@ -8,10 +8,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.building import (
-    COARSE_CONFIDENCE,
-    InsulationClass,
     loss_from_annual_energy,
-    loss_from_coarse_answers,
     loss_from_design_load,
 )
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
@@ -457,16 +454,16 @@ def _with_loss(estimate: Estimate) -> ParameterSet:
 
 def test_only_an_entered_or_confidently_measured_load_counts() -> None:
     """The design load at the curve's design point: the loss entered (or given as a design
-    load), or measured with the confidence the plugin counts (0.5) — never the coarse
-    floor-area or annual-energy estimates, which move the result by several kelvin."""
+    load), or measured with the confidence the plugin counts (0.5) — never a rough default
+    (the annual-energy estimate; the floor area's up to I8), which moves the result by several
+    kelvin."""
     entered = _with_loss(loss_from_design_load(10.0, -15.0, 20.0))
     assert design_load_kw(entered, CURVE) == pytest.approx(10.0)
     measured = _with_loss(Estimate(0.3, Source.MEASURED, 0.6))
     assert design_load_kw(measured, CURVE) == pytest.approx(0.3 * 35.0)
     unsure = _with_loss(Estimate(0.3, Source.MEASURED, 0.4))
     assert design_load_kw(unsure, CURVE) is None
-    coarse = _with_loss(loss_from_coarse_answers(120.0, InsulationClass.AVERAGE, -15.0, 20.0))
-    assert coarse.get(ParameterKey.LOSS_COEFFICIENT).effective().confidence == COARSE_CONFIDENCE
+    coarse = _with_loss(Estimate(120 * 80 / 1000 / 35, Source.DEFAULT, 0.3))
     assert design_load_kw(coarse, CURVE) is None
     annual = _with_loss(loss_from_annual_energy(12000.0, 3000.0))
     assert design_load_kw(annual, CURVE) is None

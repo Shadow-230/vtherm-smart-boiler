@@ -111,12 +111,15 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    czyta te encje. Przy integracji OpenTherm Gateway i dokładnie jednej bramce jej encje kotła
    są wpisane za Ciebie do sprawdzenia. Przy firmware OTGW przez MQTT i przy EMS-ESP osobny krok
    pyta o tematy MQTT urządzenia (zobacz [Świeżość danych](#68-świeżość-danych)).
-4. **Opisz instalację.** Sekcje **Kocioł**, **Obiegi grzewcze**, **Strefy VT** (z jednym
-   krokiem **Strefa** dla każdej wybranej strefy) i **Budynek** pytają o to, co wiesz. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić.
-   Sekcja **Kocioł** pyta też o limity ciśnienia wody z instrukcji kotła i z zaworu
-   bezpieczeństwa — pojawiają się, gdy w **Sygnały kotła** zmapujesz czujnik ciśnienia, tak jak
-   limity spalin w **Progi monitora** pojawiają się z czujnikiem spalin; sekcja **Budynek** pyta o
-   projektową temperaturę zewnętrzną, wspólną z krzywą grzewczą.
+4. **Opisz instalację.** Sekcje **Kocioł**, **Obiegi grzewcze** i **Strefy VT** (z jednym
+   krokiem **Strefa** dla każdej wybranej strefy) pytają o to, co wiesz. Nieznane wartości
+   zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Sekcja **Kocioł** pyta też o limity
+   ciśnienia wody z instrukcji kotła i z zaworu bezpieczeństwa — pojawiają się, gdy w **Sygnały
+   kotła** zmapujesz czujnik ciśnienia, tak jak limity spalin w **Progi monitora** pojawiają się
+   z czujnikiem spalin. Na poziomie zaawansowanym sekcja **Budynek** pyta o projektowe
+   obciążenie cieplne i próg grzania — tylko do statystyk monitora, nic tam nie włącza grzania —
+   a bez krzywej grzewczej także o temperaturę przy najsilniejszym mrozie, dla której podajesz
+   obciążenie projektowe.
 5. **Dni danych do werdyktu.** Na poziomie zaawansowanym sekcja **Progi monitora** zawiera
    **Dni danych do werdyktu** (domyślnie 7, od 7 do 60). Można je też zmienić później w opcjach,
    w tej samej sekcji. Niczego nie wstrzymują: sterowanie możesz ustawić i włączyć w każdej chwili. Dopóki
@@ -220,17 +223,21 @@ stref VT, tak samo jak kocioł centralny VT. Wybierasz jedno lub więcej z tych 
 
 Gdy grzanie jest włączone, wtyczka ustawia temperaturę wody w kotle (temperaturę zasilania):
 
-1. **Krzywa grzewcza** — wpisujesz ją sam: projektową temperaturę zewnętrzną (domyślnie
-   −15 °C), projektową temperaturę zasilania (wymagana, bez wartości domyślnej) i opcjonalne
-   przesunięcie. Krzywa podaje temperaturę wody dla każdej temperatury zewnętrznej.
+1. **Krzywa grzewcza** — wpisujesz ją sam: jej punkt przy najsilniejszym mrozie — temperaturę
+   zewnętrzną (domyślnie −15 °C) i potrzebną wtedy temperaturę zasilania (wymagana, bez wartości
+   domyślnej) — oraz opcjonalne przesunięcie. Krzywa podaje temperaturę wody dla każdej
+   temperatury zewnętrznej. Temperatura przy najsilniejszym mrozie to ta, na którą
+   zaprojektowano ogrzewanie: jest w projekcie instalacji, jeśli go masz; w przeciwnym razie
+   projektowa temperatura zewnętrzna z normy grzewczej dla Twojej miejscowości albo mróz kilku
+   najzimniejszych dni w roku.
    **Temperatura pokojowa krzywej** (poziom zaawansowany): **Auto** (domyślnie) idzie za
    najwyższą nastawą spośród stref, które teraz grzeją — najcieplejszym pokojem, jaki
    utrzymujesz — najwyżej 23 °C, i za presetami VT (eco w nocy ją obniża); możesz pominąć
    wybrane pokoje (łazienkę utrzymywaną cieplej). **Ręcznie** zostawia wpisaną wartość: nastawę
    najcieplejszego pokoju. Za niska zostawia pokoje zimne przy łagodnej pogodzie. Wpis ustawiony
    przed tą wersją działa ręcznie ze swoją wartością. Stan sterowania pokazuje używaną
-   temperaturę (`curve_room`). Projektowa temperatura zewnętrzna to ta sama wartość co
-   w danych budynku: zmiana w jednym kroku zmienia obie. Krok krzywej pokazuje też maksymalną
+   temperaturę (`curve_room`). Przy krzywej projektowe obciążenie budynku jest odczytywane przy
+   tej samej temperaturze. Krok krzywej pokazuje też maksymalną
    nastawę c.o. kotła i maksymalną temperaturę zasilania pierwszego obiegu — obowiązuje najniższa
    z trzech wartości: tych dwóch i najwyższej temperatury wody.
 2. **Najniższa temperatura wody** — krzywa nigdy nie schodzi poniżej niej. Domyślnie 20 °C

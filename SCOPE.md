@@ -145,7 +145,7 @@ a heat pump controller (excluded), or anything that sends data outside.
 
 | Area | Regular user | Power user |
 |---|---|---|
-| Wizard | first, how the boiler is connected (the boiler class follows from it), the control mode (no default), the heat source and the boiler type with condensing and the hot-water priority (I6, `docs/plan-0.2-i6.md`); with full or on/off control the control steps in the setup too, the control switch still off (decision 11 of I6); gateway topology and what is wired to the gateway's thermostat terminals (decision 1), circuits and zones, the design outdoor temperature (one value for the building and the curve) and the water-pressure limits from the boiler's manual, a few coarse choices (insulation, thermal mass, emitter type); on the entity and relay paths the tick "the boiler has its own room controller" (answers F, M); on the relay path the relay's own settings and the tick "this is a separate relay contact, not a setting stored in the boiler's memory" (answer G); on ESPHome the tick "safe start values and a short API `reboot_timeout`" (decision 3 of I6) | every profile field, measured values, building load from own calculation |
+| Wizard | first, how the boiler is connected (the boiler class follows from it), the control mode (no default), the heat source and the boiler type with condensing and the hot-water priority (I6, `docs/plan-0.2-i6.md`); with full or on/off control the control steps in the setup too, the control switch still off (decision 11 of I6); gateway topology and what is wired to the gateway's thermostat terminals (decision 1), circuits and zones, the outdoor temperature at the hardest frost (the curve's point with a curve; with the design load otherwise, I8 E3) and the water-pressure limits from the boiler's manual, the emitter type; on the entity and relay paths the tick "the boiler has its own room controller" (answers F, M); on the relay path the relay's own settings and the tick "this is a separate relay contact, not a setting stored in the boiler's memory" (answer G); on ESPHome the tick "safe start values and a short API `reboot_timeout`" (decision 3 of I6) | every profile field, measured values, building load from own calculation |
 | Assessment | a verdict: control is worth enabling or not, and why | all metrics, per outdoor-temperature range, raw cycle data |
 | Control | off by default; once enabled, control runs automatically in the chosen mode; curve changes: suggestions (default) or automatic within a preset band (Low / Medium / High) | Custom band, per-parameter overrides, manual edits of learned values, reset to profile |
 | Alarms | sensible default reactions | thresholds per alarm; a reaction only where decision 7 allows one (§7) |
@@ -520,17 +520,19 @@ Decided by the user on 2026-10-10 (`docs/plan-0.2-i8.md` G; sources:
 | Boiler specification | connection, heat source, type (single-function with or without a hot-water tank, combi, combi with a tank), hot-water priority, min/max power, modulation range, max CH setpoint, condensing, water-pressure limits, gas consumption min/max |
 | Boiler settings (installer menu; later, §9 — S-60) | CH hysteresis, anti-cycle time, pump overrun, summer threshold, built-in curve |
 | Installation | circuits, circuit control type, curve per circuit, emitter types, max underfloor flow, mixing valve, bypass |
-| Building (whole house, in kW) | design heat load or loss coefficient, heating threshold, thermal mass, insulation class |
+| Building (whole house, in kW; advanced level, for statistics — I8 E2) | design heat load, heating threshold (for statistics: it switches no heating) |
 
 - Every parameter has a source and a confidence, and its source is shown: class default →
   user-entered → measured → learned. The user's entry always wins over measured and learned
   values; learning ("apply", 0.3) moves only within the band around it (principle 13, S-58). A
   mismatch between declared and measured values is a diagnostic finding.
-- Regular users answer a few coarse questions; power users can fill every field (§4). Manual
-  entry always wins; boiler data read from the integration only suggests and waits for
+- Regular users answer what their installation needs; power users can fill every field (§4).
+  Manual entry always wins; boiler data read from the integration only suggests and waits for
   confirmation.
-- The user's own heat balance gives a first estimate of the building's heat loss; an estimate
-  from gas bills comes later.
+- The user's own heat balance — the design load — gives the building's heat loss, the one
+  entered value of it (an entered loss coefficient became the design load it gives; floor area,
+  insulation and thermal mass went, giving only rules of thumb no function needed — I8 B5);
+  recorded heating days measure it; an estimate from gas bills comes later.
 - The building model is the whole house in kW — the boiler's load. It does not duplicate the
   zone algorithms' room models.
 

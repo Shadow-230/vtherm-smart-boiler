@@ -141,13 +141,10 @@ def test_shares_on_minutes_of_data_decide_nothing() -> None:
 
 
 def test_the_verdict_load_criterion_needs_a_confident_model() -> None:
-    """T-43 (S-17): only rough answers — the loss from the floor area (DEFAULT, 0.3), the class
-    default threshold — and a minimum power: the load is not judged, and the reason says the
-    model is an estimate only; nothing of it can make the verdict. Entered values judge it."""
-    from custom_components.vtherm_smart_boiler.core.building import (
-        InsulationClass,
-        loss_from_coarse_answers,
-    )
+    """T-43 (S-17): only rough answers — a default loss (0.3, as the floor area's estimate gave
+    up to I8), the class default threshold — and a minimum power: the load is not judged, and
+    the reason says the model is an estimate only; nothing of it can make the verdict. Entered
+    values judge it."""
     from custom_components.vtherm_smart_boiler.core.history import History
     from custom_components.vtherm_smart_boiler.core.monitor import summarize, verdict
     from custom_components.vtherm_smart_boiler.core.parameters import (
@@ -174,7 +171,7 @@ def test_the_verdict_load_criterion_needs_a_confident_model() -> None:
         ParameterSet()
         .with_estimate(
             ParameterKey.LOSS_COEFFICIENT,
-            loss_from_coarse_answers(150.0, InsulationClass.AVERAGE, -15.0, 20.0),
+            Estimate(150 * 80 / 1000 / 35, Source.DEFAULT, 0.3),
         )
         .with_estimate(ParameterKey.BOILER_MIN_POWER, Estimate(4.0, Source.ENTERED))
     )

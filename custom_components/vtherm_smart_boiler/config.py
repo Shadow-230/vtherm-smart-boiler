@@ -59,13 +59,7 @@ from .core.alarms import (
     add_water_band,
     pressure_high_band,
 )
-from .core.building import (
-    InsulationClass,
-    ThermalMass,
-    loss_from_coarse_answers,
-    loss_from_design_load,
-    time_constant_from_mass,
-)
+from .core.building import loss_from_design_load
 from .core.installation import (
     Boiler,
     BoilerClass,
@@ -612,6 +606,11 @@ def _zones(data: Any, circuit_ids: set[str]) -> tuple[tuple[Zone, ...], list[Zon
     return tuple(zones), configs
 
 
+# I8 (decision B5): the heat loss is entered as the design load only; a stored loss coefficient
+# (a hand edit — the migration turned the form's into the design load it gives) is left out.
+NOT_ENTERED = frozenset({ParameterKey.LOSS_COEFFICIENT})
+
+
 def _parameters(data: Mapping[str, Any], building: Mapping[str, Any]) -> ParameterSet:
     parameters = ParameterSet()
     for key, value in data.items():
@@ -622,44 +621,23 @@ def _parameters(data: Mapping[str, Any], building: Mapping[str, Any]) -> Paramet
         except ValueError:
             _ignore_unknown("parameters", key)
             continue
+        if parameter in NOT_ENTERED:
+            _LOGGER.warning(
+                "Ignoring the %s in the options: the heat loss is entered as the design load", key
+            )
+            continue
         try:
             parameters = parameters.with_estimate(parameter, Estimate(float(value), Source.ENTERED))
         except ValueError as err:
             raise ConfigError("implausible_parameter", key) from err
     design_outdoor = _value_or(parameters.value(ParameterKey.DESIGN_OUTDOOR), -15.0)
     indoor = _value_or(parameters.value(ParameterKey.INDOOR_REFERENCE), 20.0)
-    # The building's choices first: one this version does not know is named, not taken for an
-    # implausible house.
-    insulation = (
-        _enum(InsulationClass, building, "insulation", InsulationClass.AVERAGE, "invalid_building")
-        if building.get("insulation")
-        else None
-    )
-    mass = (
-        _enum(ThermalMass, building, "thermal_mass", ThermalMass.MEDIUM, "invalid_building")
-        if building.get("thermal_mass")
-        else None
-    )
-    if parameters.get(ParameterKey.LOSS_COEFFICIENT).estimate(Source.ENTERED) is None:
-        loss: Estimate | None = None
-        source = "design_load_kw" if building.get("design_load_kw") else "floor_area"
+    if building.get("design_load_kw"):
         try:
-            if building.get("design_load_kw"):
-                loss = loss_from_design_load(
-                    float(building["design_load_kw"]), design_outdoor, indoor
-                )
-            elif building.get("floor_area") and insulation is not None:
-                loss = loss_from_coarse_answers(
-                    float(building["floor_area"]), insulation, design_outdoor, indoor
-                )
-            if loss is not None:
-                parameters = parameters.with_estimate(ParameterKey.LOSS_COEFFICIENT, loss)
+            loss = loss_from_design_load(float(building["design_load_kw"]), design_outdoor, indoor)
+            parameters = parameters.with_estimate(ParameterKey.LOSS_COEFFICIENT, loss)
         except (TypeError, ValueError) as err:  # a heat loss no house has: they do not fit
-            raise ConfigError("implausible_parameter", source) from err
-    if mass is not None:
-        parameters = parameters.with_estimate(
-            ParameterKey.THERMAL_TIME_CONSTANT, time_constant_from_mass(mass)
-        )
+            raise ConfigError("implausible_parameter", "design_load_kw") from err
     return parameters
 
 

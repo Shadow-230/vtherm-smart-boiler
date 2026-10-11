@@ -103,12 +103,15 @@ Only one entry of the integration can exist: it runs one boiler.
    these entities. With the OpenTherm Gateway integration and exactly one gateway, its boiler
    entities are filled in for you to check. On the OTGW firmware over MQTT and on EMS-ESP a step
    asks the device's MQTT topics (see [Fresh data](#68-fresh-data)).
-4. **Describe the installation.** The sections **Boiler**, **Heating circuits**, **VT zones**
-   (with one **Zone** step for each zone you pick) and **Building** ask what you know. Leave unknown values empty: the plugin then says what it cannot judge. **Boiler** also
-   takes the water-pressure limits from the boiler's manual and its safety valve — they appear
-   once a pressure sensor is mapped in **Boiler signals**, as the flue-gas limits in **Monitor
-   thresholds** appear with a flue-gas sensor; **Building** takes the design outdoor
-   temperature, which the heating curve shares.
+4. **Describe the installation.** The sections **Boiler**, **Heating circuits** and **VT zones**
+   (with one **Zone** step for each zone you pick) ask what you know. Leave unknown values
+   empty: the plugin then says what it cannot judge. **Boiler** also takes the water-pressure
+   limits from the boiler's manual and its safety valve — they appear once a pressure sensor is
+   mapped in **Boiler signals**, as the flue-gas limits in **Monitor thresholds** appear with a
+   flue-gas sensor. At the advanced level, **Building** takes the design heat load and the
+   heating threshold, for the monitor's statistics only — nothing there switches heating —
+   and, without a heating curve, the outdoor temperature at the hardest frost the design load
+   is given for.
 5. **Days of data for the verdict.** At the advanced level the section **Monitor thresholds**
    holds **Days of data for the verdict** (7 days by default, 7 to 60). It can also be changed
    later in the options, in the same section. It holds nothing back: you may set up and switch on
@@ -208,17 +211,20 @@ same way VT's central boiler does. You choose one or more of these criteria:
 
 While heating is on, the plugin sets the boiler's water (flow) temperature:
 
-1. **The heating curve** — you enter it: the design outdoor temperature (default −15 °C), the
-   design flow temperature (required, no default) and an optional offset. The curve gives a
-   water temperature for each outdoor temperature.
+1. **The heating curve** — you enter it: its point at the hardest frost — the outdoor
+   temperature (default −15 °C) and the flow temperature needed there (required, no default) —
+   and an optional offset. The curve gives a water temperature for each outdoor temperature.
+   The outdoor temperature at the hardest frost is the one your heating was designed for: it is
+   in the heating design, if there is one; otherwise the design outdoor temperature the national
+   heating standard gives for your place, or the frost of the few coldest days of a year there.
    **The curve's room temperature** (advanced level): **Auto** (default) follows the highest
    setpoint among the zones that heat now — the warmest room you keep — at most 23 °C, and with
    VT's presets (eco at night lowers it); you can leave rooms out (a bathroom kept warmer).
    **Manual** keeps the value you enter: the setpoint of your warmest room. Too low leaves rooms
    cold in mild weather. An entry set up before this version runs Manual with its value. The
    control state shows the room temperature in use (`curve_room`).
-   The design outdoor temperature is one value with the building's: changing it in either step
-   changes both. The curve step also shows the boiler's maximum heating setpoint and the first
+   With a curve, the building's design load is read at this same temperature. The curve step
+   also shows the boiler's maximum heating setpoint and the first
    circuit's maximum flow temperature — the lowest of the three, these two and the highest water
    temperature, applies.
 2. **Lowest water temperature** — the curve never goes below it. Default 20 °C (provisional).

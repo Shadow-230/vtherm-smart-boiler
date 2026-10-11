@@ -238,6 +238,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_zone_values(hass, entry)
     if entry.minor_version < 12:
         _migrate_correction_range(hass, entry)
+    if entry.minor_version < 13:
+        _migrate_building(hass, entry)
     return True
 
 
@@ -329,6 +331,68 @@ def _migrate_correction_range(hass: HomeAssistant, entry: ConfigEntry) -> None:
     if CONTROL in options:  # any section, set up or not: the key goes everywhere
         options[CONTROL] = without_correction_range(options[CONTROL])
     hass.config_entries.async_update_entry(entry, options=options, minor_version=12)
+
+
+# The design load the form takes, in kW (I8.3b): a converted loss coefficient is kept within it.
+DESIGN_LOAD_BOUNDS = (0.5, 200.0)
+
+
+def _migrate_building(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.3b (minor version 13): the floor area, the insulation and the thermal mass are gone
+    (`docs/plan-0.2-i8.md` B5) — they gave only rules of thumb no function needed. An entered
+    loss coefficient becomes the design load it gives at the stored design outdoor temperature
+    and the indoor reference (20 °C unless stored), to 0.1 kW, so the heat loss stays as entered;
+    it replaced a stored design load before, and does so now (logged). A value outside the
+    form's range is brought into it (logged); one that is no positive number is dropped."""
+    import logging
+    import math
+
+    from .const import BUILDING, PARAMETERS
+
+    log = logging.getLogger(__name__)
+    options = dict(entry.options)
+    building = options.get(BUILDING)
+    if isinstance(building, Mapping):
+        gone = ("floor_area", "insulation", "thermal_mass")
+        building = {k: v for k, v in building.items() if k not in gone}
+        options[BUILDING] = building
+    params = options.get(PARAMETERS)
+    if isinstance(params, Mapping) and "loss_coefficient" in params:
+        raw = params["loss_coefficient"]
+        options[PARAMETERS] = {k: v for k, v in params.items() if k != "loss_coefficient"}
+        loss = raw if isinstance(raw, int | float) and not isinstance(raw, bool) else None
+        if loss is not None and math.isfinite(loss) and loss > 0:
+            design_outdoor = _stored_float(params.get("design_outdoor"), -15.0)
+            indoor = _stored_float(params.get("indoor_reference"), 20.0)
+            exact = loss * (indoor - design_outdoor)
+            low, high = DESIGN_LOAD_BOUNDS
+            load = round(min(max(exact, low), high), 1)
+            if not low <= exact <= high:
+                log.warning(
+                    "The entered loss coefficient %s kW/K gives a design load of %.1f kW, outside "
+                    "the form's %s to %s kW: %s kW is kept",
+                    raw, exact, low, high, load,
+                )  # fmt: skip
+            target = dict(building) if isinstance(building, Mapping) else {}
+            before = target.get("design_load_kw")
+            if before not in (None, "") and before != load:
+                log.info(
+                    "The entered loss coefficient replaces the design load %s kW: %s kW",
+                    before,
+                    load,
+                )
+            target["design_load_kw"] = load
+            options[BUILDING] = target
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=13)
+
+
+def _stored_float(raw: Any, default: float) -> float:
+    """A stored number, or ``default`` where none (or no finite number) is stored."""
+    import math
+
+    if isinstance(raw, bool) or not isinstance(raw, int | float) or not math.isfinite(raw):
+        return default
+    return float(raw)
 
 
 def control_as_run(options: Mapping[str, Any]) -> Any:

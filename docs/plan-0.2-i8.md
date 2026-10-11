@@ -8,7 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-11: the plan approved by the user; I8.0 to I8.2 and I8.3a done; I8.3b next.
+Status on 2026-10-11: the plan approved by the user; I8.0 to I8.3 done; I8.4 next.
 
 ## How to read this plan
 
@@ -362,6 +362,21 @@ point.
   migrated after the update (`section_as_migrated`); `SCOPE.md` (§3, §5, §7 and the defaults
   table), the user guides' limits, the READMEs, notes on `docs/plan-0.2.md` G2 and
   `docs/plan-0.2-g11.md` B.
+- I8.3b ✅ the building and the curve point (2026-10-11): floor area, insulation, thermal mass
+  and the entered loss coefficient go — with them the rules of thumb (`core/building.py`) and
+  the thermal time constant no function read; the parser takes the heat loss from the design
+  load only (a stored loss coefficient, a hand edit, is logged and left out); the building is
+  the advanced level's only, its heating threshold "for statistics" and saying it switches no
+  heating; the outdoor temperature at the hardest frost is the curve's point, asked in the
+  curve step, and in the building only without a curve (full control decides, or for an entry
+  from before the mode a section that writes the water); still stored in the parameters
+  (Claude's call: the storage stays). Minor version 13 drops the coarse answers and turns an
+  entered loss coefficient into the design load it gives at the stored design outdoor and
+  indoor reference temperatures (to 0.1 kW, within the form's 0.5 to 200 kW, logged where it
+  replaces a stored design load or is brought into range). The building step's own "too warm
+  for the curve" check went with the field. `SCOPE.md` §4 and §6, both user guides (the setup
+  and the curve, with where to find the hardest frost); the technical documents name no
+  building parameter, so they stay.
 
 - Code: the building fields go (the loss coefficient converted); the heating threshold renamed;
   the design outdoor temperature in the curve only (in the building only without a curve),
