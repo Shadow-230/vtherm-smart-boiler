@@ -112,7 +112,7 @@ def test_full_options() -> None:
             },
             {"entity_id": "climate.b", "circuit": "c2"},
         ],
-        "building": {"design_load_kw": 8.0, "thermal_mass": "heavy"},
+        "building": {"design_load_kw": 8.0},
         "monitor": {"condensing_return": 52, "short_burn_min": 8, "monitoring_days": 10},
         "freshness": {"flow": 600, "pressure": None},
     }
@@ -127,10 +127,6 @@ def test_full_options() -> None:
     assert loss is not None
     assert loss.value == pytest.approx(0.4)
     assert loss.source is Source.ENTERED
-    mass = config.parameters.get(ParameterKey.THERMAL_TIME_CONSTANT).effective()
-    assert mass is not None
-    assert mass.value == 120.0
-    assert mass.source is Source.DEFAULT  # a coarse answer, until measured
     assert config.monitor.monitor.condensing_return == 52.0
     assert config.monitor.monitor.short_burn_s == 480.0
     assert config.monitor.monitor.verdict.min_days == 10.0
@@ -159,13 +155,21 @@ def test_the_weather_entity_has_an_age_limit_of_its_own(
     assert config.weather_max_age_s == weather
 
 
-def test_coarse_building_answers_give_a_default_loss() -> None:
-    options = MINIMAL | {"building": {"floor_area": 140, "insulation": "good"}}
-    loss = EntryConfig.from_options(options).parameters.get(ParameterKey.LOSS_COEFFICIENT)
+def test_the_heat_loss_is_entered_as_the_design_load_only() -> None:
+    """I8 (decision B5): the floor area, the insulation and the thermal mass give nothing any
+    more; a stored loss coefficient (a hand edit) is left out — the design load is the one way
+    in."""
+    coarse = MINIMAL | {"building": {"floor_area": 140, "insulation": "good"}}
+    parameters = EntryConfig.from_options(coarse).parameters
+    assert parameters.get(ParameterKey.LOSS_COEFFICIENT).effective() is None
+    hand_edit = MINIMAL | {"parameters": {"loss_coefficient": 0.3}}
+    parameters = EntryConfig.from_options(hand_edit).parameters
+    assert parameters.get(ParameterKey.LOSS_COEFFICIENT).effective() is None
+    both = hand_edit | {"building": {"design_load_kw": 7.0}}
+    loss = EntryConfig.from_options(both).parameters.get(ParameterKey.LOSS_COEFFICIENT)
     effective = loss.effective()
     assert effective is not None
-    assert effective.source is Source.DEFAULT
-    assert effective.value == pytest.approx(140 * 50 / 1000 / 35)
+    assert effective.value == pytest.approx(0.2)  # 7 kW over 35 K
 
 
 @pytest.mark.parametrize(
@@ -463,11 +467,10 @@ def test_the_form_lists_the_signals_in_their_precedence() -> None:
             "invalid_monitor",
             "monitoring_days",
         ),
-        (MINIMAL | {"building": {"thermal_mass": "granite"}}, "invalid_building", "thermal_mass"),
         (
-            MINIMAL | {"building": {"floor_area": 120, "insulation": "straw"}},
-            "invalid_building",
-            "insulation",
+            MINIMAL | {"building": {"design_load_kw": "large"}},
+            "implausible_parameter",
+            "design_load_kw",
         ),
         (MINIMAL | {"freshness": {"flow": "soon"}}, "invalid_freshness", "flow"),
     ],

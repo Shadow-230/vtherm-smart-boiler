@@ -9,17 +9,12 @@ import pytest
 
 from custom_components.vtherm_smart_boiler.core.building import (
     CLAMPED_CONFIDENCE,
-    COARSE_CONFIDENCE,
     DayPoint,
-    InsulationClass,
     LoadModel,
-    ThermalMass,
     fit_daily_load,
     loss_from_annual_energy,
-    loss_from_coarse_answers,
     loss_from_design_load,
     threshold_error,
-    time_constant_from_mass,
     trusted,
     trusted_load_model,
 )
@@ -43,11 +38,20 @@ def test_design_load_is_the_users_entry() -> None:
     assert estimate.source is Source.ENTERED
 
 
-def test_coarse_answers_are_a_low_confidence_default() -> None:
-    estimate = loss_from_coarse_answers(150.0, InsulationClass.AVERAGE, -15.0, 20.0)
-    assert estimate.value == pytest.approx(150 * 80 / 1000 / 35)
-    assert estimate.source is Source.DEFAULT
-    assert estimate.confidence == COARSE_CONFIDENCE
+def test_no_rule_of_thumb_from_floor_area_insulation_or_mass() -> None:
+    """I8 (decision B5): the floor area, the insulation class and the thermal mass are gone —
+    no function needed their rough estimates; the time constant they gave was read by none."""
+    from custom_components.vtherm_smart_boiler.core import building
+
+    for name in (
+        "InsulationClass",
+        "ThermalMass",
+        "loss_from_coarse_answers",
+        "time_constant_from_mass",
+        "COARSE_CONFIDENCE",
+    ):
+        assert not hasattr(building, name), name
+    assert "THERMAL_TIME_CONSTANT" not in ParameterKey.__members__
 
 
 def test_annual_energy_estimate() -> None:
@@ -61,20 +65,12 @@ def test_annual_energy_estimate() -> None:
     [
         lambda: loss_from_design_load(0.0, -20.0, 20.0),
         lambda: loss_from_design_load(8.0, 20.0, 20.0),
-        lambda: loss_from_coarse_answers(-1.0, InsulationClass.GOOD, -15.0, 20.0),
         lambda: loss_from_annual_energy(1000.0, 0.0),
     ],
 )
 def test_invalid_inputs_are_rejected(call) -> None:
     with pytest.raises(ValueError, match="positive"):
         call()
-
-
-def test_thermal_mass_gives_a_time_constant() -> None:
-    assert (
-        time_constant_from_mass(ThermalMass.HEAVY).value
-        > time_constant_from_mass(ThermalMass.LIGHT).value
-    )
 
 
 def test_load_model() -> None:
@@ -289,15 +285,15 @@ def _parameters(**estimates: Estimate) -> ParameterSet:
 
 def test_the_load_model_decides_only_when_entered_or_confidently_measured() -> None:
     """S-17: both the loss and the threshold entered, or measured or learned with at least
-    ``MIN_CONFIDENCE``; a rule of thumb (the class default threshold, the coarse answers) makes
-    no trusted model, whatever the loss."""
+    ``MIN_CONFIDENCE``; a rule of thumb (the class default threshold, a default loss) makes no
+    trusted model, whatever the loss."""
     entered = Estimate(0.2, Source.ENTERED)
     threshold = Estimate(16.0, Source.ENTERED)
     assert trusted_load_model(_parameters(loss_coefficient=entered, heating_threshold=threshold))
     measured = Estimate(0.2, Source.MEASURED, 0.6)
     learned = Estimate(16.0, Source.LEARNED, 0.5)
     assert trusted_load_model(_parameters(loss_coefficient=measured, heating_threshold=learned))
-    coarse = loss_from_coarse_answers(150.0, InsulationClass.AVERAGE, -15.0, 20.0)
+    coarse = Estimate(0.34, Source.DEFAULT, 0.3)
     for loss, given in (
         (entered, None),  # the class default threshold
         (coarse, threshold),

@@ -567,8 +567,15 @@ def test_y3_texts_are_translated() -> None:
     assert buttons["reset_loss_coefficient"]["name"] == "Reset measured heat loss"
     for flow in ("config", "options"):
         building = SOURCE[flow]["step"]["building"]
-        assert "data never replace it; they show a mismatch" in building["description"]
+        assert "the data never replace it, they only show a mismatch" in building["description"]
         assert "never replace it" in building["data_description"]["design_load_kw"]
+        # I8 (decision E2): the threshold is for statistics and switches no heating.
+        assert building["data"]["heating_threshold"].endswith("(for statistics)")
+        assert "It switches no heating" in building["data_description"]["heating_threshold"]
+        for gone in ("floor_area", "insulation", "thermal_mass", "loss_coefficient"):
+            assert gone not in building["data"], gone
+        curve = SOURCE[flow]["step"]["control_curve"]["data"]["design_outdoor"]
+        assert curve == "Outdoor temperature at the hardest frost (curve point)"
         monitoring = SOURCE[flow]["step"]["monitor"]["data_description"]["monitoring_days"]
         assert "even without a verdict" in monitoring
     switch = SOURCE["entity"]["switch"]["control"]["state_attributes"]["verdict"]["state"]

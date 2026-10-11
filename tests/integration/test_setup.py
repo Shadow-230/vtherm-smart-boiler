@@ -856,7 +856,7 @@ async def test_an_entry_from_before_drops_the_options_that_are_gone(
     )
     await left_control_store(hass, entry)
     await setup(hass, entry)
-    assert entry.minor_version == 12
+    assert entry.minor_version == 13
     # Minor version 3 (X6): the lowest water temperature 0.2.1 used, kept.
     assert entry.options["control"] == {
         "write_path": "entity",
@@ -910,7 +910,7 @@ async def test_the_alarm_migration_moves_to_the_add_water_threshold(
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 12
+    assert entry.minor_version == 13
     stored = entry.options["monitor"]
     assert "pressure_low_warning" not in stored
     assert "pressure_low_alarm" not in stored
@@ -950,7 +950,7 @@ async def test_the_alarm_migration_keeps_an_offered_reaction_and_raises_no_issue
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 12
+    assert entry.minor_version == 13
     assert entry.options["control"]["alarm_reactions"] == {"write_ignored": "hand_back"}
     assert ir.async_get(hass).async_get_issue(DOMAIN, f"reactions_removed_{entry.entry_id}") is None
 
@@ -986,7 +986,7 @@ async def test_migration_keeps_the_floor_of_a_control_section_without_it(
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 12
+    assert entry.minor_version == 13
     stored = entry.options.get("control")
     if hard_min is None:
         assert stored == control
@@ -1076,7 +1076,8 @@ STORED_BY_MINOR[10] = CURRENT_OPTIONS | {  # I8.1a, I8.1c: reference room, forei
 STORED_BY_MINOR[11] = CURRENT_OPTIONS | {  # I8.1d: the per-zone values gone
     "control": {**CURRENT_OPTIONS["control"], "ceiling_band": 10.0}
 }
-STORED_BY_MINOR[12] = CURRENT_OPTIONS  # I8.3: the correction range gone
+STORED_BY_MINOR[12] = CURRENT_OPTIONS  # I8.3a: the correction range gone; no building here
+STORED_BY_MINOR[13] = CURRENT_OPTIONS  # I8.3b: the coarse building answers gone
 
 
 @pytest.mark.parametrize(
@@ -1109,7 +1110,7 @@ async def test_an_entry_from_before_keeps_the_high_pressure_limits_it_ran_with(
         domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=minor
     )
     await setup(hass, entry)
-    assert entry.minor_version == 12
+    assert entry.minor_version == 13
     assert entry.options["monitor"] == {"monitoring_days": 7, **expected}
     key = f"{entry.entry_id}_alarm_pressure_high"
     found = er.async_get(hass).async_get_entity_id("binary_sensor", DOMAIN, key)
@@ -1136,7 +1137,9 @@ async def test_an_entry_from_before_keeps_the_high_pressure_limits_it_ran_with(
             },
             {
                 "control": {"curve": {}},
-                "parameters": {"design_outdoor": -18.0, "loss_coefficient": 0.2},
+                "parameters": {"design_outdoor": -18.0},
+                # I8.3b (13): the entered loss as the design load it gives, 0.2 kW/K over 38 K
+                "building": {"design_load_kw": 7.6},
             },
             True,
         ),
@@ -1181,7 +1184,7 @@ async def test_the_curves_design_outdoor_temperature_becomes_the_buildings(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 12
+    assert entry.minor_version == 13
     assert dict(entry.options) == expected
     assert ("replaces the building's -20.0 °C" in caplog.text) is replaced
 
@@ -1218,7 +1221,7 @@ async def test_an_upgraded_entry_keeps_the_comfort_correction_it_ran_with(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 12  # through the later steps too
+    assert entry.minor_version == 13  # through the later steps too
     assert entry.options.get("control") == expected
 
 
@@ -1241,7 +1244,7 @@ async def test_an_upgraded_entry_drops_foreign_heat(hass: HomeAssistant) -> None
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 12
+    assert entry.minor_version == 13
     assert dict(entry.options) == {"zones": [zone], "monitor": {"monitoring_days": 7}}
 
 
@@ -1298,7 +1301,7 @@ async def test_an_upgraded_entry_drops_the_correction_range(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 12
+    assert entry.minor_version == 13
     assert entry.options["control"] == expected
 
 
@@ -1313,6 +1316,59 @@ def test_a_session_taken_with_a_correction_range_compares_as_migrated() -> None:
         "comfort_correction": True,
         "comfort_correction_max_k": 2.0,
     }
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        (  # the coarse answers go; nothing else changes
+            {
+                "building": {"floor_area": 120, "insulation": "good", "thermal_mass": "heavy"},
+                "parameters": {"heating_threshold": 16.0},
+            },
+            {"building": {}, "parameters": {"heating_threshold": 16.0}},
+        ),
+        (  # an entered loss becomes the design load it gives: 0.2 kW/K over 20 − (−15) K
+            {"parameters": {"loss_coefficient": 0.2, "design_outdoor": -15.0}},
+            {"building": {"design_load_kw": 7.0}, "parameters": {"design_outdoor": -15.0}},
+        ),
+        (  # it won over a stored design load, and does so now
+            {
+                "building": {"design_load_kw": 9.0, "floor_area": 100},
+                "parameters": {"loss_coefficient": 0.25, "design_outdoor": -20.0},
+            },
+            {"building": {"design_load_kw": 10.0}, "parameters": {"design_outdoor": -20.0}},
+        ),
+        (  # the default design outdoor temperature (−15 °C) and a stored indoor reference
+            {"parameters": {"loss_coefficient": 0.1, "indoor_reference": 21.0}},
+            {"building": {"design_load_kw": 3.6}, "parameters": {"indoor_reference": 21.0}},
+        ),
+        (  # brought into the form's range
+            {"parameters": {"loss_coefficient": 0.001}},
+            {"building": {"design_load_kw": 0.5}, "parameters": {}},
+        ),
+        (  # no positive number: dropped
+            {"parameters": {"loss_coefficient": "big"}},
+            {"parameters": {}},
+        ),
+    ],
+    ids=["coarse_answers", "loss", "loss_over_design_load", "defaults", "clamped", "unreadable"],
+)
+async def test_an_upgraded_entry_keeps_the_heat_loss_it_entered(
+    hass: HomeAssistant, stored: dict[str, Any], expected: dict[str, Any]
+) -> None:
+    """I8.3b (minor version 13, decision B5): the floor area, the insulation and the thermal mass
+    go; an entered loss coefficient becomes the design load it gives, so the heat loss stays as
+    entered."""
+    from custom_components.vtherm_smart_boiler import async_migrate_entry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=stored, version=1, minor_version=12
+    )
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry)
+    assert entry.minor_version == 13
+    assert dict(entry.options) == expected
 
 
 async def test_an_upgraded_entry_drops_the_zone_values(hass: HomeAssistant) -> None:
@@ -1335,7 +1391,7 @@ async def test_an_upgraded_entry_drops_the_zone_values(hass: HomeAssistant) -> N
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 12
+    assert entry.minor_version == 13
     assert dict(entry.options) == {
         "zones": [zone, "climate.b"],
         "monitor": {"monitoring_days": 7},
@@ -1358,7 +1414,7 @@ async def test_an_upgraded_entry_drops_the_reference_room(hass: HomeAssistant) -
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 12
+    assert entry.minor_version == 13
     assert dict(entry.options) == kept
 
 
@@ -1404,7 +1460,7 @@ async def test_an_upgraded_entry_keeps_the_curves_room_it_ran_with(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 12
+    assert entry.minor_version == 13
     assert entry.options["control"] == expected
 
 
@@ -1412,15 +1468,15 @@ async def test_an_upgraded_entry_keeps_the_curves_room_it_ran_with(
 async def test_an_entry_of_any_earlier_minor_version_migrates_to_this_ones_options(
     hass: HomeAssistant, minor: int
 ) -> None:
-    """P-124: from minor version 1 through 2 to 11 to this one (12), each step applied once and in
+    """P-124: from minor version 1 through 2 to 12 to this one (13), each step applied once and in
     order from where the entry stands — ``boiler.shared_return`` and 0.2.1's removed control
     options go (2), the lowest water temperature 0.2.1 used is kept (3, X6), the low-pressure
     limits become the "add water" threshold and the reactions decision 7 no longer offers go,
     with their warning (4, Y1), the curve's design outdoor temperature becomes the building's
     (6, I6), the comfort correction it ran with, off, is stored (7, G11), and so is the curve's
     room temperature it ran with, Manual (8, G11), the reference room goes (9, I8), foreign heat
-    (10, I8), the per-zone values (11, I8) and the correction range (12, I8). Every starting
-    point ends with the same options;
+    (10, I8), the per-zone values (11, I8), the correction range (12, I8) and the coarse
+    building answers (13, I8). Every starting point ends with the same options;
     an entry already current is left as it is, and warns of nothing."""
     from homeassistant.helpers import issue_registry as ir
 
@@ -1750,7 +1806,8 @@ async def test_an_entered_loss_that_the_measurement_disagrees_with_is_shown(
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
     entry = entry_for(boiler)
-    options = {**entry.options, "parameters": {"loss_coefficient": 0.2}}
+    # 0.2 kW/K entered as the design load it gives (I8.3b): 7 kW over 35 K
+    options = {**entry.options, "building": {"design_load_kw": 7.0}}
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
     await setup(hass, entry)
     coordinator = entry.runtime_data
@@ -1862,9 +1919,9 @@ async def test_replayed_history_reaches_the_verdict(
         parameters={
             "boiler_min_power": 4.0,
             "boiler_max_power": 25.0,
-            "loss_coefficient": 0.25,
             "heating_threshold": 18.0,
         },
+        building={"design_load_kw": 8.75},  # 0.25 kW/K over 35 K (I8.3b)
     )
     await setup(hass, entry)
     for t, changes in events[1:]:

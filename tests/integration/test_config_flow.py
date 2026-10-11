@@ -160,8 +160,8 @@ async def test_simple_flow_creates_an_entry(hass: HomeAssistant, entities: dict[
     result = await step(hass, result, {"zones": [entities["living"]]})
     assert result["step_id"] == "zone"
     result = await step(hass, result, {"emitter": "radiator"})
-    assert result["step_id"] == "building"
-    result = await step(hass, result, {"floor_area": 120, "insulation": "average"})
+    # I8 (decision E2): no building at the simple level — nothing it asks works without the
+    # advanced level's design load.
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "My boiler"
     options = result["options"]
@@ -172,12 +172,8 @@ async def test_simple_flow_creates_an_entry(hass: HomeAssistant, entities: dict[
         "return": entities["return"],
     }
     assert options["weather"] == WEATHER_ENTITY
-    # I6: the design outdoor temperature is asked at both levels, offered at −15 °C.
-    assert options["parameters"] == {
-        "boiler_min_power": 4.0,
-        "boiler_max_power": 24.0,
-        "design_outdoor": -15.0,
-    }
+    # I8 (decision E3): without a curve and a design load, no design outdoor temperature.
+    assert options["parameters"] == {"boiler_min_power": 4.0, "boiler_max_power": 24.0}
     assert options["circuits"] == [{"id": "main", "control": "unmixed_shared"}]
     assert options["zones"] == [
         {
@@ -186,7 +182,7 @@ async def test_simple_flow_creates_an_entry(hass: HomeAssistant, entities: dict[
             "circuit": "main",
         }
     ]
-    assert options["building"] == {"floor_area": 120, "insulation": "average"}
+    assert "building" not in options
     assert "monitor" not in options
     # I6.1: the panels' answers, the class and the hot-water kind following from them.
     assert options["boiler"] == {
@@ -287,7 +283,7 @@ async def create_entry(
         {"control": "unmixed_shared"} | ({"add_another": False} if level == "advanced" else {}),
         {"zones": [entities[zone] for zone in zones]},
         *({"emitter": "radiator"} for _zone in zones),
-        {},
+        *(({},) if level == "advanced" else ()),  # the building: advanced only (I8, E2)
     ):
         result = await step(hass, result, data)
     if level == "advanced":
@@ -1986,7 +1982,7 @@ async def test_a_disabled_gateway_is_not_offered_and_mqtt_must_be_set_up(
     assert result["step_id"] == "control_curve"
 
 
-@pytest.mark.parametrize("section", ["building", "boiler", "signals"])
+@pytest.mark.parametrize("section", ["freshness", "boiler", "signals"])
 async def test_an_unknown_stored_value_is_a_form_error(
     hass: HomeAssistant, entities: dict[str, str], section: str
 ) -> None:
@@ -2002,7 +1998,7 @@ async def test_an_unknown_stored_value_is_a_form_error(
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
     entry.add_to_hass(hass)
     answers = {
-        "building": {},
+        "freshness": {},
         "boiler": {},
         "signals": {"flame": entities["flame"], "flow": entities["flow"]},
     }
@@ -2030,7 +2026,7 @@ async def test_options_that_cannot_be_read_are_a_form_error(
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
     entry.add_to_hass(hass)
     menu = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await options_step(hass, menu, {"next_step_id": "building"})
+    result = await options_step(hass, menu, {"next_step_id": "freshness"})
     result = await options_step(hass, result, {})
     assert result["step_id"] == "signals"
     assert result["errors"] == {"base": "invalid_signals"}
@@ -2083,7 +2079,7 @@ async def test_a_value_of_another_shape_inside_a_section_is_a_form_error(
     """P-70: a value of another shape inside a section that no section check names — a list as
     a parameter — is ``unreadable_options`` on the signals step, never an exception at a save."""
     signals = {"flame": entities["flame"], "flow": entities["flow"]}
-    options = {"level": "simple", "signals": signals, "parameters": {"loss_coefficient": [1]}}
+    options = {"level": "simple", "signals": signals, "parameters": {"heating_threshold": [1]}}
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
     entry.add_to_hass(hass)
     menu = await hass.config_entries.options.async_init(entry.entry_id)
@@ -2123,7 +2119,6 @@ async def test_entities_are_checked_on_the_server(
     assert result["errors"] == {"zones": "zone_not_vt"}
     result = await step(hass, result, {"zones": [entities["living"]]})
     result = await step(hass, result, {"emitter": "radiator"})
-    result = await step(hass, result, {})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["options"]["signals"]["flow"] == "sensor.not_reported_yet"
 
@@ -2271,10 +2266,10 @@ async def test_an_edit_that_would_block_control_is_confirmed_first(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["boiler"]["class"] == "read_only"
     assert entry.options["boiler"]["control_mode"] == "monitor"
-    # Negative: control already blocked by the mode; a building edit adds nothing.
+    # Negative: control already blocked by the mode; a freshness edit adds nothing.
     menu = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await options_step(hass, menu, {"next_step_id": "building"})
-    result = await options_step(hass, result, {"floor_area": 100})
+    result = await options_step(hass, menu, {"next_step_id": "freshness"})
+    result = await options_step(hass, result, {"flow": 600})
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
 
@@ -3996,7 +3991,6 @@ async def test_condensing_and_the_hot_water_priority_are_asked_where_they_apply(
         {},
         {"control": "unmixed_shared"},
         {"zones": []},
-        {},
         {"write_path": "none"},  # I6.6: the control step, set up later
     ):
         result = await step(hass, result, data)
@@ -4130,7 +4124,7 @@ async def test_an_answer_this_version_cannot_read_is_shown_on_the_first_panel(
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
     entry.add_to_hass(hass)
     menu = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await options_step(hass, menu, {"next_step_id": "building"})
+    result = await options_step(hass, menu, {"next_step_id": "freshness"})
     result = await options_step(hass, result, {})
     assert result["step_id"] == "connection"
     assert result["errors"] == {"base": "invalid_connection"}
@@ -4390,7 +4384,6 @@ async def test_the_gateways_own_entities_are_suggested(
         {"control": "unmixed_shared"},
         {"zones": [entities["living"]]},
         {"emitter": "radiator"},
-        {},
     ):
         result = await step(hass, result, data)
     # I6.6: full control is set up in the setup — with the gateway's read-backs suggested there.
@@ -4602,7 +4595,6 @@ async def test_an_mqtt_connection_asks_its_topics(
         {},
         {"control": "unmixed_shared"},
         {"zones": []},
-        {},
     ):
         result = await step(hass, result, data)
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -4676,7 +4668,6 @@ async def test_full_control_is_set_up_in_the_setup_and_starts_off(
         {"control": "unmixed_shared"},
         {"zones": [entities["living"]]},
         {"emitter": "radiator"},
-        {},
     ):
         result = await step(hass, result, data)
     assert result["step_id"] == "control"
@@ -4708,8 +4699,8 @@ async def test_full_control_is_set_up_in_the_setup_and_starts_off(
 
 
 async def test_monitoring_only_skips_the_control_steps(hass: HomeAssistant) -> None:
-    """Decision 11's negative: monitoring only (or room values until 0.3) goes from the
-    building to the entry, with no control section."""
+    """Decision 11's negative: monitoring only (or room values until 0.3) goes from the last
+    section to the entry, with no control section."""
     result = await start_setup(hass, "opentherm_gw", "monitor")
     for data in (
         {"name": "Boiler", "level": "simple"},
@@ -4717,7 +4708,6 @@ async def test_monitoring_only_skips_the_control_steps(hass: HomeAssistant) -> N
         {},
         {"control": "unmixed_shared"},
         {"zones": []},
-        {},
     ):
         result = await step(hass, result, data)
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -4745,47 +4735,67 @@ async def control_entry(
 
 
 @pytest.mark.parametrize("level", ["simple", "advanced"])
-async def test_the_design_outdoor_temperature_is_one_value(
+async def test_the_design_outdoor_temperature_is_the_curves_point(
     hass: HomeAssistant, entities: dict[str, str], level: str
 ) -> None:
-    """I6: the building and the curve show and edit one design outdoor temperature, the
-    building's, at both levels: the curve's answer is stored there, the building step offers
-    it, a change there is what control's curve then uses; the curve keeps none of its own."""
+    """I8 (decision E3): with a curve, the outdoor temperature at the hardest frost is the
+    curve's point — asked in the curve step only, at both levels; stored where it was (the
+    parameters), and what control's curve uses. The building step does not ask it."""
     entry_id = await control_entry(hass, entities, level)
     entry = hass.config_entries.async_get_entry(entry_id)
     assert entry.options["parameters"]["design_outdoor"] == -18
     assert "design_outdoor" not in entry.options["control"]["curve"]
-    menu = await hass.config_entries.options.async_init(entry_id)
-    result = await options_step(hass, menu, {"next_step_id": "building"})
+    if level == "advanced":
+        menu = await hass.config_entries.options.async_init(entry_id)
+        result = await options_step(hass, menu, {"next_step_id": "building"})
+        assert {str(m) for m in result["data_schema"].schema} == {
+            "design_load_kw",
+            "heating_threshold",
+        }
+        await options_step(hass, result, {"design_load_kw": 9.0})
+        await hass.async_block_till_done()
+        entry = hass.config_entries.async_get_entry(entry_id)
+        assert entry.options["parameters"]["design_outdoor"] == -18  # kept: not asked there
+    result = await to_control_curve(hass, entry_id)
     assert form_default(result, "design_outdoor") == -18
-    await options_step(hass, result, {"design_outdoor": -22})
+    result = await options_step(
+        hass, result, {"design_outdoor": -22, "design_flow": 52, "hard_min": 25, "hard_max": 65}
+    )
+    while result["type"] is not FlowResultType.CREATE_ENTRY:  # the advanced level's steps
+        result = await options_step(hass, result, {})
     await hass.async_block_till_done()
     entry = hass.config_entries.async_get_entry(entry_id)
     assert entry.options["parameters"]["design_outdoor"] == -22
     config = EntryConfig.from_options(entry.options)
     assert config.control.loop.control.curve.design_outdoor == -22
-    result = await to_control_curve(hass, entry_id)
-    assert form_default(result, "design_outdoor") == -22
 
 
-async def test_the_building_step_refuses_a_design_outdoor_too_warm_for_the_curve(
+async def test_the_building_asks_the_hardest_frost_only_without_a_curve(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    """I6: the curve step's check, made in the building step too, where the same value is
-    entered: at least 10 K below the curve's room temperature (X5.8). Without a curve entered,
-    nothing to check it against."""
-    entry_id = await control_entry(hass, entities, "advanced", room=18)
-    menu = await hass.config_entries.options.async_init(entry_id)
-    result = await options_step(hass, menu, {"next_step_id": "building"})
-    result = await options_step(hass, result, {"design_outdoor": 8.5})
-    assert result["errors"] == {"design_outdoor": "design_outdoor_too_warm"}
-    result = await options_step(hass, result, {"design_outdoor": 8.0})
-    assert result["type"] is FlowResultType.CREATE_ENTRY
+    """I8 (decision E2): without a curve — monitoring only, on/off — the building asks the
+    outdoor temperature its design load is given for, never empty; the building is the
+    advanced level's only."""
     from custom_components.vtherm_smart_boiler import config_flow as flow
 
-    assert not flow.design_outdoor_too_warm({}, 10.0)
-    assert not flow.design_outdoor_too_warm({"control": {"curve": {"room": 15}}}, 10.0)
-    assert flow.design_outdoor_too_warm({"control": {"curve": {"design_flow": 50}}}, 10.5)
+    entry_id = await create_entry(hass, entities, "advanced", ("living",), "read_only")
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "building"})
+    assert form_default(result, "design_outdoor") == -15
+    await options_step(hass, result, {"design_outdoor": -20, "design_load_kw": 8.0})
+    await hass.async_block_till_done()
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry.options["parameters"]["design_outdoor"] == -20
+    assert entry.options["building"] == {"design_load_kw": 8.0}
+    full = {"boiler": {"control_mode": "full"}}
+    assert flow.has_curve(full)
+    assert not flow.has_curve({"boiler": {"control_mode": "on_off"}})
+    assert not flow.has_curve({"control": {"write_path": "relay"}})  # from before the mode
+    assert flow.has_curve({"control": {"write_path": "entity"}})
+    assert not flow.has_curve({})
+    assert flow.building_parameter_keys(full) == ("heating_threshold",)
+    assert not flow.section_shown({"level": "simple"}, "building")
+    assert flow.section_shown({"level": "advanced"}, "building")
 
 
 @pytest.mark.parametrize(
@@ -4861,13 +4871,14 @@ async def test_the_setup_menu_shows_what_applies_and_creates_once_all_is_confirm
     assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == "menu"
     assert result["menu_options"] == [
-        "connection", "name", "signals", "boiler", "circuit", "zones", "building", "incomplete",
+        "connection", "name", "signals", "boiler", "circuit", "zones", "incomplete",
     ]  # fmt: skip
     assert result["description_placeholders"] == {
-        "state": "Still to confirm: Boiler signals, Boiler, Heating circuits, VT zones, Building."
+        "state": "Still to confirm: Boiler signals, Boiler, Heating circuits, VT zones."
     }
-    result = await configure(hass, result, {"next_step_id": "building"})  # in any order
-    result = await configure(hass, result, {})
+    result = await configure(hass, result, {"next_step_id": "zones"})  # in any order
+    result = await configure(hass, result, {"zones": [entities["living"]]})
+    result = await configure(hass, result, {"emitter": "radiator"})
     assert result["type"] is FlowResultType.MENU
     result = await configure(hass, result, {"next_step_id": "incomplete"})
     assert result["step_id"] == "signals"  # the first left
@@ -4875,9 +4886,6 @@ async def test_the_setup_menu_shows_what_applies_and_creates_once_all_is_confirm
     for section, answer in (("boiler", {}), ("circuit", {"control": "unmixed_shared"})):
         result = await configure(hass, result, {"next_step_id": section})
         result = await configure(hass, result, answer)
-    result = await configure(hass, result, {"next_step_id": "zones"})
-    result = await configure(hass, result, {"zones": [entities["living"]]})
-    result = await configure(hass, result, {"emitter": "radiator"})
     assert result["menu_options"][-1] == "finish"
     assert result["description_placeholders"] == {
         "state": "Every section is confirmed: choose “Create”."
@@ -4951,7 +4959,7 @@ async def test_the_menu_speaks_home_assistants_language(hass: HomeAssistant) -> 
     result = await start_setup(hass)
     result = await configure(hass, result, {"name": "Kocioł", "level": "simple"})
     assert result["description_placeholders"] == {
-        "state": "Do zatwierdzenia: Sygnały kotła, Kocioł, Obiegi grzewcze, Strefy VT, Budynek."
+        "state": "Do zatwierdzenia: Sygnały kotła, Kocioł, Obiegi grzewcze, Strefy VT."
     }
 
 
@@ -4960,14 +4968,15 @@ async def test_the_options_menu_shows_what_applies_and_closing_keeps_nothing(
 ) -> None:
     """I7, decisions 2 and 3: an entry from before the control mode offers control as before;
     monitoring only chosen, no control set up — no control;
-    the advanced level, the monitor's thresholds; the level and "Save and finish" last. The
+    the advanced level, the building and the monitor's thresholds (I8, E2); the level and "Save
+    and finish" last. The
     menu names what changed; closing the window saves nothing."""
     entry_id = await _entry(hass, _rich_options(entities))
     before = copy.deepcopy(dict(hass.config_entries.async_get_entry(entry_id).options))
     menu = await hass.config_entries.options.async_init(entry_id)
     assert menu["menu_options"] == [
-        "connection", "signals", "freshness", "boiler", "circuit", "zones", "building",
-        "control", "level_hidden", "save",
+        "connection", "signals", "freshness", "boiler", "circuit", "zones", "control",
+        "level_hidden", "save",
     ]  # fmt: skip
     configure = hass.config_entries.options.async_configure
     result = await configure(menu["flow_id"], {"next_step_id": "zones"})
@@ -4979,7 +4988,7 @@ async def test_the_options_menu_shows_what_applies_and_closing_keeps_nothing(
     assert "control" not in result["menu_options"]
     result = await configure(result["flow_id"], {"next_step_id": "level_hidden"})
     result = await configure(result["flow_id"], {"level": "advanced"})
-    assert result["menu_options"][-3:] == ["monitor", "level", "save"]
+    assert result["menu_options"][-4:] == ["building", "monitor", "level", "save"]
     assert result["description_placeholders"] == {
         "changes": "Unsaved changes: VT zones, Boiler, connection and control mode, Level of "
         "detail."
@@ -5008,11 +5017,11 @@ async def test_the_options_save_once_with_one_reload(
 ) -> None:
     """I7, decision 1: two sections changed, then "Save and finish" — both saved together, the
     integration reloaded once."""
-    entry_id = await _entry(hass, _rich_options(entities))
+    entry_id = await _entry(hass, _rich_options(entities) | {"level": "advanced"})
     configure = hass.config_entries.options.async_configure
     menu = await hass.config_entries.options.async_init(entry_id)
     result = await configure(menu["flow_id"], {"next_step_id": "building"})
-    result = await configure(result["flow_id"], {"floor_area": 150})
+    result = await configure(result["flow_id"], {"design_load_kw": 9.5})
     result = await configure(result["flow_id"], {"next_step_id": "signals"})
     signals = {"flame": entities["flame"], "flow": entities["flow"]}
     result = await configure(result["flow_id"], signals | {"pressure": entities["pressure"]})
@@ -5026,7 +5035,7 @@ async def test_the_options_save_once_with_one_reload(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert reloaded.call_count == 1
     saved = hass.config_entries.async_get_entry(entry_id).options
-    assert saved["building"]["floor_area"] == 150
+    assert saved["building"]["design_load_kw"] == 9.5
     assert saved["signals"]["pressure"] == entities["pressure"]
 
 
