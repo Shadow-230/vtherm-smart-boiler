@@ -8,7 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-11: the plan approved by the user; I8.0 to I8.5 done; I8.6 next.
+Status on 2026-10-11: the plan approved by the user; I8.0 to I8.6 done; I8.7 next.
 
 ## How to read this plan
 
@@ -491,7 +491,21 @@ fields and the freshness limits, I8.5b the read-backs in the signals.
   technical documents.
 - J4 impact: the scenarios on the relay and on freshness; the runner's signal answers.
 
-### I8.6 Boiler and monitor thresholds (E1, E4)
+### I8.6 ✅ Boiler and monitor thresholds (E1, E4)
+
+- I8.6 ✅ (2026-10-11): the boiler step shows the minimum power always; the maximum power and
+  the modulation's meaning with a modulation signal; the highest heating setpoint (advanced) but
+  for a relay (or, for an entry made before the connection question, its relay path); the gas
+  rates (advanced) with the modulation and no gas meter, in m³/h, their text naming the
+  manual's technical data and kg/h for LPG; the pressure limits with a pressure sensor (I7.2);
+  the bypass (advanced) with a pump or heating-active signal, which the low-flow warning reads.
+  The monitor step shows the condensing return for a condensing boiler with a return signal,
+  the short burn, frequent starts and unstable ignition with a flame signal, the monitoring days
+  and the verdict window always. A hidden value is kept at the save — the boiler step dropped a
+  hidden parameter at the advanced level before (A3; found while building, fixed here). Claude's
+  call: a stored parameter the options cannot take (a hand edit) is shown, hidden or not, so it
+  can be fixed — the gas rates as a pair. "Advanced settings hidden" compares with every field's
+  default. No migration: nothing stored changes. `SCOPE.md` §6, both user guides (the setup).
 
 - Code: the visibility rules; the gas rates' unit and text.
 - Documents: the user guides (boiler, monitor), `SCOPE.md` where it lists the fields.

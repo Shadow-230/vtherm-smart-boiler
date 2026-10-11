@@ -136,7 +136,7 @@
       },
       "boiler": {
         "title": "Kocioł",
-        "description": "Co wiesz o swoim kotle. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Limity ciśnienia wody pojawiają się, gdy w „Sygnały kotła” zmapujesz czujnik ciśnienia; bez niego ustawione już limity zostają zapisane i niczego nie oceniają.",
+        "description": "Co wiesz o swoim kotle. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Pole pojawia się tylko tam, gdzie może działać — moc maksymalna i znaczenie modulacji przy sygnale modulacji, zużycie gazu przy nim i bez gazomierza, limity ciśnienia przy czujniku ciśnienia, bypass przy sygnale pracy pompy lub aktywnego c.o. (wszystko w „Sygnały kotła”); ustawiona już wartość zostaje, ukryta, i niczego nie ocenia.",
         "data": {
           "boiler_min_power": "Moc minimalna",
           "boiler_max_power": "Moc maksymalna",
@@ -153,8 +153,8 @@
           "boiler_min_power": "Najmniejsza moc grzania z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować. Zła wartość wypacza tę ocenę w werdykcie.",
           "boiler_max_power": "Największa moc grzania w kW. Z minimum i modulacją szacuje moc cieplną; zła wartość wypacza szacunki ciepła i gazu.",
           "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie c.w.u.; za niska sprawia, że c.o. liczy się jako ciepła woda. Sterowanie też nigdy nie zapisze nastawy powyżej niej: za niska zostawia pokoje zimne w silny mróz.",
-          "gas_at_min_power": "Zużycie gazu na godzinę przy mocy minimalnej, w jednostce licznika gazu. Z modulacją szacuje zużycie gazu, gdy nie ma licznika; zła wartość wypacza gaz na stopniodzień.",
-          "gas_at_max_power": "Zużycie gazu na godzinę przy mocy maksymalnej, w tej samej jednostce; zła wartość wypacza szacunki gazu.",
+          "gas_at_min_power": "Zużycie gazu na godzinę przy mocy minimalnej, z danych technicznych w instrukcji kotła: m³/h (kg/h dla LPG). Z modulacją szacuje zużycie gazu, gdy nie wskazano gazomierza; zła wartość wypacza gaz na stopniodzień.",
+          "gas_at_max_power": "Zużycie gazu na godzinę przy mocy maksymalnej, z tych samych danych technicznych i w tej samej jednostce; zła wartość wypacza szacunki gazu.",
           "modulation_scale": "Czy 0 % to moc minimalna (definicja OpenTherm), czy wartość to procent mocy maksymalnej. Zły wybór zniekształca szacunki ciepła i gazu.",
           "bypass": "Zaznacz, gdy woda grzewcza ma zawsze drogę przepływu — automatyczny zawór obejściowy albo sprzęgło hydrauliczne: ostrzeżenie o małym przepływie jest wtedy wyłączone, bo zamknięte zawory nie zatrzymają przepływu. Niezaznaczone przy takim układzie daje fałszywe ostrzeżenia; zaznaczone bez niego pomija prawdziwe zamknięcie obiegu.",
           "add_water_below": "Opcjonalnie: poniżej tego ciśnienia dostaniesz powiadomienie, by dolać wody, w barach — weź wartość z instrukcji kotła (jego minimalne ciśnienie robocze). Domyślnie puste: bez powiadomienia. Tylko informuje; grzanie wyłącza się wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Za nisko — dowiesz się za późno; za wysoko — powiadomienie przyjdzie, choć ciśnienie jest w porządku.",
@@ -224,7 +224,7 @@
       },
       "monitor": {
         "title": "Monitor",
-        "description": "Progi analizy. Limity temperatury spalin pojawiają się dla kotła kondensacyjnego, gdy w „Sygnały kotła” zmapujesz czujnik spalin; bez niego ustawione już limity zostają zapisane i niczego nie oceniają.",
+        "description": "Progi analizy. Próg pojawia się tylko tam, gdzie może działać — powrót kondensacji dla kotła kondensacyjnego z sygnałem powrotu, progi palenia i zapłonów przy sygnale płomienia, limity spalin dla kotła kondensacyjnego z czujnikiem spalin (wszystko w „Sygnały kotła”); ustawiona już wartość zostaje, ukryta, i niczego nie ocenia.",
         "data": {
           "condensing_return": "Próg powrotu dla kondensacji",
           "short_burn_min": "Krótkie palenie",
@@ -731,7 +731,7 @@
       },
       "boiler": {
         "title": "Kocioł",
-        "description": "Co wiesz o swoim kotle. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Limity ciśnienia wody pojawiają się, gdy w „Sygnały kotła” zmapujesz czujnik ciśnienia; bez niego ustawione już limity zostają zapisane i niczego nie oceniają.",
+        "description": "Co wiesz o swoim kotle. Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Pole pojawia się tylko tam, gdzie może działać — moc maksymalna i znaczenie modulacji przy sygnale modulacji, zużycie gazu przy nim i bez gazomierza, limity ciśnienia przy czujniku ciśnienia, bypass przy sygnale pracy pompy lub aktywnego c.o. (wszystko w „Sygnały kotła”); ustawiona już wartość zostaje, ukryta, i niczego nie ocenia.",
         "data": {
           "boiler_min_power": "Moc minimalna",
           "boiler_max_power": "Moc maksymalna",
@@ -748,8 +748,8 @@
           "boiler_min_power": "Najmniejsza moc grzania z instrukcji, w kW. Porównywana z obciążeniem budynku: obciążenie często poniżej niej oznacza, że kocioł musi taktować. Zła wartość wypacza tę ocenę w werdykcie.",
           "boiler_max_power": "Największa moc grzania w kW. Z minimum i modulacją szacuje moc cieplną; zła wartość wypacza szacunki ciepła i gazu.",
           "max_ch_setpoint": "Najwyższa temperatura zasilania przy c.o., w °C. Zasilanie powyżej niej wskazuje na grzanie c.w.u.; za niska sprawia, że c.o. liczy się jako ciepła woda. Sterowanie też nigdy nie zapisze nastawy powyżej niej: za niska zostawia pokoje zimne w silny mróz.",
-          "gas_at_min_power": "Zużycie gazu na godzinę przy mocy minimalnej, w jednostce licznika gazu. Z modulacją szacuje zużycie gazu, gdy nie ma licznika; zła wartość wypacza gaz na stopniodzień.",
-          "gas_at_max_power": "Zużycie gazu na godzinę przy mocy maksymalnej, w tej samej jednostce; zła wartość wypacza szacunki gazu.",
+          "gas_at_min_power": "Zużycie gazu na godzinę przy mocy minimalnej, z danych technicznych w instrukcji kotła: m³/h (kg/h dla LPG). Z modulacją szacuje zużycie gazu, gdy nie wskazano gazomierza; zła wartość wypacza gaz na stopniodzień.",
+          "gas_at_max_power": "Zużycie gazu na godzinę przy mocy maksymalnej, z tych samych danych technicznych i w tej samej jednostce; zła wartość wypacza szacunki gazu.",
           "modulation_scale": "Czy 0 % to moc minimalna (definicja OpenTherm), czy wartość to procent mocy maksymalnej. Zły wybór zniekształca szacunki ciepła i gazu.",
           "bypass": "Zaznacz, gdy woda grzewcza ma zawsze drogę przepływu — automatyczny zawór obejściowy albo sprzęgło hydrauliczne: ostrzeżenie o małym przepływie jest wtedy wyłączone, bo zamknięte zawory nie zatrzymają przepływu. Niezaznaczone przy takim układzie daje fałszywe ostrzeżenia; zaznaczone bez niego pomija prawdziwe zamknięcie obiegu.",
           "add_water_below": "Opcjonalnie: poniżej tego ciśnienia dostaniesz powiadomienie, by dolać wody, w barach — weź wartość z instrukcji kotła (jego minimalne ciśnienie robocze). Domyślnie puste: bez powiadomienia. Tylko informuje; grzanie wyłącza się wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Za nisko — dowiesz się za późno; za wysoko — powiadomienie przyjdzie, choć ciśnienie jest w porządku.",
@@ -819,7 +819,7 @@
       },
       "monitor": {
         "title": "Monitor",
-        "description": "Progi analizy. Limity temperatury spalin pojawiają się dla kotła kondensacyjnego, gdy w „Sygnały kotła” zmapujesz czujnik spalin; bez niego ustawione już limity zostają zapisane i niczego nie oceniają.",
+        "description": "Progi analizy. Próg pojawia się tylko tam, gdzie może działać — powrót kondensacji dla kotła kondensacyjnego z sygnałem powrotu, progi palenia i zapłonów przy sygnale płomienia, limity spalin dla kotła kondensacyjnego z czujnikiem spalin (wszystko w „Sygnały kotła”); ustawiona już wartość zostaje, ukryta, i niczego nie ocenia.",
         "data": {
           "condensing_return": "Próg powrotu dla kondensacji",
           "short_burn_min": "Krótkie palenie",

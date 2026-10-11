@@ -126,10 +126,16 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    wskaźnik restartu.
 4. **Opisz instalację.** Sekcje **Kocioł**, **Obiegi grzewcze** i **Strefy VT** (z jednym
    krokiem **Strefa** dla każdej wybranej strefy) pytają o to, co wiesz. Nieznane wartości
-   zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Sekcja **Kocioł** pyta też o limity
-   ciśnienia wody z instrukcji kotła i z zaworu bezpieczeństwa — pojawiają się, gdy w **Sygnały
-   kotła** zmapujesz czujnik ciśnienia, tak jak limity spalin w **Progi monitora** pojawiają się
-   z czujnikiem spalin. Na poziomie zaawansowanym sekcja **Budynek** pyta o projektowe
+   zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Pole pojawia się tylko tam, gdzie
+   może działać, zależnie od tego, co wskazano w **Sygnałach kotła**: w **Kotle** moc minimalna
+   zawsze; moc maksymalna i znaczenie modulacji przy sygnale modulacji; zużycie gazu na godzinę
+   przy mocy minimalnej i maksymalnej — z danych technicznych w instrukcji kotła, w m³/h (kg/h
+   dla LPG) — przy nim i bez gazomierza; limity ciśnienia wody z instrukcji kotła i z zaworu
+   bezpieczeństwa przy czujniku ciśnienia; bypass przy sygnale pracy pompy lub aktywnego c.o.;
+   najwyższa nastawa c.o. poza przekaźnikiem. W **Progach monitora** powrót kondensacji dla
+   kotła kondensacyjnego z sygnałem powrotu, progi palenia i zapłonów przy sygnale płomienia,
+   limity spalin dla kotła kondensacyjnego z czujnikiem spalin. Ustawiona już wartość zostaje,
+   gdy jej pole jest ukryte, i niczego nie ocenia. Na poziomie zaawansowanym sekcja **Budynek** pyta o projektowe
    obciążenie cieplne i próg grzania — tylko do statystyk monitora, nic tam nie włącza grzania —
    a bez krzywej grzewczej także o temperaturę przy najsilniejszym mrozie, dla której podajesz
    obciążenie projektowe.
