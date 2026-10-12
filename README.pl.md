@@ -425,6 +425,7 @@ Cele są zamierzeniami, nie zobowiązaniami; każde wydanie zbiera dane dla nast
 | [`docs/`][docs] | plan każdego wydania i przeglądy kodu (po angielsku) |
 | 🇬🇧 [User guide][guide] · 🇵🇱 [Przewodnik użytkownika][guide-pl] | wymagania, instalacja, szybki start, jak to działa, podłączenie kotła, bezpieczeństwo, alarmy |
 | 🇬🇧 [Technical documentation][technical] · 🇵🇱 [Dokumentacja techniczna][technical-pl] | części integracji, jeden krok sterowania, cykl życia, stan trwały, testy |
+| [Dane o wodzie dla algorytmów stref][water] | wyspecyfikowany interfejs, który daje SmartPI i innym algorytmom stref temperaturę wody docierającej do każdej strefy (jeszcze niezbudowany; po angielsku, streszczenie w dokumentacji technicznej, rozdz. 8) |
 | [`CHANGELOG.md`][changelog] | co zmienia każde wydanie (po angielsku) |
 | [`CONTRIBUTING.md`][contributing] | jak współtworzyć: gałęzie, testy, zasady (po angielsku) |
 | [`LICENSE`][license] | Apache License 2.0 |
@@ -462,6 +463,7 @@ część [Checks](CONTRIBUTING.md#checks).
 [guide-pl-alarms]: documentation/pl/user-guide.md#7-alarmy-i-zgłoszenia-w-naprawach
 [technical]: documentation/en/technical.md
 [technical-pl]: documentation/pl/technical.md
+[water]: documentation/en/water-interface.md
 [changelog]: CHANGELOG.md
 [contributing]: CONTRIBUTING.md
 [license]: LICENSE
