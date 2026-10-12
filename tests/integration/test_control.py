@@ -7644,7 +7644,7 @@ async def test_a_hand_back_value_above_the_maximum_is_refused(rig: Rig) -> None:
     if flow.get("step_id") == "control_alarms":
         flow = await configure(flow["flow_id"], {})
     # A later step lowers the maximum: the circuit's highest water temperature (I8, F2).
-    flow = await configure(flow["flow_id"], {"next_step_id": "circuit"})
+    flow = await configure(flow["flow_id"], {"next_step_id": "circuit_1"})
     flow = await configure(flow["flow_id"], {"control": "unmixed_shared", "max_flow": 55})
     flow = await _saved(rig, flow)
     assert flow["step_id"] == "control_entity"  # the save found the lowered maximum

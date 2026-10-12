@@ -43,6 +43,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 from homeassistant.helpers.translation import async_get_translations
@@ -940,18 +941,28 @@ def pressure_error(user_input: dict[str, Any]) -> dict[str, str]:
 def circuit_schema(
     options: dict[str, Any],
     current: dict[str, Any],
-    more: bool = False,
     answers: Mapping[str, Any] | None = None,
+    *,
+    names: Sequence[str] = (),
+    removable: bool = False,
 ) -> vol.Schema:
-    """``more``: another circuit follows this one — offered next, so none is dropped by default.
-    A field shows where it can work (I8, decision F2): the fixed temperature for a fixed valve;
-    at the advanced level the circuit's own flow sensor for a mixed or fixed-valve circuit, and
-    the maximum's too-hot alarm (decision 10) — its temperature and time, offered as stored,
-    pre-filled once the maximum is entered — with a flow reading. ``answers``: the form's so
-    far, which may reveal fields (A2)."""
+    """One circuit's form (I8, decisions F1 and F2): its name — ``names`` suggested, any text
+    taken; the internal ID is never shown —, its type and highest water temperature; a field
+    shows where it can work: the fixed temperature for a fixed valve; at the advanced level the
+    circuit's own flow sensor for a mixed or fixed-valve circuit, and the maximum's too-hot
+    alarm (decision 10) — its temperature and time, offered as stored, pre-filled once the
+    maximum is entered — with a flow reading. ``answers``: the form's so far, which may reveal
+    fields (A2). ``removable``: a tick that removes it — never the only one."""
     given = {**current, **(answers or {})}
     shown = circuit_fields(options, given)
     fields: dict[Any, Any] = {
+        _optional(CIRCUIT_NAME, given): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=sorted(set(names)),
+                custom_value=True,
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        ),
         vol.Required(
             "control",
             default=_choice(
@@ -971,9 +982,67 @@ def circuit_schema(
         fields[_optional(MAX_FLOW_ALARM_MIN, given)] = _number(
             *CIRCUIT_BOUNDS[MAX_FLOW_ALARM_MIN], 1, "min"
         )
-    if _advanced(options):
-        fields[vol.Required("add_another", default=more)] = selector.BooleanSelector()
+    if removable:
+        fields[vol.Required(REMOVE_CIRCUIT, default=False)] = selector.BooleanSelector()
     return vol.Schema(fields)
+
+
+# I8 (decision F1): each circuit its own menu item, "Add circuit" after them — at most four
+# (CH1 and CH2 the boiler can serve, two more behind mixers); one circuit, no list, at the
+# simple level. One form serves them, the circuit it edits kept in the flow.
+CIRCUITS_MAX = 4
+ADD_CIRCUIT = "add_circuit"
+CIRCUIT_NAME = "name"
+REMOVE_CIRCUIT = "remove_circuit"
+
+
+def _circuit_list(options: Mapping[str, Any]) -> list[Any]:
+    circuits = options.get(CIRCUITS)
+    return list(circuits) if isinstance(circuits, list) else []
+
+
+def circuit_items(options: Mapping[str, Any]) -> list[str]:
+    """The menu's circuit items: one per circuit stored (the one the options imply where none
+    is), then "Add circuit" below the limit — at the advanced level; the first alone at the
+    simple level, the others kept."""
+    if not _advanced(options):
+        return ["circuit_1"]
+    count = min(max(1, len(_circuit_list(options))), CIRCUITS_MAX)
+    items = [f"circuit_{index + 1}" for index in range(count)]
+    return [*items, ADD_CIRCUIT] if count < CIRCUITS_MAX else items
+
+
+def circuit_label(circuit: object, index: int) -> str:
+    """A circuit as the menu and its form name it: its name, else its number."""
+    name = circuit.get(CIRCUIT_NAME) if isinstance(circuit, Mapping) else None
+    return str(name) if name not in (None, "") else str(index + 1)
+
+
+def circuit_placeholders(options: Mapping[str, Any]) -> dict[str, str]:
+    """What the menu's circuit items name, one placeholder each."""
+    circuits = _circuit_list(options)
+    return {
+        f"circuit_{index + 1}": circuit_label(
+            circuits[index] if index < len(circuits) else None, index
+        )
+        for index in range(CIRCUITS_MAX)
+    }
+
+
+def _new_circuit_id(circuits: Sequence[Any]) -> str:
+    """The internal ID of a circuit added: ``main`` for the first, else the first free number."""
+    used = {str(c.get("id")) for c in circuits if isinstance(c, Mapping)}
+    if not circuits:
+        return "main"
+    number = len(circuits) + 1
+    while f"circuit_{number}" in used:
+        number += 1
+    return f"circuit_{number}"
+
+
+def menu_items(options: Mapping[str, Any], section: str) -> list[str]:
+    """A menu section's items: the circuits' for theirs (I8, decision F1), else itself."""
+    return circuit_items(options) if section == "circuit" else [section]
 
 
 def circuit_fields(options: Mapping[str, Any], circuit: Mapping[str, Any]) -> set[str]:
@@ -1022,13 +1091,19 @@ def zones_schema(options: dict[str, Any]) -> vol.Schema:
 
 
 def zone_schema(options: dict[str, Any], current: dict[str, Any]) -> vol.Schema:
-    circuits = [c["id"] for c in options.get(CIRCUITS, [])] or ["main"]
+    stored = options.get(CIRCUITS, [])
+    circuits = [c["id"] for c in stored] or ["main"]
     fields: dict[Any, Any] = {}
     if len(circuits) > 1:
+        # By the circuits' names: the internal ID is never shown (I8, decision F2).
+        offered = [
+            selector.SelectOptionDict(value=str(c["id"]), label=circuit_label(c, index))
+            for index, c in enumerate(stored)
+        ]
         fields[vol.Required("circuit", default=current.get("circuit", circuits[0]))] = (
             selector.SelectSelector(
                 selector.SelectSelectorConfig(
-                    options=circuits, mode=selector.SelectSelectorMode.DROPDOWN
+                    options=offered, mode=selector.SelectSelectorMode.DROPDOWN
                 )
             )
         )
@@ -2647,7 +2722,7 @@ class _Steps:
     options: dict[str, Any]
     _zone_queue: list[str]
     _zones_done: list[dict[str, Any]]
-    _circuits_done: list[dict[str, Any]]
+    _circuit_index: int | None = None  # the circuit the form edits (I8, decision F1)
     # A problem the last check found: shown on its step, which the flow goes back to.
     _problem: tuple[str, dict[str, str]] | None = None
     _unfed_zones: str = ""  # PB-23: the zones a count of 0 could never hear, for the form
@@ -2856,14 +2931,62 @@ class _Steps:
                 return await self._after("boiler")
         return self._form(step_id="boiler", data_schema=boiler_schema(self.options), errors=errors)
 
+    async def async_step_circuit_1(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return await self._open_circuit(0)
+
+    async def async_step_circuit_2(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return await self._open_circuit(1)
+
+    async def async_step_circuit_3(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return await self._open_circuit(2)
+
+    async def async_step_circuit_4(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return await self._open_circuit(3)
+
+    async def async_step_add_circuit(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return await self._open_circuit(len(_circuit_list(self.options)))
+
+    async def _open_circuit(self, index: int) -> ConfigFlowResult:
+        """A circuit's menu item (I8, decision F1): its form, the circuit kept in the flow."""
+        self._circuit_index = index
+        self._circuit_draft = None
+        return await self.async_step_circuit()
+
     async def async_step_circuit(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """One circuit's form — the one its menu item opened, else the first (the wizard, a
+        problem to fix); a new one where "Add circuit" opened it. Its save replaces it in the
+        list, or adds it; its tick removes it, never the only one, nor one a zone still names
+        (P-64)."""
         errors: dict[str, str] = {}
-        index = len(self._circuits_done)
-        existing = self.options.get(CIRCUITS, [])
-        current = existing[index] if index < len(existing) else {}
-        if user_input is not None:
+        circuits = _circuit_list(self.options)
+        index = self._circuit_index or 0
+        new = index >= len(circuits)
+        stored = None if new else circuits[index]
+        current: dict[str, Any] = dict(stored) if isinstance(stored, Mapping) else {}
+        removable = not new and len(circuits) > 1
+        names = self._circuit_names()
+        placeholders = {"name": circuit_label(current, index)}
+        if user_input is not None and user_input.get(REMOVE_CIRCUIT) and removable:
+            rest = [*circuits[:index], *circuits[index + 1 :]]
+            if circuit_left_with_zones(self.options, rest):
+                errors = {"base": "circuit_has_zones"}
+            else:
+                self.options[CIRCUITS] = rest
+                self._circuit_index = self._circuit_draft = None
+                return await self._after("circuit")
+        elif user_input is not None:
             advanced = _advanced(self.options)
             draft = {**current, **(self._circuit_draft or {})}
             shown = circuit_fields(self.options, draft)
@@ -2875,16 +2998,13 @@ class _Steps:
                 return self._form(
                     step_id="circuit",
                     data_schema=circuit_schema(
-                        self.options, current, index + 1 < len(existing), user_input
+                        self.options, current, user_input, names=names, removable=removable
                     ),
-                    description_placeholders={"number": str(index + 1)},
+                    description_placeholders=placeholders,
                 )
-            shown = circuit_fields(self.options, {**current, **user_input})
-            circuit = circuit_from_input(
-                user_input, current.get("id", f"circuit_{index + 1}"), current, shown
-            )
-            if index == 0 and not current:
-                circuit["id"] = "main"
+            shown = circuit_fields(self.options, {**current, **user_input}) | {CIRCUIT_NAME}
+            circuit_id = current.get("id") or _new_circuit_id(circuits)
+            circuit = circuit_from_input(user_input, str(circuit_id), current, shown)
             if flow:
                 errors = flow
             elif (
@@ -2895,29 +3015,37 @@ class _Steps:
             elif alarm_error := circuit_alarm_error(circuit, advanced):
                 errors = alarm_error
             else:
-                self._circuit_draft = None
-                self._circuits_done.append(circuit)
-                if user_input.get("add_another"):
-                    return await self.async_step_circuit()
-                kept = [] if _advanced(self.options) else existing[len(self._circuits_done) :]
-                circuits = [*self._circuits_done, *kept]
-                if circuit_left_with_zones(self.options, circuits):
-                    # P-64: a zone would be left on a circuit that is gone; nothing is saved and
-                    # this circuit's form shows again, where another can be added.
-                    self._circuits_done.pop()
-                    errors = {"base": "circuit_has_zones"}
+                if new:
+                    circuits.append(circuit)
                 else:
-                    self.options[CIRCUITS] = circuits
-                    self._circuits_done = []
-                    return await self._after("circuit")
+                    circuits[index] = circuit
+                self.options[CIRCUITS] = circuits
+                self._circuit_index = self._circuit_draft = None
+                return await self._after("circuit")
         return self._form(
             step_id="circuit",
             data_schema=circuit_schema(
-                self.options, current, index + 1 < len(existing), user_input or self._circuit_draft
+                self.options,
+                current,
+                user_input or self._circuit_draft,
+                names=names,
+                removable=removable,
             ),
             errors=errors,
-            description_placeholders={"number": str(index + 1)},
+            description_placeholders=placeholders,
         )
+
+    def _circuit_names(self) -> list[str]:
+        """Names a circuit may take (I8, decision F2): Home Assistant's areas and the VT zones'."""
+        hass: HomeAssistant = self.hass  # type: ignore[attr-defined]
+        areas = [area.name for area in ar.async_get(hass).async_list_areas()]
+        registry = er.async_get(hass)
+        zones = [
+            zone_name(hass, entry.entity_id)
+            for entry in registry.entities.values()
+            if entry.platform == VT_DOMAIN and entry.domain == "climate"
+        ]
+        return [*areas, *zones]
 
     async def async_step_zones(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
@@ -3505,7 +3633,6 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
         self._title = DEFAULT_NAME
         self._zone_queue = []
         self._zones_done = []
-        self._circuits_done = []
         self._confirmed = set()
         self._changed = []
         self._at_menu = None
@@ -3565,10 +3692,17 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
             state = await self._async_menu_text("fix", [section_of(self._problem_step(*problem))])
         else:
             state = await self._async_menu_text("ready")
-        shown = [section for section in self.SECTIONS if section_shown(self.options, section)]
+        shown = [
+            item
+            for section in self.SECTIONS
+            if section_shown(self.options, section)
+            for item in menu_items(self.options, section)
+        ]
         last = "incomplete" if missing or problem is not None else "finish"
         return self.async_show_menu(
-            step_id="menu", menu_options=[*shown, last], description_placeholders={"state": state}
+            step_id="menu",
+            menu_options=[*shown, last],
+            description_placeholders={"state": state, **circuit_placeholders(self.options)},
         )
 
     async def async_step_incomplete(
@@ -3597,7 +3731,6 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
     def __init__(self) -> None:
         self._zone_queue = []
         self._zones_done = []
-        self._circuits_done = []
         self._confirmed = set()
         self._changed = []
         self._at_menu = None
@@ -3698,12 +3831,13 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
         """The menu (I7): the sections that apply, then "Save and finish"; the description names
         the sections changed in this flow — closing the window discards them."""
         menu = [
-            section
+            item
             for section in (
                 "connection", "mode", INTERFACE, "signals", "freshness", "boiler", "circuit",
                 "zones", "building", "control", "monitor",
             )
             if section_shown(self.options, section)
+            for item in menu_items(self.options, section)
         ]  # fmt: skip
         # At the simple level, say when hidden advanced settings are still active.
         menu.append("level_hidden" if has_hidden_advanced(self.options) else "level")
@@ -3714,7 +3848,9 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
             changes = await self._async_menu_text("unchanged")
         self._menu_shown()
         return self.async_show_menu(
-            step_id="init", menu_options=menu, description_placeholders={"changes": changes}
+            step_id="init",
+            menu_options=menu,
+            description_placeholders={"changes": changes, **circuit_placeholders(self.options)},
         )
 
     async def async_step_level_hidden(

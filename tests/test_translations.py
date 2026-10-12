@@ -82,7 +82,7 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "name": flow.user_schema({}),
         "signals": flow.signals_schema(options),
         "boiler": flow.boiler_schema(options),
-        "circuit": flow.circuit_schema(options, {}, answers={"control": "passive_fixed"}),
+        "circuit": flow.circuit_schema(options, {}, {"control": "passive_fixed"}, removable=True),
         "zones": flow.zones_schema(options),
         "zone": flow.zone_schema(options, {}),
         "building": flow.building_schema(options),
@@ -707,7 +707,7 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                 "signals": flow.signals_schema(options),
                 "freshness": flow.freshness_schema(options),
                 "boiler": flow.boiler_schema(options),
-                "circuit": flow.circuit_schema(options, {}, more=True),
+                "circuit": flow.circuit_schema(options, {}, removable=True),
                 "zones": flow.zones_schema(options),
                 "zone": flow.zone_schema(options, {}),
                 "building": flow.building_schema(options),
@@ -746,7 +746,7 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     # mixed circuit's own flow sensor and, read by it, the too-hot alarm.
     advanced = {"level": "advanced"}
     fixed = {"control": "passive_fixed", "flow_entity": "sensor.x"}
-    fields["circuit"] |= {str(m) for m in flow.circuit_schema(advanced, {}, True, fixed).schema}
+    fields["circuit"] |= {str(m) for m in flow.circuit_schema(advanced, {}, fixed).schema}
     # I8 (decision E1): the gas rates, asked with the modulation and no gas meter.
     no_meter = {k: v for k, v in signals["signals"].items() if k != "gas_meter"}
     rates = {"level": "advanced", "signals": no_meter}

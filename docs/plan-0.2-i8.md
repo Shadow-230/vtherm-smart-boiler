@@ -539,6 +539,17 @@ temperature, I8.7b the circuits as menu items, I8.7c the zones on the circuits' 
   maximum, that circuit gains the too-hot alarm (maximum + 5 K for 10 min), which does not
   leave hot-water runs out on a circuit the boiler feeds straight. `SCOPE.md` (§6, the
   defaults table), both user guides (the water limits, the issue table).
+- I8.7b ✅ (2026-10-12): each circuit is a menu item of its own, "Circuit: <name>" — the name
+  a placeholder the menu fills (Home Assistant passes the step's placeholders to its options'
+  labels, `research/2026-10-12-ha-menu-option-placeholders.md`) —, then "Add circuit" up to
+  four at the advanced level; the simple level shows the first only, the others kept. One form
+  serves them, the circuit it edits kept in the flow (no translations per item): its name — Home
+  Assistant's areas and the VT zones' suggested, any text taken, the circuit's number where
+  none; the internal ID never shown, the zone form's circuit choice by name too — and a tick
+  that removes it, never the only one nor one a zone still names (P-64). The "add another"
+  chain went. Claude's calls: a circuit added takes the first free ID (`main` for the first);
+  a problem routed to the circuits opens the first. No migration: the name is new and optional.
+  `SCOPE.md` (the wizard), both user guides (the setup).
 
 - Code: circuits as menu items (up to 4, add, remove, names), the circuit's zones and devices and
   emitters, the merged highest water temperature, the circuit type renamed, the zone form

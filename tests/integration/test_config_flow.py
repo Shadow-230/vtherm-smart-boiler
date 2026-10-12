@@ -80,9 +80,12 @@ async def step(hass: HomeAssistant, result: dict[str, Any], data: dict[str, Any]
 
 def curve_answer(result: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
     """I8.7a (decision F2): the curve step no longer asks the highest water temperature — it is
-    the circuit's; an answer written before keeps the rest."""
+    the circuit's; I8.7b (F1): a circuit's form no longer offers the next one — each is a menu
+    item. An answer written before keeps the rest."""
     if result.get("step_id") == "control_curve":
         return {k: v for k, v in data.items() if k != "hard_max"}
+    if result.get("step_id") == "circuit" and data.get("add_another") is False:
+        return {k: v for k, v in data.items() if k != "add_another"}
     return data
 
 
@@ -272,14 +275,21 @@ async def test_advanced_flow_with_two_circuits(
     assert not result["errors"]
     result = await step(hass, result, {"control": "passive_fixed", "add_another": False})
     assert result["errors"] == {"fixed_temperature": "fixed_temperature_missing"}
-    direct = {"control": "unmixed_shared", "max_flow": 45, "add_another": True}
+    direct = {"control": "unmixed_shared", "max_flow": 45, "name": "Radiators"}
     result = await step(hass, result, direct)
     # The boiler's flow reads a direct circuit: the too-hot alarm revealed, shown again (I8).
     assert "max_flow_alarm" in result["data_schema"].schema
-    result = await step(hass, result, direct)
+    # Saved, back at the menu: each circuit an item, "Add circuit" after them (I8, F1).
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], direct)
+    assert result["type"] is FlowResultType.MENU
+    assert {"circuit_1", "add_circuit"} <= set(result["menu_options"])
+    assert result["description_placeholders"]["circuit_1"] == "Radiators"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "add_circuit"}
+    )
     assert result["step_id"] == "circuit"
-    assert result["description_placeholders"] == {"number": "2"}
-    mixed = {"control": "separate", "add_another": False}
+    assert result["description_placeholders"] == {"name": "2"}
+    mixed = {"control": "separate"}
     result = await step(hass, result, mixed)  # a mixed circuit: its own flow sensor revealed
     assert "flow_entity" in result["data_schema"].schema
     mixed |= {"flow_entity": entities["return"]}
@@ -373,7 +383,7 @@ async def test_options_flow_edits_one_section(
     assert result["type"] is FlowResultType.MENU
     assert "monitor" not in result["menu_options"]
     assert result["menu_options"][-1] == "save"
-    assert result["description_placeholders"] == {"changes": "No unsaved changes."}
+    assert result["description_placeholders"]["changes"] == "No unsaved changes."
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "signals"}
     )
@@ -382,7 +392,7 @@ async def test_options_flow_edits_one_section(
         {"flame": entities["flame"], "flow": entities["flow"], "pressure": entities["pressure"]},
     )
     assert result["type"] is FlowResultType.MENU
-    assert result["description_placeholders"] == {"changes": "Unsaved changes: Boiler signals."}
+    assert result["description_placeholders"]["changes"] == "Unsaved changes: Boiler signals."
     entry = hass.config_entries.async_get_entry(entry_id)
     assert "pressure" not in entry.options["signals"]  # nothing saved yet
     result = await hass.config_entries.options.async_configure(
@@ -1496,7 +1506,7 @@ async def test_the_simple_level_keeps_what_it_does_not_show(
     """P38: at the simple level an edit changes only what its form shows — the second circuit and
     a circuit's flow sensor stay."""
     entry_id = await _entry(hass, _rich_options(entities))
-    options = await _section(hass, entry_id, "circuit", {"control": "unmixed_shared"})
+    options = await _section(hass, entry_id, "circuit_1", {"control": "unmixed_shared"})
     assert [c["id"] for c in options["circuits"]] == ["main", "circuit_2"]
     assert options["circuits"][0]["flow_entity"] == entities["return"]
     options = await _section(
@@ -1652,17 +1662,40 @@ async def open_interface(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
     return await options_step(hass, menu, {"next_step_id": "interface"})
 
 
-def test_editing_a_circuit_offers_the_next_one() -> None:
-    """H11: at the advanced level, editing the first of two circuits offers the second next;
-    left as offered, no circuit is dropped."""
+def test_each_circuit_is_a_menu_item_up_to_four() -> None:
+    """I8 (decision F1): each circuit its own menu item, named by its name or its number, then
+    "Add circuit" below four; one circuit, no list, at the simple level (the others kept); the
+    one the options imply where none is stored. A circuit added takes the first free ID."""
     from custom_components.vtherm_smart_boiler import config_flow as flow
 
-    options = {"level": "advanced", "circuits": [{"id": "main"}, {"id": "second"}]}
-    offered = flow.circuit_schema(options, options["circuits"][0], more=True)
-    marker = next(m for m in offered.schema if str(m) == "add_another")
-    assert marker.default() is True
-    last = flow.circuit_schema(options, options["circuits"][1])
-    assert next(m for m in last.schema if str(m) == "add_another").default() is False
+    two = {"level": "advanced", "circuits": [{"id": "main", "name": "Floor"}, {"id": "second"}]}
+    assert flow.circuit_items(two) == ["circuit_1", "circuit_2", "add_circuit"]
+    names = flow.circuit_placeholders(two)
+    assert names == {"circuit_1": "Floor", "circuit_2": "2", "circuit_3": "3", "circuit_4": "4"}
+    assert flow.circuit_items(two | {"level": "simple"}) == ["circuit_1"]
+    assert flow.circuit_items({"level": "advanced"}) == ["circuit_1", "add_circuit"]
+    four = {"level": "advanced", "circuits": [{"id": f"c{n}"} for n in range(5)]}
+    assert flow.circuit_items(four) == ["circuit_1", "circuit_2", "circuit_3", "circuit_4"]
+    assert flow.circuit_label("garbage", 0) == "1"
+    assert flow._new_circuit_id([]) == "main"
+    assert flow._new_circuit_id([{"id": "main"}, {"id": "circuit_3"}]) == "circuit_4"
+
+
+async def test_the_fourth_circuit_has_its_item_and_no_more_is_offered(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """I8 (decision F1): four circuits, four items — the fourth opens its own form — and no
+    "Add circuit"."""
+    circuits = [{"id": "main", "control": "unmixed_shared"}] + [
+        {"id": f"circuit_{n}", "control": "separate"} for n in (2, 3, 4)
+    ]
+    options = _rich_options(entities) | {"level": "advanced", "circuits": circuits}
+    entry_id = await _entry(hass, options)
+    menu = await hass.config_entries.options.async_init(entry_id)
+    assert "add_circuit" not in menu["menu_options"]
+    result = await options_step(hass, menu, {"next_step_id": "circuit_4"})
+    assert result["step_id"] == "circuit"
+    assert result["description_placeholders"] == {"name": "4"}
 
 
 def _filters(schema: Any, key: str) -> list[dict[str, Any]]:
@@ -2015,7 +2048,7 @@ async def test_restoring_defaults_keeps_the_activation_delay(
 
 async def open_circuit(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
     menu = await hass.config_entries.options.async_init(entry_id)
-    return await options_step(hass, menu, {"next_step_id": "circuit"})
+    return await options_step(hass, menu, {"next_step_id": "circuit_1"})
 
 
 def set_circuit_max(hass: HomeAssistant, entry_id: str, maximum: float) -> None:
@@ -2672,27 +2705,48 @@ def test_the_gateway_field_takes_no_custom_value() -> None:
     assert "gateway_id" not in one
 
 
-async def test_a_circuit_with_zones_cannot_be_removed(
+async def test_a_circuit_is_removed_by_its_tick_unless_a_zone_names_it(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
-    """P-64: two circuits, a zone on the second; the advanced circuit step ended after the
-    first is refused with ``circuit_has_zones`` and nothing saved; adding the second again
-    saves."""
+    """I8 (decision F1) with P-64: a circuit's form removes it by a tick — refused with
+    ``circuit_has_zones``, nothing saved, while a zone still names it; a circuit added, named,
+    and removed again; the only one has no tick."""
     options = _rich_options(entities) | {"level": "advanced"}
     entry_id = await _entry(hass, options)
-    result = await open_circuit(hass, entry_id)
-    first = {"control": "unmixed_shared"}  # its stored flow sensor hidden, kept (I8, F2)
-    result = await options_step(hass, result, first | {"add_another": False})
+    menu = await hass.config_entries.options.async_init(entry_id)
+    assert {"circuit_1", "circuit_2", "add_circuit"} <= set(menu["menu_options"])
+    result = await options_step(hass, menu, {"next_step_id": "circuit_2"})
+    assert "remove_circuit" in result["data_schema"].schema
+    result = await options_step(hass, result, {"control": "unmixed_shared", "remove_circuit": True})
     assert result["step_id"] == "circuit"
     assert result["errors"] == {"base": "circuit_has_zones"}
-    assert result["description_placeholders"] == {"number": "1"}
+    assert result["description_placeholders"] == {"name": "2"}
     assert circuits_of(hass, entry_id) == options["circuits"]  # nothing saved
-    result = await options_step(hass, result, first | {"add_another": True})
-    assert result["description_placeholders"] == {"number": "2"}
-    result = await options_step(hass, result, {"control": "unmixed_shared", "add_another": False})
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "add_circuit"})
+    assert "remove_circuit" not in result["data_schema"].schema  # a new one
+    result = await options_step(hass, result, {"control": "unmixed_shared", "name": "Garage"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    added = circuits_of(hass, entry_id)[2]
+    assert (added["id"], added["name"]) == ("circuit_3", "Garage")
+    menu = await hass.config_entries.options.async_init(entry_id)
+    assert menu["description_placeholders"]["circuit_3"] == "Garage"
+    result = await options_step(hass, menu, {"next_step_id": "circuit_3"})
+    answer = {"control": "unmixed_shared", "name": "Garage", "remove_circuit": True}
+    result = await options_step(hass, result, answer)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     assert [c["id"] for c in circuits_of(hass, entry_id)] == ["main", "circuit_2"]
+
+
+async def test_the_only_circuit_has_no_tick_to_remove_it(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """I8 (decision F1): the only circuit is never removed — its form has no tick."""
+    entry_id = await create_entry(hass, entities, "advanced")
+    result = await open_circuit(hass, entry_id)
+    assert "remove_circuit" not in result["data_schema"].schema
 
 
 async def test_restoring_defaults_keeps_the_monitoring_days(
@@ -2799,7 +2853,7 @@ async def test_confirming_names_the_new_blocker_and_asks_nothing_without_control
     assert result["description_placeholders"]["first"].startswith("Control needs at least one")
     hass.config_entries.options.async_abort(result["flow_id"])  # the window closed: nothing kept
     menu = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await options_step(hass, menu, {"next_step_id": "circuit"})
+    result = await options_step(hass, menu, {"next_step_id": "circuit_1"})
     result = await options_step(hass, result, {"control": "separate"})
     assert result["step_id"] == "confirm_blocking"
     assert result["description_placeholders"]["first"].startswith("This version controls only")
@@ -5676,11 +5730,11 @@ async def test_the_setup_menu_shows_what_applies_and_creates_once_all_is_confirm
     assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == "menu"
     assert result["menu_options"] == [
-        "connection", "mode", "name", "signals", "boiler", "circuit", "zones", "incomplete",
+        "connection", "mode", "name", "signals", "boiler", "circuit_1", "zones", "incomplete",
     ]  # fmt: skip
-    assert result["description_placeholders"] == {
-        "state": "Still to confirm: Boiler signals, Boiler, Heating circuits, VT zones."
-    }
+    assert result["description_placeholders"]["state"] == (
+        "Still to confirm: Boiler signals, Boiler, Heating circuits, VT zones."
+    )
     result = await configure(hass, result, {"next_step_id": "zones"})  # in any order
     result = await configure(hass, result, {"zones": [entities["living"]]})
     result = await configure(hass, result, {"emitter": "radiator"})
@@ -5688,13 +5742,13 @@ async def test_the_setup_menu_shows_what_applies_and_creates_once_all_is_confirm
     result = await configure(hass, result, {"next_step_id": "incomplete"})
     assert result["step_id"] == "signals"  # the first left
     result = await configure(hass, result, {"flame": entities["flame"], "flow": entities["flow"]})
-    for section, answer in (("boiler", {}), ("circuit", {"control": "unmixed_shared"})):
+    for section, answer in (("boiler", {}), ("circuit_1", {"control": "unmixed_shared"})):
         result = await configure(hass, result, {"next_step_id": section})
         result = await configure(hass, result, answer)
     assert result["menu_options"][-1] == "finish"
-    assert result["description_placeholders"] == {
-        "state": "Every section is confirmed: choose “Create”."
-    }
+    assert result["description_placeholders"]["state"] == (
+        "Every section is confirmed: choose “Create”."
+    )
     result = await configure(hass, result, {"next_step_id": "finish"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "My boiler"
@@ -5742,7 +5796,7 @@ async def test_the_setup_menu_names_a_problem_to_fix(
     for section, answer in (
         ("signals", {}),
         ("boiler", {}),  # no modulation: nothing it asks (I8, E1)
-        ("circuit", {"control": "unmixed_shared", "add_another": False}),
+        ("circuit_1", {"control": "unmixed_shared"}),
         ("zones", {"zones": []}),
         ("building", {"design_load_kw": 200.0, "design_outdoor": -15.0}),  # 5.7 kW/K
         ("monitor", {}),
@@ -5750,7 +5804,7 @@ async def test_the_setup_menu_names_a_problem_to_fix(
         result = await configure(hass, result, {"next_step_id": section})
         result = await configure(hass, result, answer)
     assert result["menu_options"][-1] == "incomplete"
-    assert result["description_placeholders"] == {"state": "To fix before creating: Building."}
+    assert result["description_placeholders"]["state"] == "To fix before creating: Building."
     result = await configure(hass, result, {"next_step_id": "incomplete"})
     assert result["step_id"] == "building"
     assert result["errors"] == {"base": "implausible_parameter"}
@@ -5766,9 +5820,9 @@ async def test_the_menu_speaks_home_assistants_language(hass: HomeAssistant) -> 
     hass.config.language = "pl"
     result = await start_setup(hass)
     result = await configure(hass, result, {"name": "Kocioł", "level": "simple"})
-    assert result["description_placeholders"] == {
-        "state": "Do zatwierdzenia: Sygnały kotła, Kocioł, Obiegi grzewcze, Strefy VT."
-    }
+    assert result["description_placeholders"]["state"] == (
+        "Do zatwierdzenia: Sygnały kotła, Kocioł, Obiegi grzewcze, Strefy VT."
+    )
 
 
 async def test_the_options_menu_shows_what_applies_and_closing_keeps_nothing(
@@ -5784,7 +5838,7 @@ async def test_the_options_menu_shows_what_applies_and_closing_keeps_nothing(
     before = copy.deepcopy(dict(hass.config_entries.async_get_entry(entry_id).options))
     menu = await hass.config_entries.options.async_init(entry_id)
     assert menu["menu_options"] == [
-        "connection", "mode", "signals", "freshness", "boiler", "circuit", "zones", "control",
+        "connection", "mode", "signals", "freshness", "boiler", "circuit_1", "zones", "control",
         "level_hidden", "save",
     ]  # fmt: skip
     configure = hass.config_entries.options.async_configure
@@ -5798,10 +5852,9 @@ async def test_the_options_menu_shows_what_applies_and_closing_keeps_nothing(
     result = await configure(result["flow_id"], {"next_step_id": "level_hidden"})
     result = await configure(result["flow_id"], {"level": "advanced"})
     assert result["menu_options"][-4:] == ["building", "monitor", "level", "save"]
-    assert result["description_placeholders"] == {
-        "changes": "Unsaved changes: VT zones, Connection and boiler type, Control mode, Level "
-        "of detail."
-    }
+    assert result["description_placeholders"]["changes"] == (
+        "Unsaved changes: VT zones, Connection and boiler type, Control mode, Level of detail."
+    )
     hass.config_entries.options.async_abort(result["flow_id"])
     await hass.async_block_till_done()
     assert dict(hass.config_entries.async_get_entry(entry_id).options) == before
@@ -5815,10 +5868,10 @@ async def test_a_change_undone_is_no_change(hass: HomeAssistant, entities: dict[
     signals = {"flame": entities["flame"], "flow": entities["flow"]}
     result = await configure(menu["flow_id"], {"next_step_id": "signals"})
     result = await configure(result["flow_id"], signals | {"pressure": entities["pressure"]})
-    assert result["description_placeholders"] == {"changes": "Unsaved changes: Boiler signals."}
+    assert result["description_placeholders"]["changes"] == "Unsaved changes: Boiler signals."
     result = await configure(result["flow_id"], {"next_step_id": "signals"})
     result = await configure(result["flow_id"], signals)
-    assert result["description_placeholders"] == {"changes": "No unsaved changes."}
+    assert result["description_placeholders"]["changes"] == "No unsaved changes."
 
 
 async def test_the_options_save_once_with_one_reload(
@@ -5834,9 +5887,9 @@ async def test_the_options_save_once_with_one_reload(
     result = await configure(result["flow_id"], {"next_step_id": "signals"})
     signals = {"flame": entities["flame"], "flow": entities["flow"]}
     result = await configure(result["flow_id"], signals | {"pressure": entities["pressure"]})
-    assert result["description_placeholders"] == {
-        "changes": "Unsaved changes: Building, Boiler signals."
-    }
+    assert result["description_placeholders"]["changes"] == (
+        "Unsaved changes: Building, Boiler signals."
+    )
     reload = hass.config_entries.async_reload
     with patch.object(hass.config_entries, "async_reload", wraps=reload) as reloaded:
         result = await configure(result["flow_id"], {"next_step_id": "save"})

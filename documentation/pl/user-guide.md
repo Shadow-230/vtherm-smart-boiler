@@ -124,9 +124,13 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    gdy skonfigurowano więcej niż jedną, o to, jak bramka stoi między termostatem a kotłem i co
    jest podłączone do jej zacisków termostatu ([5.3](#53-sposób-podłączenia-bramki)), oraz o
    wskaźnik restartu.
-4. **Opisz instalację.** Sekcje **Kocioł**, **Obiegi grzewcze** i **Strefy VT** (z jednym
-   krokiem **Strefa** dla każdej wybranej strefy) pytają o to, co wiesz. Nieznane wartości
-   zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Pole pojawia się tylko tam, gdzie
+4. **Opisz instalację.** Sekcje **Kocioł**, obiegi i **Strefy VT** (z jednym krokiem **Strefa**
+   dla każdej wybranej strefy) pytają o to, co wiesz. Nieznane wartości zostaw puste: wtyczka
+   powie wtedy, czego nie może ocenić. Każdy obieg grzewczy jest osobną pozycją menu,
+   **Obieg: <nazwa>** — nazwa wybrana z obszarów Home Assistant albo stref VT albo wpisana;
+   numer, gdy jej nie podano — a na poziomie zaawansowanym **Dodaj obieg** dodaje kolejny, do
+   czterech; zaznaczenie w formularzu obiegu go usuwa, nigdy jedynego ani takiego, który
+   wskazuje jeszcze strefa. Poziom prosty pokazuje jeden obieg, a pozostałe zachowuje. Pole pojawia się tylko tam, gdzie
    może działać, zależnie od tego, co wskazano w **Sygnałach kotła**: w **Kotle** moc minimalna
    zawsze; moc maksymalna i znaczenie modulacji przy sygnale modulacji; zużycie gazu na godzinę
    przy mocy minimalnej i maksymalnej — z danych technicznych w instrukcji kotła, w m³/h (kg/h
@@ -264,7 +268,7 @@ Gdy grzanie jest włączone, wtyczka ustawia temperaturę wody w kotle (temperat
    wyłączać; w kotle niekondensacyjnym może dojść do kondensacji w przewodzie spalinowym. Weź tę
    wartość z instrukcji kotła. Monitor może zaproponować wyższą wartość, jeśli widzi wiele
    krótkich cykli pracy palnika; nic nie zmienia się samo.
-3. **Najwyższa temperatura wody** — ta z obiegu, w jego formularzu w **Obiegach grzewczych**:
+3. **Najwyższa temperatura wody** — ta z obiegu, w jego formularzu (**Obieg: <nazwa>**):
    nigdy powyżej niej, cokolwiek wyliczy krzywa lub korekta komfortu; 70 °C, gdy pole jest
    puste. Wymagana dla podłogówki bez mieszacza. Ponad krzywą wodę podnosi tylko korekta
    komfortu, do własnego limitu (domyślnie 3 K, czyli kelwiny — różnica temperatur). Sam kocioł
