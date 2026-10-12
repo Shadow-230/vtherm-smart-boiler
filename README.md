@@ -434,9 +434,11 @@ Contributions are welcome — open pull requests against `dev`. Read
 change is small, tested and reviewed. Which automatic checks run, and when, is in its section
 [Checks](CONTRIBUTING.md#checks).
 
-# Support
+# ☕ Support
 
-If the plugin helps your heating, you can buy me a coffee: [buymeacoffee.com/shadow23][bmc].
+If Smart Boiler for Versatile Thermostat is useful to you, you can support its development here:
+
+<a href="https://buymeacoffee.com/shadow23"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy me a coffee" height="50"></a>
 
 # Authors
 
