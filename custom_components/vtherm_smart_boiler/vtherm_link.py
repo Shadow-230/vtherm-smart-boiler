@@ -436,6 +436,17 @@ def vt_climate_entities(hass: HomeAssistant) -> list[str]:
     )
 
 
+def zone_devices(hass: HomeAssistant) -> dict[str, str]:
+    """Each VT zone's own devices with the zone, as a circuit's form offers them (I8.8c): what
+    each thermostat's entry lists; a zone whose list cannot be read offers none. A device two
+    zones name stays with the first, in the zones' order."""
+    found: dict[str, str] = {}
+    for zone in vt_climate_entities(hass):
+        for device in zone_underlying_entities(hass, zone) or ():
+            found.setdefault(device, zone)
+    return found
+
+
 def vt_central_entry(hass: HomeAssistant) -> ConfigEntry | None:
     """VT's central configuration entry — the VT entry whose ``thermostat_type`` says so (VT
     10.4.0) — whatever its state; ``None`` without one. With more than one, an enabled entry in

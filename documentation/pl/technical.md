@@ -136,9 +136,11 @@ zapisuje.
 i opcji oraz opcje sterowania jako obiekty rdzenia, z blokadami, które nie pozwalają ruszyć
 sterowaniu. Sterowanie czyta swoją sekcję z dołożonymi tematami MQTT połączenia i odczytami
 zwrotnymi z sygnałów (`with_boiler_inputs`): każda wartość jest zapisana raz. Strefy należą do
-obiegów: każdy obieg wymienia zasilane strefy VT, a z nich te z podłogówką i z konwektorami;
-własna sekcja stref trzyma tylko to, czy zawory strefy zamykają się, gdy jest wyłączona
-(`config._circuit_zones`). `repairs.py` zawiera przepływy napraw (na przykład potwierdzenie oddania kotła
+obiegów: każdy obieg wymienia zasilane strefy VT, a z nich te z podłogówką i z konwektorami,
+a ze strefy zasilanej tylko w części — jej urządzenia (`devices`, według strefy; formularz
+przypisuje każde urządzenie do strefy przez `vtherm_link.zone_devices`); tylko tak strefa może
+być w dwóch obiegach. Własna sekcja stref trzyma tylko to, czy zawory strefy zamykają się, gdy
+jest wyłączona (`config._circuit_zones`). `repairs.py` zawiera przepływy napraw (na przykład potwierdzenie oddania kotła
 zrobionego ręcznie).
 
 ## 4. Jeden krok sterowania

@@ -8,7 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-12: the plan approved by the user; I8.0 to I8.7, I8.8a and I8.8b done; I8.8c next.
+Status on 2026-10-12: the plan approved by the user; I8.0 to I8.8 done; I8.9 next.
 
 ## How to read this plan
 
@@ -511,7 +511,7 @@ fields and the freshness limits, I8.5b the read-backs in the signals.
 - Documents: the user guides (boiler, monitor), `SCOPE.md` where it lists the fields.
 - J4 impact: none unless a scenario sets a hidden field.
 
-### I8.7 Circuits and zones: the model (F1, F2, F4, F5)
+### I8.7 ✅ Circuits and zones: the model (F1, F2, F4, F5)
 
 Claude's call: three pull requests — I8.7a the circuit's form and the merged highest water
 temperature, I8.7b the circuits as menu items, I8.7c the zones on the circuits' side.
@@ -576,7 +576,7 @@ temperature, I8.7b the circuits as menu items, I8.7c the zones on the circuits' 
   zones), the technical documents (installation model, `vtherm_link`).
 - J4 impact: every scenario that sets circuits or zones; the runner's circuit and zone answers.
 
-### I8.8 Circuits in control (F3, F6)
+### I8.8 ✅ Circuits in control (F3, F6)
 
 The user's answers of 2026-10-12 (asked at this step, as they change what control does):
 - **A circuit's request unknown:** a circuit run by other automation whose "Circuit asks for
@@ -633,10 +633,18 @@ Claude's calls (cautious, provisional, K4):
   through either circuit, its diagnostics naming both. A device renamed is followed; removed,
   named as a device. Diagnostics redact the active devices. No migration: the key is new. No
   form yet (I8.8c), so no user-facing text changes.
-- I8.8c: the circuit form's field for single devices of a zone — the VT zones' own devices
-  offered, each resolved to its zone at the save (`vtherm_link`); refused: a device of no VT
-  zone, one another circuit lists, a zone listed whole and by its devices. Documents:
-  `SCOPE.md`, both user guides (the setup), both technical documents (configuration).
+- I8.8c ✅ (2026-10-12): the circuit form's field "Single devices of a zone" (advanced level,
+  where VT's lists offer any): the VT zones' own devices (`vtherm_link.zone_devices`, from each
+  thermostat's entry), each resolved to its zone at the save; the form shows a split zone by
+  its devices, the emitter lists offer its zone. Refused, named: a zone both whole and by its
+  devices, a device another circuit lists, a device of a zone another circuit holds whole, a
+  zone held whole elsewhere picked here (the text now says a zone may be in two circuits only
+  by its devices); a device stored that VT no longer drives is offered and refused at the save
+  until taken out (the selector would refuse it unexplained). Without the field — the simple
+  level, or no VT list to read — the devices stored are kept with their zones, a conflict
+  named on the zones' field. An area adds no zone the circuit feeds by its devices.
+  `SCOPE.md` (§5, the wizard), both user guides (the setup), both technical documents
+  (configuration).
 
 - Core first, with tests: the boiler's water as the highest need of the circuits asking; the
   floor of a circuit run by other automation; its heat request in the demand (both modes); the

@@ -1734,6 +1734,111 @@ async def test_a_circuits_zones_are_checked_and_an_area_adds_its_own(
     assert circuits_of(hass, entry_id)[1]["zones"] == [entities["bedroom"], attic]
 
 
+def built_on(hass: HomeAssistant, zone: str, *underlying: str) -> None:
+    """The VT zone drives these devices, as VT 10.4.0 keeps them in its entry."""
+    from homeassistant.helpers import entity_registry as er
+
+    data = {"underlying_entity_ids": [*underlying]}
+    vt = MockConfigEntry(domain="versatile_thermostat", data=data)
+    vt.add_to_hass(hass)
+    er.async_get(hass).async_update_entity(zone, config_entry_id=vt.entry_id)
+
+
+async def test_a_zones_own_devices_put_it_in_two_circuits(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """I8.8c (decision F2): at the advanced level a circuit's form offers the VT zones' own
+    devices; a device picked puts its zone in the circuit by that device — the living room's
+    radiator on the first circuit, its floor loop on the second. Refused: a zone both whole and
+    by a device, a device another circuit lists, a device of a zone another circuit holds
+    whole. Reopened, the form shows the zone by its device."""
+    living, bedroom = entities["living"], entities["bedroom"]
+    built_on(hass, living, "switch.living_radiator", "switch.living_loop")
+    built_on(hass, bedroom, "switch.bedroom_radiator")
+    entry_id = await _entry(hass, _rich_options(entities) | {"level": "advanced"})
+    result = await open_circuit(hass, entry_id)
+    assert result["data_schema"]({"control": "unmixed_shared"})["devices"] == []
+    radiator = {"control": "unmixed_shared", "zones": [], "devices": ["switch.living_radiator"]}
+    for answer, error in (
+        (radiator | {"zones": [living]}, "zone_whole_and_devices"),
+        (radiator | {"devices": ["switch.bedroom_radiator"]}, "zone_in_another_circuit"),
+    ):
+        result = await options_step(hass, result, answer)
+        assert result["errors"] == {"devices": error}
+    assert result["description_placeholders"]["zone"] == "fake bedroom"
+    result = await options_step(hass, result, radiator)
+    assert not result["errors"]  # shown again: the living room among the emitter lists
+    assert result["data_schema"]({"control": "unmixed_shared"})["underfloor"] == []
+    result = await options_step(hass, result, radiator)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    main = circuits_of(hass, entry_id)[0]
+    assert (main["zones"], main["devices"]) == ([living], {living: ["switch.living_radiator"]})
+    menu = await hass.config_entries.options.async_init(entry_id)
+    result = await options_step(hass, menu, {"next_step_id": "circuit_2"})
+    loop = {"control": "separate", "zones": [bedroom], "devices": ["switch.living_radiator"]}
+    result = await options_step(hass, result, loop)
+    assert result["errors"] == {"devices": "device_in_another_circuit"}
+    loop["devices"] = ["switch.living_loop"]
+    result = await options_step(hass, result, loop | {"underfloor": [living]})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    second = circuits_of(hass, entry_id)[1]
+    assert second["zones"] == [bedroom, living]
+    assert (second["devices"], second["underfloor"]) == ({living: ["switch.living_loop"]}, [living])
+    result = await open_circuit(hass, entry_id)
+    shown = result["data_schema"]({"control": "unmixed_shared"})
+    assert (shown["zones"], shown["devices"]) == ([], ["switch.living_radiator"])
+
+
+async def test_without_devices_to_offer_or_at_the_simple_level_a_zones_devices_are_kept(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """I8.8c: no field for devices where no VT zone's devices can be read, nor at the simple
+    level; a circuit's devices stored are kept as they are, their zones with them — a zone
+    picked whole as well is refused on the zones' field, the one shown."""
+    living = entities["living"]
+    circuits = [
+        {"id": "main", "zones": [living], "devices": {living: ["switch.living_radiator"]}},
+        {"id": "circuit_2", "zones": [entities["bedroom"]]},
+    ]
+    entry_id = await _entry(hass, _rich_options(entities) | {"circuits": circuits, "zones": []})
+    result = await open_circuit(hass, entry_id)
+    assert "devices" not in result["data_schema"].schema
+    assert result["data_schema"]({"control": "unmixed_shared"})["zones"] == []
+    result = await options_step(hass, result, {"control": "unmixed_shared", "zones": [living]})
+    assert result["errors"] == {"zones": "zone_whole_and_devices"}
+    result = await options_step(hass, result, {"control": "unmixed_shared", "zones": []})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    main = circuits_of(hass, entry_id)[0]
+    assert (main["zones"], main["devices"]) == ([living], {living: ["switch.living_radiator"]})
+
+
+async def test_a_stored_device_vt_no_longer_drives_is_refused_at_the_save(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """I8.8c: a device the circuit stored that VT no longer lists for any zone — offered, so the
+    form can show it, and refused at the save, named, until it is taken out."""
+    living = entities["living"]
+    built_on(hass, living, "switch.living_radiator")
+    circuits = [
+        {"id": "main", "zones": [living], "devices": {living: ["switch.old_valve"]}},
+        {"id": "circuit_2", "zones": [entities["bedroom"]]},
+    ]
+    options = _rich_options(entities) | {"level": "advanced", "circuits": circuits, "zones": []}
+    entry_id = await _entry(hass, options)
+    result = await open_circuit(hass, entry_id)
+    kept = result["data_schema"]({"control": "unmixed_shared"})
+    result = await options_step(hass, result, kept)
+    assert result["errors"] == {"devices": "device_not_in_zone"}
+    assert result["description_placeholders"]["zone"] == "switch.old_valve"
+    result = await options_step(hass, result, kept | {"zones": [living], "devices": []})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert "devices" not in circuits_of(hass, entry_id)[0]
+
+
 def _filters(schema: Any, key: str) -> list[dict[str, Any]]:
     for marker, field in schema.schema.items():
         if str(marker) == key:

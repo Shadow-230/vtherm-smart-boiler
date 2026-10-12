@@ -133,6 +133,13 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    zachowuje. Formularz obiegu wymienia zasilane strefy VT — obszar dopisuje swoje strefy przy
    zapisie — a z nich te z podłogówką i te z konwektorami; pozostałe to grzejniki. Strefa
    należy do jednego obiegu; strefa poza obiegami nie jest obserwowana i nie prosi o ciepło.
+   Pokój zasilany przez dwa obiegi — grzejnik z jednego, pętla podłogówki z drugiego — trafia
+   do każdego przez swoje urządzenia: na poziomie zaawansowanym **Pojedyncze urządzenia
+   strefy** podaje urządzenia, którymi steruje VT, a obieg wymienia urządzenia strefy, które
+   zasila, zamiast całej strefy. Pokój pozostaje jedną strefą: pilnowaną i liczoną raz. Obieg
+   sterowany przez inną automatykę słyszy jego prośbę tylko wtedy, gdy włączone jest któreś
+   z jego urządzeń w tym obiegu (gdy VT nie podaje, które są włączone — w każdym z jego
+   obiegów).
    **Typ obiegu** mówi, skąd obieg bierze wodę: prosto z kotła, przez stały termostatyczny
    zawór mieszający (pyta o jego nastawę) albo **sterowany przez inną automatykę** — mieszacz
    lub pompę, którymi steruje coś innego. Taki obieg może wskazać encję włączoną, gdy chce
