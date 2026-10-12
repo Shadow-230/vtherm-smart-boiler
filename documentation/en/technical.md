@@ -38,7 +38,8 @@ writes that to the boiler and hands the boiler back on every exit.
   SmartPI) instead of assuming it. No other module looks up a zone's state by entity name.
 - **A feature manager registered with VT** (`feature_manager.py`, through `vtherm_api`'s
   `register_feature_manager`) shows on each VT thermostat whether the boiler's heat reaches its
-  zone now — one value, `heat_available`, from `core/heat.py` (I8, decision C1). It is
+  zone now — `heat_available`, from `core/heat.py` (I8, decision C1) — and, since I9, the water
+  reaching the zone (`core/water.py`; section 8). It is
   registered only once VT is loaded; a thermostat already running sees it only after VT's next
   reload, which the plugin never triggers itself. Nothing in control depends on it.
 
@@ -259,8 +260,7 @@ scripts/env.sh mypy
 
 ## 8. Water data for zone algorithms
 
-**Specified, not built yet** (the user's decisions of 2026-10-12; step I9 of
-[`docs/plan-0.2.md`](../../docs/plan-0.2.md), before 0.3; being built,
+**Built in I9** (the user's decisions of 2026-10-12;
 [`docs/plan-0.2-i9.md`](../../docs/plan-0.2-i9.md)). An optional
 interface gives a zone algorithm — SmartPI first — the water reaching each zone's circuit, so
 its room model can account for a weather-compensated boiler, a mixer, burner cycling and hot
@@ -272,7 +272,10 @@ zone with its reason: as properties of its feature manager, through a function i
 that works with every supported VT version, and, rounded, in the `smart_boiler` attribute. It
 reads one key a consumer writes into the thermostat's `specific_states`, and pauses SmartPI's
 learning on its own conditions. No version number: consumers detect what exists, changes only
-add, and a contract test pins every name and value.
+add, and a contract test (`tests/test_water_interface.py`) pins every name and value. The parts:
+`core/supply.py` and `core/heat.py` (the reasons), `core/water.py` (a zone's fields),
+`coordinator.py` (each zone's `ZoneWater`), `feature_manager.py` (the properties, the attribute,
+the API), `vtherm_link.py` (the consumer's key) and `core/learning.py` (the pauses).
 
 The full specification — names, types, values, ranges, what happens when a value is missing:
 [`water-interface.md`](water-interface.md).

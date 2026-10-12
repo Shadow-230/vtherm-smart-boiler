@@ -38,8 +38,8 @@ jego woda, zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
   SmartPI), zamiast to zakładać. Żaden inny moduł nie odczytuje stanu strefy po nazwie encji.
 - **Moduł funkcji (feature manager) zarejestrowany w VT** (`feature_manager.py`, przez
   `register_feature_manager` z `vtherm_api`) pokazuje na każdym termostacie VT, czy ciepło z
-  kotła dociera teraz do jego strefy — jedną wartość, `heat_available`, z `core/heat.py` (I8,
-  decyzja C1). Jest rejestrowany dopiero po wczytaniu VT; termostat, który już działa, widzi
+  kotła dociera teraz do jego strefy — `heat_available`, z `core/heat.py` (I8, decyzja C1) — a od
+  I9 także wodę docierającą do strefy (`core/water.py`; rozdział 8). Jest rejestrowany dopiero po wczytaniu VT; termostat, który już działa, widzi
   go dopiero po następnym przeładowaniu VT, którego wtyczka nigdy sama nie wywołuje. Nic w
   sterowaniu od niego nie zależy.
 
@@ -275,8 +275,7 @@ scripts/env.sh mypy
 
 ## 8. Dane o wodzie dla algorytmów stref
 
-**Wyspecyfikowane, jeszcze niezbudowane** (decyzje użytkownika z 2026-10-12; krok I9 w
-[`docs/plan-0.2.md`](../../docs/plan-0.2.md), przed wersją 0.3; w budowie,
+**Zbudowane w I9** (decyzje użytkownika z 2026-10-12;
 [`docs/plan-0.2-i9.md`](../../docs/plan-0.2-i9.md)).
 Opcjonalny interfejs daje algorytmowi strefy — najpierw SmartPI — temperaturę wody, która dociera
 do obiegu każdej strefy, żeby jego model pomieszczenia uwzględniał krzywą grzewczą, mieszacz,
@@ -302,7 +301,8 @@ najmniej 1 K. Wtyczka czyta jeden klucz, który algorytm wpisuje do `specific_st
 (dla SmartPI proponowany `water_factor`), i nadal sama wstrzymuje uczenie SmartPI na swoich
 warunkach: ciepła woda z priorytetem i awaria kotła — w strefach wołających ciepła; duże
 wahania wody — tylko gdy algorytm nie korzysta z danych o wodzie. Bez numeru wersji: strony
-wykrywają, co istnieje, zmiany tylko dodają, a test kontraktu pilnuje nazw i wartości.
+wykrywają, co istnieje, zmiany tylko dodają, a test kontraktu (`tests/test_water_interface.py`)
+pilnuje nazw i wartości.
 
 Pełna specyfikacja (po angielsku) — nazwy, typy, wartości, zakresy, co się dzieje, gdy wartości
 brak (kocioł wł./wył. na przekaźniku, integracja producenta, tryb samego monitorowania i inne):

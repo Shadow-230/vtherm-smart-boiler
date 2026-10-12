@@ -87,8 +87,10 @@ Krok po kroku: [przewodnik użytkownika][guide-pl].
 ## Obok algorytmów stref VT
 
 Wtyczka czyta strefy VT i nigdy nie zmienia ich ustawień ani algorytmów. Termostat każdej strefy
-dostaje jeden atrybut, `smart_boiler` → `heat_available`: czy ciepło z kotła dociera teraz do
-strefy. Nic w VT od niego nie zależy.
+dostaje jeden atrybut, `smart_boiler`: `heat_available` — czy ciepło z kotła dociera teraz do
+strefy — i `supply_temperature`, zaokrągloną temperaturę wody, która do niej dociera. Algorytm
+strefy może czytać pełne dane o wodzie ([interfejs][water]); SmartPI 0.4.0 z nich nie korzysta.
+Nic w VT od niego nie zależy.
 
 Krzywa grzewcza już podnosi temperaturę wody, gdy na zewnątrz robi się zimniej. Niektóre algorytmy
 stref też liczą temperaturę zewnętrzną, więc pogoda działa wtedy dwa razy:
@@ -425,7 +427,7 @@ Cele są zamierzeniami, nie zobowiązaniami; każde wydanie zbiera dane dla nast
 | [`docs/`][docs] | plan każdego wydania i przeglądy kodu (po angielsku) |
 | 🇬🇧 [User guide][guide] · 🇵🇱 [Przewodnik użytkownika][guide-pl] | wymagania, instalacja, szybki start, jak to działa, podłączenie kotła, bezpieczeństwo, alarmy |
 | 🇬🇧 [Technical documentation][technical] · 🇵🇱 [Dokumentacja techniczna][technical-pl] | części integracji, jeden krok sterowania, cykl życia, stan trwały, testy |
-| [Dane o wodzie dla algorytmów stref][water] | wyspecyfikowany interfejs, który daje SmartPI i innym algorytmom stref temperaturę wody docierającej do każdej strefy (jeszcze niezbudowany; po angielsku, streszczenie w dokumentacji technicznej, rozdz. 8) |
+| [Dane o wodzie dla algorytmów stref][water] | interfejs, który daje SmartPI i innym algorytmom stref temperaturę wody docierającej do każdej strefy (po angielsku; streszczenie w dokumentacji technicznej, rozdz. 8) |
 | [`CHANGELOG.md`][changelog] | co zmienia każde wydanie (po angielsku) |
 | [`CONTRIBUTING.md`][contributing] | jak współtworzyć: gałęzie, testy, zasady (po angielsku) |
 | [`LICENSE`][license] | Apache License 2.0 |
