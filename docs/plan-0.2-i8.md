@@ -741,5 +741,13 @@ Claude's calls (2026-10-12): four pull requests.
   relay's own app or page; the stale names ("Heating curve and limits", "the control steps",
   "the user guide has a sample") follow the new menu. Longer texts remain only where a safety
   rule settled earlier needs the words (the relay timer's, Auto-TPI's costs, VT's restart).
-- I8.10d: both user guides rewritten plain, as above.
+- I8.10d ✅ (2026-10-12): both user guides edited plain — functions, not recommendations, the
+  neutral safety facts kept: the quick start in short steps through the new menu, the
+  "Changing settings later" paragraph for it, a new section on circuits and zones (circuit
+  types, other automation, a room split by its devices), the ESPHome sample replaced by the
+  three settings its tick confirms, the relay's "the forms recommend" paragraph replaced by
+  what happens without Home Assistant and the manual way back (C4), a thermostat "in parallel"
+  nowhere, and the window alarm (gone with I8.1) taken out of the alarm table. Claude's call:
+  an editing pass, not a rewrite from scratch, so the facts checked before stay as they were;
+  their check against the code is I8.10e.
 - I8.10e: the check of every document against the code, as above; the result in `research/`.
