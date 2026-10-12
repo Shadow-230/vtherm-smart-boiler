@@ -1798,10 +1798,12 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         """Decision 10: a circuit's water above its alarm temperature for its time — information
         only, for circuits with a maximum; ``None`` without one. The flow is the circuit's own
         sensor where mapped, else the boiler's for an unmixed circuit, each by the flow's age
-        limit; without it the alarm is inactive with its reason. With several such circuits, one
+        limit — not while hot water takes the boiler's heat; without it the alarm is inactive
+        with its reason. With several such circuits, one
         in alarm is shown, else one that could be judged."""
         found: list[Alarm] = []
         boiler_flow = snapshot.number(Signal.FLOW, self._max_age(Signal.FLOW))
+        hot_water = self.dhw_takes_heat(snapshot)
         for circuit in self.config.installation.circuits:
             if circuit.max_flow_alarm is None or circuit.max_flow_alarm_s is None:
                 continue
@@ -1812,7 +1814,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 value = reading.value
                 if reading.is_fresh(now, self._max_age(Signal.FLOW)) and isinstance(value, float):
                     own = value
-            flow, reason = circuit_flow(circuit, boiler_flow, own, own_mapped=entity is not None)
+            flow, reason = circuit_flow(
+                circuit, boiler_flow, own, own_mapped=entity is not None, hot_water=hot_water
+            )
             alarm = circuit_too_hot(
                 flow,
                 circuit.max_flow_alarm,

@@ -244,7 +244,9 @@ Gdy grzanie jest włączone, wtyczka ustawia temperaturę wody w kotle (temperat
    albo stałym zaworem chroni jego mieszacz lub zawór, a własny alarm za gorącej wody o tym
    informuje. Wymagana dla podłogówki bez mieszacza. Ponad krzywą wodę podnosi tylko korekta
    komfortu, do własnego limitu (domyślnie 3 K, czyli kelwiny — różnica temperatur). Sam kocioł
-   może ją nieco przekroczyć; alarm informuje, gdy zmierzone zasilanie długo jest za wysokie.
+   może ją nieco przekroczyć; alarm informuje, gdy zmierzone zasilanie długo jest za wysokie —
+   w obiegu zasilanym prosto z kotła nie wtedy, gdy grzeje się ciepła woda: ta woda do obiegu
+   nie płynie.
    (Wcześniej krzywa miała własną najwyższą temperaturę wody; aktualizacja zachowuje niższą z
    niej i z tej obiegu.)
 
@@ -824,7 +826,7 @@ Alarmy monitora. Informują; wtyczka dalej grzeje.
 | Niestabilny zapłon | w ciągu doby wiele cykli pracy palnika gaśnie wkrótce po zapłonie | zleć sprawdzenie |
 | Dryf histerezy c.o. | pasmo wł./wył. kotła z czasem się przesuwa | zleć sprawdzenie |
 | Brak przepływu: wszystkie zawory zamknięte przy pracującej pompie | woda nie ma którędy płynąć | sprawdź zawory albo obejście (bypass) |
-| Za gorąca woda w obiegu | zasilanie powyżej temperatury alarmowej obiegu | sprawdź jego maksimum |
+| Za gorąca woda w obiegu | zasilanie powyżej temperatury alarmowej obiegu przez jego czas (obieg prosto z kotła: nie podczas grzania ciepłej wody) | sprawdź jego maksimum |
 | Długie palenie bez nagrzewania | płomień 3 h bez przerwy, a pomieszczenia się nie nagrzewają: przyczyna mówi, czy woda jest za chłodna dla niedogrzanych pomieszczeń, kocioł na granicy mocy, czy woda za ciepła | korekta podnosi za chłodną wodę; przy za ciepłej obniż krzywą |
 
 Zgłoszenia w Naprawach:

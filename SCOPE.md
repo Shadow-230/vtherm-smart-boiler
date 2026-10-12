@@ -748,7 +748,10 @@ How control decides (principle 12):
   says so. An information alarm rises when the measured flow stays above an alarm temperature for
   a time, both the user's settings at the advanced level, pre-filled with the circuit's maximum +
   5 K and 10 min (decision 10). It needs a flow reading, and a circuit with a maximum; without
-  them it is inactive.
+  them it is inactive. On a circuit fed straight from the boiler and measured by the boiler's
+  flow, it does not count the time hot water with priority runs: the circuit gets none of that
+  water (the user's decision, 2026-10-12); hot water not known is counted, so a real overheat is
+  not missed.
 - The outdoor temperature comes from the outdoor sensor, else from the weather entity; a sensor
   found stuck is replaced in the same way, with an alarm, and one found deviating from the
   weather entity gives way to it only while the weather entity reads colder — the colder value
@@ -1172,7 +1175,7 @@ Defaults of the safety options and why (the user reviews them at K4):
 | Comfort correction | on in full control (decided by the user 2026-10-10, reversing 2026-10-03; an upgraded entry keeps what it ran with); up to its limit, 3 K by default (at most 10 K), rising at most 3 K a day; the starts comparison with it on (about 2026-10-12) may revisit the default | with VT's TPI zones it can hold the water at its +3 K edge while a zone at full duty stays short of its target by TPI's own offset, and every zone's cycle then stops the burner: 1.75 to 5 times the starts in the simulation, up to 6.3 with a daily outdoor swing; switched on, it helps a room its emitter cannot heat on the curve, bounded so the others do not overheat |
 | Learning pauses | on | keep swings the plugin causes out of SmartPI's model |
 | Alarm reaction | information; the hand-backs of decision 7 always | another controller is writing — never fight; the plugin stops heating only where the boiler itself stops |
-| Circuit-maximum alarm | the circuit's maximum + 5 K, for 10 min (information) | the boiler may overshoot the maximum; the user sees it (decision 10) |
+| Circuit-maximum alarm | the circuit's maximum + 5 K, for 10 min (information); on a circuit fed straight from the boiler, hot water with priority not counted | the boiler may overshoot the maximum; the user sees it (decision 10); the hot water does not reach that circuit (2026-10-12) |
 | "Add water" threshold | none | the value comes from the boiler's manual; a wrong default stops nothing but misleads |
 | High-pressure warning / alarm | none — entered below the safety valve's rating, read on the valve | ratings differ (often 3 bar in Europe, about 2.1 bar in North America): a default of 2.8 bar would never fire below a 2.1-bar valve (decision 13 of `docs/plan-0.2.3.md`) |
 | Flue gas warning / alarm | 85 / 100 °C on a condensing boiler; none on a non-condensing one | hotter flue gas means the boiler is not condensing; too high warns too late for plastic flue pipes; a non-condensing boiler runs far hotter (reason to confirm at K4) |

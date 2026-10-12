@@ -2495,6 +2495,7 @@
             "state": {
               "no_flow_reading": "Brak odczytu zasilania",
               "circuit_not_measured": "Zasilanie obiegu nie jest mierzone",
+              "hot_water": "Grzeje się ciepła woda: woda z kotła nie płynie do tego obiegu",
               "held": "Stan zachowany: dane wejściowe chwilowo nieznane (do godziny)"
             }
           },

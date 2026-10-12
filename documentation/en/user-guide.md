@@ -229,7 +229,8 @@ While heating is on, the plugin sets the boiler's water (flow) temperature:
    a fixed valve is guarded by them, and its own too-hot alarm tells. Needed for underfloor
    heating on an unmixed loop. Above the curve only the comfort correction raises
    the water, up to its own limit (default 3 K). The boiler itself may overshoot it a little; an
-   alarm tells you when the measured flow stays too high. (Before, the curve had a highest water
+   alarm tells you when the measured flow stays too high — on a circuit fed straight from the
+   boiler, not while hot water is heated: the circuit gets none of that water. (Before, the curve had a highest water
    temperature of its own; an update keeps the lower of it and the circuit's.)
 
 The water temperature changes slowly (the ramp, default 1 K per minute). It is re-decided every
@@ -784,7 +785,7 @@ Alarms from the monitor. They inform; the plugin keeps heating.
 | Unstable ignition | many burns lost soon after ignition in a day | have it checked |
 | Heating hysteresis drifting | the boiler's on/off band drifts over time | have it checked |
 | Low flow: all valves closed while the pump runs | no path for the water | check valves or bypass |
-| Circuit water too hot | flow above the circuit's alarm temperature | check its maximum |
+| Circuit water too hot | flow above the circuit's alarm temperature for its time (a circuit fed straight from the boiler: not while hot water is heated) | check its maximum |
 | Long burn without warming | the flame on for 3 h without a break, the rooms not warming: its reason says the water too cool for the rooms short, the boiler at its power limit, or the water too hot | the correction raises cool water; lower the curve if too hot |
 
 Repair issues:
