@@ -11,6 +11,7 @@ import pytest
 
 from custom_components.vtherm_smart_boiler.core.guards import (
     DAY,
+    MIN_WRITE_INTERVAL_S,
     ChangeClass,
     GuardEvent,
     WriteKind,
@@ -25,6 +26,8 @@ from custom_components.vtherm_smart_boiler.core.relay import (
     RELAY_NOT_TAKEN_CHECKS,
     RELAY_UNREACHABLE_S,
     RESTARTS_ANSWERED,
+    TIMER_MAX_S,
+    TIMER_MIN_S,
     HeatEvidence,
     ProofSeen,
     ProofState,
@@ -2039,3 +2042,521 @@ def test_a_recognised_timer_is_renewed_at_half_its_length() -> None:
     assert renewals == [280.0, 560.0, 840.0, 1120.0]
     assert state.timer_seen_s == 560.0
     assert relay.on
+
+
+# --- Mutation testing (2026-10-12): boundaries, a real clock's large times, the run of checks ---
+
+NOW = 2 * DAY  # a clock far from zero, as a real one: "within a day" is a difference, not a sum
+UNKNOWN_TIMER = RelayConfig(
+    reports=RelayReports.YES, power_on=RelayPowerOn.OFF, timer=RelayTimer.UNKNOWN
+)
+DECLARED_TIMER = RelayConfig(reports=RelayReports.YES, timer=RelayTimer.MINUTES, timer_s=10 * MIN)
+
+
+def held(command: bool, since: float, **fields: object) -> RelayState:
+    """The relay's memory: ``command`` sent at ``since`` and read back at once, the start phase
+    over; ``fields`` change the rest."""
+    state = RelayState(
+        written=command,
+        written_at=since,
+        sent_at=since,
+        change_at=since,
+        on_since=since if command else None,
+        confirmed_at=since + 10.0,
+        held_since=since + 10.0,
+        start_done=True,
+    )
+    return replace(state, **fields)
+
+
+def found(state: RelayState, on: bool, config: RelayConfig, *, moment: bool = True) -> RelayResult:
+    """The relay found ``on`` at ``NOW`` — Home Assistant showing the moment of the change
+    (``moment``) or not — the command unchanged."""
+    seen = RelaySeen(on=on, known=True, available=True, changed_at=NOW if moment else None)
+    return plan_relay(state, state.written, seen, NOW, config)
+
+
+def not_taken_at(results: list[tuple[float, RelayResult]]) -> list[float]:
+    return [t for t, result in results if result.judged is ChangeClass.NOT_TAKEN]
+
+
+@pytest.mark.parametrize(
+    ("timer_seen_s", "lapses", "age", "judged", "timer"),
+    [
+        # A new session over a day later: the timer seen is kept, the switch-offs are gone.
+        (1800.0, (), 1800.0, ChangeClass.OWN_LAPSE, 1800.0),
+        (540.0, (), 540.0, ChangeClass.OWN_LAPSE, 540.0),  # exactly the shortest recognised
+        (1800.0, (), 1000.0, ChangeClass.LOST_COMMAND, 1800.0),  # another age: counted
+        (1080.0, (), 540.0, ChangeClass.OWN_LAPSE, 540.0),  # seen at twice its length
+        (None, ((-HOUR_S, 1780.0),), 1820.0, ChangeClass.OWN_LAPSE, 1800.0),  # the mean
+        (None, ((-DAY - HOUR_S, 1800.0), (-HOUR_S, 1800.0)), 1800.0, ChangeClass.OWN_LAPSE, 1800.0),
+        (None, ((-2 * HOUR_S, 700.0), (-HOUR_S, 1800.0)), 1800.0, ChangeClass.OWN_LAPSE, 1800.0),
+        (None, ((-HOUR_S, 530.0),), 550.0, ChangeClass.OWN_LAPSE, 540.0),  # mean exactly 540 s
+    ],
+)
+def test_an_unknown_timer_is_recognised_from_the_days_switch_offs_and_the_timer_seen(
+    timer_seen_s: float | None,
+    lapses: tuple[tuple[float, float], ...],
+    age: float,
+    judged: ChangeClass,
+    timer: float | None,
+) -> None:
+    """Z4R-02, KD-02: a switch-off the same time into its on-period as the timer seen (or a
+    whole multiple of it), or as an earlier one of the day — within 60 s, their mean; a whole
+    multiple apart, the shorter — of 540 s or more is the relay's own timer: answered and not
+    counted. Over a day old, or another age, an earlier one is passed over, not the end of the
+    search; a switch-off at another age than the timer seen still counts."""
+    state = held(
+        True,
+        NOW - age,
+        timer_seen_s=timer_seen_s,
+        lapses=tuple((NOW + at, length) for at, length in lapses),
+    )
+    result = found(state, False, UNKNOWN_TIMER)
+    assert result.judged is judged
+    assert result.lost is (judged is ChangeClass.LOST_COMMAND)
+    assert result.state.timer_seen_s == timer
+    assert result.write == RelayWrite(True, WriteKind.RESEND)
+
+
+def test_the_days_restarts_and_switch_offs_are_kept_for_a_day_of_a_real_clock() -> None:
+    """Negative (answers D, N; Z4R-02): a switch-off counted as a restart keeps the day's
+    restarts and switch-offs — on a clock far from zero, as a real one — and drops those a day
+    old or more, at the exact day too; a switch-off a day old is no timer to compare with."""
+    state = held(
+        True,
+        NOW - 1000.0,
+        restarts=(NOW - DAY, NOW - HOUR_S),
+        lapses=((NOW - DAY, 1000.0), (NOW - HOUR_S, 700.0)),
+    )
+    result = found(state, False, UNKNOWN_TIMER)
+    assert result.judged is ChangeClass.LOST_COMMAND
+    assert result.restart
+    assert result.state.restarts == (NOW - HOUR_S, NOW)
+    assert result.state.lapses == ((NOW - HOUR_S, 700.0), (NOW, 1000.0))
+    assert result.state.timer_seen_s is None
+
+
+@pytest.mark.parametrize(
+    ("restarts", "judged"),
+    [
+        ((-2 * HOUR_S, -HOUR_S, -MIN), ChangeClass.ANOTHER_CONTROLLER),  # the fourth in a day
+        ((-DAY, -HOUR_S, -MIN), ChangeClass.LOST_COMMAND),  # the first exactly a day old: out
+    ],
+)
+def test_untraced_restarts_count_within_the_day_before_now(
+    restarts: tuple[float, ...], judged: ChangeClass
+) -> None:
+    """Negative (answers D, N): the restarts answered count within the day before now, on a
+    clock far from zero as a real one, and one exactly a day old no longer does. With no timer,
+    a switch-off keeps no age."""
+    state = held(True, NOW - HOUR_S, restarts=tuple(NOW + t for t in restarts))
+    result = found(state, False, REPORTING)
+    assert result.judged is judged
+    assert result.state.blocked is (judged is ChangeClass.ANOTHER_CONTROLLER)
+    assert result.state.lapses == ()
+    assert result.state.short_off_s is None
+
+
+def test_the_short_switch_off_named_includes_the_fourth() -> None:
+    """K4.2: at answer N's fourth, the length named for the latch issue is the latest two of the
+    day's counted switch-offs — this one among them."""
+    state = held(
+        True,
+        NOW - 415.0,
+        restarts=(NOW - 3 * HOUR_S, NOW - 2 * HOUR_S, NOW - HOUR_S),
+        lapses=((NOW - 3 * HOUR_S, 400.0), (NOW - 2 * HOUR_S, 405.0), (NOW - HOUR_S, 410.0)),
+    )
+    result = found(state, False, UNKNOWN_TIMER)
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+    assert result.state.blocked
+    assert result.state.short_off_s == 412.5
+
+
+def test_a_declared_timers_lapse_keeps_the_timer_seen_and_needs_no_moment() -> None:
+    """A declared timer's lapse is its own, "on" again and not counted — also where Home
+    Assistant shows no moment of the change; the relay's own timer seen before stays a fact."""
+    state = held(True, NOW - 10 * MIN, timer_seen_s=1800.0)
+    for moment in (True, False):
+        result = found(state, False, DECLARED_TIMER, moment=moment)
+        assert result.judged is ChangeClass.OWN_LAPSE
+        assert not result.lost
+        assert result.state.timer_seen_s == 1800.0
+        assert result.write == RelayWrite(True, WriteKind.RESEND)
+
+
+def test_a_switch_off_one_timer_after_a_write_but_not_after_the_relays_own_later_on() -> None:
+    """Negative (SB-05): the relay shown on again by itself 5 min after the plugin's last "on"
+    restarted its timer: a switch-off 10 min after that "on" — 5 min into the new on-period —
+    is no lapse of a declared 10-min timer; it is judged and counted."""
+    state = held(True, NOW - 10 * MIN, on_since=NOW - 5 * MIN)
+    result = found(state, False, DECLARED_TIMER)
+    assert result.judged is ChangeClass.LOST_COMMAND
+    assert result.lost
+
+
+def test_a_change_filed_at_the_moment_of_the_send_is_not_after_it() -> None:
+    """Negative (PB-01): a switch between on and off that Home Assistant files at the very
+    moment of the send is not after it — the relay has not shown the command: "not confirmed",
+    not a change seen on the relay."""
+    relay, state = stopped_taking(True)
+    state, _ = drive(relay, REPORTING, True, 1000.0, 1000.0, state)
+    seen = RelaySeen(on=False, known=True, available=True, changed_at=1000.0)
+    result = plan_relay(state, True, seen, 1200.0, REPORTING)
+    assert result.judged is ChangeClass.NOT_CONFIRMED
+    assert not result.lost
+
+
+def test_a_send_not_shown_at_the_first_check_three_intervals_later_is_not_taken() -> None:
+    """Decision 6 of 0.2.3 (SB-06): with no run of checks kept, the run is timed from the send:
+    where the first step that looks comes three check intervals after it, the relay has stopped
+    taking commands — a step earlier, it is only "not confirmed"."""
+    relay, state = stopped_taking(True)
+    state, _ = drive(relay, REPORTING, True, 1000.0, 1000.0, state)
+    late = 1000.0 + NOT_TAKEN_S
+    early = plan_relay(state, True, relay.seen(late - 10.0), late - 10.0, REPORTING)
+    assert early.judged is ChangeClass.NOT_CONFIRMED
+    result = plan_relay(state, True, relay.seen(late), late, REPORTING)
+    assert result.judged is ChangeClass.NOT_TAKEN
+    assert result.state.not_taken
+
+
+@pytest.mark.parametrize(("break_by", "first"), [("unknown", 2200.0), ("trace", 2560.0)])
+def test_a_check_it_could_not_answer_or_a_lost_command_starts_the_run_again(
+    break_by: str, first: float
+) -> None:
+    """Negative (decision 6 of 0.2.3, SB-06): "off" not shown from 1000 s — then the relay reads
+    unknown for a step with no trace of an outage, or another entity of its device goes away
+    (lost commands, sent again while the trace lasts): the run of checks starts again, and "not
+    taken" comes three checks after its new first send, not 15 min after 1000 s."""
+    relay, state = stopped_taking(False)
+
+    def event(s: float) -> None:
+        if s == 1400 and break_by == "unknown":
+            relay.on = None
+        elif s == 1410 and break_by == "unknown":
+            relay.on = True
+        elif s == 1400:
+            relay.outage_at = s  # the relay itself stays available
+
+    state, results = drive(relay, REPORTING, False, 1000.0, 3000.0, state, at=event)
+    assert dict(results)[1120.0].judged is ChangeClass.NOT_CONFIRMED  # the first run began
+    assert not_taken_at(results)[0] == first
+    assert state.off_not_taken
+
+
+def test_a_relay_showing_the_command_for_a_moment_ends_not_taken_at_once() -> None:
+    """Negative (decision 6 of 0.2.3): "on" not taken over three checks, then the relay is seen
+    to switch on and back off between two steps — it showed the command, so it takes commands:
+    the "not taken" mark and its run of checks end at once."""
+    relay, state = stopped_taking(True)
+    state, results = drive(relay, REPORTING, True, 1000.0, 1900.0, state)
+    assert not_taken_at(results) == [1900.0]
+    relay.switch(1945.0, True)
+    relay.switch(1948.0, False)
+    result = plan_relay(state, True, relay.seen(1950.0), 1950.0, REPORTING)
+    assert result.judged is ChangeClass.NOT_JUDGED  # within the timeout of the 1900 s send
+    assert not result.state.not_taken
+    assert result.state.unshown_since is None
+    assert relay_check(result.state, REPORTING, reports=True) is RelayCheck.NOT_CONFIRMED
+
+
+def test_a_run_of_checks_ends_when_the_relay_shows_the_command() -> None:
+    """Negative (decision 6 of 0.2.3, SB-06): a run of checks without the command ends when the
+    relay shows it, read back after a check's resend: a later command not taken is "not taken"
+    three checks after its own send, not at once."""
+    relay, state = confirmed_on()
+    relay.takes = False
+
+    def event(s: float) -> None:
+        relay.takes = 1200 <= s < 2000
+
+    state, results = drive(relay, REPORTING, lambda t: t >= 2000, 1000.0, 3000.0, state, at=event)
+    assert dict(results)[1120.0].judged is ChangeClass.NOT_CONFIRMED  # the first run began
+    assert not_taken_at(results)[0] == 2000.0 + NOT_TAKEN_S
+
+
+def test_a_command_taken_as_it_is_ends_the_run_of_checks() -> None:
+    """Negative (decision 6 of 0.2.3, SB-06): "off" not shown from 1000 s, then "on" again, which
+    the relay still shows — taken as it is: the run of checks ends. The late "off" landing just
+    after it (the plugin's own context) is left to the check, whose "on" the relay does not
+    take: "not taken" three checks after that send, not 15 min after 1000 s."""
+    relay, state = confirmed_on()
+    relay.takes = False
+
+    def event(s: float) -> None:
+        if s == 1210:
+            relay.on, relay.changed_at, relay.ours = False, 1205.0, True
+
+    state, results = drive(
+        relay, REPORTING, lambda t: not 1000 <= t < 1200, 1000.0, 3000.0, state, at=event
+    )
+    by_t = dict(results)
+    assert by_t[1120.0].judged is ChangeClass.NOT_CONFIRMED  # the first run began
+    assert by_t[1200.0].write is None  # "on" taken as it is
+    assert by_t[1210.0].judged is ChangeClass.NOT_JUDGED
+    assert by_t[1300.0].write == RelayWrite(True, WriteKind.RESEND)
+    assert not_taken_at(results)[0] == 1300.0 + NOT_TAKEN_S
+
+
+def test_a_command_not_shown_after_the_start_phase_is_reported_and_cleared_by_a_new_one() -> None:
+    """After the start phase, "on" not read back within 120 s is "not confirmed" ("write
+    ignored"), and three checks on "not taken"; a new command the relay already shows clears
+    both at once — it holds that one."""
+    relay, state = stopped_taking(True)
+    state, results = drive(relay, REPORTING, True, 1000.0, 1900.0, state)
+    unshown = dict(results)[1000.0 + RELAY_CONFIRM_S].state
+    assert relay_write_ignored(unshown)
+    assert relay_check(unshown, REPORTING, reports=True) is RelayCheck.NOT_CONFIRMED
+    assert relay_check(state, REPORTING, reports=True) is RelayCheck.NOT_TAKEN
+    result = plan_relay(state, False, relay.seen(1910.0), 1910.0, REPORTING)
+    assert result.write is None  # taken as it is
+    assert not relay_write_ignored(result.state)
+    assert relay_check(result.state, REPORTING, reports=True) is RelayCheck.CONFIRMED
+
+
+def test_the_start_phase_attempts_are_reported_and_never_counted_as_lost() -> None:
+    """The start phase (R7, row 5): a send is waiting until read back; each attempt not read
+    back within 120 s is "not confirmed" at once; neither those nor "ignored from the start"
+    count toward "commands lost"."""
+    relay = Relay(takes=False)
+    state, results = drive(relay, REPORTING, True, 0.0, 800.0)
+    by_t = dict(results)
+    assert relay_check(by_t[0.0].state, REPORTING, reports=True) is RelayCheck.WAITING
+    assert by_t[120.0].judged is ChangeClass.FAILED_ATTEMPT
+    assert relay_write_ignored(by_t[120.0].state)
+    assert relay_check(by_t[120.0].state, REPORTING, reports=True) is RelayCheck.NOT_CONFIRMED
+    assert by_t[720.0].judged is ChangeClass.IGNORED_FROM_START
+    assert state.ignored
+    assert lost(results) == []
+
+
+@pytest.mark.parametrize(
+    ("on_from", "dropped", "first"),
+    [
+        (None, False, 120.0),  # "off" taken as it is at 0 s: held since
+        (60.0, False, 190.0),  # then "on" at 60 s: held since read back at 70 s
+        (0.0, True, 190.0),  # "on" held from 10 s, off at 55-65 s: held again since 70 s
+    ],
+)
+def test_the_start_phase_ends_once_the_relay_has_held_a_command_for_the_timeout(
+    on_from: float | None, dropped: bool, first: float
+) -> None:
+    """R7: the start phase is over once the relay has held a command for 120 s without a break —
+    from when it was taken as it is, or read back; a new command, or another state shown, starts
+    the count again."""
+    relay = Relay()
+
+    def command(t: float) -> bool:
+        return on_from is not None and t >= on_from
+
+    def event(s: float) -> None:
+        if dropped and s == 60:
+            relay.switch(55.0, False)
+        elif dropped and s == 70:
+            relay.switch(65.0, True)
+
+    _state, results = drive(relay, REPORTING, command, 0.0, 300.0, at=event)
+    assert min(t for t, result in results if result.state.start_done) == first
+
+
+def test_a_change_after_a_command_taken_as_it_is_is_judged_at_once() -> None:
+    """Negative (R7, rows 2 and 8): a new command the relay already shows is taken with no send —
+    nothing to wait for: the previous command shown again by something else at the next step is
+    a change, judged and answered at once, not waited out from the earlier send."""
+    relay = Relay()
+    state, _ = drive(relay, REPORTING, False, 0.0, 300.0)
+    relay.takes = False
+
+    def event(s: float) -> None:
+        if s == 1040:
+            relay.switch(s, True)
+
+    state, results = drive(
+        relay, REPORTING, lambda t: 1000 <= t < 1030, 1000.0, 1040.0, state, at=event
+    )
+    by_t = dict(results)
+    assert by_t[1030.0].write is None  # "off" taken as it is
+    assert by_t[1040.0].judged is ChangeClass.LOST_COMMAND
+    assert by_t[1040.0].write == RelayWrite(False, WriteKind.RESEND)
+    assert not state.blocked
+
+
+def test_a_command_taken_as_it_is_ends_the_pending_rewrite() -> None:
+    """Negative (decision 6, M8): the one rewrite pending, a new command the relay already shows
+    is taken as it is and the rewrite is no longer awaited: a switch-off after it is judged at
+    once (a restart, its declared power-cut state), never the rewrite's timeout."""
+    config = replace(REPORTING, power_on=RelayPowerOn.OFF)
+    relay = Relay()
+    state, _ = drive(relay, config, False, 0.0, 300.0)
+    relay.takes = False
+
+    def event(s: float) -> None:
+        if s in (1000, 1020):
+            relay.switch(s, s == 1000)
+
+    state, results = drive(relay, config, lambda t: t >= 1010, 1000.0, 1020.0, state, at=event)
+    by_t = dict(results)
+    assert by_t[1000.0].write == RelayWrite(False, WriteKind.REWRITE)
+    assert by_t[1010.0].write is None  # "on" taken as it is
+    assert by_t[1020.0].judged is ChangeClass.LOST_COMMAND
+    assert by_t[1020.0].restart
+    assert not state.blocked
+
+
+def test_a_lost_command_after_the_rewrites_timeout_answers_it() -> None:
+    """Negative (decision 6, M8; answer C): the one rewrite not read back within 120 s, but with
+    a trace of an outage on its device by then: a lost command, sent again — the rewrite is
+    answered, and once the trace has passed the relay is judged as not confirmed, not as
+    another controller: the plugin does not step aside."""
+    config = replace(REPORTING, power_on=RelayPowerOn.OFF)
+    relay = Relay()
+    state, _ = drive(relay, config, False, 0.0, 300.0)
+    relay.takes = False
+
+    def event(s: float) -> None:
+        if s == 1000:
+            relay.switch(s, True)
+        elif s == 1100:
+            relay.outage_at = s  # another entity of its device away
+
+    state, results = drive(relay, config, False, 1000.0, 1600.0, state, at=event)
+    by_t = dict(results)
+    assert by_t[1000.0].write == RelayWrite(False, WriteKind.REWRITE)
+    assert by_t[1120.0].judged is ChangeClass.LOST_COMMAND
+    assert by_t[1480.0].judged is ChangeClass.NOT_CONFIRMED
+    assert events(results) == []
+    assert not state.blocked
+
+
+def test_the_one_rewrite_counts_for_the_day_before_now() -> None:
+    """Decision 6 (M8), answer C: a change exactly a day after the one rewrite is rewritten again;
+    within the day the plugin steps aside, with no switch-off length to name. Within the
+    rewrite's timeout nothing is judged."""
+    config = replace(REPORTING, power_on=RelayPowerOn.OFF)
+    result = found(held(False, NOW - HOUR_S, rewritten_at=NOW - DAY), True, config)
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+    assert result.write == RelayWrite(False, WriteKind.REWRITE)
+    assert not result.state.blocked
+    assert result.state.rewritten_at == NOW
+    seen = RelaySeen(on=True, known=True, available=True, changed_at=NOW)
+    waiting = plan_relay(result.state, False, seen, NOW + MIN, config)
+    assert waiting.judged is ChangeClass.NOT_JUDGED
+    result = found(held(False, NOW - HOUR_S, rewritten_at=NOW - HOUR_S), True, config)
+    assert result.events == (GuardEvent.OUTSIDE_CHANGE,)
+    assert result.state.blocked
+    assert result.state.short_off_s is None
+
+
+def test_a_retried_on_while_the_relay_reads_on_keeps_its_on_period() -> None:
+    """The "on" that starts an on-period is a new "on", or "on" again while the relay reads off:
+    a renewal that failed, sent again while the relay reads on, leaves the on-period's start (and
+    so a declared timer's lapse window) where it was."""
+    config = RelayConfig(reports=RelayReports.YES, timer=RelayTimer.MINUTES, timer_s=20 * MIN)
+    relay = Relay()
+    state, _ = drive(relay, config, True, 0.0, 400.0, fails=lambda t: t == 300)
+    assert relay.failed == [(300.0, True, WriteKind.KEEPALIVE)]
+    assert (310.0, True, WriteKind.RESEND) in relay.writes
+    assert state.on_since == 0.0
+
+
+def test_a_write_exactly_the_write_interval_after_the_last_goes_out() -> None:
+    relay = Relay()
+    result = plan_relay(RelayState(), True, relay.seen(NOW), NOW, REPORTING)
+    assert result.write is not None
+    relay.write(NOW, result.write)
+    later = NOW + MIN_WRITE_INTERVAL_S
+    result = plan_relay(result.state, False, relay.seen(later), later, REPORTING)
+    assert result.write == RelayWrite(False, WriteKind.CHANGE)
+
+
+def test_a_new_command_at_a_return_does_not_hold_back_the_next_return() -> None:
+    """Negative (PB-44, M1): a relay that reports no state, back with a new command, gets that
+    command as a change; the next return 160 s later — past the confirmation timeout — still gets
+    its command at once: only a resend at a return bounds the next."""
+    config = RelayConfig(reports=RelayReports.NO, timer=RelayTimer.NONE)
+    relay = Relay()
+
+    def event(s: float) -> None:
+        if s in (200, 450):
+            relay.away(s)
+        elif s == 300:
+            relay.back(s, True)
+        elif s == 460:
+            relay.back(s, False)
+
+    drive(relay, config, lambda t: t < 300, 0.0, 500.0, at=event)
+    assert relay.writes == [
+        (0.0, True, WriteKind.CHANGE),
+        (300.0, False, WriteKind.CHANGE),
+        (460.0, False, WriteKind.RESEND),
+    ]
+
+
+def test_a_clock_set_back_moves_every_moment_kept() -> None:
+    """C9: after the wall clock went back, the one rewrite and the relay out of reach count from
+    now — its alarm comes five minutes from now, not from a moment ahead."""
+    state = RelayState(rewritten_at=NOW + 500.0, unreachable_since=NOW + 500.0)
+    result = plan_relay(state, None, RelaySeen(), NOW, REPORTING)
+    assert result.state.rewritten_at == NOW
+    assert result.state.unreachable_since == NOW
+    later = NOW + RELAY_UNREACHABLE_S
+    assert plan_relay(result.state, None, RelaySeen(), later, REPORTING).unreachable
+
+
+def test_a_new_session_keeps_the_one_rewrite_and_the_restarts_for_their_day() -> None:
+    """Answer N: a new session keeps the one rewrite, the restarts and the switch-offs counted
+    within the day before now — on a clock far from zero, as a real one — and drops those a day
+    old, at the exact day too."""
+    state = RelayState(
+        rewritten_at=NOW - HOUR_S,
+        restarts=(NOW - DAY, NOW - HOUR_S),
+        lapses=((NOW - DAY, 1800.0), (NOW - HOUR_S, 1800.0)),
+    )
+    fresh = relay_for_new_session(state, NOW)
+    assert fresh.rewritten_at == NOW - HOUR_S
+    assert fresh.restarts == (NOW - HOUR_S,)
+    assert fresh.lapses == ((NOW - HOUR_S, 1800.0),)
+    assert relay_for_new_session(replace(state, rewritten_at=NOW - DAY), NOW).rewritten_at is None
+
+
+def test_a_short_switch_off_is_named_at_its_bounds() -> None:
+    """K4.2: two of the day's switch-offs exactly 60 s apart agree; a mean of exactly 540 s is
+    the relay's own timer, not short; the latest that agree are found past a later one that
+    does not; and the day counts back from a clock far from zero."""
+
+    def named(*ages: float) -> float | None:
+        lapses = tuple((NOW - HOUR_S + n * MIN, age) for n, age in enumerate(ages))
+        return short_switch_off_s(RelayState(lapses=lapses), NOW)
+
+    assert named(400.0, 460.0) == 430.0
+    assert named(530.0, 550.0) is None
+    assert named(120.0, 150.0, 400.0) == 135.0
+
+
+@pytest.mark.parametrize("timer_s", [TIMER_MIN_S, TIMER_MAX_S])
+def test_a_declared_timer_of_10_or_120_minutes_is_accepted(timer_s: float) -> None:
+    """The declared timer's range includes its bounds, 10 and 120 minutes."""
+    config = RelayConfig(timer=RelayTimer.MINUTES, timer_s=timer_s)
+    assert config.renew_s == 300.0
+
+
+def test_power_at_its_threshold_is_heat() -> None:
+    """R12: the boiler's power at its threshold, not only above it, proves heat."""
+    power = ProofSeen(power_w=100.0, heats_above_w=100.0)
+    assert heat_evidence(power, None, None) is HeatEvidence.HEATS
+
+
+def test_the_proof_on_a_real_clock_and_twice_at_the_same_moment() -> None:
+    """Negative (R12): the 30 minutes run from the "on", on a clock far from zero as a real one —
+    no alarm 10 s in; a second look at the same moment is the same on-period: heat seen in it
+    stays seen."""
+    state, shown, alarm = follow_proof(ProofState(), True, ProofSeen(flame=True), NOW)
+    assert shown is HeatEvidence.HEATS
+    state, shown, alarm = follow_proof(state, True, ProofSeen(flame=False), NOW)
+    assert shown is HeatEvidence.HEATS
+    assert state.on_since == NOW
+    state, shown, alarm = follow_proof(ProofState(), True, ProofSeen(flame=False), NOW)
+    state, shown, alarm = follow_proof(state, True, ProofSeen(flame=False), NOW + 10.0)
+    assert shown is HeatEvidence.NOT_SEEN
+    assert not alarm

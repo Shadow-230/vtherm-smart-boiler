@@ -22,6 +22,7 @@ from custom_components.vtherm_smart_boiler.core.lowest_water import (
     WallWarning,
     WaterSetBy,
     design_load_kw,
+    entered_min_power,
     estimate_from_power,
     suggest_lowest_water,
     wall_issue_due,
@@ -301,6 +302,7 @@ def test_missing_flame_flow_or_setpoint_names_what_is_missing(
     or a setpoint source the suggestion is inactive, naming what is missing — never a guess."""
     plant = Plant()
     plant.burns(30, 3)
+    absent = dict(absent)  # the parameter itself stays whole for a later run in the same process
     source = absent.pop("source", SetpointSource.CH_SETPOINT)
     result = suggest(plant, source=source, **absent)
     assert result.state is SuggestionState.INACTIVE
@@ -527,3 +529,201 @@ def test_the_wall_thermostat_issue_waits_30_minutes() -> None:
     assert wall_warning_since(None, wall_thermostat_fallback(False, None), 0.0) is None
     assert wall_warning_since(5000.0, low, 100.0) == 100.0
     assert not wall_issue_due(None, 1e9)
+
+
+# --- Mutation testing (2026-10-12): bounds, single exclusions, unknown data, the inputs ---
+
+OTHER = "climate.b"
+
+
+def _burn_at(plant: Plant, minutes: float = 3, **kw) -> tuple[float, float]:
+    """One burn as ``Plant.burn`` makes it; returns its start and end."""
+    start = plant.t
+    plant.burn(minutes, **kw)
+    return start, start + minutes * 60.0
+
+
+def _left_out(plant: Plant, case: str) -> None:
+    """One burn the evidence leaves out, for the reason ``case`` names."""
+    kw = {
+        "cut_by_the_window": {"minutes": 20},  # the plant begins before the window
+        "hot_water": {"dhw": True},
+        "demand_ends": {"demand_ends": True},
+        "flame_lost": {"end_flow": 18.5},
+        "valve_throttled": {"valve": 0.3},
+    }.get(case, {})
+    start, end = _burn_at(plant, **kw)
+    if case == "hot_water_before_the_end":
+        plant.dhw.append(start + 5.0, True)
+        plant.dhw.append(start + 60.0, False)
+    elif case == "hot_water_at_the_end":
+        plant.dhw.append(end, True)
+        plant.dhw.append(end + 60.0, False)
+    elif case == "hot_water_one_second":
+        plant.dhw.append(start + 60.0, True)
+        plant.dhw.append(start + 61.0, False)
+    elif case == "demand_paused_one_second":
+        plant.calling.append(start + 60.0, False)
+        plant.calling.append(start + 61.0, True)
+    elif case == "setpoint_unknown_at_the_start":
+        plant.setpoint = Series([(start - 1.0, None), (start + 90.0, 20.0)])
+    elif case == "setpoint_unknown_at_the_end":
+        plant.setpoint = Series([(start - 1.0, 20.0), (start + 90.0, None)])
+    elif case == "flow_unknown_at_the_end":
+        plant.flow = Series((s.t, None if s.t == end - 5.0 else s.value) for s in plant.flow)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "cut_by_the_window",
+        "hot_water",
+        "hot_water_before_the_end",
+        "hot_water_at_the_end",
+        "hot_water_one_second",
+        "demand_ends",
+        "demand_paused_one_second",
+        "setpoint_unknown_at_the_start",
+        "setpoint_unknown_at_the_end",
+        "flow_unknown_at_the_end",
+        "flame_lost",
+        "valve_throttled",
+    ],
+)
+def test_a_burn_left_out_is_left_out_alone(case: str) -> None:
+    """Negative: a burn cut by the window, with hot water during it, at its end or for a single
+    second, its demand ending or paused for a second, its setpoint unknown at its start or end,
+    its flow unknown at its end, not ended on temperature, or its valve throttled is left out —
+    and only it: the 30 qualifying burns after it still count."""
+    plant = Plant(begin=NOW - 7 * DAY - 1200.0) if case == "cut_by_the_window" else Plant()
+    _left_out(plant, case)
+    plant.burns(30, 3)
+    result = suggest(plant)
+    assert result.counted == 30, case
+    assert result.state is SuggestionState.SUGGESTION
+
+
+@pytest.mark.parametrize("case", ["changed_at_the_end", "reported_at_the_end"])
+def test_the_setpoint_a_burn_ended_at_is_the_one_just_before_its_end(case: str) -> None:
+    """The setpoint a burn ended at is the one holding just before the flame went out — a new
+    one reported as it goes out does not judge the burn — else, unknown just before, the one
+    reported at that moment."""
+    plant = Plant()
+    for _ in range(3):
+        start, end = _burn_at(plant)
+        if case == "changed_at_the_end":
+            plant.setpoint.append(end, 30.0)
+        else:
+            plant.setpoint.append(start + 90.0, None)
+            plant.setpoint.append(end, 20.0)
+    assert suggest(plant).counted == 3
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "other_not_calling_open",
+        "other_calling_unreported",
+        "called_one_second",
+        "reported_one_second",
+    ],
+)
+def test_a_calling_zone_reporting_a_throttled_valve_leaves_the_burn_out(case: str) -> None:
+    """Negative: a zone that calls during a burn and reports its valve under half open leaves
+    the burn out, however briefly it called or reported; a second zone that does not call, or
+    reports no opening, does not let the burn count."""
+    plant = Plant()
+    own_throttled = case.startswith("other_")  # else the plant's own zone reports no opening
+    calling = Series([(START, case in ("other_calling_unreported", "reported_one_second"))])
+    valve: Series[float] = Series()
+    if case == "other_not_calling_open":
+        valve.append(START, 1.0)
+    elif case == "called_one_second":
+        valve.append(START, 0.3)
+    for _ in range(3):
+        start, end = _burn_at(plant, valve=0.3)
+        if case == "called_one_second":
+            calling.append(start + 60.0, True)
+            calling.append(start + 61.0, False)
+        elif case == "reported_one_second":
+            valve.append(end - 1.0, 0.3)
+            valve.append(end, None)
+    history = plant.history(valve=own_throttled)
+    history.zones[OTHER] = ZoneSeries(OTHER, calling=calling, valve_open=valve)
+    result = suggest_lowest_water(
+        history, SetpointSource.CH_SETPOINT, NOW, ParameterSet(), OPTIONS, PLUGIN
+    )
+    assert result.counted == 0, case
+
+
+@pytest.mark.parametrize("kw", [{"end_flow": 19.0}, {"valve": 0.5}], ids=["end_flow", "valve"])
+def test_the_evidences_bounds_count(kw: dict) -> None:
+    """A burn whose flow ended exactly 1 K under its setpoint ended on temperature; a valve
+    exactly half open is open enough: both count."""
+    plant = Plant()
+    plant.burns(30, 3, **kw)
+    assert suggest(plant).counted == 30
+
+
+def test_the_short_burn_is_the_monitors_own_and_a_burn_that_long_is_not_short() -> None:
+    """The short burn is the monitor's option, shown with the result. Negative: a burn exactly
+    that long is not short — 30 burns of exactly 5 minutes with a 5-minute short burn are good
+    enough."""
+    plant = Plant()
+    plant.burns(30, 5)
+    result = suggest(plant, options=MonitorOptions(has_dhw=False, short_burn_s=300.0))
+    assert result.short_burn_s == 300.0
+    assert (result.counted, result.short) == (30, 0)
+    assert result.state is SuggestionState.GOOD_ENOUGH
+
+
+def test_a_source_that_is_not_recorded_is_not_named_as_the_source() -> None:
+    """Negative: a setpoint source named whose series is absent is not shown as where the
+    setpoint came from."""
+    plant = Plant()
+    plant.burns(30, 3)
+    assert suggest(plant, setpoint=False).source is None
+
+
+def test_without_a_qualifying_burn_a_device_gives_no_reference() -> None:
+    """Negative: where a device sets the water and no burn qualifies, there is no reference to
+    judge against: no data, never an error."""
+    plant = Plant()
+    plant.burns(30, 3, demand_ends=True)
+    result = suggest(plant, DEVICE)
+    assert result.state is SuggestionState.NO_DATA
+    assert (result.reference, result.counted) == (None, 0)
+
+
+def test_caps_that_leave_only_the_reference_are_no_raise() -> None:
+    """Negative: a cap 2 K above the reference leaves exactly the reference (40 − 2 K = 38 °C):
+    no raise, so no suggestion — never the reference itself as a value."""
+    plant = Plant()
+    plant.burns(30, 3, setpoint=38.0)
+    context = SuggestionContext(set_by=WaterSetBy.PLUGIN, lowest=38.0, caps=(40.0,))
+    result = suggest(plant, context)
+    assert result.state is SuggestionState.NOT_APPLICABLE
+    assert result.value is None
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [(Source.ENTERED, 3.0), (Source.SUGGESTED, None), (Source.MEASURED, None), (None, None)],
+)
+def test_only_the_entered_minimum_power_is_used(
+    source: Source | None, expected: float | None
+) -> None:
+    """The estimate's minimum power is the one the user entered. Negative: one suggested by the
+    integration or measured, or none at all, gives none."""
+    parameters = ParameterSet()
+    if source is not None:
+        parameters = parameters.with_estimate(ParameterKey.BOILER_MIN_POWER, Estimate(3.0, source))
+    assert entered_min_power(parameters) == expected
+
+
+def test_the_wall_thermostat_issue_counts_from_when_the_warning_began() -> None:
+    """Negative: the 30 minutes run from the warning's start — a warning since 1000 s is not
+    due a second before 30 minutes later."""
+    since = 1000.0
+    assert not wall_issue_due(since, since + WALL_THERMOSTAT_ISSUE_S - 1.0)
+    assert wall_issue_due(since, since + WALL_THERMOSTAT_ISSUE_S)

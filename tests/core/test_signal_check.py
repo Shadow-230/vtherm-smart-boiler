@@ -646,3 +646,157 @@ def test_what_the_curve_takes_from_the_outdoor_sensor(
     """A3: a deviating sensor is used only while it reads colder than the weather entity."""
     check = None if status is None else OutdoorCheck(status, difference, 86400.0)
     assert curve_sensor(check, sensor, weather) == used
+
+
+# --- Mutation testing (2026-10-12): the long-run feature, shared signals, outdoor check limits ---
+
+LONG_RUN_CASES = [
+    (
+        "control stands in for the CH setpoint",
+        {"without": {Signal.CH_SETPOINT}, "control": ControlKind.WATER},
+        FeatureStatus.AVAILABLE,
+        (),
+    ),
+    (
+        "the read-back stands in for the CH setpoint",
+        {"without": {Signal.CH_SETPOINT}, "control": None, "read_back": True},
+        FeatureStatus.AVAILABLE,
+        (),
+    ),
+    (
+        "neither: the CH setpoint named",
+        {"without": {Signal.CH_SETPOINT}, "control": None},
+        FeatureStatus.DEGRADED,
+        ("ch_setpoint",),
+    ),
+    (
+        "no flow, no modulation: degraded, both named",
+        {"without": {Signal.FLOW, Signal.MODULATION}},
+        FeatureStatus.DEGRADED,
+        ("flow", "modulation"),
+    ),
+    ("no flame: inactive", {"without": {Signal.FLAME}}, FeatureStatus.INACTIVE, ("flame",)),
+    ("no zone known: inactive", {"zone_data": False}, FeatureStatus.INACTIVE, ("zone_data",)),
+]
+
+
+@pytest.mark.parametrize(
+    ("change", "status", "missing"),
+    [case[1:] for case in LONG_RUN_CASES],
+    ids=[case[0] for case in LONG_RUN_CASES],
+)
+def test_the_long_run_feature_names_what_it_lacks(
+    change: dict[str, Any], status: FeatureStatus, missing: tuple[str, ...]
+) -> None:
+    """Negative (G11 E): a long burn without warming needs the flame and the rooms; without the
+    flow, the modulation or a setpoint — the boiler's, or control's written one or read-back —
+    it is degraded and names each."""
+    change = dict(change)
+    mapped = EVERYTHING - change.pop("without", set())
+    result = features(mapped, True, True, **(FULL | change))[Feature.LONG_RUN]
+    assert (result.status, result.missing) == (status, missing)
+
+
+def test_a_shared_signal_is_named_beside_a_plainly_missing_one() -> None:
+    """Negative (X5): a feature missing a dropped signal and another one names both — the other
+    under its own code, the dropped one as ``entity_for_two_signals``."""
+    result = features(
+        EVERYTHING - {Signal.FLAME, Signal.RETURN},
+        True,
+        True,
+        **FULL,
+        shared={Signal.RETURN: Signal.FLOW},
+    )
+    assert result[Feature.CONDENSING] == FeatureState(
+        FeatureStatus.INACTIVE,
+        ("flame", ENTITY_FOR_TWO_SIGNALS),
+        ((Signal.RETURN, Signal.FLOW),),
+    )
+
+
+OUTDOOR_LIMITS = [
+    (
+        "exactly two hours of overlap are enough",
+        hourly([5.0, 5.0]),
+        hourly([4.0, 4.0]),
+        2,
+        OutdoorCheck(OutdoorStatus.OK, 1.0, 2 * HOUR),
+    ),
+    (
+        "an unknown sensor stretch does not end the overlap",
+        hourly([None, 5.0, 5.0, 5.0]),
+        hourly([4.0, 4.0, 4.0, 4.0]),
+        4,
+        OutdoorCheck(OutdoorStatus.OK, 1.0, 3 * HOUR),
+    ),
+    (
+        "an unknown weather stretch does not end the overlap",
+        Series([(0, 5.0)]),
+        hourly([None, 4.0, 4.0, 4.0]),
+        4,
+        OutdoorCheck(OutdoorStatus.OK, 1.0, 3 * HOUR),
+    ),
+    (
+        "too little overlap keeps the overlap seen",
+        hourly([5.0]),
+        hourly([4.0]),
+        1,
+        OutdoorCheck(OutdoorStatus.UNKNOWN, None, HOUR),
+    ),
+    (
+        "exactly the deviation limit does not deviate",
+        hourly([11.0, 11.0, 11.0]),
+        hourly([5.0, 5.0, 5.0]),
+        3,
+        OutdoorCheck(OutdoorStatus.OK, 6.0, 3 * HOUR),
+    ),
+    (
+        "deviating keeps its difference and overlap",
+        hourly([15.0, 16.0, 17.0]),
+        hourly([5.0, 6.0, 7.0]),
+        3,
+        OutdoorCheck(OutdoorStatus.DEVIATES, 10.0, 3 * HOUR),
+    ),
+    (
+        "stuck keeps its difference and overlap",
+        Series([(0, 3.0)]),
+        hourly([float(v) for v in range(13)]),
+        13,
+        OutdoorCheck(OutdoorStatus.STUCK, -3.0, 13 * HOUR),
+    ),
+    (
+        "stuck after exactly twelve hours",
+        Series([(0, 2.0)]),
+        hourly([0.0] * 6 + [4.0] * 6),
+        12,
+        OutdoorCheck(OutdoorStatus.STUCK, 0.0, 12 * HOUR),
+    ),
+    (
+        "stuck while the weather moved exactly 3 K",
+        Series([(0, 1.5)]),
+        hourly([0.0] * 8 + [3.0] * 8),
+        16,
+        OutdoorCheck(OutdoorStatus.STUCK, 0.0, 16 * HOUR),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("sensor", "weather", "hours", "expected"),
+    [case[1:] for case in OUTDOOR_LIMITS],
+    ids=[case[0] for case in OUTDOOR_LIMITS],
+)
+def test_the_outdoor_check_at_its_limits(
+    sensor: Series[float], weather: Series[float], hours: int, expected: OutdoorCheck
+) -> None:
+    """Negative: two hours of overlap are enough, a stretch without a value ends nothing;
+    exactly 6 K off is not deviating; a tail of exactly 12 h with the weather moving exactly
+    3 K is stuck (P-26) — and every result keeps its mean difference and overlap."""
+    assert check_outdoor(sensor, weather, 0, hours * HOUR) == expected
+
+
+def test_a_deviating_sensor_reading_the_same_as_the_weather_is_used() -> None:
+    """A3: a deviating sensor gives way only where it reads warmer than the weather entity; the
+    same reading is not the warmer one."""
+    check = OutdoorCheck(OutdoorStatus.DEVIATES, 7.0, 86400.0)
+    assert curve_sensor(check, -2.0, -2.0) == -2.0

@@ -20,6 +20,7 @@ from custom_components.vtherm_smart_boiler.core.limits import (
     is_on_grid,
     limit_flow,
     on_grid,
+    watched_temperatures,
     within_write_bounds,
     write_bounds,
 )
@@ -366,3 +367,142 @@ def test_the_installation_cap_is_the_lowest_of_the_hard_circuit_and_boiler_maxim
     assert install_cap(LIMITS, circuit_max=45.0) == 45.0
     assert install_cap(LIMITS, circuit_max=45.0, boiler_max=40.0) == 40.0
     assert install_cap(LIMITS, boiler_max=80.0) == 70.0
+
+
+# --- Mutation testing (2026-10-12): bounds, ties and the grid's tolerance -----------------------
+
+
+def test_the_hard_limits_take_10_and_95_and_refuse_beyond_or_equal() -> None:
+    """The bounds of the form are inclusive: 10 °C as the lowest and 95 °C as the highest are
+    taken. Negative: below 10, above 95, or a lowest equal to the highest are refused."""
+    assert FlowLimits(hard_min=10.0, hard_max=50.0).hard_min == 10.0
+    assert FlowLimits(hard_min=25.0, hard_max=95.0).hard_max == 95.0
+    for kwargs in (
+        {"hard_min": 9.9, "hard_max": 50.0},
+        {"hard_min": 25.0, "hard_max": 95.5},
+        {"hard_min": 50.0, "hard_max": 50.0},
+    ):
+        with pytest.raises(ValueError, match="must"):
+            FlowLimits(**kwargs)
+
+
+def test_a_request_exactly_at_a_limit_is_unchanged_and_names_no_limit() -> None:
+    """A setpoint at the hard maximum or minimum is inside: nothing changed it, so no limit is
+    named (a limit named where none acted would show a false reason)."""
+    assert limit_flow(70.0, LIMITS) == Limited(70.0)
+    assert limit_flow(25.0, LIMITS) == Limited(25.0)
+    assert limit_flow(40.0, LIMITS, floor=40.0) == Limited(40.0)
+    assert limit_flow(45.0, LIMITS, circuit_max=45.0) == Limited(45.0)
+
+
+def test_on_a_tie_the_limit_named_first_stands() -> None:
+    """Equal limits: the hard maximum before a circuit's, the hard minimum before a fixed
+    circuit's floor, the floor before a circuit's need at the same value, and a lower bound
+    equal to the cap is met without naming the cap."""
+    assert limit_flow(80.0, LIMITS, circuit_max=70.0) == Limited(70.0, (LimitCode.HARD_MAX,))
+    assert limit_flow(20.0, LIMITS, floor=25.0) == Limited(25.0, (LimitCode.HARD_MIN,))
+    assert limit_flow(32.0, LIMITS, floor=40.0, need=40.0) == Limited(
+        40.0, (LimitCode.FIXED_CIRCUIT,)
+    )
+    limits = FlowLimits(hard_min=30.0, hard_max=70.0)
+    assert limit_flow(20.0, limits, circuit_max=30.0) == Limited(30.0, (LimitCode.HARD_MIN,))
+
+
+def test_without_a_grid_a_value_at_a_bound_is_inside() -> None:
+    assert on_grid(25.0, 0.0, 0.0, 25.0, 70.0) == 25.0
+    assert on_grid(70.0, 0.0, 0.0, 25.0, 70.0) == 70.0
+    assert on_grid(24.9, 0.0, 0.0, 25.0, 70.0) is None
+
+
+def test_a_value_on_a_coarse_grid_stays_where_it_is() -> None:
+    """A value already on a grid of 2 K inside the bounds is not moved."""
+    assert on_grid(30.0, 2.0, 0.0, 25.0, 70.0) == 30.0
+    assert on_grid(45.0, 2.0, 1.0, 25.0, 70.0) == 45.0
+
+
+def test_a_value_above_the_highest_comes_down_to_the_highest_on_the_grid() -> None:
+    """The highest on the grid itself is the value given; one step lower would waste heat the
+    limits allow."""
+    assert on_grid(80.0, 0.5, 0.0, 25.0, 70.0) == 70.0
+    assert on_grid(70.0, 0.5, 0.0, 25.0, 70.0) == 70.0
+
+
+def test_a_grid_with_one_bound_or_none() -> None:
+    """Missing bounds: a grid value is found without the highest, without the lowest, or with
+    neither."""
+    assert on_grid(80.0, 0.5, 0.0, 25.0, None) == 80.0
+    assert on_grid(10.0, 0.5, 0.0, None, 70.0) == 10.0
+    assert on_grid(45.3, 0.5, 0.0, None, None) == 45.5
+
+
+def test_the_grids_tolerance_is_a_millionth_of_a_step() -> None:
+    """A bound a fraction of a millionth of a step off a grid value counts as on it; one
+    further off does not — the next grid value inside is taken, or none."""
+    assert on_grid(10.0, 0.5, 0.0, 10.0000002, 70.0) == 10.0
+    assert on_grid(10.0, 0.5, 0.0, 10.000001, 70.0) == 10.5
+    assert on_grid(10.0, 0.5, 0.0, 0.0, 9.9999998) == 10.0
+    assert on_grid(10.0, 0.5, 0.0, 0.0, 9.999999) == 9.5
+    assert on_grid(10.0, 5.0, 0.0, 0.0, 9.999999) == 10.0  # 2e-7 of a 5 K step
+    # Negative: the only grid value near [10.0000008, 10.2] lies more than the tolerance below.
+    assert on_grid(10.0, 0.5, 0.0, 10.0000008, 10.2) is None
+
+
+def test_on_the_grid_counts_from_its_base_with_a_relative_tolerance() -> None:
+    """The grid starts at its base; the tolerance grows with the grid index (a millionth of it),
+    and near zero it is a millionth of a step."""
+    assert is_on_grid(20.1, 0.5, 0.1)
+    assert not is_on_grid(20.2, 0.5, 0.1)
+    assert is_on_grid(45.00001, 0.5, 0.0)
+    assert not is_on_grid(45.001, 0.5, 0.0)
+    assert not is_on_grid(0.0000015, 1.0, 0.0)
+
+
+def test_a_grid_puts_a_value_inside_the_bounds_given_in_celsius() -> None:
+    """The lower bound in °C lifts a value even where the entity's own minimum is lower; a bound
+    not given leaves the entity's own range, or none."""
+    assert Grid(step=0.5, minimum=10.0, maximum=60.0).put(20.0, 25.0, 70.0) == 25.0
+    assert Grid(step=0.5, minimum=30.0, maximum=60.0).put(45.3, 25.0, None) == 45.5
+    assert Grid(step=0.5, minimum=30.0, maximum=60.0).put(80.0, 25.0, None) == 60.0
+    assert Grid(step=0.5).put(45.3) == 45.5
+
+
+def test_frost_release_may_equal_the_frost_limit() -> None:
+    assert FrostConfig(room_limit=5.0, release=5.0).release == 5.0
+
+
+def test_the_plausible_room_range_is_inclusive() -> None:
+    """−30 °C and 45 °C are rooms; a reading beyond them is a broken sensor (not counted, so
+    alone it cannot be judged)."""
+    assert in_frost([zone(-30.0)]) is True
+    assert in_frost([zone(-30.1)]) is None
+    assert in_frost([zone(45.0)]) is False
+    assert in_frost([zone(45.1)]) is None
+
+
+def test_frost_starts_only_below_the_limit_not_at_it() -> None:
+    """Negative: a room exactly at the frost limit neither starts frost heating nor is flagged
+    closed; with heating already on, it is below the release and holds."""
+    config = FrostConfig(room_limit=5.0, release=7.0)
+    assert not frost_needed([zone(5.0)], 100.0, 600.0, False, config)
+    assert frost_needed([zone(5.0)], 100.0, 600.0, True, config)
+    closed = room("a", 5.0, mode=False, valve=0.0, device=False)
+    assert frost_closed([closed], 100.0, None, config) == ()
+
+
+def test_handed_back_in_frost_ignores_a_stale_cold_room_beside_a_fresh_warm_one() -> None:
+    """Negative (stale data): a stale reading of 2 °C is not counted once another room is known
+    at 20 °C — the alarm is judged on fresh readings only."""
+    assert in_frost([zone(2.0, reported=-10_000.0), zone(20.0)]) is False
+
+
+def test_the_watched_temperatures_leave_out_closed_zones_unless_asked() -> None:
+    """By default only zones that can take heat count (control's coldest room); with
+    ``closed_too`` every watched zone does (the alarm "handed back in frost")."""
+    closed = room("off", 3.0, mode=False, valve=0.0, device=False)
+    opened = room("on", 10.0, valve=0.4)
+    config = FrostConfig()
+    assert watched_temperatures([closed, opened], 100.0, None, config) == [10.0]
+    assert watched_temperatures([closed, opened], 100.0, None, config, closed_too=True) == [
+        3.0,
+        10.0,
+    ]

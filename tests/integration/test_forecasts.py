@@ -22,7 +22,11 @@ from custom_components.vtherm_smart_boiler.core.forecast import (
     ForecastStore,
     partition_of,
 )
-from custom_components.vtherm_smart_boiler.forecasts import ForecastRecorder, partition_key
+from custom_components.vtherm_smart_boiler.forecasts import (
+    ForecastRecorder,
+    parse_forecast,
+    partition_key,
+)
 
 from .harness import WEATHER_ENTITY, FakeForecasts, canned_forecast
 
@@ -392,3 +396,90 @@ async def test_a_forecast_in_imperial_units_is_stored_in_core_units(
     assert point.temperature_low == pytest.approx(0.0)
     assert point.wind_speed == pytest.approx(4.4704)
     assert point.precipitation == pytest.approx(2.54)
+
+
+def test_a_forecast_item_without_a_readable_time_is_skipped() -> None:
+    """Negative: an item whose time is missing or cannot be read is skipped; the others are
+    kept, in time order."""
+    items = [
+        {"datetime": "2026-01-21T13:00:00+00:00", "temperature": 6.0},
+        {"datetime": "not a time", "temperature": 99.0},
+        {"temperature": 99.0},
+        {"datetime": "2026-01-21T12:00:00+00:00", "temperature": 5.0},
+    ]
+    points = parse_forecast(items, {"temperature_unit": "°C"})
+    assert [p.temperature for p in points] == [5.0, 6.0]
+
+
+async def test_a_stored_week_that_cannot_be_read_costs_that_week_only(
+    hass: HomeAssistant, hass_storage: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Negative: a week written by a later version cannot be read — it is skipped with one
+    warning, and the current week still loads."""
+    current = partition_of(NOW)
+    later = _key(current - 1)
+    hass_storage[later] = {"version": 99, "key": later, "data": {"snapshots": []}}
+    this_week = _key(current)
+    hass_storage[this_week] = {
+        "version": 1,
+        "key": this_week,
+        "data": {"snapshots": _stored_week(current, 3)},
+    }
+    recorder = ForecastRecorder(hass, "entry", WEATHER_ENTITY)
+    await recorder.async_load(NOW)
+    assert recorder.store.count() == 3
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert [r.getMessage() for r in warnings] == [
+        "Skipped 1 stored forecast weeks that could not be read"
+    ]
+
+
+async def test_unreadable_stored_snapshots_are_skipped_with_a_warning(
+    hass: HomeAssistant, hass_storage: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Negative: an entry of the current week that cannot be read is skipped and counted in
+    one warning; the readable ones are kept."""
+    current = partition_of(NOW)
+    key = _key(current)
+    hass_storage[key] = {
+        "version": 1,
+        "key": key,
+        "data": {"snapshots": [{"broken": True}, *_stored_week(current, 2)]},
+    }
+    recorder = ForecastRecorder(hass, "entry", WEATHER_ENTITY)
+    await recorder.async_load(NOW)
+    assert recorder.store.count() == 2
+    assert "Skipped 1 unreadable stored forecast snapshots" in caplog.text
+
+
+async def test_a_snapshot_held_before_the_load_is_kept(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    """A snapshot already in memory when the stored weeks are loaded is kept beside them (put
+    in directly: at setup the load comes before the first take)."""
+    current = partition_of(NOW)
+    key = _key(current)
+    hass_storage[key] = {
+        "version": 1,
+        "key": key,
+        "data": {"snapshots": _stored_week(current, 2)},
+    }
+    recorder = ForecastRecorder(hass, "entry", WEATHER_ENTITY)
+    held = ForecastSnapshot(NOW, ForecastKind.DAILY, (ForecastPoint(NOW, 5.0),))
+    recorder.store.add(held)
+    await recorder.async_load(NOW)
+    assert recorder.store.count() == 3
+    assert held in recorder.store.snapshots(ForecastKind.DAILY)
+
+
+async def test_a_snapshot_of_an_earlier_week_is_not_stored(
+    hass: HomeAssistant, hass_storage: dict[str, Any], forecasts: FakeForecasts
+) -> None:
+    """Negative: with the clock set back past the start of the week in memory, the snapshot
+    is not stored and that earlier week's file is not written again."""
+    recorder = ForecastRecorder(hass, "entry", WEATHER_ENTITY)
+    assert await recorder.async_take(NOW) == 2
+    assert await recorder.async_take(NOW - PARTITION_S) == 0
+    await recorder.async_flush()
+    assert _key(partition_of(NOW - PARTITION_S)) not in hass_storage
+    assert recorder.store.count() == 2

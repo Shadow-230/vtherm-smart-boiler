@@ -9,7 +9,7 @@ import pytest
 
 from custom_components.vtherm_smart_boiler.core.cycles import BurnKind
 from custom_components.vtherm_smart_boiler.core.history import History, ZoneSeries, combine
-from custom_components.vtherm_smart_boiler.core.metrics import ModulationScale
+from custom_components.vtherm_smart_boiler.core.metrics import Consumption, ModulationScale
 from custom_components.vtherm_smart_boiler.core.monitor import (
     GasSource,
     MonitorOptions,
@@ -24,7 +24,7 @@ from custom_components.vtherm_smart_boiler.core.parameters import (
 )
 from custom_components.vtherm_smart_boiler.core.series import Series
 from custom_components.vtherm_smart_boiler.core.signals import Signal
-from custom_components.vtherm_smart_boiler.core.verdict import Verdict
+from custom_components.vtherm_smart_boiler.core.verdict import ReasonCode, Verdict, VerdictOptions
 
 MIN = 60.0
 HOUR = 3600.0
@@ -443,3 +443,262 @@ def test_gas_with_the_flame_unknown_counts_as_before() -> None:
     estimated = summarize(history, rates, 0, 2 * HOUR)
     assert estimated.gas_source is GasSource.MODULATION
     assert estimated.other_gas is None
+
+
+# --- Mutation testing (2026-10-12): burn-kind inputs, window edges, estimates, gas, verdict ---
+
+
+@pytest.mark.parametrize(
+    ("signals", "values", "zones", "kind"),
+    [
+        ({Signal.CH_ACTIVE: Series([(0, True)])}, {}, {}, BurnKind.CH),
+        ({Signal.FLOW: Series([(0, 75.0)])}, {"max_ch_setpoint": 60.0}, {}, BurnKind.DHW),
+        (
+            {Signal.FLOW: Series([(0, 45.0)]), Signal.CH_SETPOINT: Series([(0, 50.0)])},
+            {},
+            {},
+            BurnKind.CH,
+        ),
+        ({}, {}, {"a": ZoneSeries("a", calling=Series([(0, True)]))}, BurnKind.CH),
+    ],
+    ids=["ch_active", "flow_above_max_ch", "flow_within_setpoint", "zone_demand"],
+)
+def test_every_mapped_input_tells_the_burn_kind(
+    signals: dict[Signal, Series[Any]],
+    values: dict[str, float],
+    zones: dict[str, ZoneSeries],
+    kind: BurnKind,
+) -> None:
+    """A burn's kind comes from every input the history offers — the CH signal, the flow
+    against the maximum CH setpoint or the CH setpoint, the zones' demand; without them it
+    would be of unknown kind."""
+    flame = Series([(0, False), (HOUR, True), (2 * HOUR, False)])
+    history = History(signals={Signal.FLAME: flame, **signals}, zones=zones)
+    summary = summarize(history, params(**values), 0, 3 * HOUR)
+    assert [b.kind for b in summary.burns] == [kind]
+
+
+def test_burns_touching_the_window_only_at_an_edge_are_not_in_it() -> None:
+    """Negative: with a wider search, a burn wholly before the window, one ending exactly at its
+    start and one starting exactly at its end are not the window's burns."""
+    flame = Series(
+        [
+            (0, False),
+            (HOUR, True),
+            (2 * HOUR, False),
+            (3 * HOUR, True),
+            (4 * HOUR, False),
+            (4.5 * HOUR, True),
+            (5 * HOUR, False),
+            (6 * HOUR, True),
+            (7 * HOUR, False),
+        ]
+    )
+    history = History(signals={Signal.FLAME: flame})
+    summary = summarize(history, ParameterSet(), 4 * HOUR, 6 * HOUR, search=(0, 8 * HOUR))
+    assert [(b.burn.start, b.burn.end) for b in summary.burns] == [(4.5 * HOUR, 5 * HOUR)]
+
+
+def test_hot_water_and_unknown_burns_across_the_edges_count_only_inside() -> None:
+    """P-83 for every kind: a hot-water burn begun before the window is not one of its starts,
+    and a burn of unknown kind running past its end adds only its time inside."""
+    flame = Series(
+        [
+            (0, False),
+            (DAY - 10 * MIN, True),
+            (DAY + 10 * MIN, False),
+            (2 * DAY - 10 * MIN, True),
+            (2 * DAY + 10 * MIN, False),
+        ]
+    )
+    dhw_active = Series([(0, False), (DAY - 10 * MIN, True), (DAY + 10 * MIN, None)])
+    history = History(signals={Signal.FLAME: flame, Signal.DHW_ACTIVE: dhw_active})
+    summary = summarize(history, ParameterSet(), DAY, 2 * DAY, search=(0, 3 * DAY))
+    assert (summary.dhw.starts, summary.dhw.burn_s) == (0, 10 * MIN)
+    assert (summary.unknown.starts, summary.unknown.burn_s) == (1, 10 * MIN)
+
+
+def test_the_summary_carries_its_window_and_the_flame_time_of_each_kind() -> None:
+    """The summary says its window, and each kind's statistics the time with the flame state
+    known they rest on."""
+    flame = Series([(0, False), (HOUR, True), (2 * HOUR, False)])
+    summary = summarize(History(signals={Signal.FLAME: flame}), ParameterSet(), HOUR / 2, 3 * HOUR)
+    assert (summary.start, summary.end) == (HOUR / 2, 3 * HOUR)
+    stats = (summary.heating, summary.dhw, summary.unknown)
+    assert [s.observed_s for s in stats] == [2.5 * HOUR] * 3
+
+
+def test_no_burner_signal_is_named_in_the_verdict() -> None:
+    """Negative (S-43): without a flame signal mapped, the summary says so and the verdict names
+    the missing burner signal, not merely too few days."""
+    summary = summarize(History(), ParameterSet(), 0, DAY)
+    assert summary.burner_signal is False
+    result = verdict(summary)
+    assert result.verdict is Verdict.NOT_ENOUGH_DATA
+    assert [r.code for r in result.reasons] == [ReasonCode.NO_BURNER_SIGNAL]
+
+
+def test_the_verdict_uses_the_condensing_share_and_the_options_given() -> None:
+    """A return above the user's condensing threshold all the time is low condensing — a
+    problem the control changes where it sets the water (S-22): worth it under those options,
+    not under the defaults."""
+    history = cycling_history()  # the return at 45 °C throughout
+    options = MonitorOptions(
+        condensing_return=40.0, verdict=VerdictOptions(control_sets_water=True)
+    )
+    summary = summarize(history, ParameterSet(), 0, 8 * DAY, options)
+    assert summary.condensing is not None
+    assert summary.condensing.value == 0.0
+    assert verdict(summary, options).verdict is Verdict.WORTH_IT
+    assert verdict(summary).verdict is not Verdict.WORTH_IT
+
+
+def test_heat_output_is_split_by_kind_whatever_comes_first() -> None:
+    """The heat output of heating burns and of hot-water burns each count every burn of their
+    kind, whichever comes first, at the modulation scale chosen (range by default)."""
+    history = cycling_history(days=1)
+    history.signals[Signal.DHW_ACTIVE] = Series([(0, False), (5 * MIN, True), (15 * MIN, False)])
+    parameters = params(boiler_min_power=4.0, boiler_max_power=24.0)
+    summary = summarize(history, parameters, 0, DAY)
+    assert summary.heat_output_kwh == Consumption(pytest.approx(8 * 14.0 - 14.0 / 6), True)
+    assert summary.dhw_output_kwh == Consumption(pytest.approx(14.0 / 6), True)
+
+
+@pytest.mark.parametrize(
+    ("values", "modulation"),
+    [
+        (
+            {
+                "boiler_min_power": 4.0,
+                "boiler_max_power": 24.0,
+                "gas_at_min_power": 0.4,
+                "gas_at_max_power": 2.4,
+            },
+            False,
+        ),
+        ({"boiler_max_power": 24.0, "gas_at_max_power": 2.4}, True),
+        ({"boiler_min_power": 4.0, "gas_at_min_power": 0.4}, True),
+    ],
+    ids=["modulation_not_mapped", "minimum_missing", "maximum_missing"],
+)
+def test_estimates_need_both_rates_and_the_modulation(
+    values: dict[str, float], modulation: bool
+) -> None:
+    """Negative: the heat output and the gas from modulation need the rate at minimum and at
+    maximum power and a mapped modulation; with one of them missing there is no estimate."""
+    history = cycling_history(days=1)
+    if not modulation:
+        del history.signals[Signal.MODULATION]
+    summary = summarize(history, params(**values), 0, DAY)
+    assert (summary.heat_output_kwh, summary.dhw_output_kwh) == (None, None)
+    assert (summary.gas, summary.gas_source) == (None, None)
+
+
+def test_modulation_unknown_in_a_burn_leaves_the_estimates_incomplete() -> None:
+    """Negative: with the modulation unknown during burns, the heat output and the gas from
+    modulation are incomplete, though the flame is known throughout."""
+    history = cycling_history(days=1)
+    history.signals[Signal.MODULATION] = Series([(0, 50.0), (12 * HOUR, None)])
+    parameters = params(
+        boiler_min_power=4.0, boiler_max_power=24.0, gas_at_min_power=0.4, gas_at_max_power=2.4
+    )
+    summary = summarize(history, parameters, 0, DAY)
+    assert summary.heat_output_kwh == Consumption(pytest.approx(4 * 14.0), False)
+    assert summary.gas == Consumption(pytest.approx(4 * 1.4), False)
+
+
+@pytest.mark.parametrize(
+    ("unknown_s", "complete"),
+    [(DAY / 100, True), (DAY / 100 + 1.0, False), (DAY / 2, False)],
+)
+def test_gas_from_modulation_needs_the_flame_known_99_percent(
+    unknown_s: float, complete: bool
+) -> None:
+    """A8's limit: the gas from modulation is complete with the flame known for 99 % of the
+    window — exactly that much included — and incomplete below it, on any day of the history."""
+    flame = Series([(0, False), (DAY, None), (DAY + unknown_s, False)])
+    history = History(signals={Signal.FLAME: flame, Signal.MODULATION: Series([(0, 50.0)])})
+    rates = params(gas_at_min_power=0.4, gas_at_max_power=2.4)
+    summary = summarize(history, rates, DAY, 2 * DAY)
+    assert summary.gas == Consumption(0.0, complete)
+
+
+def test_metered_gas_is_complete_with_the_meter_known_at_both_ends() -> None:
+    """Gas from a meter known at both ends of the window is complete, and gives gas per
+    degree-day."""
+    history = cycling_history(days=1)
+    history.signals[Signal.GAS_METER] = Series([(0, 100.0), (DAY, 106.0)])
+    summary = summarize(history, params(heating_threshold=15.0), 0, DAY + 1)
+    assert summary.gas == Consumption(pytest.approx(6.0), True)
+    assert summary.gas_per_degree_day is not None
+
+
+def _metered(flame: Series[bool], dhw: Series[bool], meter: Series[float]) -> History:
+    return History(signals={Signal.FLAME: flame, Signal.DHW_ACTIVE: dhw, Signal.GAS_METER: meter})
+
+
+def test_gas_after_the_last_burn_is_reported_apart_reading_by_reading() -> None:
+    """S-31: every rise between readings after the last burn, with the flame known off, is
+    another consumer's gas — each one added, none lost once the burns run out."""
+    flame = Series([(0.0, False), (10 * MIN, True), (20 * MIN, False)])
+    meter = Series([(0.0, 100.0), (30 * MIN, 100.5), (60 * MIN, 100.7), (90 * MIN, 100.8)])
+    summary = summarize(_metered(flame, Series([(0.0, False)]), meter), ParameterSet(), 0, 2 * HOUR)
+    assert summary.gas == Consumption(pytest.approx(0.5), True)
+    assert summary.other_gas == pytest.approx(0.3)
+
+
+def test_every_hot_water_burn_between_two_readings_is_left_out() -> None:
+    """Hot water's share of a rise is the burner time of all its burns between the two
+    readings, not of the last one only."""
+    flame = Series(
+        [
+            (0.0, False),
+            (10 * MIN, True),
+            (15 * MIN, False),
+            (20 * MIN, True),
+            (25 * MIN, False),
+            (30 * MIN, True),
+            (40 * MIN, False),
+        ]
+    )
+    dhw = Series([(0.0, False), (10 * MIN, True), (25 * MIN, False)])
+    meter = Series([(0.0, 100.0), (HOUR, 101.0)])
+    summary = summarize(_metered(flame, dhw, meter), ParameterSet(), 0, 2 * HOUR)
+    assert summary.gas == Consumption(pytest.approx(0.5), True)
+
+
+def test_the_last_half_second_of_a_hot_water_burn_takes_its_rise() -> None:
+    """Negative: a rise whose only burner time since the last reading is the last half second
+    of a hot-water burn is that hot water's gas — none of it heating gas."""
+    flame = Series([(0.0, False), (10 * MIN, True), (30 * MIN + 0.5, False)])
+    dhw = Series([(0.0, False), (10 * MIN, True), (30 * MIN + 0.5, False)])
+    meter = Series([(0.0, 100.0), (30 * MIN, 100.4), (HOUR, 100.6)])
+    summary = summarize(_metered(flame, dhw, meter), ParameterSet(), 0, 2 * HOUR)
+    assert summary.gas == Consumption(pytest.approx(0.0, abs=1e-9), True)
+
+
+def test_a_rise_is_split_by_the_exact_burner_time_of_each_kind() -> None:
+    """Hot water's share of a rise is its exact burner time between the readings — half a
+    second of it against ten minutes of heating is half a second's share, not more."""
+    flame = Series(
+        [
+            (0.0, False),
+            (10 * MIN, True),
+            (30 * MIN + 0.5, False),
+            (40 * MIN, True),
+            (50 * MIN, False),
+        ]
+    )
+    dhw = Series([(0.0, False), (10 * MIN, True), (30 * MIN + 0.5, False)])
+    meter = Series([(0.0, 100.0), (30 * MIN, 100.4), (HOUR, 101.4)])
+    summary = summarize(_metered(flame, dhw, meter), ParameterSet(), 0, 2 * HOUR)
+    assert summary.gas == Consumption(pytest.approx(1.0 - 0.5 / 600.5), True)
+
+
+def test_the_outdoor_bins_use_the_short_burn_limit_set() -> None:
+    """The user's short-burn limit holds in the statistics per outdoor temperature too, not only
+    in the heating total."""
+    options = MonitorOptions(short_burn_s=15 * MIN)  # every 10-minute burn is short
+    summary = summarize(cycling_history(days=1), ParameterSet(), 0, DAY, options)
+    assert summary.heating.short_burns == 48
+    assert summary.by_outdoor[5.0].short_burns == 48

@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+import json
+from dataclasses import fields, replace
 
 import pytest
 
+from custom_components.vtherm_smart_boiler.core.building import LoadFit
 from custom_components.vtherm_smart_boiler.core.daily import (
     DaySummary,
+    fit_building,
     fit_points,
+    outdoor_distribution,
     settings_key,
     summarize_day,
     verdict_over_days,
 )
 from custom_components.vtherm_smart_boiler.core.history import History
 from custom_components.vtherm_smart_boiler.core.parameters import (
+    DEFAULT_CONFIDENCE,
     Estimate,
     ParameterKey,
     ParameterSet,
@@ -22,7 +27,13 @@ from custom_components.vtherm_smart_boiler.core.parameters import (
 )
 from custom_components.vtherm_smart_boiler.core.series import Series
 from custom_components.vtherm_smart_boiler.core.signals import Signal
-from custom_components.vtherm_smart_boiler.core.verdict import Verdict, VerdictOptions
+from custom_components.vtherm_smart_boiler.core.verdict import (
+    ESTIMATE_ONLY,
+    LoadBasis,
+    ReasonCode,
+    Verdict,
+    VerdictOptions,
+)
 
 MIN = 60.0
 HOUR = 3600.0
@@ -514,3 +525,230 @@ def test_a_stored_day_without_its_starts_is_broken() -> None:
     del stored["starts"]
     with pytest.raises(KeyError):
         DaySummary.from_dict(stored)
+
+
+# --- Mutation testing (2026-10-12): stored fields, boundaries, settling and the split fit ---
+
+
+def test_an_empty_day_holds_nothing_and_round_trips() -> None:
+    """Negative: an empty day has no data and nothing that adds up — every count and time is
+    zero, nothing is known — and it survives the store."""
+    day = DaySummary.empty(0.0, DAY)
+    assert day == DaySummary(0.0, DAY, 0.0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, None, None)
+    assert not day.has_data
+    assert DaySummary.from_dict(day.to_dict()) == day
+
+
+def test_every_stored_field_round_trips_through_json() -> None:
+    """A day with every optional amount known — gas, heat, other consumers' gas, control, the
+    outdoor temperatures — reads back the same from the JSON the store writes; the stored form
+    has the summary's own keys only, as plain JSON."""
+    day = DaySummary(
+        0.0, DAY, DAY, 10, 9, 1, HOUR, 10 * HOUR, 0.5 * HOUR, HOUR, 7.0, 12.5,
+        outdoor_mean=8.0, heat_kwh=40.0, settings="abc", other_gas=0.3, controlled_s=0.0,
+        outdoor_s=((7, 0.5 * DAY), (9, 0.5 * DAY)),
+    )  # fmt: skip
+    stored = day.to_dict()
+    assert set(stored) == {field.name for field in fields(DaySummary)}
+    assert stored["outdoor_s"] == [[7, 0.5 * DAY], [9, 0.5 * DAY]]
+    assert stored == json.loads(json.dumps(stored))
+    assert DaySummary.from_dict(json.loads(json.dumps(stored))) == day
+
+
+def test_the_settings_key_is_stable_across_releases() -> None:
+    """A stored day's key must match the one computed after an update, or every kept day would
+    count as summarised with other settings: the same settings give the same 16 characters."""
+    assert settings_key({"has_dhw": True, "condensing_return": 55.0}) == "2b653a4449d28dc3"
+
+
+def test_a_burn_across_midnight_keeps_its_kind_in_the_next_day() -> None:
+    """P-83: a burn from 23:30 to 00:10 with hot water for its first 30 minutes is hot water as
+    a whole: its 10 minutes after midnight are not heating, though the hot-water signal is off
+    then."""
+    flame = Series[bool]([(0, False), (DAY - 30 * MIN, True), (DAY + 10 * MIN, False)])
+    dhw = Series[bool]([(0, False), (DAY - 30 * MIN, True), (DAY, False)])
+    history = History(
+        signals={Signal.FLAME: flame, Signal.RETURN: Series([(0, 45.0)]), Signal.DHW_ACTIVE: dhw},
+        weather=Series([(0, 8.0)]),
+    )
+    second = summarize_day(history, PARAMETERS, DAY, 2 * DAY, known_until=2 * DAY)
+    assert (second.starts, second.burn_s) == (0, 0.0)
+
+
+def test_a_day_keeps_its_metered_gas_and_other_consumers_gas() -> None:
+    """S-31: with a gas meter, a day keeps the heating gas and, apart, the gas counted with the
+    burner known off (another consumer); and its outdoor temperatures per whole °C (P-91)."""
+    history = cycling(1)
+    meter = Series([(0, 100.0)])
+    total = 100.0
+    for k in range(48):  # each burn's 0.1 read as it ends
+        total += 0.1
+        meter.append(k * 30 * MIN + 15 * MIN, total)
+        if k == 4:  # 0.5 used by a cooker five minutes after a burn
+            total += 0.5
+            meter.append(k * 30 * MIN + 20 * MIN, total)
+    history.signals[Signal.GAS_METER] = meter
+    day = summarize_day(history, PARAMETERS, 0, DAY)
+    assert day.gas == pytest.approx(4.8)
+    assert day.other_gas == pytest.approx(0.5)
+    assert day.outdoor_s == ((8, DAY),)
+
+
+def test_a_day_keeps_the_condensing_time_as_its_part() -> None:
+    """A day keeps the heating burn time with a condensing return, not only the time with the
+    return known: half the day at 45 °C, half at 60 °C — 4 of 8 burner hours condense."""
+    history = cycling(1)
+    history.signals[Signal.RETURN] = Series([(0, 45.0), (12 * HOUR, 60.0)])
+    day = summarize_day(history, PARAMETERS, 0, DAY)
+    assert (day.condensing_s, day.condensing_basis_s) == (
+        pytest.approx(4 * HOUR),
+        pytest.approx(8 * HOUR),
+    )
+
+
+def test_a_day_without_burns_or_a_return_has_no_heating_or_condensing_time() -> None:
+    """Negative: a day with the flame off throughout has no heating time; a day without a
+    return sensor has no condensing time and no basis for it."""
+    history = cycling(1)
+    history.signals[Signal.FLAME] = Series([(0, False)])
+    off = summarize_day(history, PARAMETERS, 0, DAY)
+    assert (off.starts, off.heating_s, off.condensing_s, off.condensing_basis_s) == (0, 0, 0, 0)
+    no_return = cycling(1)
+    del no_return.signals[Signal.RETURN]
+    day = summarize_day(no_return, PARAMETERS, 0, DAY)
+    assert day.heating_s == DAY
+    assert (day.condensing_s, day.condensing_basis_s) == (0.0, 0.0)
+
+
+@pytest.mark.parametrize(
+    ("known_from", "mean"),
+    [
+        (DAY * 0.1, 8.0),  # known for exactly 90 % of the day: kept
+        (DAY * 0.1 + 1, None),  # a second less: unknown
+    ],
+)
+def test_the_outdoor_mean_needs_ninety_percent_of_the_day(
+    known_from: float, mean: float | None
+) -> None:
+    """Negative: a day's outdoor mean is kept only when the outdoor temperature is known for
+    at least 90 % of the day."""
+    history = cycling(1)
+    history.weather = Series([(0, None), (known_from, 8.0)])
+    assert summarize_day(history, PARAMETERS, 0, DAY).outdoor_mean == mean
+
+
+def test_the_outdoor_distribution_skips_unknown_and_adds_up_each_degree() -> None:
+    """P-91: the seconds per whole °C add up over every stretch at that degree, past an
+    unknown stretch in between."""
+    outdoor = Series(
+        [(0, None), (2 * HOUR, 5.0), (6 * HOUR, 6.4), (9 * HOUR, None), (12 * HOUR, 5.2)]
+    )
+    assert outdoor_distribution(outdoor, 0, DAY) == ((5, 4 * HOUR + 12 * HOUR), (6, 3 * HOUR))
+
+
+def test_a_burn_starting_at_midnight_belongs_to_the_day_it_starts_in() -> None:
+    """P-83: a burn that starts exactly at midnight and still runs holds back the day it
+    started in, not the day before."""
+    from custom_components.vtherm_smart_boiler.core.daily import day_settled
+
+    history = History(signals={Signal.FLAME: Series([(0, False), (DAY, True)])})
+    assert day_settled(history, 0, DAY, DAY + 3 * MIN)
+    assert not day_settled(history, DAY, 2 * DAY, 2 * DAY + 3 * MIN)
+
+
+def test_a_burn_from_the_day_before_does_not_hold_a_day_back() -> None:
+    """Negative (P-83): a burn that started the evening before and still runs — over a day long
+    — is the day before's; the day it runs through is settled."""
+    from custom_components.vtherm_smart_boiler.core.daily import day_settled
+
+    history = History(signals={Signal.FLAME: Series([(0, False), (DAY - HOUR, True)])})
+    assert day_settled(history, DAY, 2 * DAY, 2 * DAY + 3 * MIN)
+
+
+WEEK = VerdictOptions(min_days=7.0)
+
+
+def test_the_verdict_counts_starts_per_hour_with_heating_and_the_condensing_share() -> None:
+    """Starts per hour count the hours with heating, not every hour seen: a burn every two
+    hours is one start per hour with heating. The condensing share is the condensing time over
+    its basis."""
+    days = days_of(cycling(7, every_min=120.0), 7)
+    assert days[0].heating_s == 12 * HOUR
+    codes = {r.code.value: r.value for r in verdict_over_days(days, WEEK).reasons}
+    assert codes["few_starts"] == pytest.approx(1.0)
+    assert codes["good_condensing"] == pytest.approx(1.0)
+    quarter = [replace(day, condensing_s=day.condensing_basis_s / 4) for day in days]
+    low = {r.code.value: r.value for r in verdict_over_days(quarter, WEEK).reasons}
+    assert low["low_condensing"] == pytest.approx(0.25)
+
+
+@pytest.mark.parametrize(
+    ("estimate_only", "with_temperatures", "detail"),
+    [
+        (True, True, ESTIMATE_ONLY),
+        (False, True, None),  # nothing known of the model: not "estimate only"
+        (True, False, None),  # no outdoor temperatures kept: the model was not all lacking
+    ],
+)
+def test_the_load_is_estimate_only_where_only_the_model_was_lacking(
+    estimate_only: bool, with_temperatures: bool, detail: str | None
+) -> None:
+    """S-17: the load criterion says "estimate only" where the model was only an estimate and
+    the days' outdoor temperatures were known — not otherwise."""
+    days = days_of(cycling(7), 7)
+    if not with_temperatures:
+        days = [replace(day, outdoor_s=None) for day in days]
+    result = verdict_over_days(days, WEEK, load=LoadBasis(estimate_only=estimate_only))
+    [load] = [r for r in result.reasons if r.code is ReasonCode.LOAD_UNKNOWN]
+    assert load.detail == detail
+
+
+def fit_days(first: int, count: int, low: float, high: float) -> list[DaySummary]:
+    """``count`` days from day ``first``, outdoor from ``low`` to ``high`` °C, heated by a
+    house of 0.2 kW/K with a threshold of 16 °C."""
+    days = []
+    for index in range(count):
+        outdoor = low + (high - low) * index / (count - 1)
+        start = (first + index) * DAY
+        day = DaySummary(
+            start, start + DAY, DAY, 10, 10, 0, HOUR, 10 * HOUR, 0.0, 0.0, None, None,
+            outdoor_mean=outdoor, heat_kwh=24 * 0.2 * (16.0 - outdoor),
+        )  # fmt: skip
+        days.append(day)
+    return days
+
+
+DEFAULT_THRESHOLD = Estimate(20.0, Source.DEFAULT, DEFAULT_CONFIDENCE)
+
+
+def test_a_loss_reset_just_now_keeps_the_threshold_fitted() -> None:
+    """P-90: the loss reset after the last kept day — no day to fit it from — the threshold is
+    still fitted from every day, with that fit's days and quality."""
+    days = fit_days(0, 20, -5.0, 10.0)
+    full = fit_building(days, DEFAULT_THRESHOLD, 30 * DAY)
+    assert full is not None
+    reset = fit_building(
+        days, DEFAULT_THRESHOLD, 30 * DAY, {ParameterKey.LOSS_COEFFICIENT: 25 * DAY}
+    )
+    assert reset == LoadFit(None, full.threshold, full.days, full.quality)
+
+
+def test_a_loss_reset_just_now_without_a_threshold_fit_is_no_fit() -> None:
+    """Negative (P-90): the loss reset after the last kept day and the days too narrow to fit
+    the threshold — nothing is fitted, not an empty fit."""
+    entered = Estimate(16.0, Source.ENTERED)
+    days = fit_days(0, 20, 0.0, 5.0)
+    whole = fit_building(days, entered, 30 * DAY)
+    assert whole is not None
+    assert whole.threshold is None  # the loss alone, through the entered threshold
+    assert fit_building(days, entered, 30 * DAY, {ParameterKey.LOSS_COEFFICIENT: 25 * DAY}) is None
+
+
+def test_a_day_starting_at_the_reset_counts_for_the_new_fit() -> None:
+    """P-90: the days that start from the reset on count — the one starting at that very
+    moment too: seven such days are enough to fit."""
+    reset_at = 10 * DAY
+    after = {ParameterKey.LOSS_COEFFICIENT: reset_at, ParameterKey.HEATING_THRESHOLD: reset_at}
+    fit = fit_building(fit_days(10, 7, -5.0, 10.0), DEFAULT_THRESHOLD, 30 * DAY, after)
+    assert fit is not None
+    assert fit.days == 7

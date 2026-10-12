@@ -111,3 +111,22 @@ def test_a_zone_split_between_circuits_has_heat_through_either() -> None:
     assert heat_through_any([no, unknown]) == unknown
     assert heat_through_any([no, Heat(False, HeatReason.DHW_ACTIVE)]) == no
     assert heat_through_any([yes]) == yes
+
+
+# --- Mutation testing (2026-10-12): "clearly above" excludes the margin itself ---
+
+
+@pytest.mark.parametrize(
+    ("flow", "return_temp", "room", "previous", "expected"),
+    [
+        (42.0, 40.0, 20.0, None, Heat(False, HeatReason.FLOW_NEAR_RETURN, 2.0, Against.RETURN)),
+        (41.0, 40.0, 20.0, True, Heat(False, HeatReason.FLOW_NEAR_RETURN, 1.0, Against.RETURN)),
+        (23.0, None, 20.0, None, Heat(False, HeatReason.FLOW_NEAR_ROOM, 3.0, Against.ROOM)),
+    ],
+)
+def test_a_flow_exactly_at_its_threshold_is_no_heat(
+    flow: float, return_temp: float | None, room: float, previous: bool | None, expected: Heat
+) -> None:
+    """Negative: the flow exactly at the margin (or, once available, at the margin minus the
+    hysteresis) is not clearly above what it is judged against — no heat."""
+    assert heat_available(Supply(flow), True, return_temp, room, False, previous) == expected
