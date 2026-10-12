@@ -80,7 +80,7 @@ async def Q1(r: Run):
     the rooms just under their setpoints: SmartPI's band (+0.5 K) counts, so the water rises; at
     the correction's limit for 3 h with a room still short, the warning naming it"""
     try:
-        await r.options(curve=LOW_CURVE, behaviour=CORRECTION_ON)
+        await r.options(curve=LOW_CURVE | CORRECTION_ON)
         r.ent.update(await r.ha.entities())
         await r.sim("set_outdoor", temperature=0.0)
         await r.ha.call("vtherm_smartpi", "reset_smartpi_learning", entity_id=SMARTPI_ZONE)
@@ -186,7 +186,7 @@ async def Q4(r: Run):
     """a window opened in one room without a sensor (its temperature falls 1.5 K at once): the
     window sensor on, no correction for it for at least 30 min"""
     try:
-        await r.options(behaviour=CORRECTION_ON)
+        await r.options(curve=CORRECTION_ON)
         r.ent.update(await r.ha.entities())
         await r.switch(True)
         await r.ha.wait(900)
@@ -221,7 +221,7 @@ async def Q5(r: Run):
     every room — the correction rises for it, and at its limit for 3 h the warning names that
     room, the radiator and the heat loss first"""
     try:
-        await r.options(behaviour=CORRECTION_ON)
+        await r.options(curve=CORRECTION_ON)
         await set_targets(r, {"zone_living": 28.0})
         await r.switch(True)
         rose = await r.ha.until(lambda: correction_on(r), 7200, 60)

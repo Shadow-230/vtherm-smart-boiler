@@ -159,10 +159,16 @@ Set up in the user interface — or by Claude through the API at J4, once you sa
    (simulator stub, test only)" → Submit. Its entry has the gateway ID `sim`. It is a test-only
    stand-in on the simulator for Home Assistant's own OpenTherm Gateway integration, which it
    overrides in this instance only (`scripts/deploy_test.sh` deploys it nowhere else).
-5. **Control** (options → Control):
-   - Write path "OpenTherm Gateway", topology "Gateway with a thermostat", thermostat terminals
-     "OpenTherm thermostat"; read-back `sensor.otgw_sim_boiler_control_setpoint`, heating read-back
-     `binary_sensor.otgw_sim_boiler_master_ch_enabled`; gateway ID `sim`; design flow 55 °C.
+5. **Control** (the options' menu, I8): **Boiler interface** — gateway connection "Gateway with a
+   thermostat", thermostat terminals "OpenTherm thermostat" (the gateway ID `sim` is asked only
+   where there are several gateways); **Boiler signals** — the read-backs
+   `sensor.otgw_sim_boiler_control_setpoint` (heating setpoint the boiler received) and
+   `binary_sensor.otgw_sim_boiler_master_ch_enabled` (heating on/off); **Control device** — the
+   write path "OpenTherm Gateway", only for an entry made before the connection question;
+   **Heating curve** — design flow 55 °C. The runner puts this base back after each scenario
+   that changes it (`devenv/j4/options.py`, saved item by item through the menu by
+   `devenv/j4/walk.py`; `tests/integration/test_j4_walk.py` walks the same base through the
+   real options flow).
    - At the advanced level, the signal "Wired thermostat setpoint"
      `sensor.otgw_sim_thermostat_room_setpoint` (the wall thermostat's own setting, 21 °C 06:00–22:00
      and 17 °C otherwise, UTC).

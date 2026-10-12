@@ -18,6 +18,7 @@ from typing import Any
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from run import SCENARIOS, ZONES, Run, main
+from walk import save_options
 
 RELAY = "switch.boiler_sim_relay"
 SETPOINT = "number.boiler_sim_flow_setpoint"
@@ -63,62 +64,36 @@ def entity_cmds(r: Run, since: float) -> list[tuple[str, object]]:
     return out
 
 
-async def options_walk(
-    r: Run, answers: dict[str, Any], menu: str = "control", strict: bool = True
-) -> dict[str, Any]:
-    """A section of the plugin's options — control by default — saved again, each step with its
-    current values and the given changes (a list for a step met more than once, such as each
-    zone's: one change each, in order); the confirmation steps ticked. Returns the last answer
-    of the flow. ``strict``: a form that refuses the answers, or a flow that does not save,
-    raises — so a restore that did not happen (a hand-back still owed blocks changing how it is
-    made) stops the scenario loudly instead of leaving the instance changed; a scenario whose
-    point is the refusal passes ``strict=False`` and reads ``errors``."""
-    ha = r.ha
-    entry = await ha.entry("vtherm_smart_boiler")
-    _s, d = await ha.rest(
-        "POST",
-        "/api/config/config_entries/options/flow",
-        {"handler": entry["entry_id"], "show_advanced_options": True},
+# The menu item each form belongs to (I8): the control device opens the relay's or the entity's
+# form; every other form is its own item.
+ITEM_OF = {
+    "control_entity": "control",
+    "control_relay": "control",
+    "control_relay_from_vt": "control",
+    "circuit": "circuit_1",
+}
+
+
+async def options_walk(r: Run, answers: dict[str, Any], strict: bool = True) -> dict[str, Any]:
+    """The plugin's options saved again with the given changes, by form (``control_relay``,
+    ``control_entity``, ``control_behaviour``, ``circuit`` …): each form's item opened, answered
+    with what it shows and the changes it asks (walk.py), then saved. Returns the last answer
+    of the flow. ``strict``: a change no form asks, a form that refuses its answer, or a flow
+    that does not save, raises — so a restore that did not happen (a hand-back still owed
+    blocks changing how it is made) stops the scenario loudly instead of leaving the instance
+    changed; a scenario whose point is the refusal passes ``strict=False`` and reads
+    ``errors``."""
+    changes = {key: value for form in answers.values() for key, value in form.items()}
+    items = list(dict.fromkeys(ITEM_OF.get(form, form) for form in answers))
+    required = [k for k, v in changes.items() if v is not None] if strict else []
+    entry = await r.ha.entry("vtherm_smart_boiler")
+    d = await save_options(
+        r.ha.rest, entry["entry_id"], changes, items, required=required, strict=strict, note=r.note
     )
-    fid = d["flow_id"]
-    path = f"/api/config/config_entries/options/flow/{fid}"
-    _s, d = await ha.rest("POST", path, {"next_step_id": menu})
-    met: dict[str, int] = {}
-    while d.get("type") == "form":
-        step = d["step_id"]
-        if step == "confirm_blocking":
-            r.note(f"options: 'this change stops control': {d.get('description_placeholders')}")
-            _s, d = await ha.rest("POST", path, {"save_anyway": True})
-            continue
-        if step == "control_return_confirm":
-            _s, d = await ha.rest("POST", path, {"understood": True})
-            continue
-        body: dict[str, Any] = {}
-        for field in d.get("data_schema") or []:
-            name = field["name"]
-            value = (field.get("description") or {}).get("suggested_value", field.get("default"))
-            if value is not None:
-                body[name] = value
-        change = answers.get(step, {})
-        if isinstance(change, list):
-            n = met.get(step, 0)
-            met[step] = n + 1
-            change = change[n] if n < len(change) else {}
-        body |= change
-        body = {k: v for k, v in body.items() if v is not None}
-        _s, d = await ha.rest("POST", path, body)
-        if d.get("errors"):
-            await ha.rest("DELETE", path)
-            if strict:
-                raise RuntimeError(f"options not saved ({menu}, step {step}): {d['errors']}")
-            return d
-    if d.get("type") != "create_entry":
-        await ha.rest("DELETE", path)
-        if strict:
-            raise RuntimeError(f"options not saved ({menu}): {str(d)[:200]}")
-        return {"errors": {"not_saved": str(d)[:200]}}
+    if d.get("errors"):
+        return d
     await asyncio.sleep(15)  # the entry reloads
-    r.ent.update(await ha.entities())
+    r.ent.update(await r.ha.entities())
     return d
 
 
@@ -251,7 +226,7 @@ async def R5(r: Run):
 
 async def R6(r: Run):
     """VT's activation delay of 120 s on the relay path"""
-    d = await options_walk(r, {"control_relay_behaviour": {"activation_delay_s": 120}})
+    d = await options_walk(r, {"control_behaviour": {"activation_delay_s": 120}})
     r.note(f"options {d.get('type')} {d.get('errors')}")
     await rooms_call(r, False)
     await r.switch(True)
@@ -268,7 +243,7 @@ async def R6(r: Run):
     )
     await r.switch(False)
     await r.ha.wait(10)
-    await options_walk(r, {"control_relay_behaviour": {"activation_delay_s": 0}})
+    await options_walk(r, {"control_behaviour": {"activation_delay_s": 0}})
 
 
 async def _any_valve(r: Run) -> bool:
@@ -665,7 +640,7 @@ async def R17(r: Run):
 async def R18(r: Run):
     """VT's activation delay of 120 s on the relay path: a start waits for it"""
     try:
-        d = await options_walk(r, {"control_relay_behaviour": {"activation_delay_s": 120}})
+        d = await options_walk(r, {"control_behaviour": {"activation_delay_s": 120}})
         if d.get("errors"):
             raise RuntimeError(f"options not saved: {d['errors']}")
         await r.switch(True)
@@ -689,7 +664,7 @@ async def R18(r: Run):
         if await r.s("control") == "on":
             await r.switch(False)
             await r.ha.wait(10)
-        await options_walk(r, {"control_relay_behaviour": {"activation_delay_s": 0}})
+        await options_walk(r, {"control_behaviour": {"activation_delay_s": 0}})
 
 
 # --- the entity path (instance 7, --config entity) ---------------------------------------------
@@ -888,13 +863,14 @@ async def U1(r: Run, outdoor: float = -5.0, emitters: tuple[str, ...] = ("underf
     """underfloor heating on an unmixed loop, the circuit's maximum 40 °C below what the curve
     asks at −5 °C: every setpoint held at the maximum, said so; the measured flow over it by
     the boiler's stop hysteresis at most; the too-hot alarm (45 °C, pre-filled) stays off"""
+    underfloor = [
+        f"climate.{zone}"
+        for (zone, _t), e in zip(ZONES, emitters, strict=True)
+        if e == "underfloor"
+    ]
     try:
-        d = await options_walk(r, {"circuit": {"max_flow": 40}}, menu="circuit")
-        if d.get("errors"):
-            raise RuntimeError(f"circuit not saved: {d['errors']}")
-        d = await options_walk(r, {"zone": [{"emitter": e} for e in emitters]}, menu="zones")
-        if d.get("errors"):
-            raise RuntimeError(f"zones not saved: {d['errors']}")
+        # The circuit lists its underfloor zones (I8 F2): the zones' own question is gone.
+        await options_walk(r, {"circuit": {"max_flow": 40, "underfloor": underfloor}})
         await r.sim("set_outdoor", temperature=outdoor)
         await rooms_call(r, True)
         await r.switch(True)
@@ -931,11 +907,16 @@ async def U1(r: Run, outdoor: float = -5.0, emitters: tuple[str, ...] = ("underf
             await r.switch(False)
             await r.ha.wait(10)
         await r.sim("set_outdoor", temperature=3.0)
-        await options_walk(r, {"zone": [{"emitter": "radiator"}] * 3}, menu="zones")
         await options_walk(
             r,
-            {"circuit": {"max_flow": None, "max_flow_alarm": None, "max_flow_alarm_min": None}},
-            menu="circuit",
+            {
+                "circuit": {
+                    "max_flow": None,
+                    "max_flow_alarm": None,
+                    "max_flow_alarm_min": None,
+                    "underfloor": [],
+                }
+            },
         )
 
 

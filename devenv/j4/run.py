@@ -21,6 +21,8 @@ import contextlib
 from itertools import pairwise
 
 from lib import CONTAINER, HA, ROOT, SIGNALS, ssh
+from options import BASE_GATEWAY, GATEWAY_ITEMS
+from walk import save_options
 
 RESULTS = pathlib.Path(
     os.environ.get("J4_RESULTS")
@@ -30,39 +32,6 @@ LOWEST = 20.0
 SAFE = [("setpoint", LOWEST), ("ch", True), ("setpoint", 0)]
 TRACE = 310
 ZONES = (("zone_living", 20.5), ("zone_bedroom", 19.5), ("zone_bath", 22.0))
-BASE_CONTROL = {
-    "write_path": "opentherm_gw",
-    "topology": "gateway_with_thermostat",
-    "thermostat_kind": "opentherm",
-    "confirmed_entity": "sensor.otgw_sim_boiler_control_setpoint",
-    "ch_confirmed_entity": "binary_sensor.otgw_sim_boiler_master_ch_enabled",
-}
-BASE_CURVE = {
-    "design_outdoor": -15.0,
-    "design_flow": 55.0,
-    "hard_min": 20.0,
-    "hard_max": 70.0,
-    "activation_delay_s": 0,
-    "room": 20.0,
-    "offset": 0.0,
-    "ceiling_band": 10.0,
-    "frost_limit": 5.0,
-    "frost_release": 7.0,
-    # As the scenarios ran before G11: the curve's room entered, the correction off; the
-    # corrections' scenarios (corrections.py) switch them on themselves.
-    "room_mode": "manual",
-    "room_excluded": [],
-    "comfort_correction": False,
-}
-BASE_BEHAVIOUR = {
-    "ramp_k_per_min": 1.0,
-    "decision_interval_min": 5.0,
-    "off_setpoint": 10.0,
-    "count_threshold": 1,
-    "learning_pauses": True,
-    "comfort_correction": False,
-}
-BASE_ALARMS = {"write_ignored": "info", "return_after_outside_change": False}
 
 
 def append_result(text: str) -> None:
@@ -118,77 +87,25 @@ class Run:
     async def options(
         self, control=None, curve=None, behaviour=None, alarms=None, gateway="sim", strict=True
     ):
+        """Instance 1's options saved again: its base (options.py), with the given changes, each
+        through whichever menu item asks it now (I8) — the groups are only the scenarios' names
+        for them. A change no form asks, or a form that refuses one, saves nothing: with
+        ``strict`` it raises, otherwise the refusal comes back with its ``errors``."""
         entry = await self.ha.entry("vtherm_smart_boiler")
-        _s, d = await self.ha.rest(
-            "POST",
-            "/api/config/config_entries/options/flow",
-            {"handler": entry["entry_id"], "show_advanced_options": True},
+        given = {**(control or {}), **(curve or {}), **(behaviour or {}), **(alarms or {})}
+        changes = {**BASE_GATEWAY, "gateway_id": gateway, **given}
+        required = [k for k, v in given.items() if v is not None] if strict else []
+        d = await save_options(
+            self.ha.rest,
+            entry["entry_id"],
+            changes,
+            GATEWAY_ITEMS,
+            required=required,
+            strict=strict,
+            note=self.note,
         )
-        fid = d["flow_id"]
-        steps = [
-            {"next_step_id": "control"},
-            {k: v for k, v in {**BASE_CONTROL, **(control or {})}.items() if v is not None},
-        ]
-        for body in steps:
-            _s, d = await self.ha.rest(
-                "POST", f"/api/config/config_entries/options/flow/{fid}", body
-            )
-            if d.get("errors") or d.get("type") == "abort":
-                await self.ha.rest("DELETE", f"/api/config/config_entries/options/flow/{fid}")
-                if strict:
-                    raise RuntimeError(f"options not saved: {d.get('errors') or str(d)[:200]}")
-                return d
-        while d.get("type") == "form":
-            step = d["step_id"]
-            if step == "control_return_confirm":
-                self.note("options: 'confirm the return by itself' ticked")
-                _s, d = await self.ha.rest(
-                    "POST", f"/api/config/config_entries/options/flow/{fid}", {"understood": True}
-                )
-                continue
-            if step == "confirm_blocking":
-                self.note(
-                    f"options: 'this change stops control': {d.get('description_placeholders', {}).get('first')}"
-                )
-                _s, d = await self.ha.rest(
-                    "POST", f"/api/config/config_entries/options/flow/{fid}", {"save_anyway": True}
-                )
-                continue
-            body = {
-                "control_gateway": {"gateway_id": gateway},
-                "control_curve": {**BASE_CURVE, **(curve or {})},
-                "control_behaviour": {**BASE_BEHAVIOUR, **(behaviour or {})},
-                "control_alarms": {**BASE_ALARMS, **(alarms or {})},
-            }.get(step)
-            if body is None:
-                await self.ha.rest("DELETE", f"/api/config/config_entries/options/flow/{fid}")
-                if strict:
-                    raise RuntimeError(f"options: a step the runner does not know: {step}")
-                return {"unexpected_step": step}
-            # Each step starts from what the form shows now, so a field the runner does not set
-            # keeps its value instead of falling back to the plugin's default (G11 made the
-            # comfort correction and the curve's Auto room the defaults).
-            current = {
-                f["name"]: v
-                for f in d.get("data_schema") or []
-                if (v := (f.get("description") or {}).get("suggested_value", f.get("default")))
-                is not None
-            }
-            fields = {f["name"] for f in d.get("data_schema") or []}
-            body = {k: v for k, v in (current | body).items() if v is not None and k in fields}
-            _s, d = await self.ha.rest(
-                "POST", f"/api/config/config_entries/options/flow/{fid}", body
-            )
-            if d.get("errors"):
-                await self.ha.rest("DELETE", f"/api/config/config_entries/options/flow/{fid}")
-                if strict:
-                    raise RuntimeError(f"options not saved: {d.get('errors') or str(d)[:200]}")
-                return d
-        if d.get("type") != "create_entry":
-            await self.ha.rest("DELETE", f"/api/config/config_entries/options/flow/{fid}")
-            if strict:
-                raise RuntimeError(f"options not saved: {str(d)[:200]}")
-            return {"errors": {"not_saved": str(d)[:200]}}
+        if d.get("errors"):
+            return d
         await asyncio.sleep(15)  # the entry reloads
         return d
 
@@ -659,20 +576,36 @@ async def _refused(r: Run, label: str, d: dict) -> None:
 
 
 async def G1(r: Run):
-    """control refused without a confirmed-setpoint source"""
+    """control refused without a confirmed-setpoint source (a boiler signal since I8)"""
     await _refused(
         r,
         "no confirmed setpoint",
-        await r.options(control={"confirmed_entity": None}, strict=False),
+        await r.options(control={"ch_setpoint": None}, strict=False),
     )
     await r.options()
 
 
-async def G2(r: Run):
-    """control refused in monitor mode"""
-    await _refused(
-        r, "monitor mode", await r.options(control={"topology": "monitor_mode"}, strict=False)
+async def control_mode(r: Run, mode: str, strict: bool = True) -> dict:
+    """The control mode — full control, on/off or monitoring only — in its own menu item."""
+    entry = await r.ha.entry("vtherm_smart_boiler")
+    d = await save_options(
+        r.ha.rest,
+        entry["entry_id"],
+        {"control_mode": mode},
+        ("mode",),
+        required=["control_mode"],
+        strict=strict,
+        note=r.note,
     )
+    if not d.get("errors"):
+        await r.ha.wait(15)  # the entry reloads
+    return d
+
+
+async def G2(r: Run):
+    """control refused in "monitoring only" (the control mode; a topology before I8)"""
+    await _refused(r, "monitoring only", await control_mode(r, "monitor", strict=False))
+    await control_mode(r, "full")
     await r.options()
 
 
@@ -730,8 +663,9 @@ async def H1(r: Run):
 
 
 async def E1(r: Run):
-    """hard maximum in hard frost"""
-    d = await r.options(curve={"hard_max": 48.0, "design_flow": 48.0})
+    """the circuit's highest water temperature (the curve's hard maximum before I8) in hard
+    frost"""
+    d = await r.options(curve={"max_flow": 48.0, "design_flow": 48.0})
     r.note(f"options {d.get('type')} {d.get('errors')}")
     await r.sim("set_outdoor", temperature=-25)
     t = time.time()
@@ -740,7 +674,7 @@ async def E1(r: Run):
     sp = [v for k, v in r.cmds(t, "setpoint")]
     r.check(sp and max(sp) <= 48.0, f"max setpoint {max(sp) if sp else None}")
     r.check(
-        "limit_hard_max" in (await r.attr("control_state", "reasons") or []),
+        "limit_circuit_max" in (await r.attr("control_state", "reasons") or []),
         f"reasons {await r.attr('control_state', 'reasons')}",
     )
     await r.switch(False)
@@ -829,7 +763,7 @@ async def _demand(r: Run) -> bool:
 
 async def E3(r: Run):
     """VT's activation delay of 120 s holds a start"""
-    d = await r.options(curve={"activation_delay_s": 120})
+    d = await r.options(behaviour={"activation_delay_s": 120})
     r.note(f"options {d.get('type')} {d.get('errors')}")
     await r.switch(True)
     starts = []
@@ -911,12 +845,13 @@ SCENARIOS = {
 # --- the instance's base state, and the evidence of a failure ---------------------------------
 
 # What every scenario of a path expects to find, as each instance is set up (devenv/README.md):
-# keys of the plugin's stored control options ("curve.x" inside the curve). A key the entry does
-# not store yet takes the plugin's default for an entry made before it, which is what the base
-# means — so only a stored value is compared.
+# keys of the plugin's stored control options ("curve.x" inside the curve; "circuit.x" in the
+# first circuit, which holds the highest water temperature since I8). A key the entry does not
+# store takes the plugin's default, which is what the base means — so a key expected empty
+# (None) must not be stored, and any other is compared only where stored.
 BASE_EXPECT: dict[str, dict[str, object]] = {
     "opentherm_gw": {
-        "hard_max": 70.0,
+        "circuit.max_flow": None,
         "activation_delay_s": 0,
         "comfort_correction": False,
         "curve.design_flow": 55.0,
@@ -943,8 +878,8 @@ BASE_EXPECT: dict[str, dict[str, object]] = {
 
 
 def stored_control() -> dict[str, object]:
-    """The plugin entry's stored control options, flattened — read from the instance's own
-    .storage (read only)."""
+    """The plugin entry's stored control options, flattened, with its first circuit's — read
+    from the instance's own .storage (read only)."""
     raw = json.loads(ssh(f"docker exec {CONTAINER} cat /config/.storage/core.config_entries"))
     entry = next(e for e in raw["data"]["entries"] if e["domain"] == "vtherm_smart_boiler")
     flat: dict[str, object] = {}
@@ -953,6 +888,8 @@ def stored_control() -> dict[str, object]:
             flat |= {f"{key}.{k}": v for k, v in value.items()}
         else:
             flat[key] = value
+    circuits = entry["options"].get("circuits") or [{}]
+    flat |= {f"circuit.{k}": v for k, v in circuits[0].items() if v is not None}
     return flat
 
 
@@ -1091,7 +1028,7 @@ async def _handed_back(r: Run) -> bool:
 
 async def E4(r: Run):
     """the comfort correction raises the water by 3 K at most, and says so at its edge"""
-    d = await r.options(behaviour={"comfort_correction": True})
+    d = await r.options(curve={"comfort_correction": True})
     r.note(f"options {d.get('type')}")
     r.ent.update(await r.ha.entities())
     await r.ha.call("climate", "set_temperature", entity_id="climate.zone_bath", temperature=26.0)
