@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -528,6 +529,16 @@ def test_the_count_threshold_must_fit_the_zones() -> None:
     options = parse_control(OTGW | {"count_threshold": 2}, RADIATORS, None)
     assert config_blockers(options, RADIATORS) == ["count_threshold_above_zones"]
     assert config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS) == []
+    # I8.8b: a zone split between circuits counts once.
+    split = Installation(
+        Boiler(BoilerClass.FLOW_SETPOINT),
+        (Circuit("main"), Circuit("floor", CircuitControl.SEPARATE)),
+        (
+            Zone("climate.a", "main", devices=frozenset({"switch.radiator"})),
+            Zone("climate.a", "floor", devices=frozenset({"switch.loop"})),
+        ),
+    )
+    assert config_blockers(options, split) == ["count_threshold_above_zones"]
 
 
 def test_frost_protection_watches_the_zone_picked_or_every_zone() -> None:
@@ -627,7 +638,18 @@ def test_the_circuits_set_the_caps_floors_needs_and_the_curves_zones() -> None:
         True,
         33.0,
     )
+    assert mixer.devices == {}
     assert control.curve_zones == frozenset({"climate.a"})
+    # I8.8b: a zone the mixer's circuit feeds in part asks in it through those devices.
+    split = replace(
+        layout,
+        zones=(
+            Zone("climate.a", "rads", devices=frozenset({"switch.radiator"})),
+            Zone("climate.a", "floor", devices=frozenset({"switch.loop"})),
+        ),
+    )
+    (mixer,) = parse_control(OTGW, split, None).loop.control.other_automation
+    assert mixer.devices == {"climate.a": frozenset({"switch.loop"})}
     single = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
     assert parse_control(OTGW, single, None).loop.control.curve_zones is None
 

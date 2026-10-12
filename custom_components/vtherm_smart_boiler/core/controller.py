@@ -1105,15 +1105,16 @@ def _want_heat(
 
 def _circuits(inputs: ControlInputs, config: ControlConfig) -> CircuitsAsking:
     """The circuits run by other automation that ask now (I8, decision F3): their entity on,
-    or one of their known zones wanting heat."""
+    or one of their known zones wanting heat — a zone split between circuits through the
+    devices VT lists active (I8.8b)."""
     now = inputs.now
     wanting = {
-        z.zone_id
+        z.zone_id: z.devices_active
         for z in inputs.zones
         if z.is_known(now, config.zone_max_age_s) and zone_wants_heat(z, config.demand.zone_opening)
     }
     return circuits_asking(
-        config.other_automation, inputs.circuit_requests, inputs.circuit_needs, wanting
+        config.other_automation, inputs.circuit_requests, inputs.circuit_needs, wanting, wanting
     )
 
 

@@ -481,6 +481,25 @@ def test_the_relay_heats_for_a_circuit_asking_too() -> None:
     assert Reason.CIRCUIT_REQUEST_UNKNOWN in decision.reasons
 
 
+def test_a_split_zone_asks_in_the_circuit_whose_device_runs() -> None:
+    """I8.8b: the zone feeds the mixer's circuit by its floor loop only; it heats by its
+    radiator alone — the mixer's circuit is not asked, and holds no water; its loop on — it is."""
+    split = OtherAutomation(
+        "floor", zones=frozenset({"z"}), needed=40.0, devices={"z": frozenset({"switch.loop"})}
+    )
+    config = replace(CONFIG, other_automation=(split,))
+    radiator = zone(0.0, device_active=True, devices_active=frozenset({"switch.radiator"}))
+    _state, [decision] = run([inputs(0.0, zones=(radiator,))], config)
+    assert decision.command is not None
+    assert decision.command.setpoint is not None
+    assert decision.command.setpoint < 45.0
+    assert Reason.CIRCUIT_ASKS not in decision.reasons
+    loop = replace(radiator, devices_active=frozenset({"switch.loop"}))
+    _state, [decision] = run([inputs(0.0, zones=(loop,))], config)
+    assert decision.command is not None
+    assert decision.command.setpoint == 45.0
+
+
 def test_the_curves_room_reads_its_own_circuits_zones() -> None:
     """I8 (decision F6): in Auto the curve's room is the warmest setpoint among the zones of the
     circuit the curve serves — a zone of another circuit, warmer, is not read."""

@@ -68,3 +68,27 @@ def test_a_circuit_without_its_own_entity_asks_through_its_zones_alone() -> None
     assert circuits_asking((zones_only,), {}, {}, frozenset()).asking == ()
     found = circuits_asking((zones_only,), {}, {}, frozenset({"climate.bath"}))
     assert (found.asking, found.unknown, found.floor) == (("floor",), (), 35.0)
+
+
+def test_a_zone_split_by_its_devices_asks_through_its_devices_there() -> None:
+    """I8.8b (Claude's call): a zone listed by its devices asks in the circuit while it wants
+    heat and VT lists one of those devices active; VT's list unknown (an older VT), it asks in
+    each of its circuits — the warmer side."""
+    split = OtherAutomation(
+        "floor",
+        zones=frozenset({"climate.living"}),
+        needed=35.0,
+        devices={"climate.living": frozenset({"switch.loop"})},
+    )
+    wanting = frozenset({"climate.living"})
+
+    def asking(active: frozenset[str] | None) -> tuple[str, ...]:
+        found = circuits_asking((split,), {}, {}, wanting, {"climate.living": active})
+        return found.asking
+
+    assert asking(frozenset({"switch.loop", "switch.radiator"})) == ("floor",)
+    assert asking(frozenset({"switch.radiator"})) == ()
+    assert asking(frozenset()) == ()
+    assert asking(None) == ("floor",)
+    assert circuits_asking((split,), {}, {}, wanting).asking == ("floor",)  # nothing read
+    assert circuits_asking((split,), {}, {}, frozenset()).asking == ()  # not wanting heat

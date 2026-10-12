@@ -602,6 +602,7 @@ class VThermLink:
             reported_at=reported_at(state),
             auto_mode=values.auto_mode,
             device_active=values.device_active,
+            devices_active=values.devices_active,
             ready=values.ready,
             temperature_at=values.temperature_at,
             max_on_percent=values.max_on_percent,

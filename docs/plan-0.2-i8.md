@@ -8,7 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-12: the plan approved by the user; I8.0 to I8.7 and I8.8a done; I8.8b next.
+Status on 2026-10-12: the plan approved by the user; I8.0 to I8.7, I8.8a and I8.8b done; I8.8c next.
 
 ## How to read this plan
 
@@ -621,6 +621,22 @@ Claude's calls (cautious, provisional, K4):
   circuits table, §9, the K4 list), `docs/plan-0.2.3.md` item 52, both user guides (setup,
   control's conditions, heating on and off, the water temperature, the diagram), both
   technical documents (the components, one control step and its diagram).
+- I8.8b ✅ (2026-10-12): the device-level model, core first. A circuit may list, of a zone it
+  feeds only in part, those devices (`devices`, by zone; a zone without an entry is the
+  circuit's whole); a zone may be in two circuits only so — whole in one, or a device in two,
+  is an error of the installation check (`duplicate_zone`, `duplicate_device`). VT's active
+  devices (`specific_states.device_actives`, VT 10.4.0) are read with each zone. Claude's
+  calls: a zone split between circuits asks in a circuit run by other automation through
+  those devices — while it wants heat and VT lists one of them active, or while VT's list is
+  not known (an older VT: the warmer side); the boiler's demand stays the zone's, as VT drives
+  a zone's devices together; the zone is watched, counted and shown once, its heat available
+  through either circuit, its diagnostics naming both. A device renamed is followed; removed,
+  named as a device. Diagnostics redact the active devices. No migration: the key is new. No
+  form yet (I8.8c), so no user-facing text changes.
+- I8.8c: the circuit form's field for single devices of a zone — the VT zones' own devices
+  offered, each resolved to its zone at the save (`vtherm_link`); refused: a device of no VT
+  zone, one another circuit lists, a zone listed whole and by its devices. Documents:
+  `SCOPE.md`, both user guides (the setup), both technical documents (configuration).
 
 - Core first, with tests: the boiler's water as the highest need of the circuits asking; the
   floor of a circuit run by other automation; its heat request in the demand (both modes); the

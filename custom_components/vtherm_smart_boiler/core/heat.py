@@ -3,6 +3,7 @@ value VT's thermostats are shown (I8, decision C1)."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -90,3 +91,12 @@ def heat_available(
     if excess > threshold:
         return Heat(True, None, excess, against)
     return Heat(False, near, excess, against)
+
+
+def heat_through_any(heats: Sequence[Heat]) -> Heat:
+    """A zone fed by several circuits through its devices (I8.8b): heat while any circuit
+    brings it; else what cannot be told, before a no; else the first no."""
+    return next(
+        (h for h in heats if h.available is True),
+        next((h for h in heats if h.available is None), heats[0]),
+    )

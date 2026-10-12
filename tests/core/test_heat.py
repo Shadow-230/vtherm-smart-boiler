@@ -9,6 +9,7 @@ from custom_components.vtherm_smart_boiler.core.heat import (
     Heat,
     HeatReason,
     heat_available,
+    heat_through_any,
 )
 from custom_components.vtherm_smart_boiler.core.supply import Supply, SupplyReason
 
@@ -98,3 +99,15 @@ def test_against_the_room_with_hysteresis() -> None:
     assert heat_available(Supply(22.5), True, None, 20.0, False, True).available is True
     near = heat_available(Supply(21.5), True, None, 20.0, False, True)
     assert near == Heat(False, HeatReason.FLOW_NEAR_ROOM, 1.5, Against.ROOM)
+
+
+def test_a_zone_split_between_circuits_has_heat_through_either() -> None:
+    """I8.8b: a zone fed by two circuits through its devices takes heat while either circuit
+    brings it; neither, what cannot be told comes before a no; the first no otherwise."""
+    yes = Heat(True, None, 7.0, Against.RETURN)
+    unknown = Heat(None, HeatReason.CIRCUIT_NOT_MEASURED)
+    no = Heat(False, HeatReason.FLAME_OFF)
+    assert heat_through_any([no, yes]) == yes
+    assert heat_through_any([no, unknown]) == unknown
+    assert heat_through_any([no, Heat(False, HeatReason.DHW_ACTIVE)]) == no
+    assert heat_through_any([yes]) == yes

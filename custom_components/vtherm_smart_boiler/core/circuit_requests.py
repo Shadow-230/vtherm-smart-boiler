@@ -6,7 +6,7 @@ at or above its need plus a margin. Pure logic: the entities' readings come in a
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # The water kept above a circuit's need, for the mixer to mix down from (provisional, K4) — as
 # a fixed valve's margin.
@@ -16,12 +16,28 @@ OTHER_AUTOMATION_MARGIN_K = 5.0
 @dataclass(frozen=True, slots=True)
 class OtherAutomation:
     """A circuit run by other automation. ``requests``: an entity says whether it asks for
-    heat; ``needed``: the water it needs, entered — an entity's reading of it comes first."""
+    heat; ``needed``: the water it needs, entered — an entity's reading of it comes first.
+    ``devices``: for a zone it feeds only some devices of, those devices (I8.8b)."""
 
     circuit_id: str
     zones: frozenset[str] = frozenset()
     requests: bool = False
     needed: float | None = None
+    devices: Mapping[str, frozenset[str]] = field(default_factory=dict)
+
+    def asks_through(
+        self, zones_wanting: Collection[str], active: Mapping[str, frozenset[str] | None]
+    ) -> bool:
+        """One of its zones wants heat — a zone it feeds by some devices only while VT lists
+        one of them active, or while VT's list is not known (an older VT): the warmer side."""
+        for zone in self.zones:
+            if zone not in zones_wanting:
+                continue
+            devices = self.devices.get(zone)
+            running = active.get(zone)
+            if not devices or running is None or devices & running:
+                return True
+        return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,11 +56,14 @@ def circuits_asking(
     requests: Mapping[str, bool | None],
     needs: Mapping[str, float | None],
     zones_wanting: Collection[str],
+    devices_active: Mapping[str, frozenset[str] | None] | None = None,
 ) -> CircuitsAsking:
     """The circuits run by other automation that ask now — their entity on, or one of their
     zones wanting heat — and the floor their needs set. ``requests``: each entity's reading
     (``None``: unreadable); ``needs``: each need entity's reading (``None``: unreadable, the
-    value entered then)."""
+    value entered then); ``devices_active``: by zone, the devices VT lists active (``None``
+    or absent: not known)."""
+    active = devices_active or {}
     asking: list[str] = []
     unknown: list[str] = []
     floor: float | None = None
@@ -52,7 +71,7 @@ def circuits_asking(
         request = requests.get(circuit.circuit_id) if circuit.requests else False
         if request is None:
             unknown.append(circuit.circuit_id)
-        if request is not True and not circuit.zones & set(zones_wanting):
+        if request is not True and not circuit.asks_through(zones_wanting, active):
             continue
         asking.append(circuit.circuit_id)
         reported = needs.get(circuit.circuit_id)
