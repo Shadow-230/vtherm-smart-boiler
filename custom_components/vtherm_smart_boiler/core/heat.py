@@ -27,6 +27,7 @@ class HeatReason(StrEnum):
     FLOW_STALE = "flow_stale"
     FLOW_UNKNOWN = "flow_unknown"
     CIRCUIT_NOT_MEASURED = "circuit_not_measured"
+    NOT_MAPPED = "not_mapped"  # no water sensor for the circuit at all (I9)
     ROOM_UNKNOWN = "room_unknown"
 
 
@@ -74,6 +75,8 @@ def heat_available(
     if supply.temperature is None:
         if supply.reason is SupplyReason.CIRCUIT_NOT_MEASURED:
             return Heat(None, HeatReason.CIRCUIT_NOT_MEASURED)
+        if supply.reason is SupplyReason.NOT_MAPPED:
+            return Heat(None, HeatReason.NOT_MAPPED)
         # Unknown, not "no", while the flow is unknown or stale (the user's decision).
         if supply.reason is SupplyReason.FLOW_STALE:
             return Heat(None, HeatReason.FLOW_STALE)
