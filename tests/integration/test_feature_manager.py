@@ -75,7 +75,7 @@ async def test_values_appear_on_the_thermostat_and_go_with_the_plugin(
     assert await manager.refresh_state() is False
     attributes: dict = {}
     manager.add_custom_attributes(attributes)
-    assert attributes["smart_boiler"] == {"heat_available": True}
+    assert attributes["smart_boiler"] == {"heat_available": True, "supply_temperature": 45}
     other: dict = {}
     factory.create(Thermostat("climate.not_ours")).add_custom_attributes(other)
     assert other == {}
@@ -398,7 +398,7 @@ async def test_the_zone_value_is_named_heat_available(
     manager = api.get_feature_manager(DOMAIN).create(Thermostat(living))
     attributes: dict = {}
     manager.add_custom_attributes(attributes)
-    assert set(attributes["smart_boiler"]) == {"heat_available"}
+    assert set(attributes["smart_boiler"]) == {"heat_available", "supply_temperature"}
     assert manager.heat_available is attributes["smart_boiler"]["heat_available"]
     assert not hasattr(manager, "hot_water")
 
@@ -475,13 +475,16 @@ async def test_a_zone_split_between_circuits_has_heat_through_either(
     assert view.heat.available is True
     manager = api.get_feature_manager(DOMAIN).create(Thermostat(living))
     assert manager.heat_available is True
+    # I9 (water-interface.md §4.1): its two circuits' waters differ, 45 °C and 35 °C — no one
+    # water, the lasting fallback.
+    assert (manager.supply_temperature, manager.supply_reason) == (None, "several_circuits")
 
 
 def test_the_attribute_changes_only_when_the_value_changes(hass: HomeAssistant) -> None:
     """P-63: VT records its thermostats' attributes, so the plugin's is replaced only when heat
     availability changes. Negative: a value that goes away takes the attribute with it; back, it
     is published afresh."""
-    values: dict[str, Any] | None = {"heat_available": True}
+    values: dict[str, Any] | None = {"heat_available": True, "supply_temperature": 45.0}
     manager = feature_manager.SmartBoilerFeatureManager(
         hass, Thermostat("climate.a"), lambda _entity: None if values is None else dict(values)
     )
@@ -492,18 +495,18 @@ def test_the_attribute_changes_only_when_the_value_changes(hass: HomeAssistant) 
         assert attributes.pop("other") == 1
         return attributes.get("smart_boiler")
 
-    assert shown() == {"heat_available": True}
+    assert shown() == {"heat_available": True, "supply_temperature": 45}
     first = manager._published
-    assert shown() == {"heat_available": True}
+    assert shown() == {"heat_available": True, "supply_temperature": 45}
     assert manager._published is first  # nothing new: the same published value
-    values = {"heat_available": False}
-    assert shown() == {"heat_available": False}  # a flip
-    values = {"heat_available": None}
-    assert shown() == {"heat_available": None}  # unknown now
+    values = {"heat_available": False, "supply_temperature": 45.0}
+    assert shown() == {"heat_available": False, "supply_temperature": 45}  # a flip
+    values = {"heat_available": None, "supply_temperature": None}
+    assert shown() == {"heat_available": None, "supply_temperature": None}  # unknown now
     values = None
     assert shown() is None  # not the plugin's zone any more: no attribute
-    values = {"heat_available": None}
-    assert shown() == {"heat_available": None}  # afresh
+    values = {"heat_available": None, "supply_temperature": 45.0}
+    assert shown() == {"heat_available": None, "supply_temperature": 45}  # afresh
 
 
 def test_the_manager_answers_vt_without_state_of_its_own(hass: HomeAssistant) -> None:
@@ -669,3 +672,132 @@ async def test_a_failed_refresh_publishes_no_zone_values(
     assert feature_manager.zone_values([coordinator], living) is None
     coordinator.last_update_success = True
     assert feature_manager.zone_values([coordinator], living) is not None
+
+
+# --- I9.2: the water data (documentation/en/water-interface.md) --------------------------------
+
+
+async def _refreshed(hass: HomeAssistant) -> None:
+    """The installation computes its data again now, as at its next update."""
+    await hass.async_block_till_done()
+    await hass.config_entries.async_entries(DOMAIN)[0].runtime_data.async_refresh()
+
+
+def _flow_reported(hass: HomeAssistant) -> Any:
+    state = hass.states.get(FakeBoiler(hass, (Signal.FLOW,)).entity(Signal.FLOW))
+    assert state is not None
+    return state.last_reported
+
+
+async def test_the_manager_shows_the_zone_s_water(hass: HomeAssistant, zones: FakeZones) -> None:
+    """§3.1, §4: the five fields as the manager's properties — the boiler's flow reaching the
+    zone's circuit, with the time of its reading; lost for now, `None` with its momentary
+    reason, and the heat unknown with it."""
+    api = vt_is_set_up(hass)
+    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
+    await setup(hass, zones)
+    manager = api.get_feature_manager(DOMAIN).create(Thermostat(living))
+    assert manager.supply_temperature == 45.0
+    assert manager.supply_reason is None
+    assert manager.supply_measured_at == _flow_reported(hass)
+    assert manager.supply_measured_at.tzinfo is not None
+    assert manager.heat_available is True
+    assert manager.heat_reason is None
+    FakeBoiler(hass, (Signal.FLOW,)).set(Signal.FLOW, None)
+    await _refreshed(hass)
+    assert manager.supply_temperature is None
+    assert manager.supply_reason == "flow_unknown"
+    assert manager.supply_measured_at is None
+    assert manager.heat_available is None
+    assert manager.heat_reason == "flow_unknown"
+
+
+async def test_the_api_gives_the_same_fields_without_vt_s_lookup(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """§3.2: `hass.data["vtherm_smart_boiler_api"].zone_water(entity_id)` — the same fields as a
+    read-only mapping, with no VT and no manager at all (VT 10.4.0 has no
+    `get_feature_manager`); `None` for a thermostat that is not a zone; gone with the plugin."""
+    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
+    entry = await setup(hass, zones)
+    water = hass.data["vtherm_smart_boiler_api"].zone_water(living)
+    assert dict(water) == {
+        "supply_temperature": 45.0,
+        "supply_reason": None,
+        "supply_measured_at": _flow_reported(hass),
+        "heat_available": True,
+        "heat_reason": None,
+    }
+    with pytest.raises(TypeError):
+        water["supply_temperature"] = 20.0  # read-only
+    assert hass.data["vtherm_smart_boiler_api"].zone_water("climate.not_ours") is None
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert "vtherm_smart_boiler_api" not in hass.data
+
+
+async def test_the_api_never_raises(
+    hass: HomeAssistant, zones: FakeZones, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Negative, §3.2: any error reading the data is "no data" (`None`), never an exception
+    into the consumer."""
+    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
+    await setup(hass, zones)
+
+    def broken(*_args: Any) -> dict:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(feature_manager, "zone_values", broken)
+    assert hass.data["vtherm_smart_boiler_api"].zone_water(living) is None
+
+
+async def test_no_water_sensor_is_not_mapped(hass: HomeAssistant, zones: FakeZones) -> None:
+    """Negative, §5.1: no water sensor mapped at all — a lasting `not_mapped`, for the water and
+    for the heat while the flame burns; the attribute shows no temperature."""
+    api = vt_is_set_up(hass)
+    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
+    boiler = FakeBoiler(hass, (Signal.FLAME,))
+    boiler.set(Signal.FLAME, True)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options={"signals": boiler.mapping(), "zones": [{"entity_id": living}]},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    manager = api.get_feature_manager(DOMAIN).create(Thermostat(living))
+    assert (manager.supply_temperature, manager.supply_reason) == (None, "not_mapped")
+    assert (manager.heat_available, manager.heat_reason) == (None, "not_mapped")
+    attributes: dict = {}
+    manager.add_custom_attributes(attributes)
+    assert attributes["smart_boiler"] == {"heat_available": None, "supply_temperature": None}
+
+
+async def test_the_attribute_publishes_the_water_rounded_on_a_change_of_1_k(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """§3.3: VT records the attribute, so it shows the water rounded to 1 °C and changes only
+    when the water has moved at least 1 K since it was last published, or to or from `None`;
+    the heat on every change. The live value is the manager's."""
+    api = vt_is_set_up(hass)
+    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
+    await setup(hass, zones)
+    manager = api.get_feature_manager(DOMAIN).create(Thermostat(living))
+    boiler = FakeBoiler(hass, (Signal.FLOW,))
+
+    async def shown(flow: float | None) -> dict:
+        boiler.set(Signal.FLOW, flow)
+        await _refreshed(hass)
+        attributes: dict = {}
+        manager.add_custom_attributes(attributes)
+        return attributes["smart_boiler"]
+
+    assert (await shown(45.0))["supply_temperature"] == 45
+    assert (await shown(45.9))["supply_temperature"] == 45  # 0.9 K: not yet
+    assert manager.supply_temperature == 45.9  # the live value
+    assert (await shown(46.2))["supply_temperature"] == 46  # 1.2 K from 45.0: published
+    assert (await shown(45.4))["supply_temperature"] == 46  # 0.8 K back: kept
+    assert await shown(None) == {"heat_available": None, "supply_temperature": None}
+    assert (await shown(45.4))["supply_temperature"] == 45  # back from None: at once
