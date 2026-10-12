@@ -76,106 +76,45 @@ Only one entry of the integration can exist: it runs one boiler.
 ## 3. Quick start
 
 1. **Prepare VT.** Set up VT's thermostats for the rooms. If VT's central boiler is configured,
-   untick it in VT's central configuration and restart Home Assistant, so that two controllers
-   never drive the same boiler. Monitoring works without this; control waits for it.
-   If you create VT's central configuration (or change it) after Home Assistant has started —
-   even without a central boiler — restart Home Assistant once before you switch control on:
-   until then control waits, as the plugin cannot tell what VT ran meanwhile.
-2. **Create the entry.** Settings → Devices & services → Add integration →
-   **Smart Boiler for Versatile Thermostat**. The first panel asks **how the boiler is connected**
-   (the OpenTherm Gateway integration, the OTGW firmware over MQTT, ESPHome OpenTherm, EMS-ESP, a
-   relay, the boiler's own Wi-Fi module or the manufacturer's integration, another writable
-   entity, or another integration that only reads), its **heat source** and its **type**
-   (single-function or combi, with or without a hot-water tank). The second asks the **control
-   mode** — full control, on/off or monitoring only — with condensing and the hot-water priority
-   where they apply. None of these
-   is chosen for you, and none switches anything on. Then pick a name and the level of detail (the
-   level changes only what you see, never how the plugin behaves). The same panels open the
-   integration's options, as two items: **Connection and boiler type** and **Control mode** — a
-   connection that cannot keep the mode, or a changed heat source or boiler type, opens the mode
-   at once. What each connection
-   means is in [Connecting the boiler](#5-connecting-the-boiler).
-   Then comes a **menu of sections**, as in VT's own setup: open a section, confirm it, and you
-   are back at the menu — nothing is created yet. A section that does not apply is not shown:
-   the monitor's thresholds at the simple level, control with monitoring only. The menu says which sections are still to confirm; **Configuration
-   incomplete** opens the first of them, or the step with a problem to fix, and **Create**
-   appears once every section shown is confirmed. Closing the window discards the setup.
-3. **Pick the signals.** In the section **Boiler signals** pick the entity for each signal you have — at
-   least flame and flow temperature if you plan to control the boiler. The plugin only reads
-   these entities. With the OpenTherm Gateway integration and exactly one gateway, its boiler
-   entities are filled in for you to check. With a relay the section asks first whether you
-   also read the boiler through another integration: No (the default) offers only what a relay
-   installation reads — flame, flow, return, the boiler's electric power, the gas meter, the
-   outdoor temperature and the weather — and removes the other boiler signals at the save; Yes
-   offers every signal. The outdoor temperature may come from any outdoor sensor, not only the
-   boiler's. With control of the water temperature the section also asks the read-backs:
-   **Heating setpoint the boiler received** — required, every write is checked against it —
-   and **Heating on/off read-back**. **Boiler interface** asks what the plugin needs to
-   know about the device between it and the boiler, only where your connection and mode use
-   it: the MQTT topics of the OTGW firmware or EMS-ESP (see [Fresh data](#68-fresh-data)), the
-   gateway where more than one is set up, how a gateway sits between thermostat and boiler and
-   what is wired to its thermostat terminals ([5.3](#53-the-gateway-topology)), and the restart
-   indicator.
-4. **Describe the installation.** The sections **Boiler**, the circuits and **VT zones** ask
-   what you know. Leave unknown values empty: the plugin then says what it cannot judge. Each
-   heating circuit is a menu item of its own, **Circuit: <name>** — its name picked from Home
-   Assistant's areas or the VT zones, or typed; its number where none is given — and at the
-   advanced level **Add circuit** adds one, up to four; a tick in a circuit's form removes it,
-   and its zones with it, never the only one. The simple level shows one circuit, and keeps any
-   other. A circuit's form lists the VT zones it feeds — an area adds its zones at the save —
-   and, of them, those with underfloor heating and those with convectors; the rest are
-   radiators. A zone belongs to one circuit; a zone in no circuit is neither watched nor asked
-   for heat. A room fed by two circuits — a radiator on one, a floor loop on the other — goes
-   into each by its own devices: at the advanced level **Single devices of a zone** offers the
-   devices VT drives, and a circuit lists the zone's devices it feeds instead of the whole
-   zone. The room is still one zone: watched and counted once. A circuit controlled by other
-   automation hears it only while one of its devices there is on (where VT does not say which
-   are on, in each of its circuits). **Circuit type** says how the circuit gets its water: straight from the boiler,
-   through a fixed thermostatic mixing valve (its setting asked), or **controlled by other
-   automation** — a mixer or a pump that something else runs. Such a circuit may name an entity
-   that is on while it wants heat (**Circuit asks for heat**) and the water it needs (**Water
-   temperature needed**, a value, or an entity whose reading comes first); the plugin never
-   drives its mixer or pump. **VT zones** then asks one thing: whose valves close while VT has the zone off. A field shows only where it can work, by
-   what is mapped in **Boiler signals**: in **Boiler** the minimum power always; the maximum
-   power and the modulation's meaning with a modulation signal; the gas per hour at minimum and
-   maximum power — from the technical data in the boiler's manual, in m³/h (kg/h for LPG) —
-   with it and without a gas meter; the water-pressure limits from the boiler's manual and its
-   safety valve with a pressure sensor; the bypass with a pump or heating-active signal; the
-   highest heating setpoint but for a relay. In **Monitor thresholds** the condensing return
-   for a condensing boiler with a return signal, the burn and start thresholds with a flame
-   signal, the flue-gas limits for a condensing boiler with a flue-gas sensor. A value already
-   set stays when its field is hidden, and judges nothing. At the advanced level, **Building** takes the design heat load and the
-   heating threshold, for the monitor's statistics only — nothing there switches heating —
-   and, without a heating curve, the outdoor temperature at the hardest frost the design load
-   is given for.
-5. **Days of data for the verdict.** At the advanced level the section **Monitor thresholds**
-   holds **Days of data for the verdict** (7 days by default, 7 to 60). It can also be changed
-   later in the options, in the same section. It holds nothing back: you may set up and switch on
-   control at any time. Until you do, the plugin writes nothing to the boiler.
-6. **Read the verdict.** Once it has these days of data, the sensor **Control verdict** says
-   whether control is worth enabling (see
-   [Monitoring and the verdict](#41-monitoring-and-the-verdict)). You decide.
-7. **Set up control.** With full control or on/off chosen, the setup's menu also offers
-   control's items, each one form: **Control device (experimental)** — the writable entity or
-   the relay, where the connection has one to pick —, **Heating curve** (full control; with the
-   comfort correction and its limit), **Control behaviour** (VT's activation delay; at the
-   advanced level the demand thresholds, the learning pauses and, with full control, the ramp,
-   the decision interval and the "off" setpoint), **Frost protection** (advanced level) and
-   **Alarm reactions** where one applies. The connection decides the write path, and the
-   read-backs are boiler signals (step 3). To change one later, open the same item in the
-   integration's options. To set
-   control up later, choose monitoring only as the control mode first.
-8. **Switch control on** with the switch **Control (experimental)** of the integration's device.
-   If something is missing, the switch says what, and the monitor keeps running.
+   untick it in VT's central configuration and restart Home Assistant: two controllers must never
+   drive the same boiler. Monitoring works without this; control waits for it. A VT central
+   configuration created or changed after Home Assistant started also needs that one restart.
+2. **Create the entry.** Settings → Devices & services → Add integration → **Smart Boiler for
+   Versatile Thermostat**. The first panels ask how the boiler is connected, its heat source and
+   type, and the control mode — full control, on/off or monitoring only. Nothing is chosen for
+   you and nothing is switched on. Then pick a name and the level of detail; the level changes
+   only what you see.
+3. **Go through the menu.** Each section is one form; confirming it brings you back to the menu,
+   and nothing is created yet. A section that does not apply is not shown. **Configuration
+   incomplete** opens the next section to confirm, or one with a problem; **Create** appears once
+   every section shown is confirmed. Closing the window discards the setup.
+   - **Boiler interface** — only where your connection needs it: the MQTT topics, the gateway,
+     how the gateway sits between thermostat and boiler, the restart indicator.
+   - **Boiler signals** — the entity for each signal you have; at least flame and flow for
+     control. With control of the water temperature, also the read-backs: the heating setpoint
+     the boiler received (required) and the heating on/off read-back.
+   - **Boiler** — what you know about it; leave unknown values empty.
+   - **Circuit: <name>** — one item per heating circuit (up to four at the advanced level): its
+     type, the VT zones it feeds and which of them have underfloor heating or convectors, its
+     highest water temperature. A zone in no circuit is neither watched nor asked for heat.
+   - **VT zones** — whose valves close while VT has the zone off.
+   - **Building** and **Monitor thresholds** — at the advanced level, for the monitor only;
+     **Days of data for the verdict** is there (7 by default).
+   - **Control items** — with full control or on/off: the control device, the heating curve, the
+     control behaviour, frost protection and the alarm reactions (see
+     [Control is opt-in](#42-control-is-opt-in)).
+4. **Read the verdict.** Once it has the days of data, the sensor **Control verdict** says whether
+   control is worth enabling ([4.1](#41-monitoring-and-the-verdict)). You decide.
+5. **Switch control on** with the switch **Control (experimental)** of the integration's device,
+   on the first day or later. If something is missing, the switch says what, and the monitor
+   keeps running. Until you switch it on, the plugin writes nothing to the boiler.
 
-**Changing settings later.** The integration's options open the same menu. Each section returns
-to it, and nothing is saved until **Save and finish**: it checks everything, saves it and reloads
-the integration once — while control holds the boiler, it is handed back and taken again (a
-relay goes to its rest state and back); a change of the level alone reloads nothing. The menu
-names the sections with unsaved changes; closing the window discards them. A problem found at
-the save opens its step with the reason: fix it and choose **Save and finish** again. A change
-that would stop control asks first; declined, you are back at the menu with your changes, to
-change them or to discard them by closing the window.
+**Changing settings later.** The integration's options open the same menu, with **Save and
+finish** in place of **Create**. Nothing is saved until you choose it: it checks everything,
+saves, and reloads the integration once — while control holds the boiler, it is handed back and
+taken again. Changing only the level reloads nothing. The menu names the sections you changed;
+closing the window discards them. A problem found at the save opens its section with the reason.
+A change that would stop control asks first.
 
 ## 4. How it works
 
@@ -271,11 +210,11 @@ While heating is on, the plugin sets the boiler's water (flow) temperature:
    **Manual** keeps the value you enter: the setpoint of your warmest room. Too low leaves rooms
    cold in mild weather. An entry set up before this version runs Manual with its value. The
    control state shows the room temperature in use (`curve_room`).
-   With a curve, the building's design load is read at this same temperature. The curve step
-   also shows the highest water temperature of the circuits fed straight from the boiler and
-   the boiler's maximum heating setpoint — the lower applies. With several circuits, the curve serves the one fed straight
-   from the boiler, and its room temperature (Auto) and the comfort correction read that
-   circuit's zones.
+   With a curve, the building's design load is read at this same temperature. The **Heating
+   curve** item also shows the highest water temperature of the circuits fed straight from the
+   boiler and the boiler's maximum heating setpoint — the lower applies. With several circuits,
+   the curve serves the one fed straight from the boiler, and its room temperature (Auto) and
+   the comfort correction read that circuit's zones.
 2. **Lowest water temperature** — the curve never goes below it. Default 20 °C (provisional).
    Too low, and the boiler may stop by itself again and again in mild weather; a boiler that does
    not condense may condense in its flue. Take the value from the boiler's manual. The monitor
@@ -290,8 +229,8 @@ While heating is on, the plugin sets the boiler's water (flow) temperature:
    a fixed valve is guarded by them, and its own too-hot alarm tells. Needed for underfloor
    heating on an unmixed loop. Above the curve only the comfort correction raises
    the water, up to its own limit (default 3 K). The boiler itself may overshoot it a little; an
-   alarm tells you when the measured flow stays too high. (Before, the curve step had a highest
-   water temperature of its own; an update keeps the lower of it and the circuit's.)
+   alarm tells you when the measured flow stays too high. (Before, the curve had a highest water
+   temperature of its own; an update keeps the lower of it and the circuit's.)
 
 The water temperature changes slowly (the ramp, default 1 K per minute). It is re-decided every
 5 minutes by default (the decision interval).
@@ -302,17 +241,16 @@ outdoor sensor never means zero heat.
 
 **Comfort correction** — **on by default with full control** (an entry set up before this
 version keeps what it ran with). When a room stays short of its setpoint with its valve fully
-open, the water rises slowly above the curve, up to its limit: 3 K by default, up to 10 K —
-set in **Heating curve**, beside the correction, at both levels —, never more than 3 K a day. For a room whose SmartPI is in its learning phase,
-"short" means below its setpoint + 0.5 K, where SmartPI stops heating it. It does not rise when
-the boiler starts more often than before. One room short counts like any other, within these
-limits — the water never goes higher for one room's sake. After three hours at its limit with a
-room still short, the correction holds there, and a repair issue names the room and the possible
-causes: the heating curve too low, the room's radiator too small for it, or the room losing heat
-(a window, leaks) — the curve first when most rooms are short, the radiator and the heat loss
-first when one is. What it costs: more gas, and possibly more burner starts; its text in the form explains the risk with
-VT's TPI zones. Watch the starts, and switch it off if they climb. A "Reset comfort correction"
-button sets it back to zero.
+open, the water rises slowly above the curve, up to its limit: 3 K by default, up to 10 K, set
+in **Heating curve** beside the correction; never more than 3 K a day. For a room whose SmartPI
+is in its learning phase, "short" means below its setpoint + 0.5 K, where SmartPI stops heating
+it. It does not rise while the boiler starts more often than before. One room short counts like
+any other — the water never goes higher for one room's sake. After three hours at its limit with
+a room still short, the correction holds there, and a repair issue names the room and the
+possible causes: the curve too low, the room's radiator too small, or the room losing heat. What
+it costs: more gas, and possibly more burner starts — with VT's TPI zones it can sit at its limit
+and raise the starts several times over. A "Reset comfort correction" button sets it back to
+zero.
 
 ### 4.5 Frost protection
 
@@ -396,6 +334,25 @@ Open windows are VT's to handle. VT's own window detection — a window sensor, 
 detection by the temperature's slope — turns the zone off or lowers its setpoint; such a zone no
 longer asks for heat. The plugin has no window handling of its own.
 
+### 4.10 Circuits and zones
+
+A circuit is the part of the heating fed one way, picked as its **Circuit type**:
+
+- **Straight from the boiler** — the curve's circuit; at most one is controlled.
+- **Thermostatic mixing valve (fixed)** — its setting is asked; the boiler's water is kept at
+  least 5 K above it.
+- **Controlled by other automation** — a mixer or a pump that something else runs; the plugin
+  never drives it. It may name an entity that is on while it wants heat (**Circuit asks for
+  heat**) and the water it needs (a value, or an entity whose reading comes first); while it
+  asks, the water stays at that need plus 5 K.
+- **Mixed through the boiler** (a second heating circuit of the boiler) — not controlled yet.
+
+Each circuit lists the VT zones it feeds, and of them those with underfloor heating or
+convectors; the rest are radiators. A room fed by two circuits — a radiator on one, a floor loop
+on the other — goes into each by its own devices (**Single devices of a zone**, advanced level);
+it stays one zone, watched and counted once. A zone in no circuit is neither watched nor asked
+for heat.
+
 ## 5. Connecting the boiler
 
 The plugin reads the boiler through entities you pick in its forms. To control the boiler it
@@ -406,7 +363,7 @@ Details: [`SCOPE.md`, §5](../../SCOPE.md#5-hardware-circuits-and-zone-algorithm
 [Gateway topology](../../SCOPE.md#gateway-topology).
 
 The first panel asks **how the boiler is connected**. The answer decides what the plugin can
-write, how it hands the boiler back, and what the control steps offer:
+write, how it hands the boiler back, and what the control device offers:
 
 | Connection | What the plugin writes | "Heating off" | Hand-back | If Home Assistant stops |
 |---|---|---|---|---|
@@ -489,12 +446,12 @@ installation:
 | Gateway without a thermostat (stand-alone) | heating **stops** until control resumes or you act |
 | Writable entity, value "Its own control resumes" | the boiler's own control heats |
 | Writable entity, value "Heating stops" | heating **stops** until control resumes |
-| Relay, "Relay after hand-back" = off (default) | no heat, unless a thermostat in parallel calls |
+| Relay, "Relay after hand-back" = off (default) | no heat, unless a thermostat wired to the boiler calls |
 | Relay, "Relay after hand-back" = on | the boiler heats on its own dial or thermostat |
 
 After a hand-back, or while Home Assistant is down, the boiler's (or the wall thermostat's) own
-maximum water temperature applies, not the plugin's. Set an unmixed underfloor circuit's limit
-there too.
+maximum water temperature applies, not the plugin's: an unmixed underfloor circuit then rests on
+that limit.
 
 The control switch shows what a hand-back does in your installation ("On hand-back").
 
@@ -531,8 +488,8 @@ Things to know with a gateway:
   own, if it has one.
 - **With a thermostat:** while the plugin controls, the wall thermostat's heating setting and its
   off switch do nothing (its hot-water settings still work). After a hand-back it heats by its own
-  setting and program, so keep them at what the house should get. The plugin warns when the wall
-  thermostat's setpoint is unknown or below 15 °C (if you map that signal).
+  setting and program. The plugin warns when the wall thermostat's setpoint is unknown or below
+  15 °C (if you map that signal).
 - A VT zone built on the gateway's own thermostat entity is refused.
 
 ### 5.4 The relay (on/off boiler)
@@ -552,9 +509,9 @@ The plugin cannot read the relay's own settings, so the form asks you:
   is asked with the timer, and "boiler heats above" with the boiler's power mapped (advanced);
 - "Relay after hand-back": off (default) or on.
 
-The form's texts recommend: the relay on the boiler's room-thermostat terminals, never in its
-power supply; the old thermostat kept in parallel and set low; the relay starting "off" after a
-power cut; one test in summer.
+If Home Assistant stops, the relay stays as it was; you can switch it by hand in its own app or
+web page. A relay in the boiler's power supply also cuts the boiler's pump overrun and its own
+frost protection, and the room-thermostat terminals may carry mains voltage.
 
 A relay out of reach raises an alarm after 5 minutes. There is no hand-back then, since nothing
 could reach the relay; the command is sent again when it returns.
@@ -588,61 +545,23 @@ it restarts — by default 15 minutes after its last Home Assistant connection (
 ESPHome needs the tick **"On the ESP: safe start values and a short API reboot_timeout"**, never
 ticked for you. Without it, control does not start ("The ESP's safe start not confirmed").
 
-A sketch of the parts that matter — check the names against ESPHome's
-[OpenTherm documentation](https://esphome.io/components/opentherm/) for your version, and fill in
-your own pins and names:
+The tick confirms three settings in the ESP's own configuration (ESPHome's
+[OpenTherm documentation](https://esphome.io/components/opentherm/) names them for your version):
 
-```yaml
-api:
-  reboot_timeout: 5min        # restart, and take the start values below, soon after
-                              # Home Assistant is gone
-
-opentherm:
-  in_pin: GPIO_IN             # your board's pins
-  out_pin: GPIO_OUT
-
-number:
-  - platform: opentherm
-    t_set:
-      name: "Boiler setpoint"
-      min_value: 0
-      max_value: 80
-      initial_value: 0        # no setpoint at start: no heating request
-      restore_value: false    # never the last value from before the restart
-
-switch:
-  - platform: opentherm
-    ch_enable:
-      name: "Boiler heating"
-      restore_mode: ALWAYS_OFF  # heating off at start
-
-sensor:
-  - platform: opentherm
-    t_boiler:
-      name: "Boiler flow temperature"
-      force_update: true      # report unchanged values too
-    t_ret:
-      name: "Boiler return temperature"
-      force_update: true
-    rel_mod_level:
-      name: "Boiler modulation"
-      force_update: true
-
-binary_sensor:
-  - platform: opentherm
-    flame_on:
-      name: "Boiler flame"
-```
+- the setpoint number and the heating switch start at values that are safe with nobody
+  controlling them — heating off, or a moderate water temperature;
+- neither restores its last value after a restart (`restore_value` off);
+- the API `reboot_timeout` is a few minutes, so the ESP falls back to those values soon after
+  Home Assistant is gone.
 
 In the plugin: the setpoint number is the setpoint entity, the heating switch the heating switch;
 both are held by the device, as ESPHome holds them — the form does not ask their write types —,
 with the hand-back "Write a value", whose value and effect you declare.
 
-With these start values, a house whose Home Assistant stays down after the ESP restarts is **not
-heated** until Home Assistant returns. The alternative is a moderate start: the heating switch
-starting on and `initial_value` a moderate water temperature, for example 45 °C. The boiler then
-heats without any room control — rooms may overheat, and underfloor heating needs its own
-limit — until Home Assistant is back. Choose what is safer in your house.
+With heating off at start, a house whose Home Assistant stays down after the ESP restarts is **not
+heated** until Home Assistant returns. With a moderate start — heating on and a moderate water
+temperature, for example 45 °C — the boiler heats without any room control until Home Assistant
+is back: rooms may overheat, and underfloor heating needs its own limit.
 
 `force_update: true` matters for the data's freshness: Home Assistant writes an ESPHome sensor's
 value only when it changes, unless the ESP sends it with `force_update`. Without it the plugin
@@ -655,21 +574,20 @@ names it. Binary sensors (the flame) cannot repeat; they are judged by availabil
 EMS-ESP's flow setpoint (`selflowtemp`) lapses within about a minute, and EMS-ESP does not repeat
 it, so the plugin writes it every 30 seconds. Pick it as the setpoint entity and as its
 read-back. It is expiring, as EMS-ESP's setpoint is — the form does not ask its write type —,
-with the hand-back "Device timeout" of 1 minute offered: the plugin stops writing and the boiler returns to its own setting within about a
-minute.
+with the hand-back "Device timeout" of 1 minute offered: the plugin stops writing and the boiler
+returns to its own setting within about a minute.
 
 - **"Heating off" is setpoint 0**, EMS-ESP's own documented way to keep heating off ("Force
   Heating Off"), written every 30 seconds like any setpoint — only with the setpoint kept
   "Expiring", so that a stopped Home Assistant leaves the boiler on its own control within about
   a minute. No heating switch is needed on this connection; never use EMS-ESP's "heating
   activated" for it — the boiler stores it in its memory. What the boiler's pump does at
-  setpoint 0 is not known: watch it on your boiler.
+  setpoint 0 is not known.
 - If the boiler ignores the 0 from the start, control stops and hands back ("The boiler did not
   take "heating off": switch control off and on").
 - The boiler takes a setpoint from the bus only below its own panel setting (EMS-ESP's
-  documentation). Set the boiler's own heating temperature at least as high as the plugin's
-  highest water temperature; otherwise higher setpoints are not taken, and the plugin reports
-  it.
+  documentation): with that setting below the plugin's highest water temperature, higher
+  setpoints are not taken, and the plugin reports it.
 - For fresh data the plugin listens to EMS-ESP's own repeats on its MQTT base topic (see
   [Fresh data](#68-fresh-data)).
 
@@ -868,7 +786,6 @@ Alarms from the monitor. They inform; the plugin keeps heating.
 | Low flow: all valves closed while the pump runs | no path for the water | check valves or bypass |
 | Circuit water too hot | flow above the circuit's alarm temperature | check its maximum |
 | Long burn without warming | the flame on for 3 h without a break, the rooms not warming: its reason says the water too cool for the rooms short, the boiler at its power limit, or the water too hot | the correction raises cool water; lower the curve if too hot |
-| Window probably open | a room fell 0.5 K within 10 minutes while it heated | close the window; the room is left out of the correction meanwhile |
 
 Repair issues:
 
@@ -879,7 +796,7 @@ Repair issues:
 | Heating water pressure keeps falling | risk of a leak: look for drips, or have it checked |
 | Flue gas too hot | book a service: heat exchanger, flue, condensate pipe |
 | The boiler reports a fault that stops it | heating is kept off until it clears; see the manual |
-| The boiler keeps stopping at the lowest water temperature | consider raising that limit |
+| The boiler keeps stopping at the lowest water temperature | names a higher value for that limit; nothing changes by itself |
 | The boiler keeps stopping at its lowest water temperature | the same, on the device's own curve |
 | The boiler is at its power limit | 3 h at high modulation below its setpoint with rooms short: check its heating power setting |
 
